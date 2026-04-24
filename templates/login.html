@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}로그인 · TRMT3{% endblock %}
+
+{% block body %}
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="login-mark">T3</div>
+      <h1 class="login-title">TRMT3</h1>
+      <p class="login-sub">Tanker Management Team 3</p>
+      <p class="login-sub2">Sinokor Shipmanagement</p>
+    </div>
+
+    <form method="post" class="login-form" autocomplete="on">
+      <label class="form-field">
+        <span class="form-label">아이디</span>
+        <input type="text" name="username"
+               value="{{ username or '' }}"
+               autocomplete="username" required autofocus>
+      </label>
+      <label class="form-field">
+        <span class="form-label">비밀번호</span>
+        <input type="password" name="password"
+               autocomplete="current-password" required>
+      </label>
+
+      {% if error %}
+      <div class="login-error">{{ error }}</div>
+      {% endif %}
+
+      <button type="submit" class="btn btn-primary btn-block">로그인</button>
+    </form>
+
+    <div class="login-footer">
+      계정 관련 문의는 관리자에게 요청하세요.
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,460 @@
+{% extends 'base.html' %}
+{% block title %}Daily 업무관리 · TRMT3{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Daily 업무관리</h1>
+  <div class="page-actions">
+    <button id="btn-new-issue" class="btn btn-primary">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      신규 이슈
+    </button>
+  </div>
+</div>
+
+<!-- 감독 탭 바 -->
+<div class="tab-bar" id="tab-bar"></div>
+
+<!-- 탭 컨텍스트 (담당 선박 / 카운트 요약) -->
+<div class="tab-context" id="tab-context"></div>
+
+<!-- 필터 툴바 -->
+<div class="toolbar">
+  <button class="btn btn-outline btn-sm" id="btn-today">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2"/>
+      <line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/>
+      <line x1="3" y1="10" x2="21" y2="10"/>
+    </svg>
+    <span>Today</span>
+  </button>
+
+  <button class="btn btn-outline btn-sm" id="btn-toggle-all" title="전체 펼치기/접기">
+    <span id="toggle-all-icon">▼</span>
+    <span id="toggle-all-label">전체 접기</span>
+  </button>
+
+  <input type="text" class="input search-input" id="filter-search"
+         placeholder="제목, 상세, 조치 검색...">
+
+  <select class="select" id="filter-vessel">
+    <option value="">All 선박</option>
+  </select>
+
+  <select class="select" id="filter-vessel-type">
+    <option value="">All 선종</option>
+    <option value="CNTR">CNTR</option>
+    <option value="VLCC">VLCC</option>
+    <option value="AFRAMAX">AFRAMAX</option>
+    <option value="MR">MR</option>
+    <option value="LR">LR</option>
+  </select>
+
+  <select class="select" id="filter-status">
+    <option value="">All Status</option>
+    <option value="Open">Open</option>
+    <option value="InProgress">진행중</option>
+    <option value="Closed">Closed</option>
+  </select>
+
+  <select class="select" id="filter-priority">
+    <option value="">All Priority</option>
+    <option value="Critical">Critical</option>
+    <option value="Urgent">Urgent</option>
+    <option value="Normal">Normal</option>
+  </select>
+
+  <span class="count-label" id="count-label"></span>
+</div>
+
+<!-- 데스크톱: 테이블 -->
+<div class="grid-wrap" id="table-wrap">
+  <table class="ex-table" id="issue-table">
+    <colgroup>
+      <col class="c-no">
+      <col class="c-vessel">
+      <col class="c-topic">
+      <col class="c-desc">
+      <col class="c-action">
+      <col class="c-pri">
+      <col class="c-stat">
+      <col class="c-edit">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>NO.</th>
+        <th>선박</th>
+        <th>ITEM</th>
+        <th>DESCRIPTION</th>
+        <th>ACTION PLAN</th>
+        <th>PRI.</th>
+        <th>STAT.</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="issue-tbody"></tbody>
+  </table>
+</div>
+
+<!-- 모바일: 카드 리스트 -->
+<div class="card-list" id="card-list"></div>
+
+<!-- 빈 상태 -->
+<div class="empty-state" id="empty-state" hidden>
+  <p>조건에 맞는 이슈가 없습니다.</p>
+  <p class="empty-sub">+ 신규 이슈 버튼으로 첫 이슈를 등록하세요.</p>
+</div>
+
+<!-- 하단 요약 -->
+<div class="summary-row" id="summary-row"></div>
+
+
+<!-- ========= 이슈 등록/수정 모달 ========= -->
+<div class="modal" id="issue-modal" hidden>
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="modal-title">신규 이슈</h2>
+      <button class="modal-close" data-close="1" aria-label="닫기">×</button>
+    </div>
+
+    <form id="issue-form" class="modal-body">
+      <input type="hidden" id="f-id">
+
+      <div class="form-grid">
+        <label class="form-field">
+          <span class="form-label">감독</span>
+          <select id="f-supervisor" required></select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">선박</span>
+          <select id="f-vessel" required></select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">작성일</span>
+          <input type="date" id="f-issue-date" required>
+        </label>
+        <label class="form-field">
+          <span class="form-label">마감일</span>
+          <input type="date" id="f-due-date">
+        </label>
+        <label class="form-field">
+          <span class="form-label">우선순위</span>
+          <select id="f-priority">
+            <option value="Normal">Normal</option>
+            <option value="Urgent">Urgent</option>
+            <option value="Critical">Critical</option>
+          </select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">상태</span>
+          <select id="f-status">
+            <option value="Open">Open</option>
+            <option value="InProgress">진행중</option>
+            <option value="Closed">Closed</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="form-field">
+        <span class="form-label">제목 / 이슈 <em>*</em></span>
+        <input type="text" id="f-topic" required maxlength="200">
+      </label>
+
+      <label class="form-field">
+        <span class="form-label">상세 내용</span>
+        <textarea id="f-desc" rows="5"
+                  placeholder="1. &#10;2. &#10;3. "></textarea>
+      </label>
+
+      <!-- Action Entries Editor (DD Manager 스타일) -->
+      <div class="form-field">
+        <div class="action-label-row">
+          <span class="form-label">조치 / 팔로우업 <em class="hint">(여러 건 가능)</em></span>
+          <button type="button" class="btn-add-action" id="btn-add-action">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            엔트리 추가
+          </button>
+        </div>
+        <div class="action-editor" id="f-action-editor"></div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" id="btn-delete" class="btn btn-danger" hidden>삭제</button>
+        <div class="footer-right">
+          <button type="button" data-close="1" class="btn btn-outline">취소</button>
+          <button type="submit" class="btn btn-primary" id="btn-save">저장</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========= 첨부 관리 모달 ========= -->
+<div class="modal" id="attach-modal" hidden>
+  <div class="modal-backdrop" data-close-attach="1"></div>
+  <div class="modal-box attach-modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>
+        첨부 파일
+        <span class="attach-modal-subtitle">
+          · 이슈 #<span id="attach-issue-id"></span> ·
+          <span id="attach-issue-topic"></span>
+        </span>
+      </h2>
+      <button class="modal-close" data-close-attach="1" aria-label="닫기">×</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Drop zone -->
+      <div class="attach-dropzone" id="attach-dropzone">
+        <input type="file" id="attach-file-input" multiple hidden
+               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv">
+        <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p class="attach-dropzone-title">파일을 끌어다 놓거나 클릭하여 선택하세요</p>
+        <p class="attach-dropzone-sub">이미지 · PDF · 문서 (최대 20MB)</p>
+      </div>
+
+      <!-- Uploaded grid -->
+      <div class="attach-grid" id="attach-grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= 담당 선박 모달 (감독 탭 전용) ========= -->
+<div class="modal" id="myves-modal" hidden>
+  <div class="modal-backdrop" data-close-myves="1"></div>
+  <div class="modal-box" style="width: min(680px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="myves-title">담당 선박</h2>
+      <button class="modal-close" data-close-myves="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-list" id="myves-list" style="max-height: 360px;"></div>
+
+      {% if session.role == 'admin' %}
+      <div class="admin-add-form" style="margin-top: 16px;">
+        <h3>+ 새 선박 추가 <span style="font-weight:400; text-transform:none; letter-spacing:0; color:var(--text-tertiary); font-size:11px">(현재 감독을 담당자로 자동 연결)</span></h3>
+        <div class="admin-form-grid">
+          <label class="form-field">
+            <span class="form-label">선종 <em>*</em></span>
+            <select id="myves-add-type">
+              <option value="CNTR">CNTR (컨테이너)</option>
+              <option value="VLCC" selected>VLCC</option>
+              <option value="AFRAMAX">AFRAMAX</option>
+              <option value="MR">MR</option>
+              <option value="LR">LR</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span class="form-label">선박명 <em>*</em></span>
+            <input type="text" id="myves-add-name" placeholder="예: KUWAIT HARMONY">
+          </label>
+          <label class="form-field">
+            <span class="form-label">약칭</span>
+            <input type="text" id="myves-add-short" placeholder="예: KW HARM">
+          </label>
+          <label class="form-field">
+            <span class="form-label">IMO</span>
+            <input type="text" id="myves-add-imo">
+          </label>
+          <label class="form-field full">
+            <span class="form-label">선급</span>
+            <input type="text" id="myves-add-class" placeholder="BV / DNV / ABS">
+          </label>
+        </div>
+        <div class="admin-btn-row">
+          <button type="button" class="btn btn-primary" id="btn-myves-add">+ 선박 추가</button>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ========= 비밀번호 변경 모달 (모든 사용자) ========= -->
+<div class="modal" id="password-modal" hidden>
+  <div class="modal-backdrop" data-close-pw="1"></div>
+  <div class="modal-box" style="width: min(420px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>비밀번호 변경</h2>
+      <button class="modal-close" data-close-pw="1">×</button>
+    </div>
+    <form id="password-form" class="modal-body">
+      <label class="form-field">
+        <span class="form-label">현재 비밀번호</span>
+        <input type="password" id="pw-old" required autocomplete="current-password">
+      </label>
+      <label class="form-field">
+        <span class="form-label">새 비밀번호 <em class="hint">(6자 이상)</em></span>
+        <input type="password" id="pw-new" required minlength="6" autocomplete="new-password">
+      </label>
+      <label class="form-field">
+        <span class="form-label">새 비밀번호 확인</span>
+        <input type="password" id="pw-new2" required minlength="6" autocomplete="new-password">
+      </label>
+      <div class="modal-footer">
+        <div class="footer-right">
+          <button type="button" data-close-pw="1" class="btn btn-outline">취소</button>
+          <button type="submit" class="btn btn-primary">변경</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if session.role == 'admin' %}
+<!-- ========= Admin 관리 모달 (감독 / 선박 / 사용자) ========= -->
+<div class="modal" id="admin-modal" hidden>
+  <div class="modal-backdrop" data-close-admin="1"></div>
+  <div class="modal-box admin-modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>관리</h2>
+      <button class="modal-close" data-close-admin="1">×</button>
+    </div>
+    <div class="admin-tabs">
+      <div class="admin-tab active" data-admin-tab="supervisors">감독</div>
+      <div class="admin-tab" data-admin-tab="vessels">선박</div>
+      <div class="admin-tab" data-admin-tab="users">사용자</div>
+    </div>
+
+    <div class="modal-body">
+      <!-- 감독 패널 -->
+      <div class="admin-panel active" data-admin-panel="supervisors">
+        <div class="admin-list" id="admin-sup-list"></div>
+        <div class="admin-add-form">
+          <h3>새 감독 추가</h3>
+          <div class="admin-form-grid">
+            <label class="form-field">
+              <span class="form-label">이름 <em>*</em></span>
+              <input type="text" id="sup-add-name" placeholder="예: 박차장">
+            </label>
+            <label class="form-field">
+              <span class="form-label">이메일</span>
+              <input type="text" id="sup-add-email" placeholder="sample@sinokor.co.kr">
+            </label>
+            <div class="form-field full">
+              <span class="form-label">색상</span>
+              <div class="color-swatches" id="sup-add-colors">
+                <span class="color-swatch selected" data-color="blue"></span>
+                <span class="color-swatch" data-color="teal"></span>
+                <span class="color-swatch" data-color="purple"></span>
+                <span class="color-swatch" data-color="coral"></span>
+                <span class="color-swatch" data-color="amber"></span>
+                <span class="color-swatch" data-color="gray"></span>
+              </div>
+            </div>
+          </div>
+          <div class="admin-btn-row">
+            <button type="button" class="btn btn-primary" id="btn-sup-add">+ 감독 추가</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 선박 패널 -->
+      <div class="admin-panel" data-admin-panel="vessels">
+        <div class="admin-list" id="admin-ves-list"></div>
+        <div class="admin-add-form">
+          <h3>새 선박 추가</h3>
+          <div class="admin-form-grid">
+            <label class="form-field">
+              <span class="form-label">선종 <em>*</em></span>
+              <select id="ves-add-type">
+                <option value="CNTR">CNTR (컨테이너)</option>
+                <option value="VLCC" selected>VLCC</option>
+                <option value="AFRAMAX">AFRAMAX</option>
+                <option value="MR">MR</option>
+                <option value="LR">LR</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span class="form-label">선박명 <em>*</em></span>
+              <input type="text" id="ves-add-name" placeholder="예: KUWAIT HARMONY">
+            </label>
+            <label class="form-field">
+              <span class="form-label">약칭</span>
+              <input type="text" id="ves-add-short" placeholder="예: KW HARM">
+            </label>
+            <label class="form-field">
+              <span class="form-label">IMO</span>
+              <input type="text" id="ves-add-imo" placeholder="9999999">
+            </label>
+            <label class="form-field">
+              <span class="form-label">선급</span>
+              <input type="text" id="ves-add-class" placeholder="BV / DNV / ABS ...">
+            </label>
+            <div class="form-field full">
+              <span class="form-label">담당 감독 <em>*</em> <em class="hint">(복수 선택 가능)</em></span>
+              <div class="admin-chip-group" id="ves-add-sups"></div>
+            </div>
+          </div>
+          <div class="admin-btn-row">
+            <button type="button" class="btn btn-primary" id="btn-ves-add">+ 선박 추가</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 사용자 패널 -->
+      <div class="admin-panel" data-admin-panel="users">
+        <div class="admin-list" id="admin-user-list"></div>
+        <div class="admin-add-form">
+          <h3>새 사용자 추가</h3>
+          <div class="admin-form-grid">
+            <label class="form-field">
+              <span class="form-label">사용자명(ID) <em>*</em></span>
+              <input type="text" id="user-add-username" placeholder="예: ysson" autocomplete="off">
+            </label>
+            <label class="form-field">
+              <span class="form-label">비밀번호 <em>*</em> <em class="hint">(6자 이상)</em></span>
+              <input type="password" id="user-add-password" autocomplete="new-password">
+            </label>
+            <label class="form-field">
+              <span class="form-label">표시 이름</span>
+              <input type="text" id="user-add-display" placeholder="예: 손유석 차장">
+            </label>
+            <label class="form-field">
+              <span class="form-label">권한</span>
+              <select id="user-add-role">
+                <option value="member" selected>일반 사용자</option>
+                <option value="admin">관리자</option>
+              </select>
+            </label>
+            <label class="form-field full">
+              <span class="form-label">연결 감독 <em class="hint">(선택 — 로그인 시 해당 감독 탭 자동 표시)</em></span>
+              <select id="user-add-supervisor">
+                <option value="">(연결 없음)</option>
+              </select>
+            </label>
+          </div>
+          <div class="admin-btn-row">
+            <button type="button" class="btn btn-primary" id="btn-user-add">+ 사용자 추가</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.TRMT = { user: {{ {
+      'username': session.username,
+      'display_name': session.display_name,
+      'role': session.role,
+      'supervisor_id': session.supervisor_id
+    } | tojson }} };
+</script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endblock %}
