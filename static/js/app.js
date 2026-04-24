@@ -1542,6 +1542,18 @@ function renderAdminVesList() {
       el('div', { class: 'item-sub' },
         `${v.short_name ? v.short_name + ' · ' : ''}${v.imo ? 'IMO ' + v.imo + ' · ' : ''}담당: ${escHtml(v.supervisor_names || '없음')}`)));
     item.append(el('div', {}));
+
+    const actions = el('div', { class: 'item-actions' });
+    // 편집 버튼
+    const ed = el('button', {
+      class: 'icon-btn', title: '선박 편집',
+      onclick: () => openVesselEdit(v.id, 'admin'),
+    });
+    ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+    actions.append(ed);
+    // 삭제 버튼
     const rm = el('button', {
       class: 'icon-btn danger', title: '선박 삭제',
       onclick: () => deleteVessel(v.id, v.name),
@@ -1549,7 +1561,8 @@ function renderAdminVesList() {
     rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
       <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
       <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
-    item.append(el('div', { class: 'item-actions' }, rm));
+    actions.append(rm);
+    item.append(actions);
     list.append(item);
   }
 }
@@ -1761,13 +1774,25 @@ async function renderMyVesList() {
     item.append(el('div', {}));
 
     if (S.user.role === 'admin') {
+      const actions = el('div', { class: 'item-actions' });
+      // 편집
+      const ed = el('button', {
+        class: 'icon-btn', title: '선박 편집',
+        onclick: () => openVesselEdit(v.id, 'myves'),
+      });
+      ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+      actions.append(ed);
+      // 담당 해제
       const rm = el('button', {
         class: 'icon-btn danger', title: '이 감독의 담당에서 제외',
         onclick: () => unassignMyVessel(v.id, v.name),
       });
       rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-      item.append(el('div', { class: 'item-actions' }, rm));
+      actions.append(rm);
+      item.append(actions);
     } else {
       item.append(el('div', {}));
     }
@@ -1811,6 +1836,93 @@ async function addVesselFromMyVes() {
     $('#myves-add-class').value = '';
     await renderMyVesList();
   } catch (err) { alert('추가 실패: ' + err.message); }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Vessel Edit Modal (선박 정보 수정 — admin 전용)
+// ═══════════════════════════════════════════════════════════
+const VEDIT = {
+  id: null,
+  selectedSupIds: new Set(),
+  context: null,   // 'admin' | 'myves' — 어느 리스트를 갱신할지
+};
+
+async function openVesselEdit(vid, context) {
+  VEDIT.id = vid;
+  VEDIT.context = context || 'admin';
+
+  // 현재 선박 정보 조회
+  const all = await api('/api/vessels/all');
+  const v = all.find(x => x.id === vid);
+  if (!v) { alert('선박 정보를 찾을 수 없습니다.'); return; }
+
+  $('#vedit-name').value  = v.name || '';
+  $('#vedit-short').value = v.short_name || '';
+  $('#vedit-type').value  = v.vessel_type || 'VLCC';
+  $('#vedit-imo').value   = v.imo || '';
+  $('#vedit-class').value = v.class_society || '';
+
+  VEDIT.selectedSupIds = new Set(v.supervisor_ids || []);
+  renderVeditSups();
+
+  $('#vessel-edit-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function renderVeditSups() {
+  const box = $('#vedit-sups');
+  box.innerHTML = '';
+  // S.supervisors 또는 ADMIN.supervisors 사용
+  const sups = (ADMIN.supervisors && ADMIN.supervisors.length) ? ADMIN.supervisors : S.supervisors;
+  if (!sups || !sups.length) {
+    box.append(el('span', { style: 'color:var(--text-tertiary); font-size:11.5px' },
+      '감독이 없습니다.'));
+    return;
+  }
+  for (const s of sups) {
+    const chip = el('span', {
+      class: 'admin-chip' + (VEDIT.selectedSupIds.has(s.id) ? ' selected' : ''),
+      onclick: () => {
+        if (VEDIT.selectedSupIds.has(s.id)) VEDIT.selectedSupIds.delete(s.id);
+        else VEDIT.selectedSupIds.add(s.id);
+        renderVeditSups();
+      },
+    }, s.name);
+    box.append(chip);
+  }
+}
+
+function closeVesselEdit() {
+  $('#vessel-edit-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+
+async function saveVesselEdit() {
+  const name = $('#vedit-name').value.trim();
+  if (!name) { alert('선박명을 입력하세요.'); return; }
+  if (!VEDIT.selectedSupIds.size) {
+    if (!confirm('담당 감독이 선택되지 않았습니다. 저장하면 미할당 상태가 됩니다. 계속할까요?')) return;
+  }
+  try {
+    await api(`/api/vessels/${VEDIT.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name,
+        short_name:    $('#vedit-short').value.trim(),
+        vessel_type:   $('#vedit-type').value,
+        imo:           $('#vedit-imo').value.trim(),
+        class_society: $('#vedit-class').value.trim(),
+        supervisor_ids: [...VEDIT.selectedSupIds],
+      }),
+    });
+    closeVesselEdit();
+    if (VEDIT.context === 'myves') {
+      await renderMyVesList();
+    } else {
+      await loadAdminVessels();
+    }
+    await reloadAll();
+  } catch (err) { alert('저장 실패: ' + err.message); }
 }
 
 // ───────────── reloadAll ─────────────
@@ -1903,11 +2015,21 @@ function wireEvents() {
     if (ev.key !== 'Escape') return;
     if (!$('#issue-modal').hidden) closeModal();
     else if (!$('#attach-modal').hidden) closeAttach();
+    else if ($('#vessel-edit-modal') && !$('#vessel-edit-modal').hidden) closeVesselEdit();
     else if (!$('#myves-modal').hidden) closeMyVessels();
     else if (!$('#password-modal').hidden) closePasswordModal();
     else if ($('#admin-modal') && !$('#admin-modal').hidden) closeAdminModal();
     else if (S.inlineAdd) cancelInlineAdd();
   });
+
+  // ───── 선박 편집 모달 (admin 전용) ─────
+  const vEditModal = $('#vessel-edit-modal');
+  if (vEditModal) {
+    vEditModal.addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeVesedit === '1') closeVesselEdit();
+    });
+    $('#btn-vedit-save').addEventListener('click', saveVesselEdit);
+  }
 
   // ───── 담당 선박 모달 ─────
   $('#myves-modal').addEventListener('click', (ev) => {
