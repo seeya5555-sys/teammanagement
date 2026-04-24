@@ -108,7 +108,6 @@ def init_db(drop=False):
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
                 conn.executescript(f.read())
-            _seed_issues(conn)
             print('  · 시드 데이터 로드 완료')
 
         # 기본 admin 계정 자동 생성
