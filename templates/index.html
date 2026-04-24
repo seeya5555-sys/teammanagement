@@ -281,6 +281,57 @@
   </div>
 </div>
 
+{% if session.role == 'admin' %}
+<!-- ========= 선박 편집 모달 (admin 전용) ========= -->
+<div class="modal" id="vessel-edit-modal" hidden>
+  <div class="modal-backdrop" data-close-vesedit="1"></div>
+  <div class="modal-box" style="width: min(540px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>선박 편집</h2>
+      <button class="modal-close" data-close-vesedit="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-form-grid">
+        <label class="form-field">
+          <span class="form-label">선종 <em>*</em></span>
+          <select id="vedit-type">
+            <option value="CNTR">CNTR (컨테이너)</option>
+            <option value="VLCC">VLCC</option>
+            <option value="AFRAMAX">AFRAMAX</option>
+            <option value="MR">MR</option>
+            <option value="LR">LR</option>
+          </select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">선박명 <em>*</em></span>
+          <input type="text" id="vedit-name">
+        </label>
+        <label class="form-field">
+          <span class="form-label">약칭</span>
+          <input type="text" id="vedit-short">
+        </label>
+        <label class="form-field">
+          <span class="form-label">IMO</span>
+          <input type="text" id="vedit-imo">
+        </label>
+        <label class="form-field full">
+          <span class="form-label">선급</span>
+          <input type="text" id="vedit-class">
+        </label>
+        <div class="form-field full">
+          <span class="form-label">담당 감독 <em>*</em> <em class="hint">(복수 선택 가능)</em></span>
+          <div class="admin-chip-group" id="vedit-sups"></div>
+        </div>
+      </div>
+      <div class="admin-btn-row">
+        <button type="button" class="btn btn-outline" data-close-vesedit="1">취소</button>
+        <button type="button" class="btn btn-primary" id="btn-vedit-save">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- ========= 비밀번호 변경 모달 (모든 사용자) ========= -->
 <div class="modal" id="password-modal" hidden>
   <div class="modal-backdrop" data-close-pw="1"></div>
