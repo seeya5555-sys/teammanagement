@@ -664,11 +664,29 @@ def api_vessel_create():
 
 
 @app.route('/api/vessels/<int:vid>', methods=['PUT'])
-@admin_required
+@login_required
 def api_vessel_update(vid):
     if not query('SELECT id FROM vessels WHERE id=?', (vid,), one=True):
         abort(404)
     d = request.get_json(silent=True) or {}
+
+    # 일반 사용자(member) 권한 제약:
+    #   - 본인 담당 감독에 연결된 선박만 수정 가능
+    #   - 담당 감독 변경(supervisor_ids), 비활성화(active) 는 불가
+    if session.get('role') != 'admin':
+        my_sup = session.get('supervisor_id')
+        if not my_sup:
+            return jsonify({'error': '담당 감독이 연결되지 않은 계정입니다.'}), 403
+        owned = query(
+            'SELECT 1 FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id=?',
+            (vid, my_sup), one=True,
+        )
+        if not owned:
+            return jsonify({'error': '본인 담당 선박만 수정할 수 있습니다.'}), 403
+        # 민감 필드는 서버에서 무시 (이중 방어)
+        d.pop('supervisor_ids', None)
+        d.pop('active', None)
+
     sets, params = [], []
     for f in ('name', 'short_name', 'vessel_type', 'imo', 'class_society', 'active'):
         if f in d:
@@ -677,7 +695,7 @@ def api_vessel_update(vid):
     if sets:
         params.append(vid)
         execute(f'UPDATE vessels SET {", ".join(sets)} WHERE id = ?', params)
-    # supervisor 매핑 갱신 (제공됐을 때만)
+    # supervisor 매핑 갱신 (admin만 가능 — member는 위에서 pop됨)
     if 'supervisor_ids' in d:
         execute('DELETE FROM supervisor_vessels WHERE vessel_id = ?', (vid,))
         for sid in (d.get('supervisor_ids') or []):
@@ -687,8 +705,37 @@ def api_vessel_update(vid):
 
 
 @app.route('/api/vessels/<int:vid>', methods=['DELETE'])
-@admin_required
+@login_required
 def api_vessel_delete(vid):
+    if not query('SELECT id FROM vessels WHERE id=?', (vid,), one=True):
+        abort(404)
+
+    # 일반 사용자(member) 권한 제약:
+    #   - 본인 담당 선박만 삭제 가능
+    #   - 다른 감독에게도 공유된 선박 → 본인 담당만 제거 (선박 자체는 유지)
+    #   - 본인만 담당 → 아래 공통 로직으로 진행 (이슈 있으면 soft, 없으면 hard)
+    if session.get('role') != 'admin':
+        my_sup = session.get('supervisor_id')
+        if not my_sup:
+            return jsonify({'error': '담당 감독이 연결되지 않은 계정입니다.'}), 403
+        owned = query(
+            'SELECT 1 FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id=?',
+            (vid, my_sup), one=True,
+        )
+        if not owned:
+            return jsonify({'error': '본인 담당 선박만 삭제할 수 있습니다.'}), 403
+        # 다른 감독도 담당하는지?
+        other = query(
+            'SELECT COUNT(*) AS n FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id<>?',
+            (vid, my_sup), one=True,
+        )
+        if other['n'] > 0:
+            # 본인 담당만 해제하고 종료
+            execute('DELETE FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id=?',
+                    (vid, my_sup))
+            return jsonify({'ok': True, 'unassigned_only': True})
+
+    # 이슈가 있으면 soft delete
     n = query('SELECT COUNT(*) AS n FROM issues WHERE vessel_id=?',
               (vid,), one=True)['n']
     if n > 0:
