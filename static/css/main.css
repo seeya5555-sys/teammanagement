@@ -452,6 +452,8 @@ col.c-edit   { width: 110px; }
 .pri-cocflag::before { content: "⚑"; font-size: 10px; color: var(--red-strong); }
 .pri-urgent   { background: var(--amber-bg); color: var(--amber); }
 .pri-urgent::before   { content: "◆"; font-size: 10px; color: var(--amber-dot); }
+.pri-nextdd   { background: var(--blue-bg);  color: var(--blue-text); }
+.pri-nextdd::before   { content: "⚓"; font-size: 10px; color: var(--blue); }
 .pri-normal   { background: var(--surface-3); color: var(--text-secondary); }
 .pri-normal::before   { content: "○"; font-size: 9px; color: var(--text-tertiary); }
 
