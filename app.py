@@ -431,7 +431,7 @@ def api_issue_list():
           JOIN supervisors s ON s.id = i.supervisor_id
           JOIN vessels     v ON v.id = i.vessel_id
          WHERE {' AND '.join(conds)}
-         ORDER BY i.issue_date DESC, i.id DESC
+         ORDER BY i.issue_date ASC, i.id ASC
     '''
     rows = [_issue_to_dict(r) for r in query(sql, params)]
     return jsonify(rows)
