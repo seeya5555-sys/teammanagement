@@ -1782,7 +1782,9 @@ async function renderMyVesList() {
   list.innerHTML = '';
   const vs = await api(`/api/vessels?supervisor_id=${S.myVesSupId}`);
   if (!vs.length) {
-    const msg = S.user.role === 'admin'
+    const isAdmin    = S.user.role === 'admin';
+    const isOwnerSup = S.user.supervisor_id && S.user.supervisor_id === S.myVesSupId;
+    const msg = (isAdmin || isOwnerSup)
       ? '담당 선박이 없습니다. 아래에서 추가하세요.'
       : '담당 선박이 없습니다. 관리자에게 요청하세요.';
     list.append(el('div', { class: 'attach-empty' }, msg));
@@ -1801,7 +1803,11 @@ async function renderMyVesList() {
         ].filter(Boolean).join(' · ') || '-')));
     item.append(el('div', {}));
 
-    if (S.user.role === 'admin') {
+    // 권한별 버튼 노출
+    const isAdmin    = S.user.role === 'admin';
+    const isOwnerSup = S.user.supervisor_id && S.user.supervisor_id === S.myVesSupId;
+
+    if (isAdmin) {
       const actions = el('div', { class: 'item-actions' });
       // 편집
       const ed = el('button', {
@@ -1821,11 +1827,45 @@ async function renderMyVesList() {
         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
       actions.append(rm);
       item.append(actions);
+    } else if (isOwnerSup) {
+      // member: 본인 담당 탭에서 편집 + 삭제 가능
+      const actions = el('div', { class: 'item-actions' });
+      const ed = el('button', {
+        class: 'icon-btn', title: '선박 편집',
+        onclick: () => openVesselEdit(v.id, 'myves'),
+      });
+      ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+      actions.append(ed);
+      const rm = el('button', {
+        class: 'icon-btn danger', title: '선박 삭제',
+        onclick: () => deleteMyVessel(v.id, v.name),
+      });
+      rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+        <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+        <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+      actions.append(rm);
+      item.append(actions);
     } else {
       item.append(el('div', {}));
     }
     list.append(item);
   }
+}
+
+async function deleteMyVessel(vid, vname) {
+  if (!confirm(`"${vname}"을(를) 삭제하시겠습니까?\n\n· 다른 감독도 담당 중이라면 → 본인 담당에서만 제외됩니다\n· 본인만 담당 + 이슈 있음 → 비활성 처리됩니다\n· 본인만 담당 + 이슈 없음 → 완전히 삭제됩니다`)) return;
+  try {
+    const r = await api('/api/vessels/' + vid, { method: 'DELETE' });
+    if (r.unassigned_only) {
+      alert('다른 감독이 담당 중이어서, 본인 담당에서만 제외되었습니다.');
+    } else if (r.soft_delete) {
+      alert(`이슈 ${r.issues}건이 있어 비활성 처리되었습니다.`);
+    }
+    await renderMyVesList();
+    await reloadAll();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
 }
 
 async function unassignMyVessel(vid, vname) {
@@ -1893,6 +1933,12 @@ async function openVesselEdit(vid, context) {
   VEDIT.selectedSupIds = new Set(v.supervisor_ids || []);
   renderVeditSups();
 
+  // member는 담당 감독 변경 불가 — 섹션 숨김
+  const supsField = $('#vedit-sups').closest('.form-field');
+  if (supsField) {
+    supsField.style.display = (S.user.role === 'admin') ? '' : 'none';
+  }
+
   $('#vessel-edit-modal').hidden = false;
   document.body.style.overflow = 'hidden';
 }
@@ -1928,20 +1974,24 @@ function closeVesselEdit() {
 async function saveVesselEdit() {
   const name = $('#vedit-name').value.trim();
   if (!name) { alert('선박명을 입력하세요.'); return; }
-  if (!VEDIT.selectedSupIds.size) {
+  const isAdmin = S.user.role === 'admin';
+  if (isAdmin && !VEDIT.selectedSupIds.size) {
     if (!confirm('담당 감독이 선택되지 않았습니다. 저장하면 미할당 상태가 됩니다. 계속할까요?')) return;
   }
   try {
+    const payload = {
+      name,
+      short_name:    $('#vedit-short').value.trim(),
+      vessel_type:   $('#vedit-type').value,
+      imo:           $('#vedit-imo').value.trim(),
+      class_society: $('#vedit-class').value.trim(),
+    };
+    if (isAdmin) {
+      payload.supervisor_ids = [...VEDIT.selectedSupIds];
+    }
     await api(`/api/vessels/${VEDIT.id}`, {
       method: 'PUT',
-      body: JSON.stringify({
-        name,
-        short_name:    $('#vedit-short').value.trim(),
-        vessel_type:   $('#vedit-type').value,
-        imo:           $('#vedit-imo').value.trim(),
-        class_society: $('#vedit-class').value.trim(),
-        supervisor_ids: [...VEDIT.selectedSupIds],
-      }),
+      body: JSON.stringify(payload),
     });
     closeVesselEdit();
     if (VEDIT.context === 'myves') {
