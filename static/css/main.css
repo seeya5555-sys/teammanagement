@@ -2060,3 +2060,90 @@ col.c-edit   { width: 110px; }
   background: var(--text-tertiary);
   color: white;
 }
+
+/* ───── 선박 헤더의 분기별 Open 카운트 격자 ───── */
+.cs-vessel-summary {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+}
+.cs-q-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  min-width: 50px;
+  justify-content: center;
+}
+.cs-q-summary.has-data {
+  background: var(--blue-bg);
+  color: var(--blue-text);
+}
+.cs-q-summary .cs-q-label {
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+}
+.cs-q-summary .cs-q-num { font-weight: 600; }
+.cs-q-summary .cs-q-num strong.cs-q-open-on {
+  color: var(--red);
+  font-weight: 800;
+}
+.cs-q-summary .cs-q-num strong.cs-q-all-closed {
+  color: var(--green);
+}
+.cs-q-summary .cs-q-num .cs-q-empty-data,
+.cs-q-summary .cs-q-num .cs-q-blank {
+  color: var(--text-tertiary);
+}
+
+/* ───── 선종(Vessel Type) 그룹 ───── */
+.cs-type-group {
+  margin-bottom: 28px;
+}
+.cs-type-group:last-child { margin-bottom: 0; }
+
+.cs-type-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  margin-bottom: 12px;
+  border-bottom: 2px solid var(--border-subtle);
+}
+.cs-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  border-radius: 6px;
+  background: var(--text-primary);
+  color: white;
+}
+/* 선종별 색상 강조 */
+.cs-type-vlcc    .cs-type-badge { background: #1e3a8a; }   /* deep blue */
+.cs-type-aframax .cs-type-badge { background: #155e75; }   /* teal */
+.cs-type-mr      .cs-type-badge { background: #166534; }   /* green */
+.cs-type-lr      .cs-type-badge { background: #854d0e; }   /* amber-dark */
+.cs-type-cntr    .cs-type-badge { background: #7c2d12; }   /* maroon */
+.cs-type-기타    .cs-type-badge { background: #475569; }
+
+.cs-type-count {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.cs-type-header::after {
+  /* 우측에 채우는 빈 공간을 위한 가짜 요소 (header 폭 다 사용) */
+  content: '';
+  flex: 1;
+}
