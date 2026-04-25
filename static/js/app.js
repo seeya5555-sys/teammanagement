@@ -1482,6 +1482,17 @@ function renderAdminSupList() {
         `담당 선박: ${escHtml(s.vessels || '없음')} · 이슈 ${s.total}건`)));
     item.append(el('div', { class: 'item-tags' },
       el('span', { class: 'item-tag' }, s.email || '(이메일 없음)')));
+    const actions = el('div', { class: 'item-actions' });
+    // 편집
+    const ed = el('button', {
+      class: 'icon-btn', title: '감독 편집',
+      onclick: () => openSupervisorEdit(s),
+    });
+    ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+    actions.append(ed);
+    // 삭제
     const rm = el('button', {
       class: 'icon-btn danger', title: '감독 삭제',
       onclick: () => deleteSupervisor(s.id, s.name),
@@ -1489,7 +1500,8 @@ function renderAdminSupList() {
     rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
       <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
       <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
-    item.append(el('div', { class: 'item-actions' }, rm));
+    actions.append(rm);
+    item.append(actions);
     list.append(item);
   }
 }
@@ -1645,6 +1657,15 @@ function renderAdminUserList() {
     item.append(el('div', {}));
 
     const actions = el('div', { class: 'item-actions' });
+    // 편집
+    const ed = el('button', {
+      class: 'icon-btn', title: '사용자 편집',
+      onclick: () => openUserEdit(u),
+    });
+    ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+    actions.append(ed);
     // 비밀번호 리셋
     const pwBtn = el('button', {
       class: 'icon-btn', title: '비밀번호 리셋',
@@ -1925,6 +1946,89 @@ async function saveVesselEdit() {
   } catch (err) { alert('저장 실패: ' + err.message); }
 }
 
+// ═══════════════════════════════════════════════════════════
+//  Supervisor Edit Modal (감독 정보 수정)
+// ═══════════════════════════════════════════════════════════
+const SEDIT = { id: null, selectedColor: 'blue' };
+
+function openSupervisorEdit(sup) {
+  SEDIT.id = sup.id;
+  SEDIT.selectedColor = sup.color || 'blue';
+  $('#sedit-name').value  = sup.name || '';
+  $('#sedit-email').value = sup.email || '';
+  document.querySelectorAll('#sedit-colors .color-swatch').forEach(sw => {
+    sw.classList.toggle('selected', sw.dataset.color === SEDIT.selectedColor);
+  });
+  $('#supervisor-edit-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+function closeSupervisorEdit() {
+  $('#supervisor-edit-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+async function saveSupervisorEdit() {
+  const name = $('#sedit-name').value.trim();
+  if (!name) { alert('이름을 입력하세요.'); return; }
+  try {
+    await api(`/api/supervisors/${SEDIT.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name,
+        email: $('#sedit-email').value.trim(),
+        color: SEDIT.selectedColor,
+      }),
+    });
+    closeSupervisorEdit();
+    await loadAdminSupervisors();
+    await reloadAll();
+  } catch (err) { alert('저장 실패: ' + err.message); }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  User Edit Modal (사용자 정보 수정)
+// ═══════════════════════════════════════════════════════════
+const UEDIT = { id: null };
+
+function openUserEdit(user) {
+  UEDIT.id = user.id;
+  $('#uedit-username').value = user.username || '';
+  $('#uedit-display').value  = user.display_name || '';
+  $('#uedit-role').value     = user.role || 'member';
+  $('#uedit-active').value   = String(user.active != null ? user.active : 1);
+
+  // 감독 셀렉트 옵션 채우기
+  const sel = $('#uedit-supervisor');
+  sel.innerHTML = '';
+  sel.append(el('option', { value: '' }, '(연결 없음)'));
+  for (const s of ADMIN.supervisors) {
+    sel.append(el('option', { value: s.id }, s.name));
+  }
+  sel.value = user.supervisor_id != null ? String(user.supervisor_id) : '';
+
+  $('#user-edit-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+function closeUserEdit() {
+  $('#user-edit-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+async function saveUserEdit() {
+  try {
+    const supVal = $('#uedit-supervisor').value;
+    await api(`/api/users/${UEDIT.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        display_name: $('#uedit-display').value.trim(),
+        role:         $('#uedit-role').value,
+        active:       Number($('#uedit-active').value),
+        supervisor_id: supVal ? Number(supVal) : null,
+      }),
+    });
+    closeUserEdit();
+    await loadAdminUsers();
+  } catch (err) { alert('저장 실패: ' + err.message); }
+}
+
 // ───────────── reloadAll ─────────────
 async function reloadAll() {
   await loadSupervisors();
@@ -2013,9 +2117,13 @@ function wireEvents() {
   // 전역 ESC
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
+    // 2차 모달(편집) 먼저 체크
+    if ($('#vessel-edit-modal') && !$('#vessel-edit-modal').hidden) { closeVesselEdit(); return; }
+    if ($('#supervisor-edit-modal') && !$('#supervisor-edit-modal').hidden) { closeSupervisorEdit(); return; }
+    if ($('#user-edit-modal') && !$('#user-edit-modal').hidden) { closeUserEdit(); return; }
+    // 1차 모달
     if (!$('#issue-modal').hidden) closeModal();
     else if (!$('#attach-modal').hidden) closeAttach();
-    else if ($('#vessel-edit-modal') && !$('#vessel-edit-modal').hidden) closeVesselEdit();
     else if (!$('#myves-modal').hidden) closeMyVessels();
     else if (!$('#password-modal').hidden) closePasswordModal();
     else if ($('#admin-modal') && !$('#admin-modal').hidden) closeAdminModal();
@@ -2029,6 +2137,31 @@ function wireEvents() {
       if (ev.target.dataset.closeVesedit === '1') closeVesselEdit();
     });
     $('#btn-vedit-save').addEventListener('click', saveVesselEdit);
+  }
+
+  // ───── 감독 편집 모달 (admin 전용) ─────
+  const sEditModal = $('#supervisor-edit-modal');
+  if (sEditModal) {
+    sEditModal.addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeSupedit === '1') closeSupervisorEdit();
+    });
+    $('#btn-sedit-save').addEventListener('click', saveSupervisorEdit);
+    $('#sedit-colors').addEventListener('click', (ev) => {
+      const sw = ev.target.closest('.color-swatch');
+      if (!sw) return;
+      SEDIT.selectedColor = sw.dataset.color;
+      document.querySelectorAll('#sedit-colors .color-swatch')
+        .forEach(x => x.classList.toggle('selected', x === sw));
+    });
+  }
+
+  // ───── 사용자 편집 모달 (admin 전용) ─────
+  const uEditModal = $('#user-edit-modal');
+  if (uEditModal) {
+    uEditModal.addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeUseredit === '1') closeUserEdit();
+    });
+    $('#btn-uedit-save').addEventListener('click', saveUserEdit);
   }
 
   // ───── 담당 선박 모달 ─────
