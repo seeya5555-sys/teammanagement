@@ -174,17 +174,11 @@ function render() {
 }
 
 function vesselSummary(item) {
-  // 접힌 상태에서도 보이는 요약: 1Q~4Q 분기별 Open 카운트
+  // 접힌 상태에서도 보이는 요약: 1Q~4Q 분기별 Open 카운트 (미등록도 격자로 표시)
   const surveys = item.surveys || {};
-  const filled = Object.keys(surveys).length;
   const wrap = el('span', { class: 'cs-vessel-summary' });
 
-  if (filled === 0) {
-    wrap.append(el('span', { class: 'cs-vessel-summary-empty' }, '미등록'));
-    return wrap;
-  }
-
-  // 1Q ~ 4Q 격자
+  // 1Q ~ 4Q 격자 (미등록 분기는 회색 빈 셀)
   for (const q of [1, 2, 3, 4]) {
     const s = surveys[q];
     const cell = el('span', { class: 'cs-q-summary' });
@@ -193,7 +187,7 @@ function vesselSummary(item) {
       const op = s.open_count || 0;
       const cl = s.close_count || 0;
       const num = el('span', { class: 'cs-q-num' });
-      // Open이 1+ 이면 빨간 강조, 0이면 (모두 완료) 초록
+      // Open이 1+ 이면 빨간 강조, 모두 Closed면 초록 체크, 항목 0이면 –
       if (op > 0) {
         num.append(el('strong', { class: 'cs-q-open-on' }, String(op)));
       } else if (cl > 0) {
