@@ -256,6 +256,7 @@ async function switchSubTab(id) {
   try { localStorage.setItem('trmt_subtab', id); } catch (_) {}
   S.inlineAdd = null;
   renderSubTabs();
+  renderTabContext();
   await loadIssues();
   render();
 }
@@ -289,14 +290,21 @@ function renderVesselFilter() {
 function renderTabContext() {
   const c = $('#tab-context');
   c.innerHTML = '';
+
+  const isClosedSub = S.activeSubTab === 'closed';
+
   if (S.activeTab === 'all') {
     const open = S.supervisors.reduce((a,s)=>a+s.open_count, 0);
     const prog = S.supervisors.reduce((a,s)=>a+s.progress_count, 0);
     const done = S.supervisors.reduce((a,s)=>a+s.closed_count, 0);
-    c.innerHTML = `전체 감독 · <strong>${S.supervisors.length}</strong>명 ·
-                   Open <strong>${open}</strong> ·
-                   진행중 <strong>${prog}</strong> ·
-                   Closed <strong>${done}</strong>`;
+    const parts = [`전체 감독 · <strong>${S.supervisors.length}</strong>명`];
+    if (isClosedSub) {
+      parts.push(`Closed <strong>${done}</strong>`);
+    } else {
+      parts.push(`Open <strong>${open}</strong>`);
+      parts.push(`진행중 <strong>${prog}</strong>`);
+    }
+    c.innerHTML = parts.join(' · ');
     return;
   }
   const s = S.supervisors.find(x => x.id == S.activeTab);
@@ -312,22 +320,33 @@ function renderTabContext() {
     `담당 선박 ${vesCount}척`,
     el('span', { class: 'caret' }, '▸'));
   c.append(trigger);
-  c.append(el('span', { style: 'margin-left: 10px;' },
-    '· Open ', el('strong', {}, String(s.open_count)),
-    ' · 진행중 ', el('strong', {}, String(s.progress_count)),
-    ' · Closed ', el('strong', {}, String(s.closed_count))
-  ));
+
+  const ctx = el('span', { style: 'margin-left: 10px;' });
+  if (isClosedSub) {
+    ctx.append('· Closed ', el('strong', {}, String(s.closed_count)));
+  } else {
+    ctx.append(
+      '· Open ', el('strong', {}, String(s.open_count)),
+      ' · 진행중 ', el('strong', {}, String(s.progress_count)),
+    );
+  }
+  c.append(ctx);
 }
 function renderSummary() {
   const n  = S.issues.length;
   const op = S.issues.filter(i => i.status === 'Open').length;
   const pg = S.issues.filter(i => i.status === 'InProgress').length;
   const cl = S.issues.filter(i => i.status === 'Closed').length;
-  $('#summary-row').innerHTML = `
-    <span>총 <strong>${n}</strong>건</span>
-    <span>· Open <strong>${op}</strong></span>
-    <span>· 진행중 <strong>${pg}</strong></span>
-    <span>· Closed <strong>${cl}</strong></span>`;
+
+  const isClosedSub = S.activeSubTab === 'closed';
+  const parts = [`<span>총 <strong>${n}</strong>건</span>`];
+  if (isClosedSub) {
+    parts.push(`<span>· Closed <strong>${cl}</strong></span>`);
+  } else {
+    parts.push(`<span>· Open <strong>${op}</strong></span>`);
+    parts.push(`<span>· 진행중 <strong>${pg}</strong></span>`);
+  }
+  $('#summary-row').innerHTML = parts.join('');
   $('#count-label').textContent = `${n} items`;
 }
 
