@@ -19,6 +19,12 @@ function saveExpandedSet() {
 // (localStorage 사용 안 함. 같은 페이지 안에서 펼친 건 유지되지만,
 //  페이지 다시 진입하면 다시 모두 접힘)
 
+// CS에서 숨길 감독 이름 (대소문자 무시) — Daily 업무관리는 영향 없음
+const HIDDEN_SUPERVISOR_NAMES_CS = ['FLEET AGENDA'];
+function isHiddenSupervisor(sup) {
+  return HIDDEN_SUPERVISOR_NAMES_CS.includes((sup.name || '').toUpperCase());
+}
+
 // ───────────── State ─────────────
 const S = {
   user:        window.TRMT?.user || {},
@@ -26,9 +32,10 @@ const S = {
   data:        [],
   activeTab:   'all',
   year:        new Date().getFullYear(),
-  search:      '',                       // 선박명 검색 키워드
-  expandedSurveys: loadExpandedSet(),    // 분기 행 펼침 (이건 유지)
-  expandedVessels: new Set(),            // 선박 카드 — 매 진입 시 빈 상태
+  search:      '',
+  expandedSurveys: loadExpandedSet(),
+  expandedVessels: new Set(),
+  hiddenVesselIds: new Set(),    // CS 전체 탭에서 제외할 vessel id
 };
 
 // ───────────── Helpers ─────────────
@@ -76,6 +83,7 @@ function renderTabs() {
   bar.innerHTML = '';
   bar.append(tabEl('all', '전체', 'gray', null, S.activeTab === 'all'));
   for (const s of S.supervisors) {
+    if (isHiddenSupervisor(s)) continue;   // CS 숨김
     bar.append(tabEl(s.id, s.name, s.color, null, S.activeTab == s.id));
   }
 }
@@ -968,7 +976,12 @@ async function deleteSurvey(survey) {
 async function reloadData() {
   const url = `/api/cs/surveys?year=${S.year}` +
               (S.activeTab !== 'all' ? `&supervisor_id=${S.activeTab}` : '');
-  S.data = await api(url);
+  let data = await api(url);
+  // 전체 탭에서는 숨김 감독 담당 vessel 제외
+  if (S.activeTab === 'all' && S.hiddenVesselIds.size) {
+    data = data.filter(item => !S.hiddenVesselIds.has(item.vessel.id));
+  }
+  S.data = data;
   renderContext();
   render();
 }
@@ -1084,13 +1097,30 @@ async function deleteCsAttach(aid) {
 // ───────────── Init ─────────────
 async function loadSupervisors() {
   S.supervisors = await api('/api/supervisors');
+  // 숨김 감독이 담당하는 vessel ID 캐싱 (전체 탭에서 제외용)
+  S.hiddenVesselIds = new Set();
+  const hiddenSups = S.supervisors.filter(isHiddenSupervisor);
+  for (const sup of hiddenSups) {
+    try {
+      const vessels = await api(`/api/vessels?supervisor_id=${sup.id}`);
+      for (const v of vessels) S.hiddenVesselIds.add(v.id);
+    } catch (_) {}
+  }
 }
 
 (async function init() {
   try {
     await loadSupervisors();
-    // 본인 감독 탭 자동 선택
-    if (S.user.supervisor_id) S.activeTab = S.user.supervisor_id;
+    // 본인 감독 탭 자동 선택 (단, 숨김 감독이면 전체로)
+    if (S.user.supervisor_id) {
+      const sup = S.supervisors.find(s => s.id === S.user.supervisor_id);
+      if (sup && !isHiddenSupervisor(sup)) {
+        S.activeTab = S.user.supervisor_id;
+      }
+    }
+    // 활성 탭이 우연히 숨김 감독이면 전체로 복귀
+    const activeSup = S.supervisors.find(s => s.id == S.activeTab);
+    if (activeSup && isHiddenSupervisor(activeSup)) S.activeTab = 'all';
     renderTabs();
     $('#cs-year-label').textContent = S.year;
     await reloadData();
