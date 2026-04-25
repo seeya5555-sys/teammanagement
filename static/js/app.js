@@ -1750,14 +1750,21 @@ async function openMyVessels() {
   $('#myves-title').textContent = `${sup.name} 담당 선박`;
   await renderMyVesList();
 
-  // admin 폼 리셋 (요소 존재 시)
-  const nameIn = $('#myves-add-name');
-  if (nameIn) {
-    nameIn.value = '';
-    $('#myves-add-short').value = '';
-    $('#myves-add-imo').value = '';
-    $('#myves-add-class').value = '';
-    $('#myves-add-type').value = 'VLCC';
+  // 선박 추가 폼 표시 조건:
+  //  - admin: 항상 표시
+  //  - member: 본인 감독 탭일 때만 표시 (본인 담당 선박으로만 추가 가능)
+  const canAdd = (S.user.role === 'admin')
+                 || (S.user.supervisor_id && S.user.supervisor_id === sup.id);
+  const addForm = $('#myves-add-form');
+  if (addForm) {
+    addForm.hidden = !canAdd;
+    if (canAdd) {
+      $('#myves-add-name').value = '';
+      $('#myves-add-short').value = '';
+      $('#myves-add-imo').value = '';
+      $('#myves-add-class').value = '';
+      $('#myves-add-type').value = 'VLCC';
+    }
   }
 
   $('#myves-modal').hidden = false;
