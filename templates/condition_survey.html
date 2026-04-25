@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Condition Survey · TRMT3{% endblock %}
+
+{% block content %}
+
+<h1 class="page-title">Condition Survey</h1>
+
+<!-- 감독 탭 바 -->
+<div class="tab-bar" id="cs-tab-bar"></div>
+
+<!-- 연도 셀렉터 + 컨텍스트 -->
+<div class="cs-toolbar">
+  <div class="cs-year-picker">
+    <button class="btn btn-outline btn-sm" id="cs-year-prev" title="이전 연도">‹</button>
+    <span class="cs-year-label" id="cs-year-label">2026</span>
+    <button class="btn btn-outline btn-sm" id="cs-year-next" title="다음 연도">›</button>
+  </div>
+  <span class="cs-context" id="cs-context"></span>
+</div>
+
+<!-- 본문: 선박별 그룹 -->
+<div class="cs-vessel-list" id="cs-vessel-list"></div>
+
+<!-- ========= 분기 헤더 편집 모달 (인라인 대신 모달도 옵션) ========= -->
+<div class="modal" id="cs-survey-modal" hidden>
+  <div class="modal-backdrop" data-close-cs="1"></div>
+  <div class="modal-box" style="width: min(540px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="cs-modal-title">분기 수검 정보</h2>
+      <button class="modal-close" data-close-cs="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-form-grid">
+        <label class="form-field">
+          <span class="form-label">시행사</span>
+          <select id="cs-f-vendor">
+            <option value="">(미선택)</option>
+            <option value="AALMAR">AALMAR</option>
+            <option value="IDWAL">IDWAL</option>
+          </select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">Management</span>
+          <input type="text" id="cs-f-mgmt" placeholder="예: HHI, ABS">
+        </label>
+        <label class="form-field full">
+          <span class="form-label">Inspection Date</span>
+          <input type="date" id="cs-f-date">
+        </label>
+        <label class="form-field full">
+          <span class="form-label">Overall Remark <em class="hint">(이번 분기 수검 전체 코멘트)</em></span>
+          <textarea id="cs-f-remark" rows="4" placeholder="이번 수검에 대한 종합 의견, 주요 관찰 사항 등"></textarea>
+        </label>
+      </div>
+      <div class="admin-btn-row">
+        <button type="button" class="btn btn-outline" data-close-cs="1">취소</button>
+        <button type="button" class="btn btn-primary" id="cs-btn-save">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= 첨부 모달 (Daily 업무관리와 동일한 드롭존 방식) ========= -->
+<div class="modal" id="cs-attach-modal" hidden>
+  <div class="modal-backdrop" data-close-csa="1"></div>
+  <div class="modal-box attach-modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>
+        첨부파일
+        <span class="attach-modal-subtitle" id="cs-attach-subtitle"></span>
+      </h2>
+      <button class="modal-close" data-close-csa="1" aria-label="닫기">×</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Drop zone -->
+      <div class="attach-dropzone" id="cs-attach-dropzone">
+        <input type="file" id="cs-attach-file-input" multiple hidden
+               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv">
+        <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p class="attach-dropzone-title">파일을 끌어다 놓거나 클릭하여 선택하세요</p>
+        <p class="attach-dropzone-sub">이미지 · PDF · 문서 (최대 20MB)</p>
+      </div>
+
+      <!-- Uploaded grid -->
+      <div class="attach-grid" id="cs-attach-grid"></div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.TRMT = { user: {{ {
+      'username': session.username,
+      'display_name': session.display_name,
+      'role': session.role,
+      'supervisor_id': session.supervisor_id
+    } | tojson }} };
+</script>
+<script src="{{ url_for('static', filename='js/cs.js') }}"></script>
+{% endblock %}
