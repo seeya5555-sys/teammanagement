@@ -26,6 +26,9 @@ const S = {
   collapsedDates:  new Set(),
   expandedActions: new Set(),
 
+  // 사용자가 직접 클릭해서 펼치거나 접은 날짜 — 자동 접기에서 제외
+  userToggledDates: new Set(),
+
   // 첨부 모달
   attachIssue:  null,
 
@@ -172,21 +175,30 @@ async function loadIssues() {
   } else if (S.activeSubTab === 'closed') {
     p.set('status', 'Closed');
   } else {
-    // 'open' 서브 탭 = Open + InProgress (서버는 단일 status만 받으니
-    // 클라에서 한번 더 필터링하거나 서버 API 변경 필요 → 간단히 두 번 호출 후 합침)
+    // 'open' 서브 탭 = Open + InProgress
     const [openIssues, progIssues] = await Promise.all([
       (() => { const q = new URLSearchParams(p); q.set('status', 'Open'); return api('/api/issues?' + q); })(),
       (() => { const q = new URLSearchParams(p); q.set('status', 'InProgress'); return api('/api/issues?' + q); })(),
     ]);
-    // 서버 정렬 기준이 issue_date ASC, id ASC 이므로 합치고 재정렬
     S.issues = [...openIssues, ...progIssues].sort((a, b) => {
       if (a.issue_date !== b.issue_date) return a.issue_date < b.issue_date ? -1 : 1;
       return a.id - b.id;
     });
+    autoCollapseNewDates();
     return;
   }
 
   S.issues = await api('/api/issues?' + p);
+  autoCollapseNewDates();
+}
+
+// 새로 로드된 이슈 중 사용자가 손대지 않은 날짜는 자동으로 접기
+function autoCollapseNewDates() {
+  for (const i of S.issues) {
+    if (i.issue_date && !S.userToggledDates.has(i.issue_date)) {
+      S.collapsedDates.add(i.issue_date);
+    }
+  }
 }
 
 // ───────────── Tabs / Filter / Summary ─────────────
@@ -420,6 +432,7 @@ function toggleMonth(m) {
 function toggleDate(d) {
   if (S.collapsedDates.has(d)) S.collapsedDates.delete(d);
   else S.collapsedDates.add(d);
+  S.userToggledDates.add(d);   // 사용자가 직접 토글했음 — 자동 접기에서 제외
   renderTable(); renderCards();
 }
 
@@ -2412,10 +2425,6 @@ function wireEvents() {
     renderTabContext();
     await loadIssues();
     fillFormSelects();
-    // 첫 진입 시 모든 일자(date) 그룹 접기 — 월/연 단위만 펼친 상태로 시작
-    for (const i of S.issues) {
-      if (i.issue_date) S.collapsedDates.add(i.issue_date);
-    }
     render();
     wireEvents();
   } catch (err) {
