@@ -282,8 +282,8 @@ col.c-no     { width: 40px; }
 col.c-vessel { width: 92px; }
 col.c-topic  { width: 16.5%; }
 col.c-desc   { width: 30%; }
-col.c-action { width: 30%; }
-col.c-pri    { width: 78px; }
+col.c-action { width: 28%; }
+col.c-pri    { width: 102px; }
 col.c-stat   { width: 62px; }
 col.c-edit   { width: 110px; }
 
@@ -439,12 +439,12 @@ col.c-edit   { width: 110px; }
 /* Badges */
 .bd {
   font-size: 11px;
-  padding: 2px 8px;
+  padding: 2px 7px;
   border-radius: 999px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   white-space: nowrap;
   line-height: 1.5;
 }
