@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS supervisor_vessels (
 -- -------------------------------------------------------------
 --  이슈 (Issues) — Daily 업무관리의 각 행
 --   · description / action_plan 은 \n 으로 여러 줄 허용
---   · priority : Critical / Urgent / Normal
+--   · priority : Normal / Urgent / COC & Flag
 --   · status   : Open / InProgress / Closed
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS issues (
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS issues (
     description   TEXT,                            -- 상세 내용 (여러 줄)
     actions       TEXT    DEFAULT '[]',            -- JSON: [{date, progress, important}]
     priority      TEXT    NOT NULL DEFAULT 'Normal'
-                  CHECK (priority IN ('Critical','Urgent','Normal')),
+                  CHECK (priority IN ('Normal','Urgent','COC & Flag')),
     status        TEXT    NOT NULL DEFAULT 'Open'
                   CHECK (status   IN ('Open','InProgress','Closed')),
     created_by    TEXT,                            -- 작성자 username
