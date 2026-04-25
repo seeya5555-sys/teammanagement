@@ -279,8 +279,8 @@
   </div>
 </div>
 
-{% if session.role == 'admin' %}
-<!-- ========= 선박 편집 모달 (admin 전용) ========= -->
+{# 선박 편집 모달은 admin + member 공통 (버튼 자체를 권한별로 표시/숨김 처리) #}
+<!-- ========= 선박 편집 모달 ========= -->
 <div class="modal" id="vessel-edit-modal" hidden>
   <div class="modal-backdrop" data-close-vesedit="1"></div>
   <div class="modal-box" style="width: min(540px, 94vw);" role="dialog" aria-modal="true">
@@ -329,6 +329,7 @@
   </div>
 </div>
 
+{% if session.role == 'admin' %}
 <!-- ========= 감독 편집 모달 (admin 전용) ========= -->
 <div class="modal" id="supervisor-edit-modal" hidden>
   <div class="modal-backdrop" data-close-supedit="1"></div>
