@@ -26,6 +26,7 @@ const S = {
   data:        [],
   activeTab:   'all',
   year:        new Date().getFullYear(),
+  search:      '',                       // 선박명 검색 키워드
   expandedSurveys: loadExpandedSet(),    // 분기 행 펼침 (이건 유지)
   expandedVessels: new Set(),            // 선박 카드 — 매 진입 시 빈 상태
 };
@@ -93,11 +94,24 @@ async function switchTab(id) {
 
 function renderContext() {
   const c = $('#cs-context');
-  if (S.activeTab === 'all') {
-    c.textContent = `${S.year}년 · 전체 선박 ${S.data.length}척`;
+  const q = (S.search || '').trim().toLowerCase();
+  let totalCount = S.data.length;
+  let filteredCount = totalCount;
+  if (q) {
+    filteredCount = S.data.filter(item => {
+      const v = item.vessel;
+      return (v.name && v.name.toLowerCase().includes(q))
+          || (v.short_name && v.short_name.toLowerCase().includes(q));
+    }).length;
+  }
+  const tabName = S.activeTab === 'all'
+    ? '전체'
+    : (S.supervisors.find(x => x.id == S.activeTab)?.name + ' 담당' || '');
+
+  if (q) {
+    c.textContent = `${S.year}년 · ${tabName} 선박 ${filteredCount}/${totalCount}척  (검색: "${S.search}")`;
   } else {
-    const sup = S.supervisors.find(x => x.id == S.activeTab);
-    c.textContent = `${S.year}년 · ${sup ? sup.name : ''} 담당 ${S.data.length}척`;
+    c.textContent = `${S.year}년 · ${tabName} 선박 ${totalCount}척`;
   }
 }
 
@@ -112,7 +126,22 @@ function render() {
       '담당 선박이 없습니다. Daily 업무관리에서 선박을 추가하세요.'));
     return;
   }
-  for (const item of S.data) {
+
+  // 검색어로 선박명 필터링 (대소문자 무시 · 부분 일치 · 약칭도 검색 대상)
+  const q = (S.search || '').trim().toLowerCase();
+  const filtered = q ? S.data.filter(item => {
+    const v = item.vessel;
+    return (v.name && v.name.toLowerCase().includes(q))
+        || (v.short_name && v.short_name.toLowerCase().includes(q));
+  }) : S.data;
+
+  if (q && !filtered.length) {
+    list.append(el('div', { class: 'cs-empty' },
+      `"${S.search}" 와(과) 일치하는 선박이 없습니다.`));
+    return;
+  }
+
+  for (const item of filtered) {
     list.append(vesselBlock(item));
   }
 }
@@ -1039,6 +1068,33 @@ async function loadSupervisors() {
       $('#cs-year-label').textContent = S.year;
       S.expandedSurveys.clear();
       await reloadData();
+    });
+
+    // 검색 — 실시간 필터링 (재요청 없이 클라에서)
+    const searchInput = $('#cs-search');
+    const clearBtn = $('#cs-search-clear');
+    searchInput.addEventListener('input', (e) => {
+      S.search = e.target.value;
+      clearBtn.hidden = !S.search;
+      renderContext();
+      render();
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && S.search) {
+        S.search = '';
+        searchInput.value = '';
+        clearBtn.hidden = true;
+        renderContext();
+        render();
+      }
+    });
+    clearBtn.addEventListener('click', () => {
+      S.search = '';
+      searchInput.value = '';
+      clearBtn.hidden = true;
+      searchInput.focus();
+      renderContext();
+      render();
     });
 
     // 모달
