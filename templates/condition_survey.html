@@ -9,12 +9,20 @@
 <!-- 감독 탭 바 -->
 <div class="tab-bar" id="cs-tab-bar"></div>
 
-<!-- 연도 셀렉터 + 컨텍스트 -->
+<!-- 연도 셀렉터 + 검색 + 컨텍스트 -->
 <div class="cs-toolbar">
   <div class="cs-year-picker">
     <button class="btn btn-outline btn-sm" id="cs-year-prev" title="이전 연도">‹</button>
     <span class="cs-year-label" id="cs-year-label">2026</span>
     <button class="btn btn-outline btn-sm" id="cs-year-next" title="다음 연도">›</button>
+  </div>
+  <div class="cs-search-wrap">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="cs-search-icon">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" id="cs-search" class="cs-search-input" placeholder="선박명 검색...">
+    <button type="button" class="cs-search-clear" id="cs-search-clear" title="검색어 지우기" hidden>×</button>
   </div>
   <span class="cs-context" id="cs-context"></span>
 </div>
