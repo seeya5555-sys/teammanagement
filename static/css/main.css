@@ -2006,3 +2006,57 @@ col.c-edit   { width: 110px; }
   color: var(--text-tertiary);
   font-size: 12.5px;
 }
+
+/* ───── Condition Survey 검색 입력 ───── */
+.cs-search-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 280px;
+}
+.cs-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+.cs-search-input {
+  width: 100%;
+  padding: 6px 30px 6px 32px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+.cs-search-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-bg);
+}
+.cs-search-input::placeholder { color: var(--text-tertiary); }
+.cs-search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px; height: 20px;
+  padding: 0;
+  border: none;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cs-search-clear:hover {
+  background: var(--text-tertiary);
+  color: white;
+}
