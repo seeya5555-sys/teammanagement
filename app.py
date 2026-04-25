@@ -93,7 +93,11 @@ def execute(sql, params=()):
     return last_id
 
 def init_db(drop=False):
-    """schema + seed 실행, 기본 admin 계정 자동 생성."""
+    """schema + seed 실행, 기본 admin 계정 자동 생성.
+
+    재실행 안전: 이미 데이터가 있어도 schema는 IF NOT EXISTS 라 무해.
+    옛 priority 값(Critical/High/Low)이 남아있으면 새 분류로 자동 마이그레이션.
+    """
     if drop and os.path.exists(DATABASE):
         os.remove(DATABASE)
         print(f'  · 기존 DB 삭제: {DATABASE}')
@@ -101,6 +105,59 @@ def init_db(drop=False):
     fresh = not os.path.exists(DATABASE)
     conn = sqlite3.connect(DATABASE)
     try:
+        # ── 마이그레이션 단계 ──
+        # SQLite는 CHECK 제약을 ALTER TABLE 로 못 바꿈.
+        # 옛 CHECK가 박혀있는 테이블이면 새 스키마로 재구축하면서
+        # 데이터를 새 분류로 정규화 (Critical → COC & Flag, 기타 → Normal)
+        existing = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='issues'"
+        ).fetchone()
+        if existing:
+            ddl_row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='issues'"
+            ).fetchone()
+            ddl = ddl_row[0] if ddl_row else ''
+            needs_rebuild = ('COC & Flag' not in ddl)
+            if needs_rebuild:
+                old_vals = [r[0] for r in conn.execute(
+                    "SELECT DISTINCT priority FROM issues "
+                    "WHERE priority NOT IN ('Normal','Urgent','COC & Flag')"
+                ).fetchall()]
+                if old_vals:
+                    print(f'  · priority 마이그레이션: {old_vals}')
+                print('  · issues 테이블 CHECK 제약 갱신 중...')
+
+                conn.execute('PRAGMA foreign_keys=OFF')
+                conn.execute('ALTER TABLE issues RENAME TO issues_old')
+                # 새 스키마 CREATE
+                with open(SCHEMA_FILE, encoding='utf-8') as f:
+                    conn.executescript(f.read())
+                # 데이터 복원하면서 priority 정규화
+                conn.execute("""
+                    INSERT INTO issues
+                        (id, supervisor_id, vessel_id, issue_date, due_date,
+                         item_topic, description, actions, priority, status,
+                         created_by, created_at, updated_at)
+                    SELECT
+                         id, supervisor_id, vessel_id, issue_date, due_date,
+                         item_topic, description, COALESCE(actions, '[]'),
+                         CASE priority
+                             WHEN 'Critical' THEN 'COC & Flag'
+                             WHEN 'Urgent'   THEN 'Urgent'
+                             WHEN 'Normal'   THEN 'Normal'
+                             ELSE 'Normal'
+                         END,
+                         status, created_by,
+                         COALESCE(created_at, CURRENT_TIMESTAMP),
+                         COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+                    FROM issues_old
+                """)
+                conn.execute('DROP TABLE issues_old')
+                conn.execute('PRAGMA foreign_keys=ON')
+                conn.commit()
+                print('  · CHECK 제약 갱신 완료')
+
+        # ── 일반 init ──
         with open(SCHEMA_FILE, encoding='utf-8') as f:
             conn.executescript(f.read())
         print('  · 스키마 적용 완료')
@@ -139,7 +196,7 @@ def _seed_issues(conn):
                  {'date': '2026-04-25', 'progress': 'Xue Jing Gang 측 중간 회신 — 내부 검토 중.', 'important': False},
                  {'date': '2026-04-26', 'progress': '정정 견적 회신 기한. 미회신 시 상부 보고.', 'important': True},
              ],
-             priority='Critical', status='Open'),
+             priority='COC & Flag', status='Open'),
 
         dict(supervisor='이과장', vessel='ATLANTIC PIONEER',
              issue_date='2026-04-24', due_date='2026-04-24',
@@ -176,7 +233,7 @@ def _seed_issues(conn):
                  {'date': '2026-04-23', 'progress': 'YiuLian 측 구두 확인 — 오기재 인정. 정정 약속.', 'important': False},
                  {'date': '2026-04-28', 'progress': 'Pre-docking meeting 에서 공식 정정본 수령 예정.', 'important': True},
              ],
-             priority='Critical', status='InProgress'),
+             priority='COC & Flag', status='InProgress'),
 
         dict(supervisor='이과장', vessel='ATLANTIC PIONEER',
              issue_date='2026-04-22', due_date='2026-04-30',
