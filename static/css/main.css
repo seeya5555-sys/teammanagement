@@ -448,8 +448,8 @@ col.c-edit   { width: 110px; }
   white-space: nowrap;
   line-height: 1.5;
 }
-.pri-critical { background: var(--red-bg);   color: var(--red); }
-.pri-critical::before { content: "●"; font-size: 9px; color: var(--red-strong); }
+.pri-cocflag { background: var(--red-bg);   color: var(--red); }
+.pri-cocflag::before { content: "⚑"; font-size: 10px; color: var(--red-strong); }
 .pri-urgent   { background: var(--amber-bg); color: var(--amber); }
 .pri-urgent::before   { content: "◆"; font-size: 10px; color: var(--amber-dot); }
 .pri-normal   { background: var(--surface-3); color: var(--text-secondary); }
