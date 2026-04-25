@@ -628,7 +628,7 @@ def api_vessels_all():
 
 
 @app.route('/api/vessels', methods=['POST'])
-@admin_required
+@login_required
 def api_vessel_create():
     d = request.get_json(silent=True) or {}
     name = (d.get('name') or '').strip()
@@ -636,6 +636,19 @@ def api_vessel_create():
         return jsonify({'error': '선박명은 필수입니다.'}), 400
     if query('SELECT id FROM vessels WHERE name=?', (name,), one=True):
         return jsonify({'error': '이미 존재하는 선박명입니다.'}), 400
+
+    sids = [int(x) for x in (d.get('supervisor_ids') or [])]
+
+    # 일반 사용자(member) 권한 제약:
+    #   - 반드시 본인의 감독 1명에게만 연결 가능
+    #   - 다른 감독이나 복수 감독, 미할당은 불가
+    if session.get('role') != 'admin':
+        my_sup = session.get('supervisor_id')
+        if not my_sup:
+            return jsonify({'error': '담당 감독이 연결되지 않은 계정입니다. 관리자에게 요청하세요.'}), 403
+        if sids != [my_sup]:
+            return jsonify({'error': '본인 담당 감독으로만 선박을 추가할 수 있습니다.'}), 403
+
     vid = execute('''
         INSERT INTO vessels (name, short_name, vessel_type, imo, class_society, active)
         VALUES (?, ?, ?, ?, ?, 1)
@@ -644,9 +657,9 @@ def api_vessel_create():
           d.get('vessel_type') or '',
           d.get('imo') or '',
           d.get('class_society') or ''))
-    for sid in (d.get('supervisor_ids') or []):
+    for sid in sids:
         execute('INSERT OR IGNORE INTO supervisor_vessels (vessel_id, supervisor_id) VALUES (?, ?)',
-                (vid, int(sid)))
+                (vid, sid))
     return jsonify({'id': vid}), 201
 
 
