@@ -141,27 +141,72 @@ function render() {
     return;
   }
 
+  // 선종별 그룹화
+  const TYPE_ORDER = ['VLCC', 'AFRAMAX', 'MR', 'LR', 'CNTR', '기타'];
+  const TYPE_LABEL = {
+    VLCC: 'VLCC', AFRAMAX: 'AFRAMAX', MR: 'MR', LR: 'LR',
+    CNTR: 'CNTR (Container)', '기타': '기타',
+  };
+  const byType = {};
   for (const item of filtered) {
-    list.append(vesselBlock(item));
+    const type = item.vessel.vessel_type || '기타';
+    if (!byType[type]) byType[type] = [];
+    byType[type].push(item);
+  }
+  const types = Object.keys(byType).sort((a, b) => {
+    const ai = TYPE_ORDER.indexOf(a);
+    const bi = TYPE_ORDER.indexOf(b);
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+  });
+
+  for (const type of types) {
+    const group = byType[type];
+    const groupBlock = el('div', { class: 'cs-type-group' });
+    groupBlock.append(el('div', { class: `cs-type-header cs-type-${type.toLowerCase()}` },
+      el('span', { class: 'cs-type-badge' }, TYPE_LABEL[type] || type),
+      el('span', { class: 'cs-type-count' }, `${group.length}척`),
+    ));
+    for (const item of group) {
+      groupBlock.append(vesselBlock(item));
+    }
+    list.append(groupBlock);
   }
 }
 
 function vesselSummary(item) {
-  // 접힌 상태에서도 보이는 요약: 등록된 분기 N개, Open M, Close K
-  const surveys = Object.values(item.surveys || {});
-  const filled = surveys.length;
-  let open = 0, close = 0;
-  for (const s of surveys) {
-    open  += (s.open_count || 0);
-    close += (s.close_count || 0);
-  }
+  // 접힌 상태에서도 보이는 요약: 1Q~4Q 분기별 Open 카운트
+  const surveys = item.surveys || {};
+  const filled = Object.keys(surveys).length;
   const wrap = el('span', { class: 'cs-vessel-summary' });
+
   if (filled === 0) {
     wrap.append(el('span', { class: 'cs-vessel-summary-empty' }, '미등록'));
-  } else {
-    wrap.append(el('span', {}, `${filled}개 분기`));
-    if (open  > 0) wrap.append(el('span', { class: 'cs-summary-open' },  `Open ${open}`));
-    if (close > 0) wrap.append(el('span', { class: 'cs-summary-close' }, `Close ${close}`));
+    return wrap;
+  }
+
+  // 1Q ~ 4Q 격자
+  for (const q of [1, 2, 3, 4]) {
+    const s = surveys[q];
+    const cell = el('span', { class: 'cs-q-summary' });
+    cell.append(el('span', { class: 'cs-q-label' }, `${q}Q`));
+    if (s) {
+      const op = s.open_count || 0;
+      const cl = s.close_count || 0;
+      const num = el('span', { class: 'cs-q-num' });
+      // Open이 1+ 이면 빨간 강조, 0이면 (모두 완료) 초록
+      if (op > 0) {
+        num.append(el('strong', { class: 'cs-q-open-on' }, String(op)));
+      } else if (cl > 0) {
+        num.append(el('strong', { class: 'cs-q-all-closed' }, '✓'));
+      } else {
+        num.append(el('span', { class: 'cs-q-empty-data' }, '–'));
+      }
+      cell.append(num);
+      cell.classList.add('has-data');
+    } else {
+      cell.append(el('span', { class: 'cs-q-num cs-q-blank' }, '–'));
+    }
+    wrap.append(cell);
   }
   return wrap;
 }
