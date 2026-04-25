@@ -124,3 +124,60 @@ CREATE INDEX IF NOT EXISTS idx_issues_priority    ON issues(priority);
 CREATE INDEX IF NOT EXISTS idx_attachments_issue  ON attachments(issue_id);
 CREATE INDEX IF NOT EXISTS idx_sv_supervisor      ON supervisor_vessels(supervisor_id);
 CREATE INDEX IF NOT EXISTS idx_sv_vessel          ON supervisor_vessels(vessel_id);
+
+-- =============================================================
+--  Condition Survey 모듈
+-- =============================================================
+
+-- 분기별 수검 헤더 (선박 × 연도 × 분기 unique)
+CREATE TABLE IF NOT EXISTS cs_surveys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id       INTEGER NOT NULL,
+    year            INTEGER NOT NULL,
+    quarter         INTEGER NOT NULL CHECK (quarter IN (1,2,3,4)),
+    vendor          TEXT    CHECK (vendor IN ('AALMAR','IDWAL') OR vendor IS NULL OR vendor = ''),
+    management      TEXT,
+    inspection_date TEXT,                 -- YYYY-MM-DD
+    overall_remark  TEXT,                 -- 분기별 수검 전체 리마크
+    manual_defect_count      INTEGER,      -- 수동 입력 (NULL이면 자동 카운트 사용)
+    manual_observation_count INTEGER,
+    manual_close_count       INTEGER,
+    created_by      TEXT,
+    created_at      TEXT DEFAULT (datetime('now','localtime')),
+    updated_at      TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE (vessel_id, year, quarter),
+    FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_cs_surveys_vessel_year ON cs_surveys(vessel_id, year);
+
+-- 세부 항목 (Defect / Observation)
+CREATE TABLE IF NOT EXISTS cs_findings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    survey_id   INTEGER NOT NULL,
+    category    TEXT    NOT NULL CHECK (category IN ('Defect','Observation')),
+    no          INTEGER NOT NULL,         -- category 내 자동 넘버링
+    item        TEXT,                     -- 항목명 (간단)
+    description TEXT,                     -- 상세 내용
+    remark      TEXT,                     -- 비고
+    status      TEXT    NOT NULL DEFAULT 'Open' CHECK (status IN ('Open','Closed')),
+    created_at  TEXT DEFAULT (datetime('now','localtime')),
+    updated_at  TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (survey_id) REFERENCES cs_surveys(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_cs_findings_survey ON cs_findings(survey_id, category, no);
+
+-- Condition Survey 첨부파일
+CREATE TABLE IF NOT EXISTS cs_attachments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    survey_id   INTEGER NOT NULL,
+    filename    TEXT    NOT NULL,
+    stored_name TEXT    NOT NULL UNIQUE,
+    file_size   INTEGER,
+    mime_type   TEXT,
+    uploaded_by TEXT,
+    uploaded_at TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (survey_id) REFERENCES cs_surveys(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_cs_attachments_survey ON cs_attachments(survey_id);
