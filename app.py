@@ -108,7 +108,9 @@ def init_db(drop=False):
         # ── 마이그레이션 단계 ──
         # SQLite는 CHECK 제약을 ALTER TABLE 로 못 바꿈.
         # 옛 CHECK가 박혀있는 테이블이면 새 스키마로 재구축하면서
-        # 데이터를 새 분류로 정규화 (Critical → COC & Flag, 기타 → Normal)
+        # 데이터를 새 분류로 정규화.
+        # 또한 ALTER TABLE RENAME 시 다른 테이블의 FK 참조가 자동 추적되는
+        # 동작 때문에 attachments의 FK가 깨질 수 있음 → legacy_alter_table 사용.
         existing = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='issues'"
         ).fetchone()
@@ -117,22 +119,26 @@ def init_db(drop=False):
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='issues'"
             ).fetchone()
             ddl = ddl_row[0] if ddl_row else ''
-            needs_rebuild = ('COC & Flag' not in ddl)
+            # 새 분류 키워드 4개 모두 포함하는지 확인
+            needs_rebuild = ('Next DD' not in ddl)
             if needs_rebuild:
                 old_vals = [r[0] for r in conn.execute(
                     "SELECT DISTINCT priority FROM issues "
-                    "WHERE priority NOT IN ('Normal','Urgent','COC & Flag')"
+                    "WHERE priority NOT IN ('Normal','Urgent','COC & Flag','Next DD')"
                 ).fetchall()]
                 if old_vals:
                     print(f'  · priority 마이그레이션: {old_vals}')
                 print('  · issues 테이블 CHECK 제약 갱신 중...')
 
+                # legacy_alter_table=ON: RENAME 시 다른 테이블의 FK 참조가
+                # 자동으로 따라가지 않도록 해서 attachments FK 보호
+                conn.execute('PRAGMA legacy_alter_table=ON')
                 conn.execute('PRAGMA foreign_keys=OFF')
                 conn.execute('ALTER TABLE issues RENAME TO issues_old')
                 # 새 스키마 CREATE
                 with open(SCHEMA_FILE, encoding='utf-8') as f:
                     conn.executescript(f.read())
-                # 데이터 복원하면서 priority 정규화
+                # 데이터 복원하면서 priority 정규화 (Critical → COC & Flag, 그 외 → Normal)
                 conn.execute("""
                     INSERT INTO issues
                         (id, supervisor_id, vessel_id, issue_date, due_date,
@@ -141,10 +147,10 @@ def init_db(drop=False):
                     SELECT
                          id, supervisor_id, vessel_id, issue_date, due_date,
                          item_topic, description, COALESCE(actions, '[]'),
-                         CASE priority
-                             WHEN 'Critical' THEN 'COC & Flag'
-                             WHEN 'Urgent'   THEN 'Urgent'
-                             WHEN 'Normal'   THEN 'Normal'
+                         CASE
+                             WHEN priority IN ('Normal','Urgent','COC & Flag','Next DD')
+                                 THEN priority
+                             WHEN priority = 'Critical' THEN 'COC & Flag'
                              ELSE 'Normal'
                          END,
                          status, created_by,
@@ -153,9 +159,45 @@ def init_db(drop=False):
                     FROM issues_old
                 """)
                 conn.execute('DROP TABLE issues_old')
+                conn.execute('PRAGMA legacy_alter_table=OFF')
                 conn.execute('PRAGMA foreign_keys=ON')
                 conn.commit()
                 print('  · CHECK 제약 갱신 완료')
+
+            # ── attachments FK 무결성 검증 + 자동 복원 ──
+            # 과거 마이그레이션 사고로 깨졌을 수 있는 attachments FK 보정
+            att_ddl_row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='attachments'"
+            ).fetchone()
+            if att_ddl_row and 'issues_old' in (att_ddl_row[0] or ''):
+                print('  · attachments FK 깨짐 감지 → 복원 중...')
+                rows = conn.execute('SELECT * FROM attachments').fetchall()
+                cols = [r[1] for r in conn.execute('PRAGMA table_info(attachments)').fetchall()]
+                conn.execute('PRAGMA foreign_keys=OFF')
+                conn.execute('ALTER TABLE attachments RENAME TO attachments_broken')
+                conn.execute("""
+                    CREATE TABLE attachments (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        issue_id    INTEGER NOT NULL,
+                        filename    TEXT    NOT NULL,
+                        stored_name TEXT    NOT NULL UNIQUE,
+                        file_size   INTEGER,
+                        mime_type   TEXT,
+                        uploaded_by TEXT,
+                        uploaded_at TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+                        FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+                    )
+                """)
+                if rows:
+                    placeholders = ','.join(['?'] * len(cols))
+                    conn.executemany(
+                        f'INSERT INTO attachments ({",".join(cols)}) VALUES ({placeholders})',
+                        rows,
+                    )
+                conn.execute('DROP TABLE attachments_broken')
+                conn.execute('PRAGMA foreign_keys=ON')
+                conn.commit()
+                print(f'  · attachments {len(rows)}건 복원 완료')
 
         # ── 일반 init ──
         with open(SCHEMA_FILE, encoding='utf-8') as f:
