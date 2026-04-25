@@ -241,8 +241,7 @@
     <div class="modal-body">
       <div class="admin-list" id="myves-list" style="max-height: 360px;"></div>
 
-      {% if session.role == 'admin' %}
-      <div class="admin-add-form" style="margin-top: 16px;">
+      <div class="admin-add-form" id="myves-add-form" style="margin-top: 16px;" hidden>
         <h3>+ 새 선박 추가 <span style="font-weight:400; text-transform:none; letter-spacing:0; color:var(--text-tertiary); font-size:11px">(현재 감독을 담당자로 자동 연결)</span></h3>
         <div class="admin-form-grid">
           <label class="form-field">
@@ -276,7 +275,6 @@
           <button type="button" class="btn btn-primary" id="btn-myves-add">+ 선박 추가</button>
         </div>
       </div>
-      {% endif %}
     </div>
   </div>
 </div>
