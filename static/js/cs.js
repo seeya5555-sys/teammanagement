@@ -651,9 +651,9 @@ function findingsSection(survey, category, findings) {
 function findingRow(survey, f) {
   const tr = el('tr');
   tr.append(el('td', { class: 'cs-no' }, String(f.no)));
-  tr.append(findingEditableCell(f, 'item', 'text'));
-  tr.append(findingEditableCell(f, 'description', 'text'));
-  tr.append(findingEditableCell(f, 'remark', 'text'));
+  tr.append(findingEditableCell(f, 'item', 'text', survey));
+  tr.append(findingEditableCell(f, 'description', 'text', survey));
+  tr.append(findingEditableCell(f, 'remark', 'text', survey));
 
   // Status — 클릭 토글
   const stTd = el('td', { class: 'cs-status', style: 'text-align:center' });
@@ -681,7 +681,7 @@ function findingRow(survey, f) {
   return tr;
 }
 
-function findingEditableCell(f, field, kind) {
+function findingEditableCell(f, field, kind, survey) {
   const td = el('td', { class: 'cs-edit-cell' });
   const display = el('div', { class: 'cs-cell-display' }, f[field] || '–');
   if (!f[field]) display.classList.add('placeholder');
@@ -728,8 +728,74 @@ function findingEditableCell(f, field, kind) {
         td.innerHTML = ''; td.append(display);
       }
     });
+
+    // 멀티라인 붙여넣기 → 같은 카테고리 내 연속 항목 일괄 수정
+    input.addEventListener('paste', async (ev) => {
+      if (!survey) return;     // survey 없으면 일괄 수정 불가
+      const text = (ev.clipboardData || window.clipboardData).getData('text');
+      if (!text) return;
+      const isTabular = text.includes('\t') || /\r?\n/.test(text.trim());
+      if (!isTabular) return;  // 단일 행은 기본 동작
+
+      ev.preventDefault();
+      const rows = parseTSV(text);
+      if (rows.length <= 1) {
+        // 1행이면 그냥 첫 셀만 input에 채우기 (기본 텍스트 붙여넣기 동작)
+        input.value = rows.length ? rows[0][0] : text;
+        return;
+      }
+      // 여러 행 → 일괄 수정 모드
+      done = true; td._editing = false;
+      // 각 행에서 "현재 셀 컬럼만" 추출 (첫 번째 셀)
+      const values = rows.map(r => (r[0] !== undefined ? r[0].trim() : ''));
+      // input은 원래 표시로 복귀
+      td.innerHTML = ''; td.append(display);
+      await bulkUpdateFindings(survey, f, field, values);
+    });
   });
   return td;
+}
+
+// 같은 카테고리의 연속된 finding들에 같은 컬럼을 일괄 update
+async function bulkUpdateFindings(survey, startFinding, field, values) {
+  const sameCategory = (survey.findings || [])
+    .filter(x => x.category === startFinding.category)
+    .sort((a, b) => a.no - b.no);
+  const startIdx = sameCategory.findIndex(x => x.id === startFinding.id);
+  if (startIdx < 0) {
+    alert('대상 항목을 찾지 못했습니다.');
+    return;
+  }
+  const remaining = sameCategory.length - startIdx;
+  const willUpdate = Math.min(values.length, remaining);
+  const skipped = values.length - willUpdate;
+
+  const fieldLabel = { item: 'Item', description: 'Description', remark: 'Remark' }[field] || field;
+  const startNo = startFinding.no;
+  const endNo = sameCategory[startIdx + willUpdate - 1].no;
+
+  let msg = `${startFinding.category} ${startNo}번 ~ ${endNo}번 항목의 ${fieldLabel}을(를) 일괄 수정합니다.\n총 ${willUpdate}개 항목.`;
+  if (skipped > 0) {
+    msg += `\n\n주의: ${skipped}개 행은 대상 항목 부족으로 무시됩니다.`;
+  }
+  msg += '\n\n진행하시겠습니까?';
+  if (!confirm(msg)) return;
+
+  try {
+    const tasks = [];
+    for (let i = 0; i < willUpdate; i++) {
+      const target = sameCategory[startIdx + i];
+      tasks.push(api(`/api/cs/findings/${target.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ [field]: values[i] }),
+      }));
+    }
+    await Promise.all(tasks);
+    await reloadData();
+  } catch (err) {
+    alert('일괄 수정 중 오류: ' + err.message);
+    await reloadData();   // 일부만 적용된 상태도 화면에는 반영
+  }
 }
 
 async function toggleFindingStatus(f) {
