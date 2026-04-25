@@ -330,6 +330,91 @@
     </div>
   </div>
 </div>
+
+<!-- ========= 감독 편집 모달 (admin 전용) ========= -->
+<div class="modal" id="supervisor-edit-modal" hidden>
+  <div class="modal-backdrop" data-close-supedit="1"></div>
+  <div class="modal-box" style="width: min(460px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>감독 편집</h2>
+      <button class="modal-close" data-close-supedit="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-form-grid">
+        <label class="form-field">
+          <span class="form-label">이름 <em>*</em></span>
+          <input type="text" id="sedit-name">
+        </label>
+        <label class="form-field">
+          <span class="form-label">이메일</span>
+          <input type="text" id="sedit-email">
+        </label>
+        <div class="form-field full">
+          <span class="form-label">색상</span>
+          <div class="color-swatches" id="sedit-colors">
+            <span class="color-swatch" data-color="blue"></span>
+            <span class="color-swatch" data-color="teal"></span>
+            <span class="color-swatch" data-color="purple"></span>
+            <span class="color-swatch" data-color="coral"></span>
+            <span class="color-swatch" data-color="amber"></span>
+            <span class="color-swatch" data-color="gray"></span>
+          </div>
+        </div>
+      </div>
+      <div class="admin-btn-row">
+        <button type="button" class="btn btn-outline" data-close-supedit="1">취소</button>
+        <button type="button" class="btn btn-primary" id="btn-sedit-save">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= 사용자 편집 모달 (admin 전용) ========= -->
+<div class="modal" id="user-edit-modal" hidden>
+  <div class="modal-backdrop" data-close-useredit="1"></div>
+  <div class="modal-box" style="width: min(460px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>사용자 편집</h2>
+      <button class="modal-close" data-close-useredit="1">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-form-grid">
+        <label class="form-field">
+          <span class="form-label">사용자명(ID) <em class="hint">(변경 불가)</em></span>
+          <input type="text" id="uedit-username" disabled>
+        </label>
+        <label class="form-field">
+          <span class="form-label">표시 이름</span>
+          <input type="text" id="uedit-display">
+        </label>
+        <label class="form-field">
+          <span class="form-label">권한</span>
+          <select id="uedit-role">
+            <option value="member">일반 사용자</option>
+            <option value="admin">관리자</option>
+          </select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">상태</span>
+          <select id="uedit-active">
+            <option value="1">활성</option>
+            <option value="0">비활성</option>
+          </select>
+        </label>
+        <label class="form-field full">
+          <span class="form-label">연결 감독</span>
+          <select id="uedit-supervisor">
+            <option value="">(연결 없음)</option>
+          </select>
+        </label>
+      </div>
+      <div class="admin-btn-row">
+        <button type="button" class="btn btn-outline" data-close-useredit="1">취소</button>
+        <button type="button" class="btn btn-primary" id="btn-uedit-save">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endif %}
 
 <!-- ========= 비밀번호 변경 모달 (모든 사용자) ========= -->
