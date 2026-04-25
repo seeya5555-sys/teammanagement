@@ -83,7 +83,6 @@ function dDayBadge(due) {
 }
 
 const PRI_MAP = {
-const PRI_MAP = {
   'COC & Flag': { cls: 'pri-cocflag', label: 'COC & Flag' },
   Urgent:       { cls: 'pri-urgent',  label: 'Urgent'     },
   Normal:       { cls: 'pri-normal',  label: 'Normal'     },
