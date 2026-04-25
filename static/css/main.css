@@ -1585,3 +1585,424 @@ col.c-edit   { width: 110px; }
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--green);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Condition Survey
+   ═══════════════════════════════════════════════════════════════ */
+
+.cs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 16px;
+}
+.cs-year-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.cs-year-label {
+  font-size: 14px;
+  font-weight: 700;
+  min-width: 50px;
+  text-align: center;
+}
+.cs-context {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.cs-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.cs-vessel-list {
+  display: flex; flex-direction: column;
+  gap: 16px;
+}
+
+.cs-vessel-block {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cs-vessel-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cs-vessel-icon { font-size: 14px; }
+.cs-vessel-name { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.cs-vessel-type {
+  font-size: 10.5px; font-weight: 600;
+  padding: 2px 7px;
+  background: var(--blue-bg); color: var(--blue-text);
+  border: 1px solid var(--blue-border);
+  border-radius: 999px;
+}
+
+.cs-quarter-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+  table-layout: fixed;
+}
+.cs-quarter-table thead th {
+  background: var(--surface-2);
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cs-quarter-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+.cs-quarter-row.empty td { color: var(--text-tertiary); }
+.cs-quarter-row.has-data { background: var(--surface); }
+.cs-quarter-row:hover:not(.cs-detail-row) { background: var(--surface-2); }
+
+.cs-q-label {
+  font-weight: 700;
+  color: var(--text-primary);
+  user-select: none;
+}
+.cs-q-label.disabled { color: var(--text-tertiary); }
+.cs-caret {
+  font-size: 9px;
+  color: var(--text-tertiary);
+  margin-right: 4px;
+  display: inline-block;
+  width: 10px;
+}
+
+.cs-cell-display {
+  min-height: 18px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: text;
+}
+.cs-cell-display.placeholder { color: var(--text-tertiary); }
+.cs-edit-cell:hover .cs-cell-display { background: var(--surface-3); }
+
+.cs-inline-input {
+  width: 100%;
+  height: 28px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  border: 1px solid var(--blue);
+  border-radius: 4px;
+  background: white;
+  font-family: inherit;
+  outline: none;
+}
+
+.cs-cnt {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cs-cnt-total {
+  background: var(--surface-2);
+  font-weight: 700;
+}
+.cs-cnt-close {
+  color: var(--green);
+}
+
+.cs-actions {
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+  /* display: flex 절대 금지! td는 table-cell이어야 보더가 그려짐 */
+}
+.cs-actions > * {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.cs-actions > *:first-child { margin-left: 0; }
+
+/* 분기 표의 actions 헤더 — 폭 고정 */
+.cs-quarter-table .cs-th-actions { width: 90px; }
+.cs-quarter-table .cs-actions { padding-right: 10px; }
+
+.icon-btn.has-memo {
+  background: var(--blue-bg);
+  border-color: var(--blue-border);
+  color: var(--blue-text);
+}
+
+/* Open 카운트 셀 — 빨간색 (Closed가 아닌 미해결) */
+.cs-cnt-open {
+  color: var(--red);
+  font-weight: 600;
+}
+
+/* 수동 입력된 카운트는 살짝 강조 (글씨 진하게 + 미세한 하단 점선) */
+.cs-cnt.is-manual .cs-cell-display {
+  font-weight: 700;
+  text-decoration: underline dotted var(--blue);
+  text-underline-offset: 3px;
+}
+.cs-cnt.cs-edit-cell { cursor: pointer; }
+.cs-cnt.cs-edit-cell:hover .cs-cell-display {
+  background: var(--surface-3);
+}
+
+/* 펼침 — 세부 행 */
+.cs-detail-row td.cs-detail-cell {
+  padding: 16px 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cs-finding-section {
+  margin-bottom: 16px;
+}
+.cs-finding-empty { padding: 12px 0; }
+
+.cs-finding-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+}
+.cs-cat-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.cs-cat-defect      .cs-cat-dot { background: var(--red); }
+.cs-cat-observation .cs-cat-dot { background: var(--amber-dot); }
+.cs-cat-defect      strong       { color: var(--red); }
+.cs-cat-observation strong       { color: var(--amber); }
+.cs-cat-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.cs-findings-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  table-layout: fixed;
+}
+.cs-findings-table thead th {
+  background: var(--surface-3);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cs-findings-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;          /* 윗줄에 맞춰서 정렬 (멀티라인일 때 일관) */
+  word-break: break-word;       /* 긴 단어 줄바꿈 */
+  line-height: 1.5;
+}
+.cs-findings-table tbody tr:last-child td { border-bottom: none; }
+.cs-findings-table tbody tr:hover { background: var(--surface-2); }
+
+/* Item 20% : Description 50% : Remark 30% 비율 */
+.cs-findings-table .cs-th-item {
+  width: calc((100% - 50px - 90px - 48px) * 0.2);
+}
+.cs-findings-table .cs-th-desc {
+  width: calc((100% - 50px - 90px - 48px) * 0.5);
+}
+.cs-findings-table .cs-th-remark {
+  width: calc((100% - 50px - 90px - 48px) * 0.3);
+}
+
+/* finding 행의 셀별 디스플레이도 멀티라인 깔끔히 */
+.cs-findings-table .cs-cell-display {
+  white-space: pre-wrap;
+  min-height: 18px;
+}
+/* 상태 뱃지가 항상 첫 줄 기준 정렬되도록 */
+.cs-findings-table .cs-status .bd { display: inline-flex; }
+.cs-findings-table .cs-actions {
+  padding-top: 6px;
+  /* 셀이 vertical-align: top 이라 액션도 윗줄 기준 — Status와 동일선상 */
+}
+.cs-no {
+  font-weight: 600;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-add-btn { margin-top: 8px; }
+.cs-add-btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cs-inline-add-row td { background: var(--blue-bg); }
+
+.cs-overall-remark {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: white;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--blue);
+  border-radius: 4px;
+}
+.cs-overall-remark-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--blue-text);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.cs-overall-remark-body {
+  font-size: 12.5px;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+}
+
+@media (max-width: 768px) {
+  .cs-quarter-table { font-size: 11.5px; }
+  .cs-quarter-table thead th,
+  .cs-quarter-table td { padding: 6px; }
+}
+
+/* ───── 선박 헤더 (클릭 토글) ───── */
+.cs-vessel-head {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+.cs-vessel-head:hover { background: var(--surface-3); }
+.cs-vessel-head.expanded { border-bottom: 1px solid var(--border-subtle); }
+.cs-vessel-caret {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+}
+.cs-vessel-summary {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.cs-vessel-summary > span { font-variant-numeric: tabular-nums; }
+.cs-vessel-summary-empty { color: var(--text-tertiary); font-style: italic; }
+.cs-summary-open  { color: var(--red);   font-weight: 600; }
+.cs-summary-close { color: var(--green); font-weight: 600; }
+
+/* cs-vessel-head를 flex로 (요약 우측 정렬) */
+.cs-vessel-head { display: flex; }
+
+/* ───── Overall Remark — Defect/Observation 섹션과 동일 헤더 스타일 ───── */
+.cs-cat-overall .cs-cat-dot { background: var(--blue); }
+.cs-cat-overall strong       { color: var(--blue-text); }
+.cs-overall-body {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  padding: 10px 14px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+/* 옛 Overall Remark 박스 스타일은 미사용 (필요 시 그대로 둠) */
+
+/* ───── 첨부 뱃지 ───── */
+.icon-btn.has-attach {
+  background: var(--blue-bg);
+  border-color: var(--blue-border);
+  color: var(--blue-text);
+  position: relative;
+}
+.attach-badge {
+  position: absolute;
+  top: -5px; right: -5px;
+  background: var(--blue);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 999px;
+  min-width: 14px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* 첨부 모달 리스트 */
+.attach-add { display: flex; gap: 8px; align-items: center; }
+.attach-list .attach-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.attach-list .attach-item:last-child { border-bottom: none; }
+.attach-thumb {
+  width: 52px; height: 52px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--surface-3);
+}
+.attach-thumb-doc {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+.attach-meta { flex: 1; min-width: 0; }
+.attach-name {
+  display: block;
+  font-size: 12.5px;
+  color: var(--blue-text);
+  text-decoration: none;
+  word-break: break-word;
+}
+.attach-name:hover { text-decoration: underline; }
+.attach-size {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.attach-empty {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+}
