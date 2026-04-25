@@ -85,6 +85,7 @@ function dDayBadge(due) {
 const PRI_MAP = {
   'COC & Flag': { cls: 'pri-cocflag', label: 'COC & Flag' },
   Urgent:       { cls: 'pri-urgent',  label: 'Urgent'     },
+  'Next DD':    { cls: 'pri-nextdd',  label: 'Next DD'    },
   Normal:       { cls: 'pri-normal',  label: 'Normal'     },
 };
 const STAT_MAP = {
@@ -418,7 +419,7 @@ function rowEl(i, no) {
     } else {
       // 나머지 클릭 → 우선순위 select
       startEditSelect(priTd, i, 'priority', [
-        ['Normal', 'Normal'], ['Urgent', 'Urgent'], ['COC & Flag', 'COC & Flag'],
+        ['Normal', 'Normal'], ['Urgent', 'Urgent'], ['Next DD', 'Next DD'], ['COC & Flag', 'COC & Flag'],
       ]);
     }
   });
@@ -1026,7 +1027,7 @@ function inlineAddRow() {
 
   // Priority
   const priSel = el('select', { class: 'inline-select' });
-  for (const [v, l] of [['Normal','Normal'], ['Urgent','Urgent'], ['COC & Flag','COC & Flag']]) {
+  for (const [v, l] of [['Normal','Normal'], ['Urgent','Urgent'], ['Next DD','Next DD'], ['COC & Flag','COC & Flag']]) {
     priSel.append(el('option', { value: v }, l));
   }
   priSel.value = add.priority;
