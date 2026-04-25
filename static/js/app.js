@@ -1473,7 +1473,8 @@ function renderAdminSupList() {
     list.append(el('div', { class: 'attach-empty' }, '등록된 감독이 없습니다.'));
     return;
   }
-  for (const s of ADMIN.supervisors) {
+  const total = ADMIN.supervisors.length;
+  ADMIN.supervisors.forEach((s, idx) => {
     const item = el('div', { class: 'admin-list-item' });
     item.append(el('span', { class: `tab-dot dot-${s.color}`, style: 'width:10px;height:10px;flex-shrink:0' }));
     item.append(el('div', { class: 'item-main' },
@@ -1483,6 +1484,27 @@ function renderAdminSupList() {
     item.append(el('div', { class: 'item-tags' },
       el('span', { class: 'item-tag' }, s.email || '(이메일 없음)')));
     const actions = el('div', { class: 'item-actions' });
+
+    // ↑ 위로
+    const upBtn = el('button', {
+      class: 'icon-btn', title: '위로 이동',
+      disabled: idx === 0,
+      onclick: () => moveSupervisor(s.id, 'up'),
+    });
+    upBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:12px;height:12px">
+      <polyline points="18 15 12 9 6 15"/></svg>`;
+    actions.append(upBtn);
+
+    // ↓ 아래로
+    const downBtn = el('button', {
+      class: 'icon-btn', title: '아래로 이동',
+      disabled: idx === total - 1,
+      onclick: () => moveSupervisor(s.id, 'down'),
+    });
+    downBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:12px;height:12px">
+      <polyline points="6 9 12 15 18 9"/></svg>`;
+    actions.append(downBtn);
+
     // 편집
     const ed = el('button', {
       class: 'icon-btn', title: '감독 편집',
@@ -1503,6 +1525,34 @@ function renderAdminSupList() {
     actions.append(rm);
     item.append(actions);
     list.append(item);
+  });
+}
+
+// 감독 순서 ↑↓ 이동 (display_order 기준)
+async function moveSupervisor(sid, direction) {
+  const list = [...ADMIN.supervisors];
+  const idx = list.findIndex(s => s.id === sid);
+  if (idx < 0) return;
+  const target = direction === 'up' ? idx - 1 : idx + 1;
+  if (target < 0 || target >= list.length) return;
+
+  // 배열에서 swap
+  [list[idx], list[target]] = [list[target], list[idx]];
+
+  // 전체 display_order를 1..N 으로 재정규화 (변경 필요한 것만 PUT)
+  try {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].display_order !== i + 1) {
+        await api(`/api/supervisors/${list[i].id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ display_order: i + 1 }),
+        });
+      }
+    }
+    await loadAdminSupervisors();
+    await reloadAll();   // 실제 화면 탭 바도 갱신
+  } catch (err) {
+    alert('순서 변경 실패: ' + err.message);
   }
 }
 async function addSupervisor() {
