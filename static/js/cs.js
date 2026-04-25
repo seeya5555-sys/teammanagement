@@ -752,6 +752,64 @@ async function deleteFinding(f) {
 }
 
 // ───────────── 인라인 추가 + 엑셀 붙여넣기 ─────────────
+
+// 엑셀 클립보드 TSV 파서 — 셀 안의 줄바꿈("..."로 감싼 셀)을 보존
+// 입력: 'A\tB\nC\tD' 또는 '"긴\n내용"\tB\nC\tD' 같은 형태
+// 출력: [[셀,셀,...], [셀,셀,...], ...]
+function parseTSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+  let cellStart = true;     // 현재 셀이 비어있는 시작 시점인가
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {       // 이스케이프된 따옴표 ""
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;              // 닫는 따옴표
+        }
+      } else {
+        cell += ch;                      // 줄바꿈 \n / 탭 \t / 캐리지 리턴 \r 모두 그대로
+      }
+      continue;
+    }
+    // 따옴표 밖
+    if (ch === '"' && cellStart) {
+      inQuotes = true;
+      cellStart = false;
+      continue;
+    }
+    if (ch === '\t') {
+      row.push(cell);
+      cell = '';
+      cellStart = true;
+      continue;
+    }
+    if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;     // \r\n 한 번에 처리
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+      cellStart = true;
+      continue;
+    }
+    cell += ch;
+    cellStart = false;
+  }
+  // 마지막 셀/행
+  if (cell !== '' || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  // 순수 빈 행 제거
+  return rows.filter(r => r.some(c => c !== ''));
+}
+
 // 빈 행 하나 추가 (이미 있으면 행 배열에 push, 없으면 새로 시작)
 function addBlankRow(survey, category) {
   // 다른 survey의 inlineAdd는 닫기 (한 번에 하나만)
@@ -819,11 +877,10 @@ function inlineAddRow(survey, category, row, idx, baseNo) {
     if (!isTabular) return;
 
     ev.preventDefault();
-    const rows = text.split(/\r?\n/).filter(r => r.length > 0 || r === '');
-    while (rows.length && rows[rows.length - 1].trim() === '') rows.pop();
+    // 따옴표 인식하는 TSV 파서 사용 (셀 안의 줄바꿈 보존)
+    const rows = parseTSV(text);
 
-    rows.forEach((rline, k) => {
-      const cols = rline.split('\t');
+    rows.forEach((cols, k) => {
       const targetIdx = idx + k;
       while (survey._inlineAdd.rows.length <= targetIdx) {
         survey._inlineAdd.rows.push({ item: '', description: '', remark: '', status: 'Open' });
