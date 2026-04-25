@@ -204,6 +204,22 @@ def init_db(drop=False):
             conn.executescript(f.read())
         print('  · 스키마 적용 완료')
 
+        # cs_surveys 에 manual_*_count 컬럼이 없으면 추가 (기존 DB 보강)
+        cs_cols = [r[1] for r in conn.execute('PRAGMA table_info(cs_surveys)').fetchall()]
+        if cs_cols:  # cs_surveys 테이블이 존재할 때만
+            for col in ('manual_defect_count', 'manual_observation_count', 'manual_close_count'):
+                if col not in cs_cols:
+                    conn.execute(f'ALTER TABLE cs_surveys ADD COLUMN {col} INTEGER')
+                    print(f'  · cs_surveys.{col} 컬럼 추가')
+            conn.commit()
+
+        # cs_findings 에 item 컬럼이 없으면 추가
+        cf_cols = [r[1] for r in conn.execute('PRAGMA table_info(cs_findings)').fetchall()]
+        if cf_cols and 'item' not in cf_cols:
+            conn.execute('ALTER TABLE cs_findings ADD COLUMN item TEXT')
+            print('  · cs_findings.item 컬럼 추가')
+            conn.commit()
+
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
                 conn.executescript(f.read())
@@ -411,6 +427,12 @@ def logout():
 @login_required
 def index():
     return render_template('index.html')
+
+
+@app.route('/condition-survey')
+@login_required
+def condition_survey():
+    return render_template('condition_survey.html')
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -932,6 +954,326 @@ def api_user_reset_password(uid):
         abort(404)
     execute('UPDATE users SET password_hash=? WHERE id=?',
             (generate_password_hash(new), uid))
+    return jsonify({'ok': True})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  API — Condition Survey
+# ═════════════════════════════════════════════════════════════════
+
+def _cs_survey_with_counts(s):
+    """단일 survey에 카운트 컬럼들 포함시켜 반환 (dict).
+    manual_*_count 가 NULL이 아니면 수동 입력값을 우선."""
+    sid = s['id']
+    rows = query("""
+        SELECT category, status, COUNT(*) AS n
+          FROM cs_findings
+         WHERE survey_id = ?
+         GROUP BY category, status
+    """, (sid,))
+    def_open = def_closed = obs_open = obs_closed = 0
+    for r in rows:
+        if r['category'] == 'Defect':
+            if r['status'] == 'Closed': def_closed = r['n']
+            else: def_open = r['n']
+        else:
+            if r['status'] == 'Closed': obs_closed = r['n']
+            else: obs_open = r['n']
+    auto_def   = def_open + def_closed
+    auto_obs   = obs_open + obs_closed
+    auto_close = def_closed + obs_closed
+
+    d = dict(s)
+    # 수동 override가 있으면 그 값을, 없으면 자동 카운트
+    d['defect_count']      = s['manual_defect_count']      if s['manual_defect_count']      is not None else auto_def
+    d['observation_count'] = s['manual_observation_count'] if s['manual_observation_count'] is not None else auto_obs
+    d['close_count']       = s['manual_close_count']       if s['manual_close_count']       is not None else auto_close
+    d['total_count']       = d['defect_count'] + d['observation_count']
+    # Open 카운트는 항상 자동 (전체 - 완료)
+    d['open_count']        = max(0, d['total_count'] - d['close_count'])
+    # manual flag (UI에서 자동/수동 구분)
+    d['defect_manual']      = s['manual_defect_count']      is not None
+    d['observation_manual'] = s['manual_observation_count'] is not None
+    d['close_manual']       = s['manual_close_count']       is not None
+    # 첨부 카운트
+    ar = query('SELECT COUNT(*) AS n FROM cs_attachments WHERE survey_id=?',
+               (sid,), one=True)
+    d['attach_count'] = ar['n'] if ar else 0
+    return d
+
+
+@app.route('/api/cs/surveys')
+@login_required
+def api_cs_surveys_list():
+    """연도 + (선택)감독별 모든 선박의 분기별 서베이 목록.
+    응답 구조: [{vessel: {...}, surveys: {1: {...}, 2: {...}}}]"""
+    year = int(request.args.get('year') or 2026)
+    sup_id = request.args.get('supervisor_id')
+
+    # 선박 목록 — 감독 필터 적용
+    if sup_id and sup_id != 'all':
+        vessels = query("""
+            SELECT v.* FROM vessels v
+              JOIN supervisor_vessels sv ON sv.vessel_id = v.id
+             WHERE v.active = 1 AND sv.supervisor_id = ?
+             ORDER BY v.name
+        """, (sup_id,))
+    else:
+        vessels = query('SELECT * FROM vessels WHERE active=1 ORDER BY name')
+
+    # 해당 연도의 모든 서베이 한번에
+    surveys = query('SELECT * FROM cs_surveys WHERE year = ?', (year,))
+
+    # 한번에 findings 모두 가져와서 survey_id 별로 매핑 (N+1 회피)
+    sids = [s['id'] for s in surveys]
+    findings_by_sid = {sid: [] for sid in sids}
+    if sids:
+        placeholders = ','.join('?' * len(sids))
+        all_findings = query(
+            f'SELECT * FROM cs_findings WHERE survey_id IN ({placeholders}) ORDER BY survey_id, category, no',
+            tuple(sids),
+        )
+        for f in all_findings:
+            findings_by_sid[f['survey_id']].append(dict(f))
+
+    by_vessel = {}
+    for s in surveys:
+        d = _cs_survey_with_counts(s)
+        d['findings'] = findings_by_sid.get(s['id'], [])
+        by_vessel.setdefault(s['vessel_id'], {})[s['quarter']] = d
+
+    out = []
+    for v in vessels:
+        out.append({
+            'vessel': dict(v),
+            'surveys': by_vessel.get(v['id'], {}),
+        })
+    return jsonify(out)
+
+
+@app.route('/api/cs/surveys', methods=['POST'])
+@login_required
+def api_cs_survey_create():
+    """헤더(분기 셀) 생성 또는 upsert."""
+    d = request.get_json(silent=True) or {}
+    vid = d.get('vessel_id'); year = d.get('year'); q = d.get('quarter')
+    if not (vid and year and q in (1,2,3,4)):
+        return jsonify({'error': 'vessel_id, year, quarter 필수'}), 400
+    if not query('SELECT id FROM vessels WHERE id=?', (vid,), one=True):
+        return jsonify({'error': '선박 없음'}), 404
+
+    existing = query(
+        'SELECT id FROM cs_surveys WHERE vessel_id=? AND year=? AND quarter=?',
+        (vid, year, q), one=True,
+    )
+    if existing:
+        return jsonify({'id': existing['id'], 'existed': True})
+
+    sid = execute("""
+        INSERT INTO cs_surveys
+            (vessel_id, year, quarter, vendor, management, inspection_date,
+             overall_remark, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (vid, year, q,
+          d.get('vendor') or None,
+          d.get('management') or None,
+          d.get('inspection_date') or None,
+          d.get('overall_remark') or None,
+          session.get('username')))
+    return jsonify({'id': sid}), 201
+
+
+@app.route('/api/cs/surveys/<int:sid>', methods=['GET'])
+@login_required
+def api_cs_survey_get(sid):
+    s = query('SELECT * FROM cs_surveys WHERE id=?', (sid,), one=True)
+    if not s: abort(404)
+    d = _cs_survey_with_counts(s)
+    findings = query(
+        "SELECT * FROM cs_findings WHERE survey_id=? ORDER BY category, no",
+        (sid,),
+    )
+    d['findings'] = [dict(f) for f in findings]
+    return jsonify(d)
+
+
+@app.route('/api/cs/surveys/<int:sid>', methods=['PUT'])
+@login_required
+def api_cs_survey_update(sid):
+    if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    sets, params = [], []
+    for f in ('vendor','management','inspection_date','overall_remark',
+              'manual_defect_count','manual_observation_count','manual_close_count'):
+        if f in d:
+            sets.append(f'{f} = ?')
+            v = d[f]
+            # 빈 문자열은 NULL로 저장 (자동 카운트로 복귀)
+            params.append(None if v == '' else v)
+    if not sets:
+        return jsonify({'error': '수정할 필드 없음'}), 400
+    sets.append("updated_at = datetime('now','localtime')")
+    params.append(sid)
+    execute(f'UPDATE cs_surveys SET {", ".join(sets)} WHERE id = ?', params)
+    return jsonify({'id': sid})
+
+
+@app.route('/api/cs/surveys/<int:sid>', methods=['DELETE'])
+@login_required
+def api_cs_survey_delete(sid):
+    execute('DELETE FROM cs_surveys WHERE id=?', (sid,))
+    return jsonify({'ok': True})
+
+
+# ----- Findings (세부 항목) -----
+
+def _next_finding_no(survey_id, category):
+    r = query(
+        'SELECT COALESCE(MAX(no), 0) + 1 AS n FROM cs_findings WHERE survey_id=? AND category=?',
+        (survey_id, category), one=True,
+    )
+    return r['n']
+
+
+@app.route('/api/cs/surveys/<int:sid>/findings', methods=['POST'])
+@login_required
+def api_cs_finding_create(sid):
+    """단건 또는 배치(엑셀 붙여넣기) 추가.
+    body: { category: 'Defect'|'Observation', items: [{description,remark,status},...] }
+    또는 단건: { category, description, remark, status }
+    """
+    if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    cat = d.get('category')
+    if cat not in ('Defect','Observation'):
+        return jsonify({'error': "category는 Defect 또는 Observation"}), 400
+
+    items = d.get('items')
+    if items is None:
+        items = [{
+            'item':        d.get('item'),
+            'description': d.get('description'),
+            'remark':      d.get('remark'),
+            'status':      d.get('status') or 'Open',
+        }]
+
+    next_no = _next_finding_no(sid, cat)
+    created_ids = []
+    for it in items:
+        st = it.get('status') or 'Open'
+        if st not in ('Open','Closed'): st = 'Open'
+        fid = execute("""
+            INSERT INTO cs_findings (survey_id, category, no, item, description, remark, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (sid, cat, next_no,
+              it.get('item') or '',
+              it.get('description') or '',
+              it.get('remark') or '',
+              st))
+        created_ids.append(fid)
+        next_no += 1
+    return jsonify({'ids': created_ids, 'count': len(created_ids)}), 201
+
+
+@app.route('/api/cs/findings/<int:fid>', methods=['PUT'])
+@login_required
+def api_cs_finding_update(fid):
+    if not query('SELECT id FROM cs_findings WHERE id=?', (fid,), one=True):
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    sets, params = [], []
+    for f in ('item','description','remark','status'):
+        if f in d:
+            sets.append(f'{f} = ?')
+            params.append(d[f])
+    if not sets:
+        return jsonify({'error': '수정할 필드 없음'}), 400
+    sets.append("updated_at = datetime('now','localtime')")
+    params.append(fid)
+    execute(f'UPDATE cs_findings SET {", ".join(sets)} WHERE id = ?', params)
+    return jsonify({'id': fid})
+
+
+@app.route('/api/cs/findings/<int:fid>', methods=['DELETE'])
+@login_required
+def api_cs_finding_delete(fid):
+    f = query('SELECT survey_id, category, no FROM cs_findings WHERE id=?', (fid,), one=True)
+    if not f: abort(404)
+    execute('DELETE FROM cs_findings WHERE id=?', (fid,))
+    # No 재정렬: 같은 survey + category 내에서
+    rows = query(
+        'SELECT id FROM cs_findings WHERE survey_id=? AND category=? ORDER BY no, id',
+        (f['survey_id'], f['category']),
+    )
+    for idx, r in enumerate(rows, 1):
+        execute('UPDATE cs_findings SET no=? WHERE id=?', (idx, r['id']))
+    return jsonify({'ok': True})
+
+
+# ----- CS 첨부파일 -----
+
+@app.route('/api/cs/surveys/<int:sid>/attachments', methods=['GET'])
+@login_required
+def api_cs_attachments_list(sid):
+    rows = query(
+        'SELECT * FROM cs_attachments WHERE survey_id=? ORDER BY id DESC',
+        (sid,),
+    )
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/cs/surveys/<int:sid>/attachments', methods=['POST'])
+@login_required
+def api_cs_attachment_upload(sid):
+    if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
+        abort(404)
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다.'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': '파일명이 없습니다.'}), 400
+
+    ext = os.path.splitext(f.filename)[1]
+    stored = f"cs_{uuid.uuid4().hex}{ext}"
+    save_path = os.path.join(UPLOAD_DIR, stored)
+    f.save(save_path)
+    size = os.path.getsize(save_path)
+
+    aid = execute("""
+        INSERT INTO cs_attachments
+            (survey_id, filename, stored_name, file_size, mime_type, uploaded_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (sid, f.filename, stored, size, f.mimetype, session.get('username')))
+    return jsonify({'id': aid, 'filename': f.filename, 'file_size': size}), 201
+
+
+@app.route('/api/cs/attachments/<int:aid>', methods=['GET'])
+@login_required
+def api_cs_attachment_get(aid):
+    a = query('SELECT * FROM cs_attachments WHERE id=?', (aid,), one=True)
+    if not a:
+        abort(404)
+    inline = request.args.get('inline')
+    return send_from_directory(
+        UPLOAD_DIR, a['stored_name'],
+        as_attachment=not inline,
+        download_name=a['filename'],
+    )
+
+
+@app.route('/api/cs/attachments/<int:aid>', methods=['DELETE'])
+@login_required
+def api_cs_attachment_delete(aid):
+    a = query('SELECT * FROM cs_attachments WHERE id=?', (aid,), one=True)
+    if not a:
+        abort(404)
+    p = os.path.join(UPLOAD_DIR, a['stored_name'])
+    if os.path.exists(p):
+        try: os.remove(p)
+        except OSError: pass
+    execute('DELETE FROM cs_attachments WHERE id=?', (aid,))
     return jsonify({'ok': True})
 
 
