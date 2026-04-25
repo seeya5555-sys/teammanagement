@@ -2412,6 +2412,10 @@ function wireEvents() {
     renderTabContext();
     await loadIssues();
     fillFormSelects();
+    // 첫 진입 시 모든 일자(date) 그룹 접기 — 월/연 단위만 펼친 상태로 시작
+    for (const i of S.issues) {
+      if (i.issue_date) S.collapsedDates.add(i.issue_date);
+    }
     render();
     wireEvents();
   } catch (err) {
