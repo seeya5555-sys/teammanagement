@@ -15,6 +15,7 @@ const S = {
   supervisors:  [],
   vessels:      [],
   activeTab:    'all',
+  activeSubTab: localStorage.getItem('trmt_subtab') || 'open',  // 'open' = Open+진행중 / 'closed' = Closed
   issues:       [],
   filters: { q:'', vessel_id:'', vessel_type:'', status:'', priority:'' },
 
@@ -162,8 +163,29 @@ async function loadIssues() {
   if (S.filters.q)           p.set('q', S.filters.q);
   if (S.filters.vessel_id)   p.set('vessel_id', S.filters.vessel_id);
   if (S.filters.vessel_type) p.set('vessel_type', S.filters.vessel_type);
-  if (S.filters.status)      p.set('status', S.filters.status);
   if (S.filters.priority)    p.set('priority', S.filters.priority);
+
+  // status: 사용자가 명시적으로 status 필터를 골랐으면 그게 우선,
+  //         아니면 서브 탭 기준으로 자동 적용
+  if (S.filters.status) {
+    p.set('status', S.filters.status);
+  } else if (S.activeSubTab === 'closed') {
+    p.set('status', 'Closed');
+  } else {
+    // 'open' 서브 탭 = Open + InProgress (서버는 단일 status만 받으니
+    // 클라에서 한번 더 필터링하거나 서버 API 변경 필요 → 간단히 두 번 호출 후 합침)
+    const [openIssues, progIssues] = await Promise.all([
+      (() => { const q = new URLSearchParams(p); q.set('status', 'Open'); return api('/api/issues?' + q); })(),
+      (() => { const q = new URLSearchParams(p); q.set('status', 'InProgress'); return api('/api/issues?' + q); })(),
+    ]);
+    // 서버 정렬 기준이 issue_date ASC, id ASC 이므로 합치고 재정렬
+    S.issues = [...openIssues, ...progIssues].sort((a, b) => {
+      if (a.issue_date !== b.issue_date) return a.issue_date < b.issue_date ? -1 : 1;
+      return a.id - b.id;
+    });
+    return;
+  }
+
   S.issues = await api('/api/issues?' + p);
 }
 
@@ -176,6 +198,54 @@ function renderTabs() {
   for (const s of S.supervisors) {
     bar.append(tabEl(s.id, s.name, s.color, s.total, S.activeTab == s.id));
   }
+  renderSubTabs();
+}
+
+// 서브 탭 (진행중 = Open+InProgress / 완료 = Closed)
+function renderSubTabs() {
+  const bar = $('#subtab-bar');
+  bar.innerHTML = '';
+
+  // 카운트 계산 (현재 활성 메인 탭 기준)
+  let openCnt = 0, doneCnt = 0;
+  if (S.activeTab === 'all') {
+    for (const s of S.supervisors) {
+      openCnt += (s.open_count || 0) + (s.progress_count || 0);
+      doneCnt += (s.closed_count || 0);
+    }
+  } else {
+    const s = S.supervisors.find(x => x.id == S.activeTab);
+    if (s) {
+      openCnt = (s.open_count || 0) + (s.progress_count || 0);
+      doneCnt = (s.closed_count || 0);
+    }
+  }
+
+  bar.append(subtabEl('open',   '진행중', openCnt, S.activeSubTab === 'open'));
+  bar.append(subtabEl('closed', '완료',   doneCnt, S.activeSubTab === 'closed'));
+}
+
+function subtabEl(id, label, count, active) {
+  const t = el('div', {
+    class: 'subtab' + (active ? ' active' : ''),
+    'data-sub': id,
+    onclick: () => switchSubTab(id),
+  },
+    el('span', { class: 'subtab-dot' }),
+    label,
+    el('span', { class: 'subtab-count' }, String(count))
+  );
+  return t;
+}
+
+async function switchSubTab(id) {
+  if (S.activeSubTab === id) return;
+  S.activeSubTab = id;
+  try { localStorage.setItem('trmt_subtab', id); } catch (_) {}
+  S.inlineAdd = null;
+  renderSubTabs();
+  await loadIssues();
+  render();
 }
 function tabEl(id, name, color, count, active) {
   const t = el('div', { class: 'tab' + (active ? ' active' : ''), 'data-id': id },
