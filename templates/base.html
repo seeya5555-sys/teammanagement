@@ -25,7 +25,9 @@
         <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint=='index' %}active{% endif %}">
           Daily 업무관리
         </a>
-        <a href="#" class="nav-link disabled" title="준비 중">Condition Survey</a>
+        <a href="{{ url_for('condition_survey') }}" class="nav-link {% if request.endpoint=='condition_survey' %}active{% endif %}">
+          Condition Survey
+        </a>
         <a href="#" class="nav-link disabled" title="준비 중">Vetting Status</a>
       </nav>
 
