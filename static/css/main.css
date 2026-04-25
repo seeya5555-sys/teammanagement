@@ -1524,3 +1524,64 @@ col.c-edit   { width: 110px; }
 #user-edit-modal {
   z-index: 1000;
 }
+
+/* ───── 서브 탭 (진행중 / 완료) ───── */
+.subtab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 0 0 10px 0;
+  margin-top: -4px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 12px;
+}
+.subtab-bar:empty { display: none; }
+.subtab {
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.1s, color 0.1s;
+  margin-bottom: -1px;   /* 아래 border와 겹쳐서 active 시 깔끔하게 */
+}
+.subtab:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+.subtab.active {
+  background: var(--surface);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+  border-bottom-color: var(--surface);
+  font-weight: 600;
+}
+.subtab-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--surface-3);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 500;
+  min-width: 18px;
+  text-align: center;
+}
+.subtab.active .subtab-count {
+  background: var(--blue-bg);
+  color: var(--blue-text);
+}
+.subtab[data-sub="open"] .subtab-dot {
+  display: inline-block;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--red);
+}
+.subtab[data-sub="closed"] .subtab-dot {
+  display: inline-block;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+}
