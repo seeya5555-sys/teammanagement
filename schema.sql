@@ -181,3 +181,56 @@ CREATE TABLE IF NOT EXISTS cs_attachments (
     FOREIGN KEY (survey_id) REFERENCES cs_surveys(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_cs_attachments_survey ON cs_attachments(survey_id);
+
+-- ═════════════════════════════════════════════════════════════
+--  Vetting Status (비정기 검사 — 선박당 0~N건)
+--  적용 선박: VLCC, AFRAMAX, LR, MR (CNTR 제외)
+-- ═════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS vettings (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id                INTEGER NOT NULL,
+    report_number            TEXT,
+    inspection_date          TEXT,                 -- YYYY-MM-DD (검사일 기준 연도 필터)
+    inspection_company       TEXT,
+    inspector                TEXT,
+    port                     TEXT,
+    operation                TEXT CHECK (operation IN ('Loading','Discharging','Idle') OR operation IS NULL OR operation = ''),
+    overall_remark           TEXT,
+    manual_observation_count INTEGER,              -- NULL이면 자동 카운트
+    manual_open_count        INTEGER,
+    manual_close_count       INTEGER,
+    created_by               TEXT,
+    created_at               TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at               TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_vettings_vessel_date ON vettings(vessel_id, inspection_date DESC);
+
+-- Vetting Findings (단일 카테고리: Observation)
+CREATE TABLE IF NOT EXISTS vt_findings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    vetting_id  INTEGER NOT NULL,
+    no          INTEGER NOT NULL,
+    item        TEXT,
+    description TEXT,
+    remark      TEXT,
+    status      TEXT NOT NULL DEFAULT 'Open' CHECK (status IN ('Open','Closed')),
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (vetting_id) REFERENCES vettings(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_vt_findings_vetting ON vt_findings(vetting_id, no);
+
+-- Vetting Attachments
+CREATE TABLE IF NOT EXISTS vt_attachments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    vetting_id  INTEGER NOT NULL,
+    filename    TEXT NOT NULL,
+    stored_name TEXT NOT NULL UNIQUE,
+    file_size   INTEGER,
+    mime_type   TEXT,
+    uploaded_by TEXT,
+    uploaded_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (vetting_id) REFERENCES vettings(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_vt_attachments_vetting ON vt_attachments(vetting_id);
