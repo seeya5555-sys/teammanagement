@@ -435,6 +435,12 @@ def condition_survey():
     return render_template('condition_survey.html')
 
 
+@app.route('/vetting-status')
+@login_required
+def vetting_status():
+    return render_template('vetting_status.html')
+
+
 # ═════════════════════════════════════════════════════════════════
 #  API — me / password
 # ═════════════════════════════════════════════════════════════════
@@ -1274,6 +1280,343 @@ def api_cs_attachment_delete(aid):
         try: os.remove(p)
         except OSError: pass
     execute('DELETE FROM cs_attachments WHERE id=?', (aid,))
+    return jsonify({'ok': True})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  API — Vetting Status (비정기, 선박당 0~N건, CNTR 제외)
+# ═════════════════════════════════════════════════════════════════
+VETTING_TYPES = ('VLCC', 'AFRAMAX', 'LR', 'MR')
+
+
+def _vetting_with_counts(v):
+    """vetting dict에 카운트 추가. manual override 적용."""
+    vid = v['id']
+    rows = query("""
+        SELECT status, COUNT(*) AS n
+          FROM vt_findings
+         WHERE vetting_id = ?
+         GROUP BY status
+    """, (vid,))
+    auto_open = auto_closed = 0
+    for r in rows:
+        if r['status'] == 'Closed': auto_closed = r['n']
+        else: auto_open = r['n']
+    auto_total = auto_open + auto_closed
+
+    d = dict(v)
+    d['observation_count'] = v['manual_observation_count'] if v['manual_observation_count'] is not None else auto_total
+    d['close_count']       = v['manual_close_count']       if v['manual_close_count']       is not None else auto_closed
+    d['open_count']        = v['manual_open_count']        if v['manual_open_count']        is not None else max(0, d['observation_count'] - d['close_count'])
+    d['observation_manual'] = v['manual_observation_count'] is not None
+    d['open_manual']        = v['manual_open_count']        is not None
+    d['close_manual']       = v['manual_close_count']       is not None
+    # 첨부 카운트
+    ar = query('SELECT COUNT(*) AS n FROM vt_attachments WHERE vetting_id=?',
+               (vid,), one=True)
+    d['attach_count'] = ar['n'] if ar else 0
+    return d
+
+
+# ----- Vettings (vessel별 그룹) -----
+
+@app.route('/api/vettings', methods=['GET'])
+@login_required
+def api_vettings_list():
+    """선박별 vetting 그룹 응답.
+    Query: ?year=2026&supervisor_id=N
+    응답: [ { vessel: {...}, vettings: [...with findings...] } ]
+    """
+    year = request.args.get('year', type=int)
+    sup_id = request.args.get('supervisor_id', type=int)
+
+    # 대상 선박: VLCC/AFRAMAX/LR/MR만
+    placeholders = ','.join('?' * len(VETTING_TYPES))
+    sql = f'SELECT v.* FROM vessels v WHERE v.active=1 AND v.vessel_type IN ({placeholders})'
+    params = list(VETTING_TYPES)
+    if sup_id:
+        sql += ' AND EXISTS (SELECT 1 FROM supervisor_vessels sv WHERE sv.vessel_id=v.id AND sv.supervisor_id=?)'
+        params.append(sup_id)
+    sql += ' ORDER BY v.name'
+    vessels = query(sql, tuple(params))
+
+    # vetting 한번에
+    # vetting 필터:
+    #  - 검사일이 있는 것은 해당 연도와 일치할 때만
+    #  - 검사일이 없는 것 (방금 + 새 Vetting 추가 한 빈 행)은 모든 연도에 항상 표시
+    if year:
+        vettings = query('SELECT * FROM vettings')
+        vettings = [v for v in vettings
+                    if (not v['inspection_date'])
+                    or (v['inspection_date'].startswith(str(year)))]
+    else:
+        vettings = query('SELECT * FROM vettings')
+
+    # findings 한번에
+    vids = [v['id'] for v in vettings]
+    findings_by_vid = {vid: [] for vid in vids}
+    if vids:
+        ph = ','.join('?' * len(vids))
+        all_f = query(
+            f'SELECT * FROM vt_findings WHERE vetting_id IN ({ph}) ORDER BY vetting_id, no',
+            tuple(vids),
+        )
+        for f in all_f:
+            findings_by_vid[f['vetting_id']].append(dict(f))
+
+    by_vessel = {}
+    for v in vettings:
+        d = _vetting_with_counts(v)
+        d['findings'] = findings_by_vid.get(v['id'], [])
+        by_vessel.setdefault(v['vessel_id'], []).append(d)
+
+    # 검사일 내림차순 정렬 (최신이 위)
+    for vid in by_vessel:
+        by_vessel[vid].sort(key=lambda x: (x.get('inspection_date') or ''), reverse=True)
+
+    # 선박별 담당 감독 ID 매핑 (Daily 이슈 등록 시 필요)
+    sv_map = {}
+    if vessels:
+        v_ids = [v['id'] for v in vessels]
+        ph2 = ','.join('?' * len(v_ids))
+        rows = query(
+            f'SELECT vessel_id, supervisor_id FROM supervisor_vessels WHERE vessel_id IN ({ph2})',
+            tuple(v_ids),
+        )
+        for r in rows:
+            sv_map.setdefault(r['vessel_id'], []).append(r['supervisor_id'])
+
+    out = []
+    for ves in vessels:
+        vd = dict(ves)
+        vd['supervisor_ids'] = sv_map.get(ves['id'], [])
+        out.append({
+            'vessel': vd,
+            'vettings': by_vessel.get(ves['id'], []),
+        })
+    return jsonify(out)
+
+
+@app.route('/api/vettings', methods=['POST'])
+@login_required
+def api_vetting_create():
+    """단일 vetting 생성. 선박 ID만 필수, 나머지는 선택."""
+    d = request.get_json() or {}
+    vid = d.get('vessel_id')
+    if not vid:
+        return jsonify({'error': 'vessel_id 가 필요합니다.'}), 400
+    v = query('SELECT vessel_type FROM vessels WHERE id=?', (vid,), one=True)
+    if not v:
+        return jsonify({'error': '선박을 찾을 수 없습니다.'}), 404
+    if v['vessel_type'] not in VETTING_TYPES:
+        return jsonify({'error': f'Vetting은 {", ".join(VETTING_TYPES)} 선박에만 적용됩니다.'}), 400
+
+    op = d.get('operation') or None
+    if op and op not in ('Loading','Discharging','Idle'):
+        op = None
+
+    new_id = execute("""
+        INSERT INTO vettings
+            (vessel_id, report_number, inspection_date, inspection_company,
+             inspector, port, operation, overall_remark, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (vid,
+          d.get('report_number') or '',
+          d.get('inspection_date') or None,
+          d.get('inspection_company') or '',
+          d.get('inspector') or '',
+          d.get('port') or '',
+          op,
+          d.get('overall_remark') or '',
+          session.get('username')))
+    row = query('SELECT * FROM vettings WHERE id=?', (new_id,), one=True)
+    return jsonify(_vetting_with_counts(row)), 201
+
+
+@app.route('/api/vettings/<int:vid>', methods=['GET'])
+@login_required
+def api_vetting_get(vid):
+    v = query('SELECT * FROM vettings WHERE id=?', (vid,), one=True)
+    if not v:
+        abort(404)
+    d = _vetting_with_counts(v)
+    d['findings'] = [dict(f) for f in query(
+        'SELECT * FROM vt_findings WHERE vetting_id=? ORDER BY no', (vid,))]
+    return jsonify(d)
+
+
+@app.route('/api/vettings/<int:vid>', methods=['PUT'])
+@login_required
+def api_vetting_update(vid):
+    if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
+        abort(404)
+    d = request.get_json() or {}
+    sets, params = [], []
+    for f in ('report_number','inspection_date','inspection_company','inspector',
+              'port','operation','overall_remark',
+              'manual_observation_count','manual_open_count','manual_close_count'):
+        if f in d:
+            sets.append(f'{f} = ?')
+            v = d[f]
+            params.append(None if v == '' else v)
+    if not sets:
+        return jsonify({'ok': True})
+    sets.append("updated_at = datetime('now','localtime')")
+    execute(f'UPDATE vettings SET {", ".join(sets)} WHERE id=?', tuple(params + [vid]))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/vettings/<int:vid>', methods=['DELETE'])
+@login_required
+def api_vetting_delete(vid):
+    # 첨부 파일도 같이 삭제 (CASCADE는 DB만, 파일은 직접)
+    atts = query('SELECT stored_name FROM vt_attachments WHERE vetting_id=?', (vid,))
+    for a in atts:
+        p = os.path.join(UPLOAD_DIR, a['stored_name'])
+        if os.path.exists(p):
+            try: os.remove(p)
+            except OSError: pass
+    execute('DELETE FROM vettings WHERE id=?', (vid,))
+    return jsonify({'ok': True})
+
+
+# ----- Findings -----
+
+def _vt_next_no(vid):
+    r = query('SELECT COALESCE(MAX(no), 0) + 1 AS next FROM vt_findings WHERE vetting_id=?',
+              (vid,), one=True)
+    return r['next']
+
+
+@app.route('/api/vettings/<int:vid>/findings', methods=['POST'])
+@login_required
+def api_vt_findings_create(vid):
+    """단건 또는 배치(items 배열) 생성."""
+    if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
+        abort(404)
+    d = request.get_json() or {}
+    items = d.get('items')
+    if items is None:
+        items = [{
+            'item':        d.get('item'),
+            'description': d.get('description'),
+            'remark':      d.get('remark'),
+            'status':      d.get('status') or 'Open',
+        }]
+
+    next_no = _vt_next_no(vid)
+    created = []
+    for it in items:
+        st = it.get('status') or 'Open'
+        if st not in ('Open','Closed'): st = 'Open'
+        fid = execute("""
+            INSERT INTO vt_findings (vetting_id, no, item, description, remark, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (vid, next_no,
+              it.get('item') or '',
+              it.get('description') or '',
+              it.get('remark') or '',
+              st))
+        created.append(fid)
+        next_no += 1
+    return jsonify({'ids': created, 'count': len(created)}), 201
+
+
+@app.route('/api/vt-findings/<int:fid>', methods=['PUT'])
+@login_required
+def api_vt_finding_update(fid):
+    if not query('SELECT id FROM vt_findings WHERE id=?', (fid,), one=True):
+        abort(404)
+    d = request.get_json() or {}
+    sets, params = [], []
+    for f in ('item','description','remark','status'):
+        if f in d:
+            sets.append(f'{f} = ?')
+            params.append(d[f] or '')
+    if not sets:
+        return jsonify({'ok': True})
+    sets.append("updated_at = datetime('now','localtime')")
+    execute(f'UPDATE vt_findings SET {", ".join(sets)} WHERE id=?', tuple(params + [fid]))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/vt-findings/<int:fid>', methods=['DELETE'])
+@login_required
+def api_vt_finding_delete(fid):
+    f = query('SELECT vetting_id FROM vt_findings WHERE id=?', (fid,), one=True)
+    if not f:
+        abort(404)
+    vid = f['vetting_id']
+    execute('DELETE FROM vt_findings WHERE id=?', (fid,))
+    # No 재정렬
+    rows = query('SELECT id FROM vt_findings WHERE vetting_id=? ORDER BY no', (vid,))
+    for new_no, r in enumerate(rows, start=1):
+        execute('UPDATE vt_findings SET no=? WHERE id=?', (new_no, r['id']))
+    return jsonify({'ok': True})
+
+
+# ----- Attachments -----
+
+@app.route('/api/vettings/<int:vid>/attachments', methods=['GET'])
+@login_required
+def api_vt_attachments_list(vid):
+    rows = query(
+        'SELECT * FROM vt_attachments WHERE vetting_id=? ORDER BY id DESC',
+        (vid,),
+    )
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/vettings/<int:vid>/attachments', methods=['POST'])
+@login_required
+def api_vt_attachment_upload(vid):
+    if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
+        abort(404)
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다.'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': '파일명이 없습니다.'}), 400
+
+    ext = os.path.splitext(f.filename)[1]
+    stored = f"vt_{uuid.uuid4().hex}{ext}"
+    save_path = os.path.join(UPLOAD_DIR, stored)
+    f.save(save_path)
+    size = os.path.getsize(save_path)
+
+    aid = execute("""
+        INSERT INTO vt_attachments
+            (vetting_id, filename, stored_name, file_size, mime_type, uploaded_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (vid, f.filename, stored, size, f.mimetype, session.get('username')))
+    return jsonify({'id': aid, 'filename': f.filename, 'file_size': size}), 201
+
+
+@app.route('/api/vt-attachments/<int:aid>', methods=['GET'])
+@login_required
+def api_vt_attachment_get(aid):
+    a = query('SELECT * FROM vt_attachments WHERE id=?', (aid,), one=True)
+    if not a:
+        abort(404)
+    inline = request.args.get('inline')
+    return send_from_directory(
+        UPLOAD_DIR, a['stored_name'],
+        as_attachment=not inline,
+        download_name=a['filename'],
+    )
+
+
+@app.route('/api/vt-attachments/<int:aid>', methods=['DELETE'])
+@login_required
+def api_vt_attachment_delete(aid):
+    a = query('SELECT * FROM vt_attachments WHERE id=?', (aid,), one=True)
+    if not a:
+        abort(404)
+    p = os.path.join(UPLOAD_DIR, a['stored_name'])
+    if os.path.exists(p):
+        try: os.remove(p)
+        except OSError: pass
+    execute('DELETE FROM vt_attachments WHERE id=?', (aid,))
     return jsonify({'ok': True})
 
 
