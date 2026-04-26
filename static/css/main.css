@@ -2147,3 +2147,166 @@ col.c-edit   { width: 110px; }
   content: '';
   flex: 1;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Vetting Status — 전용 스타일
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Vetting 표 */
+.vt-vetting-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+  table-layout: fixed;
+  margin-top: 8px;
+}
+.vt-vetting-table thead th {
+  background: var(--surface-3);
+  padding: 7px 10px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.vt-vetting-table thead th.vt-th-cnt { text-align: center; }
+.vt-vetting-table tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+/* 컬럼 폭 (대략적인 비율 — table-layout: fixed) */
+.vt-th-rep    { width: 14%; }
+.vt-th-date   { width: 110px; }
+.vt-th-comp   { width: 14%; }
+.vt-th-insp   { width: 14%; }
+.vt-th-port   { width: 12%; }
+.vt-th-op     { width: 110px; }
+.vt-th-cnt    { width: 60px; }
+.vt-th-actions{ width: 90px; }
+
+/* 행 토글 caret */
+.vt-row-toggle {
+  cursor: pointer;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  margin-right: 4px;
+  user-select: none;
+}
+.vt-row-toggle:hover { color: var(--blue); }
+
+/* 셀 디스플레이 */
+.vt-cell-display { display: inline-block; min-height: 1em; }
+.vt-cell-display.placeholder { color: var(--text-tertiary); }
+.vt-edit-cell { cursor: pointer; word-break: break-word; }
+.vt-edit-cell:hover { background: var(--surface-2); }
+
+/* 빈 행 안내 */
+.vt-empty-row {
+  text-align: center;
+  color: var(--text-tertiary);
+  font-style: italic;
+  padding: 14px;
+}
+
+/* + 새 Vetting 추가 버튼 영역 */
+.vt-add-bar {
+  padding: 8px 0 14px 0;
+  text-align: left;
+}
+
+/* 선박 헤더 요약 - Vetting */
+.vt-summary-last {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.vt-summary-open {
+  background: var(--red-bg);
+  color: var(--red);
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+.vt-summary-allclosed {
+  background: var(--green-bg, #ecfdf5);
+  color: var(--green);
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+/* 새로 추가된 Vetting 행 플래시 효과 */
+.vt-vetting-row.vt-row-flash td {
+  animation: vt-flash 1.5s ease-out;
+}
+@keyframes vt-flash {
+  0%   { background-color: var(--blue-bg); }
+  100% { background-color: transparent; }
+}
+
+/* ───── Vetting Overall Remark 모달 ───── */
+.vt-remark-textarea {
+  width: 100%;
+  min-height: 130px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: inherit;
+  resize: none;          /* 자동 높이 조정 사용, 수동 리사이즈 비활성 */
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+.vt-remark-textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-bg);
+}
+.vt-remark-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* modal-foot 영역이 없으면 하단 버튼 정렬 */
+.modal-box .modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ───── Vetting caret 셀 (Report# 편집과 분리) ───── */
+.vt-th-caret { width: 36px; }
+.vt-caret-cell {
+  width: 36px;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  padding: 8px 0 !important;
+  color: var(--text-tertiary);
+  transition: background 0.1s, color 0.1s;
+}
+.vt-caret-cell:hover {
+  background: var(--surface-3);
+  color: var(--blue);
+}
+.vt-caret-icon {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* 첨부 삭제 버튼 — 오른쪽 끝 (margin-left auto로 밀어냄) */
+.attach-rm-right {
+  margin-left: auto !important;
+}
