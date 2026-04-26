@@ -2306,7 +2306,15 @@ col.c-edit   { width: 110px; }
   line-height: 1;
 }
 
-/* 첨부 삭제 버튼 — 오른쪽 끝 (margin-left auto로 밀어냄) */
-.attach-rm-right {
-  margin-left: auto !important;
+/* 첨부 삭제 버튼 — 오른쪽 끝, 세로 가운데 (grid의 행 전체 span)
+   CS 와 VT 모두 적용 */
+.attach-item .attach-rm,
+.attach-item .attach-rm-right,
+.attach-item .icon-btn.attach-rm,
+.attach-item .icon-btn.attach-rm-right {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  justify-self: end;
+  margin-left: 0 !important;
 }
