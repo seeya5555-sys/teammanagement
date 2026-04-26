@@ -28,7 +28,9 @@
         <a href="{{ url_for('condition_survey') }}" class="nav-link {% if request.endpoint=='condition_survey' %}active{% endif %}">
           Condition Survey
         </a>
-        <a href="#" class="nav-link disabled" title="준비 중">Vetting Status</a>
+        <a href="{{ url_for('vetting_status') }}" class="nav-link {% if request.endpoint=='vetting_status' %}active{% endif %}">
+          Vetting Status
+        </a>
       </nav>
 
       <div class="user-menu">
