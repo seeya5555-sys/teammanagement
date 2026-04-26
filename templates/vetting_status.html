@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Vetting Status · TRMT3{% endblock %}
+
+{% block content %}
+
+<h1 class="page-title">Vetting Status</h1>
+
+<!-- 감독 탭 바 -->
+<div class="tab-bar" id="vt-tab-bar"></div>
+
+<!-- 툴바: 연도 + 검색 + 컨텍스트 -->
+<div class="cs-toolbar">
+  <div class="cs-year-picker">
+    <button class="btn btn-outline btn-sm" id="vt-year-prev" title="이전 연도">‹</button>
+    <span class="cs-year-label" id="vt-year-label">2026</span>
+    <button class="btn btn-outline btn-sm" id="vt-year-next" title="다음 연도">›</button>
+  </div>
+  <div class="cs-search-wrap">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="cs-search-icon">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" id="vt-search" class="cs-search-input"
+           placeholder="선박명 / Report# / Inspection Company 검색...">
+    <button type="button" class="cs-search-clear" id="vt-search-clear" title="검색어 지우기" hidden>×</button>
+  </div>
+  <span class="cs-context" id="vt-context"></span>
+</div>
+
+<!-- 선박 리스트 -->
+<div id="vt-vessel-list" class="cs-vessel-list"></div>
+
+<!-- ========= Overall Remark 모달 ========= -->
+<div class="modal" id="vt-remark-modal" hidden>
+  <div class="modal-backdrop" data-close-vtr="1"></div>
+  <div class="modal-box" style="width: min(720px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>
+        Overall Remark
+        <span class="attach-modal-subtitle" id="vt-remark-subtitle"></span>
+      </h2>
+      <button class="modal-close" data-close-vtr="1" aria-label="닫기">×</button>
+    </div>
+    <div class="modal-body">
+      <textarea id="vt-remark-textarea" class="cs-inline-input vt-remark-textarea"
+                placeholder="Vetting 검사 전체 평가 / 메모를 입력하세요. (Enter 시 자동 행 추가)"
+                rows="6"></textarea>
+      <div class="vt-remark-hint">
+        Tip: 일반 Enter로 줄바꿈 · Ctrl+Enter 또는 저장 버튼으로 저장 · ESC로 취소
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-outline" data-close-vtr="1">취소</button>
+      <button type="button" class="btn btn-primary" id="vt-remark-save">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========= 첨부 모달 (CS와 동일 패턴) ========= -->
+<div class="modal" id="vt-attach-modal" hidden>
+  <div class="modal-backdrop" data-close-vta="1"></div>
+  <div class="modal-box attach-modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>
+        첨부파일
+        <span class="attach-modal-subtitle" id="vt-attach-subtitle"></span>
+      </h2>
+      <button class="modal-close" data-close-vta="1" aria-label="닫기">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="attach-dropzone" id="vt-attach-dropzone">
+        <input type="file" id="vt-attach-file-input" multiple hidden
+               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv">
+        <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p class="attach-dropzone-title">파일을 끌어다 놓거나 클릭하여 선택하세요</p>
+        <p class="attach-dropzone-sub">Initial Report, Close Report 등 (최대 20MB)</p>
+      </div>
+      <div class="attach-grid" id="vt-attach-grid"></div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.TRMT = { user: {{ {
+      'username': session.username,
+      'display_name': session.display_name,
+      'role': session.role,
+      'supervisor_id': session.supervisor_id
+    } | tojson }} };
+</script>
+<script src="{{ url_for('static', filename='js/vt.js') }}"></script>
+{% endblock %}
