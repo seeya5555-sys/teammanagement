@@ -2365,7 +2365,7 @@ col.c-edit   { width: 156px; }
 
 .cal-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));   /* 콘텐츠가 길어도 셀 너비 1/7 균등 유지 */
   grid-auto-rows: minmax(108px, auto);
 }
 .cal-cell {
@@ -2378,6 +2378,8 @@ col.c-edit   { width: 156px; }
   flex-direction: column;
   gap: 4px;
   min-height: 108px;
+  min-width: 0;             /* 자식의 콘텐츠 너비가 셀을 밀어내지 못하게 */
+  overflow: hidden;
 }
 .cal-cell:nth-child(7n) { border-right: none; }
 .cal-cell:nth-last-child(-n+7) { border-bottom: none; }
@@ -2413,6 +2415,7 @@ col.c-edit   { width: 156px; }
   gap: 2px;
   flex: 1;
   overflow: hidden;
+  min-width: 0;
 }
 .cal-evt {
   font-size: 10.5px;
@@ -2423,6 +2426,9 @@ col.c-edit   { width: 156px; }
   text-overflow: ellipsis;
   color: white;
   cursor: pointer;
+  max-width: 100%;     /* 셀 너비를 넘어가지 않음 */
+  min-width: 0;
+  display: block;
   line-height: 1.4;
 }
 .cal-evt.more {
