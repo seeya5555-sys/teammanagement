@@ -545,8 +545,9 @@ function rowEl(i, no) {
     attBtn.append(el('span', { class: 'att-count-badge' }, String(i.att_count)));
   }
   const delBtn  = mkIconBtn('delete', '삭제', () => confirmDelete(i.id));
+  const calBtn  = mkIconBtn('calendar', '일정에 등록', () => addIssueToCalendar(i));
 
-  tr.append(el('td', {}, el('div', { class: 'row-actions' }, editBtn, attBtn, delBtn)));
+  tr.append(el('td', {}, el('div', { class: 'row-actions' }, editBtn, attBtn, calBtn, delBtn)));
   return tr;
 }
 
@@ -560,6 +561,11 @@ function mkIconBtn(kind, title, onclick) {
     delete: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
       <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`,
+    calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+      <line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/>
+      <line x1="3" y1="10" x2="21" y2="10"/></svg>`,
   };
   const b = el('button', {
     class: 'icon-btn' + (kind === 'delete' ? ' danger' : kind === 'attach' ? ' attach' : ''),
@@ -978,7 +984,8 @@ function cardEl(i) {
     attBtn.append(el('span', { class: 'att-count-badge' }, String(i.att_count)));
   }
   const delBtn  = mkIconBtn('delete', '삭제', () => confirmDelete(i.id));
-  foot.append(editBtn, attBtn, delBtn);
+  const calBtn  = mkIconBtn('calendar', '일정에 등록', () => addIssueToCalendar(i));
+  foot.append(editBtn, attBtn, calBtn, delBtn);
   card.append(foot);
   return card;
 }
@@ -1348,6 +1355,76 @@ async function confirmDelete(iid) {
     if (S.attachIssue?.id === iid) closeAttach();
     await reloadAll();
   } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ───────────── 캘린더(일정)에 등록 ─────────────
+async function addIssueToCalendar(i) {
+  // 중복 체크
+  let existing = null;
+  try {
+    existing = await api(`/api/cal/events/find?source_type=issue&source_id=${i.id}`);
+  } catch (_) {}
+
+  if (existing) {
+    if (confirm(
+        `이 이슈는 이미 일정에 등록되어 있습니다.\n\n` +
+        `제목: ${existing.title}\n날짜: ${existing.start_date}\n\n` +
+        `일정 페이지에서 확인/편집하시겠습니까?`
+    )) {
+      window.location.href = '/calendar';
+    }
+    return;
+  }
+
+  // priority별 색상 매핑
+  const colorMap = {
+    'COC & Flag': 'red',
+    'Urgent':     'amber',
+    'Next DD':    'blue',
+    'Normal':     'gray',
+  };
+  const color = colorMap[i.priority] || 'blue';
+
+  // 미리 채워진 데이터
+  const vesselName = (S.vessels.find(v => v.id === i.vessel_id) || {}).name || '';
+  const supName    = (S.supervisors.find(s => s.id === i.supervisor_id) || {}).name || '';
+  const title = (vesselName ? `[${vesselName}] ` : '') + (i.item_topic || '(이슈)');
+  const startDate = i.due_date || i.issue_date;
+  const endDate   = (i.due_date && i.issue_date && i.due_date !== i.issue_date) ? i.due_date : null;
+
+  const summary =
+    `다음 정보로 일정에 등록합니다:\n\n` +
+    `  제목: ${title}\n` +
+    `  날짜: ${startDate}${endDate ? ' ~ ' + endDate : ''}\n` +
+    `  감독: ${supName || '(미지정)'}\n` +
+    `  선박: ${vesselName || '(미지정)'}\n` +
+    `  우선순위: ${i.priority} → 색상: ${color}\n\n` +
+    `진행하시겠습니까? (저장 후 일정 페이지에서 시간/메모 등 추가 편집 가능)`;
+  if (!confirm(summary)) return;
+
+  try {
+    await api('/api/cal/events', {
+      method: 'POST',
+      body: JSON.stringify({
+        title,
+        start_date: startDate,
+        end_date:   endDate,
+        all_day:    true,
+        supervisor_id: i.supervisor_id || null,
+        vessel_id:     i.vessel_id || null,
+        category:   '업무',
+        color,
+        notes:      i.description || '',
+        source_type: 'issue',
+        source_id:   i.id,
+      }),
+    });
+    if (confirm('일정에 등록되었습니다. 일정 페이지로 이동하시겠습니까?')) {
+      window.location.href = '/calendar';
+    }
+  } catch (err) {
+    alert('일정 등록 실패: ' + err.message);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
