@@ -220,6 +220,49 @@ def init_db(drop=False):
             print('  · cs_findings.item 컬럼 추가')
             conn.commit()
 
+        # cs_surveys.vendor CHECK 제약 제거 (AALMAR/IDWAL 외 자유 입력 허용)
+        try:
+            sql_def = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='cs_surveys'",
+            ).fetchone()
+            if sql_def and "CHECK (vendor IN" in (sql_def[0] or ''):
+                conn.executescript("""
+                    PRAGMA foreign_keys = OFF;
+                    BEGIN;
+                    CREATE TABLE cs_surveys_new (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        vessel_id       INTEGER NOT NULL,
+                        year            INTEGER NOT NULL,
+                        quarter         INTEGER NOT NULL CHECK (quarter IN (1,2,3,4)),
+                        vendor          TEXT,
+                        management      TEXT,
+                        inspection_date TEXT,
+                        overall_remark  TEXT,
+                        manual_defect_count      INTEGER,
+                        manual_observation_count INTEGER,
+                        manual_close_count       INTEGER,
+                        created_by      TEXT,
+                        created_at      TEXT DEFAULT (datetime('now','localtime')),
+                        updated_at      TEXT DEFAULT (datetime('now','localtime')),
+                        UNIQUE (vessel_id, year, quarter),
+                        FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE CASCADE
+                    );
+                    INSERT INTO cs_surveys_new
+                      SELECT id, vessel_id, year, quarter, vendor, management,
+                             inspection_date, overall_remark,
+                             manual_defect_count, manual_observation_count, manual_close_count,
+                             created_by, created_at, updated_at
+                      FROM cs_surveys;
+                    DROP TABLE cs_surveys;
+                    ALTER TABLE cs_surveys_new RENAME TO cs_surveys;
+                    CREATE INDEX IF NOT EXISTS idx_cs_surveys_vessel_year ON cs_surveys(vessel_id, year);
+                    COMMIT;
+                    PRAGMA foreign_keys = ON;
+                """)
+                print('  · cs_surveys.vendor CHECK 제약 제거 (자유 입력 허용)')
+        except Exception as e:
+            print(f'  · cs_surveys vendor 마이그레이션 스킵: {e}')
+
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
                 conn.executescript(f.read())
@@ -1054,11 +1097,19 @@ def api_cs_surveys_list():
         d['findings'] = findings_by_sid.get(s['id'], [])
         by_vessel.setdefault(s['vessel_id'], {})[s['quarter']] = d
 
+    # 선박별 last_updated (해당 선박의 모든 surveys 중 가장 최근 updated_at)
+    last_by_vessel = {}
+    for s in surveys:
+        u = s['updated_at']
+        if u and (s['vessel_id'] not in last_by_vessel or u > last_by_vessel[s['vessel_id']]):
+            last_by_vessel[s['vessel_id']] = u
+
     out = []
     for v in vessels:
         out.append({
             'vessel': dict(v),
             'surveys': by_vessel.get(v['id'], {}),
+            'last_updated': last_by_vessel.get(v['id']),
         })
     return jsonify(out)
 
@@ -1192,7 +1243,8 @@ def api_cs_finding_create(sid):
 @app.route('/api/cs/findings/<int:fid>', methods=['PUT'])
 @login_required
 def api_cs_finding_update(fid):
-    if not query('SELECT id FROM cs_findings WHERE id=?', (fid,), one=True):
+    cur = query('SELECT survey_id, status FROM cs_findings WHERE id=?', (fid,), one=True)
+    if not cur:
         abort(404)
     d = request.get_json(silent=True) or {}
     sets, params = [], []
@@ -1205,6 +1257,13 @@ def api_cs_finding_update(fid):
     sets.append("updated_at = datetime('now','localtime')")
     params.append(fid)
     execute(f'UPDATE cs_findings SET {", ".join(sets)} WHERE id = ?', params)
+
+    # status 변경 시 cs_surveys.updated_at 갱신 (선박 헤더의 Last update에 반영)
+    if 'status' in d and d['status'] != cur['status']:
+        execute(
+            "UPDATE cs_surveys SET updated_at = datetime('now','localtime') WHERE id=?",
+            (cur['survey_id'],),
+        )
     return jsonify({'id': fid})
 
 
@@ -1392,6 +1451,13 @@ def api_vettings_list():
         for r in rows:
             sv_map.setdefault(r['vessel_id'], []).append(r['supervisor_id'])
 
+    # 선박별 last_updated (해당 선박의 모든 vettings 중 가장 최근 updated_at)
+    last_by_vessel = {}
+    for v in vettings:
+        u = v['updated_at']
+        if u and (v['vessel_id'] not in last_by_vessel or u > last_by_vessel[v['vessel_id']]):
+            last_by_vessel[v['vessel_id']] = u
+
     out = []
     for ves in vessels:
         vd = dict(ves)
@@ -1399,6 +1465,7 @@ def api_vettings_list():
         out.append({
             'vessel': vd,
             'vettings': by_vessel.get(ves['id'], []),
+            'last_updated': last_by_vessel.get(ves['id']),
         })
     return jsonify(out)
 
@@ -1531,7 +1598,8 @@ def api_vt_findings_create(vid):
 @app.route('/api/vt-findings/<int:fid>', methods=['PUT'])
 @login_required
 def api_vt_finding_update(fid):
-    if not query('SELECT id FROM vt_findings WHERE id=?', (fid,), one=True):
+    cur = query('SELECT vetting_id, status FROM vt_findings WHERE id=?', (fid,), one=True)
+    if not cur:
         abort(404)
     d = request.get_json() or {}
     sets, params = [], []
@@ -1543,6 +1611,13 @@ def api_vt_finding_update(fid):
         return jsonify({'ok': True})
     sets.append("updated_at = datetime('now','localtime')")
     execute(f'UPDATE vt_findings SET {", ".join(sets)} WHERE id=?', tuple(params + [fid]))
+
+    # status 변경 시 vettings.updated_at 갱신 (선박 헤더의 Last update에 반영)
+    if 'status' in d and d['status'] != cur['status']:
+        execute(
+            "UPDATE vettings SET updated_at = datetime('now','localtime') WHERE id=?",
+            (cur['vetting_id'],),
+        )
     return jsonify({'ok': True})
 
 
