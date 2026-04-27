@@ -441,6 +441,12 @@ def vetting_status():
     return render_template('vetting_status.html')
 
 
+@app.route('/calendar')
+@login_required
+def calendar_page():
+    return render_template('calendar.html')
+
+
 # ═════════════════════════════════════════════════════════════════
 #  API — me / password
 # ═════════════════════════════════════════════════════════════════
@@ -1617,6 +1623,143 @@ def api_vt_attachment_delete(aid):
         try: os.remove(p)
         except OSError: pass
     execute('DELETE FROM vt_attachments WHERE id=?', (aid,))
+    return jsonify({'ok': True})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  API — Calendar Events (일정 모듈)
+# ═════════════════════════════════════════════════════════════════
+CAL_VALID_COLORS = ('gray','red','amber','yellow','green','blue','purple','pink')
+
+
+@app.route('/api/cal/events', methods=['GET'])
+@login_required
+def api_cal_events_list():
+    """기간 내 일정 조회.
+    Query: ?start=YYYY-MM-DD&end=YYYY-MM-DD&supervisor_id=N
+    - supervisor_id 없거나 'all' = 전체 (공용 + 모든 감독)
+    - supervisor_id=N = 해당 감독의 일정 + 공용(supervisor_id IS NULL)
+    """
+    start = request.args.get('start')
+    end   = request.args.get('end')
+    sup   = request.args.get('supervisor_id')
+
+    sql = 'SELECT * FROM calendar_events WHERE 1=1'
+    params = []
+    if start:
+        # 시작일이 end 보다 작거나, end_date가 start보다 크거나 (멀티데이 겹침)
+        sql += ' AND (COALESCE(end_date, start_date) >= ?)'
+        params.append(start)
+    if end:
+        sql += ' AND (start_date <= ?)'
+        params.append(end)
+    if sup and sup != 'all':
+        sql += ' AND (supervisor_id = ? OR supervisor_id IS NULL)'
+        params.append(int(sup))
+    sql += ' ORDER BY start_date, COALESCE(start_time, "00:00")'
+
+    rows = query(sql, tuple(params))
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/cal/events/find', methods=['GET'])
+@login_required
+def api_cal_event_find():
+    """source_type + source_id 로 기존 일정 조회 (중복 체크용).
+    Query: ?source_type=issue|cs|vetting&source_id=N
+    응답: event dict 또는 null
+    """
+    src_type = request.args.get('source_type')
+    src_id   = request.args.get('source_id', type=int)
+    if not src_type or not src_id:
+        return jsonify(None)
+    r = query('SELECT * FROM calendar_events WHERE source_type=? AND source_id=?',
+              (src_type, src_id), one=True)
+    return jsonify(dict(r) if r else None)
+
+
+@app.route('/api/cal/events', methods=['POST'])
+@login_required
+def api_cal_event_create():
+    d = request.get_json() or {}
+    if not d.get('title'):
+        return jsonify({'error': 'title 이 필요합니다.'}), 400
+    if not d.get('start_date'):
+        return jsonify({'error': 'start_date 가 필요합니다.'}), 400
+
+    color = (d.get('color') or 'blue').lower()
+    if color not in CAL_VALID_COLORS:
+        color = 'blue'
+
+    all_day = 1 if d.get('all_day', True) else 0
+
+    new_id = execute("""
+        INSERT INTO calendar_events
+            (supervisor_id, vessel_id, title, start_date, end_date,
+             all_day, start_time, end_time, category, color, location, notes,
+             source_type, source_id, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        d.get('supervisor_id') or None,
+        d.get('vessel_id') or None,
+        d['title'],
+        d['start_date'],
+        d.get('end_date') or None,
+        all_day,
+        d.get('start_time') or None,
+        d.get('end_time') or None,
+        d.get('category') or '',
+        color,
+        d.get('location') or '',
+        d.get('notes') or '',
+        d.get('source_type') or 'manual',
+        d.get('source_id') or None,
+        session.get('username'),
+    ))
+    return jsonify({'id': new_id}), 201
+
+
+@app.route('/api/cal/events/<int:eid>', methods=['GET'])
+@login_required
+def api_cal_event_get(eid):
+    r = query('SELECT * FROM calendar_events WHERE id=?', (eid,), one=True)
+    if not r:
+        abort(404)
+    return jsonify(dict(r))
+
+
+@app.route('/api/cal/events/<int:eid>', methods=['PUT'])
+@login_required
+def api_cal_event_update(eid):
+    if not query('SELECT id FROM calendar_events WHERE id=?', (eid,), one=True):
+        abort(404)
+    d = request.get_json() or {}
+    sets, params = [], []
+    for f in ('supervisor_id','vessel_id','title','start_date','end_date',
+              'all_day','start_time','end_time','category','color',
+              'location','notes'):
+        if f in d:
+            v = d[f]
+            if f == 'color' and v:
+                v = v.lower()
+                if v not in CAL_VALID_COLORS:
+                    v = 'blue'
+            if f == 'all_day':
+                v = 1 if v else 0
+            sets.append(f'{f} = ?')
+            params.append(None if v == '' else v)
+    if not sets:
+        return jsonify({'ok': True})
+    sets.append("updated_at = datetime('now','localtime')")
+    execute(f'UPDATE calendar_events SET {", ".join(sets)} WHERE id=?',
+            tuple(params + [eid]))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/cal/events/<int:eid>', methods=['DELETE'])
+@login_required
+def api_cal_event_delete(eid):
+    execute('DELETE FROM calendar_events WHERE id=?', (eid,))
     return jsonify({'ok': True})
 
 
