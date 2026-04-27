@@ -285,7 +285,7 @@ col.c-desc   { width: 30%; }
 col.c-action { width: 28%; }
 col.c-pri    { width: 102px; }
 col.c-stat   { width: 62px; }
-col.c-edit   { width: 110px; }
+col.c-edit   { width: 156px; }
 
 .ex-table thead th {
   background: var(--surface-2);
@@ -478,9 +478,13 @@ col.c-edit   { width: 110px; }
 /* Action buttons (Edit + Delete) */
 .row-actions {
   display: flex; gap: 4px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  white-space: nowrap;
 }
 .icon-btn {
   width: 28px; height: 28px;
+  flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid var(--border);
   border-radius: 5px;
