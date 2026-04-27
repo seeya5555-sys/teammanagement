@@ -234,3 +234,33 @@ CREATE TABLE IF NOT EXISTS vt_attachments (
     FOREIGN KEY (vetting_id) REFERENCES vettings(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_vt_attachments_vetting ON vt_attachments(vetting_id);
+
+-- ═════════════════════════════════════════════════════════════
+--  Calendar Events (일정 모듈)
+-- ═════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS calendar_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    supervisor_id   INTEGER,                            -- NULL = 공용/전사
+    vessel_id       INTEGER,                            -- 선박 연결 (선택)
+    title           TEXT NOT NULL,
+    start_date      TEXT NOT NULL,                      -- YYYY-MM-DD
+    end_date        TEXT,                               -- NULL = 단일일자
+    all_day         INTEGER NOT NULL DEFAULT 1,         -- 1=종일, 0=시간 지정
+    start_time      TEXT,                               -- HH:MM (all_day=0일 때만)
+    end_time        TEXT,
+    category        TEXT,                               -- 회의/출장/ETA/ETD/휴가/DD/검사/기타
+    color           TEXT,                               -- gray/red/amber/yellow/green/blue/purple/pink
+    location        TEXT,
+    notes           TEXT,
+    -- 다른 모듈에서 가져온 경우 (Phase B에서 사용)
+    source_type     TEXT,                               -- 'issue'|'cs'|'vetting'|'manual'(default)|null
+    source_id       INTEGER,                            -- 원본 row id
+    created_by      TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (supervisor_id) REFERENCES supervisors(id) ON DELETE SET NULL,
+    FOREIGN KEY (vessel_id)     REFERENCES vessels(id)     ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cal_events_date ON calendar_events(start_date);
+CREATE INDEX IF NOT EXISTS idx_cal_events_supervisor ON calendar_events(supervisor_id);
+CREATE INDEX IF NOT EXISTS idx_cal_events_source ON calendar_events(source_type, source_id);
