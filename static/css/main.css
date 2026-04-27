@@ -2637,3 +2637,43 @@ col.c-edit   { width: 110px; }
 .cal-side-source.src-issue   { background: #dbeafe; color: #1e40af; }
 .cal-side-source.src-cs      { background: #ede9fe; color: #6d28d9; }
 .cal-side-source.src-vetting { background: #fef3c7; color: #92400e; }
+
+/* ───── 한국 공휴일 표시 ───── */
+.cal-cell-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-height: 18px;
+}
+.cal-cell.is-holiday .cal-cell-day {
+  color: #d6586a;
+}
+.cal-cell.is-holiday.is-today .cal-cell-day {
+  color: white;  /* 오늘+공휴일이면 today 동그라미 흰글자 유지 */
+}
+.cal-holiday-label {
+  font-size: 9.5px;
+  color: #d6586a;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  line-height: 1.2;
+}
+.cal-cell.other-month .cal-holiday-label {
+  color: #c8a4ad;  /* 다른 달이면 흐리게 */
+}
+.cal-side-holiday {
+  display: inline-block;
+  margin-left: 8px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: -0.1px;
+}
