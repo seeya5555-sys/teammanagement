@@ -363,6 +363,19 @@ function quarterRow(vesselId, quarter, survey) {
     if (survey.overall_remark) memoBtn.classList.add('has-memo');
     actions.append(memoBtn);
 
+    // 📅 캘린더 등록
+    const calBtn = el('button', {
+      class: 'icon-btn',
+      title: '일정에 등록',
+      onclick: (e) => { e.stopPropagation(); addCsToCalendar(vesselId, quarter, survey); },
+    });
+    calBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+      <line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/>
+      <line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+    actions.append(calBtn);
+
     // 🗑 삭제
     const rm = el('button', {
       class: 'icon-btn danger',
@@ -1093,6 +1106,73 @@ async function deleteSurvey(survey) {
     S.expandedSurveys.delete(survey.id);
     await reloadData();
   } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ───────────── 캘린더(일정)에 등록 ─────────────
+async function addCsToCalendar(vesselId, quarter, survey) {
+  if (!survey.inspection_date) {
+    alert('Inspection Date가 설정되지 않았습니다.\n분기 행에서 검사일을 먼저 입력해주세요.');
+    return;
+  }
+
+  // 중복 체크
+  let existing = null;
+  try {
+    existing = await api(`/api/cal/events/find?source_type=cs&source_id=${survey.id}`);
+  } catch (_) {}
+
+  if (existing) {
+    if (confirm(
+        `이 분기 수검은 이미 일정에 등록되어 있습니다.\n\n` +
+        `제목: ${existing.title}\n날짜: ${existing.start_date}\n\n` +
+        `일정 페이지에서 확인/편집하시겠습니까?`
+    )) {
+      window.location.href = '/calendar';
+    }
+    return;
+  }
+
+  // 선박 정보 + 활성 감독
+  const item = S.data.find(x => x.vessel.id === vesselId);
+  const vesselName = item?.vessel?.name || '';
+  let supId = null;
+  if (S.activeTab !== 'all') supId = parseInt(S.activeTab);
+  if (!supId && S.user.supervisor_id) supId = S.user.supervisor_id;
+
+  const vendor = survey.vendor || '시행사 미정';
+  const title = `[${vesselName}] ${quarter}Q Condition Survey · ${vendor}`;
+
+  const summary =
+    `다음 정보로 일정에 등록합니다:\n\n` +
+    `  제목: ${title}\n` +
+    `  날짜: ${survey.inspection_date}\n` +
+    `  선박: ${vesselName}\n` +
+    `  카테고리: 검사  (색상: 보라)\n\n` +
+    `진행하시겠습니까? (저장 후 일정 페이지에서 추가 편집 가능)`;
+  if (!confirm(summary)) return;
+
+  try {
+    await api('/api/cal/events', {
+      method: 'POST',
+      body: JSON.stringify({
+        title,
+        start_date: survey.inspection_date,
+        all_day:    true,
+        supervisor_id: supId,
+        vessel_id:     vesselId,
+        category:   '검사',
+        color:      'purple',
+        notes:      survey.overall_remark || '',
+        source_type: 'cs',
+        source_id:   survey.id,
+      }),
+    });
+    if (confirm('일정에 등록되었습니다. 일정 페이지로 이동하시겠습니까?')) {
+      window.location.href = '/calendar';
+    }
+  } catch (err) {
+    alert('일정 등록 실패: ' + err.message);
+  }
 }
 
 // ───────────── Data Reload ─────────────
