@@ -351,6 +351,19 @@ function vettingRow(item, vt) {
   }
   actions.append(attBtn);
 
+  // 📅 캘린더 등록
+  const calBtn = el('button', {
+    class: 'icon-btn',
+    title: '일정에 등록',
+    onclick: (e) => { e.stopPropagation(); addVtToCalendar(item, vt); },
+  });
+  calBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+    <line x1="16" y1="2" x2="16" y2="6"/>
+    <line x1="8" y1="2" x2="8" y2="6"/>
+    <line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+  actions.append(calBtn);
+
   const rm = el('button', {
     class: 'icon-btn danger',
     title: '이 Vetting 삭제',
@@ -936,6 +949,81 @@ async function deleteVetting(vt) {
     saveVtExpanded();
     await reloadData();
   } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ───────────── 캘린더(일정)에 등록 ─────────────
+async function addVtToCalendar(item, vt) {
+  if (!vt.inspection_date) {
+    alert('Inspection Date가 설정되지 않았습니다.\n검사일을 먼저 입력해주세요.');
+    return;
+  }
+
+  // 중복 체크
+  let existing = null;
+  try {
+    existing = await api(`/api/cal/events/find?source_type=vetting&source_id=${vt.id}`);
+  } catch (_) {}
+
+  if (existing) {
+    if (confirm(
+        `이 Vetting은 이미 일정에 등록되어 있습니다.\n\n` +
+        `제목: ${existing.title}\n날짜: ${existing.start_date}\n\n` +
+        `일정 페이지에서 확인/편집하시겠습니까?`
+    )) {
+      window.location.href = '/calendar';
+    }
+    return;
+  }
+
+  const v = item.vessel;
+  let supId = null;
+  if (S.activeTab !== 'all') supId = parseInt(S.activeTab);
+  if (!supId && S.user.supervisor_id) supId = S.user.supervisor_id;
+  if (!supId && (v.supervisor_ids || []).length) supId = v.supervisor_ids[0];
+
+  const company = vt.inspection_company || '검사기관 미정';
+  const repPart = vt.report_number ? ` (${vt.report_number})` : '';
+  const title = `[${v.name}] Vetting · ${company}${repPart}`;
+
+  const summary =
+    `다음 정보로 일정에 등록합니다:\n\n` +
+    `  제목: ${title}\n` +
+    `  날짜: ${vt.inspection_date}\n` +
+    `  선박: ${v.name}\n` +
+    `  Operation: ${vt.operation || '-'}\n` +
+    `  카테고리: 검사  (색상: 호박)\n\n` +
+    `진행하시겠습니까? (저장 후 일정 페이지에서 추가 편집 가능)`;
+  if (!confirm(summary)) return;
+
+  const notes =
+    `Inspector: ${vt.inspector || '-'}\n` +
+    `Port: ${vt.port || '-'}\n` +
+    `Operation: ${vt.operation || '-'}\n` +
+    (vt.overall_remark ? `\n${vt.overall_remark}` : '');
+
+  try {
+    await api('/api/cal/events', {
+      method: 'POST',
+      body: JSON.stringify({
+        title,
+        start_date: vt.inspection_date,
+        all_day:    true,
+        supervisor_id: supId,
+        vessel_id:     v.id,
+        category:   '검사',
+        color:      'amber',
+        location:   vt.port || '',
+        notes,
+        source_type: 'vetting',
+        source_id:   vt.id,
+      }),
+    });
+    if (confirm('일정에 등록되었습니다. 일정 페이지로 이동하시겠습니까?')) {
+      window.location.href = '/calendar';
+    }
+  } catch (err) {
+    alert('일정 등록 실패: ' + err.message);
+  }
 }
 
 // ───────────── Overall Remark 모달 ─────────────
