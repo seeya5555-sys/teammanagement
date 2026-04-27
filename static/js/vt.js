@@ -219,6 +219,7 @@ function vesselBlock(item) {
     el('span', { class: 'cs-vessel-icon' }, '🚢'),
     el('strong', { class: 'cs-vessel-name' }, v.name),
     el('span', { class: 'cs-vessel-type' }, v.vessel_type || ''),
+    lastUpdateLabelVT(item.last_updated),
     vesselSummary(item),
   );
   block.append(head);
@@ -267,6 +268,15 @@ function vesselBlock(item) {
   block.append(addBar);
 
   return block;
+}
+
+function lastUpdateLabelVT(updatedAt) {
+  if (!updatedAt) return el('span', { class: 'cs-last-update empty' }, '');
+  const dateOnly = (updatedAt || '').slice(0, 10);
+  return el('span', {
+    class: 'cs-last-update',
+    title: `Status 마지막 변경: ${updatedAt}`,
+  }, '↻ ' + dateOnly);
 }
 
 function vesselSummary(item) {
