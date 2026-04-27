@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block title %}일정 · TRMT3{% endblock %}
+
+{% block content %}
+
+<h1 class="page-title">일정</h1>
+
+<!-- 감독 탭 -->
+<div class="tab-bar" id="cal-tab-bar"></div>
+
+<!-- 툴바 -->
+<div class="cs-toolbar cal-toolbar">
+  <div class="cs-year-picker">
+    <button class="btn btn-outline btn-sm" id="cal-prev" title="이전 달">‹</button>
+    <span class="cs-year-label" id="cal-month-label">2026.04</span>
+    <button class="btn btn-outline btn-sm" id="cal-next" title="다음 달">›</button>
+  </div>
+  <button class="btn btn-outline btn-sm" id="cal-today">Today</button>
+  <button class="btn btn-primary btn-sm" id="cal-add" title="새 일정 추가">+ 일정 추가</button>
+  <span class="cs-context" id="cal-context"></span>
+</div>
+
+<!-- 분할: 좌측 월 캘린더 / 우측 일정 리스트 -->
+<div class="cal-layout">
+  <div class="cal-grid-wrap">
+    <div class="cal-grid-head">
+      <div class="cal-dow sun">일</div>
+      <div class="cal-dow">월</div>
+      <div class="cal-dow">화</div>
+      <div class="cal-dow">수</div>
+      <div class="cal-dow">목</div>
+      <div class="cal-dow">금</div>
+      <div class="cal-dow sat">토</div>
+    </div>
+    <div class="cal-grid" id="cal-grid"></div>
+  </div>
+
+  <aside class="cal-side">
+    <div class="cal-side-head">
+      <strong id="cal-side-date">날짜를 클릭하세요</strong>
+      <button class="btn btn-outline btn-sm" id="cal-side-add" title="이 날에 일정 추가" hidden>+ 추가</button>
+    </div>
+    <div class="cal-side-list" id="cal-side-list">
+      <div class="cal-empty">왼쪽 캘린더에서 날짜를 클릭하면 그날의 일정이 보입니다.</div>
+    </div>
+  </aside>
+</div>
+
+<!-- ========= 일정 추가/편집 모달 ========= -->
+<div class="modal" id="cal-modal" hidden>
+  <div class="modal-backdrop" data-close-cal="1"></div>
+  <div class="modal-box" style="width: min(560px, 94vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="cal-modal-title">새 일정</h2>
+      <button class="modal-close" data-close-cal="1" aria-label="닫기">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label for="cal-f-title">제목 <span class="req">*</span></label>
+        <input type="text" id="cal-f-title" placeholder="일정 제목" maxlength="200">
+      </div>
+
+      <div class="form-row form-row-grid">
+        <div>
+          <label for="cal-f-start">시작일 <span class="req">*</span></label>
+          <input type="date" id="cal-f-start">
+        </div>
+        <div>
+          <label for="cal-f-end">종료일 <span class="hint">(선택)</span></label>
+          <input type="date" id="cal-f-end">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label class="cb-row">
+          <input type="checkbox" id="cal-f-allday" checked>
+          종일
+        </label>
+      </div>
+      <div class="form-row form-row-grid" id="cal-f-time-row" hidden>
+        <div>
+          <label for="cal-f-stime">시작 시간</label>
+          <input type="time" id="cal-f-stime">
+        </div>
+        <div>
+          <label for="cal-f-etime">종료 시간</label>
+          <input type="time" id="cal-f-etime">
+        </div>
+      </div>
+
+      <div class="form-row form-row-grid">
+        <div>
+          <label for="cal-f-supervisor">담당 감독</label>
+          <select id="cal-f-supervisor">
+            <option value="">(공용 / 전체)</option>
+          </select>
+        </div>
+        <div>
+          <label for="cal-f-vessel">선박 (선택)</label>
+          <select id="cal-f-vessel">
+            <option value="">(선택 안 함)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row form-row-grid">
+        <div>
+          <label for="cal-f-category">카테고리</label>
+          <select id="cal-f-category">
+            <option value="">(선택)</option>
+            <option value="회의">회의</option>
+            <option value="출장">출장</option>
+            <option value="ETA">ETA (입항)</option>
+            <option value="ETD">ETD (출항)</option>
+            <option value="DD">DD 관련</option>
+            <option value="검사">검사</option>
+            <option value="휴가">휴가</option>
+            <option value="기타">기타</option>
+          </select>
+        </div>
+        <div>
+          <label>색상</label>
+          <div class="color-picker" id="cal-f-colors">
+            <button type="button" class="color-dot dot-blue   active" data-color="blue"   title="파랑"></button>
+            <button type="button" class="color-dot dot-purple"        data-color="purple" title="보라"></button>
+            <button type="button" class="color-dot dot-amber"         data-color="amber"  title="호박"></button>
+            <button type="button" class="color-dot dot-red"           data-color="red"    title="빨강"></button>
+            <button type="button" class="color-dot dot-green"         data-color="green"  title="초록"></button>
+            <button type="button" class="color-dot dot-pink"          data-color="pink"   title="분홍"></button>
+            <button type="button" class="color-dot dot-yellow"        data-color="yellow" title="노랑"></button>
+            <button type="button" class="color-dot dot-gray"          data-color="gray"   title="회색"></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label for="cal-f-location">장소</label>
+        <input type="text" id="cal-f-location" placeholder="예: 본사 회의실, Singapore Anchorage" maxlength="200">
+      </div>
+
+      <div class="form-row">
+        <label for="cal-f-notes">메모</label>
+        <textarea id="cal-f-notes" rows="3" placeholder="일정에 대한 추가 정보"></textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-outline danger" id="cal-f-delete" hidden>삭제</button>
+      <span style="flex:1"></span>
+      <button type="button" class="btn btn-outline" data-close-cal="1">취소</button>
+      <button type="button" class="btn btn-primary" id="cal-f-save">저장</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.TRMT = { user: {{ {
+      'username': session.username,
+      'display_name': session.display_name,
+      'role': session.role,
+      'supervisor_id': session.supervisor_id
+    } | tojson }} };
+</script>
+<script src="{{ url_for('static', filename='js/cal.js') }}"></script>
+{% endblock %}
