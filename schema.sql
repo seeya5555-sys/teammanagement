@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS cs_surveys (
     vessel_id       INTEGER NOT NULL,
     year            INTEGER NOT NULL,
     quarter         INTEGER NOT NULL CHECK (quarter IN (1,2,3,4)),
-    vendor          TEXT    CHECK (vendor IN ('AALMAR','IDWAL') OR vendor IS NULL OR vendor = ''),
+    vendor          TEXT,                 -- AALMAR / IDWAL / OTHERS / 자유 입력
     management      TEXT,
     inspection_date TEXT,                 -- YYYY-MM-DD
     overall_remark  TEXT,                 -- 분기별 수검 전체 리마크
