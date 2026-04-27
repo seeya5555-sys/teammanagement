@@ -181,6 +181,33 @@ function render() {
   }
 }
 
+// ───────────── Vendor 색상 매핑 ─────────────
+const VENDOR_COLOR_MAP = {
+  'AALMAR': 'blue',
+  'IDWAL':  'amber',
+  'OTHERS': 'gray',
+};
+function vendorColor(vendor) {
+  if (!vendor) return null;
+  const upper = vendor.trim().toUpperCase();
+  if (VENDOR_COLOR_MAP[upper]) return VENDOR_COLOR_MAP[upper];
+  // AALMAR/IDWAL이 부분 포함되어 있으면 매칭
+  if (upper.includes('AALMAR')) return 'blue';
+  if (upper.includes('IDWAL'))  return 'amber';
+  return 'gray';   // 그 외는 OTHERS 색상
+}
+
+// ───────────── Last update 라벨 ─────────────
+function lastUpdateLabel(updatedAt) {
+  if (!updatedAt) return el('span', { class: 'cs-last-update empty' }, '');
+  // updatedAt 형식: "2026-04-26 14:30:25"
+  const dateOnly = (updatedAt || '').slice(0, 10);
+  return el('span', {
+    class: 'cs-last-update',
+    title: `Status 마지막 변경: ${updatedAt}`,
+  }, '↻ ' + dateOnly);
+}
+
 function vesselSummary(item) {
   // 접힌 상태에서도 보이는 요약: 1Q~4Q 분기별 Open 카운트 (미등록도 격자로 표시)
   const surveys = item.surveys || {};
@@ -192,6 +219,10 @@ function vesselSummary(item) {
     const cell = el('span', { class: 'cs-q-summary' });
     cell.append(el('span', { class: 'cs-q-label' }, `${q}Q`));
     if (s) {
+      // vendor 색상 적용 (AALMAR=blue, IDWAL=amber, 기타=gray)
+      const vc = vendorColor(s.vendor);
+      if (vc) cell.classList.add(`cs-q-vendor-${vc}`);
+
       const op = s.open_count || 0;
       const cl = s.close_count || 0;
       const num = el('span', { class: 'cs-q-num' });
@@ -204,7 +235,15 @@ function vesselSummary(item) {
         num.append(el('span', { class: 'cs-q-empty-data' }, '–'));
       }
       cell.append(num);
+      // vendor 라벨 (있으면)
+      if (s.vendor) {
+        cell.append(el('span', { class: 'cs-q-vendor-label' },
+          (s.vendor || '').trim().slice(0, 6)));
+      }
       cell.classList.add('has-data');
+      cell.title = s.vendor
+        ? `${q}Q · ${s.vendor} · ${s.inspection_date || '날짜 미정'}`
+        : `${q}Q · ${s.inspection_date || '날짜 미정'}`;
     } else {
       cell.append(el('span', { class: 'cs-q-num cs-q-blank' }, '–'));
     }
@@ -234,6 +273,8 @@ function vesselBlock(item) {
     el('span', { class: 'cs-vessel-icon' }, '🚢'),
     el('strong', { class: 'cs-vessel-name' }, v.name),
     el('span', { class: 'cs-vessel-type' }, v.vessel_type || ''),
+    // Last update (Status 마지막 변경일)
+    lastUpdateLabel(item.last_updated),
     // 요약 카운트 (접힌 상태에서도 보이도록)
     vesselSummary(item),
   );
@@ -293,11 +334,11 @@ function quarterRow(vesselId, quarter, survey) {
   }
   tr.append(qCell);
 
-  // 시행사
+  // 시행사 — 드롭다운 추천(AALMAR/IDWAL/OTHERS) + 자유 입력 가능
   tr.append(editableCell(
     survey, vesselId, quarter, 'vendor',
     survey?.vendor || '',
-    'select', ['', 'AALMAR', 'IDWAL'],
+    'combo', ['AALMAR', 'IDWAL', 'OTHERS'],
   ));
   // Management
   tr.append(editableCell(
@@ -479,6 +520,26 @@ function editableCell(survey, vesselId, quarter, field, value, kind, options) {
         o.value = opt; o.textContent = opt || '(미선택)';
         if (opt === value) o.selected = true;
         input.append(o);
+      }
+    } else if (kind === 'combo') {
+      // 드롭다운 추천 + 자유 입력 가능 (datalist 활용)
+      input = document.createElement('input');
+      input.type = 'text';
+      input.value = value || '';
+      input.setAttribute('list', `cs-dl-${field}`);
+      // datalist는 이미 td 외부에 있는지 확인 후 없으면 생성
+      let dl = document.getElementById(`cs-dl-${field}`);
+      if (!dl) {
+        dl = document.createElement('datalist');
+        dl.id = `cs-dl-${field}`;
+        document.body.append(dl);
+      }
+      dl.innerHTML = '';
+      for (const opt of (options || [])) {
+        if (!opt) continue;
+        const o = document.createElement('option');
+        o.value = opt;
+        dl.append(o);
       }
     } else if (kind === 'date') {
       input = document.createElement('input');
