@@ -31,6 +31,9 @@
         <a href="{{ url_for('vetting_status') }}" class="nav-link {% if request.endpoint=='vetting_status' %}active{% endif %}">
           Vetting Status
         </a>
+        <a href="{{ url_for('calendar_page') }}" class="nav-link {% if request.endpoint=='calendar_page' %}active{% endif %}">
+          일정
+        </a>
       </nav>
 
       <div class="user-menu">
