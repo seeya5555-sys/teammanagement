@@ -205,10 +205,14 @@ function autoCollapseNewDates() {
 function renderTabs() {
   const bar = $('#tab-bar');
   bar.innerHTML = '';
-  const total = S.supervisors.reduce((a, s) => a + s.total, 0);
-  bar.append(tabEl('all', '전체', 'gray', total, S.activeTab === 'all'));
+  // 탭 카운트는 "진행중"(Open + InProgress)만 표시 — 완료(Closed)는 제외
+  const totalActive = S.supervisors.reduce(
+    (a, s) => a + (s.open_count || 0) + (s.progress_count || 0), 0,
+  );
+  bar.append(tabEl('all', '전체', 'gray', totalActive, S.activeTab === 'all'));
   for (const s of S.supervisors) {
-    bar.append(tabEl(s.id, s.name, s.color, s.total, S.activeTab == s.id));
+    const active = (s.open_count || 0) + (s.progress_count || 0);
+    bar.append(tabEl(s.id, s.name, s.color, active, S.activeTab == s.id));
   }
   renderSubTabs();
 }
@@ -2341,6 +2345,29 @@ function wireEvents() {
   });
 
   $('#btn-toggle-all').addEventListener('click', toggleAll);
+
+  // 엑셀 추출 — 현재 필터 상태 그대로 백엔드에 넘김
+  $('#btn-export-xlsx').addEventListener('click', () => {
+    const p = new URLSearchParams();
+    if (S.activeTab !== 'all')   p.set('supervisor_id', S.activeTab);
+    if (S.filters.q)             p.set('q', S.filters.q);
+    if (S.filters.vessel_id)     p.set('vessel_id', S.filters.vessel_id);
+    if (S.filters.vessel_type)   p.set('vessel_type', S.filters.vessel_type);
+    if (S.filters.priority)      p.set('priority', S.filters.priority);
+
+    // status 처리 — 화면과 동일하게:
+    //  · 명시 필터 있으면 그대로
+    //  · "완료" 서브탭은 status=Closed
+    //  · "진행중" 서브탭은 status_in=Open,InProgress (다중 값)
+    if (S.filters.status) {
+      p.set('status', S.filters.status);
+    } else if (S.activeSubTab === 'closed') {
+      p.set('status', 'Closed');
+    } else {
+      p.set('status_in', 'Open,InProgress');
+    }
+    window.location = '/api/issues/export?' + p.toString();
+  });
 
   let searchTimer;
   $('#filter-search').addEventListener('input', (e) => {
