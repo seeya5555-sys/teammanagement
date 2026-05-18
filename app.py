@@ -622,6 +622,382 @@ def _issue_to_dict(row):
     return d
 
 
+# ─────────────────────────────────────────────────────────────────
+#  Daily 업무관리 — Excel 추출 (정형 템플릿)
+#   · 화면 구조 그대로 재현: 감독 시트 → 제목 → 컬럼 헤더 →
+#     월 그룹 헤더 → 일 그룹 헤더 → 데이터 행
+#   · Excel의 행 그룹(outline) 기능으로 월·일 단위 접기/펼치기 가능
+#   · 컬럼 헤더 행에 AutoFilter 적용 → 선박명 등 자유롭게 필터
+#   · 현재 화면 필터(상태/우선순위/선박/선종/검색어/서브탭) 그대로 반영
+# ─────────────────────────────────────────────────────────────────
+@app.route('/api/issues/export')
+@login_required
+def api_issue_export():
+    from io import BytesIO
+    from datetime import datetime
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return jsonify({'error': 'openpyxl 미설치 — 서버에 pip install openpyxl 필요'}), 500
+    from flask import send_file
+
+    # ── 1) 화면 필터와 동일한 조건 ──────────────────────────────
+    conds, params = ['1=1'], []
+    for key, col in [('supervisor_id', 'i.supervisor_id'),
+                     ('vessel_id',     'i.vessel_id'),
+                     ('status',        'i.status'),
+                     ('priority',      'i.priority')]:
+        val = request.args.get(key)
+        if val:
+            conds.append(f'{col} = ?')
+            params.append(val)
+
+    status_in = request.args.get('status_in')
+    if status_in:
+        vals = [v.strip() for v in status_in.split(',') if v.strip()]
+        if vals:
+            placeholders = ','.join('?' for _ in vals)
+            conds.append(f'i.status IN ({placeholders})')
+            params += vals
+
+    q = request.args.get('q')
+    if q:
+        like = f'%{q}%'
+        conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
+        params += [like, like, like]
+
+    vt = request.args.get('vessel_type')
+    if vt:
+        conds.append('v.vessel_type = ?')
+        params.append(vt)
+
+    sql = f'''
+        SELECT i.*,
+               s.id            AS sv_id,
+               s.name          AS supervisor_name,
+               s.display_order AS sv_order,
+               v.name          AS vessel_name
+          FROM issues i
+          JOIN supervisors s ON s.id = i.supervisor_id
+          JOIN vessels     v ON v.id = i.vessel_id
+         WHERE {' AND '.join(conds)}
+         ORDER BY s.display_order ASC, s.id ASC,
+                  i.issue_date ASC, i.id ASC
+    '''
+    rows = [_issue_to_dict(r) for r in query(sql, params)]
+
+    # ── 2) 감독 → 월 → 일 → 이슈 (4단 그룹핑) ───────────────────
+    sv_map  = {}   # sv_name -> {'order': sv_order, 'months': OrderedDict}
+    sv_seq  = []
+    for r in rows:
+        sn = r['supervisor_name']
+        if sn not in sv_map:
+            sv_map[sn] = {'order': r.get('sv_order') or 0, 'months': {}}
+            sv_seq.append(sn)
+        d = r.get('issue_date') or ''
+        ym = d[:7] if len(d) >= 7 else '날짜 미정'
+        months = sv_map[sn]['months']
+        if ym not in months:
+            months[ym] = {}
+        days = months[ym]
+        dkey = d if d else '날짜 미정'
+        if dkey not in days:
+            days[dkey] = []
+        days[dkey].append(r)
+
+    # ── 3) 스타일 정의 ──────────────────────────────────────────
+    HEADERS = ['NO.', '작성일', '마감일', '선박명', 'ITEM',
+               'DESCRIPTION', 'ACTION PLAN', '우선순위', '상태', '작성자']
+    COL_WIDTHS = [5, 12, 12, 22, 28, 38, 42, 13, 11, 11]
+    N_COLS = len(HEADERS)
+
+    F = 'Malgun Gothic'   # Windows 환경의 한글 폰트, macOS도 대체 잘 됨
+    title_font   = Font(name=F, size=14, bold=True, color='FFFFFF')
+    sub_font     = Font(name=F, size=10, color='ECF0F1', italic=True)
+    title_fill   = PatternFill('solid', start_color='1F3A5F')   # 짙은 네이비
+    sub_fill     = PatternFill('solid', start_color='2C5282')
+
+    col_hdr_font = Font(name=F, size=10, bold=True, color='FFFFFF')
+    col_hdr_fill = PatternFill('solid', start_color='34495E')   # 슬레이트
+
+    month_font   = Font(name=F, size=11, bold=True, color='FFFFFF')
+    month_fill   = PatternFill('solid', start_color='7F8C8D')   # 미디엄 그레이
+
+    day_font     = Font(name=F, size=10, bold=True, color='2C3E50')
+    day_fill     = PatternFill('solid', start_color='D5DBDB')   # 라이트 그레이
+
+    body_font    = Font(name=F, size=10)
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    body_align   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
+    cent_top     = Alignment(horizontal='center', vertical='top',    wrap_text=True)
+    left_mid     = Alignment(horizontal='left',   vertical='center', wrap_text=False)
+
+    thin = Side(style='thin',   color='BDC3C7')
+    med  = Side(style='medium', color='34495E')
+    border_thin = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    PRI_FILL = {
+        'COC & Flag': PatternFill('solid', start_color='F8CECC'),
+        'Urgent':     PatternFill('solid', start_color='FFE6CC'),
+        'Next DD':    PatternFill('solid', start_color='FFF2CC'),
+        'Normal':     None,
+    }
+    PRI_FONT = {
+        'COC & Flag': Font(name=F, size=10, bold=True, color='B71C1C'),
+        'Urgent':     Font(name=F, size=10, bold=True, color='E65100'),
+        'Next DD':    Font(name=F, size=10, bold=True, color='6D4C0F'),
+        'Normal':     Font(name=F, size=10, color='5D6D7E'),
+    }
+    STAT_FILL = {
+        'Open':       PatternFill('solid', start_color='E1F5FE'),
+        'InProgress': PatternFill('solid', start_color='FFF9C4'),
+        'Closed':     PatternFill('solid', start_color='E8F5E9'),
+    }
+    STAT_FONT = {
+        'Open':       Font(name=F, size=10, bold=True, color='0277BD'),
+        'InProgress': Font(name=F, size=10, bold=True, color='F57F17'),
+        'Closed':     Font(name=F, size=10, bold=True, color='2E7D32'),
+    }
+    STAT_LABEL = {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'}
+
+    def _sheet_safe(name):
+        bad = '[]:*?/\\'
+        out = ''.join('_' if c in bad else c for c in name)
+        return (out[:31] or 'Sheet')
+
+    def _fmt_actions(acts):
+        if not acts:
+            return ''
+        lines = []
+        for a in acts:
+            d = (a.get('date') or '').strip()
+            p = (a.get('progress') or '').strip()
+            mark = '★ ' if a.get('important') else ''
+            if d and p:   lines.append(f'{mark}[{d}] {p}')
+            elif d:       lines.append(f'{mark}[{d}]')
+            elif p:       lines.append(f'{mark}{p}')
+        return '\n'.join(lines)
+
+    def _ko_month(ym):
+        # "2026-05" -> "2026년 5월"
+        try:
+            y, m = ym.split('-')
+            return f'{y}년 {int(m)}월'
+        except Exception:
+            return ym
+
+    # ── 4) Workbook 생성 ────────────────────────────────────────
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+
+    # 현재 사용자 (서명용)
+    me = session.get('display_name') or session.get('username') or ''
+
+    # 화면 필터 요약 (제목 영역에 노출)
+    sub_chips = []
+    if status_in:
+        sub_chips.append('필터: ' + status_in.replace(',', ' / '))
+    elif request.args.get('status'):
+        sub_chips.append('상태: ' + request.args.get('status'))
+    if request.args.get('priority'):
+        sub_chips.append('우선순위: ' + request.args.get('priority'))
+    if request.args.get('vessel_type'):
+        sub_chips.append('선종: ' + request.args.get('vessel_type'))
+    if request.args.get('vessel_id'):
+        vname = query('SELECT name FROM vessels WHERE id=?',
+                      (request.args.get('vessel_id'),), one=True)
+        if vname: sub_chips.append('선박: ' + vname['name'])
+    if request.args.get('q'):
+        sub_chips.append('검색: ' + request.args.get('q'))
+    sub_text = ' | '.join(sub_chips) if sub_chips else '전체 항목'
+
+    if not sv_seq:
+        ws = wb.create_sheet('데이터 없음')
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS)
+        c = ws.cell(row=1, column=1, value='Daily 업무관리 — 데이터 없음')
+        c.font = title_font
+        c.fill = title_fill
+        c.alignment = center_align
+        ws.cell(row=3, column=1,
+                value='필터 조건에 해당하는 이슈가 없습니다.').font = Font(name=F, size=11, italic=True)
+        for idx, w in enumerate(COL_WIDTHS, start=1):
+            ws.column_dimensions[get_column_letter(idx)].width = w
+    else:
+        for sn in sv_seq:
+            ws = wb.create_sheet(_sheet_safe(sn))
+            months = sv_map[sn]['months']
+
+            # 컬럼 너비
+            for idx, w in enumerate(COL_WIDTHS, start=1):
+                ws.column_dimensions[get_column_letter(idx)].width = w
+
+            # ── 4-1) 제목 영역 (행1-2) ──
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS)
+            c1 = ws.cell(row=1, column=1, value=f'Daily 업무관리   |   {sn}')
+            c1.font = title_font
+            c1.fill = title_fill
+            c1.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+            ws.row_dimensions[1].height = 30
+
+            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=N_COLS)
+            total_cnt = sum(len(v) for m in months.values() for v in m.values())
+            sub_msg = f'추출일: {today_str}    │    총 {total_cnt}건    │    {sub_text}'
+            if me:
+                sub_msg += f'    │    출력: {me}'
+            c2 = ws.cell(row=2, column=1, value=sub_msg)
+            c2.font = sub_font
+            c2.fill = sub_fill
+            c2.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+            ws.row_dimensions[2].height = 20
+
+            # 행 3: 빈 줄 (시각적 분리)
+            ws.row_dimensions[3].height = 6
+
+            # ── 4-2) 컬럼 헤더 (행4) — AutoFilter 시작점 ──
+            HDR_ROW = 4
+            for col_idx, h in enumerate(HEADERS, start=1):
+                c = ws.cell(row=HDR_ROW, column=col_idx, value=h)
+                c.font = col_hdr_font
+                c.fill = col_hdr_fill
+                c.alignment = center_align
+                c.border = Border(left=thin, right=thin, top=med, bottom=med)
+            ws.row_dimensions[HDR_ROW].height = 26
+
+            # ── 4-3) 본문: 월 → 일 → 데이터 ──
+            cur_row = HDR_ROW + 1
+            no = 0
+            # 월 키 정렬 (날짜 미정은 맨 뒤)
+            month_keys = sorted([k for k in months.keys() if k != '날짜 미정'])
+            if '날짜 미정' in months:
+                month_keys.append('날짜 미정')
+
+            for ym in month_keys:
+                days = months[ym]
+                m_cnt = sum(len(v) for v in days.values())
+
+                # 월 헤더 행
+                ws.merge_cells(start_row=cur_row, start_column=1,
+                               end_row=cur_row, end_column=N_COLS)
+                mc = ws.cell(row=cur_row, column=1,
+                             value=f'▼  {_ko_month(ym)}    ({m_cnt} item{"s" if m_cnt > 1 else ""})')
+                mc.font = month_font
+                mc.fill = month_fill
+                mc.alignment = left_mid
+                ws.row_dimensions[cur_row].height = 22
+                # 월 헤더 자체에도 outline level 0 (접기 기준점)
+                cur_row += 1
+
+                day_keys = sorted([k for k in days.keys() if k != '날짜 미정'])
+                if '날짜 미정' in days:
+                    day_keys.append('날짜 미정')
+
+                for dkey in day_keys:
+                    items = days[dkey]
+                    # 일 헤더 행
+                    ws.merge_cells(start_row=cur_row, start_column=1,
+                                   end_row=cur_row, end_column=N_COLS)
+                    dc = ws.cell(row=cur_row, column=1,
+                                 value=f'   ▸  {dkey}   ({len(items)} item{"s" if len(items)>1 else ""})')
+                    dc.font = day_font
+                    dc.fill = day_fill
+                    dc.alignment = left_mid
+                    ws.row_dimensions[cur_row].height = 19
+                    # 일 헤더는 outline level 1 (월 단위로 접으면 같이 사라짐)
+                    ws.row_dimensions[cur_row].outline_level = 1
+                    cur_row += 1
+
+                    # 데이터 행
+                    for r in items:
+                        no += 1
+                        vals = [
+                            no,
+                            r.get('issue_date') or '',
+                            r.get('due_date') or '',
+                            r.get('vessel_name') or '',
+                            r.get('item_topic') or '',
+                            r.get('description') or '',
+                            _fmt_actions(r.get('actions')),
+                            r.get('priority') or '',
+                            STAT_LABEL.get(r.get('status'), r.get('status') or ''),
+                            r.get('created_by') or '',
+                        ]
+                        for col_idx, v in enumerate(vals, start=1):
+                            c = ws.cell(row=cur_row, column=col_idx, value=v)
+                            c.font = body_font
+                            c.border = border_thin
+                            if col_idx in (1, 2, 3, 10):
+                                c.alignment = cent_top
+                            elif col_idx == 4:
+                                c.alignment = Alignment(horizontal='left',
+                                                        vertical='top', wrap_text=True)
+                            elif col_idx in (8, 9):
+                                c.alignment = center_align
+                            else:
+                                c.alignment = body_align
+
+                        # 우선순위 / 상태 색상
+                        pri = r.get('priority')
+                        pf = PRI_FILL.get(pri)
+                        if pf:
+                            ws.cell(row=cur_row, column=8).fill = pf
+                        if pri in PRI_FONT:
+                            ws.cell(row=cur_row, column=8).font = PRI_FONT[pri]
+
+                        st = r.get('status')
+                        sf = STAT_FILL.get(st)
+                        if sf:
+                            ws.cell(row=cur_row, column=9).fill = sf
+                        if st in STAT_FONT:
+                            ws.cell(row=cur_row, column=9).font = STAT_FONT[st]
+
+                        # 데이터 행은 outline level 2 (일/월 단위 접기 모두에 영향)
+                        ws.row_dimensions[cur_row].outline_level = 2
+                        cur_row += 1
+
+            # ── 4-4) AutoFilter — 컬럼 헤더부터 마지막 데이터까지 ──
+            last_col = get_column_letter(N_COLS)
+            last_row = cur_row - 1
+            if last_row > HDR_ROW:
+                ws.auto_filter.ref = f'A{HDR_ROW}:{last_col}{last_row}'
+
+            # ── 4-5) Freeze panes — 컬럼 헤더 행 아래 고정 ──
+            ws.freeze_panes = f'A{HDR_ROW + 1}'
+
+            # outline 방향: 요약(부모) 행이 위에 있으므로 summary_below=False
+            ws.sheet_properties.outlinePr.summaryBelow = False
+            ws.sheet_properties.outlinePr.summaryRight = False
+
+            # 인쇄 설정
+            ws.print_options.horizontalCentered = True
+            ws.page_setup.orientation = 'landscape'
+            ws.page_setup.fitToWidth  = 1
+            ws.page_setup.fitToHeight = 0
+            ws.sheet_properties.pageSetUpPr.fitToPage = True
+            ws.print_title_rows = f'{HDR_ROW}:{HDR_ROW}'  # 컬럼 헤더는 매 페이지 반복
+
+    # ── 5) 파일명 ──
+    today = now.strftime('%Y%m%d')
+    if len(sv_seq) == 1:
+        fname = f'TRMT_Daily_{_sheet_safe(sv_seq[0])}_{today}.xlsx'
+    else:
+        fname = f'TRMT_Daily_{today}.xlsx'
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return send_file(
+        bio,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=fname,
+    )
+
+
 @app.route('/api/issues/<int:iid>')
 @login_required
 def api_issue_get(iid):
