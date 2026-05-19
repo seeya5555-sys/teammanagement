@@ -410,56 +410,117 @@ function autoResize(ta) {
 
 // ─── bullet_list ─────────────────────────────────────────────
 // marker 종류: 'bullet'(•) / 'dash'(-) / 'number'(1)) / 'alpha'(a))
-function bulletMarkerFor(kind, idx) {
-  if (kind === 'dash')   return '–';
-  if (kind === 'number') return `${idx + 1})`;
-  if (kind === 'alpha')  return `${String.fromCharCode(97 + (idx % 26))})`;
-  return '•';  // bullet (기본)
+// items: [{text:string, indent:number}, ...]  (indent: 0~3)
+// 구버전 호환: items가 문자열 배열이면 {text, indent:0}으로 변환
+function normalizeBulletItems(items) {
+  return (items || []).map(it =>
+    typeof it === 'string' ? { text: it, indent: 0 } : {
+      text: it.text || '',
+      indent: Math.max(0, Math.min(3, it.indent || 0)),
+    });
+}
+
+const MAX_INDENT = 3;
+
+// 들여쓰기 레벨별 카운터로 마커 계산
+function computeBulletMarkers(items, kind) {
+  const markers = [];
+  const counters = [0, 0, 0, 0];   // level 0~3
+  for (const it of items) {
+    const lv = Math.max(0, Math.min(MAX_INDENT, it.indent || 0));
+    counters[lv]++;
+    for (let i = lv + 1; i <= MAX_INDENT; i++) counters[i] = 0;
+    if (kind === 'dash')        markers.push('–');
+    else if (kind === 'number') markers.push(`${counters[lv]})`);
+    else if (kind === 'alpha')  markers.push(`${String.fromCharCode(97 + (counters[lv] - 1) % 26)})`);
+    else                        markers.push('•');
+  }
+  return markers;
 }
 
 function renderBulletList(body, b) {
   const list = el('div', { class: 'dde-bullet-list' });
-  const items = (b.content?.items || ['']).slice();
+  let items = normalizeBulletItems(b.content?.items);
+  if (items.length === 0) items = [{ text: '', indent: 0 }];
   let marker = b.content?.marker || 'bullet';
 
   function getCurrent() {
-    return { items: items.slice(), marker };
+    return {
+      items: items.map(it => ({ text: it.text, indent: it.indent })),
+      marker,
+    };
   }
 
   function rebuild() {
     list.innerHTML = '';
+    const markers = computeBulletMarkers(items, marker);
     items.forEach((it, i) => {
-      const row = el('div', { class: `dde-bullet-row dde-bullet-${marker}` });
+      const row = el('div', {
+        class: `dde-bullet-row dde-bullet-${marker} indent-${it.indent}`,
+        'data-indent': it.indent,
+      });
       const inp = el('input', {
-        type: 'text', class: 'dde-bullet-input', placeholder: '항목...', value: it,
+        type: 'text', class: 'dde-bullet-input', placeholder: '항목...', value: it.text,
         oninput: (e) => {
-          items[i] = e.target.value;
+          items[i].text = e.target.value;
           scheduleBlockSave(b.id, getCurrent);
         },
         onkeydown: (e) => {
+          if (e.key === 'Tab') {
+            // Tab → indent +1, Shift+Tab → indent -1
+            e.preventDefault();
+            if (e.shiftKey) {
+              if (items[i].indent > 0) {
+                items[i].indent -= 1;
+                rebuild();
+                focusItem(i);
+                scheduleBlockSave(b.id, getCurrent);
+              }
+            } else {
+              if (items[i].indent < MAX_INDENT) {
+                items[i].indent += 1;
+                rebuild();
+                focusItem(i);
+                scheduleBlockSave(b.id, getCurrent);
+              }
+            }
+            return;
+          }
           if (e.key === 'Enter') {
             e.preventDefault();
-            items.splice(i + 1, 0, '');
+            // 새 항목은 현재 항목과 같은 indent
+            items.splice(i + 1, 0, { text: '', indent: items[i].indent });
             rebuild();
-            const next = list.querySelectorAll('.dde-bullet-input')[i + 1];
-            if (next) next.focus();
+            focusItem(i + 1);
             scheduleBlockSave(b.id, getCurrent);
-          } else if (e.key === 'Backspace' && !e.target.value && items.length > 1) {
-            e.preventDefault();
-            items.splice(i, 1);
-            rebuild();
-            const prev = list.querySelectorAll('.dde-bullet-input')[Math.max(0, i - 1)];
-            if (prev) { prev.focus(); prev.setSelectionRange(prev.value.length, prev.value.length); }
-            scheduleBlockSave(b.id, getCurrent);
+            return;
+          }
+          if (e.key === 'Backspace' && !e.target.value) {
+            // 빈 줄에서 백스페이스
+            // - indent가 있으면 먼저 내어쓰기
+            // - indent 0이고 항목이 여러 개면 항목 삭제
+            if (items[i].indent > 0) {
+              e.preventDefault();
+              items[i].indent -= 1;
+              rebuild();
+              focusItem(i);
+              scheduleBlockSave(b.id, getCurrent);
+            } else if (items.length > 1) {
+              e.preventDefault();
+              items.splice(i, 1);
+              rebuild();
+              focusItem(Math.max(0, i - 1), 'end');
+              scheduleBlockSave(b.id, getCurrent);
+            }
           }
         },
       });
       row.append(
-        el('span', { class: 'dde-bullet-marker' }, bulletMarkerFor(marker, i)),
+        el('span', { class: 'dde-bullet-marker' }, markers[i]),
         inp,
         el('button', { class: 'dde-bullet-x', type: 'button', title: '항목 삭제',
           onclick: () => {
-            if (items.length <= 1) items[0] = '';
+            if (items.length <= 1) items[0] = { text: '', indent: 0 };
             else items.splice(i, 1);
             rebuild();
             scheduleBlockSave(b.id, getCurrent);
@@ -467,6 +528,14 @@ function renderBulletList(body, b) {
       );
       list.append(row);
     });
+  }
+
+  function focusItem(i, where) {
+    const inputs = list.querySelectorAll('.dde-bullet-input');
+    const t = inputs[i];
+    if (!t) return;
+    t.focus();
+    if (where === 'end') t.setSelectionRange(t.value.length, t.value.length);
   }
 
   // 마커 선택 옵션 바
@@ -481,30 +550,30 @@ function renderBulletList(body, b) {
   for (const m of markerOptions) {
     opts.append(el('button', {
       class: 'dde-marker-btn' + (marker === m.v ? ' active' : ''),
-      type: 'button',
-      title: m.title,
+      type: 'button', title: m.title, 'data-v': m.v,
       onclick: () => {
         marker = m.v;
-        // 옵션 버튼 active 갱신
         opts.querySelectorAll('.dde-marker-btn').forEach(btn => {
           btn.classList.toggle('active', btn.dataset.v === m.v);
         });
         rebuild();
         scheduleBlockSave(b.id, getCurrent);
       },
-      'data-v': m.v,
     }, m.icon));
   }
+  opts.append(el('span', { class: 'dde-bullet-hint' },
+    'Tab: 들여쓰기 / Shift+Tab: 내어쓰기'));
 
   rebuild();
 
   const addBtn = el('button', {
     class: 'dde-bullet-add-link', type: 'button',
     onclick: () => {
-      items.push('');
+      // 마지막 항목의 indent를 따라감
+      const last = items[items.length - 1];
+      items.push({ text: '', indent: last ? last.indent : 0 });
       rebuild();
-      const last = list.querySelectorAll('.dde-bullet-input');
-      if (last.length) last[last.length - 1].focus();
+      focusItem(items.length - 1);
       scheduleBlockSave(b.id, getCurrent);
     },
   }, '+ 항목 추가');
