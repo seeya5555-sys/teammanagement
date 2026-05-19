@@ -409,19 +409,32 @@ function autoResize(ta) {
 }
 
 // ─── bullet_list ─────────────────────────────────────────────
+// marker 종류: 'bullet'(•) / 'dash'(-) / 'number'(1)) / 'alpha'(a))
+function bulletMarkerFor(kind, idx) {
+  if (kind === 'dash')   return '–';
+  if (kind === 'number') return `${idx + 1})`;
+  if (kind === 'alpha')  return `${String.fromCharCode(97 + (idx % 26))})`;
+  return '•';  // bullet (기본)
+}
+
 function renderBulletList(body, b) {
   const list = el('div', { class: 'dde-bullet-list' });
   const items = (b.content?.items || ['']).slice();
+  let marker = b.content?.marker || 'bullet';
+
+  function getCurrent() {
+    return { items: items.slice(), marker };
+  }
 
   function rebuild() {
     list.innerHTML = '';
     items.forEach((it, i) => {
-      const row = el('div', { class: 'dde-bullet-row' });
+      const row = el('div', { class: `dde-bullet-row dde-bullet-${marker}` });
       const inp = el('input', {
         type: 'text', class: 'dde-bullet-input', placeholder: '항목...', value: it,
         oninput: (e) => {
           items[i] = e.target.value;
-          scheduleBlockSave(b.id, () => ({ items: items.slice() }));
+          scheduleBlockSave(b.id, getCurrent);
         },
         onkeydown: (e) => {
           if (e.key === 'Enter') {
@@ -430,30 +443,59 @@ function renderBulletList(body, b) {
             rebuild();
             const next = list.querySelectorAll('.dde-bullet-input')[i + 1];
             if (next) next.focus();
-            scheduleBlockSave(b.id, () => ({ items: items.slice() }));
+            scheduleBlockSave(b.id, getCurrent);
           } else if (e.key === 'Backspace' && !e.target.value && items.length > 1) {
             e.preventDefault();
             items.splice(i, 1);
             rebuild();
             const prev = list.querySelectorAll('.dde-bullet-input')[Math.max(0, i - 1)];
             if (prev) { prev.focus(); prev.setSelectionRange(prev.value.length, prev.value.length); }
-            scheduleBlockSave(b.id, () => ({ items: items.slice() }));
+            scheduleBlockSave(b.id, getCurrent);
           }
         },
       });
       row.append(
-        el('span', { class: 'dde-bullet-marker' }, '•'), inp,
+        el('span', { class: 'dde-bullet-marker' }, bulletMarkerFor(marker, i)),
+        inp,
         el('button', { class: 'dde-bullet-x', type: 'button', title: '항목 삭제',
           onclick: () => {
             if (items.length <= 1) items[0] = '';
             else items.splice(i, 1);
             rebuild();
-            scheduleBlockSave(b.id, () => ({ items: items.slice() }));
+            scheduleBlockSave(b.id, getCurrent);
           }}, '✕'),
       );
       list.append(row);
     });
   }
+
+  // 마커 선택 옵션 바
+  const opts = el('div', { class: 'dde-bullet-opts' },
+    el('span', { class: 'dde-bullet-opts-label' }, '마커:'));
+  const markerOptions = [
+    { v: 'bullet', icon: '•',  title: '점 (•)' },
+    { v: 'dash',   icon: '–',  title: '대시 (–)' },
+    { v: 'number', icon: '1)', title: '숫자 (1) 2) 3))' },
+    { v: 'alpha',  icon: 'a)', title: '알파벳 (a) b) c))' },
+  ];
+  for (const m of markerOptions) {
+    opts.append(el('button', {
+      class: 'dde-marker-btn' + (marker === m.v ? ' active' : ''),
+      type: 'button',
+      title: m.title,
+      onclick: () => {
+        marker = m.v;
+        // 옵션 버튼 active 갱신
+        opts.querySelectorAll('.dde-marker-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.v === m.v);
+        });
+        rebuild();
+        scheduleBlockSave(b.id, getCurrent);
+      },
+      'data-v': m.v,
+    }, m.icon));
+  }
+
   rebuild();
 
   const addBtn = el('button', {
@@ -463,11 +505,11 @@ function renderBulletList(body, b) {
       rebuild();
       const last = list.querySelectorAll('.dde-bullet-input');
       if (last.length) last[last.length - 1].focus();
-      scheduleBlockSave(b.id, () => ({ items: items.slice() }));
+      scheduleBlockSave(b.id, getCurrent);
     },
   }, '+ 항목 추가');
 
-  body.append(list, addBtn);
+  body.append(opts, list, addBtn);
 }
 
 // ─── table (with column resize) ──────────────────────────────
