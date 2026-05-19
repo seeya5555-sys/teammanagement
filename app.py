@@ -568,6 +568,47 @@ def api_vessels():
     return jsonify([dict(r) for r in rows])
 
 
+# 선박별 활성(Open + InProgress) 이슈 수 — Daily 필터 드롭다운용
+#   · 다른 화면 필터(감독, 검색, 우선순위, 선종)는 적용
+#   · 선박 필터 자체는 무시 (드롭다운 라벨용이므로)
+@app.route('/api/vessels/active-counts')
+@login_required
+def api_vessel_active_counts():
+    conds = ["i.status IN ('Open', 'InProgress')"]
+    params = []
+
+    sup = request.args.get('supervisor_id')
+    if sup:
+        conds.append('i.supervisor_id = ?')
+        params.append(sup)
+
+    q = request.args.get('q')
+    if q:
+        like = f'%{q}%'
+        conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
+        params += [like, like, like]
+
+    vt = request.args.get('vessel_type')
+    if vt:
+        conds.append('v.vessel_type = ?')
+        params.append(vt)
+
+    pri = request.args.get('priority')
+    if pri:
+        conds.append('i.priority = ?')
+        params.append(pri)
+
+    sql = f'''
+        SELECT i.vessel_id, COUNT(*) AS cnt
+          FROM issues i
+          JOIN vessels v ON v.id = i.vessel_id
+         WHERE {' AND '.join(conds)}
+         GROUP BY i.vessel_id
+    '''
+    rows = query(sql, params)
+    return jsonify({str(r['vessel_id']): r['cnt'] for r in rows})
+
+
 # ═════════════════════════════════════════════════════════════════
 #  API — issues (list / get / create / update / delete)
 # ═════════════════════════════════════════════════════════════════
