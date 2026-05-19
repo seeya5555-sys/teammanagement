@@ -2822,10 +2822,9 @@ col.c-edit   { width: 156px; }
   border-top: 1px dashed var(--border, #e5e7eb);
 }
 
-/* 모달 - large variant */
-.modal-lg {
-  max-width: 720px;
-  width: 95%;
+/* 모달 - large variant: .modal-box와 함께 사용 */
+.modal-box.modal-lg {
+  width: min(720px, 95vw);
 }
 
 /* 폼 그리드 */
