@@ -2717,6 +2717,157 @@ def api_dock_upload_image(rid):
     return jsonify({'ok': True, 'filename': fname, 'url': url}), 201
 
 
+# ─── Word / PDF Export ───────────────────────────────────────
+def _get_full_report_data(rid):
+    """build_docx에 넘길 보고서 데이터 빌드 — api_dock_get과 동일한 구조"""
+    r = query('''
+        SELECT d.*,
+               v.name       AS vessel_name,
+               v.short_name AS vessel_short,
+               v.vessel_type AS vessel_type,
+               s.name       AS supervisor_name
+          FROM dock_reports d
+          JOIN vessels       v ON v.id = d.vessel_id
+          LEFT JOIN supervisors s ON s.id = d.supervisor_id
+         WHERE d.id = ?
+    ''', (rid,), one=True)
+    if not r:
+        return None
+    out = dict(r)
+
+    secs = query('''
+        SELECT * FROM dock_report_sections
+         WHERE report_id = ?
+         ORDER BY display_order, id
+    ''', (rid,))
+    sec_list = [dict(s) for s in secs]
+    sec_ids = [s['id'] for s in sec_list]
+    blocks_by_sec = {}
+    if sec_ids:
+        placeholders = ','.join('?' for _ in sec_ids)
+        blocks = query(f'''
+            SELECT * FROM dock_report_blocks
+             WHERE section_id IN ({placeholders})
+             ORDER BY section_id, display_order, id
+        ''', sec_ids)
+        for b in blocks:
+            bd = dict(b)
+            try:
+                bd['content'] = json.loads(bd.pop('content_json'))
+            except Exception:
+                bd['content'] = {}
+            blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
+    for s in sec_list:
+        s['blocks'] = blocks_by_sec.get(s['id'], [])
+    out['sections'] = sec_list
+    return out
+
+
+def _safe_filename(s):
+    """파일명에서 OS 비호환 문자 제거"""
+    import re
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', s)
+    s = s.strip().strip('.')
+    return s[:80] or 'report'
+
+
+@app.route('/api/dock-reports/<int:rid>/export/docx')
+@login_required
+def api_dock_export_docx(rid):
+    try:
+        from dock_report_docx import build_docx
+    except ImportError as e:
+        return jsonify({'error': f'docx 생성 모듈 로드 실패: {e}'}), 500
+
+    data = _get_full_report_data(rid)
+    if not data:
+        abort(404)
+
+    try:
+        docx_bytes = build_docx(data)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
+
+    from io import BytesIO
+    from flask import send_file
+    fname = _safe_filename(data.get('title') or f'DryDock_Report_{rid}') + '.docx'
+    return send_file(
+        BytesIO(docx_bytes),
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        as_attachment=True,
+        download_name=fname,
+    )
+
+
+@app.route('/api/dock-reports/<int:rid>/export/pdf')
+@login_required
+def api_dock_export_pdf(rid):
+    try:
+        from dock_report_docx import build_docx
+    except ImportError as e:
+        return jsonify({'error': f'docx 생성 모듈 로드 실패: {e}'}), 500
+
+    data = _get_full_report_data(rid)
+    if not data:
+        abort(404)
+
+    # 1) docx 생성
+    try:
+        docx_bytes = build_docx(data)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
+
+    # 2) docx → pdf (LibreOffice headless)
+    import tempfile, subprocess, shutil, os as _os
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            docx_path = _os.path.join(tmp, 'report.docx')
+            with open(docx_path, 'wb') as f:
+                f.write(docx_bytes)
+
+            soffice = shutil.which('soffice') or shutil.which('libreoffice')
+            if not soffice:
+                return jsonify({
+                    'error': 'PDF 변환 도구(LibreOffice)가 설치되지 않았습니다. '
+                             '서버에 sudo dnf install -y libreoffice-core libreoffice-writer 명령으로 설치해주세요.'
+                }), 500
+
+            proc = subprocess.run(
+                [soffice, '--headless', '--convert-to', 'pdf',
+                 '--outdir', tmp, docx_path],
+                capture_output=True, timeout=120,
+            )
+            if proc.returncode != 0:
+                return jsonify({
+                    'error': f'PDF 변환 실패: {proc.stderr.decode("utf-8", errors="ignore")[:500]}'
+                }), 500
+
+            pdf_path = _os.path.join(tmp, 'report.pdf')
+            if not _os.path.exists(pdf_path):
+                return jsonify({'error': 'PDF 파일이 생성되지 않았습니다.'}), 500
+
+            with open(pdf_path, 'rb') as f:
+                pdf_bytes = f.read()
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'PDF 변환 시간 초과 (2분).'}), 500
+    except Exception as e:
+        return jsonify({'error': f'PDF 변환 오류: {e}'}), 500
+
+    from io import BytesIO
+    from flask import send_file
+    fname = _safe_filename(data.get('title') or f'DryDock_Report_{rid}') + '.pdf'
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=fname,
+    )
+
+
 # ═════════════════════════════════════════════════════════════════
 #  API — attachments
 # ═════════════════════════════════════════════════════════════════
