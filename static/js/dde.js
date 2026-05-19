@@ -211,6 +211,133 @@ async function moveSection(sid, direction) {
   } catch (e) { alert('순서 변경 실패: ' + e.message); }
 }
 
+// ─── 일괄 추가 ───────────────────────────────────────────────
+// 텍스트 한 줄당 1 섹션. 줄 앞 Tab 개수(또는 4 스페이스 단위)로 들여쓰기
+// 빈 줄과 # 으로 시작하는 줄은 무시
+function parseBulkText(text) {
+  const out = [];
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines) {
+    if (!raw.trim()) continue;
+    if (raw.trim().startsWith('#')) continue;
+    // 줄 앞 Tab 또는 스페이스 카운트
+    let indent = 0;
+    let i = 0;
+    while (i < raw.length) {
+      if (raw[i] === '\t') { indent += 1; i += 1; }
+      else if (raw[i] === ' ') {
+        // 4 스페이스 = Tab 1개 (4개씩 끊어서)
+        let sp = 0;
+        while (i < raw.length && raw[i] === ' ' && sp < 4) { sp++; i++; }
+        if (sp === 4) indent += 1;
+        else break;
+      } else break;
+    }
+    // 최대 깊이 2 (1단계 / 2단계 / 3단계 = depth 0~2)
+    indent = Math.min(2, indent);
+    const title = raw.slice(i).trim();
+    if (!title) continue;
+    out.push({ indent, title });
+  }
+  return out;
+}
+
+function openBulkAddDialog() {
+  const m = $('#dde-bulk-modal');
+  $('#dde-bulk-text').value = '';
+  $('#dde-bulk-preview').hidden = true;
+
+  // "현재 섹션 아래에 추가" 옵션 가용 여부
+  const underRadio = $('input[name="dde-bulk-target"][value="under"]');
+  const underLabel = $('#dde-bulk-under-label');
+  const curTitle = $('#dde-bulk-current-title');
+  const info = E.activeSecId ? E.byId.get(E.activeSecId) : null;
+  // 현재 섹션 depth가 0 또는 1이어야 그 아래로 1~2단계 추가 가능
+  if (info && info.depth < 2) {
+    underRadio.disabled = false;
+    underLabel.style.opacity = '1';
+    curTitle.textContent = `"${info.section.title}"`;
+  } else {
+    underRadio.disabled = true;
+    underLabel.style.opacity = '0.4';
+    curTitle.textContent = '—';
+  }
+  // 기본 선택: 최상위
+  $('input[name="dde-bulk-target"][value="root"]').checked = true;
+
+  m.hidden = false;
+  document.body.classList.add('modal-open');
+  setTimeout(() => $('#dde-bulk-text').focus(), 50);
+}
+
+function closeBulkAddDialog() {
+  $('#dde-bulk-modal').hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
+async function applyBulkAdd() {
+  const text = $('#dde-bulk-text').value;
+  const parsed = parseBulkText(text);
+  if (parsed.length === 0) {
+    alert('추가할 섹션이 없습니다.');
+    return;
+  }
+  // 깊이 검증 — 부모 없이 indent > 0인 첫 항목은 자동 보정
+  // 첫 항목은 무조건 indent 0으로
+  if (parsed[0].indent > 0) parsed[0].indent = 0;
+
+  const targetMode = document.querySelector('input[name="dde-bulk-target"]:checked').value;
+  let basePid = null;
+  let baseDepth = 0;
+  if (targetMode === 'under' && E.activeSecId) {
+    const info = E.byId.get(E.activeSecId);
+    if (info && info.depth < 2) {
+      basePid = E.activeSecId;
+      baseDepth = info.depth + 1;
+    }
+  }
+
+  // 깊이 검증 — 추가 후 최대 깊이 2(=3단계) 초과 방지
+  const overflow = parsed.some(p => baseDepth + p.indent > 2);
+  if (overflow) {
+    alert('최대 3단계까지만 추가할 수 있습니다. (들여쓰기 깊이 줄이기 필요)');
+    return;
+  }
+
+  // 진행 — depth 별 parent stack
+  const btn = $('#dde-bulk-apply');
+  btn.disabled = true;
+  btn.textContent = `추가 중... (0/${parsed.length})`;
+
+  const parents = [basePid, null, null];  // depth별 마지막 부모 id
+
+  try {
+    let done = 0;
+    for (const item of parsed) {
+      const lv = item.indent;
+      const parentId = lv === 0 ? basePid : parents[lv - 1];
+      const r = await api(`/api/dock-reports/${E.reportId}/sections`, {
+        method: 'POST',
+        body: JSON.stringify({ title: item.title, parent_id: parentId }),
+      });
+      parents[lv] = r.id;
+      // 하위 레벨 부모 stack 리셋
+      for (let i = lv + 1; i < parents.length; i++) parents[i] = null;
+      done += 1;
+      btn.textContent = `추가 중... (${done}/${parsed.length})`;
+    }
+    closeBulkAddDialog();
+    await loadReport();
+    setSaveStatus(`섹션 ${parsed.length}개 추가됨`, 'ok');
+  } catch (e) {
+    alert('일괄 추가 중 오류: ' + e.message + '\n일부만 추가되었을 수 있습니다.');
+    await loadReport();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '추가';
+  }
+}
+
 async function saveSectionTitle(sid, title) {
   if (!title.trim()) return;
   setSaveStatus('저장 중...', 'busy');
@@ -944,6 +1071,27 @@ function bindEvents() {
   $('#dde-btn-add-sub').addEventListener('click', () => {
     if (!E.activeSecId) return;
     addSection(E.activeSecId);
+  });
+
+  // 일괄 추가
+  $('#dde-btn-bulk-add').addEventListener('click', openBulkAddDialog);
+  $('#dde-bulk-apply').addEventListener('click', applyBulkAdd);
+  $('#dde-bulk-modal').addEventListener('click', (ev) => {
+    if (ev.target.dataset.close === '1') closeBulkAddDialog();
+  });
+  // Esc로 모달 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#dde-bulk-modal').hidden) closeBulkAddDialog();
+  });
+  // textarea에서 Tab 키 → 실제 탭 문자 삽입 (포커스 이동 방지)
+  $('#dde-bulk-text').addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const ta = e.target;
+      const s = ta.selectionStart, t = ta.selectionEnd;
+      ta.value = ta.value.slice(0, s) + '\t' + ta.value.slice(t);
+      ta.selectionStart = ta.selectionEnd = s + 1;
+    }
   });
 
   let titleTimer;
