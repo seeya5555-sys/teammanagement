@@ -3061,20 +3061,79 @@ col.c-edit   { width: 156px; }
   color: var(--text-muted, #9ca3af); font-size: 13px;
 }
 
+/* 빈 섹션 — 4종 블록 큰 버튼 */
+.dde-empty-add {
+  padding: 30px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+.dde-empty-add-hint {
+  font-size: 13px;
+  color: var(--text-secondary, #6b7280);
+  font-weight: 500;
+}
+.dde-empty-add-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 720px;
+}
+.dde-empty-add-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 18px 12px;
+  background: #fff;
+  border: 1.5px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.dde-empty-add-btn:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+}
+.dde-empty-add-icon {
+  font-size: 24px;
+  color: var(--text-secondary, #4b5563);
+  height: 32px;
+  display: flex;
+  align-items: center;
+}
+.dde-empty-add-btn:hover .dde-empty-add-icon { color: #2563eb; }
+.dde-empty-add-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary, #111827);
+}
+.dde-empty-add-desc {
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+}
+@media (max-width: 600px) {
+  .dde-empty-add-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* 블록 사이의 + Inserter (호버 시만 표시) */
 .dde-inserter {
   display: flex; justify-content: center; align-items: center;
-  height: 0;
+  height: 8px;
   position: relative;
   transition: height 0.15s;
 }
 .dde-inserter-btn {
-  width: 22px; height: 22px;
+  width: 24px; height: 24px;
   border-radius: 50%;
   border: 1px solid var(--border, #d1d5db);
   background: #fff;
   color: var(--text-secondary, #6b7280);
-  font-size: 14px; font-weight: 700;
+  font-size: 15px; font-weight: 700;
   cursor: pointer;
   padding: 0;
   display: flex; align-items: center; justify-content: center;
@@ -3082,8 +3141,8 @@ col.c-edit   { width: 156px; }
   transition: opacity 0.15s, transform 0.15s;
 }
 .dde-inserter:hover {
-  height: 22px;
-  margin: 4px 0;
+  height: 28px;
+  margin: 2px 0;
 }
 .dde-inserter:hover .dde-inserter-btn {
   opacity: 1;
