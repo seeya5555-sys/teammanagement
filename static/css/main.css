@@ -2729,3 +2729,178 @@ col.c-edit   { width: 156px; }
 .cs-q-vendor-blue  .cs-q-vendor-label { color: #1e40af; }
 .cs-q-vendor-amber .cs-q-vendor-label { color: #92400e; }
 .cs-q-vendor-gray  .cs-q-vendor-label { color: #4b5563; }
+
+/* ════════════════════════════════════════════════════════════
+   Dry Dock Report — Step 1 (목록 + 메타 모달)
+   ════════════════════════════════════════════════════════════ */
+
+/* 카드 그리드 */
+.dd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.dd-card {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dd-card:hover {
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  transform: translateY(-1px);
+}
+
+.dd-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.dd-card-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.35;
+  color: var(--text-primary, #111827);
+  word-break: break-all;
+  flex: 1;
+}
+
+.dd-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.dd-badge-draft { background: #fef3c7; color: #92400e; }
+.dd-badge-done  { background: #d1fae5; color: #065f46; }
+
+.dd-card-vessel {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #2563eb;
+  letter-spacing: 0.2px;
+}
+
+.dd-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+  align-items: center;
+}
+.dd-meta-chip {
+  background: #e0e7ff;
+  color: #3730a3;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 11px;
+}
+.dd-meta-text {
+  white-space: nowrap;
+}
+
+.dd-card-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-muted, #9ca3af);
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, #e5e7eb);
+}
+
+/* 모달 - large variant */
+.modal-lg {
+  max-width: 720px;
+  width: 95%;
+}
+
+/* 폼 그리드 */
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.form-row-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.form-row-3col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+.form-row-4col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 10px;
+}
+.form-row-2col > label,
+.form-row-3col > label,
+.form-row-4col > label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.form-row-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary, #4b5563);
+}
+.form-label-sm {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted, #6b7280);
+}
+.req { color: #ef4444; font-style: normal; }
+
+.form-fieldset {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  padding: 12px 14px 14px;
+  margin: 0;
+}
+.form-fieldset > legend {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary, #4b5563);
+  padding: 0 6px;
+}
+
+.flex-spacer { flex: 1; }
+
+@media (max-width: 640px) {
+  .form-row-2col,
+  .form-row-3col,
+  .form-row-4col {
+    grid-template-columns: 1fr;
+  }
+  .dd-grid {
+    grid-template-columns: 1fr;
+  }
+}
