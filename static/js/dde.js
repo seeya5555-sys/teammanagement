@@ -1110,10 +1110,18 @@ function bindEvents() {
   $('#dde-img-input').setAttribute('multiple', '');
 
   $('#dde-btn-export-docx').addEventListener('click', () => {
-    alert('Word 추출은 Step 3에서 활성화됩니다.');
+    setSaveStatus('Word 생성 중...', 'busy');
+    // 새 탭에서 다운로드 시작 (이 탭은 유지)
+    const url = `/api/dock-reports/${E.reportId}/export/docx`;
+    // 다운로드는 같은 탭에서 — Content-Disposition: attachment 이므로 페이지 이동 안 됨
+    window.location = url;
+    setTimeout(() => setSaveStatus('저장됨', 'ok'), 1500);
   });
   $('#dde-btn-export-pdf').addEventListener('click', () => {
-    alert('PDF 추출은 Step 3에서 활성화됩니다.');
+    setSaveStatus('PDF 변환 중... (10~20초 소요)', 'busy');
+    const url = `/api/dock-reports/${E.reportId}/export/pdf`;
+    window.location = url;
+    setTimeout(() => setSaveStatus('저장됨', 'ok'), 3000);
   });
 }
 
