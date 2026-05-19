@@ -3120,29 +3120,25 @@ col.c-edit   { width: 156px; }
   .dde-empty-add-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* 블록 사이의 + Inserter (호버 시만 표시) */
+/* 블록 사이의 + Inserter — 평소엔 살짝 보이고, 호버 시 진해짐 */
 .dde-inserter {
   display: flex; justify-content: center; align-items: center;
-  height: 8px;
+  height: 18px;
   position: relative;
   transition: height 0.15s;
 }
 .dde-inserter-btn {
-  width: 24px; height: 24px;
+  width: 22px; height: 22px;
   border-radius: 50%;
-  border: 1px solid var(--border, #d1d5db);
+  border: 1px dashed var(--border, #d1d5db);
   background: #fff;
-  color: var(--text-secondary, #6b7280);
-  font-size: 15px; font-weight: 700;
+  color: var(--text-muted, #9ca3af);
+  font-size: 13px; font-weight: 700;
   cursor: pointer;
   padding: 0;
   display: flex; align-items: center; justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s, transform 0.15s;
-}
-.dde-inserter:hover {
-  height: 28px;
-  margin: 2px 0;
+  opacity: 0.5;
+  transition: opacity 0.15s, transform 0.15s, background 0.15s, border-color 0.15s;
 }
 .dde-inserter:hover .dde-inserter-btn {
   opacity: 1;
@@ -3150,9 +3146,53 @@ col.c-edit   { width: 156px; }
 .dde-inserter-btn:hover {
   background: #2563eb;
   border-color: #2563eb;
+  border-style: solid;
   color: #fff;
   transform: scale(1.1);
 }
+
+/* 마지막에 항상 보이는 추가 영역 */
+.dde-tail-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding: 10px 12px;
+  background: #fafbfc;
+  border: 1px dashed var(--border, #d1d5db);
+  border-radius: 8px;
+}
+.dde-tail-add-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary, #6b7280);
+  margin-right: 4px;
+}
+.dde-tail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: #fff;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary, #111827);
+  transition: all 0.15s;
+}
+.dde-tail-btn:hover {
+  background: #eff6ff;
+  border-color: #2563eb;
+  color: #1e40af;
+}
+.dde-tail-icon {
+  font-size: 13px;
+  color: var(--text-secondary, #6b7280);
+}
+.dde-tail-btn:hover .dde-tail-icon { color: #2563eb; }
 
 /* + 메뉴 (블록 종류 선택) */
 .dde-insert-menu {
