@@ -264,3 +264,71 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE INDEX IF NOT EXISTS idx_cal_events_date ON calendar_events(start_date);
 CREATE INDEX IF NOT EXISTS idx_cal_events_supervisor ON calendar_events(supervisor_id);
 CREATE INDEX IF NOT EXISTS idx_cal_events_source ON calendar_events(source_type, source_id);
+
+
+-- ═════════════════════════════════════════════════════════════
+--  Dry Dock Report (입거수리 완료 보고)
+-- ═════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS dock_reports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id       INTEGER NOT NULL,
+    supervisor_id   INTEGER,
+    title           TEXT NOT NULL,                       -- 보고서 제목
+    dock_no         TEXT,                                -- "4차 중간", "특별검사" 등
+    shipyard        TEXT,                                -- 조선소명
+    period_start    TEXT,                                -- YYYY-MM-DD
+    period_end      TEXT,
+    imo_no          TEXT,
+    gross_tonnage   TEXT,
+    dead_weight     TEXT,
+    -- 결재선 (이름만 저장, 도장은 출력 시 비워서 사람이 채움)
+    approval_drafter   TEXT,
+    approval_team_lead TEXT,
+    approval_director  TEXT,
+    approval_ceo       TEXT,
+
+    status          TEXT NOT NULL DEFAULT 'draft'
+                    CHECK(status IN ('draft','done')),
+    -- 템플릿 라이브러리 — 1이면 보고서가 아니라 재사용용 템플릿
+    is_template     INTEGER NOT NULL DEFAULT 0,
+    template_name   TEXT,                                -- is_template=1일 때 노출 이름
+
+    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_by      TEXT,
+    FOREIGN KEY (vessel_id)     REFERENCES vessels(id)     ON DELETE RESTRICT,
+    FOREIGN KEY (supervisor_id) REFERENCES supervisors(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dock_reports_vessel  ON dock_reports(vessel_id);
+CREATE INDEX IF NOT EXISTS idx_dock_reports_status  ON dock_reports(status, is_template);
+CREATE INDEX IF NOT EXISTS idx_dock_reports_updated ON dock_reports(updated_at DESC);
+
+-- 섹션 (목차 항목) — 계층 구조 (parent_id NULL이면 1단계)
+CREATE TABLE IF NOT EXISTS dock_report_sections (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id       INTEGER NOT NULL,
+    parent_id       INTEGER,                             -- NULL이면 최상위
+    title           TEXT NOT NULL,
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (report_id) REFERENCES dock_reports(id)         ON DELETE CASCADE,
+    FOREIGN KEY (parent_id) REFERENCES dock_report_sections(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dock_sections_report ON dock_report_sections(report_id, display_order);
+CREATE INDEX IF NOT EXISTS idx_dock_sections_parent ON dock_report_sections(parent_id, display_order);
+
+-- 블록 (각 섹션의 내용) — paragraph / bullet_list / table / image
+CREATE TABLE IF NOT EXISTS dock_report_blocks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    section_id      INTEGER NOT NULL,
+    block_type      TEXT NOT NULL
+                    CHECK(block_type IN ('paragraph','bullet_list','table','image')),
+    content_json    TEXT NOT NULL,                       -- 타입별 데이터
+    -- block_type별 content_json 스키마:
+    --  paragraph   : {"text":"..."}
+    --  bullet_list : {"items":["...", "..."]}
+    --  table       : {"headers":["..."], "rows":[["..."], ...]}
+    --  image       : {"filename":"...", "caption":"...", "width_pct":100}
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (section_id) REFERENCES dock_report_sections(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dock_blocks_section ON dock_report_blocks(section_id, display_order);
