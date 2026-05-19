@@ -490,6 +490,12 @@ def calendar_page():
     return render_template('calendar.html')
 
 
+@app.route('/dry-dock')
+@login_required
+def dry_dock_page():
+    return render_template('dry_dock.html')
+
+
 # ═════════════════════════════════════════════════════════════════
 #  API — me / password
 # ═════════════════════════════════════════════════════════════════
@@ -2252,6 +2258,196 @@ def api_cal_event_update(eid):
 @login_required
 def api_cal_event_delete(eid):
     execute('DELETE FROM calendar_events WHERE id=?', (eid,))
+    return jsonify({'ok': True})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  API — Dry Dock Report (메타 CRUD)
+#   · Step 1: 보고서 자체의 생성/조회/수정/삭제만
+#   · 섹션·블록 편집 / 추출은 Step 2~3에서 추가
+# ═════════════════════════════════════════════════════════════════
+def _dock_to_dict(row):
+    d = dict(row)
+    # 출력 시 None → '' 변환은 프론트에서 처리
+    return d
+
+
+@app.route('/api/dock-reports', methods=['GET'])
+@login_required
+def api_dock_list():
+    """목록 조회 — 필터: vessel_id, status, is_template, q"""
+    conds, params = ['1=1'], []
+
+    is_tmpl = request.args.get('is_template')
+    if is_tmpl is not None:
+        conds.append('d.is_template = ?')
+        params.append(1 if is_tmpl in ('1', 'true', 'yes') else 0)
+    else:
+        # 기본은 보고서만 (템플릿 제외)
+        conds.append('d.is_template = 0')
+
+    if request.args.get('vessel_id'):
+        conds.append('d.vessel_id = ?')
+        params.append(request.args.get('vessel_id'))
+
+    if request.args.get('status'):
+        conds.append('d.status = ?')
+        params.append(request.args.get('status'))
+
+    if request.args.get('q'):
+        like = f'%{request.args.get("q")}%'
+        conds.append('(d.title LIKE ? OR d.shipyard LIKE ? OR d.dock_no LIKE ?)')
+        params += [like, like, like]
+
+    sql = f'''
+        SELECT d.*,
+               v.name       AS vessel_name,
+               v.short_name AS vessel_short,
+               s.name       AS supervisor_name
+          FROM dock_reports d
+          JOIN vessels       v ON v.id = d.vessel_id
+          LEFT JOIN supervisors s ON s.id = d.supervisor_id
+         WHERE {' AND '.join(conds)}
+         ORDER BY d.updated_at DESC, d.id DESC
+    '''
+    rows = query(sql, params)
+    return jsonify([_dock_to_dict(r) for r in rows])
+
+
+@app.route('/api/dock-reports', methods=['POST'])
+@login_required
+def api_dock_create():
+    d = request.get_json(silent=True) or {}
+    vessel_id = d.get('vessel_id')
+    title     = (d.get('title') or '').strip()
+    if not vessel_id:
+        return jsonify({'error': '선박을 선택하세요.'}), 400
+    if not title:
+        return jsonify({'error': '제목을 입력하세요.'}), 400
+    if not query('SELECT id FROM vessels WHERE id=?', (vessel_id,), one=True):
+        return jsonify({'error': '존재하지 않는 선박입니다.'}), 400
+
+    is_template = 1 if d.get('is_template') else 0
+
+    new_id = execute('''
+        INSERT INTO dock_reports
+            (vessel_id, supervisor_id, title, dock_no, shipyard,
+             period_start, period_end, imo_no, gross_tonnage, dead_weight,
+             approval_drafter, approval_team_lead, approval_director, approval_ceo,
+             status, is_template, template_name, created_by)
+        VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?, ?,?,?,?)
+    ''', (
+        vessel_id,
+        d.get('supervisor_id') or None,
+        title,
+        d.get('dock_no') or None,
+        d.get('shipyard') or None,
+        d.get('period_start') or None,
+        d.get('period_end') or None,
+        d.get('imo_no') or None,
+        d.get('gross_tonnage') or None,
+        d.get('dead_weight') or None,
+        d.get('approval_drafter') or None,
+        d.get('approval_team_lead') or None,
+        d.get('approval_director') or None,
+        d.get('approval_ceo') or None,
+        d.get('status') or 'draft',
+        is_template,
+        d.get('template_name') if is_template else None,
+        session.get('display_name') or session.get('username') or '',
+    ))
+    return jsonify({'id': new_id, 'ok': True}), 201
+
+
+@app.route('/api/dock-reports/<int:rid>', methods=['GET'])
+@login_required
+def api_dock_get(rid):
+    """보고서 상세 — 메타 + 섹션 트리 + 블록 모두 포함"""
+    r = query('''
+        SELECT d.*,
+               v.name       AS vessel_name,
+               v.short_name AS vessel_short,
+               s.name       AS supervisor_name
+          FROM dock_reports d
+          JOIN vessels       v ON v.id = d.vessel_id
+          LEFT JOIN supervisors s ON s.id = d.supervisor_id
+         WHERE d.id = ?
+    ''', (rid,), one=True)
+    if not r:
+        abort(404)
+
+    out = _dock_to_dict(r)
+
+    # 섹션 + 블록 (Step 2에서 활용; 현재는 빈 리스트라도 채워줌)
+    secs = query('''
+        SELECT * FROM dock_report_sections
+         WHERE report_id = ?
+         ORDER BY display_order, id
+    ''', (rid,))
+    sec_list = [dict(s) for s in secs]
+
+    sec_ids = [s['id'] for s in sec_list]
+    blocks = []
+    if sec_ids:
+        placeholders = ','.join('?' for _ in sec_ids)
+        blocks = query(f'''
+            SELECT * FROM dock_report_blocks
+             WHERE section_id IN ({placeholders})
+             ORDER BY section_id, display_order, id
+        ''', sec_ids)
+    blocks_by_sec = {}
+    for b in blocks:
+        bd = dict(b)
+        try:
+            bd['content'] = json.loads(bd.pop('content_json'))
+        except Exception:
+            bd['content'] = {}
+        blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
+
+    for s in sec_list:
+        s['blocks'] = blocks_by_sec.get(s['id'], [])
+
+    out['sections'] = sec_list
+    return jsonify(out)
+
+
+@app.route('/api/dock-reports/<int:rid>', methods=['PUT'])
+@login_required
+def api_dock_update(rid):
+    """메타 정보 수정"""
+    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
+        abort(404)
+    d = request.get_json(silent=True) or {}
+
+    updatable = {
+        'vessel_id', 'supervisor_id', 'title', 'dock_no', 'shipyard',
+        'period_start', 'period_end', 'imo_no', 'gross_tonnage', 'dead_weight',
+        'approval_drafter', 'approval_team_lead', 'approval_director', 'approval_ceo',
+        'status', 'template_name',
+    }
+    sets, params = [], []
+    for k in updatable:
+        if k in d:
+            sets.append(f'{k} = ?')
+            v = d.get(k)
+            params.append(v if (v not in ('',)) else None)
+
+    if not sets:
+        return jsonify({'ok': True, 'updated': 0})
+
+    sets.append("updated_at = datetime('now','localtime')")
+    params.append(rid)
+    execute(f'UPDATE dock_reports SET {", ".join(sets)} WHERE id = ?', params)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/dock-reports/<int:rid>', methods=['DELETE'])
+@login_required
+def api_dock_delete(rid):
+    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
+        abort(404)
+    execute('DELETE FROM dock_reports WHERE id = ?', (rid,))
+    # 섹션/블록은 ON DELETE CASCADE로 자동 삭제
     return jsonify({'ok': True})
 
 
