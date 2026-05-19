@@ -28,7 +28,13 @@
     <aside class="dde-sidebar">
       <div class="dde-side-head">
         <span>목차</span>
-        <button class="btn btn-primary btn-sm" id="dde-btn-add-section">+ 섹션</button>
+        <div class="dde-side-actions">
+          <button class="btn btn-outline btn-sm" id="dde-btn-bulk-add"
+                  title="여러 섹션을 한 번에 붙여넣기로 추가">
+            📋 일괄
+          </button>
+          <button class="btn btn-primary btn-sm" id="dde-btn-add-section">+ 섹션</button>
+        </div>
       </div>
       <div class="dde-toc" id="dde-toc"></div>
       <div class="dde-side-foot">
@@ -60,6 +66,58 @@
 
 <!-- 이미지 업로드 (숨김) -->
 <input type="file" id="dde-img-input" accept="image/*" hidden>
+
+<!-- ───── 섹션 일괄 추가 모달 ───── -->
+<div class="modal" id="dde-bulk-modal" hidden>
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-box modal-lg">
+    <div class="modal-head">
+      <h2>섹션 일괄 추가</h2>
+      <button class="modal-close" data-close="1" aria-label="닫기">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="dde-bulk-help">
+        엑셀이나 메모장의 목록을 그대로 붙여넣으세요. <strong>한 줄당 1개 섹션</strong>으로 추가됩니다.<br>
+        줄 앞에 <code>Tab</code>(또는 4개 이상의 스페이스)을 넣으면 <strong>하위 섹션</strong>이 됩니다.
+      </p>
+
+      <div class="dde-bulk-example">
+        <strong>예시:</strong>
+<pre>선체 도장
+	도장 전 HULL CONDITION
+	도장 작업
+	CARGO HOLD TANK TOP 도장
+STEEL 작업
+	HULL DENT DAMAGE 수리
+	ANCHOR HAWSER PIPE 수리</pre>
+      </div>
+
+      <label class="form-row">
+        <span class="form-label">목차 텍스트</span>
+        <textarea id="dde-bulk-text" rows="10"
+                  placeholder="여기에 붙여넣으세요..."></textarea>
+      </label>
+
+      <div class="form-row form-row-inline" style="margin-top: 10px;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="radio" name="dde-bulk-target" value="root" checked>
+          <span>최상위에 추가</span>
+        </label>
+        <label id="dde-bulk-under-label" style="display:flex; align-items:center; gap:6px; opacity:0.5;">
+          <input type="radio" name="dde-bulk-target" value="under" disabled>
+          <span>현재 선택한 섹션 <strong id="dde-bulk-current-title">—</strong> 아래에 추가</span>
+        </label>
+      </div>
+
+      <div id="dde-bulk-preview" class="dde-bulk-preview" hidden></div>
+    </div>
+    <div class="modal-foot">
+      <span class="flex-spacer"></span>
+      <button type="button" class="btn btn-outline" data-close="1">취소</button>
+      <button type="button" class="btn btn-primary" id="dde-bulk-apply">추가</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
