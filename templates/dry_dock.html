@@ -1,0 +1,157 @@
+{% extends 'base.html' %}
+{% block title %}Dry Dock Report · TRMT3{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Dry Dock Report</h1>
+  <div class="page-actions">
+    <button id="btn-new-dock" class="btn btn-primary">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      신규 보고서
+    </button>
+  </div>
+</div>
+
+<!-- 필터 툴바 -->
+<div class="toolbar">
+  <input type="text" class="input" id="dd-search" placeholder="제목, 조선소 검색..." style="flex:1;max-width:360px;">
+  <select class="select" id="dd-filter-vessel">
+    <option value="">All 선박</option>
+  </select>
+  <select class="select" id="dd-filter-status">
+    <option value="">All Status</option>
+    <option value="draft">진행 중</option>
+    <option value="done">완료</option>
+  </select>
+  <span class="count-label" id="dd-count-label"></span>
+</div>
+
+<!-- 보고서 카드 그리드 -->
+<div class="dd-grid" id="dd-grid">
+  <div class="empty-state" id="dd-empty" hidden>
+    <p>아직 작성된 보고서가 없습니다. 우측 상단 "신규 보고서"를 눌러 시작하세요.</p>
+  </div>
+</div>
+
+<!-- ──────────────────────────────────────────────
+     신규/편집 모달 — 메타정보 입력
+──────────────────────────────────────────────── -->
+<div class="modal" id="dd-modal" hidden>
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-panel modal-lg">
+    <div class="modal-header">
+      <h2 class="modal-title" id="dd-modal-title">신규 보고서</h2>
+      <button class="modal-close" data-close="1" aria-label="닫기">&times;</button>
+    </div>
+
+    <form id="dd-form" class="modal-body">
+      <div class="form-grid">
+        <label class="form-row">
+          <span class="form-label">제목 <em class="req">*</em></span>
+          <input type="text" id="dd-title" required
+                 placeholder="예) PACIFIC BUSAN호 입거수리 완료 보고 (4차 중간)">
+        </label>
+
+        <div class="form-row form-row-2col">
+          <label>
+            <span class="form-label">선박 <em class="req">*</em></span>
+            <select id="dd-vessel" required>
+              <option value="">선박 선택...</option>
+            </select>
+          </label>
+          <label>
+            <span class="form-label">담당 감독</span>
+            <select id="dd-supervisor">
+              <option value="">미지정</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="form-row form-row-2col">
+          <label>
+            <span class="form-label">입거 회차</span>
+            <input type="text" id="dd-dock-no" placeholder="예) 4차 중간 / 특별검사">
+          </label>
+          <label>
+            <span class="form-label">조선소</span>
+            <input type="text" id="dd-shipyard" placeholder="예) Zhoushan Changhong Putuo Shipyard, China">
+          </label>
+        </div>
+
+        <div class="form-row form-row-2col">
+          <label>
+            <span class="form-label">입거 시작일</span>
+            <input type="date" id="dd-period-start">
+          </label>
+          <label>
+            <span class="form-label">출거일</span>
+            <input type="date" id="dd-period-end">
+          </label>
+        </div>
+
+        <div class="form-row form-row-3col">
+          <label>
+            <span class="form-label">IMO No.</span>
+            <input type="text" id="dd-imo" placeholder="9414125">
+          </label>
+          <label>
+            <span class="form-label">Gross Tonnage</span>
+            <input type="text" id="dd-gt" placeholder="7,170 Ton">
+          </label>
+          <label>
+            <span class="form-label">Dead Weight</span>
+            <input type="text" id="dd-dwt" placeholder="8,518 Ton">
+          </label>
+        </div>
+
+        <fieldset class="form-fieldset">
+          <legend>결재선 (Approval Line)</legend>
+          <div class="form-row form-row-4col">
+            <label>
+              <span class="form-label-sm">기안자</span>
+              <input type="text" id="dd-app-drafter">
+            </label>
+            <label>
+              <span class="form-label-sm">팀장</span>
+              <input type="text" id="dd-app-team">
+            </label>
+            <label>
+              <span class="form-label-sm">중역</span>
+              <input type="text" id="dd-app-director">
+            </label>
+            <label>
+              <span class="form-label-sm">대표이사</span>
+              <input type="text" id="dd-app-ceo">
+            </label>
+          </div>
+        </fieldset>
+
+        <label class="form-row form-row-inline">
+          <input type="checkbox" id="dd-is-template">
+          <span>이 보고서를 <strong>템플릿</strong>으로 저장 (다음 보고서 작성 시 재사용)</span>
+        </label>
+
+        <label class="form-row" id="dd-template-name-row" hidden>
+          <span class="form-label">템플릿 이름</span>
+          <input type="text" id="dd-template-name" placeholder="예) 표준 입거수리 보고서">
+        </label>
+      </div>
+    </form>
+
+    <div class="modal-footer">
+      <button type="button" class="btn btn-danger btn-outline" id="dd-btn-delete" hidden>삭제</button>
+      <span class="flex-spacer"></span>
+      <button type="button" class="btn btn-outline" data-close="1">취소</button>
+      <button type="button" class="btn btn-primary" id="dd-btn-save">저장</button>
+      <button type="button" class="btn btn-primary" id="dd-btn-save-edit" hidden>저장 후 본문 편집 ▶</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dd.js') }}"></script>
+{% endblock %}
