@@ -2904,16 +2904,14 @@ col.c-edit   { width: 156px; }
   }
 }
 
+
 /* ════════════════════════════════════════════════════════════
-   Dry Dock Report — Step 2: Editor (목차 + 블록)
+   Dry Dock Report — Step 2 (v2): Editor
    ════════════════════════════════════════════════════════════ */
 
-/* 카드 우측 메타편집 버튼 (Step 1 보완) */
+/* 카드 우측 메타편집 버튼 */
 .dd-card-head-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
 }
 .dd-card-edit {
   background: transparent;
@@ -2936,423 +2934,454 @@ col.c-edit   { width: 156px; }
   display: flex;
   flex-direction: column;
   height: calc(100vh - 64px);
-  margin: -16px -16px 0;  /* main-content padding 상쇄 */
+  margin: -16px -16px 0;
   background: var(--surface, #fff);
 }
-
 .dde-topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: flex; align-items: center; gap: 12px;
   padding: 10px 18px;
   border-bottom: 1px solid var(--border, #e5e7eb);
   background: var(--surface, #fff);
   flex-shrink: 0;
 }
-.dde-title-block {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
+.dde-title-block { display: flex; flex-direction: column; min-width: 0; }
 .dde-title {
-  font-size: 15px;
-  font-weight: 700;
-  margin: 0;
+  font-size: 15px; font-weight: 700; margin: 0;
   color: var(--text-primary, #111827);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dde-subtitle {
-  font-size: 11.5px;
-  color: var(--text-secondary, #6b7280);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 11.5px; color: var(--text-secondary, #6b7280);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dde-save-status {
-  font-size: 12px;
-  color: var(--text-muted, #9ca3af);
-  font-style: italic;
-  min-width: 80px;
+  font-size: 12px; color: var(--text-muted, #9ca3af);
+  font-style: italic; min-width: 90px;
 }
 .dde-save-ok   { color: #10b981; font-style: normal; }
 .dde-save-busy { color: #2563eb; font-style: italic; }
 .dde-save-err  { color: #ef4444; font-weight: 600; font-style: normal; }
 
-.dde-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
+.dde-body { flex: 1; display: flex; min-height: 0; }
 
-/* ──── 좌측 사이드바 — 목차 ──── */
+/* ──── 좌측 사이드바 ──── */
 .dde-sidebar {
-  width: 280px;
-  flex-shrink: 0;
+  width: 280px; flex-shrink: 0;
   border-right: 1px solid var(--border, #e5e7eb);
   background: #fafbfc;
-  display: flex;
-  flex-direction: column;
+  display: flex; flex-direction: column;
 }
 .dde-side-head, .dde-side-foot {
   padding: 12px 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between;
   gap: 8px;
-  font-size: 12.5px;
-  font-weight: 700;
+  font-size: 12.5px; font-weight: 700;
   color: var(--text-secondary, #4b5563);
 }
 .dde-side-foot {
   border-top: 1px solid var(--border, #e5e7eb);
   background: #f3f4f6;
 }
-.dde-toc {
-  flex: 1;
-  overflow-y: auto;
-  padding: 6px 8px;
-}
+.dde-toc { flex: 1; overflow-y: auto; padding: 6px 8px; }
 .dde-toc-empty {
-  padding: 20px 16px;
-  font-size: 12px;
-  color: var(--text-muted, #9ca3af);
-  text-align: center;
-  line-height: 1.5;
+  padding: 20px 16px; font-size: 12px;
+  color: var(--text-muted, #9ca3af); text-align: center; line-height: 1.5;
 }
-
 .dde-toc-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; border-radius: 6px;
+  cursor: pointer; font-size: 13px;
   color: var(--text-primary, #111827);
-  margin-bottom: 2px;
-  position: relative;
+  margin-bottom: 2px; position: relative;
 }
-.dde-toc-item:hover {
-  background: var(--surface-2, #eef2ff);
-}
+.dde-toc-item:hover { background: var(--surface-2, #eef2ff); }
 .dde-toc-item.active {
-  background: #dbeafe;
-  color: #1e40af;
-  font-weight: 600;
+  background: #dbeafe; color: #1e40af; font-weight: 600;
 }
 .dde-toc-no {
-  font-weight: 700;
-  color: #2563eb;
-  flex-shrink: 0;
-  font-size: 12px;
-  min-width: 28px;
+  font-weight: 700; color: #2563eb; flex-shrink: 0;
+  font-size: 12px; min-width: 28px;
 }
 .dde-toc-item.active .dde-toc-no { color: #1e40af; }
 .dde-toc-title {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.dde-toc-actions {
-  display: none;
-  gap: 2px;
-}
+.dde-toc-actions { display: none; gap: 2px; }
 .dde-toc-item:hover .dde-toc-actions { display: flex; }
 .dde-toc-btn {
   background: transparent;
   border: 1px solid var(--border, #d1d5db);
-  width: 20px; height: 20px;
-  border-radius: 4px;
-  font-size: 11px;
-  cursor: pointer;
-  padding: 0;
+  width: 20px; height: 20px; border-radius: 4px;
+  font-size: 11px; cursor: pointer; padding: 0;
   color: var(--text-secondary, #4b5563);
 }
 .dde-toc-btn:hover { background: #fff; border-color: #2563eb; color: #2563eb; }
-
 .dde-toc-children {
   padding-left: 14px;
   border-left: 2px solid #e5e7eb;
-  margin-left: 12px;
-  margin-bottom: 4px;
+  margin-left: 12px; margin-bottom: 4px;
 }
-
 .dde-toc-item.depth-1 { font-size: 12.5px; }
 .dde-toc-item.depth-2 { font-size: 12px; opacity: 0.95; }
 
-/* ──── 우측 메인 — 본문 편집 ──── */
+/* ──── 우측 메인 ──── */
 .dde-main {
-  flex: 1;
-  overflow-y: auto;
-  padding: 18px 24px 60px;
+  flex: 1; overflow-y: auto;
+  padding: 18px 24px 80px;
   min-width: 0;
 }
 .dde-main-empty {
-  padding: 60px 20px;
-  text-align: center;
-  color: var(--text-muted, #9ca3af);
-  font-size: 13.5px;
+  padding: 60px 20px; text-align: center;
+  color: var(--text-muted, #9ca3af); font-size: 13.5px;
 }
-
-.dde-section-edit {
-  max-width: 920px;
-}
+.dde-section-edit { max-width: 920px; }
 .dde-section-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: flex; align-items: center; gap: 10px;
   padding-bottom: 14px;
   border-bottom: 2px solid #2563eb;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 .dde-section-no {
-  font-size: 18px;
-  font-weight: 800;
-  color: #2563eb;
-  flex-shrink: 0;
+  font-size: 18px; font-weight: 800; color: #2563eb; flex-shrink: 0;
 }
 .dde-section-title-input {
-  flex: 1;
-  font-size: 17px;
-  font-weight: 700;
-  border: none;
-  border-bottom: 1px solid transparent;
-  padding: 6px 4px;
-  background: transparent;
-  outline: none;
-  color: var(--text-primary, #111827);
+  flex: 1; font-size: 17px; font-weight: 700;
+  border: none; border-bottom: 1px solid transparent;
+  padding: 6px 4px; background: transparent;
+  outline: none; color: var(--text-primary, #111827);
 }
-.dde-section-title-input:hover {
-  border-bottom-color: var(--border, #d1d5db);
-}
-.dde-section-title-input:focus {
-  border-bottom-color: #2563eb;
-  background: #f9fafb;
+.dde-section-title-input:hover { border-bottom-color: var(--border, #d1d5db); }
+.dde-section-title-input:focus { border-bottom-color: #2563eb; background: #f9fafb; }
+
+/* ──── 블록 컨테이너 ──── */
+.dde-blocks { display: flex; flex-direction: column; }
+
+.dde-blocks-hint {
+  padding: 30px 20px; text-align: center;
+  color: var(--text-muted, #9ca3af); font-size: 13px;
 }
 
-/* ──── 블록 공통 ──── */
-.dde-blocks { display: flex; flex-direction: column; gap: 14px; }
+/* 블록 사이의 + Inserter (호버 시만 표시) */
+.dde-inserter {
+  display: flex; justify-content: center; align-items: center;
+  height: 0;
+  position: relative;
+  transition: height 0.15s;
+}
+.dde-inserter-btn {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border, #d1d5db);
+  background: #fff;
+  color: var(--text-secondary, #6b7280);
+  font-size: 14px; font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s;
+}
+.dde-inserter:hover {
+  height: 22px;
+  margin: 4px 0;
+}
+.dde-inserter:hover .dde-inserter-btn {
+  opacity: 1;
+}
+.dde-inserter-btn:hover {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+  transform: scale(1.1);
+}
 
-.dde-block {
+/* + 메뉴 (블록 종류 선택) */
+.dde-insert-menu {
+  position: absolute;
+  z-index: 1000;
   background: #fff;
   border: 1px solid var(--border, #e5e7eb);
   border-radius: 8px;
-  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 6px;
+  min-width: 180px;
+  display: flex; flex-direction: column;
 }
-.dde-block-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: #f9fafb;
-  border-bottom: 1px solid var(--border, #e5e7eb);
-  font-size: 11px;
+.dde-insert-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  border: none; background: transparent;
+  cursor: pointer; font-size: 13px;
+  border-radius: 5px;
+  color: var(--text-primary, #111827);
+  text-align: left;
 }
-.dde-block-type {
-  font-weight: 700;
-  color: var(--text-secondary, #4b5563);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+.dde-insert-item:hover {
+  background: #eff6ff; color: #1e40af;
 }
-.dde-block-btn {
-  background: transparent;
-  border: 1px solid var(--border, #d1d5db);
-  width: 22px; height: 22px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 11px;
-  color: var(--text-secondary, #4b5563);
-  padding: 0;
+.dde-insert-icon {
+  font-size: 15px;
+  width: 22px; text-align: center;
+  color: var(--text-secondary, #6b7280);
 }
-.dde-block-btn:hover:not(:disabled) {
-  background: #fff;
-  border-color: #2563eb;
-  color: #2563eb;
-}
-.dde-block-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-.dde-block-del:hover {
-  background: #fee2e2 !important;
-  border-color: #ef4444 !important;
-  color: #b91c1c !important;
-}
-.dde-block-body { padding: 12px 14px; }
+.dde-insert-item:hover .dde-insert-icon { color: #2563eb; }
 
-/* ──── 블록: paragraph ──── */
-.dde-p-input {
-  width: 100%;
-  min-height: 60px;
-  padding: 8px 10px;
+/* ──── 블록 (헤더 없음, 호버 시 우측 상단 컨트롤) ──── */
+.dde-block {
+  position: relative;
+  padding: 8px 4px;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+.dde-block:hover {
+  background: #fafbfc;
+}
+.dde-block-body {}
+
+.dde-block-controls {
+  position: absolute;
+  top: 4px; right: 6px;
+  display: none;
+  gap: 2px;
+  background: #fff;
   border: 1px solid var(--border, #e5e7eb);
   border-radius: 6px;
-  font-family: inherit;
-  font-size: 13.5px;
-  line-height: 1.6;
-  resize: none;
-  outline: none;
+  padding: 2px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  z-index: 5;
 }
-.dde-p-input:focus { border-color: #2563eb; }
+.dde-block:hover .dde-block-controls { display: flex; }
+.dde-block-btn {
+  background: transparent; border: none;
+  width: 22px; height: 22px; border-radius: 4px;
+  cursor: pointer; font-size: 11px;
+  color: var(--text-secondary, #4b5563); padding: 0;
+}
+.dde-block-btn:hover:not(:disabled) {
+  background: #eff6ff; color: #2563eb;
+}
+.dde-block-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.dde-block-del:hover { background: #fee2e2 !important; color: #b91c1c !important; }
 
-/* ──── 블록: bullet_list ──── */
-.dde-bullet-list { display: flex; flex-direction: column; gap: 4px; }
-.dde-bullet-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.dde-bullet-marker {
-  color: var(--text-secondary, #6b7280);
-  font-size: 16px;
-  width: 14px;
-  text-align: center;
-}
-.dde-bullet-input {
-  flex: 1;
+/* ──── paragraph ──── */
+.dde-p-input {
+  width: 100%; min-height: 60px;
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 4px;
-  font-size: 13px;
+  font-family: inherit; font-size: 13.5px;
+  line-height: 1.7;
+  resize: none; outline: none;
   background: transparent;
-  outline: none;
 }
-.dde-bullet-input:hover { background: #f9fafb; }
-.dde-bullet-input:focus { border-color: #2563eb; background: #fff; }
+.dde-p-input:hover { background: #fff; border-color: var(--border, #e5e7eb); }
+.dde-p-input:focus { background: #fff; border-color: #2563eb; }
+
+/* ──── bullet_list ──── */
+.dde-bullet-list { display: flex; flex-direction: column; gap: 2px; }
+.dde-bullet-row { display: flex; align-items: center; gap: 6px; }
+.dde-bullet-marker {
+  color: var(--text-secondary, #6b7280);
+  font-size: 16px; width: 14px; text-align: center;
+}
+.dde-bullet-input {
+  flex: 1; padding: 5px 8px;
+  border: 1px solid transparent; border-radius: 4px;
+  font-size: 13px; background: transparent; outline: none;
+}
+.dde-bullet-input:hover { background: #fff; border-color: var(--border, #e5e7eb); }
+.dde-bullet-input:focus { background: #fff; border-color: #2563eb; }
 .dde-bullet-x {
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 11px;
-  color: var(--text-muted, #9ca3af);
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  visibility: hidden;
+  background: transparent; border: none; cursor: pointer;
+  font-size: 11px; color: var(--text-muted, #9ca3af);
+  width: 22px; height: 22px; border-radius: 4px; visibility: hidden;
 }
 .dde-bullet-row:hover .dde-bullet-x { visibility: visible; }
 .dde-bullet-x:hover { background: #fee2e2; color: #b91c1c; }
-.dde-bullet-add { align-self: flex-start; margin-top: 4px; }
+.dde-bullet-add-link {
+  align-self: flex-start;
+  margin-top: 6px;
+  margin-left: 20px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #9ca3af);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+.dde-bullet-add-link:hover { color: #2563eb; }
 
-/* ──── 블록: table ──── */
+/* ──── table ──── */
 .dde-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border, #e5e7eb);
   border-radius: 6px;
+  background: #fff;
 }
 .dde-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12.5px;
+  table-layout: fixed;
 }
-.dde-table th,
-.dde-table td {
+.dde-table th, .dde-table td {
   border: 1px solid var(--border, #e5e7eb);
   padding: 0;
   vertical-align: top;
   position: relative;
+  overflow: hidden;
 }
 .dde-table th {
-  background: #f3f4f6;
-  font-weight: 700;
+  background: #f3f4f6; font-weight: 700;
 }
 .dde-table th .dde-cell-input,
 .dde-table td .dde-cell-textarea {
   width: 100%;
   border: none;
   padding: 6px 8px;
-  font-family: inherit;
-  font-size: 12.5px;
-  background: transparent;
-  outline: none;
+  font-family: inherit; font-size: 12.5px;
+  background: transparent; outline: none;
   resize: none;
+  box-sizing: border-box;
 }
 .dde-table th .dde-cell-input {
-  font-weight: 700;
-  text-align: center;
+  font-weight: 700; text-align: center;
 }
 .dde-table th .dde-cell-input:focus,
 .dde-table td .dde-cell-textarea:focus {
   background: #eff6ff;
 }
-.dde-table td .dde-cell-textarea {
-  min-height: 28px;
-  line-height: 1.4;
-}
-.dde-col-del,
-.dde-row-del {
-  position: absolute;
-  background: transparent;
-  border: none;
-  color: var(--text-muted, #9ca3af);
-  cursor: pointer;
+.dde-table td .dde-cell-textarea { min-height: 28px; line-height: 1.4; }
+
+.dde-col-del, .dde-row-del {
+  background: transparent; border: none;
+  color: var(--text-muted, #9ca3af); cursor: pointer;
   font-size: 10px;
   width: 18px; height: 18px;
-  border-radius: 3px;
-  padding: 0;
+  border-radius: 3px; padding: 0;
   visibility: hidden;
 }
-.dde-col-del {
-  top: 2px; right: 2px;
+.dde-col-del { position: absolute; top: 2px; right: 2px; }
+.dde-table th:hover .dde-col-del { visibility: visible; }
+.dde-row-del {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin: 4px auto; visibility: visible;
 }
-.dde-table th:hover .dde-col-del,
-.dde-row-del { visibility: visible; }
-.dde-col-del:hover, .dde-row-del:hover {
-  background: #fee2e2;
-  color: #b91c1c;
-}
-.dde-tbl-ctrl-col {
-  background: #f9fafb;
+.dde-col-del:hover, .dde-row-del:hover { background: #fee2e2; color: #b91c1c; }
+
+.dde-tbl-ctrl-col, .dde-tbl-ctrl-col-c {
   width: 30px;
+  background: #f9fafb;
   text-align: center;
 }
-.dde-tbl-ctrl-col .dde-row-del {
-  position: static;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: 4px auto;
+
+/* 컬럼 리사이즈 핸들 */
+.dde-col-resize {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+  user-select: none;
 }
+.dde-col-resize:hover { background: #2563eb33; }
+body.dde-col-resizing { cursor: col-resize !important; user-select: none; }
+body.dde-col-resizing * { cursor: col-resize !important; }
 
 .dde-table-ctrls {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  display: flex; gap: 8px; margin-top: 8px;
+  align-items: center;
+}
+.dde-table-hint {
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+  margin-left: 6px;
 }
 
-/* ──── 블록: image ──── */
-.dde-image-block {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* ──── image gallery ──── */
+.dde-image-block { display: flex; flex-direction: column; gap: 10px; }
+
+.dde-img-opts {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 0;
 }
-.dde-image-preview {
-  max-width: 100%;
-  max-height: 480px;
-  object-fit: contain;
-  border-radius: 6px;
+.dde-img-opts-label {
+  font-size: 12px; font-weight: 600;
+  color: var(--text-secondary, #6b7280);
+  margin-right: 4px;
+}
+.dde-col-btn {
+  width: 26px; height: 26px;
+  border: 1px solid var(--border, #d1d5db);
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px; font-weight: 600;
+  color: var(--text-secondary, #4b5563);
+}
+.dde-col-btn:hover { border-color: #2563eb; color: #2563eb; }
+.dde-col-btn.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.dde-img-grid {
+  display: grid;
+  gap: 12px;
+}
+.dde-img-cell {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.dde-img-cell-inner {
+  position: relative;
   background: #f3f4f6;
-  align-self: center;
-}
-.dde-image-caption {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--border, #e5e7eb);
   border-radius: 6px;
-  font-size: 12.5px;
+  overflow: hidden;
+  aspect-ratio: 4/3;
+}
+.dde-img-thumb {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.dde-img-ctrl {
+  position: absolute;
+  top: 6px; right: 6px;
+  display: none;
+  gap: 4px;
+  background: rgba(0,0,0,0.6);
+  padding: 4px;
+  border-radius: 4px;
+}
+.dde-img-cell-inner:hover .dde-img-ctrl { display: flex; }
+.dde-img-mv, .dde-img-x {
+  background: transparent; border: none;
+  color: #fff; cursor: pointer;
+  width: 22px; height: 22px;
+  font-size: 11px;
+  border-radius: 3px; padding: 0;
+}
+.dde-img-mv:hover:not(:disabled) { background: rgba(255,255,255,0.2); }
+.dde-img-mv:disabled { opacity: 0.3; cursor: not-allowed; }
+.dde-img-x:hover { background: #ef4444; }
+
+.dde-img-caption-inp {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 11.5px;
   text-align: center;
   font-style: italic;
-  background: #fafbfc;
+  background: transparent;
   outline: none;
+  color: var(--text-secondary, #4b5563);
 }
-.dde-image-caption:focus { border-color: #2563eb; background: #fff; }
-.dde-image-actions {
-  display: flex;
-  justify-content: center;
-}
+.dde-img-caption-inp:hover { background: #fafbfc; border-color: var(--border, #e5e7eb); }
+.dde-img-caption-inp:focus { background: #fff; border-color: #2563eb; }
 
 .dde-image-drop {
   border: 2px dashed var(--border, #d1d5db);
@@ -3362,46 +3391,20 @@ col.c-edit   { width: 156px; }
   cursor: pointer;
   transition: all 0.15s;
 }
-.dde-image-drop:hover {
-  border-color: #2563eb;
-  background: #eff6ff;
-}
+.dde-image-drop:hover { border-color: #2563eb; background: #eff6ff; }
 .dde-image-drop-icon { font-size: 32px; }
 .dde-image-drop-text {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #111827);
-  margin-top: 6px;
+  font-size: 13px; font-weight: 600;
+  color: var(--text-primary, #111827); margin-top: 6px;
 }
 .dde-image-drop-hint {
-  font-size: 11.5px;
-  color: var(--text-muted, #9ca3af);
-  margin-top: 4px;
-}
-
-/* ──── 블록 추가 영역 ──── */
-.dde-block-add {
-  margin-top: 18px;
-  padding: 14px;
-  border: 1px dashed var(--border, #d1d5db);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  background: #fafbfc;
-}
-.dde-add-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-secondary, #6b7280);
+  font-size: 11.5px; color: var(--text-muted, #9ca3af); margin-top: 4px;
 }
 
 @media (max-width: 800px) {
   .dde-body { flex-direction: column; }
   .dde-sidebar {
-    width: 100%;
-    max-height: 240px;
+    width: 100%; max-height: 240px;
     border-right: none;
     border-bottom: 1px solid var(--border, #e5e7eb);
   }
