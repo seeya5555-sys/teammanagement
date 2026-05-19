@@ -255,12 +255,39 @@ function renderEditor() {
     return;
   }
 
-  // 블록이 있을 때 — 인라인 inserter
+  // 블록이 있을 때
+  // - 맨 위와 블록 사이는 인라인 inserter (호버형)
+  // - 맨 마지막에는 항상 보이는 "+ 블록 추가" 영역
   blocksWrap.append(renderInserter(0));
   blocks.forEach((b, idx) => {
     blocksWrap.append(renderBlock(b, idx, blocks.length));
-    blocksWrap.append(renderInserter(idx + 1));
+    if (idx < blocks.length - 1) {
+      blocksWrap.append(renderInserter(idx + 1));
+    }
   });
+  blocksWrap.append(renderTailAdder(blocks.length));
+}
+
+// 맨 끝에 항상 보이는 추가 영역 — 4가지 종류 작은 버튼 가로 배치
+function renderTailAdder(position) {
+  const wrap = el('div', { class: 'dde-tail-add' });
+  wrap.append(el('span', { class: 'dde-tail-add-label' }, '+ 블록 추가:'));
+  const items = [
+    { type: 'paragraph',   icon: 'T',  label: '텍스트' },
+    { type: 'bullet_list', icon: '•',  label: '불릿' },
+    { type: 'table',       icon: '▦',  label: '표' },
+    { type: 'image',       icon: '🖼', label: '사진' },
+  ];
+  for (const it of items) {
+    wrap.append(el('button', {
+      class: 'dde-tail-btn', type: 'button',
+      onclick: () => addBlockAt(it.type, position),
+    },
+      el('span', { class: 'dde-tail-icon' }, it.icon),
+      el('span', {}, it.label),
+    ));
+  }
+  return wrap;
 }
 
 // 섹션에 블록이 하나도 없을 때 보여줄 큰 추가 영역
