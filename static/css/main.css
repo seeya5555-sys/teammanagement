@@ -3311,6 +3311,18 @@ col.c-edit   { width: 156px; }
 
 .dde-bullet-list { display: flex; flex-direction: column; gap: 2px; }
 .dde-bullet-row { display: flex; align-items: center; gap: 6px; }
+/* 들여쓰기 레벨별 padding */
+.dde-bullet-row.indent-0 { padding-left: 0; }
+.dde-bullet-row.indent-1 { padding-left: 28px; }
+.dde-bullet-row.indent-2 { padding-left: 56px; }
+.dde-bullet-row.indent-3 { padding-left: 84px; }
+
+.dde-bullet-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+  font-style: italic;
+}
 .dde-bullet-marker {
   color: var(--text-secondary, #6b7280);
   font-size: 14px;
