@@ -496,6 +496,15 @@ def dry_dock_page():
     return render_template('dry_dock.html')
 
 
+@app.route('/dry-dock/<int:rid>/edit')
+@login_required
+def dry_dock_edit_page(rid):
+    r = query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True)
+    if not r:
+        abort(404)
+    return render_template('dry_dock_edit.html', report_id=rid)
+
+
 # ═════════════════════════════════════════════════════════════════
 #  API — me / password
 # ═════════════════════════════════════════════════════════════════
@@ -2449,6 +2458,256 @@ def api_dock_delete(rid):
     execute('DELETE FROM dock_reports WHERE id = ?', (rid,))
     # 섹션/블록은 ON DELETE CASCADE로 자동 삭제
     return jsonify({'ok': True})
+
+
+def _touch_dock_report(rid):
+    """보고서 updated_at 갱신 — 섹션/블록 변경 시 호출"""
+    execute("UPDATE dock_reports SET updated_at=datetime('now','localtime') WHERE id=?",
+            (rid,))
+
+
+def _section_report_id(sid):
+    r = query('SELECT report_id FROM dock_report_sections WHERE id=?', (sid,), one=True)
+    return r['report_id'] if r else None
+
+
+def _block_report_id(bid):
+    r = query('''
+        SELECT s.report_id FROM dock_report_blocks b
+          JOIN dock_report_sections s ON s.id = b.section_id
+         WHERE b.id = ?
+    ''', (bid,), one=True)
+    return r['report_id'] if r else None
+
+
+# ─── Sections ─────────────────────────────────────────────────
+@app.route('/api/dock-reports/<int:rid>/sections', methods=['POST'])
+@login_required
+def api_dock_section_create(rid):
+    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    title = (d.get('title') or '').strip() or '새 섹션'
+    parent_id = d.get('parent_id')
+    if parent_id:
+        # parent가 같은 report 내인지 확인
+        p = query('SELECT report_id FROM dock_report_sections WHERE id=?',
+                  (parent_id,), one=True)
+        if not p or p['report_id'] != rid:
+            return jsonify({'error': '잘못된 상위 섹션입니다.'}), 400
+
+    # 같은 부모 아래 마지막 순서
+    cond = 'parent_id IS NULL' if not parent_id else 'parent_id = ?'
+    cp = (rid,) if not parent_id else (parent_id,)
+    last = query(f'''
+        SELECT COALESCE(MAX(display_order), -1) AS mx
+          FROM dock_report_sections
+         WHERE report_id = ? AND {cond}
+    ''', (rid, *([parent_id] if parent_id else [])), one=True)
+    next_order = (last['mx'] if last else -1) + 1
+
+    new_id = execute('''
+        INSERT INTO dock_report_sections (report_id, parent_id, title, display_order)
+        VALUES (?,?,?,?)
+    ''', (rid, parent_id, title, next_order))
+    _touch_dock_report(rid)
+    return jsonify({'id': new_id, 'ok': True}), 201
+
+
+@app.route('/api/dock-sections/<int:sid>', methods=['PUT'])
+@login_required
+def api_dock_section_update(sid):
+    rid = _section_report_id(sid)
+    if not rid:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    title = (d.get('title') or '').strip()
+    if not title:
+        return jsonify({'error': '제목을 입력하세요.'}), 400
+    execute('UPDATE dock_report_sections SET title=? WHERE id=?', (title, sid))
+    _touch_dock_report(rid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/dock-sections/<int:sid>', methods=['DELETE'])
+@login_required
+def api_dock_section_delete(sid):
+    rid = _section_report_id(sid)
+    if not rid:
+        abort(404)
+    execute('DELETE FROM dock_report_sections WHERE id=?', (sid,))
+    # 자식 섹션·블록 모두 CASCADE
+    _touch_dock_report(rid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/dock-sections/<int:sid>/move', methods=['POST'])
+@login_required
+def api_dock_section_move(sid):
+    """같은 부모 아래에서 위/아래로 한 칸 이동"""
+    rid = _section_report_id(sid)
+    if not rid:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    direction = d.get('direction')
+    if direction not in ('up', 'down'):
+        return jsonify({'error': 'invalid direction'}), 400
+
+    me = query('SELECT * FROM dock_report_sections WHERE id=?', (sid,), one=True)
+    cond = 'parent_id IS NULL' if me['parent_id'] is None else 'parent_id = ?'
+    args = (me['report_id'],) if me['parent_id'] is None else (me['report_id'], me['parent_id'])
+
+    if direction == 'up':
+        nb = query(f'''
+            SELECT * FROM dock_report_sections
+             WHERE report_id=? AND {cond} AND display_order < ?
+             ORDER BY display_order DESC LIMIT 1
+        ''', (*args, me['display_order']), one=True)
+    else:
+        nb = query(f'''
+            SELECT * FROM dock_report_sections
+             WHERE report_id=? AND {cond} AND display_order > ?
+             ORDER BY display_order ASC LIMIT 1
+        ''', (*args, me['display_order']), one=True)
+
+    if not nb:
+        return jsonify({'ok': True, 'moved': False})
+
+    execute('UPDATE dock_report_sections SET display_order=? WHERE id=?',
+            (nb['display_order'], me['id']))
+    execute('UPDATE dock_report_sections SET display_order=? WHERE id=?',
+            (me['display_order'], nb['id']))
+    _touch_dock_report(rid)
+    return jsonify({'ok': True, 'moved': True})
+
+
+# ─── Blocks ──────────────────────────────────────────────────
+def _default_block_content(block_type):
+    if block_type == 'paragraph':   return {'text': ''}
+    if block_type == 'bullet_list': return {'items': ['']}
+    if block_type == 'table':       return {'headers': ['항목', '내용'], 'rows': [['', '']]}
+    if block_type == 'image':       return {'filename': '', 'url': '', 'caption': '', 'width_pct': 100}
+    return {}
+
+
+@app.route('/api/dock-sections/<int:sid>/blocks', methods=['POST'])
+@login_required
+def api_dock_block_create(sid):
+    rid = _section_report_id(sid)
+    if not rid:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    bt = d.get('block_type')
+    if bt not in ('paragraph', 'bullet_list', 'table', 'image'):
+        return jsonify({'error': 'invalid block_type'}), 400
+    content = d.get('content') or _default_block_content(bt)
+
+    last = query('''
+        SELECT COALESCE(MAX(display_order), -1) AS mx
+          FROM dock_report_blocks WHERE section_id=?
+    ''', (sid,), one=True)
+    next_order = (last['mx'] if last else -1) + 1
+
+    new_id = execute('''
+        INSERT INTO dock_report_blocks (section_id, block_type, content_json, display_order)
+        VALUES (?,?,?,?)
+    ''', (sid, bt, json.dumps(content, ensure_ascii=False), next_order))
+    _touch_dock_report(rid)
+    return jsonify({'id': new_id, 'ok': True, 'content': content}), 201
+
+
+@app.route('/api/dock-blocks/<int:bid>', methods=['PUT'])
+@login_required
+def api_dock_block_update(bid):
+    rid = _block_report_id(bid)
+    if not rid:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    content = d.get('content')
+    if content is None:
+        return jsonify({'error': 'content가 필요합니다.'}), 400
+    execute('UPDATE dock_report_blocks SET content_json=? WHERE id=?',
+            (json.dumps(content, ensure_ascii=False), bid))
+    _touch_dock_report(rid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/dock-blocks/<int:bid>', methods=['DELETE'])
+@login_required
+def api_dock_block_delete(bid):
+    rid = _block_report_id(bid)
+    if not rid:
+        abort(404)
+    execute('DELETE FROM dock_report_blocks WHERE id=?', (bid,))
+    _touch_dock_report(rid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/dock-blocks/<int:bid>/move', methods=['POST'])
+@login_required
+def api_dock_block_move(bid):
+    rid = _block_report_id(bid)
+    if not rid:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    direction = d.get('direction')
+    if direction not in ('up', 'down'):
+        return jsonify({'error': 'invalid direction'}), 400
+
+    me = query('SELECT * FROM dock_report_blocks WHERE id=?', (bid,), one=True)
+    if direction == 'up':
+        nb = query('''
+            SELECT * FROM dock_report_blocks
+             WHERE section_id=? AND display_order < ?
+             ORDER BY display_order DESC LIMIT 1
+        ''', (me['section_id'], me['display_order']), one=True)
+    else:
+        nb = query('''
+            SELECT * FROM dock_report_blocks
+             WHERE section_id=? AND display_order > ?
+             ORDER BY display_order ASC LIMIT 1
+        ''', (me['section_id'], me['display_order']), one=True)
+
+    if not nb:
+        return jsonify({'ok': True, 'moved': False})
+
+    execute('UPDATE dock_report_blocks SET display_order=? WHERE id=?',
+            (nb['display_order'], me['id']))
+    execute('UPDATE dock_report_blocks SET display_order=? WHERE id=?',
+            (me['display_order'], nb['id']))
+    _touch_dock_report(rid)
+    return jsonify({'ok': True, 'moved': True})
+
+
+# ─── Image upload ────────────────────────────────────────────
+@app.route('/api/dock-reports/<int:rid>/upload-image', methods=['POST'])
+@login_required
+def api_dock_upload_image(rid):
+    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
+        abort(404)
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다.'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': '파일명이 비어있습니다.'}), 400
+
+    # 확장자 화이트리스트 (이미지만)
+    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+    if ext not in {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'}:
+        return jsonify({'error': '이미지 파일만 업로드 가능합니다.'}), 400
+
+    # static/uploads/dock/ 폴더에 저장
+    dock_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'dock')
+    os.makedirs(dock_dir, exist_ok=True)
+
+    # 파일명: dock-{rid}-{timestamp}-{rand}.{ext}
+    import time
+    fname = f'dock-{rid}-{int(time.time()*1000)}-{secrets.token_hex(4)}.{ext}'
+    fpath = os.path.join(dock_dir, fname)
+    f.save(fpath)
+
+    url = url_for('static', filename=f'uploads/dock/{fname}')
+    return jsonify({'ok': True, 'filename': fname, 'url': url}), 201
 
 
 # ═════════════════════════════════════════════════════════════════
