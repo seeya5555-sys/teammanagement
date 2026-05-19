@@ -2903,3 +2903,507 @@ col.c-edit   { width: 156px; }
     grid-template-columns: 1fr;
   }
 }
+
+/* ════════════════════════════════════════════════════════════
+   Dry Dock Report — Step 2: Editor (목차 + 블록)
+   ════════════════════════════════════════════════════════════ */
+
+/* 카드 우측 메타편집 버튼 (Step 1 보완) */
+.dd-card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.dd-card-edit {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 16px;
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted, #9ca3af);
+}
+.dd-card-edit:hover {
+  background: var(--surface-2, #f3f4f6);
+  border-color: var(--border, #e5e7eb);
+  color: var(--text-primary, #111827);
+}
+
+/* ──── 편집 페이지 레이아웃 ──── */
+.dde-wrap {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 64px);
+  margin: -16px -16px 0;  /* main-content padding 상쇄 */
+  background: var(--surface, #fff);
+}
+
+.dde-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--surface, #fff);
+  flex-shrink: 0;
+}
+.dde-title-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.dde-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary, #111827);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dde-subtitle {
+  font-size: 11.5px;
+  color: var(--text-secondary, #6b7280);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dde-save-status {
+  font-size: 12px;
+  color: var(--text-muted, #9ca3af);
+  font-style: italic;
+  min-width: 80px;
+}
+.dde-save-ok   { color: #10b981; font-style: normal; }
+.dde-save-busy { color: #2563eb; font-style: italic; }
+.dde-save-err  { color: #ef4444; font-weight: 600; font-style: normal; }
+
+.dde-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ──── 좌측 사이드바 — 목차 ──── */
+.dde-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border, #e5e7eb);
+  background: #fafbfc;
+  display: flex;
+  flex-direction: column;
+}
+.dde-side-head, .dde-side-foot {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-secondary, #4b5563);
+}
+.dde-side-foot {
+  border-top: 1px solid var(--border, #e5e7eb);
+  background: #f3f4f6;
+}
+.dde-toc {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+.dde-toc-empty {
+  padding: 20px 16px;
+  font-size: 12px;
+  color: var(--text-muted, #9ca3af);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.dde-toc-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary, #111827);
+  margin-bottom: 2px;
+  position: relative;
+}
+.dde-toc-item:hover {
+  background: var(--surface-2, #eef2ff);
+}
+.dde-toc-item.active {
+  background: #dbeafe;
+  color: #1e40af;
+  font-weight: 600;
+}
+.dde-toc-no {
+  font-weight: 700;
+  color: #2563eb;
+  flex-shrink: 0;
+  font-size: 12px;
+  min-width: 28px;
+}
+.dde-toc-item.active .dde-toc-no { color: #1e40af; }
+.dde-toc-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dde-toc-actions {
+  display: none;
+  gap: 2px;
+}
+.dde-toc-item:hover .dde-toc-actions { display: flex; }
+.dde-toc-btn {
+  background: transparent;
+  border: 1px solid var(--border, #d1d5db);
+  width: 20px; height: 20px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text-secondary, #4b5563);
+}
+.dde-toc-btn:hover { background: #fff; border-color: #2563eb; color: #2563eb; }
+
+.dde-toc-children {
+  padding-left: 14px;
+  border-left: 2px solid #e5e7eb;
+  margin-left: 12px;
+  margin-bottom: 4px;
+}
+
+.dde-toc-item.depth-1 { font-size: 12.5px; }
+.dde-toc-item.depth-2 { font-size: 12px; opacity: 0.95; }
+
+/* ──── 우측 메인 — 본문 편집 ──── */
+.dde-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 24px 60px;
+  min-width: 0;
+}
+.dde-main-empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-muted, #9ca3af);
+  font-size: 13.5px;
+}
+
+.dde-section-edit {
+  max-width: 920px;
+}
+.dde-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 2px solid #2563eb;
+  margin-bottom: 18px;
+}
+.dde-section-no {
+  font-size: 18px;
+  font-weight: 800;
+  color: #2563eb;
+  flex-shrink: 0;
+}
+.dde-section-title-input {
+  flex: 1;
+  font-size: 17px;
+  font-weight: 700;
+  border: none;
+  border-bottom: 1px solid transparent;
+  padding: 6px 4px;
+  background: transparent;
+  outline: none;
+  color: var(--text-primary, #111827);
+}
+.dde-section-title-input:hover {
+  border-bottom-color: var(--border, #d1d5db);
+}
+.dde-section-title-input:focus {
+  border-bottom-color: #2563eb;
+  background: #f9fafb;
+}
+
+/* ──── 블록 공통 ──── */
+.dde-blocks { display: flex; flex-direction: column; gap: 14px; }
+
+.dde-block {
+  background: #fff;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dde-block-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #f9fafb;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  font-size: 11px;
+}
+.dde-block-type {
+  font-weight: 700;
+  color: var(--text-secondary, #4b5563);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.dde-block-btn {
+  background: transparent;
+  border: 1px solid var(--border, #d1d5db);
+  width: 22px; height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-secondary, #4b5563);
+  padding: 0;
+}
+.dde-block-btn:hover:not(:disabled) {
+  background: #fff;
+  border-color: #2563eb;
+  color: #2563eb;
+}
+.dde-block-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.dde-block-del:hover {
+  background: #fee2e2 !important;
+  border-color: #ef4444 !important;
+  color: #b91c1c !important;
+}
+.dde-block-body { padding: 12px 14px; }
+
+/* ──── 블록: paragraph ──── */
+.dde-p-input {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+}
+.dde-p-input:focus { border-color: #2563eb; }
+
+/* ──── 블록: bullet_list ──── */
+.dde-bullet-list { display: flex; flex-direction: column; gap: 4px; }
+.dde-bullet-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dde-bullet-marker {
+  color: var(--text-secondary, #6b7280);
+  font-size: 16px;
+  width: 14px;
+  text-align: center;
+}
+.dde-bullet-input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 13px;
+  background: transparent;
+  outline: none;
+}
+.dde-bullet-input:hover { background: #f9fafb; }
+.dde-bullet-input:focus { border-color: #2563eb; background: #fff; }
+.dde-bullet-x {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  visibility: hidden;
+}
+.dde-bullet-row:hover .dde-bullet-x { visibility: visible; }
+.dde-bullet-x:hover { background: #fee2e2; color: #b91c1c; }
+.dde-bullet-add { align-self: flex-start; margin-top: 4px; }
+
+/* ──── 블록: table ──── */
+.dde-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+}
+.dde-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.dde-table th,
+.dde-table td {
+  border: 1px solid var(--border, #e5e7eb);
+  padding: 0;
+  vertical-align: top;
+  position: relative;
+}
+.dde-table th {
+  background: #f3f4f6;
+  font-weight: 700;
+}
+.dde-table th .dde-cell-input,
+.dde-table td .dde-cell-textarea {
+  width: 100%;
+  border: none;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12.5px;
+  background: transparent;
+  outline: none;
+  resize: none;
+}
+.dde-table th .dde-cell-input {
+  font-weight: 700;
+  text-align: center;
+}
+.dde-table th .dde-cell-input:focus,
+.dde-table td .dde-cell-textarea:focus {
+  background: #eff6ff;
+}
+.dde-table td .dde-cell-textarea {
+  min-height: 28px;
+  line-height: 1.4;
+}
+.dde-col-del,
+.dde-row-del {
+  position: absolute;
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #9ca3af);
+  cursor: pointer;
+  font-size: 10px;
+  width: 18px; height: 18px;
+  border-radius: 3px;
+  padding: 0;
+  visibility: hidden;
+}
+.dde-col-del {
+  top: 2px; right: 2px;
+}
+.dde-table th:hover .dde-col-del,
+.dde-row-del { visibility: visible; }
+.dde-col-del:hover, .dde-row-del:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.dde-tbl-ctrl-col {
+  background: #f9fafb;
+  width: 30px;
+  text-align: center;
+}
+.dde-tbl-ctrl-col .dde-row-del {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 4px auto;
+}
+
+.dde-table-ctrls {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ──── 블록: image ──── */
+.dde-image-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dde-image-preview {
+  max-width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #f3f4f6;
+  align-self: center;
+}
+.dde-image-caption {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  font-size: 12.5px;
+  text-align: center;
+  font-style: italic;
+  background: #fafbfc;
+  outline: none;
+}
+.dde-image-caption:focus { border-color: #2563eb; background: #fff; }
+.dde-image-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.dde-image-drop {
+  border: 2px dashed var(--border, #d1d5db);
+  border-radius: 8px;
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.dde-image-drop:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+.dde-image-drop-icon { font-size: 32px; }
+.dde-image-drop-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #111827);
+  margin-top: 6px;
+}
+.dde-image-drop-hint {
+  font-size: 11.5px;
+  color: var(--text-muted, #9ca3af);
+  margin-top: 4px;
+}
+
+/* ──── 블록 추가 영역 ──── */
+.dde-block-add {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px dashed var(--border, #d1d5db);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: #fafbfc;
+}
+.dde-add-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary, #6b7280);
+}
+
+@media (max-width: 800px) {
+  .dde-body { flex-direction: column; }
+  .dde-sidebar {
+    width: 100%;
+    max-height: 240px;
+    border-right: none;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+  }
+  .dde-main { padding: 14px 16px 60px; }
+}
