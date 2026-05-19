@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% block title %}본문 편집 · Dry Dock Report{% endblock %}
+
+{% block content %}
+<div class="dde-wrap" data-report-id="{{ report_id }}">
+
+  <!-- 상단 바: 뒤로가기 + 보고서 정보 + 저장 상태 + 추출 -->
+  <div class="dde-topbar">
+    <a class="btn btn-outline btn-sm" href="{{ url_for('dry_dock_page') }}">← 목록</a>
+    <div class="dde-title-block">
+      <h1 class="dde-title" id="dde-title">로딩 중...</h1>
+      <div class="dde-subtitle" id="dde-subtitle"></div>
+    </div>
+    <span class="dde-save-status" id="dde-save-status"></span>
+    <span class="flex-spacer"></span>
+    <button class="btn btn-outline btn-sm" id="dde-btn-export-docx" title="Word 파일로 추출 (Step 3에서 활성화)">
+      📄 Word
+    </button>
+    <button class="btn btn-outline btn-sm" id="dde-btn-export-pdf" title="PDF로 추출 (Step 3에서 활성화)">
+      📕 PDF
+    </button>
+  </div>
+
+  <!-- 본체: 좌 사이드바 + 우 편집창 -->
+  <div class="dde-body">
+
+    <!-- 좌측 — 목차 -->
+    <aside class="dde-sidebar">
+      <div class="dde-side-head">
+        <span>목차</span>
+        <button class="btn btn-primary btn-sm" id="dde-btn-add-section">+ 섹션</button>
+      </div>
+      <div class="dde-toc" id="dde-toc"></div>
+      <div class="dde-side-foot">
+        <button class="btn btn-outline btn-sm" id="dde-btn-add-sub" disabled title="선택된 섹션 아래에 하위 추가">
+          + 하위 섹션
+        </button>
+      </div>
+    </aside>
+
+    <!-- 우측 — 본문 -->
+    <section class="dde-main">
+      <div class="dde-main-empty" id="dde-main-empty">
+        <p>좌측에서 섹션을 선택하거나, 새 섹션을 추가하여 시작하세요.</p>
+      </div>
+
+      <div class="dde-section-edit" id="dde-section-edit" hidden>
+        <div class="dde-section-head">
+          <span class="dde-section-no" id="dde-section-no"></span>
+          <input type="text" id="dde-section-title" class="dde-section-title-input" placeholder="섹션 제목...">
+          <button class="btn btn-danger btn-outline btn-sm" id="dde-btn-del-section">섹션 삭제</button>
+        </div>
+
+        <div class="dde-blocks" id="dde-blocks"></div>
+
+        <div class="dde-block-add">
+          <span class="dde-add-label">+ 블록 추가:</span>
+          <button class="btn btn-outline btn-sm" data-add-block="paragraph">텍스트</button>
+          <button class="btn btn-outline btn-sm" data-add-block="bullet_list">불릿 리스트</button>
+          <button class="btn btn-outline btn-sm" data-add-block="table">표</button>
+          <button class="btn btn-outline btn-sm" data-add-block="image">사진</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- 이미지 업로드 (숨김) -->
+<input type="file" id="dde-img-input" accept="image/*" hidden>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.DDE_REPORT_ID = {{ report_id|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/dde.js') }}"></script>
+{% endblock %}
