@@ -133,18 +133,26 @@ function renderCard(r) {
   const card = el('div', {
     class: 'dd-card',
     'data-id': r.id,
-    onclick: () => openEdit(r.id),
+    onclick: () => { window.location = `/dry-dock/${r.id}/edit`; },
   });
 
   const statusBadge = el('span', {
     class: `dd-badge ${r.status === 'done' ? 'dd-badge-done' : 'dd-badge-draft'}`
   }, r.status === 'done' ? '완료' : '진행 중');
 
-  // 헤더 — 제목 + 상태
+  // 메타 편집 버튼 (카드 클릭과 분리)
+  const metaBtn = el('button', {
+    class: 'dd-card-edit',
+    type: 'button',
+    title: '보고서 정보 편집',
+    onclick: (ev) => { ev.stopPropagation(); openEdit(r.id); },
+  }, '⋮');
+
+  // 헤더 — 제목 + 상태 + 메타편집
   card.append(
     el('div', { class: 'dd-card-head' },
       el('h3', { class: 'dd-card-title' }, r.title),
-      statusBadge,
+      el('div', { class: 'dd-card-head-right' }, statusBadge, metaBtn),
     )
   );
 
@@ -281,8 +289,8 @@ async function saveReport(thenEdit = false) {
     closeModal();
     await reload();
     if (thenEdit) {
-      // Step 2에서 구현 예정 — 지금은 안내만
-      alert('본문 편집 화면은 다음 단계(Step 2)에서 추가됩니다.\n현재는 메타 정보까지 저장됐습니다.');
+      // 본문 편집 페이지로 이동
+      window.location = `/dry-dock/${DD.editingId}/edit`;
     }
   } catch (e) {
     alert('저장 실패: ' + e.message);
