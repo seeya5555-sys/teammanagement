@@ -249,18 +249,44 @@ function renderEditor() {
   const blocks = (sec.blocks || []).slice().sort((a, b) =>
     a.display_order - b.display_order || a.id - b.id);
 
-  // 위치별 inserter + block
+  if (blocks.length === 0) {
+    // 빈 섹션 — 큰 안내 버튼 (4종 모두 선택 가능)
+    blocksWrap.append(renderEmptyInserter());
+    return;
+  }
+
+  // 블록이 있을 때 — 인라인 inserter
   blocksWrap.append(renderInserter(0));
   blocks.forEach((b, idx) => {
     blocksWrap.append(renderBlock(b, idx, blocks.length));
     blocksWrap.append(renderInserter(idx + 1));
   });
+}
 
-  if (blocks.length === 0) {
-    const hint = el('div', { class: 'dde-blocks-hint' },
-      '⊕ 버튼을 눌러 블록을 추가하세요.');
-    blocksWrap.append(hint);
+// 섹션에 블록이 하나도 없을 때 보여줄 큰 추가 영역
+function renderEmptyInserter() {
+  const wrap = el('div', { class: 'dde-empty-add' });
+  wrap.append(el('div', { class: 'dde-empty-add-hint' },
+    '이 섹션에 추가할 블록 종류를 선택하세요'));
+  const grid = el('div', { class: 'dde-empty-add-grid' });
+  const items = [
+    { type: 'paragraph',   icon: 'T',  label: '텍스트', desc: '단락 본문' },
+    { type: 'bullet_list', icon: '•',  label: '불릿 리스트', desc: '항목 나열' },
+    { type: 'table',       icon: '▦',  label: '표', desc: '행/열 데이터' },
+    { type: 'image',       icon: '🖼', label: '사진 갤러리', desc: '여러 장 가능' },
+  ];
+  for (const it of items) {
+    grid.append(el('button', {
+      class: 'dde-empty-add-btn', type: 'button',
+      onclick: () => addBlockAt(it.type, 0),
+    },
+      el('span', { class: 'dde-empty-add-icon' }, it.icon),
+      el('span', { class: 'dde-empty-add-label' }, it.label),
+      el('span', { class: 'dde-empty-add-desc' }, it.desc),
+    ));
   }
+  wrap.append(grid);
+  return wrap;
 }
 
 function renderInserter(position) {
