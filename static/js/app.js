@@ -290,6 +290,41 @@ function renderVesselFilter() {
   for (const v of S.vessels) sel.append(el('option', { value: v.id }, v.name));
   sel.value = S.vessels.find(v => v.id == cur) ? cur : '';
   S.filters.vessel_id = sel.value;
+
+  // 비동기로 활성 이슈 카운트 받아서 옵션 라벨에 추가
+  refreshVesselFilterCounts();
+}
+
+async function refreshVesselFilterCounts() {
+  const sel = $('#filter-vessel');
+  if (!sel || !S.vessels.length) return;
+
+  const p = new URLSearchParams();
+  if (S.activeTab !== 'all')   p.set('supervisor_id', S.activeTab);
+  if (S.filters.q)             p.set('q', S.filters.q);
+  if (S.filters.vessel_type)   p.set('vessel_type', S.filters.vessel_type);
+  if (S.filters.priority)      p.set('priority', S.filters.priority);
+  // vessel_id는 의도적으로 제외 (드롭다운 라벨용)
+
+  let counts = {};
+  try {
+    counts = await api('/api/vessels/active-counts?' + p);
+  } catch (e) {
+    return;   // 실패해도 조용히 — 기본 라벨 유지
+  }
+
+  // 옵션 라벨 갱신 ("All 선박"은 총합으로 업데이트)
+  const total = Object.values(counts).reduce((a, b) => a + (b || 0), 0);
+  for (const opt of sel.options) {
+    if (opt.value === '') {
+      opt.textContent = `All 선박 (${total})`;
+    } else {
+      const v = S.vessels.find(x => String(x.id) === opt.value);
+      if (!v) continue;
+      const c = counts[opt.value] || 0;
+      opt.textContent = c > 0 ? `${v.name}  ·  ${c}건` : v.name;
+    }
+  }
 }
 function renderTabContext() {
   const c = $('#tab-context');
@@ -362,6 +397,9 @@ function render() {
   renderCards();
   renderSummary();
   updateToggleAllButton();
+  // 다른 필터(검색/우선순위/선종)가 바뀐 후에도 선박 드롭다운의 카운트가
+  // 일관되게 보이도록 갱신 (select 값은 유지됨)
+  refreshVesselFilterCounts();
 }
 
 function renderTable() {
