@@ -2585,8 +2585,15 @@ def api_dock_section_move(sid):
 def _default_block_content(block_type):
     if block_type == 'paragraph':   return {'text': ''}
     if block_type == 'bullet_list': return {'items': ['']}
-    if block_type == 'table':       return {'headers': ['항목', '내용'], 'rows': [['', '']]}
-    if block_type == 'image':       return {'filename': '', 'url': '', 'caption': '', 'width_pct': 100}
+    if block_type == 'table':
+        return {
+            'headers': ['항목', '내용'],
+            'rows':    [['', '']],
+            'col_widths': [],   # 비어있으면 균등 배분, 있으면 px 단위 너비
+        }
+    if block_type == 'image':
+        # 갤러리: 여러 장 가능. images=[] (비어있음) + columns=2 (2장씩 한 줄)
+        return {'images': [], 'columns': 2}
     return {}
 
 
