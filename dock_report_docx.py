@@ -378,6 +378,28 @@ def _render_block(doc, block, depth):
         marker = content.get('marker') or 'bullet'
         # 레벨별 카운터
         counters = [0, 0, 0, 0]
+        # 원숫자 (①~⑳)
+        CIRCLED = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩',
+                   '⑪','⑫','⑬','⑭','⑮','⑯','⑰','⑱','⑲','⑳']
+
+        def _alpha(n):
+            return chr(96 + ((n - 1) % 26) + 1)
+
+        def _circled(n):
+            return CIRCLED[(n - 1) % len(CIRCLED)]
+
+        def _number_by_depth(depth, n):
+            if depth == 0: return f'{n}.'
+            if depth == 1: return f'{n})'
+            if depth == 2: return _circled(n)
+            return f'{_alpha(n)})'
+
+        def _alpha_by_depth(depth, n):
+            if depth == 0: return f'{_alpha(n)}.'
+            if depth == 1: return f'{_alpha(n)})'
+            if depth == 2: return _circled(n)
+            return f'{n})'
+
         for it in items:
             if isinstance(it, str):
                 text, indent = it, 0
@@ -390,10 +412,11 @@ def _render_block(doc, block, depth):
             for k in range(indent + 1, 4):
                 counters[k] = 0
 
-            if marker == 'dash':       mk = '–'
-            elif marker == 'number':   mk = f'{counters[indent]})'
-            elif marker == 'alpha':    mk = f'{chr(96 + (counters[indent] - 1) % 26 + 1)})'
-            else:                       mk = '•'
+            n = counters[indent]
+            if marker == 'dash':      mk = '–'
+            elif marker == 'number':  mk = _number_by_depth(indent, n)
+            elif marker == 'alpha':   mk = _alpha_by_depth(indent, n)
+            else:                      mk = '•'
 
             line = f'{mk}  {text}'
             _add_paragraph(doc, line, size=10.5,
