@@ -549,6 +549,28 @@ function normalizeBulletItems(items) {
 
 const MAX_INDENT = 3;
 
+// marker 종류: 'bullet'(•) / 'dash'(-) / 'number' / 'alpha'
+// number 들여쓰기별 형식: 0=1.  1=1)  2=①  3=a)
+// alpha  들여쓰기별 형식: 0=a.  1=a)  2=①  3=1)
+const CIRCLED_NUMS = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩',
+                       '⑪','⑫','⑬','⑭','⑮','⑯','⑰','⑱','⑲','⑳'];
+
+function numberMarkerByDepth(depth, n) {
+  // n: 1-based 카운터
+  if (depth === 0) return `${n}.`;
+  if (depth === 1) return `${n})`;
+  if (depth === 2) return CIRCLED_NUMS[(n - 1) % CIRCLED_NUMS.length];
+  // depth >= 3
+  return `${String.fromCharCode(96 + ((n - 1) % 26) + 1)})`;
+}
+
+function alphaMarkerByDepth(depth, n) {
+  if (depth === 0) return `${String.fromCharCode(96 + ((n - 1) % 26) + 1)}.`;
+  if (depth === 1) return `${String.fromCharCode(96 + ((n - 1) % 26) + 1)})`;
+  if (depth === 2) return CIRCLED_NUMS[(n - 1) % CIRCLED_NUMS.length];
+  return `${n})`;
+}
+
 // 들여쓰기 레벨별 카운터로 마커 계산
 function computeBulletMarkers(items, kind) {
   const markers = [];
@@ -557,10 +579,10 @@ function computeBulletMarkers(items, kind) {
     const lv = Math.max(0, Math.min(MAX_INDENT, it.indent || 0));
     counters[lv]++;
     for (let i = lv + 1; i <= MAX_INDENT; i++) counters[i] = 0;
-    if (kind === 'dash')        markers.push('–');
-    else if (kind === 'number') markers.push(`${counters[lv]})`);
-    else if (kind === 'alpha')  markers.push(`${String.fromCharCode(97 + (counters[lv] - 1) % 26)})`);
-    else                        markers.push('•');
+    if (kind === 'dash')         markers.push('–');
+    else if (kind === 'number')  markers.push(numberMarkerByDepth(lv, counters[lv]));
+    else if (kind === 'alpha')   markers.push(alphaMarkerByDepth(lv, counters[lv]));
+    else                          markers.push('•');
   }
   return markers;
 }
