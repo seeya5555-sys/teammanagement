@@ -2687,6 +2687,83 @@ def api_dock_block_move(bid):
 
 
 # ─── Image upload ────────────────────────────────────────────
+# Word "그림 압축 — 웹(150ppi)" 기준에 맞춤
+#   · 16cm 본문폭 × 150ppi ≈ 944px → 안전 마진 두고 장변 1280px
+#   · JPEG quality 85 (사진용 표준 압축)
+#   · EXIF orientation 적용 (스마트폰 회전 자동 보정)
+DOCK_IMAGE_MAX_LONG_SIDE = 1280
+DOCK_IMAGE_JPEG_QUALITY  = 85
+
+
+def _process_uploaded_image(file_storage, dest_path):
+    """
+    업로드된 이미지를 리사이즈 + 재인코딩하여 dest_path에 저장.
+    실패 시 원본을 그대로 저장하고 False 반환.
+    성공 시 (final_path, original_size_bytes, final_size_bytes) 반환.
+    dest_path의 확장자는 결과에 따라 .jpg로 변경될 수 있음 (PNG 투명 X일 때).
+    """
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        # Pillow 없으면 그냥 저장
+        file_storage.save(dest_path)
+        return dest_path, os.path.getsize(dest_path), os.path.getsize(dest_path)
+
+    # 원본을 메모리에 읽어두기 (저장 실패 시 fallback용)
+    file_storage.stream.seek(0)
+    raw_bytes = file_storage.stream.read()
+    original_size = len(raw_bytes)
+
+    try:
+        from io import BytesIO
+        im = Image.open(BytesIO(raw_bytes))
+
+        # EXIF orientation 적용
+        try:
+            im = ImageOps.exif_transpose(im)
+        except Exception:
+            pass
+
+        w, h = im.size
+        long_side = max(w, h)
+
+        # 리사이즈 필요 시
+        if long_side > DOCK_IMAGE_MAX_LONG_SIDE:
+            ratio = DOCK_IMAGE_MAX_LONG_SIDE / long_side
+            new_w = int(w * ratio)
+            new_h = int(h * ratio)
+            im = im.resize((new_w, new_h), Image.LANCZOS)
+
+        # 저장 — PNG 투명도 있으면 PNG 유지, 아니면 JPEG로 통일
+        ext_lower = dest_path.rsplit('.', 1)[-1].lower()
+        has_alpha = (im.mode in ('RGBA', 'LA')) or (
+            im.mode == 'P' and 'transparency' in im.info
+        )
+
+        if ext_lower == 'png' and has_alpha:
+            # PNG 투명도 보존
+            im.save(dest_path, 'PNG', optimize=True)
+            final_path = dest_path
+        else:
+            # JPEG로 통일 (용량 작음)
+            if im.mode != 'RGB':
+                im = im.convert('RGB')
+            # 확장자 .jpg로 통일
+            base = dest_path.rsplit('.', 1)[0]
+            final_path = base + '.jpg'
+            im.save(final_path, 'JPEG',
+                    quality=DOCK_IMAGE_JPEG_QUALITY,
+                    optimize=True, progressive=True)
+
+        return final_path, original_size, os.path.getsize(final_path)
+
+    except Exception as e:
+        # 처리 실패 → 원본 그대로 저장
+        with open(dest_path, 'wb') as f:
+            f.write(raw_bytes)
+        return dest_path, original_size, len(raw_bytes)
+
+
 @app.route('/api/dock-reports/<int:rid>/upload-image', methods=['POST'])
 @login_required
 def api_dock_upload_image(rid):
@@ -2703,18 +2780,34 @@ def api_dock_upload_image(rid):
     if ext not in {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'}:
         return jsonify({'error': '이미지 파일만 업로드 가능합니다.'}), 400
 
-    # static/uploads/dock/ 폴더에 저장
+    # static/uploads/dock/ 폴더
     dock_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'dock')
     os.makedirs(dock_dir, exist_ok=True)
 
-    # 파일명: dock-{rid}-{timestamp}-{rand}.{ext}
+    # 임시 파일명 (확장자는 처리 함수가 결정)
     import time
-    fname = f'dock-{rid}-{int(time.time()*1000)}-{secrets.token_hex(4)}.{ext}'
-    fpath = os.path.join(dock_dir, fname)
-    f.save(fpath)
+    base_fname = f'dock-{rid}-{int(time.time()*1000)}-{secrets.token_hex(4)}'
+    initial_path = os.path.join(dock_dir, f'{base_fname}.{ext}')
 
-    url = url_for('static', filename=f'uploads/dock/{fname}')
-    return jsonify({'ok': True, 'filename': fname, 'url': url}), 201
+    # 리사이즈 + 재인코딩
+    final_path, orig_size, final_size = _process_uploaded_image(f, initial_path)
+    final_fname = os.path.basename(final_path)
+
+    url = url_for('static', filename=f'uploads/dock/{final_fname}')
+
+    # 압축률 계산 (로깅용)
+    reduction = 0
+    if orig_size > 0:
+        reduction = int((1 - final_size / orig_size) * 100)
+
+    return jsonify({
+        'ok': True,
+        'filename': final_fname,
+        'url': url,
+        'original_kb': round(orig_size / 1024, 1),
+        'final_kb':    round(final_size / 1024, 1),
+        'reduction_pct': reduction,
+    }), 201
 
 
 # ─── Word / PDF Export ───────────────────────────────────────
