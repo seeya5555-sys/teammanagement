@@ -987,21 +987,34 @@ function renderImageGallery(body, b) {
       const files = [...(inp.files || [])];
       inp.value = '';
       if (!files.length) return;
-      setSaveStatus(`사진 ${files.length}장 업로드 중...`, 'busy');
       try {
+        let totalOrig = 0, totalFinal = 0;
+        let done = 0;
         for (const f of files) {
+          setSaveStatus(`사진 압축·업로드 중 (${done + 1}/${files.length})...`, 'busy');
           const fd = new FormData();
           fd.append('file', f);
           const res = await api(`/api/dock-reports/${E.reportId}/upload-image`, {
             method: 'POST', body: fd,
           });
           images.push({ filename: res.filename, url: res.url, caption: '' });
+          totalOrig  += res.original_kb || 0;
+          totalFinal += res.final_kb || 0;
+          done += 1;
         }
         await api(`/api/dock-blocks/${b.id}`, {
           method: 'PUT', body: JSON.stringify({ content: getCurrent() }),
         });
         rebuild();
-        setSaveStatus('저장됨', 'ok');
+        // 압축 결과 노출
+        if (totalOrig > 0) {
+          const pct = Math.round((1 - totalFinal / totalOrig) * 100);
+          const origMb  = (totalOrig  / 1024).toFixed(1);
+          const finalMb = (totalFinal / 1024).toFixed(1);
+          setSaveStatus(`저장됨 (${origMb}MB → ${finalMb}MB, ${pct}% 절감)`, 'ok');
+        } else {
+          setSaveStatus('저장됨', 'ok');
+        }
       } catch (e) {
         setSaveStatus('업로드 실패: ' + e.message, 'err');
         alert('이미지 업로드 실패: ' + e.message);
