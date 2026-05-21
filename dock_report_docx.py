@@ -430,6 +430,62 @@ def _render_block(doc, block, depth):
         _render_image_block(doc, content, base_indent)
 
 
+def _set_table_fixed_layout(tbl, total_cm, col_cm_list):
+    """
+    표 전체 폭을 고정하고 컬럼 너비를 정확히 적용.
+      · tblLayout=fixed: Word가 셀 내용에 따라 너비 자동 조정 못 하게
+      · tblW: 표 전체 너비 강제
+      · w:gridCol: 각 컬럼 너비 (Word가 우선 참조)
+    """
+    tblPr = tbl._element.find(qn('w:tblPr'))
+    if tblPr is None:
+        tblPr = OxmlElement('w:tblPr')
+        tbl._element.insert(0, tblPr)
+
+    # 1) fixed layout
+    existing_layout = tblPr.find(qn('w:tblLayout'))
+    if existing_layout is not None:
+        tblPr.remove(existing_layout)
+    layout = OxmlElement('w:tblLayout')
+    layout.set(qn('w:type'), 'fixed')
+    tblPr.append(layout)
+
+    # 2) 전체 너비
+    existing_w = tblPr.find(qn('w:tblW'))
+    if existing_w is not None:
+        tblPr.remove(existing_w)
+    tblW = OxmlElement('w:tblW')
+    tblW.set(qn('w:w'), str(int(total_cm * 567)))  # cm → twips (1cm = 567 twips)
+    tblW.set(qn('w:type'), 'dxa')
+    tblPr.append(tblW)
+
+    # 3) grid (각 컬럼 너비) — Word는 이걸 우선 참조
+    existing_grid = tbl._element.find(qn('w:tblGrid'))
+    if existing_grid is not None:
+        tbl._element.remove(existing_grid)
+    grid = OxmlElement('w:tblGrid')
+    for w_cm in col_cm_list:
+        col = OxmlElement('w:gridCol')
+        col.set(qn('w:w'), str(int(w_cm * 567)))
+        grid.append(col)
+    # tblPr 다음에 삽입
+    tblPr.addnext(grid)
+
+    # 4) 셀별 너비도 명시 (안정성)
+    for row in tbl.rows:
+        for ci, cell in enumerate(row.cells):
+            if ci >= len(col_cm_list):
+                continue
+            tcPr = cell._tc.get_or_add_tcPr()
+            existing_tcw = tcPr.find(qn('w:tcW'))
+            if existing_tcw is not None:
+                tcPr.remove(existing_tcw)
+            tcW = OxmlElement('w:tcW')
+            tcW.set(qn('w:w'), str(int(col_cm_list[ci] * 567)))
+            tcW.set(qn('w:type'), 'dxa')
+            tcPr.append(tcW)
+
+
 def _render_table_block(doc, content, base_indent):
     headers = content.get('headers') or []
     rows = content.get('rows') or []
@@ -460,7 +516,6 @@ def _render_table_block(doc, content, base_indent):
     # 헤더
     for ci, h in enumerate(headers):
         cell = tbl.rows[0].cells[ci]
-        cell.width = Cm(col_cm[ci])
         _set_cell_shading(cell, 'D9E2EC')
         _set_cell_borders(cell)
         cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
@@ -473,12 +528,10 @@ def _render_table_block(doc, content, base_indent):
     for ri, row in enumerate(rows, start=1):
         for ci, val in enumerate(row):
             cell = tbl.rows[ri].cells[ci]
-            cell.width = Cm(col_cm[ci])
             _set_cell_borders(cell)
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
             p = cell.paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            # 표 셀에는 줄바꿈을 \n 으로 처리
             text = str(val or '')
             lines = text.split('\n')
             for li, ln in enumerate(lines):
@@ -487,8 +540,62 @@ def _render_table_block(doc, content, base_indent):
                 r = p.add_run(ln)
                 _set_font(r, size=10)
 
+    # 표 너비 강제 고정 — Word가 마지막 셀을 좁히지 못하게
+    _set_table_fixed_layout(tbl, total_cm, col_cm)
+
     # 표 위/아래 여백
     _add_paragraph(doc, '', before=2, after=4)
+
+
+def _crop_to_aspect(src_path, target_ratio=4/3):
+    """
+    이미지를 target_ratio(가로/세로)에 맞춰 center-crop한 임시 파일 경로 반환.
+    원본이 이미 비율 맞으면 그대로 원본 경로 반환.
+    실패 시 원본 경로 반환.
+    """
+    try:
+        from PIL import Image
+        import tempfile
+        with Image.open(src_path) as im:
+            # EXIF orientation 적용
+            try:
+                from PIL import ImageOps
+                im = ImageOps.exif_transpose(im)
+            except Exception:
+                pass
+
+            w, h = im.size
+            if w <= 0 or h <= 0:
+                return src_path
+            cur_ratio = w / h
+            # 이미 비율이 비슷하면 그대로
+            if abs(cur_ratio - target_ratio) < 0.02:
+                return src_path
+
+            if cur_ratio > target_ratio:
+                # 너무 가로로 길다 → 좌우 잘라냄
+                new_w = int(h * target_ratio)
+                left = (w - new_w) // 2
+                box = (left, 0, left + new_w, h)
+            else:
+                # 너무 세로로 길다 → 위아래 잘라냄
+                new_h = int(w / target_ratio)
+                top = (h - new_h) // 2
+                box = (0, top, w, top + new_h)
+
+            cropped = im.crop(box)
+            # RGBA(투명PNG)는 JPEG 저장 위해 RGB로
+            if cropped.mode in ('RGBA', 'P', 'LA'):
+                cropped = cropped.convert('RGB')
+
+            # 임시 파일 저장 (JPEG, quality 88)
+            fd, tmp_path = tempfile.mkstemp(suffix='.jpg', prefix='dock_img_')
+            os.close(fd)
+            cropped.save(tmp_path, 'JPEG', quality=88, optimize=True)
+            return tmp_path
+    except Exception as e:
+        # 실패 시 원본 사용
+        return src_path
 
 
 def _render_image_block(doc, content, base_indent):
@@ -506,27 +613,39 @@ def _render_image_block(doc, content, base_indent):
     total_cm = 16.0
     cell_cm = (total_cm - 0.3 * (columns - 1)) / columns
 
+    # 모든 이미지에 동일한 크기 (4:3 비율 강제)
+    img_width_cm = cell_cm - 0.4   # 셀 양쪽 padding 고려
+    img_height_cm = img_width_cm * 3 / 4
+
     # 캡션 행 포함 → 행 수 × 2 (이미지 행 + 캡션 행)
     tbl = doc.add_table(rows=n_rows * 2, cols=columns)
     tbl.autofit = False
     tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    # 임시로 만든 cropped 파일 목록 (나중에 정리)
+    temp_files = []
 
     for idx, img in enumerate(images):
         ri = (idx // columns) * 2
         ci = idx % columns
         img_cell = tbl.rows[ri].cells[ci]
         cap_cell = tbl.rows[ri + 1].cells[ci]
-        img_cell.width = Cm(cell_cm)
-        cap_cell.width = Cm(cell_cm)
 
         # 이미지 삽입
         img_path = _resolve_image_path(img.get('url') or '', img.get('filename') or '')
         if img_path and os.path.exists(img_path):
             try:
+                # 4:3로 잘라낸 이미지 사용
+                processed = _crop_to_aspect(img_path, 4/3)
+                if processed != img_path:
+                    temp_files.append(processed)
                 p = img_cell.paragraphs[0]
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run = p.add_run()
-                run.add_picture(img_path, width=Cm(cell_cm - 0.4))
+                # width와 height 모두 명시 → 모든 이미지가 동일 크기
+                run.add_picture(processed,
+                                width=Cm(img_width_cm),
+                                height=Cm(img_height_cm))
             except Exception as e:
                 p = img_cell.paragraphs[0]
                 r = p.add_run(f'[이미지 로드 실패: {e}]')
@@ -545,8 +664,20 @@ def _render_image_block(doc, content, base_indent):
             _set_font(cap_run, size=9, color='4B5563')
             cap_run.italic = True
 
-    # 빈 셀(마지막 행의 잉여) 처리는 자동
+    # 표 너비 고정 (이미지 표도 동일하게)
+    col_cm_list = [cell_cm] * columns
+    _set_table_fixed_layout(tbl, total_cm, col_cm_list)
+
+    # 임시 파일 정리 — docx 생성 후
+    # 주의: doc.save() 전까지는 파일이 필요하므로 즉시 삭제 X
+    # 모듈 레벨 cleanup 리스트에 누적
+    _GLOBAL_TEMP_FILES.extend(temp_files)
+
     _add_paragraph(doc, '', before=2, after=6)
+
+
+# Word 생성 시 만들어진 임시 cropped 이미지 — build_docx 끝나면 일괄 삭제
+_GLOBAL_TEMP_FILES = []
 
 
 def _resolve_image_path(url, filename):
@@ -617,7 +748,18 @@ def build_docx(report: dict) -> bytes:
     bio = io.BytesIO()
     doc.save(bio)
     bio.seek(0)
-    return bio.read()
+    result = bio.read()
+
+    # 이미지 cropped 임시 파일 정리
+    global _GLOBAL_TEMP_FILES
+    for fp in _GLOBAL_TEMP_FILES:
+        try:
+            os.remove(fp)
+        except Exception:
+            pass
+    _GLOBAL_TEMP_FILES = []
+
+    return result
 
 
 def _build_tree(sections_flat):
