@@ -634,16 +634,17 @@ function parseHtmlTable(html) {
     tbl.querySelectorAll('tr').forEach(tr => {
       const row = [];
       tr.querySelectorAll('th, td').forEach(c => {
-        // 셀 내용에서 의미 없는 줄바꿈 제거, 단 <br>은 \n으로
+        // ★ <br>은 공백으로 (Excel의 visual word-wrap이 <br>로 들어오는 경우 방지)
+        //    사용자가 정말 alt+enter로 줄바꿈한 경우는 TSV 경로에서 처리됨.
         let text = c.innerHTML
-          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<br\s*\/?>/gi, ' ')
           .replace(/<[^>]+>/g, '')
           .replace(/&nbsp;/g, ' ')
           .replace(/&amp;/g, '&')
           .replace(/&lt;/g, '<')
           .replace(/&gt;/g, '>');
-        // 줄 단위 trim 후, 빈 줄 제거
-        text = text.split('\n').map(s => s.trim()).filter(Boolean).join('\n');
+        // 연속 공백/탭/개행을 하나의 공백으로 정규화 + 앞뒤 trim
+        text = text.replace(/[\s\u00A0]+/g, ' ').trim();
         row.push(text);
       });
       if (row.length > 0) result.push(row);
@@ -1016,16 +1017,22 @@ function renderTable(body, b) {
   function handleTablePaste(ev, ri, ci) {
     const cd = ev.clipboardData || window.clipboardData;
     if (!cd) return;
-    // HTML 안에 <table>이 있으면 그걸 우선 파싱 (포맷 보존 더 좋음)
     const html = cd.getData('text/html');
     const txt  = cd.getData('text/plain') || '';
 
+    // ★ TSV(text/plain) 우선 사용:
+    //   Excel/Google Sheets는 셀 데이터를 text/plain에 정확히 넣어줌.
+    //   text/html은 visual word-wrap을 <br>로 표현하는 경우가 있어
+    //   사용자가 의도하지 않은 줄바꿈이 셀 안에 들어갈 수 있음.
     let grid = null;
-    if (html && /<t(able|r|d|h)\b/i.test(html)) {
-      grid = parseHtmlTable(html);
-    }
-    if (!grid || grid.length === 0) {
+    if (txt) {
       grid = parseTsv(txt);
+    }
+    // TSV가 단일 셀(=표 구조 아님)이거나 파싱 실패면 HTML 시도
+    if ((!grid || (grid.length === 1 && grid[0].length === 1))
+        && html && /<t(able|r|d|h)\b/i.test(html)) {
+      const htmlGrid = parseHtmlTable(html);
+      if (htmlGrid && htmlGrid.length > 0) grid = htmlGrid;
     }
     if (!grid) return;
 
