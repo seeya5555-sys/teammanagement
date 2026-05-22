@@ -3435,25 +3435,45 @@ col.c-edit   { width: 156px; }
   background: #f3f4f6; font-weight: 700;
 }
 .dde-table th .dde-cell-input,
+.dde-table th .dde-cell-textarea,
 .dde-table td .dde-cell-textarea {
   width: 100%;
   border: none;
   padding: 6px 8px;
+  margin: 0;
   font-family: inherit; font-size: 12.5px;
-  background: transparent; outline: none;
+  background: transparent;
+  outline: none;
   resize: none;
   box-sizing: border-box;
   display: inline-block;
   vertical-align: middle;
+  /* 브라우저 기본 textarea 외곽 스타일 제거 (Safari/Firefox 등) */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  /* 박스 그림자/내부 그림자 제거 */
+  box-shadow: none;
+  /* 줄바꿈 처리 */
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
-.dde-table th .dde-cell-input {
-  font-weight: 700; text-align: center;
+/* 헤더 셀의 입력 — input이든 textarea든 동일하게 굵게/중앙 정렬 */
+.dde-table th .dde-cell-input,
+.dde-table th .dde-cell-textarea {
+  font-weight: 700;
+  text-align: center;
+  /* 헤더 배경(회색)을 그대로 보이게 — 자체 배경 강제 transparent */
+  background-color: transparent !important;
 }
 .dde-table th .dde-cell-input:focus,
+.dde-table th .dde-cell-textarea:focus,
 .dde-table td .dde-cell-textarea:focus {
-  background: #eff6ff;
+  background-color: #eff6ff !important;
 }
 .dde-table td .dde-cell-textarea { min-height: 28px; line-height: 1.4; }
+.dde-table th .dde-cell-textarea { min-height: 28px; line-height: 1.4; }
 
 .dde-col-del, .dde-row-del {
   background: transparent; border: none;
