@@ -552,17 +552,19 @@ function renderParagraph(body, b) {
     class: 'dde-p-input', placeholder: '내용을 입력하세요...', rows: 3,
   });
   ta.value = b.content?.text || '';
-  autoResize(ta);
   ta.addEventListener('input', () => {
     autoResize(ta);
     scheduleBlockSave(b.id, () => ({ text: ta.value }));
   });
   body.append(ta);
+  // DOM에 부착된 다음에 autoResize 실행 (scrollHeight가 정상 계산됨)
+  setTimeout(() => autoResize(ta), 0);
 }
 
 function autoResize(ta) {
+  // 'auto'로 일단 줄여서 scrollHeight 정확히 측정 후 다시 늘림
   ta.style.height = 'auto';
-  ta.style.height = Math.max(ta.scrollHeight, 40) + 'px';
+  ta.style.height = Math.max(ta.scrollHeight + 2, 40) + 'px';
 }
 
 // ─── bullet_list ─────────────────────────────────────────────
@@ -638,10 +640,11 @@ function renderBulletList(body, b) {
         class: `dde-bullet-row dde-bullet-${marker} indent-${it.indent}`,
         'data-indent': it.indent,
       });
-      const inp = el('input', {
-        type: 'text', class: 'dde-bullet-input', placeholder: '항목...', value: it.text,
+      const inp = el('textarea', {
+        class: 'dde-bullet-input', placeholder: '항목...', rows: 1,
         oninput: (e) => {
           items[i].text = e.target.value;
+          autoResize(e.target);
           scheduleBlockSave(b.id, getCurrent);
         },
         onkeydown: (e) => {
@@ -665,9 +668,10 @@ function renderBulletList(body, b) {
             }
             return;
           }
-          if (e.key === 'Enter') {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            // Enter: 새 항목 추가
+            // Shift+Enter: 같은 항목 내에서 줄바꿈 (기본 동작 유지)
             e.preventDefault();
-            // 새 항목은 현재 항목과 같은 indent
             items.splice(i + 1, 0, { text: '', indent: items[i].indent });
             rebuild();
             focusItem(i + 1);
@@ -694,6 +698,9 @@ function renderBulletList(body, b) {
           }
         },
       });
+      inp.value = it.text || '';
+      // 다음 frame에서 autoResize 실행 (DOM에 붙은 후)
+      setTimeout(() => autoResize(inp), 0);
       row.append(
         el('span', { class: 'dde-bullet-marker' }, markers[i]),
         inp,
