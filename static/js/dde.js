@@ -1095,7 +1095,7 @@ function renderTable(body, b) {
     const thead = el('thead');
     for (let ri = 0; ri < headerRowCount && ri < nRows(); ri++) {
       const tr = el('tr');
-      renderCellsInRow(tr, ri, true);
+      renderCellsInRow(tr, ri, true, tbl);
       // 컨트롤 칸 (헤더 첫 행에만 표시)
       if (ri === 0) {
         const ctrl = el('th', { class: 'dde-tbl-ctrl-col', rowspan: headerRowCount });
@@ -1109,7 +1109,7 @@ function renderTable(body, b) {
     const tbody = el('tbody');
     for (let ri = headerRowCount; ri < nRows(); ri++) {
       const tr = el('tr');
-      renderCellsInRow(tr, ri, false);
+      renderCellsInRow(tr, ri, false, tbl);
       tr.append(el('td', { class: 'dde-tbl-ctrl-col' },
         el('button', { class: 'dde-row-del', type: 'button', title: '행 삭제',
           onclick: () => deleteRow(ri) }, '✕')));
@@ -1119,7 +1119,7 @@ function renderTable(body, b) {
     tblWrap.append(tbl);
   }
 
-  function renderCellsInRow(tr, ri, isHeader) {
+  function renderCellsInRow(tr, ri, isHeader, tbl) {
     for (let ci = 0; ci < nCols(); ci++) {
       const cell = cells[ri][ci];
       if (cell === null) continue;  // 병합으로 가려진 셀 → 건너뜀
