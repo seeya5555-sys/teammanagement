@@ -119,7 +119,7 @@ def _build_cover(doc, report):
     col_widths_cm = [1.4] + [2.0] * len(approvals)
     # 첫 열: "결재" 라벨 (세로 병합)
     title_cell = approval_tbl.rows[0].cells[0]
-    title_cell.merge(approval_tbl.rows[1].cells[0])
+    title_cell = title_cell.merge(approval_tbl.rows[1].cells[0])
     title_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
     title_cell.width = Cm(col_widths_cm[0])
     _set_cell_shading(title_cell, 'F2F2F2')
@@ -128,7 +128,18 @@ def _build_cover(doc, report):
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = p.add_run('결재')
     _set_font(r, size=11, bold=True)
-    _set_cell_borders(title_cell)
+    # 4면 모두 명시적으로 테두리 설정 (병합 셀에서 누락 방지)
+    _set_cell_borders_sides(title_cell, {'top', 'left', 'bottom', 'right'},
+                            color='808080', sz=4)
+    # 병합된 결재 셀의 너비도 XML 레벨에서 강제 (LibreOffice가 무시하는 경우 방지)
+    _tcPr = title_cell._tc.get_or_add_tcPr()
+    _existing_tcw = _tcPr.find(qn('w:tcW'))
+    if _existing_tcw is not None:
+        _tcPr.remove(_existing_tcw)
+    _tcW = OxmlElement('w:tcW')
+    _tcW.set(qn('w:w'), str(int(col_widths_cm[0] * 567)))
+    _tcW.set(qn('w:type'), 'dxa')
+    _tcPr.append(_tcW)
 
     # 결재자 헤더 + 빈 서명란
     for col, (label, name) in enumerate(approvals, start=1):
@@ -154,6 +165,10 @@ def _build_cover(doc, report):
 
     # 서명란 행 높이 고정
     _set_row_height(approval_tbl.rows[1], 1.3)
+
+    # 표 전체 너비 고정 (셀 너비 확정)
+    _set_table_fixed_layout(approval_tbl,
+                            sum(col_widths_cm), col_widths_cm)
 
     _add_paragraph(doc, '', before=12)
 
@@ -626,6 +641,23 @@ def _set_cell_borders_sides(cell, sides, color='808080', sz=4):
             b.set(qn('w:val'), 'nil')
 
 
+def _set_cell_vertical_padding(cell, top_twips=20, bottom_twips=20):
+    """셀의 상하 안쪽 여백(margin) 설정. 기본 Word 값은 ~80~120 twips."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcMar = tcPr.find(qn('w:tcMar'))
+    if tcMar is None:
+        tcMar = OxmlElement('w:tcMar')
+        tcPr.append(tcMar)
+    for side, val in [('top', top_twips), ('bottom', bottom_twips)]:
+        e = tcMar.find(qn(f'w:{side}'))
+        if e is None:
+            e = OxmlElement(f'w:{side}')
+            tcMar.append(e)
+        e.set(qn('w:w'), str(val))
+        e.set(qn('w:type'), 'dxa')
+
+
 def _render_image_block(doc, content, base_indent):
     images = content.get('images') or []
     columns = max(1, min(4, int(content.get('columns', 2) or 2)))
@@ -633,43 +665,36 @@ def _render_image_block(doc, content, base_indent):
     if not images:
         return
 
-    # 이미지 그리드: N열 표로 배치
     n = len(images)
     n_rows = (n + columns - 1) // columns
 
-    # 각 셀 너비: A4 본문폭 / columns
     total_cm = 16.0
     cell_cm = (total_cm - 0.3 * (columns - 1)) / columns
-
-    # 모든 이미지에 동일한 크기 (4:3 비율 강제)
-    img_width_cm = cell_cm - 0.4   # 셀 양쪽 padding 고려
+    img_width_cm = cell_cm - 0.4
     img_height_cm = img_width_cm * 3 / 4
 
-    # 캡션 행 포함 → 행 수 × 2 (이미지 행 + 캡션 행)
     tbl = doc.add_table(rows=n_rows * 2, cols=columns)
     tbl.autofit = False
     tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-    border_color = 'D1D5DB'   # 옅은 회색
-
-    # 임시로 만든 cropped 파일 목록
+    border_color = 'D1D5DB'
     temp_files = []
 
     for idx, img in enumerate(images):
-        grid_row = idx // columns         # 이미지 그리드 행 (0부터)
-        ri = grid_row * 2                 # 이미지 행 인덱스
+        grid_row = idx // columns
+        ri = grid_row * 2
         ci = idx % columns
         img_cell = tbl.rows[ri].cells[ci]
         cap_cell = tbl.rows[ri + 1].cells[ci]
 
-        # ─── 테두리 설정 ───
-        # 이미지 셀: 위/좌/우는 항상, 아래(=캡션과 경계)는 제거
-        img_sides = {'left', 'right', 'top'}
-        # 캡션 셀: 좌/우/아래는 항상, 위(=이미지와 경계)는 제거
-        cap_sides = {'left', 'right', 'bottom'}
-        # 첫 행이 아니어도 위 캡션과 분리하는 테두리는 이미지 셀의 top에 있음 (위에서 추가)
-        _set_cell_borders_sides(img_cell, img_sides, color=border_color, sz=6)
-        _set_cell_borders_sides(cap_cell, cap_sides, color=border_color, sz=6)
+        # 테두리: 이미지 셀 아래 / 캡션 셀 위만 제거
+        _set_cell_borders_sides(img_cell, {'left', 'right', 'top'},
+                                color=border_color, sz=6)
+        _set_cell_borders_sides(cap_cell, {'left', 'right', 'bottom'},
+                                color=border_color, sz=6)
+
+        # 캡션 셀: 상하 여백 최소화
+        _set_cell_vertical_padding(cap_cell, top_twips=10, bottom_twips=10)
 
         # 이미지 삽입
         img_path = _resolve_image_path(img.get('url') or '', img.get('filename') or '')
@@ -693,33 +718,31 @@ def _render_image_block(doc, content, base_indent):
             r = p.add_run('[이미지 없음]')
             _set_font(r, size=9, color='9CA3AF')
 
-        # 캡션
+        # 캡션 - paragraph 자체의 위아래 여백도 0으로
         cap_p = cap_cell.paragraphs[0]
         cap_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cap_p.paragraph_format.space_before = Pt(0)
+        cap_p.paragraph_format.space_after = Pt(0)
+        cap_p.paragraph_format.line_spacing = 1.0
         caption = img.get('caption') or ''
         if caption:
             cap_run = cap_p.add_run(caption)
             _set_font(cap_run, size=9, color='4B5563')
             cap_run.italic = True
 
-    # 마지막 행이 잉여 셀(이미지가 다 못 채운 경우)이 있으면 빈 셀의 테두리도 정리
+    # 마지막 행 잉여 셀 테두리 정리
     last_idx = n - 1
     last_grid_row = last_idx // columns
     last_col = last_idx % columns
     if last_col < columns - 1:
-        # 마지막 그리드 행의 잉여 셀들 — 빈 칸 (테두리 없음)
         ri_img = last_grid_row * 2
         ri_cap = ri_img + 1
         for ci in range(last_col + 1, columns):
             _set_cell_borders_sides(tbl.rows[ri_img].cells[ci], set())
             _set_cell_borders_sides(tbl.rows[ri_cap].cells[ci], set())
 
-    # 표 너비 고정
     col_cm_list = [cell_cm] * columns
     _set_table_fixed_layout(tbl, total_cm, col_cm_list)
-
-    # 단, _set_table_fixed_layout이 셀별 테두리를 덮어쓰지는 않으므로
-    # 위에서 설정한 사이드별 테두리가 유지됨
 
     _GLOBAL_TEMP_FILES.extend(temp_files)
 
