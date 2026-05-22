@@ -4,6 +4,11 @@
 {% block content %}
 <div class="dde-wrap" data-report-id="{{ report_id }}">
 
+  <!-- 읽기 전용 안내 배너 -->
+  <div class="dde-readonly-banner" id="dde-readonly-banner" hidden>
+    이 보고서는 담당 감독과 관리자만 수정할 수 있습니다. 현재는 읽기 전용 모드입니다.
+  </div>
+
   <!-- 상단 바: 뒤로가기 + 보고서 정보 + 저장 상태 + 추출 -->
   <div class="dde-topbar">
     <a class="btn btn-outline btn-sm" href="{{ url_for('dry_dock_page') }}">← 목록</a>
