@@ -1415,10 +1415,16 @@ function renderTable(body, b) {
 
   function startColResize(ev, colIndex, tbl, onDone) {
     ev.preventDefault();
+    ev.stopPropagation();
     const cols = tbl.querySelectorAll('colgroup col');
+    if (!cols[colIndex]) {
+      console.warn('[resize] col not found at', colIndex);
+      return;
+    }
     const startX = ev.clientX;
     const startW = cols[colIndex].getBoundingClientRect().width;
     document.body.classList.add('dde-col-resizing');
+    console.log('[resize] start col=', colIndex, 'startW=', startW);
 
     function onMove(mv) {
       const dx = mv.clientX - startX;
@@ -1430,6 +1436,7 @@ function renderTable(body, b) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.classList.remove('dde-col-resizing');
+      console.log('[resize] end col=', colIndex, 'newW=', colWidths[colIndex]);
       onDone();
     }
     document.addEventListener('mousemove', onMove);
