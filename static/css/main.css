@@ -3496,25 +3496,29 @@ col.c-edit   { width: 156px; }
   text-align: center;
 }
 
-/* 컬럼 리사이즈 핸들 */
+/* 컬럼 리사이즈 핸들 — 셀 우측 경계에 걸쳐 표시 */
 .dde-col-resize {
   position: absolute;
-  right: -4px;        /* 셀 경계선 위에 걸치게 */
+  right: -5px;
   top: 0;
-  width: 8px;
+  width: 10px;
   height: 100%;
-  cursor: col-resize;
-  z-index: 100;       /* input/textarea/button 위에 */
+  cursor: col-resize !important;
+  z-index: 100;
   user-select: none;
   background: transparent;
+  /* 항상 옅게 보이도록 우측 경계선 표시 */
+  border-right: 2px solid #cbd5e1;
 }
-/* 헤더에 마우스 올라가면 핸들 위치를 옅게 보여줌 */
-.dde-table th:hover .dde-col-resize {
+/* 핸들 위에 마우스 → 진한 파랑 */
+.dde-col-resize:hover {
   background: #2563eb22;
+  border-right-color: #2563eb !important;
+  border-right-width: 3px;
 }
-.dde-col-resize:hover { background: #2563eb66 !important; }
+/* 드래그 중 표시 */
 body.dde-col-resizing { cursor: col-resize !important; user-select: none; }
-body.dde-col-resizing * { cursor: col-resize !important; }
+body.dde-col-resizing * { cursor: col-resize !important; user-select: none !important; }
 
 .dde-table-ctrls {
   display: flex; gap: 8px; margin-top: 8px;
