@@ -130,8 +130,9 @@ function fmtPeriod(r) {
 }
 
 function renderCard(r) {
+  const canEdit = !!r.can_edit;
   const card = el('div', {
-    class: 'dd-card',
+    class: 'dd-card' + (canEdit ? '' : ' dd-card-readonly'),
     'data-id': r.id,
     onclick: () => { window.location = `/dry-dock/${r.id}/edit`; },
   });
@@ -140,19 +141,22 @@ function renderCard(r) {
     class: `dd-badge ${r.status === 'done' ? 'dd-badge-done' : 'dd-badge-draft'}`
   }, r.status === 'done' ? '완료' : '진행 중');
 
-  // 메타 편집 버튼 (카드 클릭과 분리)
-  const metaBtn = el('button', {
-    class: 'dd-card-edit',
-    type: 'button',
-    title: '보고서 정보 편집',
-    onclick: (ev) => { ev.stopPropagation(); openEdit(r.id); },
-  }, '⋮');
+  // 메타 편집 버튼 (편집 권한 있을 때만)
+  const headRight = el('div', { class: 'dd-card-head-right' }, statusBadge);
+  if (canEdit) {
+    const metaBtn = el('button', {
+      class: 'dd-card-edit',
+      type: 'button',
+      title: '보고서 정보 편집',
+      onclick: (ev) => { ev.stopPropagation(); openEdit(r.id); },
+    }, '⋮');
+    headRight.append(metaBtn);
+  }
 
-  // 헤더 — 제목 + 상태 + 메타편집
   card.append(
     el('div', { class: 'dd-card-head' },
       el('h3', { class: 'dd-card-title' }, r.title),
-      el('div', { class: 'dd-card-head-right' }, statusBadge, metaBtn),
+      headRight,
     )
   );
 
