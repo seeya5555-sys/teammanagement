@@ -3645,3 +3645,83 @@ body.dde-col-resizing * { cursor: col-resize !important; }
   font-size: 12.5px;
   color: #1e40af;
 }
+
+/* ──── Dry Dock Report — 읽기 전용 모드 ──── */
+.dde-readonly-banner {
+  background: #fef3c7;
+  border-bottom: 1px solid #f59e0b;
+  color: #92400e;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 18px;
+  text-align: center;
+}
+.dde-readonly-banner::before {
+  content: '🔒 ';
+}
+
+/* 읽기 전용일 때 모든 input/textarea 보더 + 호버 효과 제거 */
+body.dde-readonly .dde-section-title-input,
+body.dde-readonly .dde-p-input,
+body.dde-readonly .dde-bullet-input,
+body.dde-readonly .dde-cell-input,
+body.dde-readonly .dde-cell-textarea,
+body.dde-readonly .dde-img-caption-inp {
+  pointer-events: none;
+  background: transparent !important;
+  border-color: transparent !important;
+  cursor: default;
+  color: var(--text-primary, #111827);
+}
+body.dde-readonly .dde-section-title-input:hover,
+body.dde-readonly .dde-p-input:hover,
+body.dde-readonly .dde-bullet-input:hover,
+body.dde-readonly .dde-cell-textarea:hover {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+body.dde-readonly .dde-block:hover {
+  background: transparent;
+}
+/* 읽기 전용 모드에서는 마커 옵션 / 표 컨트롤 / 이미지 컨트롤 모두 숨김 */
+body.dde-readonly .dde-bullet-opts,
+body.dde-readonly .dde-bullet-add-link,
+body.dde-readonly .dde-table-ctrls,
+body.dde-readonly .dde-table-hint,
+body.dde-readonly .dde-col-resize,
+body.dde-readonly .dde-col-del,
+body.dde-readonly .dde-row-del,
+body.dde-readonly .dde-tbl-ctrl-col,
+body.dde-readonly .dde-tbl-ctrl-col-c,
+body.dde-readonly .dde-bullet-x,
+body.dde-readonly .dde-img-opts,
+body.dde-readonly .dde-img-ctrl {
+  display: none !important;
+}
+
+.dde-blocks-empty-ro {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-muted, #9ca3af);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* 목록 카드에 readonly 표시 */
+.dd-card.dd-card-readonly .dd-card-edit {
+  display: none;
+}
+.dd-card-readonly::after {
+  content: '읽기 전용';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #6b7280;
+  background: #f3f4f6;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+.dd-card { position: relative; }
