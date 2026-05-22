@@ -571,7 +571,8 @@ def _render_table_block(doc, content, base_indent):
         return
 
     # 컬럼 너비 (cm)
-    total_cm = 16.0
+    # A4 21cm - 좌우 마진 2cm씩 = 본문 가용 폭 17cm
+    total_cm = 17.0
     if (not col_widths_px or len(col_widths_px) != n_cols
             or sum(w for w in col_widths_px if w and w > 0) <= 0):
         col_cm = [total_cm / n_cols] * n_cols
@@ -734,7 +735,8 @@ def _render_image_block(doc, content, base_indent):
     n = len(images)
     n_rows = (n + columns - 1) // columns
 
-    total_cm = 16.0
+    # A4 21cm - 좌우 마진 2cm씩 = 본문 가용 폭 17cm
+    total_cm = 17.0
     cell_cm = (total_cm - 0.3 * (columns - 1)) / columns
     img_width_cm = cell_cm - 0.4
     img_height_cm = img_width_cm * 3 / 4
