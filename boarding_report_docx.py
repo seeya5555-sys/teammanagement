@@ -396,11 +396,21 @@ def _render_brep_block_in_cell(cell, block):
             elif marker == 'number':  mk = _number_by_depth(indent, n)
             elif marker == 'alpha':   mk = _alpha_by_depth(indent, n)
             else:                      mk = '•'
-            p = cell.add_paragraph()
-            p.paragraph_format.left_indent = Cm(0.5 * indent)
-            p.paragraph_format.space_after = Pt(1)
-            r = p.add_run(f'{mk}  {text}')
-            _set_font(r, size=10.5)
+
+            # 항목 내 줄바꿈(\n) — 둘째 줄부터 마커 폭만큼 추가 들여쓰기
+            base_left = 0.5 * indent
+            cont_left = base_left + 0.5
+            lines = text.split('\n')
+            for li, ln in enumerate(lines):
+                p = cell.add_paragraph()
+                p.paragraph_format.space_after = Pt(1)
+                if li == 0:
+                    p.paragraph_format.left_indent = Cm(base_left)
+                    r = p.add_run(f'{mk}  {ln}')
+                else:
+                    p.paragraph_format.left_indent = Cm(cont_left)
+                    r = p.add_run(ln)
+                _set_font(r, size=10.5)
 
     elif bt == 'table':
         # 일반 표 — 셀 내부에 표 중첩 (LibreOffice 호환 제한 있어서 단순 형태로)
@@ -601,8 +611,21 @@ def _render_bullet(doc, content, base_indent):
         elif marker == 'number':  mk = _number_by_depth(indent, n)
         elif marker == 'alpha':   mk = _alpha_by_depth(indent, n)
         else:                      mk = '•'
-        _add_paragraph(doc, f'{mk}  {text}', size=10.5,
-                       indent_left=base_indent + 0.6 * indent, after=2)
+
+        # 항목 내 줄바꿈(\n) — 둘째 줄부터 마커 폭만큼 추가 들여쓰기
+        base_left = base_indent + 0.6 * indent
+        cont_left = base_left + 0.6
+        lines = text.split('\n')
+        total = len(lines)
+        for li, ln in enumerate(lines):
+            is_last = (li == total - 1)
+            after_pt = 2 if is_last else 0
+            if li == 0:
+                _add_paragraph(doc, f'{mk}  {ln}', size=10.5,
+                               indent_left=base_left, after=after_pt)
+            else:
+                _add_paragraph(doc, ln, size=10.5,
+                               indent_left=cont_left, after=after_pt)
 
 
 def _render_table(doc, content, base_indent):
