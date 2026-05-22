@@ -332,3 +332,70 @@ CREATE TABLE IF NOT EXISTS dock_report_blocks (
     FOREIGN KEY (section_id) REFERENCES dock_report_sections(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_dock_blocks_section ON dock_report_blocks(section_id, display_order);
+
+
+-- ═════════════════════════════════════════════════════════════
+--  Boarding Report (방선보고서 + Defect List 통합)
+-- ═════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS boarding_reports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id       INTEGER NOT NULL,
+    supervisor_id   INTEGER,
+    title           TEXT NOT NULL,                       -- 보고서 제목
+    -- 방선 기본 정보 (양식 헤더 표용)
+    port            TEXT,                                -- 방선 항구
+    boarding_start  TEXT,                                -- YYYY-MM-DD (방선 시작일)
+    boarding_end    TEXT,                                -- YYYY-MM-DD (방선 종료일)
+    master_name     TEXT,                                -- Master 이름
+    master_board_date TEXT,                              -- Master 승선일
+    chief_eng_name  TEXT,                                -- C/E 이름
+    chief_eng_board_date TEXT,                           -- C/E 승선일
+    sv_checklist_score TEXT,                             -- Ship-Visit Checklist Score
+    -- 결재선
+    approval_drafter   TEXT,
+    approval_team_lead TEXT,
+    approval_director  TEXT,
+    approval_ceo       TEXT,
+
+    status          TEXT NOT NULL DEFAULT 'draft'
+                    CHECK(status IN ('draft','done')),
+    is_template     INTEGER NOT NULL DEFAULT 0,
+    template_name   TEXT,
+
+    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_by      TEXT,
+    FOREIGN KEY (vessel_id)     REFERENCES vessels(id)     ON DELETE RESTRICT,
+    FOREIGN KEY (supervisor_id) REFERENCES supervisors(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_boarding_reports_vessel  ON boarding_reports(vessel_id);
+CREATE INDEX IF NOT EXISTS idx_boarding_reports_status  ON boarding_reports(status, is_template);
+CREATE INDEX IF NOT EXISTS idx_boarding_reports_updated ON boarding_reports(updated_at DESC);
+
+-- 섹션 (목차 항목) — 계층 구조
+CREATE TABLE IF NOT EXISTS boarding_report_sections (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id       INTEGER NOT NULL,
+    parent_id       INTEGER,
+    title           TEXT NOT NULL,
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (report_id) REFERENCES boarding_reports(id)         ON DELETE CASCADE,
+    FOREIGN KEY (parent_id) REFERENCES boarding_report_sections(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_boarding_sections_report ON boarding_report_sections(report_id, display_order);
+CREATE INDEX IF NOT EXISTS idx_boarding_sections_parent ON boarding_report_sections(parent_id, display_order);
+
+-- 블록 — paragraph / bullet_list / table / image + info_table / defect_table
+CREATE TABLE IF NOT EXISTS boarding_report_blocks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    section_id      INTEGER NOT NULL,
+    block_type      TEXT NOT NULL
+                    CHECK(block_type IN ('paragraph','bullet_list','table','image',
+                                          'info_table','defect_table')),
+    content_json    TEXT NOT NULL,
+    -- info_table   : {"rows":[{"label":"Vessel","value":"MARITIME GLORY"}, ...]}
+    -- defect_table : {"items":[{"item":"...","desc":"...","fix":"...","risk":"L/M/H","images":[...]}]}
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (section_id) REFERENCES boarding_report_sections(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_boarding_blocks_section ON boarding_report_blocks(section_id, display_order);
