@@ -3333,7 +3333,7 @@ col.c-edit   { width: 156px; }
 }
 
 .dde-bullet-list { display: flex; flex-direction: column; gap: 2px; }
-.dde-bullet-row { display: flex; align-items: center; gap: 6px; }
+.dde-bullet-row { display: flex; align-items: flex-start; gap: 6px; }
 /* 들여쓰기 레벨별 padding */
 .dde-bullet-row.indent-0 { padding-left: 0; }
 .dde-bullet-row.indent-1 { padding-left: 28px; }
@@ -3352,6 +3352,9 @@ col.c-edit   { width: 156px; }
   text-align: center;
   flex-shrink: 0;
   min-width: 16px;
+  /* textarea의 첫 줄 텍스트 baseline과 맞춤 */
+  padding-top: 4px;
+  line-height: 1.6;
 }
 /* 마커 종류별 너비 조정 (숫자·알파벳은 점·대시보다 자리 더 필요) */
 .dde-bullet-row.dde-bullet-bullet .dde-bullet-marker,
@@ -3371,7 +3374,18 @@ col.c-edit   { width: 156px; }
 .dde-bullet-input {
   flex: 1; padding: 5px 8px;
   border: 1px solid transparent; border-radius: 4px;
+  font-family: inherit;
   font-size: 13px; background: transparent; outline: none;
+  /* textarea 사용 — 자동 줄바꿈 + 자동 높이 확장 */
+  resize: none;
+  line-height: 1.6;
+  overflow: hidden;
+  min-height: 26px;
+  /* textarea도 한 줄 input과 비슷한 정렬 */
+  display: block;
+  width: 100%;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .dde-bullet-input:hover { background: #fff; border-color: var(--border, #e5e7eb); }
 .dde-bullet-input:focus { background: #fff; border-color: #2563eb; }
@@ -3379,6 +3393,8 @@ col.c-edit   { width: 156px; }
   background: transparent; border: none; cursor: pointer;
   font-size: 11px; color: var(--text-muted, #9ca3af);
   width: 22px; height: 22px; border-radius: 4px; visibility: hidden;
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 .dde-bullet-row:hover .dde-bullet-x { visibility: visible; }
 .dde-bullet-x:hover { background: #fee2e2; color: #b91c1c; }
