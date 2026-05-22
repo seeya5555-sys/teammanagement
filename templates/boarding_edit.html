@@ -2,14 +2,105 @@
 {% block title %}본문 편집 · Boarding Report{% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <a class="btn btn-outline btn-sm" href="{{ url_for('boarding_page') }}">← 목록</a>
-  <h1 class="page-title">Boarding Report 본문 편집 (Step 2에서 구현)</h1>
+<div class="dde-wrap" data-report-id="{{ report_id }}">
+
+  <div class="dde-readonly-banner" id="bre-readonly-banner" hidden>
+    이 보고서는 담당 감독과 관리자만 수정할 수 있습니다. 현재는 읽기 전용 모드입니다.
+  </div>
+
+  <div class="dde-topbar">
+    <a class="btn btn-outline btn-sm" href="{{ url_for('boarding_page') }}">← 목록</a>
+    <div class="dde-title-block">
+      <h1 class="dde-title" id="bre-title">로딩 중...</h1>
+      <div class="dde-subtitle" id="bre-subtitle"></div>
+    </div>
+    <span class="dde-save-status" id="bre-save-status"></span>
+    <span class="flex-spacer"></span>
+    <button class="btn btn-outline btn-sm" id="bre-btn-export-docx" title="Word 파일로 추출 (Step 3에서 활성화)">
+      📄 Word
+    </button>
+    <button class="btn btn-outline btn-sm" id="bre-btn-export-pdf" title="PDF로 추출 (Step 3에서 활성화)">
+      📕 PDF
+    </button>
+  </div>
+
+  <div class="dde-body">
+    <aside class="dde-sidebar">
+      <div class="dde-side-head">
+        <span>목차</span>
+        <div class="dde-side-actions">
+          <button class="btn btn-outline btn-sm" id="bre-btn-bulk-add" title="여러 섹션을 한 번에 붙여넣기로 추가">📋 일괄</button>
+          <button class="btn btn-primary btn-sm" id="bre-btn-add-section">+ 섹션</button>
+        </div>
+      </div>
+      <div class="dde-toc" id="bre-toc"></div>
+      <div class="dde-side-foot">
+        <button class="btn btn-outline btn-sm" id="bre-btn-add-sub" disabled title="선택된 섹션 아래에 하위 추가">
+          + 하위 섹션
+        </button>
+      </div>
+    </aside>
+
+    <section class="dde-main">
+      <div class="dde-main-empty" id="bre-main-empty">
+        <p>좌측에서 섹션을 선택하거나, 새 섹션을 추가하여 시작하세요.</p>
+      </div>
+
+      <div class="dde-section-edit" id="bre-section-edit" hidden>
+        <div class="dde-section-head">
+          <span class="dde-section-no" id="bre-section-no"></span>
+          <input type="text" id="bre-section-title" class="dde-section-title-input" placeholder="섹션 제목...">
+          <button class="btn btn-danger btn-outline btn-sm" id="bre-btn-del-section">섹션 삭제</button>
+        </div>
+
+        <div class="dde-blocks" id="bre-blocks"></div>
+      </div>
+    </section>
+  </div>
 </div>
 
-<div class="empty-state">
-  <p>본문 편집 화면은 다음 단계(Step 2)에서 추가됩니다.</p>
-  <p>현재는 메타 정보까지만 저장 가능합니다.</p>
-  <p style="margin-top:16px;">보고서 ID: {{ report_id }}</p>
+<input type="file" id="bre-img-input" accept="image/*" hidden>
+
+<!-- 섹션 일괄 추가 모달 -->
+<div class="modal" id="bre-bulk-modal" hidden>
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-box modal-lg">
+    <div class="modal-head">
+      <h2>섹션 일괄 추가</h2>
+      <button class="modal-close" data-close="1" aria-label="닫기">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="dde-bulk-help">
+        엑셀이나 메모장의 목록을 그대로 붙여넣으세요. <strong>한 줄당 1개 섹션</strong>으로 추가됩니다.<br>
+        줄 앞에 <code>Tab</code>(또는 4개 이상의 스페이스)을 넣으면 <strong>하위 섹션</strong>이 됩니다.
+      </p>
+      <label class="form-row">
+        <span class="form-label">목차 텍스트</span>
+        <textarea id="bre-bulk-text" rows="10" placeholder="여기에 붙여넣으세요..."></textarea>
+      </label>
+      <div class="form-row form-row-inline" style="margin-top: 10px;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="radio" name="bre-bulk-target" value="root" checked>
+          <span>최상위에 추가</span>
+        </label>
+        <label id="bre-bulk-under-label" style="display:flex; align-items:center; gap:6px; opacity:0.5;">
+          <input type="radio" name="bre-bulk-target" value="under" disabled>
+          <span>현재 선택한 섹션 <strong id="bre-bulk-current-title">—</strong> 아래에 추가</span>
+        </label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="flex-spacer"></span>
+      <button type="button" class="btn btn-outline" data-close="1">취소</button>
+      <button type="button" class="btn btn-primary" id="bre-bulk-apply">추가</button>
+    </div>
+  </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.BRE_REPORT_ID = {{ report_id|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/bre.js') }}"></script>
 {% endblock %}
