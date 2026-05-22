@@ -567,6 +567,106 @@ function autoResize(ta) {
   ta.style.height = Math.max(ta.scrollHeight + 2, 40) + 'px';
 }
 
+
+// ════════════════════════════════════════════════════════════════
+//  표 paste 헬퍼: Excel/Google Sheets에서 복사한 데이터 → 2D 배열
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * TSV/CSV 텍스트를 2D 배열로 파싱.
+ * 엑셀이 \r\n으로 행 구분, \t로 셀 구분.
+ * 셀 안에 줄바꿈이 있는 경우 그 셀은 "..."로 인용됨 (RFC 4180 스타일)
+ */
+function parseTsv(text) {
+  if (!text) return null;
+  // 끝의 trailing newline 제거
+  text = text.replace(/[\r\n]+$/, '');
+  if (!text) return null;
+
+  // 탭 또는 다중 공백이 보이지 않으면 표가 아님
+  const hasTab = text.includes('\t');
+  const hasMultiLine = /\r?\n/.test(text);
+  if (!hasTab && !hasMultiLine) return null;
+
+  const rows = [];
+  let i = 0;
+  let cur = '';
+  let curRow = [];
+  let inQuote = false;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inQuote) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cur += '"'; i += 2; continue; }
+        inQuote = false; i++; continue;
+      }
+      cur += ch; i++; continue;
+    }
+    if (ch === '"' && cur === '') {
+      // 셀 시작의 인용
+      inQuote = true; i++; continue;
+    }
+    if (ch === '\t') { curRow.push(cur); cur = ''; i++; continue; }
+    if (ch === '\r') { i++; continue; }
+    if (ch === '\n') {
+      curRow.push(cur); rows.push(curRow);
+      curRow = []; cur = ''; i++; continue;
+    }
+    cur += ch; i++;
+  }
+  curRow.push(cur);
+  rows.push(curRow);
+
+  // 빈 행 제거 (모든 셀이 빈 문자열인 경우)
+  return rows.filter(r => r.some(c => c.trim() !== ''));
+}
+
+/**
+ * HTML 안의 <table>을 2D 배열로 파싱.
+ * Excel 클립보드는 HTML도 함께 넣어주므로, 그게 있으면 더 정확.
+ */
+function parseHtmlTable(html) {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const tbl = doc.querySelector('table');
+    if (!tbl) return null;
+    const result = [];
+    tbl.querySelectorAll('tr').forEach(tr => {
+      const row = [];
+      tr.querySelectorAll('th, td').forEach(c => {
+        // 셀 내용에서 의미 없는 줄바꿈 제거, 단 <br>은 \n으로
+        let text = c.innerHTML
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>');
+        // 줄 단위 trim 후, 빈 줄 제거
+        text = text.split('\n').map(s => s.trim()).filter(Boolean).join('\n');
+        row.push(text);
+      });
+      if (row.length > 0) result.push(row);
+    });
+    return result.length > 0 ? result : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 현재 포커스된 input/textarea에 plain text 삽입 (paste 동작 직접 구현)
+ */
+function insertPlainTextAtFocused(el, text) {
+  if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
+  const start = el.selectionStart ?? el.value.length;
+  const end   = el.selectionEnd   ?? el.value.length;
+  el.value = el.value.slice(0, start) + text + el.value.slice(end);
+  el.selectionStart = el.selectionEnd = start + text.length;
+  // 변경 이벤트 발생 (oninput 핸들러 트리거)
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 // ─── bullet_list ─────────────────────────────────────────────
 // marker 종류: 'bullet'(•) / 'dash'(-) / 'number'(1)) / 'alpha'(a))
 // items: [{text:string, indent:number}, ...]  (indent: 0~3)
@@ -822,6 +922,7 @@ function renderTable(body, b) {
       const inp = el('input', {
         type: 'text', class: 'dde-cell-input', value: h, placeholder: '헤더',
         oninput: (e) => { headers[ci] = e.target.value; scheduleBlockSave(b.id, getCurrent); },
+        onpaste: (e) => handleTablePaste(e, -1, ci),
       });
       const delBtn = el('button', {
         class: 'dde-col-del', type: 'button', title: '열 삭제',
@@ -862,6 +963,7 @@ function renderTable(body, b) {
             autoResize(e.target);
             scheduleBlockSave(b.id, getCurrent);
           },
+          onpaste: (e) => handleTablePaste(e, ri, ci),
         });
         ta.value = cell;
         setTimeout(() => autoResize(ta), 0);
@@ -906,6 +1008,96 @@ function renderTable(body, b) {
     document.addEventListener('mouseup', onUp);
   }
 
+  // ─── 엑셀/구글시트 표 붙여넣기 핸들러 ───
+  // 클립보드의 TSV(탭+개행)나 다중 셀 텍스트를 감지해서
+  // 표를 자동으로 확장하고 데이터 채워넣음.
+  //
+  // ri = -1 이면 헤더 행, 0+ 이면 본문 행
+  function handleTablePaste(ev, ri, ci) {
+    const cd = ev.clipboardData || window.clipboardData;
+    if (!cd) return;
+    // HTML 안에 <table>이 있으면 그걸 우선 파싱 (포맷 보존 더 좋음)
+    const html = cd.getData('text/html');
+    const txt  = cd.getData('text/plain') || '';
+
+    let grid = null;
+    if (html && /<t(able|r|d|h)\b/i.test(html)) {
+      grid = parseHtmlTable(html);
+    }
+    if (!grid || grid.length === 0) {
+      grid = parseTsv(txt);
+    }
+    if (!grid) return;
+
+    // 단일 셀(한 행 한 열)이면 기본 동작 유지 (그냥 텍스트로 붙여넣기)
+    if (grid.length === 1 && grid[0].length === 1) return;
+
+    ev.preventDefault();
+
+    // 사용자가 표 형태를 인지 못 할 수도 있으니 첫 사용 시에만 확인
+    const rowsCount = grid.length;
+    const colsCount = Math.max(...grid.map(r => r.length));
+    const where = ri === -1
+      ? `헤더 [${ci+1}열]부터`
+      : `[${ri+1}행, ${ci+1}열]부터`;
+    if (!confirm(
+      `표 형식의 데이터를 감지했습니다 (${rowsCount}행 × ${colsCount}열).\n\n` +
+      `${where} 자동으로 표를 확장하여 채워넣을까요?\n\n` +
+      `· '예'(확인): 표 확장 + 데이터 채우기\n` +
+      `· '아니오'(취소): 일반 텍스트로 현재 셀에만 붙여넣기`
+    )) {
+      // 취소 → 현재 셀에 plain text만 삽입
+      insertPlainTextAtFocused(ev.target, txt);
+      return;
+    }
+
+    // ─── 표 확장 ───
+    if (ri === -1) {
+      // 헤더에서 시작: 첫 그리드 행 → 헤더, 나머지 → 본문 시작 (0행부터)
+      const newColsNeeded = ci + colsCount;
+      while (headers.length < newColsNeeded) {
+        headers.push('');
+        rows.forEach(r => r.push(''));
+        colWidths.push(0);
+      }
+      // 헤더 행 적용
+      for (let cj = 0; cj < grid[0].length; cj++) {
+        headers[ci + cj] = grid[0][cj];
+      }
+      // 본문 행 적용 (그리드 2번째 줄부터)
+      const bodyGrid = grid.slice(1);
+      while (rows.length < bodyGrid.length) {
+        rows.push(headers.map(() => ''));
+      }
+      bodyGrid.forEach((gr, gi) => {
+        for (let cj = 0; cj < gr.length; cj++) {
+          rows[gi][ci + cj] = gr[cj];
+        }
+      });
+    } else {
+      // 본문 셀에서 시작
+      const newColsNeeded = ci + colsCount;
+      while (headers.length < newColsNeeded) {
+        headers.push('');
+        rows.forEach(r => r.push(''));
+        colWidths.push(0);
+      }
+      const newRowsNeeded = ri + rowsCount;
+      while (rows.length < newRowsNeeded) {
+        rows.push(headers.map(() => ''));
+      }
+      grid.forEach((gr, gi) => {
+        for (let cj = 0; cj < gr.length; cj++) {
+          rows[ri + gi][ci + cj] = gr[cj];
+        }
+      });
+    }
+
+    rebuild();
+    scheduleBlockSave(b.id, getCurrent);
+    setSaveStatus(`표 데이터 ${rowsCount}×${colsCount} 붙여넣기 완료`, 'ok');
+  }
+
   rebuild();
 
   const ctrls = el('div', { class: 'dde-table-ctrls' },
@@ -920,7 +1112,8 @@ function renderTable(body, b) {
         rebuild();
         scheduleBlockSave(b.id, getCurrent);
       }}, '+ 열 추가'),
-    el('span', { class: 'dde-table-hint' }, '열 경계선을 드래그해서 너비 조정'),
+    el('span', { class: 'dde-table-hint' },
+      '💡 Excel/구글시트에서 표를 복사 후 셀에 붙여넣으면 자동 확장 · 열 경계선 드래그로 너비 조정'),
   );
 
   body.append(tblWrap, ctrls);
