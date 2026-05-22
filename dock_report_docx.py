@@ -739,28 +739,53 @@ def _render_image_block(doc, content, base_indent):
     img_width_cm = cell_cm - 0.4
     img_height_cm = img_width_cm * 3 / 4
 
-    tbl = doc.add_table(rows=n_rows * 2, cols=columns)
+    # 각 그리드 행마다 캡션 행이 필요한지 미리 결정
+    # (그 행의 이미지 중 하나라도 캡션이 있으면 캡션 행 추가)
+    row_has_caption = []
+    for gr in range(n_rows):
+        start = gr * columns
+        end   = min(start + columns, n)
+        has = any((images[i].get('caption') or '').strip() for i in range(start, end))
+        row_has_caption.append(has)
+
+    # 실제 표의 행 수 = 그리드행마다 1(이미지) + (캡션있으면 +1)
+    total_rows = sum(1 + (1 if h else 0) for h in row_has_caption)
+
+    tbl = doc.add_table(rows=total_rows, cols=columns)
     tbl.autofit = False
     tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
 
     border_color = 'D1D5DB'
     temp_files = []
 
+    # 그리드 행 → 실제 표의 시작 행 인덱스 매핑
+    row_offsets = []
+    cursor = 0
+    for h in row_has_caption:
+        row_offsets.append(cursor)
+        cursor += 2 if h else 1
+
     for idx, img in enumerate(images):
-        grid_row = idx // columns
-        ri = grid_row * 2
+        gr = idx // columns
         ci = idx % columns
-        img_cell = tbl.rows[ri].cells[ci]
-        cap_cell = tbl.rows[ri + 1].cells[ci]
+        img_row_idx = row_offsets[gr]
+        has_caption = row_has_caption[gr]
 
-        # 테두리: 이미지 셀 아래 / 캡션 셀 위만 제거
-        _set_cell_borders_sides(img_cell, {'left', 'right', 'top'},
-                                color=border_color, sz=6)
-        _set_cell_borders_sides(cap_cell, {'left', 'right', 'bottom'},
-                                color=border_color, sz=6)
+        img_cell = tbl.rows[img_row_idx].cells[ci]
+        cap_cell = tbl.rows[img_row_idx + 1].cells[ci] if has_caption else None
 
-        # 캡션 셀: 상하 여백 최소화
-        _set_cell_vertical_padding(cap_cell, top_twips=10, bottom_twips=10)
+        # 테두리:
+        #  - 캡션 있는 경우: 이미지(top/left/right), 캡션(bottom/left/right) — 사이는 비움
+        #  - 캡션 없는 경우: 이미지에 4면 모두
+        if has_caption:
+            _set_cell_borders_sides(img_cell, {'left', 'right', 'top'},
+                                    color=border_color, sz=6)
+            _set_cell_borders_sides(cap_cell, {'left', 'right', 'bottom'},
+                                    color=border_color, sz=6)
+            _set_cell_vertical_padding(cap_cell, top_twips=10, bottom_twips=10)
+        else:
+            _set_cell_borders_sides(img_cell, {'left', 'right', 'top', 'bottom'},
+                                    color=border_color, sz=6)
 
         # 이미지 삽입
         img_path = _resolve_image_path(img.get('url') or '', img.get('filename') or '')
@@ -784,28 +809,30 @@ def _render_image_block(doc, content, base_indent):
             r = p.add_run('[이미지 없음]')
             _set_font(r, size=9, color='9CA3AF')
 
-        # 캡션 - paragraph 자체의 위아래 여백도 0으로
-        cap_p = cap_cell.paragraphs[0]
-        cap_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        cap_p.paragraph_format.space_before = Pt(0)
-        cap_p.paragraph_format.space_after = Pt(0)
-        cap_p.paragraph_format.line_spacing = 1.0
-        caption = img.get('caption') or ''
-        if caption:
-            cap_run = cap_p.add_run(caption)
-            _set_font(cap_run, size=9, color='4B5563')
-            cap_run.italic = True
+        # 캡션 (있는 경우만)
+        if cap_cell is not None:
+            cap_p = cap_cell.paragraphs[0]
+            cap_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cap_p.paragraph_format.space_before = Pt(0)
+            cap_p.paragraph_format.space_after = Pt(0)
+            cap_p.paragraph_format.line_spacing = 1.0
+            caption = (img.get('caption') or '').strip()
+            if caption:
+                cap_run = cap_p.add_run(caption)
+                _set_font(cap_run, size=9, color='4B5563')
+                cap_run.italic = True
 
-    # 마지막 행 잉여 셀 테두리 정리
+    # 마지막 그리드 행의 잉여 셀(이미지가 columns 수보다 적을 때) — 테두리 제거
     last_idx = n - 1
-    last_grid_row = last_idx // columns
+    last_gr = last_idx // columns
     last_col = last_idx % columns
     if last_col < columns - 1:
-        ri_img = last_grid_row * 2
-        ri_cap = ri_img + 1
+        img_row = row_offsets[last_gr]
+        cap_row = img_row + 1 if row_has_caption[last_gr] else None
         for ci in range(last_col + 1, columns):
-            _set_cell_borders_sides(tbl.rows[ri_img].cells[ci], set())
-            _set_cell_borders_sides(tbl.rows[ri_cap].cells[ci], set())
+            _set_cell_borders_sides(tbl.rows[img_row].cells[ci], set())
+            if cap_row is not None:
+                _set_cell_borders_sides(tbl.rows[cap_row].cells[ci], set())
 
     col_cm_list = [cell_cm] * columns
     _set_table_fixed_layout(tbl, total_cm, col_cm_list)
