@@ -605,6 +605,27 @@ def _crop_to_aspect(src_path, target_ratio=4/3):
         return src_path
 
 
+def _set_cell_borders_sides(cell, sides, color='808080', sz=4):
+    """셀의 특정 면(top/left/bottom/right)만 테두리 설정. sides는 set 또는 list."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcBorders = tcPr.find(qn('w:tcBorders'))
+    if tcBorders is None:
+        tcBorders = OxmlElement('w:tcBorders')
+        tcPr.append(tcBorders)
+    for side in ['top', 'left', 'bottom', 'right']:
+        b = tcBorders.find(qn(f'w:{side}'))
+        if b is None:
+            b = OxmlElement(f'w:{side}')
+            tcBorders.append(b)
+        if side in sides:
+            b.set(qn('w:val'), 'single')
+            b.set(qn('w:sz'), str(sz))
+            b.set(qn('w:color'), color)
+        else:
+            b.set(qn('w:val'), 'nil')
+
+
 def _render_image_block(doc, content, base_indent):
     images = content.get('images') or []
     columns = max(1, min(4, int(content.get('columns', 2) or 2)))
@@ -629,27 +650,37 @@ def _render_image_block(doc, content, base_indent):
     tbl.autofit = False
     tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-    # 임시로 만든 cropped 파일 목록 (나중에 정리)
+    border_color = 'D1D5DB'   # 옅은 회색
+
+    # 임시로 만든 cropped 파일 목록
     temp_files = []
 
     for idx, img in enumerate(images):
-        ri = (idx // columns) * 2
+        grid_row = idx // columns         # 이미지 그리드 행 (0부터)
+        ri = grid_row * 2                 # 이미지 행 인덱스
         ci = idx % columns
         img_cell = tbl.rows[ri].cells[ci]
         cap_cell = tbl.rows[ri + 1].cells[ci]
+
+        # ─── 테두리 설정 ───
+        # 이미지 셀: 위/좌/우는 항상, 아래(=캡션과 경계)는 제거
+        img_sides = {'left', 'right', 'top'}
+        # 캡션 셀: 좌/우/아래는 항상, 위(=이미지와 경계)는 제거
+        cap_sides = {'left', 'right', 'bottom'}
+        # 첫 행이 아니어도 위 캡션과 분리하는 테두리는 이미지 셀의 top에 있음 (위에서 추가)
+        _set_cell_borders_sides(img_cell, img_sides, color=border_color, sz=6)
+        _set_cell_borders_sides(cap_cell, cap_sides, color=border_color, sz=6)
 
         # 이미지 삽입
         img_path = _resolve_image_path(img.get('url') or '', img.get('filename') or '')
         if img_path and os.path.exists(img_path):
             try:
-                # 4:3로 잘라낸 이미지 사용
                 processed = _crop_to_aspect(img_path, 4/3)
                 if processed != img_path:
                     temp_files.append(processed)
                 p = img_cell.paragraphs[0]
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run = p.add_run()
-                # width와 height 모두 명시 → 모든 이미지가 동일 크기
                 run.add_picture(processed,
                                 width=Cm(img_width_cm),
                                 height=Cm(img_height_cm))
@@ -671,13 +702,25 @@ def _render_image_block(doc, content, base_indent):
             _set_font(cap_run, size=9, color='4B5563')
             cap_run.italic = True
 
-    # 표 너비 고정 (이미지 표도 동일하게)
+    # 마지막 행이 잉여 셀(이미지가 다 못 채운 경우)이 있으면 빈 셀의 테두리도 정리
+    last_idx = n - 1
+    last_grid_row = last_idx // columns
+    last_col = last_idx % columns
+    if last_col < columns - 1:
+        # 마지막 그리드 행의 잉여 셀들 — 빈 칸 (테두리 없음)
+        ri_img = last_grid_row * 2
+        ri_cap = ri_img + 1
+        for ci in range(last_col + 1, columns):
+            _set_cell_borders_sides(tbl.rows[ri_img].cells[ci], set())
+            _set_cell_borders_sides(tbl.rows[ri_cap].cells[ci], set())
+
+    # 표 너비 고정
     col_cm_list = [cell_cm] * columns
     _set_table_fixed_layout(tbl, total_cm, col_cm_list)
 
-    # 임시 파일 정리 — docx 생성 후
-    # 주의: doc.save() 전까지는 파일이 필요하므로 즉시 삭제 X
-    # 모듈 레벨 cleanup 리스트에 누적
+    # 단, _set_table_fixed_layout이 셀별 테두리를 덮어쓰지는 않으므로
+    # 위에서 설정한 사이드별 테두리가 유지됨
+
     _GLOBAL_TEMP_FILES.extend(temp_files)
 
     _add_paragraph(doc, '', before=2, after=6)
