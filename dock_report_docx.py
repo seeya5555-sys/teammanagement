@@ -283,11 +283,11 @@ def _build_toc(doc, sections_tree):
             _add_paragraph(doc, text, size=11.5, bold=True,
                            before=4, after=2)
         elif depth == 1:
-            text = f'{num.split("-", 1)[1]})  {n["title"]}'  # "1-2" → "2)"
+            text = f'{num}.  {n["title"]}'   # "1-1." 형식
             _add_paragraph(doc, text, size=10.5, indent_left=0.8,
                            before=2, after=1)
         else:
-            text = f'- {n["title"]}'
+            text = f'{num}.  {n["title"]}'   # "1-1-1." 형식
             _add_paragraph(doc, text, size=10, indent_left=1.6,
                            before=1, after=1)
 
@@ -314,18 +314,16 @@ def _render_sections(doc, sections_tree, depth=0, prefix=''):
             # 제목 밑 선
             _add_horizontal_line(doc, color='1F4E79', sz=8)
         elif depth == 1:
-            # 2단계 — 하위 제목 ("1) ...")
-            sub_num = num.split('-', 1)[1]
-            _add_paragraph(doc, f'{sub_num}) {sec["title"]}',
-                           size=12, bold=True, color='2E5990',
-                           indent_left=0.0,
-                           before=10, after=6)
+            # 2단계 — "1-1. 제목" 형식 (1단계와 같은 스타일이지만 글자 크기만 약간 작음)
+            _add_paragraph(doc, f'{num}. {sec["title"]}',
+                           size=13, bold=True, color='1F4E79',
+                           before=14, after=6)
+            _add_horizontal_line(doc, color='5B9BD5', sz=6)
         else:
-            # 3단계 — 더 작은 제목
-            _add_paragraph(doc, f'· {sec["title"]}',
-                           size=11, bold=True,
-                           indent_left=0.8,
-                           before=8, after=4)
+            # 3단계 — "1-1-1. 제목" 형식, 더 작은 제목
+            _add_paragraph(doc, f'{num}. {sec["title"]}',
+                           size=11.5, bold=True, color='2E5990',
+                           before=10, after=4)
 
         # 블록 렌더링
         blocks = sorted(sec.get('blocks', []),
