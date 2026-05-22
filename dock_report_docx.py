@@ -431,10 +431,22 @@ def _render_block(doc, block, depth):
             elif marker == 'alpha':   mk = _alpha_by_depth(indent, n)
             else:                      mk = '•'
 
-            line = f'{mk}  {text}'
-            _add_paragraph(doc, line, size=10.5,
-                           indent_left=base_indent + 0.6 * indent,
-                           after=2)
+            # 항목 내 줄바꿈(\n) 처리:
+            #   첫 줄  → 마커 + text  (들여쓰기 = base + 0.6*indent)
+            #   둘째 줄~ → 마커 없이    (추가로 마커 폭만큼 들여쓰기, hanging indent)
+            base_left = base_indent + 0.6 * indent
+            cont_left = base_left + 0.6   # 마커("•  ") 폭만큼 추가 들여쓰기
+            lines = text.split('\n')
+            total = len(lines)
+            for li, ln in enumerate(lines):
+                is_last = (li == total - 1)
+                after_pt = 2 if is_last else 0
+                if li == 0:
+                    _add_paragraph(doc, f'{mk}  {ln}', size=10.5,
+                                   indent_left=base_left, after=after_pt)
+                else:
+                    _add_paragraph(doc, ln, size=10.5,
+                                   indent_left=cont_left, after=after_pt)
 
     elif bt == 'table':
         _render_table_block(doc, content, base_indent)
