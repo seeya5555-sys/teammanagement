@@ -15,6 +15,7 @@ const E = {
   byId: new Map(),
   activeSecId: null,
   saveTimer: null,
+  canEdit: true,   // 서버에서 보내주는 can_edit 플래그
 };
 
 const $  = (sel, root = document) => root.querySelector(sel);
@@ -71,6 +72,7 @@ async function loadReport() {
   const r = await api(`/api/dock-reports/${E.reportId}`);
   E.report = r;
   E.sectionsFlat = r.sections || [];
+  E.canEdit = !!r.can_edit;
 
   $('#dde-title').textContent = r.title || '제목 없음';
   const subs = [];
@@ -81,6 +83,25 @@ async function loadReport() {
     subs.push(`${(r.period_start||'').replace(/-/g,'.')} ~ ${(r.period_end||'').replace(/-/g,'.')}`);
   }
   $('#dde-subtitle').textContent = subs.join('   ·   ');
+
+  // 읽기 전용 모드 시각화
+  document.body.classList.toggle('dde-readonly', !E.canEdit);
+  const ro = $('#dde-readonly-banner');
+  if (ro) ro.hidden = E.canEdit;
+
+  // 좌측 사이드바의 편집 버튼 비활성화
+  const btnAddSec = $('#dde-btn-add-section');
+  const btnAddSub = $('#dde-btn-add-sub');
+  const btnBulk   = $('#dde-btn-bulk-add');
+  const btnDelSec = $('#dde-btn-del-section');
+  if (btnAddSec) btnAddSec.style.display = E.canEdit ? '' : 'none';
+  if (btnAddSub) btnAddSub.style.display = E.canEdit ? '' : 'none';
+  if (btnBulk)   btnBulk.style.display   = E.canEdit ? '' : 'none';
+  if (btnDelSec) btnDelSec.style.display = E.canEdit ? '' : 'none';
+
+  // 섹션 제목 input 읽기 전용
+  const titleInp = $('#dde-section-title');
+  if (titleInp) titleInp.readOnly = !E.canEdit;
 
   buildTree();
   renderTOC();
@@ -151,12 +172,12 @@ function renderTOCNodes(nodes, container) {
     item.append(
       el('span', { class: 'dde-toc-no' }, info.number + '.'),
       el('span', { class: 'dde-toc-title' }, n.title || '(제목 없음)'),
-      el('div', { class: 'dde-toc-actions' },
+      E.canEdit ? el('div', { class: 'dde-toc-actions' },
         el('button', { class: 'dde-toc-btn', title: '위로',
           onclick: (e) => { e.stopPropagation(); moveSection(n.id, 'up'); }}, '↑'),
         el('button', { class: 'dde-toc-btn', title: '아래로',
           onclick: (e) => { e.stopPropagation(); moveSection(n.id, 'down'); }}, '↓'),
-      ),
+      ) : null,
     );
     container.append(item);
     if (n.children.length > 0) {
@@ -377,22 +398,29 @@ function renderEditor() {
     a.display_order - b.display_order || a.id - b.id);
 
   if (blocks.length === 0) {
-    // 빈 섹션 — 큰 안내 버튼 (4종 모두 선택 가능)
-    blocksWrap.append(renderEmptyInserter());
+    if (E.canEdit) {
+      blocksWrap.append(renderEmptyInserter());
+    } else {
+      blocksWrap.append(el('div', { class: 'dde-blocks-empty-ro' },
+        '이 섹션에는 작성된 내용이 없습니다.'));
+    }
     return;
   }
 
   // 블록이 있을 때
-  // - 맨 위와 블록 사이는 인라인 inserter (호버형)
-  // - 맨 마지막에는 항상 보이는 "+ 블록 추가" 영역
-  blocksWrap.append(renderInserter(0));
+  // - 편집 권한 있으면 inserter + tail-add도 렌더
+  if (E.canEdit) {
+    blocksWrap.append(renderInserter(0));
+  }
   blocks.forEach((b, idx) => {
     blocksWrap.append(renderBlock(b, idx, blocks.length));
-    if (idx < blocks.length - 1) {
+    if (E.canEdit && idx < blocks.length - 1) {
       blocksWrap.append(renderInserter(idx + 1));
     }
   });
-  blocksWrap.append(renderTailAdder(blocks.length));
+  if (E.canEdit) {
+    blocksWrap.append(renderTailAdder(blocks.length));
+  }
 }
 
 // 맨 끝에 항상 보이는 추가 영역 — 4가지 종류 작은 버튼 가로 배치
@@ -497,15 +525,17 @@ function showInsertMenu(anchor, position) {
 function renderBlock(b, idx, total) {
   const wrap = el('div', { class: `dde-block dde-block-${b.block_type}`, 'data-id': b.id });
 
-  const controls = el('div', { class: 'dde-block-controls' },
-    el('button', { class: 'dde-block-btn', title: '위로', disabled: idx === 0,
-      onclick: () => moveBlock(b.id, 'up') }, '↑'),
-    el('button', { class: 'dde-block-btn', title: '아래로', disabled: idx === total - 1,
-      onclick: () => moveBlock(b.id, 'down') }, '↓'),
-    el('button', { class: 'dde-block-btn dde-block-del', title: '삭제',
-      onclick: () => deleteBlock(b.id) }, '✕'),
-  );
-  wrap.append(controls);
+  if (E.canEdit) {
+    const controls = el('div', { class: 'dde-block-controls' },
+      el('button', { class: 'dde-block-btn', title: '위로', disabled: idx === 0,
+        onclick: () => moveBlock(b.id, 'up') }, '↑'),
+      el('button', { class: 'dde-block-btn', title: '아래로', disabled: idx === total - 1,
+        onclick: () => moveBlock(b.id, 'down') }, '↓'),
+      el('button', { class: 'dde-block-btn dde-block-del', title: '삭제',
+        onclick: () => deleteBlock(b.id) }, '✕'),
+    );
+    wrap.append(controls);
+  }
 
   const body = el('div', { class: 'dde-block-body' });
   if (b.block_type === 'paragraph')        renderParagraph(body, b);
