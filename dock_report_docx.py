@@ -631,9 +631,34 @@ def _render_table_block(doc, content, base_indent):
                 except Exception:
                     pass
 
+    # 3) 헤더 행 반복: 페이지가 넘어가면 자동으로 맨 위에 다시 표시
+    for ri in range(min(header_row_count, n_rows)):
+        _set_row_as_header(tbl.rows[ri])
+
     # 표 너비 고정
     _set_table_fixed_layout(tbl, total_cm, col_cm)
     _add_paragraph(doc, '', before=2, after=4)
+
+
+def _set_row_as_header(row):
+    """이 행을 '제목 행 반복' 행으로 설정 — 표가 페이지를 넘어가면 자동 반복.
+       Word의 <w:trPr><w:tblHeader/></w:trPr> 속성 추가."""
+    tr = row._tr
+    trPr = tr.find(qn('w:trPr'))
+    if trPr is None:
+        trPr = OxmlElement('w:trPr')
+        tr.insert(0, trPr)
+    # 기존 tblHeader 있으면 중복 방지
+    existing = trPr.find(qn('w:tblHeader'))
+    if existing is None:
+        tblHeader = OxmlElement('w:tblHeader')
+        tblHeader.set(qn('w:val'), 'true')
+        trPr.append(tblHeader)
+    # 페이지가 분리되어도 행 자체가 잘리지 않도록 cantSplit도 추가
+    cantSplit = trPr.find(qn('w:cantSplit'))
+    if cantSplit is None:
+        cs = OxmlElement('w:cantSplit')
+        trPr.append(cs)
 
 
 def _crop_to_aspect(src_path, target_ratio=4/3):
