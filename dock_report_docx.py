@@ -511,31 +511,71 @@ def _set_table_fixed_layout(tbl, total_cm, col_cm_list):
             tcPr.append(tcW)
 
 
-def _render_table_block(doc, content, base_indent):
+def _normalize_table_content(content):
+    """기존 {headers, rows} 또는 새 {cells, header_row_count} 모두 받아서
+       통일된 {cells, header_row_count, col_widths} 반환"""
+    if isinstance(content.get('cells'), list):
+        cells = content['cells']
+        # 각 셀 정규화
+        norm_cells = []
+        for row in cells:
+            norm_row = []
+            for c in row:
+                if c is None:
+                    norm_row.append(None)
+                else:
+                    norm_row.append({
+                        'text': c.get('text', '') or '',
+                        'rowspan': max(1, int(c.get('rowspan', 1))),
+                        'colspan': max(1, int(c.get('colspan', 1))),
+                    })
+            norm_cells.append(norm_row)
+        return {
+            'cells': norm_cells,
+            'header_row_count': max(1, int(content.get('header_row_count', 1))),
+            'col_widths': list(content.get('col_widths') or []),
+        }
+
+    # 옛 구조 → 변환
     headers = content.get('headers') or []
     rows = content.get('rows') or []
-    if not headers and not rows:
+    n_cols = max(len(headers), max((len(r) for r in rows), default=0))
+    if n_cols == 0:
+        return None
+    headers = (list(headers) + [''] * n_cols)[:n_cols]
+    rows = [(list(r) + [''] * n_cols)[:n_cols] for r in rows]
+    cells = [
+        [{'text': h or '', 'rowspan': 1, 'colspan': 1} for h in headers],
+    ]
+    for r in rows:
+        cells.append([{'text': v or '', 'rowspan': 1, 'colspan': 1} for v in r])
+    return {
+        'cells': cells,
+        'header_row_count': 1,
+        'col_widths': list(content.get('col_widths') or []),
+    }
+
+
+def _render_table_block(doc, content, base_indent):
+    norm = _normalize_table_content(content)
+    if not norm or not norm['cells']:
         return
 
-    n_cols = max(len(headers), max((len(r) for r in rows), default=0))
+    cells = norm['cells']
+    header_row_count = norm['header_row_count']
+    col_widths_px = norm['col_widths']
+
+    n_rows = len(cells)
+    n_cols = max((len(r) for r in cells), default=0)
     if n_cols == 0:
         return
 
-    # 헤더/행 길이 맞추기
-    headers = (list(headers) + [''] * n_cols)[:n_cols]
-    rows = [(list(r) + [''] * n_cols)[:n_cols] for r in rows]
-
-    # 컬럼 너비 — 사용자 지정 있으면 비율로 적용, 없으면 균등
-    col_widths_px = content.get('col_widths') or []
-    total_cm = 16.0  # 본문 가용 폭 (A4 - 양쪽 여백)
-
-    # 길이 안 맞거나 모든 값이 0/누락이면 균등 분배
+    # 컬럼 너비 (cm)
+    total_cm = 16.0
     if (not col_widths_px or len(col_widths_px) != n_cols
             or sum(w for w in col_widths_px if w and w > 0) <= 0):
         col_cm = [total_cm / n_cols] * n_cols
     else:
-        # 0이거나 음수인 컬럼은 다른 컬럼들의 평균값으로 보정
-        # (옛 데이터에서 마지막 컬럼이 0으로 저장된 케이스 구제)
         valid = [w for w in col_widths_px if w and w > 0]
         if len(valid) < n_cols:
             avg = sum(valid) / len(valid)
@@ -543,41 +583,55 @@ def _render_table_block(doc, content, base_indent):
         total = sum(col_widths_px)
         col_cm = [total_cm * (w / total) for w in col_widths_px]
 
-    tbl = doc.add_table(rows=1 + len(rows), cols=n_cols)
+    tbl = doc.add_table(rows=n_rows, cols=n_cols)
     tbl.autofit = False
     tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
 
-    # 헤더
-    for ci, h in enumerate(headers):
-        cell = tbl.rows[0].cells[ci]
-        _set_cell_shading(cell, 'D9E2EC')
-        _set_cell_borders(cell)
-        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-        p = cell.paragraphs[0]
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = p.add_run(str(h))
-        _set_font(r, size=10, bold=True)
-
-    # 데이터
-    for ri, row in enumerate(rows, start=1):
-        for ci, val in enumerate(row):
+    # 1) 모든 마스터 셀에 텍스트 채우기
+    for ri in range(n_rows):
+        for ci in range(n_cols):
+            cell_data = cells[ri][ci]
+            if cell_data is None:
+                continue
             cell = tbl.rows[ri].cells[ci]
+            is_header = (ri < header_row_count)
+            if is_header:
+                _set_cell_shading(cell, 'D9E2EC')
             _set_cell_borders(cell)
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+            # 첫 paragraph 초기화
             p = cell.paragraphs[0]
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            text = str(val or '')
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if is_header else WD_ALIGN_PARAGRAPH.LEFT
+            text = str(cell_data.get('text') or '')
             lines = text.split('\n')
             for li, ln in enumerate(lines):
                 if li > 0:
                     p = cell.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER if is_header else WD_ALIGN_PARAGRAPH.LEFT
                 r = p.add_run(ln)
-                _set_font(r, size=10)
+                _set_font(r, size=10, bold=is_header)
 
-    # 표 너비 강제 고정 — Word가 마지막 셀을 좁히지 못하게
+    # 2) 병합 적용 (rowspan/colspan > 1인 마스터 셀)
+    for ri in range(n_rows):
+        for ci in range(n_cols):
+            cell_data = cells[ri][ci]
+            if cell_data is None:
+                continue
+            rs = cell_data.get('rowspan', 1)
+            cs = cell_data.get('colspan', 1)
+            if rs > 1 or cs > 1:
+                r_end = min(n_rows - 1, ri + rs - 1)
+                c_end = min(n_cols - 1, ci + cs - 1)
+                top_left = tbl.cell(ri, ci)
+                bottom_right = tbl.cell(r_end, c_end)
+                try:
+                    top_left.merge(bottom_right)
+                except Exception:
+                    pass
+
+    # 표 너비 고정
     _set_table_fixed_layout(tbl, total_cm, col_cm)
-
-    # 표 위/아래 여백
     _add_paragraph(doc, '', before=2, after=4)
 
 
