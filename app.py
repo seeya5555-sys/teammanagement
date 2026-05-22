@@ -3262,10 +3262,10 @@ def api_brep_create():
     # Step 2에서 활용: 신규 보고서 생성 시 기본 섹션 자동 생성
     # (방선보고서 + Defect List 통합본 양식)
     default_sections = [
-        ('1. Inspector Opinion', None),
-        ('2. Vessel General Condition & Deficiencies', None),
-        ('3. 첨부 사진', None),
-        ('4. Defect List', None),
+        ('Inspector Opinion', None),
+        ('Vessel General Condition & Deficiencies', None),
+        ('첨부 사진', None),
+        ('Defect List', None),
     ]
     for idx, (title_text, parent) in enumerate(default_sections):
         execute('''
