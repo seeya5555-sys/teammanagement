@@ -493,17 +493,17 @@ function renderParagraph(body, b) {
     class: 'dde-p-input', placeholder: '내용을 입력하세요...', rows: 3,
   });
   ta.value = b.content?.text || '';
-  autoResize(ta);
   ta.addEventListener('input', () => {
     autoResize(ta);
     scheduleBlockSave(b.id, () => ({ text: ta.value }));
   });
   body.append(ta);
+  setTimeout(() => autoResize(ta), 0);
 }
 
 function autoResize(ta) {
   ta.style.height = 'auto';
-  ta.style.height = Math.max(ta.scrollHeight, 40) + 'px';
+  ta.style.height = Math.max(ta.scrollHeight + 2, 40) + 'px';
 }
 
 // ─── bullet_list (마커 4종 + 들여쓰기) ───────────────────────
@@ -575,10 +575,11 @@ function renderBulletList(body, b) {
       const row = el('div', {
         class: `dde-bullet-row dde-bullet-${marker} indent-${it.indent}`,
       });
-      const inp = el('input', {
-        type: 'text', class: 'dde-bullet-input', placeholder: '항목...', value: it.text,
+      const inp = el('textarea', {
+        class: 'dde-bullet-input', placeholder: '항목...', rows: 1,
         oninput: (e) => {
           items[i].text = e.target.value;
+          autoResize(e.target);
           scheduleBlockSave(b.id, getCurrent);
         },
         onkeydown: (e) => {
@@ -599,7 +600,8 @@ function renderBulletList(body, b) {
             }
             return;
           }
-          if (e.key === 'Enter') {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            // Enter: 새 항목 / Shift+Enter: 같은 항목 내 줄바꿈
             e.preventDefault();
             items.splice(i + 1, 0, { text: '', indent: items[i].indent });
             rebuild(); focusItem(i + 1);
@@ -621,6 +623,8 @@ function renderBulletList(body, b) {
           }
         },
       });
+      inp.value = it.text || '';
+      setTimeout(() => autoResize(inp), 0);
       row.append(
         el('span', { class: 'dde-bullet-marker' }, markers[i]),
         inp,
