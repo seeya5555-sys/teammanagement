@@ -505,6 +505,21 @@ def dry_dock_edit_page(rid):
     return render_template('dry_dock_edit.html', report_id=rid)
 
 
+@app.route('/boarding')
+@login_required
+def boarding_page():
+    return render_template('boarding.html')
+
+
+@app.route('/boarding/<int:rid>/edit')
+@login_required
+def boarding_edit_page(rid):
+    r = query('SELECT id FROM boarding_reports WHERE id=?', (rid,), one=True)
+    if not r:
+        abort(404)
+    return render_template('boarding_edit.html', report_id=rid)
+
+
 # ═════════════════════════════════════════════════════════════════
 #  API — me / password
 # ═════════════════════════════════════════════════════════════════
@@ -3070,6 +3085,551 @@ def api_dock_export_pdf(rid):
         as_attachment=True,
         download_name=fname,
     )
+
+
+# ═════════════════════════════════════════════════════════════════
+#  API — Boarding Report (방선보고서)
+#   · 구조는 Dry Dock Report와 거의 동일 (별도 테이블, 별도 권한 체크)
+#   · 메타 필드만 다름 (port / boarding_start_end / master / chief_eng 등)
+# ═════════════════════════════════════════════════════════════════
+def _can_edit_boarding_report(report_row_or_id):
+    if session.get('role') == 'admin':
+        return True
+    my_sv = session.get('supervisor_id')
+    if not my_sv:
+        return False
+    if isinstance(report_row_or_id, int):
+        r = query('SELECT supervisor_id FROM boarding_reports WHERE id=?',
+                  (report_row_or_id,), one=True)
+        if not r:
+            return False
+        report_sv = r['supervisor_id']
+    else:
+        report_sv = report_row_or_id.get('supervisor_id') if hasattr(report_row_or_id, 'get') \
+                    else report_row_or_id['supervisor_id']
+    return report_sv is not None and report_sv == my_sv
+
+
+def _require_brep_edit(rid):
+    if not query('SELECT id FROM boarding_reports WHERE id=?', (rid,), one=True):
+        abort(404)
+    if not _can_edit_boarding_report(rid):
+        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다. (담당 감독 또는 관리자만 수정 가능)'}), 403
+    return None
+
+
+def _brep_section_report_id(sid):
+    r = query('SELECT report_id FROM boarding_report_sections WHERE id=?', (sid,), one=True)
+    return r['report_id'] if r else None
+
+
+def _brep_block_report_id(bid):
+    r = query('''
+        SELECT s.report_id FROM boarding_report_blocks b
+          JOIN boarding_report_sections s ON s.id = b.section_id
+         WHERE b.id = ?
+    ''', (bid,), one=True)
+    return r['report_id'] if r else None
+
+
+def _require_brep_edit_via_section(sid):
+    rid = _brep_section_report_id(sid)
+    if not rid:
+        abort(404)
+    if not _can_edit_boarding_report(rid):
+        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다.'}), 403
+    return None
+
+
+def _require_brep_edit_via_block(bid):
+    rid = _brep_block_report_id(bid)
+    if not rid:
+        abort(404)
+    if not _can_edit_boarding_report(rid):
+        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다.'}), 403
+    return None
+
+
+def _touch_brep(rid):
+    execute("UPDATE boarding_reports SET updated_at=datetime('now','localtime') WHERE id=?",
+            (rid,))
+
+
+def _brep_to_dict(row):
+    return dict(row)
+
+
+# ─── Boarding Report — 보고서 메타 CRUD ─────────────────────────
+@app.route('/api/boarding-reports', methods=['GET'])
+@login_required
+def api_brep_list():
+    conds, params = ['1=1'], []
+
+    is_tmpl = request.args.get('is_template')
+    if is_tmpl is not None:
+        conds.append('b.is_template = ?')
+        params.append(1 if is_tmpl in ('1', 'true', 'yes') else 0)
+    else:
+        conds.append('b.is_template = 0')
+
+    if request.args.get('vessel_id'):
+        conds.append('b.vessel_id = ?')
+        params.append(request.args.get('vessel_id'))
+
+    if request.args.get('status'):
+        conds.append('b.status = ?')
+        params.append(request.args.get('status'))
+
+    if request.args.get('q'):
+        like = f'%{request.args.get("q")}%'
+        conds.append('(b.title LIKE ? OR b.port LIKE ?)')
+        params += [like, like]
+
+    sql = f'''
+        SELECT b.*,
+               v.name       AS vessel_name,
+               v.short_name AS vessel_short,
+               s.name       AS supervisor_name
+          FROM boarding_reports b
+          JOIN vessels       v ON v.id = b.vessel_id
+          LEFT JOIN supervisors s ON s.id = b.supervisor_id
+         WHERE {' AND '.join(conds)}
+         ORDER BY b.updated_at DESC, b.id DESC
+    '''
+    rows = query(sql, params)
+    out = []
+    for r in rows:
+        d = _brep_to_dict(r)
+        d['can_edit'] = _can_edit_boarding_report(r)
+        out.append(d)
+    return jsonify(out)
+
+
+@app.route('/api/boarding-reports', methods=['POST'])
+@login_required
+def api_brep_create():
+    d = request.get_json(silent=True) or {}
+    vessel_id = d.get('vessel_id')
+    title     = (d.get('title') or '').strip()
+    if not vessel_id:
+        return jsonify({'error': '선박을 선택하세요.'}), 400
+    if not title:
+        return jsonify({'error': '제목을 입력하세요.'}), 400
+    if not query('SELECT id FROM vessels WHERE id=?', (vessel_id,), one=True):
+        return jsonify({'error': '존재하지 않는 선박입니다.'}), 400
+
+    supervisor_id = d.get('supervisor_id') or None
+    if session.get('role') != 'admin':
+        my_sv = session.get('supervisor_id')
+        if not my_sv:
+            return jsonify({'error': '보고서 작성 권한이 없습니다. (담당 감독으로 등록된 계정만 가능)'}), 403
+        if supervisor_id and int(supervisor_id) != my_sv:
+            return jsonify({'error': '본인을 담당 감독으로 지정한 경우에만 생성할 수 있습니다.'}), 403
+        if not supervisor_id:
+            supervisor_id = my_sv
+
+    is_template = 1 if d.get('is_template') else 0
+
+    new_id = execute('''
+        INSERT INTO boarding_reports
+            (vessel_id, supervisor_id, title, port,
+             boarding_start, boarding_end,
+             master_name, master_board_date, chief_eng_name, chief_eng_board_date,
+             sv_checklist_score,
+             approval_drafter, approval_team_lead, approval_director, approval_ceo,
+             status, is_template, template_name, created_by)
+        VALUES (?,?,?,?, ?,?, ?,?,?,?, ?, ?,?,?,?, ?,?,?,?)
+    ''', (
+        vessel_id, supervisor_id, title,
+        d.get('port') or None,
+        d.get('boarding_start') or None,
+        d.get('boarding_end') or None,
+        d.get('master_name') or None,
+        d.get('master_board_date') or None,
+        d.get('chief_eng_name') or None,
+        d.get('chief_eng_board_date') or None,
+        d.get('sv_checklist_score') or None,
+        d.get('approval_drafter') or None,
+        d.get('approval_team_lead') or None,
+        d.get('approval_director') or None,
+        d.get('approval_ceo') or None,
+        d.get('status') or 'draft',
+        is_template,
+        d.get('template_name') if is_template else None,
+        session.get('display_name') or session.get('username') or '',
+    ))
+
+    # Step 2에서 활용: 신규 보고서 생성 시 기본 섹션 자동 생성
+    # (방선보고서 + Defect List 통합본 양식)
+    default_sections = [
+        ('1. Inspector Opinion', None),
+        ('2. Vessel General Condition & Deficiencies', None),
+        ('3. 첨부 사진', None),
+        ('4. Defect List', None),
+    ]
+    for idx, (title_text, parent) in enumerate(default_sections):
+        execute('''
+            INSERT INTO boarding_report_sections
+                (report_id, parent_id, title, display_order)
+            VALUES (?, ?, ?, ?)
+        ''', (new_id, parent, title_text, idx))
+
+    return jsonify({'id': new_id, 'ok': True}), 201
+
+
+@app.route('/api/boarding-reports/<int:rid>', methods=['GET'])
+@login_required
+def api_brep_get(rid):
+    r = query('''
+        SELECT b.*,
+               v.name       AS vessel_name,
+               v.short_name AS vessel_short,
+               s.name       AS supervisor_name
+          FROM boarding_reports b
+          JOIN vessels       v ON v.id = b.vessel_id
+          LEFT JOIN supervisors s ON s.id = b.supervisor_id
+         WHERE b.id = ?
+    ''', (rid,), one=True)
+    if not r:
+        abort(404)
+
+    out = _brep_to_dict(r)
+    out['can_edit'] = _can_edit_boarding_report(r)
+
+    secs = query('''
+        SELECT * FROM boarding_report_sections
+         WHERE report_id = ?
+         ORDER BY display_order, id
+    ''', (rid,))
+    sec_list = [dict(s) for s in secs]
+
+    sec_ids = [s['id'] for s in sec_list]
+    blocks = []
+    if sec_ids:
+        placeholders = ','.join('?' for _ in sec_ids)
+        blocks = query(f'''
+            SELECT * FROM boarding_report_blocks
+             WHERE section_id IN ({placeholders})
+             ORDER BY section_id, display_order, id
+        ''', sec_ids)
+    blocks_by_sec = {}
+    for b in blocks:
+        bd = dict(b)
+        try:
+            bd['content'] = json.loads(bd.pop('content_json'))
+        except Exception:
+            bd['content'] = {}
+        blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
+
+    for s in sec_list:
+        s['blocks'] = blocks_by_sec.get(s['id'], [])
+
+    out['sections'] = sec_list
+    return jsonify(out)
+
+
+@app.route('/api/boarding-reports/<int:rid>', methods=['PUT'])
+@login_required
+def api_brep_update(rid):
+    err = _require_brep_edit(rid)
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+
+    updatable = {
+        'vessel_id', 'supervisor_id', 'title', 'port',
+        'boarding_start', 'boarding_end',
+        'master_name', 'master_board_date', 'chief_eng_name', 'chief_eng_board_date',
+        'sv_checklist_score',
+        'approval_drafter', 'approval_team_lead', 'approval_director', 'approval_ceo',
+        'status', 'template_name',
+    }
+    if 'supervisor_id' in d and session.get('role') != 'admin':
+        d.pop('supervisor_id', None)
+
+    sets, params = [], []
+    for k in updatable:
+        if k in d:
+            sets.append(f'{k} = ?')
+            v = d.get(k)
+            params.append(v if (v not in ('',)) else None)
+
+    if not sets:
+        return jsonify({'ok': True, 'updated': 0})
+
+    sets.append("updated_at = datetime('now','localtime')")
+    params.append(rid)
+    execute(f'UPDATE boarding_reports SET {", ".join(sets)} WHERE id = ?', params)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/boarding-reports/<int:rid>', methods=['DELETE'])
+@login_required
+def api_brep_delete(rid):
+    err = _require_brep_edit(rid)
+    if err:
+        return err
+    execute('DELETE FROM boarding_reports WHERE id = ?', (rid,))
+    return jsonify({'ok': True})
+
+
+# ─── Boarding Report — 섹션 CRUD ────────────────────────────────
+@app.route('/api/boarding-reports/<int:rid>/sections', methods=['POST'])
+@login_required
+def api_brep_section_create(rid):
+    err = _require_brep_edit(rid)
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    title = (d.get('title') or '').strip() or '새 섹션'
+    parent_id = d.get('parent_id')
+    if parent_id:
+        p = query('SELECT report_id FROM boarding_report_sections WHERE id=?',
+                  (parent_id,), one=True)
+        if not p or p['report_id'] != rid:
+            return jsonify({'error': '잘못된 상위 섹션입니다.'}), 400
+
+    cond = 'parent_id IS NULL' if not parent_id else 'parent_id = ?'
+    last = query(f'''
+        SELECT COALESCE(MAX(display_order), -1) AS mx
+          FROM boarding_report_sections
+         WHERE report_id = ? AND {cond}
+    ''', (rid, *([parent_id] if parent_id else [])), one=True)
+    next_order = (last['mx'] if last else -1) + 1
+
+    new_id = execute('''
+        INSERT INTO boarding_report_sections (report_id, parent_id, title, display_order)
+        VALUES (?,?,?,?)
+    ''', (rid, parent_id, title, next_order))
+    _touch_brep(rid)
+    return jsonify({'id': new_id, 'ok': True}), 201
+
+
+@app.route('/api/boarding-sections/<int:sid>', methods=['PUT'])
+@login_required
+def api_brep_section_update(sid):
+    err = _require_brep_edit_via_section(sid)
+    if err:
+        return err
+    rid = _brep_section_report_id(sid)
+    d = request.get_json(silent=True) or {}
+    title = (d.get('title') or '').strip()
+    if not title:
+        return jsonify({'error': '제목을 입력하세요.'}), 400
+    execute('UPDATE boarding_report_sections SET title=? WHERE id=?', (title, sid))
+    _touch_brep(rid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/boarding-sections/<int:sid>', methods=['DELETE'])
+@login_required
+def api_brep_section_delete(sid):
+    err = _require_brep_edit_via_section(sid)
+    if err:
+        return err
+    rid = _brep_section_report_id(sid)
+    execute('DELETE FROM boarding_report_sections WHERE id=?', (sid,))
+    _touch_brep(rid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/boarding-sections/<int:sid>/move', methods=['POST'])
+@login_required
+def api_brep_section_move(sid):
+    err = _require_brep_edit_via_section(sid)
+    if err:
+        return err
+    rid = _brep_section_report_id(sid)
+    d = request.get_json(silent=True) or {}
+    direction = d.get('direction')
+    if direction not in ('up', 'down'):
+        return jsonify({'error': 'invalid direction'}), 400
+
+    me = query('SELECT * FROM boarding_report_sections WHERE id=?', (sid,), one=True)
+    cond = 'parent_id IS NULL' if me['parent_id'] is None else 'parent_id = ?'
+    args = (me['report_id'],) if me['parent_id'] is None else (me['report_id'], me['parent_id'])
+
+    if direction == 'up':
+        nb = query(f'''
+            SELECT * FROM boarding_report_sections
+             WHERE report_id=? AND {cond} AND display_order < ?
+             ORDER BY display_order DESC LIMIT 1
+        ''', (*args, me['display_order']), one=True)
+    else:
+        nb = query(f'''
+            SELECT * FROM boarding_report_sections
+             WHERE report_id=? AND {cond} AND display_order > ?
+             ORDER BY display_order ASC LIMIT 1
+        ''', (*args, me['display_order']), one=True)
+
+    if not nb:
+        return jsonify({'ok': True, 'moved': False})
+
+    execute('UPDATE boarding_report_sections SET display_order=? WHERE id=?',
+            (nb['display_order'], me['id']))
+    execute('UPDATE boarding_report_sections SET display_order=? WHERE id=?',
+            (me['display_order'], nb['id']))
+    _touch_brep(rid)
+    return jsonify({'ok': True, 'moved': True})
+
+
+# ─── Boarding Report — 블록 CRUD ────────────────────────────────
+def _brep_default_block_content(block_type):
+    if block_type == 'paragraph':   return {'text': ''}
+    if block_type == 'bullet_list': return {'items': [{'text': '', 'indent': 0}], 'marker': 'bullet'}
+    if block_type == 'table':
+        return {'headers': ['항목', '내용'], 'rows': [['', '']], 'col_widths': []}
+    if block_type == 'image':
+        return {'images': [], 'columns': 2}
+    if block_type == 'info_table':
+        # 방선보고서 헤더용 (Label-Value 쌍)
+        return {'rows': [
+            {'label': 'Vessel',    'value': ''},
+            {'label': 'Port',      'value': ''},
+            {'label': 'Inspector', 'value': ''},
+            {'label': 'Date/Time', 'value': ''},
+        ]}
+    if block_type == 'defect_table':
+        # Defect List 항목 리스트 (각 항목: 사진 + 발견사항 + 조치사항 + Risk)
+        return {'items': []}
+    return {}
+
+
+@app.route('/api/boarding-sections/<int:sid>/blocks', methods=['POST'])
+@login_required
+def api_brep_block_create(sid):
+    err = _require_brep_edit_via_section(sid)
+    if err:
+        return err
+    rid = _brep_section_report_id(sid)
+    d = request.get_json(silent=True) or {}
+    bt = d.get('block_type')
+    if bt not in ('paragraph','bullet_list','table','image','info_table','defect_table'):
+        return jsonify({'error': 'invalid block_type'}), 400
+    content = d.get('content') or _brep_default_block_content(bt)
+
+    last = query('''
+        SELECT COALESCE(MAX(display_order), -1) AS mx
+          FROM boarding_report_blocks WHERE section_id=?
+    ''', (sid,), one=True)
+    next_order = (last['mx'] if last else -1) + 1
+
+    new_id = execute('''
+        INSERT INTO boarding_report_blocks (section_id, block_type, content_json, display_order)
+        VALUES (?,?,?,?)
+    ''', (sid, bt, json.dumps(content, ensure_ascii=False), next_order))
+    _touch_brep(rid)
+    return jsonify({'id': new_id, 'ok': True, 'content': content}), 201
+
+
+@app.route('/api/boarding-blocks/<int:bid>', methods=['PUT'])
+@login_required
+def api_brep_block_update(bid):
+    err = _require_brep_edit_via_block(bid)
+    if err:
+        return err
+    rid = _brep_block_report_id(bid)
+    d = request.get_json(silent=True) or {}
+    content = d.get('content')
+    if content is None:
+        return jsonify({'error': 'content가 필요합니다.'}), 400
+    execute('UPDATE boarding_report_blocks SET content_json=? WHERE id=?',
+            (json.dumps(content, ensure_ascii=False), bid))
+    _touch_brep(rid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/boarding-blocks/<int:bid>', methods=['DELETE'])
+@login_required
+def api_brep_block_delete(bid):
+    err = _require_brep_edit_via_block(bid)
+    if err:
+        return err
+    rid = _brep_block_report_id(bid)
+    execute('DELETE FROM boarding_report_blocks WHERE id=?', (bid,))
+    _touch_brep(rid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/boarding-blocks/<int:bid>/move', methods=['POST'])
+@login_required
+def api_brep_block_move(bid):
+    err = _require_brep_edit_via_block(bid)
+    if err:
+        return err
+    rid = _brep_block_report_id(bid)
+    d = request.get_json(silent=True) or {}
+    direction = d.get('direction')
+    if direction not in ('up', 'down'):
+        return jsonify({'error': 'invalid direction'}), 400
+
+    me = query('SELECT * FROM boarding_report_blocks WHERE id=?', (bid,), one=True)
+    if direction == 'up':
+        nb = query('''
+            SELECT * FROM boarding_report_blocks
+             WHERE section_id=? AND display_order < ?
+             ORDER BY display_order DESC LIMIT 1
+        ''', (me['section_id'], me['display_order']), one=True)
+    else:
+        nb = query('''
+            SELECT * FROM boarding_report_blocks
+             WHERE section_id=? AND display_order > ?
+             ORDER BY display_order ASC LIMIT 1
+        ''', (me['section_id'], me['display_order']), one=True)
+
+    if not nb:
+        return jsonify({'ok': True, 'moved': False})
+
+    execute('UPDATE boarding_report_blocks SET display_order=? WHERE id=?',
+            (nb['display_order'], me['id']))
+    execute('UPDATE boarding_report_blocks SET display_order=? WHERE id=?',
+            (me['display_order'], nb['id']))
+    _touch_brep(rid)
+    return jsonify({'ok': True, 'moved': True})
+
+
+# ─── Boarding Report — 이미지 업로드 ────────────────────────────
+# (dock/ 폴더와 분리하기 위해 별도 boarding/ 폴더 사용)
+@app.route('/api/boarding-reports/<int:rid>/upload-image', methods=['POST'])
+@login_required
+def api_brep_upload_image(rid):
+    err = _require_brep_edit(rid)
+    if err:
+        return err
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다.'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': '파일명이 비어있습니다.'}), 400
+
+    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+    if ext not in {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'}:
+        return jsonify({'error': '이미지 파일만 업로드 가능합니다.'}), 400
+
+    boarding_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'boarding')
+    os.makedirs(boarding_dir, exist_ok=True)
+
+    import time
+    base_fname = f'brep-{rid}-{int(time.time()*1000)}-{secrets.token_hex(4)}'
+    initial_path = os.path.join(boarding_dir, f'{base_fname}.{ext}')
+
+    # Dock Report와 동일한 이미지 압축 로직 사용
+    final_path, orig_size, final_size = _process_uploaded_image(f, initial_path)
+    final_fname = os.path.basename(final_path)
+
+    url = url_for('static', filename=f'uploads/boarding/{final_fname}')
+    reduction = 0
+    if orig_size > 0:
+        reduction = int((1 - final_size / orig_size) * 100)
+
+    return jsonify({
+        'ok': True,
+        'filename': final_fname,
+        'url': url,
+        'original_kb': round(orig_size / 1024, 1),
+        'final_kb':    round(final_size / 1024, 1),
+        'reduction_pct': reduction,
+    }), 201
 
 
 # ═════════════════════════════════════════════════════════════════
