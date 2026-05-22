@@ -3427,7 +3427,7 @@ col.c-edit   { width: 156px; }
 .dde-table th, .dde-table td {
   border: 1px solid var(--border, #e5e7eb);
   padding: 0;
-  vertical-align: top;
+  vertical-align: middle;
   position: relative;
   overflow: hidden;
 }
@@ -3443,6 +3443,8 @@ col.c-edit   { width: 156px; }
   background: transparent; outline: none;
   resize: none;
   box-sizing: border-box;
+  display: inline-block;
+  vertical-align: middle;
 }
 .dde-table th .dde-cell-input {
   font-weight: 700; text-align: center;
