@@ -1391,10 +1391,14 @@ function bindEvents() {
   });
 
   $('#bre-btn-export-docx').addEventListener('click', () => {
-    alert('Word 추출은 Step 3에서 활성화됩니다.');
+    setSaveStatus('Word 생성 중...', 'busy');
+    window.location = `/api/boarding-reports/${E.reportId}/export/docx`;
+    setTimeout(() => setSaveStatus('저장됨', 'ok'), 1500);
   });
   $('#bre-btn-export-pdf').addEventListener('click', () => {
-    alert('PDF 추출은 Step 3에서 활성화됩니다.');
+    setSaveStatus('PDF 변환 중... (10~20초 소요)', 'busy');
+    window.location = `/api/boarding-reports/${E.reportId}/export/pdf`;
+    setTimeout(() => setSaveStatus('저장됨', 'ok'), 3000);
   });
 }
 
