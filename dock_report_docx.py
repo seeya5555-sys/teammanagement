@@ -501,11 +501,20 @@ def _render_table_block(doc, content, base_indent):
     # 컬럼 너비 — 사용자 지정 있으면 비율로 적용, 없으면 균등
     col_widths_px = content.get('col_widths') or []
     total_cm = 16.0  # 본문 가용 폭 (A4 - 양쪽 여백)
-    if col_widths_px and len(col_widths_px) == n_cols and sum(col_widths_px) > 0:
+
+    # 길이 안 맞거나 모든 값이 0/누락이면 균등 분배
+    if (not col_widths_px or len(col_widths_px) != n_cols
+            or sum(w for w in col_widths_px if w and w > 0) <= 0):
+        col_cm = [total_cm / n_cols] * n_cols
+    else:
+        # 0이거나 음수인 컬럼은 다른 컬럼들의 평균값으로 보정
+        # (옛 데이터에서 마지막 컬럼이 0으로 저장된 케이스 구제)
+        valid = [w for w in col_widths_px if w and w > 0]
+        if len(valid) < n_cols:
+            avg = sum(valid) / len(valid)
+            col_widths_px = [w if (w and w > 0) else avg for w in col_widths_px]
         total = sum(col_widths_px)
         col_cm = [total_cm * (w / total) for w in col_widths_px]
-    else:
-        col_cm = [total_cm / n_cols] * n_cols
 
     tbl = doc.add_table(rows=1 + len(rows), cols=n_cols)
     tbl.autofit = False
