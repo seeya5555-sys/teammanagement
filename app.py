@@ -2281,6 +2281,69 @@ def _dock_to_dict(row):
     return d
 
 
+def _can_edit_dock_report(report_row_or_id):
+    """
+    현재 세션 사용자가 이 보고서를 편집할 권한이 있는가?
+      · admin: 항상 True
+      · 담당 감독(supervisor_id 일치): True
+      · 그 외: False
+    인자로 report 행(dict 또는 sqlite Row) 또는 id(int) 모두 받음.
+    """
+    if session.get('role') == 'admin':
+        return True
+    my_sv = session.get('supervisor_id')
+    if not my_sv:
+        return False
+
+    if isinstance(report_row_or_id, int):
+        r = query('SELECT supervisor_id FROM dock_reports WHERE id=?',
+                  (report_row_or_id,), one=True)
+        if not r:
+            return False
+        report_sv = r['supervisor_id']
+    else:
+        report_sv = report_row_or_id.get('supervisor_id') \
+                    if hasattr(report_row_or_id, 'get') \
+                    else report_row_or_id['supervisor_id']
+
+    return report_sv is not None and report_sv == my_sv
+
+
+def _require_dock_edit(rid):
+    """편집 권한 없으면 403. 통과 시 None 반환."""
+    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
+        abort(404)
+    if not _can_edit_dock_report(rid):
+        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다. (담당 감독 또는 관리자만 수정 가능)'}), 403
+    return None
+
+
+def _require_dock_edit_via_section(sid):
+    """섹션 ID → 보고서 ID → 권한 검사"""
+    r = query('SELECT report_id FROM dock_report_sections WHERE id=?', (sid,), one=True)
+    if not r:
+        abort(404)
+    rid = r['report_id']
+    if not _can_edit_dock_report(rid):
+        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다.'}), 403
+    return None
+
+
+def _require_dock_edit_via_block(bid):
+    """블록 ID → 섹션 → 보고서 → 권한 검사"""
+    r = query('''
+        SELECT s.report_id FROM dock_report_blocks b
+          JOIN dock_report_sections s ON s.id = b.section_id
+         WHERE b.id = ?
+    ''', (bid,), one=True)
+    if not r:
+        abort(404)
+    rid = r['report_id']
+    if not _can_edit_dock_report(rid):
+        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다.'}), 403
+    return None
+
+
 @app.route('/api/dock-reports', methods=['GET'])
 @login_required
 def api_dock_list():
@@ -2320,7 +2383,12 @@ def api_dock_list():
          ORDER BY d.updated_at DESC, d.id DESC
     '''
     rows = query(sql, params)
-    return jsonify([_dock_to_dict(r) for r in rows])
+    out = []
+    for r in rows:
+        d = _dock_to_dict(r)
+        d['can_edit'] = _can_edit_dock_report(r)
+        out.append(d)
+    return jsonify(out)
 
 
 @app.route('/api/dock-reports', methods=['POST'])
@@ -2336,6 +2404,19 @@ def api_dock_create():
     if not query('SELECT id FROM vessels WHERE id=?', (vessel_id,), one=True):
         return jsonify({'error': '존재하지 않는 선박입니다.'}), 400
 
+    # 권한: admin이거나, 자기 자신을 담당 감독으로 지정하는 경우만 생성 허용
+    supervisor_id = d.get('supervisor_id') or None
+    if session.get('role') != 'admin':
+        my_sv = session.get('supervisor_id')
+        if not my_sv:
+            return jsonify({'error': '보고서 작성 권한이 없습니다. (담당 감독으로 등록된 계정만 가능)'}), 403
+        # member는 자기 자신을 담당으로만 지정 가능
+        if supervisor_id and int(supervisor_id) != my_sv:
+            return jsonify({'error': '본인을 담당 감독으로 지정한 경우에만 생성할 수 있습니다.'}), 403
+        # 미지정 시 자동으로 본인 지정
+        if not supervisor_id:
+            supervisor_id = my_sv
+
     is_template = 1 if d.get('is_template') else 0
 
     new_id = execute('''
@@ -2347,7 +2428,7 @@ def api_dock_create():
         VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?, ?,?,?,?)
     ''', (
         vessel_id,
-        d.get('supervisor_id') or None,
+        supervisor_id,
         title,
         d.get('dock_no') or None,
         d.get('shipyard') or None,
@@ -2386,6 +2467,7 @@ def api_dock_get(rid):
         abort(404)
 
     out = _dock_to_dict(r)
+    out['can_edit'] = _can_edit_dock_report(r)
 
     # 섹션 + 블록 (Step 2에서 활용; 현재는 빈 리스트라도 채워줌)
     secs = query('''
@@ -2424,8 +2506,9 @@ def api_dock_get(rid):
 @login_required
 def api_dock_update(rid):
     """메타 정보 수정"""
-    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
-        abort(404)
+    err = _require_dock_edit(rid)
+    if err:
+        return err
     d = request.get_json(silent=True) or {}
 
     updatable = {
@@ -2434,6 +2517,10 @@ def api_dock_update(rid):
         'approval_drafter', 'approval_team_lead', 'approval_director', 'approval_ceo',
         'status', 'template_name',
     }
+    # supervisor_id 변경은 admin만 가능 (담당자가 자기 보고서를 남에게 넘기는 것 방지)
+    if 'supervisor_id' in d and session.get('role') != 'admin':
+        d.pop('supervisor_id', None)
+
     sets, params = [], []
     for k in updatable:
         if k in d:
@@ -2453,8 +2540,9 @@ def api_dock_update(rid):
 @app.route('/api/dock-reports/<int:rid>', methods=['DELETE'])
 @login_required
 def api_dock_delete(rid):
-    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
-        abort(404)
+    err = _require_dock_edit(rid)
+    if err:
+        return err
     execute('DELETE FROM dock_reports WHERE id = ?', (rid,))
     # 섹션/블록은 ON DELETE CASCADE로 자동 삭제
     return jsonify({'ok': True})
@@ -2484,8 +2572,9 @@ def _block_report_id(bid):
 @app.route('/api/dock-reports/<int:rid>/sections', methods=['POST'])
 @login_required
 def api_dock_section_create(rid):
-    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
-        abort(404)
+    err = _require_dock_edit(rid)
+    if err:
+        return err
     d = request.get_json(silent=True) or {}
     title = (d.get('title') or '').strip() or '새 섹션'
     parent_id = d.get('parent_id')
@@ -2517,6 +2606,9 @@ def api_dock_section_create(rid):
 @app.route('/api/dock-sections/<int:sid>', methods=['PUT'])
 @login_required
 def api_dock_section_update(sid):
+    err = _require_dock_edit_via_section(sid)
+    if err:
+        return err
     rid = _section_report_id(sid)
     if not rid:
         abort(404)
@@ -2532,6 +2624,9 @@ def api_dock_section_update(sid):
 @app.route('/api/dock-sections/<int:sid>', methods=['DELETE'])
 @login_required
 def api_dock_section_delete(sid):
+    err = _require_dock_edit_via_section(sid)
+    if err:
+        return err
     rid = _section_report_id(sid)
     if not rid:
         abort(404)
@@ -2545,6 +2640,9 @@ def api_dock_section_delete(sid):
 @login_required
 def api_dock_section_move(sid):
     """같은 부모 아래에서 위/아래로 한 칸 이동"""
+    err = _require_dock_edit_via_section(sid)
+    if err:
+        return err
     rid = _section_report_id(sid)
     if not rid:
         abort(404)
@@ -2600,6 +2698,9 @@ def _default_block_content(block_type):
 @app.route('/api/dock-sections/<int:sid>/blocks', methods=['POST'])
 @login_required
 def api_dock_block_create(sid):
+    err = _require_dock_edit_via_section(sid)
+    if err:
+        return err
     rid = _section_report_id(sid)
     if not rid:
         abort(404)
@@ -2626,6 +2727,9 @@ def api_dock_block_create(sid):
 @app.route('/api/dock-blocks/<int:bid>', methods=['PUT'])
 @login_required
 def api_dock_block_update(bid):
+    err = _require_dock_edit_via_block(bid)
+    if err:
+        return err
     rid = _block_report_id(bid)
     if not rid:
         abort(404)
@@ -2642,6 +2746,9 @@ def api_dock_block_update(bid):
 @app.route('/api/dock-blocks/<int:bid>', methods=['DELETE'])
 @login_required
 def api_dock_block_delete(bid):
+    err = _require_dock_edit_via_block(bid)
+    if err:
+        return err
     rid = _block_report_id(bid)
     if not rid:
         abort(404)
@@ -2653,6 +2760,9 @@ def api_dock_block_delete(bid):
 @app.route('/api/dock-blocks/<int:bid>/move', methods=['POST'])
 @login_required
 def api_dock_block_move(bid):
+    err = _require_dock_edit_via_block(bid)
+    if err:
+        return err
     rid = _block_report_id(bid)
     if not rid:
         abort(404)
@@ -2767,8 +2877,9 @@ def _process_uploaded_image(file_storage, dest_path):
 @app.route('/api/dock-reports/<int:rid>/upload-image', methods=['POST'])
 @login_required
 def api_dock_upload_image(rid):
-    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
-        abort(404)
+    err = _require_dock_edit(rid)
+    if err:
+        return err
     if 'file' not in request.files:
         return jsonify({'error': '파일이 없습니다.'}), 400
     f = request.files['file']
