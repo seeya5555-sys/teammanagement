@@ -3748,3 +3748,235 @@ body.dde-readonly .dde-img-ctrl {
   letter-spacing: 0.3px;
 }
 .dd-card { position: relative; }
+
+/* ════════════════════════════════════════════════════════════
+ *  Boarding Report — 신규 블록 (info_table, defect_table)
+ * ════════════════════════════════════════════════════════════ */
+
+/* ── info_table (Label-Value 쌍 표) ── */
+.bre-info-table-wrap {
+  overflow-x: auto;
+  margin: 4px 0;
+}
+.bre-info-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  border: 1px solid var(--border, #d1d5db);
+}
+.bre-info-table td {
+  border: 1px solid var(--border, #d1d5db);
+  padding: 6px 10px;
+  vertical-align: top;
+}
+.bre-info-table td.bre-info-label {
+  width: 28%;
+  background: #f3f4f6;
+  font-weight: 600;
+}
+.bre-info-table td.bre-info-value {
+  background: #fff;
+}
+.bre-info-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font: inherit;
+  color: inherit;
+  outline: none;
+  resize: none;
+}
+.bre-info-input:hover { border-color: #e5e7eb; }
+.bre-info-input:focus { border-color: #2563eb; background: #fff; }
+.bre-info-textarea { min-height: 28px; line-height: 1.45; }
+
+/* ── defect_table (결함 표) ── */
+.bre-defect-wrap {
+  overflow-x: auto;
+  margin: 4px 0;
+}
+.bre-defect-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  border: 1px solid var(--border, #d1d5db);
+  font-size: 13px;
+}
+.bre-defect-table thead th {
+  background: #1f4e79;
+  color: #fff;
+  font-weight: 600;
+  font-size: 12.5px;
+  text-align: center;
+  padding: 8px 6px;
+  border: 1px solid #1f4e79;
+}
+.bre-defect-th-no    { width: 42px; }
+.bre-defect-th-photo { width: 22%; }
+.bre-defect-th-desc  { width: 30%; }
+.bre-defect-th-fix   { width: 27%; }
+.bre-defect-th-risk  { width: 110px; }
+
+.bre-defect-table td {
+  border: 1px solid var(--border, #d1d5db);
+  padding: 6px;
+  vertical-align: top;
+}
+.bre-defect-row.bre-defect-risk-L { background: #f0fdf4; }
+.bre-defect-row.bre-defect-risk-M { background: #fffbeb; }
+.bre-defect-row.bre-defect-risk-H { background: #fef2f2; }
+
+.bre-defect-no {
+  text-align: center;
+  font-weight: 700;
+  color: #4b5563;
+  vertical-align: middle !important;
+}
+
+/* 사진 셀 */
+.bre-defect-photo-cell {
+  text-align: center;
+  position: relative;
+}
+.bre-defect-photo-add {
+  background: transparent;
+  border: 2px dashed #d1d5db;
+  border-radius: 6px;
+  padding: 18px 8px;
+  width: 100%;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.bre-defect-photo-add:hover { border-color: #2563eb; background: #f0f9ff; color: #2563eb; }
+.bre-defect-photo-main {
+  width: 100%;
+  height: auto;
+  max-height: 160px;
+  object-fit: cover;
+  border-radius: 4px;
+  cursor: pointer;
+  display: block;
+}
+.bre-defect-photo-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+.bre-defect-photo-thumb {
+  width: 38px; height: 38px;
+  object-fit: cover;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid #d1d5db;
+}
+.bre-defect-photo-thumb:hover { border-color: #2563eb; }
+.bre-defect-photo-actions {
+  display: flex;
+  gap: 3px;
+  justify-content: center;
+  margin-top: 5px;
+}
+.bre-defect-photo-add-btn,
+.bre-defect-photo-del-btn {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  width: 22px; height: 22px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  color: #4b5563;
+}
+.bre-defect-photo-add-btn:hover { background: #dbeafe; color: #1d4ed8; border-color: #2563eb; }
+.bre-defect-photo-del-btn:hover { background: #fee2e2; color: #b91c1c; border-color: #dc2626; }
+
+/* Description / Rectification / Item */
+.bre-defect-desc-cell, .bre-defect-fix-cell { background: transparent; }
+.bre-defect-item-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  font-weight: 700;
+  font-size: 12.5px;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  outline: none;
+}
+.bre-defect-item-input:hover { border-color: #e5e7eb; }
+.bre-defect-item-input:focus { border-color: #2563eb; background: #fff; }
+.bre-defect-desc-input, .bre-defect-fix-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  outline: none;
+  resize: none;
+  line-height: 1.5;
+}
+.bre-defect-desc-input:hover, .bre-defect-fix-input:hover { border-color: #e5e7eb; }
+.bre-defect-desc-input:focus, .bre-defect-fix-input:focus { border-color: #2563eb; background: #fff; }
+
+/* Risk 셀 */
+.bre-defect-risk-cell { text-align: center; vertical-align: middle !important; }
+.bre-defect-risk-select {
+  width: 100%;
+  padding: 6px 4px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  text-align-last: center;
+  cursor: pointer;
+}
+.bre-defect-row.bre-defect-risk-L .bre-defect-risk-select { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
+.bre-defect-row.bre-defect-risk-M .bre-defect-risk-select { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.bre-defect-row.bre-defect-risk-H .bre-defect-risk-select { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+
+/* Risk 범례 */
+.bre-defect-legend {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #4b5563;
+  padding: 8px 12px;
+  background: #f9fafb;
+  border-radius: 4px;
+  border: 1px solid var(--border, #e5e7eb);
+}
+.bre-defect-legend-L { color: #065f46; font-weight: 600; }
+.bre-defect-legend-M { color: #92400e; font-weight: 600; }
+.bre-defect-legend-H { color: #991b1b; font-weight: 600; }
+
+/* 빈 섹션 - 신규 블록 2종 포함 6칸 그리드 */
+.bre-add-grid {
+  grid-template-columns: repeat(3, 1fr) !important;
+}
+@media (max-width: 900px) {
+  .bre-add-grid { grid-template-columns: repeat(2, 1fr) !important; }
+}
+
+/* 읽기 전용 시 신규 블록도 비활성화 */
+body.dde-readonly .bre-info-input,
+body.dde-readonly .bre-defect-item-input,
+body.dde-readonly .bre-defect-desc-input,
+body.dde-readonly .bre-defect-fix-input {
+  pointer-events: none;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+body.dde-readonly .bre-defect-risk-select { pointer-events: none; }
+body.dde-readonly .bre-defect-photo-add,
+body.dde-readonly .bre-defect-photo-actions,
+body.dde-readonly .bre-defect-photo-main,
+body.dde-readonly .bre-defect-photo-thumb {
+  pointer-events: none;
+}
