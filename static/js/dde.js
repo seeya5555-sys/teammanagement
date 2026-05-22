@@ -742,6 +742,21 @@ function renderTable(body, b) {
   const tblWrap = el('div', { class: 'dde-table-wrap' });
 
   function getCurrent() {
+    // 저장 시점에, colWidths에 0(auto)인 컬럼이 있으면 실제 렌더링된 너비로 채움
+    // 이렇게 해야 Word/PDF 출력 시 비율 계산이 망가지지 않음
+    const liveTbl = tblWrap.querySelector('.dde-table');
+    if (liveTbl) {
+      const ths = liveTbl.querySelectorAll('thead th');
+      for (let i = 0; i < headers.length; i++) {
+        if (!colWidths[i] || colWidths[i] <= 0) {
+          const th = ths[i];
+          if (th) {
+            const w = Math.round(th.getBoundingClientRect().width);
+            if (w > 0) colWidths[i] = w;
+          }
+        }
+      }
+    }
     return {
       headers: headers.slice(),
       rows: rows.map(r => r.slice()),
@@ -783,6 +798,8 @@ function renderTable(body, b) {
         }}, '✕');
       th.append(inp, delBtn);
 
+      // 컬럼 리사이즈 핸들 — 모든 컬럼에 (마지막 포함) 표시
+      // 마지막 컬럼은 실제 픽셀 너비를 측정해두기만 하고, 드래그는 안 되게
       if (ci < headers.length - 1) {
         const handle = el('div', {
           class: 'dde-col-resize',
