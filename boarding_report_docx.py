@@ -681,7 +681,24 @@ def _render_table(doc, content, base_indent):
                 _set_font(r, size=10)
 
     _set_table_fixed_layout(tbl, total_cm, col_cm)
+    # 헤더 행 반복 (페이지 넘어가면 자동으로 위에 다시 표시)
+    _set_row_as_header(tbl.rows[0])
     _add_paragraph(doc, '', before=2, after=4)
+
+
+def _set_row_as_header(row):
+    """이 행을 '제목 행 반복' 행으로 설정 — 표가 페이지를 넘어가면 자동 반복."""
+    tr = row._tr
+    trPr = tr.find(qn('w:trPr'))
+    if trPr is None:
+        trPr = OxmlElement('w:trPr')
+        tr.insert(0, trPr)
+    if trPr.find(qn('w:tblHeader')) is None:
+        tblHeader = OxmlElement('w:tblHeader')
+        tblHeader.set(qn('w:val'), 'true')
+        trPr.append(tblHeader)
+    if trPr.find(qn('w:cantSplit')) is None:
+        trPr.append(OxmlElement('w:cantSplit'))
 
 
 def _render_image(doc, content, base_indent):
@@ -897,6 +914,8 @@ def _render_defect_table(doc, content, base_indent):
             _set_font(fr, size=10)
 
     _set_table_fixed_layout(tbl, total_cm, col_cm)
+    # 헤더 행 반복 (페이지 넘어가면 자동으로 위에 다시 표시)
+    _set_row_as_header(tbl.rows[0])
     _add_paragraph(doc, '', before=2, after=2)
 
     # Risk Legend
