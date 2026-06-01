@@ -151,6 +151,10 @@ function renderTOCNodes(nodes, container) {
         renderTOC();
         renderEditor();
       },
+      oncontextmenu: E.canEdit ? (ev) => {
+        ev.preventDefault();
+        showTocCtxMenu(ev, n.id);
+      } : null,
     });
     item.append(
       el('span', { class: 'dde-toc-no' }, info.number + '.'),
@@ -160,6 +164,8 @@ function renderTOCNodes(nodes, container) {
           onclick: (e) => { e.stopPropagation(); moveSection(n.id, 'up'); }}, '↑'),
         el('button', { class: 'dde-toc-btn', title: '아래로',
           onclick: (e) => { e.stopPropagation(); moveSection(n.id, 'down'); }}, '↓'),
+        el('button', { class: 'dde-toc-btn', title: '다른 섹션으로 이동…',
+          onclick: (e) => { e.stopPropagation(); openReparentModal(n.id); }}, '↗'),
       ) : null,
     );
     container.append(item);
@@ -169,6 +175,162 @@ function renderTOCNodes(nodes, container) {
       container.append(subWrap);
     }
   }
+}
+
+function showTocCtxMenu(ev, sid) {
+  document.querySelectorAll('.dde-toc-ctx-menu').forEach(m => m.remove());
+  const menu = el('div', { class: 'dde-table-ctx-menu dde-toc-ctx-menu' });
+  const info = E.byId.get(sid);
+  const addItem = (label, fn, opts = {}) => {
+    menu.append(el('button', {
+      class: 'dde-ctx-item' + (opts.disabled ? ' disabled' : ''),
+      type: 'button', disabled: opts.disabled,
+      onclick: () => { menu.remove(); fn(); },
+    }, label));
+  };
+  const addSep = () => menu.append(el('div', { class: 'dde-ctx-sep' }));
+
+  addItem('↑ 위로', () => moveSection(sid, 'up'));
+  addItem('↓ 아래로', () => moveSection(sid, 'down'));
+  addSep();
+  addItem('↗ 다른 섹션으로 이동…', () => openReparentModal(sid));
+  if (info && info.depth > 0) {
+    addItem('⤴ 최상위로 이동', () => reparentSection(sid, null));
+  }
+  addSep();
+  addItem('이름 변경', () => renameSection(sid));
+  addItem('🗑 삭제', () => deleteSection(sid));
+
+  document.body.append(menu);
+  menu.style.position = 'fixed';
+  menu.style.top  = (ev.clientY + 4) + 'px';
+  menu.style.left = (ev.clientX + 4) + 'px';
+  setTimeout(() => {
+    const onDoc = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener('click', onDoc);
+      }
+    };
+    document.addEventListener('click', onDoc);
+  }, 0);
+}
+
+function openReparentModal(sid) {
+  const info = E.byId.get(sid);
+  if (!info) return;
+
+  const descendants = new Set();
+  (function collect(node) {
+    descendants.add(node.id);
+    (node.children || []).forEach(collect);
+  })(info.section);
+
+  let maxRelDepth = 0;
+  (function md(node, d) {
+    maxRelDepth = Math.max(maxRelDepth, d);
+    (node.children || []).forEach(c => md(c, d + 1));
+  })(info.section, 0);
+
+  const maxAllowedDepth = 2 - maxRelDepth;
+  const candidates = [];
+  if (info.section.parent_id != null && maxAllowedDepth >= 0) {
+    candidates.push({ id: null, label: '— 최상위 (depth 0) —', depth: -1 });
+  }
+  for (const [id, item] of E.byId.entries()) {
+    if (descendants.has(id)) continue;
+    if (item.depth > maxAllowedDepth) continue;
+    if (id === info.section.parent_id) continue;
+    candidates.push({
+      id,
+      label: `${'  '.repeat(item.depth)}${item.number}. ${item.section.title || '(제목 없음)'}`,
+      depth: item.depth,
+    });
+  }
+
+  if (candidates.length === 0) {
+    alert('이동할 수 있는 부모 섹션이 없습니다.\n(자기 자신과 자손은 제외됩니다.)');
+    return;
+  }
+
+  const backdrop = el('div', { class: 'dde-modal-backdrop' });
+  const dialog = el('div', { class: 'dde-modal' });
+  dialog.append(
+    el('div', { class: 'dde-modal-title' },
+      `"${info.section.title}" 을(를) 이동할 위치 선택`),
+    el('div', { class: 'dde-modal-hint' },
+      '아래에서 새 부모 섹션을 선택하세요. 자기 자신과 자손은 표시되지 않습니다.'),
+  );
+
+  const list = el('div', { class: 'dde-modal-list' });
+  let selected;
+  candidates.forEach(c => {
+    const opt = el('div', {
+      class: 'dde-modal-option',
+      onclick: () => {
+        list.querySelectorAll('.dde-modal-option.selected').forEach(o =>
+          o.classList.remove('selected'));
+        opt.classList.add('selected');
+        selected = c.id;
+      },
+    }, c.label);
+    list.append(opt);
+  });
+  dialog.append(list);
+
+  const actions = el('div', { class: 'dde-modal-actions' },
+    el('button', {
+      class: 'btn btn-outline',
+      onclick: () => backdrop.remove(),
+    }, '취소'),
+    el('button', {
+      class: 'btn btn-primary',
+      onclick: async () => {
+        if (selected === undefined) {
+          alert('이동할 위치를 선택하세요.');
+          return;
+        }
+        backdrop.remove();
+        await reparentSection(sid, selected);
+      },
+    }, '이동'),
+  );
+  dialog.append(actions);
+
+  backdrop.append(dialog);
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  document.body.append(backdrop);
+}
+
+async function reparentSection(sid, newParentId) {
+  try {
+    await api(`/api/boarding-sections/${sid}/reparent`, {
+      method: 'POST',
+      body: JSON.stringify({ new_parent_id: newParentId }),
+    });
+    await loadReport();
+    setSaveStatus('이동 완료', 'ok');
+  } catch (e) {
+    alert('이동 실패: ' + e.message);
+  }
+}
+
+async function renameSection(sid) {
+  const info = E.byId.get(sid);
+  if (!info) return;
+  const newTitle = prompt('새 제목:', info.section.title);
+  if (newTitle === null) return;
+  const t = newTitle.trim();
+  if (!t) return;
+  try {
+    await api(`/api/boarding-sections/${sid}`, {
+      method: 'PUT',
+      body: JSON.stringify({ title: t }),
+    });
+    await loadReport();
+  } catch (e) { alert('이름 변경 실패: ' + e.message); }
 }
 
 async function addSection(parentId = null) {
