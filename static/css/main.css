@@ -4070,3 +4070,63 @@ body.dde-readonly .bre-defect-photo-thumb {
   background: #e5e7eb;
   margin: 4px 0;
 }
+
+/* ──── 섹션 이동 모달 ──── */
+.dde-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 10000;
+}
+.dde-modal {
+  background: #fff;
+  border-radius: 10px;
+  padding: 24px;
+  width: 90%; max-width: 480px;
+  max-height: 80vh; display: flex; flex-direction: column;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+}
+.dde-modal-title {
+  font-size: 15px; font-weight: 700;
+  color: var(--text-primary, #111827);
+  margin-bottom: 8px;
+}
+.dde-modal-hint {
+  font-size: 12px; color: var(--text-secondary, #6b7280);
+  margin-bottom: 12px;
+}
+.dde-modal-list {
+  flex: 1; overflow-y: auto;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  background: #fafafa;
+  padding: 4px;
+  margin-bottom: 16px;
+  max-height: 360px;
+}
+.dde-modal-option {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-family: ui-monospace, 'SF Mono', 'Menlo', monospace;
+  font-size: 13px;
+  border-radius: 4px;
+  white-space: pre;
+  color: var(--text-primary, #111827);
+}
+.dde-modal-option:hover { background: #eff6ff; }
+.dde-modal-option.selected {
+  background: #2563eb; color: #fff;
+}
+.dde-modal-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+
+/* 목차 ↗ 버튼 (이동) */
+.dde-toc-btn[title="다른 섹션으로 이동…"] {
+  /* 기본 토글 버튼과 동일 스타일이지만 강조 */
+  color: var(--text-secondary, #6b7280);
+}
+.dde-toc-btn[title="다른 섹션으로 이동…"]:hover {
+  background: #eff6ff;
+  color: #2563eb;
+}
