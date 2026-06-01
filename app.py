@@ -2694,6 +2694,88 @@ def api_dock_section_move(sid):
     return jsonify({'ok': True, 'moved': True})
 
 
+@app.route('/api/dock-sections/<int:sid>/reparent', methods=['POST'])
+@login_required
+def api_dock_section_reparent(sid):
+    """섹션을 다른 부모로 이동.
+       body: { "new_parent_id": null | int }
+            null/None을 보내면 최상위(루트)로 이동.
+    """
+    err = _require_dock_edit_via_section(sid)
+    if err:
+        return err
+    rid = _section_report_id(sid)
+    if not rid:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    new_parent_id = d.get('new_parent_id')
+    # 정수 또는 None만 허용
+    if new_parent_id is not None:
+        try:
+            new_parent_id = int(new_parent_id)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'invalid new_parent_id'}), 400
+
+    me = query('SELECT * FROM dock_report_sections WHERE id=?', (sid,), one=True)
+    if not me:
+        abort(404)
+
+    # 새 부모가 같은 보고서 안에 있어야 함
+    if new_parent_id is not None:
+        new_parent = query('SELECT * FROM dock_report_sections WHERE id=?',
+                           (new_parent_id,), one=True)
+        if not new_parent or new_parent['report_id'] != me['report_id']:
+            return jsonify({'error': '같은 보고서의 섹션만 부모로 지정할 수 있습니다.'}), 400
+
+        # 자기 자신을 부모로 설정 금지
+        if new_parent_id == sid:
+            return jsonify({'error': '자기 자신을 부모로 지정할 수 없습니다.'}), 400
+
+        # 자손에게 옮기는 것 금지 (순환 참조 방지) - 후손 검사
+        descendants = set()
+        stack = [sid]
+        while stack:
+            cur = stack.pop()
+            children = query(
+                'SELECT id FROM dock_report_sections WHERE parent_id=?',
+                (cur,))
+            for c in children:
+                if c['id'] in descendants:
+                    continue
+                descendants.add(c['id'])
+                stack.append(c['id'])
+        if new_parent_id in descendants:
+            return jsonify({'error': '자기 자신의 하위 섹션으로 이동할 수 없습니다.'}), 400
+
+    # 변경 사항 없음
+    if (me['parent_id'] or None) == new_parent_id:
+        return jsonify({'ok': True, 'moved': False})
+
+    # 새 부모 아래의 마지막 display_order + 1로 배치
+    if new_parent_id is None:
+        max_ord = query('''
+            SELECT MAX(display_order) AS m FROM dock_report_sections
+             WHERE report_id=? AND parent_id IS NULL
+        ''', (me['report_id'],), one=True)
+    else:
+        max_ord = query('''
+            SELECT MAX(display_order) AS m FROM dock_report_sections
+             WHERE report_id=? AND parent_id=?
+        ''', (me['report_id'], new_parent_id), one=True)
+
+    new_order = (max_ord['m'] or 0) + 1
+
+    execute('''
+        UPDATE dock_report_sections
+           SET parent_id=?, display_order=?
+         WHERE id=?
+    ''', (new_parent_id, new_order, sid))
+    _touch_dock_report(rid)
+    return jsonify({'ok': True, 'moved': True,
+                    'new_parent_id': new_parent_id,
+                    'new_display_order': new_order})
+
+
 # ─── Blocks ──────────────────────────────────────────────────
 def _default_block_content(block_type):
     if block_type == 'paragraph':   return {'text': ''}
@@ -3471,6 +3553,80 @@ def api_brep_section_move(sid):
             (me['display_order'], nb['id']))
     _touch_brep(rid)
     return jsonify({'ok': True, 'moved': True})
+
+
+@app.route('/api/boarding-sections/<int:sid>/reparent', methods=['POST'])
+@login_required
+def api_brep_section_reparent(sid):
+    """섹션을 다른 부모로 이동.
+       body: { "new_parent_id": null | int }
+    """
+    err = _require_brep_edit_via_section(sid)
+    if err:
+        return err
+    rid = _brep_section_report_id(sid)
+    if not rid:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    new_parent_id = d.get('new_parent_id')
+    if new_parent_id is not None:
+        try:
+            new_parent_id = int(new_parent_id)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'invalid new_parent_id'}), 400
+
+    me = query('SELECT * FROM boarding_report_sections WHERE id=?', (sid,), one=True)
+    if not me:
+        abort(404)
+
+    if new_parent_id is not None:
+        new_parent = query('SELECT * FROM boarding_report_sections WHERE id=?',
+                           (new_parent_id,), one=True)
+        if not new_parent or new_parent['report_id'] != me['report_id']:
+            return jsonify({'error': '같은 보고서의 섹션만 부모로 지정할 수 있습니다.'}), 400
+        if new_parent_id == sid:
+            return jsonify({'error': '자기 자신을 부모로 지정할 수 없습니다.'}), 400
+
+        descendants = set()
+        stack = [sid]
+        while stack:
+            cur = stack.pop()
+            children = query(
+                'SELECT id FROM boarding_report_sections WHERE parent_id=?',
+                (cur,))
+            for c in children:
+                if c['id'] in descendants:
+                    continue
+                descendants.add(c['id'])
+                stack.append(c['id'])
+        if new_parent_id in descendants:
+            return jsonify({'error': '자기 자신의 하위 섹션으로 이동할 수 없습니다.'}), 400
+
+    if (me['parent_id'] or None) == new_parent_id:
+        return jsonify({'ok': True, 'moved': False})
+
+    if new_parent_id is None:
+        max_ord = query('''
+            SELECT MAX(display_order) AS m FROM boarding_report_sections
+             WHERE report_id=? AND parent_id IS NULL
+        ''', (me['report_id'],), one=True)
+    else:
+        max_ord = query('''
+            SELECT MAX(display_order) AS m FROM boarding_report_sections
+             WHERE report_id=? AND parent_id=?
+        ''', (me['report_id'], new_parent_id), one=True)
+
+    new_order = (max_ord['m'] or 0) + 1
+
+    execute('''
+        UPDATE boarding_report_sections
+           SET parent_id=?, display_order=?
+         WHERE id=?
+    ''', (new_parent_id, new_order, sid))
+    _touch_brep(rid)
+    return jsonify({'ok': True, 'moved': True,
+                    'new_parent_id': new_parent_id,
+                    'new_display_order': new_order})
 
 
 # ─── Boarding Report — 블록 CRUD ────────────────────────────────
