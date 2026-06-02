@@ -1426,9 +1426,39 @@ function renderDefectTable(body, b) {
 function renderDefectPhoto(photoCell, items, idx, b, getCurrent, rebuild) {
   const imgs = items[idx].images;
 
+  // ── 드래그앤드롭: 이 결함 행의 사진 셀에 이미지 드롭 → 추가 ──
+  installDndNavGuard();
+  let dragDepth = 0;
+  const dndHasFiles = (e) =>
+    e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  photoCell.addEventListener('dragenter', (e) => {
+    if (!dndHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth += 1;
+    photoCell.classList.add('bre-defect-dnd-over');
+  });
+  photoCell.addEventListener('dragover', (e) => {
+    if (!dndHasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  photoCell.addEventListener('dragleave', (e) => {
+    if (!dndHasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) photoCell.classList.remove('bre-defect-dnd-over');
+  });
+  photoCell.addEventListener('drop', (e) => {
+    if (!e.dataTransfer) return;
+    e.preventDefault();
+    dragDepth = 0;
+    photoCell.classList.remove('bre-defect-dnd-over');
+    uploadDefectFiles(items, idx, b, getCurrent, rebuild, e.dataTransfer.files);
+  });
+
   if (imgs.length === 0) {
     photoCell.append(el('button', {
       class: 'bre-defect-photo-add', type: 'button',
+      title: '클릭 또는 사진을 끌어다 놓기',
       onclick: () => uploadDefectImage(items, idx, b, getCurrent, rebuild),
     }, '📷', el('br'), el('span', {}, '사진 추가')));
     return;
@@ -1504,7 +1534,35 @@ function uploadDefectImage(items, idx, b, getCurrent, rebuild, replaceAt) {
   inp.click();
 }
 
-// ─── Save / Block actions ────────────────────────────────────
+// 결함 사진 셀에 드롭된 여러 이미지를 순차 업로드해 해당 행에 추가
+async function uploadDefectFiles(items, idx, b, getCurrent, rebuild, fileList) {
+  const files = [...(fileList || [])].filter(f => f && (f.type || '').startsWith('image/'));
+  if (!files.length) {
+    setSaveStatus('이미지 파일만 추가할 수 있습니다', 'err');
+    return;
+  }
+  try {
+    let done = 0;
+    for (const f of files) {
+      setSaveStatus(`사진 업로드 중 (${done + 1}/${files.length})...`, 'busy');
+      const fd = new FormData();
+      fd.append('file', f);
+      const res = await api(`/api/boarding-reports/${E.reportId}/upload-image`, {
+        method: 'POST', body: fd,
+      });
+      items[idx].images.push({ filename: res.filename, url: res.url });
+      done += 1;
+    }
+    await api(`/api/boarding-blocks/${b.id}`, {
+      method: 'PUT', body: JSON.stringify({ content: getCurrent() }),
+    });
+    rebuild();
+    setSaveStatus('저장됨', 'ok');
+  } catch (e) {
+    setSaveStatus('업로드 실패: ' + e.message, 'err');
+    alert('업로드 실패: ' + e.message);
+  }
+}
 function scheduleBlockSave(blockId, getContent) {
   clearTimeout(E.saveTimer);
   setSaveStatus('저장 대기...', 'busy');
