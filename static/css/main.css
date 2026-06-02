@@ -3924,6 +3924,30 @@ body.dde-readonly .dde-img-ctrl {
   line-height: 1.6;
 }
 .bre-defect-photo-add:hover { border-color: #2563eb; background: #f0f9ff; color: #2563eb; }
+
+/* 결함 사진 셀 — 드래그앤드롭 업로드 */
+.bre-defect-photo-cell.bre-defect-dnd-over {
+  outline: 2px dashed #2563eb;
+  outline-offset: -3px;
+  background: rgba(37, 99, 235, 0.10);
+}
+.bre-defect-photo-cell.bre-defect-dnd-over::after {
+  content: '여기에 놓기';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 4;
+}
+.bre-defect-photo-cell.bre-defect-dnd-over .bre-defect-photo-add {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
 .bre-defect-photo-main {
   width: 100%;
   height: auto;
