@@ -2785,6 +2785,8 @@ col.c-edit   { width: 156px; }
 }
 .dd-badge-draft { background: #fef3c7; color: #92400e; }
 .dd-badge-done  { background: #d1fae5; color: #065f46; }
+.dd-badge-clickable { cursor: pointer; transition: filter 0.12s, box-shadow 0.12s; user-select: none; }
+.dd-badge-clickable:hover { filter: brightness(0.95); box-shadow: 0 0 0 2px rgba(0,0,0,0.06); }
 
 .dd-card-vessel {
   font-size: 12.5px;
