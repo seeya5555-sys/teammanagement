@@ -140,6 +140,14 @@ function renderCard(r) {
   const statusBadge = el('span', {
     class: `dd-badge ${r.status === 'done' ? 'dd-badge-done' : 'dd-badge-draft'}`
   }, r.status === 'done' ? '완료' : '진행 중');
+  if (canEdit) {
+    statusBadge.classList.add('dd-badge-clickable');
+    statusBadge.title = '클릭하여 진행 중 / 완료 전환';
+    statusBadge.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleStatus(r, statusBadge);
+    });
+  }
 
   // 메타 편집 버튼 (편집 권한 있을 때만)
   const headRight = el('div', { class: 'dd-card-head-right' }, statusBadge);
@@ -184,9 +192,28 @@ function renderCard(r) {
   return card;
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Modal — 신규 / 편집
-// ─────────────────────────────────────────────────────────────
+// 카드 badge 클릭 → 진행 중 ↔ 완료 즉시 전환
+async function toggleStatus(r, badgeEl) {
+  const next = r.status === 'done' ? 'draft' : 'done';
+  badgeEl.style.opacity = '0.5';
+  try {
+    await api(`/api/dock-reports/${r.id}`, {
+      method: 'PUT', body: JSON.stringify({ status: next }),
+    });
+    r.status = next;
+    if (DD.filters.status) {
+      reload();   // 상태 필터 적용 중이면 목록을 다시 불러와 갱신
+      return;
+    }
+    badgeEl.textContent = next === 'done' ? '완료' : '진행 중';
+    badgeEl.classList.toggle('dd-badge-done', next === 'done');
+    badgeEl.classList.toggle('dd-badge-draft', next !== 'done');
+  } catch (e) {
+    alert('상태 변경 실패: ' + e.message);
+  } finally {
+    badgeEl.style.opacity = '';
+  }
+}
 function fillVesselSupervisorSelects() {
   const vSel = $('#dd-vessel');
   const sSel = $('#dd-supervisor');
@@ -204,6 +231,7 @@ function openNew() {
   fillVesselSupervisorSelects();
   // 폼 초기화
   $('#dd-form').reset();
+  $('#dd-status').value = 'draft';
   $('#dd-template-name-row').hidden = true;
   openModal();
 }
@@ -220,6 +248,7 @@ async function openEdit(id) {
     $('#dd-title').value         = r.title || '';
     $('#dd-vessel').value        = r.vessel_id || '';
     $('#dd-supervisor').value    = r.supervisor_id || '';
+    $('#dd-status').value        = r.status || 'draft';
     $('#dd-dock-no').value       = r.dock_no || '';
     $('#dd-shipyard').value      = r.shipyard || '';
     $('#dd-period-start').value  = r.period_start || '';
@@ -256,6 +285,7 @@ function collectForm() {
     title:               $('#dd-title').value.trim(),
     vessel_id:           $('#dd-vessel').value || null,
     supervisor_id:       $('#dd-supervisor').value || null,
+    status:              $('#dd-status').value || 'draft',
     dock_no:             $('#dd-dock-no').value.trim(),
     shipyard:            $('#dd-shipyard').value.trim(),
     period_start:        $('#dd-period-start').value || null,
