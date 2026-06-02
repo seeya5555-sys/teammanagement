@@ -1039,8 +1039,8 @@ function renderImageGallery(body, b) {
         class: 'dde-image-drop', onclick: () => triggerAddImages(),
       },
         el('div', { class: 'dde-image-drop-icon' }, '📷'),
-        el('div', { class: 'dde-image-drop-text' }, '클릭해서 사진 추가'),
-        el('div', { class: 'dde-image-drop-hint' }, '여러 장 한번에 선택 가능'),
+        el('div', { class: 'dde-image-drop-text' }, '클릭하거나 사진을 끌어다 놓기'),
+        el('div', { class: 'dde-image-drop-hint' }, '여러 장 한번에 선택·드롭 가능'),
       ));
       return;
     }
@@ -1090,52 +1090,107 @@ function renderImageGallery(body, b) {
     wrap.append(grid);
   }
 
-  async function triggerAddImages() {
+  // 파일 목록(File[])을 순차 압축·업로드 — 파일 선택과 드래그앤드롭이 공유
+  async function uploadFiles(fileList) {
+    const files = [...(fileList || [])].filter(f => f && (f.type || '').startsWith('image/'));
+    if (!files.length) {
+      setSaveStatus('이미지 파일만 추가할 수 있습니다', 'err');
+      return;
+    }
+    try {
+      let totalOrig = 0, totalFinal = 0;
+      let done = 0;
+      for (const f of files) {
+        setSaveStatus(`사진 압축·업로드 중 (${done + 1}/${files.length})...`, 'busy');
+        const fd = new FormData();
+        fd.append('file', f);
+        const res = await api(`/api/boarding-reports/${E.reportId}/upload-image`, {
+          method: 'POST', body: fd,
+        });
+        images.push({ filename: res.filename, url: res.url, caption: '' });
+        totalOrig  += res.original_kb || 0;
+        totalFinal += res.final_kb || 0;
+        done += 1;
+      }
+      await api(`/api/boarding-blocks/${b.id}`, {
+        method: 'PUT', body: JSON.stringify({ content: getCurrent() }),
+      });
+      rebuild();
+      if (totalOrig > 0) {
+        const pct = Math.round((1 - totalFinal / totalOrig) * 100);
+        const origMb  = (totalOrig  / 1024).toFixed(1);
+        const finalMb = (totalFinal / 1024).toFixed(1);
+        setSaveStatus(`저장됨 (${origMb}MB → ${finalMb}MB, ${pct}% 절감)`, 'ok');
+      } else {
+        setSaveStatus('저장됨', 'ok');
+      }
+    } catch (e) {
+      setSaveStatus('업로드 실패: ' + e.message, 'err');
+      alert('이미지 업로드 실패: ' + e.message);
+    }
+  }
+
+  function triggerAddImages() {
     const inp = $('#bre-img-input');
     const onChange = async () => {
       inp.removeEventListener('change', onChange);
       const files = [...(inp.files || [])];
       inp.value = '';
-      if (!files.length) return;
-      try {
-        let totalOrig = 0, totalFinal = 0;
-        let done = 0;
-        for (const f of files) {
-          setSaveStatus(`사진 압축·업로드 중 (${done + 1}/${files.length})...`, 'busy');
-          const fd = new FormData();
-          fd.append('file', f);
-          const res = await api(`/api/boarding-reports/${E.reportId}/upload-image`, {
-            method: 'POST', body: fd,
-          });
-          images.push({ filename: res.filename, url: res.url, caption: '' });
-          totalOrig  += res.original_kb || 0;
-          totalFinal += res.final_kb || 0;
-          done += 1;
-        }
-        await api(`/api/boarding-blocks/${b.id}`, {
-          method: 'PUT', body: JSON.stringify({ content: getCurrent() }),
-        });
-        rebuild();
-        if (totalOrig > 0) {
-          const pct = Math.round((1 - totalFinal / totalOrig) * 100);
-          const origMb  = (totalOrig  / 1024).toFixed(1);
-          const finalMb = (totalFinal / 1024).toFixed(1);
-          setSaveStatus(`저장됨 (${origMb}MB → ${finalMb}MB, ${pct}% 절감)`, 'ok');
-        } else {
-          setSaveStatus('저장됨', 'ok');
-        }
-      } catch (e) {
-        setSaveStatus('업로드 실패: ' + e.message, 'err');
-        alert('이미지 업로드 실패: ' + e.message);
-      }
+      if (!files.length) return;   // 파일 선택 취소 시 조용히 종료
+      await uploadFiles(files);
     };
     inp.addEventListener('change', onChange);
     inp.click();
   }
 
+  // ── 드래그앤드롭: 갤러리 블록 전체를 드롭 영역으로 ──
+  let dragDepth = 0;
+  const dndHasFiles = (e) =>
+    e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  wrap.addEventListener('dragenter', (e) => {
+    if (!dndHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth += 1;
+    wrap.classList.add('dde-dnd-over');
+  });
+  wrap.addEventListener('dragover', (e) => {
+    if (!dndHasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  wrap.addEventListener('dragleave', (e) => {
+    if (!dndHasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) wrap.classList.remove('dde-dnd-over');
+  });
+  wrap.addEventListener('drop', (e) => {
+    if (!e.dataTransfer) return;
+    e.preventDefault();
+    dragDepth = 0;
+    wrap.classList.remove('dde-dnd-over');
+    uploadFiles(e.dataTransfer.files);
+  });
+
+  installDndNavGuard();
   inp_setMultiple();
   rebuild();
   body.append(wrap);
+}
+
+// 갤러리 밖에 파일을 떨어뜨렸을 때 브라우저가 그 파일로 페이지를 벗어나
+// 편집 중인 내용이 날아가는 것을 방지 (앱 전체에서 1회만 등록)
+function installDndNavGuard() {
+  if (window.__trmtDndNavGuard) return;
+  window.__trmtDndNavGuard = true;
+  ['dragover', 'drop'].forEach((evt) => {
+    document.addEventListener(evt, (e) => {
+      if (e.dataTransfer
+          && Array.from(e.dataTransfer.types || []).includes('Files')
+          && !(e.target.closest && e.target.closest('.dde-image-block'))) {
+        e.preventDefault();
+      }
+    });
+  });
 }
 
 function inp_setMultiple() {
