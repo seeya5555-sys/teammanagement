@@ -237,7 +237,7 @@ function save(r, patch) {
   Object.assign(r, patch);
   // 합계/갤러리에 영향 주는 변경은 즉시 반영
   if ('amount' in patch || 'currency' in patch) recomputeTotals();
-  if ('amount' in patch || 'currency' in patch || 'vendor' in patch) renderGallery();
+  if ('amount' in patch || 'currency' in patch || 'vendor' in patch || 'remark' in patch) renderGallery();
   clearTimeout(_saveTimers[r.id]);
   setSaveStatus('저장 중...', 'busy');
   _saveTimers[r.id] = setTimeout(async () => {
@@ -274,16 +274,29 @@ function renderGallery() {
   }
   E.receipts.forEach((r, i) => {
     if (!r.image_url) return;
-    const cap = [
+    // 자동 헤더 (SEQ · 통화 금액) — 인쇄 시 증빙 식별용
+    const head = [
       String(i + 1).padStart(4, '0'),
-      r.vendor || '',
       fmtMoney(r.currency, r.amount),
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join('  ·  ');
+
+    // 수정 가능한 캡션 (= remark, 비어 있으면 상호로 초기 표시)
+    const capInput = el('input', {
+      type: 'text', class: 'expd-receipt-cap-input',
+      value: (r.remark != null && r.remark !== '') ? r.remark : (r.vendor || ''),
+      placeholder: '메모 입력 (예: 호텔 3박)',
+      onchange: () => save(r, { remark: capInput.value }),
+    });
+    if (!E.trip.can_edit) capInput.disabled = true;
+
     grid.append(
       el('div', { class: 'expd-receipt-cell' },
         el('div', { class: 'expd-receipt-imgbox' },
           el('img', { class: 'expd-receipt-img', src: r.image_url, alt: '영수증 ' + (i + 1) })),
-        el('div', { class: 'expd-receipt-cap' }, cap),
+        el('div', { class: 'expd-receipt-cap' },
+          el('div', { class: 'expd-receipt-cap-head' }, head),
+          capInput,
+        ),
       )
     );
   });
