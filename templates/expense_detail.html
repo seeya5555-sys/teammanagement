@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+{% block title %}출장 경비 상세 · TRMT3{% endblock %}
+
+{% block content %}
+<div class="expd-wrap" data-trip-id="{{ trip_id }}">
+
+  <div class="expd-topbar no-print">
+    <a class="btn btn-outline btn-sm" href="{{ url_for('expenses_page') }}">← 목록</a>
+    <div class="expd-title-block">
+      <h1 class="expd-title" id="expd-title">로딩 중...</h1>
+      <div class="expd-subtitle" id="expd-subtitle"></div>
+    </div>
+    <span class="dde-save-status" id="expd-save-status"></span>
+    <span class="flex-spacer"></span>
+    <button class="btn btn-outline btn-sm" id="expd-btn-print" title="증빙 영수증 인쇄 (A4)">증빙 출력</button>
+  </div>
+
+  <div class="expd-totals no-print" id="expd-totals"></div>
+
+  <div class="expd-add-bar no-print" id="expd-add-bar">
+    <button class="btn btn-primary" id="expd-btn-camera">📷 촬영</button>
+    <button class="btn btn-outline"  id="expd-btn-gallery">🖼️ 업로드</button>
+    <input type="file" id="expd-inp-camera"  accept="image/*" capture="environment" hidden>
+    <input type="file" id="expd-inp-gallery" accept="image/*" multiple hidden>
+    <span class="form-hint">사진을 올리면 자동 추출 후 표에 한 줄씩 추가됩니다.</span>
+  </div>
+
+  <!-- 영수증 표 -->
+  <div class="expd-table-wrap no-print">
+    <table class="expd-table" id="expd-table">
+      <thead>
+        <tr>
+          <th class="seq">SEQ</th>
+          <th>Bz Trip Cost Type</th>
+          <th>Cost Use Type</th>
+          <th>Occur Date</th>
+          <th>Bz Card No</th>
+          <th>Remarks</th>
+          <th>Currency</th>
+          <th class="num">Occur Amount</th>
+          <th class="ph">사진</th>
+          <th class="del"></th>
+        </tr>
+      </thead>
+      <tbody id="expd-tbody"></tbody>
+    </table>
+    <div class="empty-state" id="expd-empty" hidden>
+      <p>아직 영수증이 없습니다. 위의 촬영 / 업로드 버튼으로 추가하세요.</p>
+    </div>
+  </div>
+
+  <!-- 증빙 영수증 (인쇄 영역) -->
+  <div class="expd-print-head" id="expd-print-head"></div>
+  <h2 class="expd-section-title no-print">증빙 영수증</h2>
+  <div class="expd-receipt-grid" id="expd-receipt-grid"></div>
+</div>
+
+<!-- 추출 리뷰 / 재촬영 모달 -->
+<div class="modal" id="expd-review" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="expd-review-title">영수증 확인</h2>
+      <button class="modal-close" id="expd-review-close" aria-label="닫기">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="expd-review-grid">
+        <div class="expd-review-photo">
+          <img id="expd-review-img" alt="영수증" />
+        </div>
+        <div class="expd-review-info">
+          <div id="expd-review-warn" class="expd-review-warn" hidden></div>
+          <div class="form-row">
+            <span class="form-label">상호 (Vendor)</span>
+            <input type="text" id="expd-rv-vendor" placeholder="자동 추출">
+          </div>
+          <div class="form-row form-row-2col">
+            <label>
+              <span class="form-label">Occur Date <em class="req">*</em></span>
+              <input type="date" id="expd-rv-date">
+            </label>
+            <label>
+              <span class="form-label">Currency <em class="req">*</em></span>
+              <input type="text" id="expd-rv-currency" placeholder="KRW / CNY / USD">
+            </label>
+          </div>
+          <div class="form-row">
+            <span class="form-label">Occur Amount <em class="req">*</em></span>
+            <input type="number" id="expd-rv-amount" step="0.01" placeholder="0.00">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-danger btn-outline" id="expd-rv-retake">다시 촬영</button>
+      <span class="flex-spacer"></span>
+      <button type="button" class="btn btn-primary" id="expd-rv-add">표에 추가 ▶</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>window.EXP_TRIP_ID = {{ trip_id|tojson }};</script>
+<script src="{{ url_for('static', filename='js/expd.js') }}"></script>
+{% endblock %}
