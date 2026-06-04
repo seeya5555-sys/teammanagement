@@ -399,3 +399,48 @@ CREATE TABLE IF NOT EXISTS boarding_report_blocks (
     FOREIGN KEY (section_id) REFERENCES boarding_report_sections(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_boarding_blocks_section ON boarding_report_blocks(section_id, display_order);
+
+
+-- ═════════════════════════════════════════════════════════════════
+--  출장 경비 (Business Trip Expense) — 영수증 추출/증빙
+-- ═════════════════════════════════════════════════════════════════
+
+-- 출장 카드 (일정당 1개)
+CREATE TABLE IF NOT EXISTS biz_trips (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    supervisor_id   INTEGER,                       -- 담당(소유자)
+    title           TEXT NOT NULL,                 -- 출장명
+    trip_start      TEXT,                          -- 기간 시작 (YYYY-MM-DD)
+    trip_end        TEXT,                          -- 기간 종료 (YYYY-MM-DD)
+    corp_cards      TEXT,                          -- 법인카드 번호 목록 (JSON 배열 문자열)
+    status          TEXT NOT NULL DEFAULT 'open'
+                    CHECK(status IN ('open','settled')),   -- 진행 중 / 정산완료
+    created_by      TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (supervisor_id) REFERENCES supervisors(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_biz_trips_sup     ON biz_trips(supervisor_id);
+CREATE INDEX IF NOT EXISTS idx_biz_trips_status  ON biz_trips(status);
+CREATE INDEX IF NOT EXISTS idx_biz_trips_updated ON biz_trips(updated_at DESC);
+
+-- 영수증 (표의 한 줄 = 1건)
+CREATE TABLE IF NOT EXISTS biz_receipts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    trip_id         INTEGER NOT NULL,
+    image_filename  TEXT,                          -- 증빙 사진 파일명 (static/uploads/receipt/)
+    image_url       TEXT,
+    vendor          TEXT,                          -- 상호 (추출, 갤러리 캡션용)
+    cost_type       TEXT,                          -- Bz Trip Cost Type: 교통비/숙박비/접대비/복리후생비/기타
+    use_type        TEXT,                          -- Cost Use Type: 법인카드/개인카드/현금
+    occur_date      TEXT,                          -- Occur Date (필수, YYYY-MM-DD, 추출)
+    card_no         TEXT,                          -- Bz Card No
+    remark          TEXT,                          -- Remarks (직접입력)
+    currency        TEXT,                          -- Currency Code (필수, 추출, e.g. KRW/CNY/USD)
+    amount          REAL,                          -- Occur Amount (필수, 추출)
+    extracted_raw   TEXT,                          -- Haiku 원본 JSON (감사/디버그용)
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (trip_id) REFERENCES biz_trips(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_biz_receipts_trip ON biz_receipts(trip_id, display_order, id);
