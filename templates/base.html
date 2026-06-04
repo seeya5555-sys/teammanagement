@@ -40,6 +40,9 @@
         <a href="{{ url_for('calendar_page') }}" class="nav-link {% if request.endpoint=='calendar_page' %}active{% endif %}">
           일정
         </a>
+        <a href="{{ url_for('expenses_page') }}" class="nav-link {% if request.endpoint in ['expenses_page','expense_detail_page'] %}active{% endif %}">
+          출장 경비
+        </a>
       </nav>
 
       <div class="user-menu">
