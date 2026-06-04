@@ -3993,8 +3993,8 @@ def api_attachment_delete(aid):
 # ═════════════════════════════════════════════════════════════════
 RECEIPT_IMAGE_MAX_LONG_SIDE = 1568   # 영수증 작은 글씨 가독성 위해 dock(1280)보다 크게
 RECEIPT_IMAGE_JPEG_QUALITY  = 88
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-ANTHROPIC_MODEL   = os.environ.get('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+GEMINI_MODEL   = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash-lite')
 
 
 def _trip_owned(t):
@@ -4211,19 +4211,18 @@ def api_receipt_upload(tid):
                     'final_kb': round(final / 1024, 1)}), 201
 
 
-# ─── Haiku 비전 추출 ─────────────────────────────────────────
-def _anthropic_vision_extract(image_path):
-    """저장된 영수증 이미지를 Haiku로 추출 (vendor/date/currency/amount + 품질 판정)."""
-    if not ANTHROPIC_API_KEY:
+# ─── Gemini 비전 추출 (Gemini 3.1 Flash Lite) ────────────────
+def _gemini_vision_extract(image_path):
+    """저장된 영수증 이미지를 Gemini 3.1 Flash Lite로 추출 (vendor/date/currency/amount + 품질 판정)."""
+    if not GEMINI_API_KEY:
         return {'error': 'NO_API_KEY'}
-    import base64, mimetypes, urllib.request
+    import base64, mimetypes, urllib.request, urllib.error
     with open(image_path, 'rb') as fp:
         raw = fp.read()
     media = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
     b64 = base64.standard_b64encode(raw).decode()
     prompt = (
-        "이 이미지는 출장 경비 영수증/인보이스다. 아래 항목만 추출해 지정한 JSON 형식으로만 답하라. "
-        "JSON 외 다른 텍스트나 코드펜스는 절대 출력하지 마라.\n"
+        "이 이미지는 출장 경비 영수증/인보이스다. 아래 항목만 추출해 지정한 JSON 형식으로만 답하라.\n"
         "- vendor: 상호/가맹점명 (없으면 null)\n"
         "- date: 거래 일자 YYYY-MM-DD (확실치 않으면 null)\n"
         "- currency: 통화 ISO 코드 (KRW/CNY/USD/JPY/EUR 등, 기호는 코드로 변환, 불명확하면 null)\n"
@@ -4235,33 +4234,47 @@ def _anthropic_vision_extract(image_path):
         '"vendor":null,"date":null,"currency":null,"amount":null}'
     )
     body = {
-        'model': ANTHROPIC_MODEL,
-        'max_tokens': 400,
-        'messages': [{
-            'role': 'user',
-            'content': [
-                {'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': b64}},
-                {'type': 'text', 'text': prompt},
+        'contents': [{
+            'parts': [
+                {'inline_data': {'mime_type': media, 'data': b64}},
+                {'text': prompt},
             ],
         }],
+        'generationConfig': {'response_mime_type': 'application/json'},
     }
+    url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
+           f'{GEMINI_MODEL}:generateContent')
     req = urllib.request.Request(
-        'https://api.anthropic.com/v1/messages',
+        url,
         data=json.dumps(body).encode('utf-8'),
         headers={
             'content-type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
+            'x-goog-api-key': GEMINI_API_KEY,
         }, method='POST')
     try:
         with urllib.request.urlopen(req, timeout=40) as resp:
             data = json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as he:
+        try:
+            detail = he.read().decode('utf-8')[:300]
+        except Exception:
+            detail = str(he)
+        return {'error': 'API_CALL_FAILED', 'detail': detail}
     except Exception as e:
         return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+
+    # candidates[0].content.parts[*].text 취합
     text = ''
-    for blk in data.get('content', []):
-        if blk.get('type') == 'text':
-            text += blk.get('text', '')
+    try:
+        cands = data.get('candidates') or []
+        if not cands:
+            return {'error': 'API_CALL_FAILED', 'detail': json.dumps(data)[:300]}
+        for part in (cands[0].get('content', {}).get('parts') or []):
+            if isinstance(part.get('text'), str):
+                text += part['text']
+    except Exception as e:
+        return {'error': 'PARSE_FAILED', 'raw': str(e)}
+
     text = text.strip()
     if text.startswith('```'):
         text = text.strip('`')
@@ -4287,7 +4300,7 @@ def api_receipt_extract(tid):
     path = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt', fname)
     if not os.path.exists(path):
         return jsonify({'error': '파일을 찾을 수 없습니다.'}), 404
-    result = _anthropic_vision_extract(path)
+    result = _gemini_vision_extract(path)
     if result.get('error') == 'NO_API_KEY':
         return jsonify({'ok': False, 'reason': 'no_api_key',
                         'message': 'AI 자동추출이 설정되지 않았습니다. 직접 입력해 주세요.'}), 200
