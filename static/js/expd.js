@@ -59,6 +59,7 @@ function fmtMoney(cur, amt) {
 // ─── Load & Render ───────────────────────────────────────────
 async function init() {
   bindEvents();
+  bindCropEvents();
   await load();
 }
 
@@ -332,9 +333,13 @@ async function handleFiles(files) {
 }
 
 async function processOne(file) {
+  // 0) 크롭/원근보정 (사용자가 모서리 맞춤) — 취소 시 이 파일 건너뜀
+  const prepared = await openCrop(file);
+  if (!prepared) return;
+
   // 1) 업로드 (리사이즈/증빙 저장)
   const fd = new FormData();
-  fd.append('file', file);
+  fd.append('file', prepared, prepared.name || 'receipt.jpg');
   const up = await api(`/api/biz-trips/${E.tripId}/upload-receipt`, { method: 'POST', body: fd });
 
   // 2) Haiku 추출
@@ -459,3 +464,183 @@ function bindEvents() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// ════════════════════════════════════════════════════════════════
+//  영수증 수동 크롭 + 원근보정 (Adobe 스캔 방식, 라이브러리 없음)
+//  · 기본 사각형(가장자리 6% 안쪽) 제시 → 사용자가 네 모서리 조정
+//  · "적용" 시 4점→사각형 호모그래피로 반듯하게 펴서 JPEG Blob 반환
+// ════════════════════════════════════════════════════════════════
+const CROP = {
+  resolve: null,
+  file: null,
+  handles: [],   // [{fx,fy} ...]  TL,TR,BR,BL (0~1 비율)
+  active: -1,
+  WORK_MAX: 1800,  // 작업 캔버스 최대 장변
+  OUT_MAX: 1500,   // 출력 최대 장변
+};
+
+function openCrop(file) {
+  return new Promise((resolve) => {
+    CROP.resolve = resolve;
+    CROP.file = file;
+    const modal = $('#expd-crop');
+    const canvas = $('#expd-crop-canvas');
+    const img = new Image();
+    img.onload = () => {
+      // 작업 해상도로 캔버스에 그림
+      let w = img.naturalWidth, h = img.naturalHeight;
+      const long = Math.max(w, h);
+      if (long > CROP.WORK_MAX) { const r = CROP.WORK_MAX / long; w = Math.round(w * r); h = Math.round(h * r); }
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(img.src);
+
+      CROP.handles = [
+        { fx: 0.06, fy: 0.06 }, { fx: 0.94, fy: 0.06 },
+        { fx: 0.94, fy: 0.94 }, { fx: 0.06, fy: 0.94 },
+      ];
+      modal.hidden = false;
+      document.body.classList.add('modal-open');
+      buildHandles();
+      requestAnimationFrame(renderQuad);
+    };
+    img.onerror = () => { resolve(file); };  // 디코드 실패 시 원본 그대로
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function buildHandles() {
+  const overlay = $('#expd-crop-overlay');
+  // 기존 핸들 제거 (폴리곤 svg는 유지)
+  $$('.expd-crop-handle', overlay).forEach(n => n.remove());
+  CROP.handles.forEach((h, i) => {
+    const hd = el('div', { class: 'expd-crop-handle', 'data-i': i });
+    hd.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      CROP.active = i;
+      try { hd.setPointerCapture(e.pointerId); } catch {}
+    });
+    hd.addEventListener('pointermove', (e) => {
+      if (CROP.active !== i) return;
+      const rect = overlay.getBoundingClientRect();
+      const fx = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      const fy = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+      CROP.handles[i] = { fx, fy };
+      renderQuad();
+    });
+    const end = (e) => { if (CROP.active === i) { CROP.active = -1; try { hd.releasePointerCapture(e.pointerId); } catch {} } };
+    hd.addEventListener('pointerup', end);
+    hd.addEventListener('pointercancel', end);
+    overlay.append(hd);
+  });
+}
+
+function renderQuad() {
+  const overlay = $('#expd-crop-overlay');
+  const canvas = $('#expd-crop-canvas');
+  const rect = canvas.getBoundingClientRect();
+  // 오버레이를 캔버스 표시 크기에 맞춤
+  overlay.style.width = rect.width + 'px';
+  overlay.style.height = rect.height + 'px';
+  const pts = CROP.handles.map(h => [h.fx * rect.width, h.fy * rect.height]);
+  const svg = $('#expd-crop-svg');
+  svg.setAttribute('width', rect.width);
+  svg.setAttribute('height', rect.height);
+  $('#expd-crop-poly').setAttribute('points', pts.map(p => p.join(',')).join(' '));
+  $$('.expd-crop-handle', overlay).forEach((hd, i) => {
+    hd.style.left = pts[i][0] + 'px';
+    hd.style.top = pts[i][1] + 'px';
+  });
+}
+
+// 8x8 선형계 풀이 (부분 피벗 가우스 소거)
+function _solve8(M, b) {
+  const n = 8, A = M.map((r, i) => r.concat([b[i]]));
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]];
+    const piv = A[c][c] || 1e-12;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / piv;
+      for (let k = c; k <= n; k++) A[r][k] -= f * A[c][k];
+    }
+  }
+  const x = new Array(n);
+  for (let i = 0; i < n; i++) x[i] = A[i][n] / (A[i][i] || 1e-12);
+  return x;
+}
+
+// dst(사각형)→src(사용자 사각형) 호모그래피 [h0..h8]
+function _homography(dst, src) {
+  const M = [], r = [];
+  for (let i = 0; i < 4; i++) {
+    const x = dst[i].x, y = dst[i].y, u = src[i].x, v = src[i].y;
+    M.push([x, y, 1, 0, 0, 0, -x * u, -y * u]); r.push(u);
+    M.push([0, 0, 0, x, y, 1, -x * v, -y * v]); r.push(v);
+  }
+  const h = _solve8(M, r);
+  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+}
+
+function _dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+function applyCrop() {
+  const canvas = $('#expd-crop-canvas');
+  const W = canvas.width, H = canvas.height;
+  const q = CROP.handles.map(h => ({ x: h.fx * W, y: h.fy * H }));  // src 4점 (작업 px)
+  const [tl, tr, br, bl] = q;
+  let outW = Math.round((_dist(tl, tr) + _dist(bl, br)) / 2);
+  let outH = Math.round((_dist(tl, bl) + _dist(tr, br)) / 2);
+  const long = Math.max(outW, outH);
+  if (long > CROP.OUT_MAX) { const r = CROP.OUT_MAX / long; outW = Math.round(outW * r); outH = Math.round(outH * r); }
+  outW = Math.max(outW, 80); outH = Math.max(outH, 80);
+
+  const dstC = [{ x: 0, y: 0 }, { x: outW, y: 0 }, { x: outW, y: outH }, { x: 0, y: outH }];
+  const Hm = _homography(dstC, q);  // dst->src
+
+  const sctx = canvas.getContext('2d', { willReadFrequently: true });
+  const sImg = sctx.getImageData(0, 0, W, H), sData = sImg.data;
+  const out = document.createElement('canvas'); out.width = outW; out.height = outH;
+  const octx = out.getContext('2d');
+  const oImg = octx.createImageData(outW, outH), oData = oImg.data;
+
+  for (let y = 0; y < outH; y++) {
+    for (let x = 0; x < outW; x++) {
+      const dn = Hm[6] * x + Hm[7] * y + Hm[8];
+      const sx = (Hm[0] * x + Hm[1] * y + Hm[2]) / dn;
+      const sy = (Hm[3] * x + Hm[4] * y + Hm[5]) / dn;
+      const ix = sx | 0, iy = sy | 0;
+      const oi = (y * outW + x) * 4;
+      if (ix >= 0 && ix < W && iy >= 0 && iy < H) {
+        const si = (iy * W + ix) * 4;
+        oData[oi] = sData[si]; oData[oi + 1] = sData[si + 1]; oData[oi + 2] = sData[si + 2]; oData[oi + 3] = 255;
+      } else { oData[oi] = oData[oi + 1] = oData[oi + 2] = oData[oi + 3] = 255; }
+    }
+  }
+  octx.putImageData(oImg, 0, 0);
+  out.toBlob((blob) => { finishCrop(blob || CROP.file); }, 'image/jpeg', 0.9);
+}
+
+function finishCrop(result) {
+  $('#expd-crop').hidden = true;
+  document.body.classList.remove('modal-open');
+  const resolve = CROP.resolve; CROP.resolve = null; CROP.active = -1;
+  if (resolve) resolve(result);
+}
+
+function bindCropEvents() {
+  $('#expd-crop-apply').addEventListener('click', applyCrop);
+  $('#expd-crop-orig').addEventListener('click', () => finishCrop(CROP.file));   // 원본 사용
+  $('#expd-crop-cancel').addEventListener('click', () => finishCrop(null));      // 취소(건너뜀)
+  $('#expd-crop-reset').addEventListener('click', () => {
+    CROP.handles = [
+      { fx: 0.06, fy: 0.06 }, { fx: 0.94, fy: 0.06 },
+      { fx: 0.94, fy: 0.94 }, { fx: 0.06, fy: 0.94 },
+    ];
+    renderQuad();
+  });
+  window.addEventListener('resize', () => { if (!$('#expd-crop').hidden) renderQuad(); });
+}
