@@ -4182,3 +4182,99 @@ body.dde-readonly .bre-defect-photo-thumb {
   background: #eff6ff;
   color: #2563eb;
 }
+
+
+/* ═══════════════════════════════════════════════════════════
+   출장 경비 (Business Trip Expense)
+   ═══════════════════════════════════════════════════════════ */
+.expd-total-chip {
+  display: inline-block; padding: 2px 8px; border-radius: 6px;
+  background: #eef2ff; color: #3730a3; font-weight: 500; font-size: 12px;
+  margin-left: 4px;
+}
+
+/* 상세 페이지 */
+.expd-wrap { max-width: 1200px; margin: 0 auto; }
+.expd-topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.expd-title-block { min-width: 0; }
+.expd-title { font-size: 20px; font-weight: 600; margin: 0; }
+.expd-subtitle { font-size: 12.5px; color: #6b7280; margin-top: 2px; }
+
+.expd-totals { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.expd-total-label { font-size: 12px; color: #6b7280; font-weight: 600; }
+
+.expd-add-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.expd-add-bar .form-hint { font-size: 12px; color: #9ca3af; }
+
+/* 영수증 표 */
+.expd-table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 24px; }
+.expd-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 920px; }
+.expd-table thead th {
+  background: #f3f4f6; color: #374151; font-weight: 600; text-align: left;
+  padding: 9px 8px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; font-size: 12px;
+}
+.expd-table thead th.num { text-align: right; }
+.expd-table tbody td { padding: 5px 6px; border-bottom: 1px solid #f1f1f1; vertical-align: middle; }
+.expd-table tbody tr:nth-child(odd) { background: #fcfcfd; }
+.expd-table td.seq { font-variant-numeric: tabular-nums; color: #6b7280; text-align: center; width: 52px; }
+.expd-table td.num { text-align: right; }
+.expd-table td.ph  { width: 56px; text-align: center; }
+.expd-table td.del { width: 34px; text-align: center; }
+
+.expd-cell-input {
+  width: 100%; box-sizing: border-box; padding: 5px 6px;
+  border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; background: #fff;
+}
+.expd-cell-input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.12); }
+.expd-cell-input.sel  { min-width: 96px; }
+.expd-cell-input.card { min-width: 90px; }
+.expd-cell-input.cur  { width: 72px; text-transform: uppercase; }
+.expd-cell-input.num  { text-align: right; }
+.expd-cell-input:disabled { background: #f3f4f6; color: #9ca3af; }
+.expd-cell-input.expd-req-missing { border-color: #f0997b; background: #fef6f2; }
+
+.expd-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 5px; border: 1px solid #e5e7eb; cursor: pointer; }
+.expd-nophoto { color: #d1d5db; }
+.expd-del-btn {
+  width: 26px; height: 26px; border: none; background: transparent; color: #b91c1c;
+  font-size: 18px; line-height: 1; cursor: pointer; border-radius: 5px;
+}
+.expd-del-btn:hover { background: #fee2e2; }
+
+/* 증빙 갤러리 (화면) */
+.expd-section-title { font-size: 15px; font-weight: 600; margin: 8px 0 12px; }
+.expd-receipt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.expd-receipt-cell { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; background: #fff; }
+.expd-receipt-imgbox { height: 200px; display: flex; align-items: center; justify-content: center; background: #f8f8f9; border-radius: 6px; overflow: hidden; }
+.expd-receipt-img { max-width: 100%; max-height: 200px; object-fit: contain; }
+.expd-receipt-cap { margin-top: 6px; font-size: 11.5px; color: #4b5563; text-align: center; line-height: 1.4; }
+.expd-gallery-empty { color: #9ca3af; font-size: 13px; padding: 12px 0; }
+.expd-print-head { display: none; }
+
+/* 추출 리뷰 모달 */
+.expd-review-grid { display: grid; grid-template-columns: 240px 1fr; gap: 18px; }
+.expd-review-photo { background: #f8f8f9; border-radius: 8px; display: flex; align-items: center; justify-content: center; max-height: 360px; overflow: hidden; }
+.expd-review-photo img { max-width: 100%; max-height: 360px; object-fit: contain; }
+.expd-review-warn { background: #fef6f2; border: 1px solid #f0997b; color: #7a2e12; border-radius: 8px; padding: 10px 12px; font-size: 12.5px; margin-bottom: 12px; line-height: 1.5; }
+.expd-warn-hint { display: inline-block; margin-top: 4px; color: #9a3d1d; font-size: 11.5px; }
+@media (max-width: 640px) { .expd-review-grid { grid-template-columns: 1fr; } }
+
+/* ── A4 인쇄: 증빙 영수증만, 한 장당 4~6개 ── */
+@media print {
+  .topnav, .expd-topbar, .expd-totals, .expd-add-bar, .expd-table-wrap,
+  .expd-section-title, .no-print, .modal { display: none !important; }
+  .main-content { padding: 0 !important; margin: 0 !important; }
+  .expd-wrap { max-width: none; }
+
+  .expd-print-head { display: block !important; margin-bottom: 6mm; }
+  .expd-print-title { font-size: 15pt; font-weight: 700; }
+  .expd-print-sub { font-size: 10pt; color: #333; margin-top: 1mm; }
+
+  .expd-receipt-grid { display: grid !important; grid-template-columns: 1fr 1fr; gap: 6mm; }
+  .expd-receipt-cell { break-inside: avoid; page-break-inside: avoid; border: 1px solid #999; border-radius: 0; padding: 3mm; background: #fff; }
+  .expd-receipt-imgbox { height: 64mm; background: #fff; }
+  .expd-receipt-img { max-width: 100%; max-height: 64mm; object-fit: contain; }
+  .expd-receipt-cap { margin-top: 2mm; font-size: 9pt; color: #000; }
+
+  @page { size: A4 portrait; margin: 12mm; }
+}
