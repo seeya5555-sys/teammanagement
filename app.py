@@ -2902,7 +2902,9 @@ DOCK_IMAGE_MAX_LONG_SIDE = 1280
 DOCK_IMAGE_JPEG_QUALITY  = 85
 
 
-def _process_uploaded_image(file_storage, dest_path):
+def _process_uploaded_image(file_storage, dest_path,
+                            max_long_side=DOCK_IMAGE_MAX_LONG_SIDE,
+                            jpeg_quality=DOCK_IMAGE_JPEG_QUALITY):
     """
     업로드된 이미지를 리사이즈 + 재인코딩하여 dest_path에 저장.
     실패 시 원본을 그대로 저장하고 False 반환.
@@ -2935,8 +2937,8 @@ def _process_uploaded_image(file_storage, dest_path):
         long_side = max(w, h)
 
         # 리사이즈 필요 시
-        if long_side > DOCK_IMAGE_MAX_LONG_SIDE:
-            ratio = DOCK_IMAGE_MAX_LONG_SIDE / long_side
+        if long_side > max_long_side:
+            ratio = max_long_side / long_side
             new_w = int(w * ratio)
             new_h = int(h * ratio)
             im = im.resize((new_w, new_h), Image.LANCZOS)
@@ -2959,7 +2961,7 @@ def _process_uploaded_image(file_storage, dest_path):
             base = dest_path.rsplit('.', 1)[0]
             final_path = base + '.jpg'
             im.save(final_path, 'JPEG',
-                    quality=DOCK_IMAGE_JPEG_QUALITY,
+                    quality=jpeg_quality,
                     optimize=True, progressive=True)
 
         return final_path, original_size, os.path.getsize(final_path)
@@ -3983,6 +3985,399 @@ def api_attachment_delete(aid):
     if os.path.exists(p):
         os.remove(p)
     execute('DELETE FROM attachments WHERE id=?', (aid,))
+    return jsonify({'ok': True})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  출장 경비 (Business Trip Expense) — 영수증 추출/증빙
+# ═════════════════════════════════════════════════════════════════
+RECEIPT_IMAGE_MAX_LONG_SIDE = 1568   # 영수증 작은 글씨 가독성 위해 dock(1280)보다 크게
+RECEIPT_IMAGE_JPEG_QUALITY  = 88
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+ANTHROPIC_MODEL   = os.environ.get('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001')
+
+
+def _trip_owned(t):
+    if session.get('role') == 'admin':
+        return True
+    return t['supervisor_id'] is not None and t['supervisor_id'] == session.get('supervisor_id')
+
+
+def _get_trip_for_edit(tid):
+    """편집용 trip row 조회. (trip, None) 또는 (None, error_response)."""
+    t = query('SELECT * FROM biz_trips WHERE id=?', (tid,), one=True)
+    if not t:
+        return None, (jsonify({'error': 'not found'}), 404)
+    if not _trip_owned(t):
+        return None, (jsonify({'error': '권한이 없습니다.'}), 403)
+    return t, None
+
+
+def _trip_to_dict(r):
+    d = dict(r)
+    try:
+        d['corp_cards'] = json.loads(r['corp_cards']) if r['corp_cards'] else []
+    except Exception:
+        d['corp_cards'] = []
+    return d
+
+
+def _delete_receipt_image(fname):
+    if not fname:
+        return
+    p = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt', fname)
+    try:
+        if os.path.exists(p):
+            os.remove(p)
+    except Exception:
+        pass
+
+
+def _parse_amount(v):
+    """'1,200.50' / '₩48,000' / 1200 등 다양한 입력을 float 또는 None으로."""
+    if v is None or v == '':
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    import re
+    m = re.search(r'-?\d[\d,]*(\.\d+)?', str(v))
+    if not m:
+        return None
+    try:
+        return float(m.group().replace(',', ''))
+    except ValueError:
+        return None
+
+
+# ─── Pages ───────────────────────────────────────────────────
+@app.route('/expenses')
+@login_required
+def expenses_page():
+    return render_template('expenses.html')
+
+
+@app.route('/expenses/<int:tid>')
+@login_required
+def expense_detail_page(tid):
+    t = query('SELECT id FROM biz_trips WHERE id=?', (tid,), one=True)
+    if not t:
+        abort(404)
+    return render_template('expense_detail.html', trip_id=tid)
+
+
+# ─── API : 출장 카드 ─────────────────────────────────────────
+@app.route('/api/biz-trips', methods=['GET'])
+@login_required
+def api_trips_list():
+    conds, params = ['1=1'], []
+    if session.get('role') != 'admin':
+        conds.append('t.supervisor_id = ?')
+        params.append(session.get('supervisor_id'))
+    if request.args.get('status'):
+        conds.append('t.status = ?')
+        params.append(request.args.get('status'))
+    if request.args.get('q'):
+        conds.append('t.title LIKE ?')
+        params.append(f"%{request.args.get('q')}%")
+    sql = f'''
+        SELECT t.*, s.name AS supervisor_name
+          FROM biz_trips t
+          LEFT JOIN supervisors s ON s.id = t.supervisor_id
+         WHERE {' AND '.join(conds)}
+         ORDER BY t.updated_at DESC, t.id DESC
+    '''
+    rows = query(sql, params)
+    out = []
+    for r in rows:
+        d = _trip_to_dict(r)
+        d['can_edit'] = _trip_owned(r)
+        cnt = query('SELECT COUNT(*) AS c FROM biz_receipts WHERE trip_id=?', (r['id'],), one=True)['c']
+        d['receipt_count'] = cnt
+        sums = query('SELECT currency, COALESCE(SUM(amount),0) AS s FROM biz_receipts WHERE trip_id=? GROUP BY currency', (r['id'],))
+        d['totals'] = {(row['currency'] or '?'): row['s'] for row in sums}
+        out.append(d)
+    return jsonify(out)
+
+
+@app.route('/api/biz-trips', methods=['POST'])
+@login_required
+def api_trips_create():
+    d = request.get_json(silent=True) or {}
+    title = (d.get('title') or '').strip()
+    if not title:
+        return jsonify({'error': '출장명을 입력하세요.'}), 400
+    sup = session.get('supervisor_id')
+    if session.get('role') == 'admin' and d.get('supervisor_id'):
+        sup = d.get('supervisor_id')
+    cards = d.get('corp_cards') or []
+    if isinstance(cards, str):
+        cards = [c.strip() for c in cards.split(',') if c.strip()]
+    new_id = execute('''
+        INSERT INTO biz_trips
+            (supervisor_id, title, trip_start, trip_end, corp_cards, status, created_by)
+        VALUES (?,?,?,?,?,?,?)
+    ''', (
+        sup, title, d.get('trip_start') or None, d.get('trip_end') or None,
+        json.dumps(cards, ensure_ascii=False), d.get('status') or 'open',
+        session.get('display_name') or session.get('username') or '',
+    ))
+    return jsonify({'id': new_id, 'ok': True}), 201
+
+
+@app.route('/api/biz-trips/<int:tid>', methods=['GET'])
+@login_required
+def api_trip_get(tid):
+    t = query('''SELECT t.*, s.name AS supervisor_name
+                   FROM biz_trips t LEFT JOIN supervisors s ON s.id=t.supervisor_id
+                  WHERE t.id=?''', (tid,), one=True)
+    if not t:
+        abort(404)
+    if not _trip_owned(t):
+        return jsonify({'error': '권한이 없습니다.'}), 403
+    d = _trip_to_dict(t)
+    d['can_edit'] = _trip_owned(t)
+    recs = query('SELECT * FROM biz_receipts WHERE trip_id=? ORDER BY display_order, id', (tid,))
+    d['receipts'] = [dict(r) for r in recs]
+    sums = query('SELECT currency, COALESCE(SUM(amount),0) AS s FROM biz_receipts WHERE trip_id=? GROUP BY currency', (tid,))
+    d['totals'] = {(row['currency'] or '?'): row['s'] for row in sums}
+    return jsonify(d)
+
+
+@app.route('/api/biz-trips/<int:tid>', methods=['PUT'])
+@login_required
+def api_trip_update(tid):
+    t, err = _get_trip_for_edit(tid)
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    sets, params = [], []
+    if 'title' in d:
+        sets.append('title=?'); params.append((d.get('title') or '').strip())
+    for k in ('trip_start', 'trip_end', 'status'):
+        if k in d:
+            sets.append(f'{k}=?'); params.append(d.get(k) or None)
+    if 'corp_cards' in d:
+        cards = d.get('corp_cards') or []
+        if isinstance(cards, str):
+            cards = [c.strip() for c in cards.split(',') if c.strip()]
+        sets.append('corp_cards=?'); params.append(json.dumps(cards, ensure_ascii=False))
+    if not sets:
+        return jsonify({'ok': True, 'updated': 0})
+    sets.append("updated_at=datetime('now','localtime')")
+    params.append(tid)
+    execute(f'UPDATE biz_trips SET {", ".join(sets)} WHERE id=?', params)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/biz-trips/<int:tid>', methods=['DELETE'])
+@login_required
+def api_trip_delete(tid):
+    t, err = _get_trip_for_edit(tid)
+    if err:
+        return err
+    for r in query('SELECT image_filename FROM biz_receipts WHERE trip_id=?', (tid,)):
+        _delete_receipt_image(r['image_filename'])
+    execute('DELETE FROM biz_receipts WHERE trip_id=?', (tid,))
+    execute('DELETE FROM biz_trips WHERE id=?', (tid,))
+    return jsonify({'ok': True})
+
+
+# ─── API : 영수증 이미지 업로드 ──────────────────────────────
+@app.route('/api/biz-trips/<int:tid>/upload-receipt', methods=['POST'])
+@login_required
+def api_receipt_upload(tid):
+    t, err = _get_trip_for_edit(tid)
+    if err:
+        return err
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다.'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': '파일명이 비어있습니다.'}), 400
+    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+    if ext not in {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'}:
+        return jsonify({'error': '이미지 파일만 업로드 가능합니다.'}), 400
+    rdir = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt')
+    os.makedirs(rdir, exist_ok=True)
+    import time
+    base = f'rcpt-{tid}-{int(time.time()*1000)}-{secrets.token_hex(4)}'
+    initial = os.path.join(rdir, f'{base}.{ext}')
+    final_path, orig, final = _process_uploaded_image(
+        f, initial, RECEIPT_IMAGE_MAX_LONG_SIDE, RECEIPT_IMAGE_JPEG_QUALITY)
+    fname = os.path.basename(final_path)
+    url = url_for('static', filename=f'uploads/receipt/{fname}')
+    return jsonify({'ok': True, 'filename': fname, 'url': url,
+                    'original_kb': round(orig / 1024, 1),
+                    'final_kb': round(final / 1024, 1)}), 201
+
+
+# ─── Haiku 비전 추출 ─────────────────────────────────────────
+def _anthropic_vision_extract(image_path):
+    """저장된 영수증 이미지를 Haiku로 추출 (vendor/date/currency/amount + 품질 판정)."""
+    if not ANTHROPIC_API_KEY:
+        return {'error': 'NO_API_KEY'}
+    import base64, mimetypes, urllib.request
+    with open(image_path, 'rb') as fp:
+        raw = fp.read()
+    media = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
+    b64 = base64.standard_b64encode(raw).decode()
+    prompt = (
+        "이 이미지는 출장 경비 영수증/인보이스다. 아래 항목만 추출해 지정한 JSON 형식으로만 답하라. "
+        "JSON 외 다른 텍스트나 코드펜스는 절대 출력하지 마라.\n"
+        "- vendor: 상호/가맹점명 (없으면 null)\n"
+        "- date: 거래 일자 YYYY-MM-DD (확실치 않으면 null)\n"
+        "- currency: 통화 ISO 코드 (KRW/CNY/USD/JPY/EUR 등, 기호는 코드로 변환, 불명확하면 null)\n"
+        "- amount: 총 결제 금액 숫자만 (콤마/통화기호 제거, 소수 허용, 불명확하면 null)\n"
+        "글자가 흐리거나 잘려 확신할 수 없으면 해당 필드는 null로 두고, "
+        "readable(true/false), confidence(high/medium/low), "
+        "issues(배열: blurry/glare/cropped/dark/unclear_amount 등)를 채워라.\n"
+        '형식: {"readable":true,"confidence":"high","issues":[],'
+        '"vendor":null,"date":null,"currency":null,"amount":null}'
+    )
+    body = {
+        'model': ANTHROPIC_MODEL,
+        'max_tokens': 400,
+        'messages': [{
+            'role': 'user',
+            'content': [
+                {'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': b64}},
+                {'type': 'text', 'text': prompt},
+            ],
+        }],
+    }
+    req = urllib.request.Request(
+        'https://api.anthropic.com/v1/messages',
+        data=json.dumps(body).encode('utf-8'),
+        headers={
+            'content-type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+        }, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+    text = ''
+    for blk in data.get('content', []):
+        if blk.get('type') == 'text':
+            text += blk.get('text', '')
+    text = text.strip()
+    if text.startswith('```'):
+        text = text.strip('`')
+        if text[:4].lower() == 'json':
+            text = text[4:]
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        return {'error': 'PARSE_FAILED', 'raw': text}
+
+
+@app.route('/api/biz-trips/<int:tid>/extract', methods=['POST'])
+@login_required
+def api_receipt_extract(tid):
+    t, err = _get_trip_for_edit(tid)
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    fname = d.get('filename') or ''
+    if not fname or '/' in fname or '\\' in fname or '..' in fname:
+        return jsonify({'error': '잘못된 파일명'}), 400
+    path = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt', fname)
+    if not os.path.exists(path):
+        return jsonify({'error': '파일을 찾을 수 없습니다.'}), 404
+    result = _anthropic_vision_extract(path)
+    if result.get('error') == 'NO_API_KEY':
+        return jsonify({'ok': False, 'reason': 'no_api_key',
+                        'message': 'AI 자동추출이 설정되지 않았습니다. 직접 입력해 주세요.'}), 200
+    if result.get('error'):
+        return jsonify({'ok': False, 'reason': result['error'],
+                        'message': '자동 추출에 실패했습니다. 다시 시도하거나 직접 입력해 주세요.',
+                        'detail': result.get('detail') or result.get('raw')}), 200
+    fields = {
+        'vendor':     result.get('vendor'),
+        'occur_date': result.get('date'),
+        'currency':   result.get('currency'),
+        'amount':     result.get('amount'),
+    }
+    missing = [k for k in ('occur_date', 'currency', 'amount') if not fields.get(k)]
+    need_retake = (result.get('readable') is False) or bool(missing) or (result.get('confidence') == 'low')
+    return jsonify({
+        'ok': True,
+        'fields': fields,
+        'readable': result.get('readable', True),
+        'confidence': result.get('confidence'),
+        'issues': result.get('issues') or [],
+        'missing': missing,
+        'need_retake': need_retake,
+        'raw': json.dumps(result, ensure_ascii=False),
+    })
+
+
+# ─── API : 영수증 (표의 한 줄) ───────────────────────────────
+@app.route('/api/biz-trips/<int:tid>/receipts', methods=['POST'])
+@login_required
+def api_receipt_create(tid):
+    t, err = _get_trip_for_edit(tid)
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    mx = query('SELECT COALESCE(MAX(display_order),-1) AS m FROM biz_receipts WHERE trip_id=?', (tid,), one=True)['m']
+    amount = _parse_amount(d.get('amount'))
+    new_id = execute('''
+        INSERT INTO biz_receipts
+            (trip_id, image_filename, image_url, vendor, cost_type, use_type,
+             occur_date, card_no, remark, currency, amount, extracted_raw, display_order)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ''', (
+        tid, d.get('image_filename') or None, d.get('image_url') or None,
+        d.get('vendor') or None, d.get('cost_type') or None, d.get('use_type') or None,
+        d.get('occur_date') or None, d.get('card_no') or None, d.get('remark') or None,
+        d.get('currency') or None, amount, d.get('extracted_raw') or None, mx + 1,
+    ))
+    execute("UPDATE biz_trips SET updated_at=datetime('now','localtime') WHERE id=?", (tid,))
+    r = query('SELECT * FROM biz_receipts WHERE id=?', (new_id,), one=True)
+    return jsonify({'ok': True, 'receipt': dict(r)}), 201
+
+
+@app.route('/api/biz-receipts/<int:rid>', methods=['PUT'])
+@login_required
+def api_receipt_update(rid):
+    r = query('SELECT * FROM biz_receipts WHERE id=?', (rid,), one=True)
+    if not r:
+        abort(404)
+    t, err = _get_trip_for_edit(r['trip_id'])
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    sets, params = [], []
+    for k in ('vendor', 'cost_type', 'use_type', 'occur_date', 'card_no', 'remark', 'currency'):
+        if k in d:
+            sets.append(f'{k}=?'); params.append(d.get(k) or None)
+    if 'amount' in d:
+        sets.append('amount=?'); params.append(_parse_amount(d.get('amount')))
+    if 'display_order' in d:
+        sets.append('display_order=?'); params.append(int(d.get('display_order') or 0))
+    if not sets:
+        return jsonify({'ok': True, 'updated': 0})
+    params.append(rid)
+    execute(f'UPDATE biz_receipts SET {", ".join(sets)} WHERE id=?', params)
+    execute("UPDATE biz_trips SET updated_at=datetime('now','localtime') WHERE id=?", (r['trip_id'],))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/biz-receipts/<int:rid>', methods=['DELETE'])
+@login_required
+def api_receipt_delete(rid):
+    r = query('SELECT * FROM biz_receipts WHERE id=?', (rid,), one=True)
+    if not r:
+        abort(404)
+    t, err = _get_trip_for_edit(r['trip_id'])
+    if err:
+        return err
+    _delete_receipt_image(r['image_filename'])
+    execute('DELETE FROM biz_receipts WHERE id=?', (rid,))
     return jsonify({'ok': True})
 
 
