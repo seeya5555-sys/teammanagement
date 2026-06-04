@@ -55,6 +55,32 @@
   <div class="expd-receipt-grid" id="expd-receipt-grid"></div>
 </div>
 
+<!-- 영수증 크롭 / 원근보정 모달 -->
+<div class="modal expd-crop-modal" id="expd-crop" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="expd-crop-box">
+    <div class="expd-crop-head">
+      <span>영수증 영역 맞추기</span>
+      <button class="modal-close" id="expd-crop-cancel" aria-label="취소">&times;</button>
+    </div>
+    <div class="expd-crop-stage">
+      <canvas id="expd-crop-canvas"></canvas>
+      <div class="expd-crop-overlay" id="expd-crop-overlay">
+        <svg id="expd-crop-svg" xmlns="http://www.w3.org/2000/svg">
+          <polygon id="expd-crop-poly" points="" />
+        </svg>
+      </div>
+    </div>
+    <div class="expd-crop-hint">네 모서리를 영수증 꼭짓점에 맞추세요. 적용하면 자동으로 반듯하게 펴집니다.</div>
+    <div class="expd-crop-foot">
+      <button type="button" class="btn btn-outline btn-sm" id="expd-crop-orig">원본 사용</button>
+      <span class="flex-spacer"></span>
+      <button type="button" class="btn btn-outline btn-sm" id="expd-crop-reset">초기화</button>
+      <button type="button" class="btn btn-primary" id="expd-crop-apply">적용 ▶</button>
+    </div>
+  </div>
+</div>
+
 <!-- 추출 리뷰 / 재촬영 모달 -->
 <div class="modal" id="expd-review" hidden>
   <div class="modal-backdrop"></div>
