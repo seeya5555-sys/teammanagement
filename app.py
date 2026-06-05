@@ -1785,7 +1785,7 @@ def _findings_prompt(kind):
             "- category: 'Defect' 또는 'Observation' (시정이 필요한 지적은 Defect, 권고/관찰사항은 Observation)\n"
             "- item: 짧은 제목 한 줄 (예: 'Main deck 부식')\n"
             "- description: 지적 상세 내용을 원문 그대로 복사한다(영문이면 영문 그대로). 요약·변형 금지.\n"
-            "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). "
+            "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺는다. "
             "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다.\n"
             "없는 내용을 지어내지 말 것. 항목이 하나도 없으면 items를 빈 배열로.\n"
             '형식: {"items":[{"category":"Defect","item":"","description":"","remark":""}]}'
@@ -1800,7 +1800,7 @@ def _findings_prompt(kind):
         "지적 제목을 그대로 이어 붙인다. 예: '(Hardware)Misc Nautical Equipment – Maintenance deferred, awaiting spares', "
         "'(Human)Senior Engineer Officer – Not as expected'.\n"
         "- description: 제목 아래의 상세 본문(이탤릭 문장)을 영어 원문 그대로 복사한다. 요약·변형 금지.\n"
-        "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). "
+        "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺는다. "
         "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm, turn table 등)는 번역하지 말고 영문 그대로 둔다.\n"
         "없는 내용을 지어내지 말 것. 지적이 하나도 없으면 items를 빈 배열로.\n"
         '형식: {"items":[{"item":"","description":"","remark":""}]}'
@@ -1891,7 +1891,7 @@ def _summarize_remarks(items, kind):
         ensure_ascii=False)
     prompt = (
         "아래는 선박 점검 지적 항목들의 description 목록(JSON 배열)이다. 각 항목의 description을 "
-        "한국어로 1~2문장으로 간결하게 요약하라(전체 직역 금지). 기술 명칭·장비명·약어"
+        "한국어로 1~2문장으로 간결하게 요약하라(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺어라. 기술 명칭·장비명·약어"
         "(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다. "
         "입력의 i 값을 그대로 사용해 JSON으로만 답하라.\n"
         '형식: {"summaries":[{"i":0,"remark":"요약문"}]}\n\n[입력]\n' + payload)
