@@ -101,6 +101,31 @@
   </div>
 </div>
 
+<!-- 보고서 → 항목 자동 생성 (검토 후 선택 추가) -->
+<div class="modal" id="cs-extract-modal" hidden>
+  <div class="modal-backdrop" data-csx-close="1"></div>
+  <div class="modal-box" style="width: min(820px, 96vw);" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>보고서에서 항목 자동 생성</h2>
+      <button class="modal-close" data-csx-close="1">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="csx-pick">
+        <input type="file" id="cs-extract-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif,.xlsx,.xls" hidden>
+        <button class="btn btn-outline" id="cs-extract-pick" type="button">파일 선택 (PDF · 이미지 · 엑셀)</button>
+        <span id="cs-extract-status" class="form-hint"></span>
+      </div>
+      <div id="cs-extract-list" class="csx-list"></div>
+    </div>
+    <div class="modal-foot">
+      <label class="csx-selall"><input type="checkbox" id="cs-extract-selall" checked> 전체 선택</label>
+      <span class="flex-spacer"></span>
+      <button class="btn btn-outline" type="button" data-csx-close="1">취소</button>
+      <button class="btn btn-primary" type="button" id="cs-extract-add" disabled>선택 항목 추가</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
