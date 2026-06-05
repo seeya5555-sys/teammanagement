@@ -614,6 +614,11 @@ function detailRow(survey) {
   const tr = el('tr', { class: 'cs-detail-row' });
   const td = el('td', { colspan: 10, class: 'cs-detail-cell' });
 
+  // 보고서 → 항목 자동 생성 (Gemini)
+  td.append(el('div', { class: 'csx-bar' },
+    el('button', { class: 'btn btn-outline btn-sm', onclick: () => openCsExtract(survey) },
+      '📄 보고서에서 자동 생성')));
+
   const defects      = (survey.findings || []).filter(f => f.category === 'Defect');
   const observations = (survey.findings || []).filter(f => f.category === 'Observation');
 
@@ -1468,3 +1473,125 @@ async function loadSupervisors() {
     alert('초기 로드 실패: ' + err.message);
   }
 })();
+
+// ════════════════════════════════════════════════════════════════
+//  보고서(PDF·이미지·엑셀) → Defect/Observation 항목 자동 생성
+//  · 업로드 → 서버(Gemini/엑셀파서) 추출 → 검토 목록 → 선택 추가
+// ════════════════════════════════════════════════════════════════
+const CSX = { surveyId: null, items: [], bound: false };
+
+function openCsExtract(survey) {
+  CSX.surveyId = survey.id;
+  CSX.items = [];
+  if (!CSX.bound) bindCsExtract();
+  $('#cs-extract-status').textContent = '';
+  $('#cs-extract-list').innerHTML = '';
+  $('#cs-extract-add').disabled = true;
+  $('#cs-extract-selall').checked = true;
+  $('#cs-extract-modal').hidden = false;
+  document.body.classList.add('modal-open');
+}
+function closeCsExtract() {
+  $('#cs-extract-modal').hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
+function bindCsExtract() {
+  CSX.bound = true;
+  const fileInp = $('#cs-extract-file');
+  $('#cs-extract-pick').addEventListener('click', () => fileInp.click());
+  fileInp.addEventListener('change', async () => {
+    const f = fileInp.files && fileInp.files[0];
+    fileInp.value = '';
+    if (f) await runCsExtract(f);
+  });
+  $('#cs-extract-selall').addEventListener('change', (e) => {
+    document.querySelectorAll('#cs-extract-list .csx-chk').forEach(c => { c.checked = e.target.checked; });
+    updateCsxAddState();
+  });
+  $('#cs-extract-add').addEventListener('click', confirmCsExtract);
+  $('#cs-extract-modal').addEventListener('click', (ev) => {
+    if (ev.target.dataset && ev.target.dataset.csxClose === '1') closeCsExtract();
+  });
+}
+
+async function runCsExtract(file) {
+  $('#cs-extract-list').innerHTML = '';
+  $('#cs-extract-add').disabled = true;
+  $('#cs-extract-status').textContent = '분석 중... (파일 크기에 따라 수십 초 걸릴 수 있어요)';
+  const fd = new FormData(); fd.append('file', file);
+  let res;
+  try {
+    res = await api(`/api/cs/surveys/${CSX.surveyId}/extract-report`, { method: 'POST', body: fd });
+  } catch (e) {
+    $('#cs-extract-status').textContent = '실패: ' + e.message;
+    return;
+  }
+  if (!res.ok) { $('#cs-extract-status').textContent = res.message || '추출 실패'; return; }
+  CSX.items = res.items || [];
+  if (!CSX.items.length) {
+    $('#cs-extract-status').textContent = '추출된 항목이 없습니다. 다른 파일을 시도해 보세요.';
+    return;
+  }
+  $('#cs-extract-status').textContent = `${CSX.items.length}개 항목을 찾았습니다. 확인 후 추가하세요.`;
+  renderCsxList();
+}
+
+function renderCsxList() {
+  const wrap = $('#cs-extract-list'); wrap.innerHTML = '';
+  CSX.items.forEach((it, i) => {
+    const chk = el('input', { type: 'checkbox', class: 'csx-chk', checked: true });
+    chk.addEventListener('change', updateCsxAddState);
+    it._chk = chk;
+    const cat = el('select', { class: 'csx-cat' },
+      el('option', { value: 'Defect' }, 'Defect'),
+      el('option', { value: 'Observation' }, 'Observation'));
+    cat.value = it.category || 'Observation';
+    cat.addEventListener('change', () => { CSX.items[i].category = cat.value; });
+    const item = el('input', { class: 'csx-in', value: it.item || '', placeholder: '항목명' });
+    item.addEventListener('input', () => { CSX.items[i].item = item.value; });
+    const desc = el('textarea', { class: 'csx-ta', rows: 2, placeholder: '상세 내용' });
+    desc.value = it.description || '';
+    desc.addEventListener('input', () => { CSX.items[i].description = desc.value; });
+    const rem = el('input', { class: 'csx-in', value: it.remark || '', placeholder: '비고' });
+    rem.addEventListener('input', () => { CSX.items[i].remark = rem.value; });
+    wrap.append(el('div', { class: 'csx-row' },
+      el('div', { class: 'csx-row-top' }, chk, cat, item),
+      desc,
+      el('div', { class: 'csx-row-rem' }, el('span', { class: 'csx-rem-label' }, 'Remark'), rem),
+    ));
+  });
+  updateCsxAddState();
+}
+
+function updateCsxAddState() {
+  const n = document.querySelectorAll('#cs-extract-list .csx-chk:checked').length;
+  const btn = $('#cs-extract-add');
+  btn.disabled = n === 0;
+  btn.textContent = n ? `선택 항목 추가 (${n})` : '선택 항목 추가';
+}
+
+async function confirmCsExtract() {
+  const chosen = CSX.items.filter(it => it._chk && it._chk.checked);
+  if (!chosen.length) return;
+  const groups = { Defect: [], Observation: [] };
+  chosen.forEach(it => {
+    const cat = (it.category === 'Defect') ? 'Defect' : 'Observation';
+    groups[cat].push({ item: it.item || '', description: it.description || '', remark: it.remark || '', status: 'Open' });
+  });
+  $('#cs-extract-add').disabled = true;
+  $('#cs-extract-status').textContent = '추가 중...';
+  try {
+    for (const cat of ['Defect', 'Observation']) {
+      if (groups[cat].length)
+        await api(`/api/cs/surveys/${CSX.surveyId}/findings`, {
+          method: 'POST', body: JSON.stringify({ category: cat, items: groups[cat] }),
+        });
+    }
+  } catch (e) {
+    $('#cs-extract-status').textContent = '추가 실패: ' + e.message;
+    return;
+  }
+  closeCsExtract();
+  await reloadData();
+}
