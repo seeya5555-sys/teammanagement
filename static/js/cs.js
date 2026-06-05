@@ -1553,7 +1553,8 @@ function renderCsxList() {
     const desc = el('textarea', { class: 'csx-ta', rows: 2, placeholder: '상세 내용' });
     desc.value = it.description || '';
     desc.addEventListener('input', () => { CSX.items[i].description = desc.value; });
-    const rem = el('input', { class: 'csx-in', value: it.remark || '', placeholder: '비고' });
+    const rem = el('textarea', { class: 'csx-ta', rows: 2, placeholder: '비고 (Description 한글 번역)' });
+    rem.value = it.remark || '';
     rem.addEventListener('input', () => { CSX.items[i].remark = rem.value; });
     wrap.append(el('div', { class: 'csx-row' },
       el('div', { class: 'csx-row-top' }, chk, cat, item),
