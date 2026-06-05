@@ -1730,6 +1730,208 @@ def api_cs_finding_delete(fid):
     return jsonify({'ok': True})
 
 
+# ─── 보고서 → 항목 자동 추출 (Gemini + 엑셀 파서) ─────────────
+def _gemini_call_json(parts):
+    """parts(list) → Gemini generateContent → 파싱된 JSON dict 또는 {'error':...}."""
+    if not GEMINI_API_KEY:
+        return {'error': 'NO_API_KEY'}
+    import urllib.request, urllib.error
+    body = {'contents': [{'parts': parts}],
+            'generationConfig': {'response_mime_type': 'application/json'}}
+    url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
+           f'{GEMINI_MODEL}:generateContent')
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode('utf-8'),
+        headers={'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY},
+        method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as he:
+        try:
+            detail = he.read().decode('utf-8')[:300]
+        except Exception:
+            detail = str(he)
+        return {'error': 'API_CALL_FAILED', 'detail': detail}
+    except Exception as e:
+        return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+    text = ''
+    try:
+        cands = data.get('candidates') or []
+        if not cands:
+            return {'error': 'API_CALL_FAILED', 'detail': json.dumps(data)[:300]}
+        for part in (cands[0].get('content', {}).get('parts') or []):
+            if isinstance(part.get('text'), str):
+                text += part['text']
+    except Exception as e:
+        return {'error': 'PARSE_FAILED', 'raw': str(e)}
+    text = text.strip()
+    if text.startswith('```'):
+        text = text.strip('`')
+        if text[:4].lower() == 'json':
+            text = text[4:]
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        return {'error': 'PARSE_FAILED', 'raw': text[:300]}
+
+
+def _findings_prompt(kind):
+    if kind == 'cs':
+        return (
+            "다음은 선박 컨디션 서베이(상태검사) 보고서다. 보고서에 적힌 지적/관찰 항목을 "
+            "빠짐없이 추출해 지정한 JSON으로만 답하라. 각 항목 필드:\n"
+            "- category: 'Defect' 또는 'Observation' (시정이 필요한 지적은 Defect, 권고/관찰사항은 Observation)\n"
+            "- item: 짧은 제목 한 줄 (예: 'Main deck 부식')\n"
+            "- description: 상세 내용\n"
+            "- remark: 위치/조치/비고 등 부가정보 (없으면 빈 문자열)\n"
+            "원문이 영어면 item/description은 영어 그대로 두라. 없는 내용을 지어내지 말 것. "
+            "항목이 하나도 없으면 items를 빈 배열로.\n"
+            '형식: {"items":[{"category":"Defect","item":"","description":"","remark":""}]}'
+        )
+    return (
+        "다음은 선박 SIRE/베팅 점검 보고서다. 보고서에 적힌 관찰사항(observation)을 "
+        "빠짐없이 추출해 지정한 JSON으로만 답하라. 각 항목 필드:\n"
+        "- item: 짧은 제목 한 줄\n"
+        "- description: 상세 내용 (지적 본문)\n"
+        "- remark: 참조번호/장비/비고 등 부가정보 (없으면 빈 문자열)\n"
+        "원문이 영어면 그대로 두라. 없는 내용을 지어내지 말 것. 없으면 items를 빈 배열로.\n"
+        '형식: {"items":[{"item":"","description":"","remark":""}]}'
+    )
+
+
+def _normalize_findings(parsed, kind):
+    out = []
+    for it in (parsed.get('items') or []):
+        if not isinstance(it, dict):
+            continue
+        rec = {
+            'item':        (it.get('item') or '').strip(),
+            'description': (it.get('description') or '').strip(),
+            'remark':      (it.get('remark') or '').strip(),
+        }
+        if kind == 'cs':
+            cat = it.get('category')
+            rec['category'] = cat if cat in ('Defect', 'Observation') else 'Observation'
+        if rec['item'] or rec['description']:
+            out.append(rec)
+    return out
+
+
+def _xlsx_extract(raw_bytes, kind):
+    """엑셀: 헤더가 명확하면 직접 매핑(AI 불필요), 자유양식이면 텍스트화 후 Gemini.
+    반환: ('items', [...])  또는  ('text', '<탭구분 텍스트>')."""
+    import io
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
+    ws = wb.active
+    rows = []
+    for r in ws.iter_rows(values_only=True):
+        rows.append(['' if c is None else str(c).strip() for c in r])
+    if not rows:
+        return ('items', [])
+
+    KEY = {
+        'category':    ['category', '구분', '분류', 'type', 'def/obs'],
+        'item':        ['item', '항목', 'title', 'subject', '제목'],
+        'description': ['description', 'detail', 'details', '내용', '상세', 'finding', 'observation', 'remarks/finding'],
+        'remark':      ['remark', 'remarks', '비고', 'note', 'notes', 'comment', 'action', '조치'],
+    }
+    header_idx, colmap = None, {}
+    for i, row in enumerate(rows[:6]):
+        m = {}
+        for ci, cell in enumerate(row):
+            lc = cell.lower()
+            for field, keys in KEY.items():
+                if field in m:
+                    continue
+                if any(k == lc or k in lc for k in keys):
+                    m[field] = ci
+        if 'description' in m or ('item' in m and len(m) >= 2):
+            header_idx, colmap = i, m
+            break
+
+    if header_idx is not None:
+        items = []
+        for row in rows[header_idx + 1:]:
+            if not any(row):
+                continue
+            def g(f):
+                ci = colmap.get(f)
+                return row[ci] if ci is not None and ci < len(row) else ''
+            rec = {'item': g('item'), 'description': g('description'), 'remark': g('remark')}
+            if kind == 'cs':
+                cat = (g('category') or '').strip().lower()
+                rec['category'] = 'Defect' if cat.startswith('def') or '지적' in cat else 'Observation'
+            if not rec['description'] and rec['item']:
+                rec['description'] = rec['item']
+            if rec['item'] or rec['description']:
+                items.append(rec)
+        return ('items', items)
+
+    # 자유 양식 → 텍스트(TSV)로 변환
+    lines = ['\t'.join(r) for r in rows if any(r)]
+    return ('text', '\n'.join(lines[:400]))
+
+
+def _extract_findings_from_upload(f, kind):
+    """업로드 FileStorage → 항목 리스트. (items, err) 반환."""
+    name = (f.filename or '').lower()
+    ext = name.rsplit('.', 1)[-1] if '.' in name else ''
+    raw = f.read()
+    size_mb = len(raw) / (1024 * 1024)
+
+    if ext in ('xlsx', 'xls'):
+        try:
+            mode, data = _xlsx_extract(raw, kind)
+        except Exception as e:
+            return None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
+        if mode == 'items':
+            return data, None
+        parsed = _gemini_call_json([{'text': _findings_prompt(kind) + '\n\n[보고서 표 내용]\n' + data}])
+    elif ext == 'pdf':
+        if size_mb > 15:
+            return None, {'reason': 'TOO_LARGE', 'message': f'PDF가 너무 큽니다({size_mb:.1f}MB). 15MB 이하로 줄이거나 페이지를 나눠 올려주세요.'}
+        b64 = __import__('base64').standard_b64encode(raw).decode()
+        parsed = _gemini_call_json([
+            {'inline_data': {'mime_type': 'application/pdf', 'data': b64}},
+            {'text': _findings_prompt(kind)},
+        ])
+    elif ext in ('png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'):
+        if size_mb > 15:
+            return None, {'reason': 'TOO_LARGE', 'message': f'이미지가 너무 큽니다({size_mb:.1f}MB).'}
+        import mimetypes
+        media = mimetypes.guess_type(name)[0] or 'image/jpeg'
+        b64 = __import__('base64').standard_b64encode(raw).decode()
+        parsed = _gemini_call_json([
+            {'inline_data': {'mime_type': media, 'data': b64}},
+            {'text': _findings_prompt(kind)},
+        ])
+    else:
+        return None, {'reason': 'BAD_TYPE', 'message': 'PDF, 이미지, 엑셀(xlsx) 파일만 지원합니다.'}
+
+    if parsed.get('error') == 'NO_API_KEY':
+        return None, {'reason': 'no_api_key', 'message': 'AI 자동추출이 설정되지 않았습니다(키 미설정).'}
+    if parsed.get('error'):
+        return None, {'reason': parsed['error'], 'message': '자동 추출에 실패했습니다.',
+                      'detail': parsed.get('detail') or parsed.get('raw')}
+    return _normalize_findings(parsed, kind), None
+
+
+@app.route('/api/cs/surveys/<int:sid>/extract-report', methods=['POST'])
+@login_required
+def api_cs_extract_report(sid):
+    if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
+        abort(404)
+    if 'file' not in request.files or not request.files['file'].filename:
+        return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
+    items, err = _extract_findings_from_upload(request.files['file'], 'cs')
+    if err:
+        return jsonify({'ok': False, **err}), 200
+    return jsonify({'ok': True, 'items': items, 'count': len(items)})
+
+
 # ----- CS 첨부파일 -----
 
 @app.route('/api/cs/surveys/<int:sid>/attachments', methods=['GET'])
