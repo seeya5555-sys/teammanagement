@@ -1784,10 +1784,10 @@ def _findings_prompt(kind):
             "빠짐없이 추출해 지정한 JSON으로만 답하라. 각 항목 필드:\n"
             "- category: 'Defect' 또는 'Observation' (시정이 필요한 지적은 Defect, 권고/관찰사항은 Observation)\n"
             "- item: 짧은 제목 한 줄 (예: 'Main deck 부식')\n"
-            "- description: 상세 내용\n"
-            "- remark: 위치/조치/비고 등 부가정보 (없으면 빈 문자열)\n"
-            "원문이 영어면 item/description은 영어 그대로 두라. 없는 내용을 지어내지 말 것. "
-            "항목이 하나도 없으면 items를 빈 배열로.\n"
+            "- description: 지적 상세 내용을 원문 그대로 복사한다(영문이면 영문 그대로). 요약·변형 금지.\n"
+            "- remark: description 내용을 한국어로 번역해 넣되, 기술 명칭·장비명·약어"
+            "(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다.\n"
+            "없는 내용을 지어내지 말 것. 항목이 하나도 없으면 items를 빈 배열로.\n"
             '형식: {"items":[{"category":"Defect","item":"","description":"","remark":""}]}'
         )
     return (
