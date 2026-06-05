@@ -1840,7 +1840,7 @@ def _xlsx_extract(raw_bytes, kind):
 
     KEY = {
         'category':    ['category', '구분', '분류', 'type', 'def/obs'],
-        'item':        ['item', '항목', 'title', 'subject', '제목'],
+        'item':        ['item', '항목', 'title', 'subject', '제목', 'short gen name', 'gen name', 'short name'],
         'description': ['description', 'detail', 'details', '내용', '상세', 'finding', 'observation', 'remarks/finding'],
         'remark':      ['remark', 'remarks', '비고', 'note', 'notes', 'comment', 'action', '조치'],
     }
@@ -1881,6 +1881,35 @@ def _xlsx_extract(raw_bytes, kind):
     return ('text', '\n'.join(lines[:400]))
 
 
+def _summarize_remarks(items, kind):
+    """엑셀 직접매핑 항목들의 remark를, 각 description의 한글 요약으로 채운다(배치 1회 호출).
+    GEMINI 키 없거나 실패 시 기존 remark 값을 그대로 유지."""
+    if not GEMINI_API_KEY or not items:
+        return items
+    payload = json.dumps(
+        [{'i': idx, 'description': (it.get('description') or '')} for idx, it in enumerate(items)],
+        ensure_ascii=False)
+    prompt = (
+        "아래는 선박 점검 지적 항목들의 description 목록(JSON 배열)이다. 각 항목의 description을 "
+        "한국어로 1~2문장으로 간결하게 요약하라(전체 직역 금지). 기술 명칭·장비명·약어"
+        "(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다. "
+        "입력의 i 값을 그대로 사용해 JSON으로만 답하라.\n"
+        '형식: {"summaries":[{"i":0,"remark":"요약문"}]}\n\n[입력]\n' + payload)
+    res = _gemini_call_json([{'text': prompt}])
+    if res.get('error'):
+        return items
+    by_i = {}
+    for s in (res.get('summaries') or []):
+        try:
+            by_i[int(s.get('i'))] = (s.get('remark') or '').strip()
+        except (TypeError, ValueError):
+            pass
+    for idx, it in enumerate(items):
+        if by_i.get(idx):
+            it['remark'] = by_i[idx]
+    return items
+
+
 def _extract_findings_from_upload(f, kind):
     """업로드 FileStorage → 항목 리스트. (items, err) 반환."""
     name = (f.filename or '').lower()
@@ -1894,7 +1923,7 @@ def _extract_findings_from_upload(f, kind):
         except Exception as e:
             return None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
         if mode == 'items':
-            return data, None
+            return _summarize_remarks(data, kind), None
         parsed = _gemini_call_json([{'text': _findings_prompt(kind) + '\n\n[보고서 표 내용]\n' + data}])
     elif ext == 'pdf':
         if size_mb > 15:
