@@ -1791,12 +1791,18 @@ def _findings_prompt(kind):
             '형식: {"items":[{"category":"Defect","item":"","description":"","remark":""}]}'
         )
     return (
-        "다음은 선박 SIRE/베팅 점검 보고서다. 보고서에 적힌 관찰사항(observation)을 "
-        "빠짐없이 추출해 지정한 JSON으로만 답하라. 각 항목 필드:\n"
-        "- item: 짧은 제목 한 줄\n"
-        "- description: 상세 내용 (지적 본문)\n"
-        "- remark: 참조번호/장비/비고 등 부가정보 (없으면 빈 문자열)\n"
-        "원문이 영어면 그대로 두라. 없는 내용을 지어내지 말 것. 없으면 items를 빈 배열로.\n"
+        "다음은 선박 SIRE 2.0 점검 보고서다. 지적(결함) 사항만 추출한다.\n"
+        "■ 포함 대상: 'Observable or detectable deficiency' 또는 'Not as expected'로 표시된 부정적 지적 "
+        "(보고서에서 빨간색 글씨로 적힌 항목).\n"
+        "■ 제외 대상: 'Exceeded normal expectation' 등 칭찬/긍정 평가(초록색 글씨)는 절대 포함하지 마라.\n"
+        "각 지적 항목의 필드:\n"
+        "- item: 항목 왼쪽에 표시된 분류(Hardware 또는 Human)를 괄호로 먼저 붙이고, 그 뒤에 굵게 표시된 "
+        "지적 제목을 그대로 이어 붙인다. 예: '(Hardware)Misc Nautical Equipment – Maintenance deferred, awaiting spares', "
+        "'(Human)Senior Engineer Officer – Not as expected'.\n"
+        "- description: 제목 아래의 상세 본문(이탤릭 문장)을 영어 원문 그대로 복사한다. 요약·변형 금지.\n"
+        "- remark: description 내용을 한국어로 번역해 넣되, 기술 명칭·장비명·약어"
+        "(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm, turn table 등)는 번역하지 말고 영문 그대로 둔다.\n"
+        "없는 내용을 지어내지 말 것. 지적이 하나도 없으면 items를 빈 배열로.\n"
         '형식: {"items":[{"item":"","description":"","remark":""}]}'
     )
 
@@ -2286,6 +2292,19 @@ def api_vt_finding_delete(fid):
 
 
 # ----- Attachments -----
+
+@app.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
+@login_required
+def api_vt_extract_report(vid):
+    if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
+        abort(404)
+    if 'file' not in request.files or not request.files['file'].filename:
+        return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
+    items, err = _extract_findings_from_upload(request.files['file'], 'sire')
+    if err:
+        return jsonify({'ok': False, **err}), 200
+    return jsonify({'ok': True, 'items': items, 'count': len(items)})
+
 
 @app.route('/api/vettings/<int:vid>/attachments', methods=['GET'])
 @login_required
