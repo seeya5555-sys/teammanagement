@@ -551,6 +551,11 @@ function detailRow(vt) {
   const tr = el('tr', { class: 'cs-detail-row' });
   const td = el('td', { colspan: 11, class: 'cs-detail-cell' });
 
+  // 보고서 → 지적 항목 자동 생성 (Gemini)
+  td.append(el('div', { class: 'csx-bar' },
+    el('button', { class: 'btn btn-outline btn-sm', onclick: () => openVtExtract(vt) },
+      '📄 보고서에서 자동 생성')));
+
   // Overall Remark
   const remarkSec = el('div', { class: 'cs-finding-section' });
   remarkSec.append(el('div', { class: 'cs-finding-header cs-cat-overall' },
@@ -1366,3 +1371,118 @@ async function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// ════════════════════════════════════════════════════════════════
+//  SIRE 보고서(PDF·이미지·엑셀) → 지적 항목 자동 생성
+//  · 빨간 지적만 추출 / item=(Hardware|Human)+제목 / desc=원문 / remark=한글번역
+//  · 검토 목록 → 선택 추가
+// ════════════════════════════════════════════════════════════════
+const VTX = { vettingId: null, items: [], bound: false };
+
+function openVtExtract(vt) {
+  VTX.vettingId = vt.id;
+  VTX.items = [];
+  if (!VTX.bound) bindVtExtract();
+  $('#vt-extract-status').textContent = '';
+  $('#vt-extract-list').innerHTML = '';
+  $('#vt-extract-add').disabled = true;
+  $('#vt-extract-selall').checked = true;
+  $('#vt-extract-modal').hidden = false;
+  document.body.classList.add('modal-open');
+}
+function closeVtExtract() {
+  $('#vt-extract-modal').hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
+function bindVtExtract() {
+  VTX.bound = true;
+  const fileInp = $('#vt-extract-file');
+  $('#vt-extract-pick').addEventListener('click', () => fileInp.click());
+  fileInp.addEventListener('change', async () => {
+    const f = fileInp.files && fileInp.files[0];
+    fileInp.value = '';
+    if (f) await runVtExtract(f);
+  });
+  $('#vt-extract-selall').addEventListener('change', (e) => {
+    document.querySelectorAll('#vt-extract-list .csx-chk').forEach(c => { c.checked = e.target.checked; });
+    updateVtxAddState();
+  });
+  $('#vt-extract-add').addEventListener('click', confirmVtExtract);
+  $('#vt-extract-modal').addEventListener('click', (ev) => {
+    if (ev.target.dataset && ev.target.dataset.vtxClose === '1') closeVtExtract();
+  });
+}
+
+async function runVtExtract(file) {
+  $('#vt-extract-list').innerHTML = '';
+  $('#vt-extract-add').disabled = true;
+  $('#vt-extract-status').textContent = '분석 중... (파일 크기에 따라 수십 초 걸릴 수 있어요)';
+  const fd = new FormData(); fd.append('file', file);
+  let res;
+  try {
+    res = await api(`/api/vettings/${VTX.vettingId}/extract-report`, { method: 'POST', body: fd });
+  } catch (e) {
+    $('#vt-extract-status').textContent = '실패: ' + e.message;
+    return;
+  }
+  if (!res.ok) { $('#vt-extract-status').textContent = res.message || '추출 실패'; return; }
+  VTX.items = res.items || [];
+  if (!VTX.items.length) {
+    $('#vt-extract-status').textContent = '추출된 지적 항목이 없습니다 (긍정 평가만 있는 보고서일 수 있어요).';
+    return;
+  }
+  $('#vt-extract-status').textContent = `${VTX.items.length}개 지적 항목을 찾았습니다. 확인 후 추가하세요.`;
+  renderVtxList();
+}
+
+function renderVtxList() {
+  const wrap = $('#vt-extract-list'); wrap.innerHTML = '';
+  VTX.items.forEach((it, i) => {
+    const chk = el('input', { type: 'checkbox', class: 'csx-chk' });
+    chk.checked = true;
+    chk.addEventListener('change', updateVtxAddState);
+    it._chk = chk;
+    const item = el('input', { class: 'csx-in', value: it.item || '', placeholder: '(Hardware)/(Human) + 지적 제목' });
+    item.addEventListener('input', () => { VTX.items[i].item = item.value; });
+    const desc = el('textarea', { class: 'csx-ta', rows: 2, placeholder: 'Description (원문)' });
+    desc.value = it.description || '';
+    desc.addEventListener('input', () => { VTX.items[i].description = desc.value; });
+    const rem = el('textarea', { class: 'csx-ta', rows: 2, placeholder: 'Remark (한글 번역)' });
+    rem.value = it.remark || '';
+    rem.addEventListener('input', () => { VTX.items[i].remark = rem.value; });
+    wrap.append(el('div', { class: 'csx-row' },
+      el('div', { class: 'csx-row-top' }, chk, item),
+      desc,
+      el('div', { class: 'csx-row-rem' }, el('span', { class: 'csx-rem-label' }, 'Remark'), rem),
+    ));
+  });
+  updateVtxAddState();
+}
+
+function updateVtxAddState() {
+  const n = document.querySelectorAll('#vt-extract-list .csx-chk:checked').length;
+  const btn = $('#vt-extract-add');
+  btn.disabled = n === 0;
+  btn.textContent = n ? `선택 항목 추가 (${n})` : '선택 항목 추가';
+}
+
+async function confirmVtExtract() {
+  const chosen = VTX.items.filter(it => it._chk && it._chk.checked);
+  if (!chosen.length) return;
+  const items = chosen.map(it => ({
+    item: it.item || '', description: it.description || '', remark: it.remark || '', status: 'Open',
+  }));
+  $('#vt-extract-add').disabled = true;
+  $('#vt-extract-status').textContent = '추가 중...';
+  try {
+    await api(`/api/vettings/${VTX.vettingId}/findings`, {
+      method: 'POST', body: JSON.stringify({ items }),
+    });
+  } catch (e) {
+    $('#vt-extract-status').textContent = '추가 실패: ' + e.message;
+    return;
+  }
+  closeVtExtract();
+  await reloadData();
+}
