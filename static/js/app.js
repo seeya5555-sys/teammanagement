@@ -2385,18 +2385,15 @@ function wireEvents() {
   $('#btn-toggle-all').addEventListener('click', toggleAll);
 
   // 엑셀 추출 — 현재 필터 상태 그대로 백엔드에 넘김
-  $('#btn-export-xlsx').addEventListener('click', () => {
+  function buildExportParams() {
     const p = new URLSearchParams();
     if (S.activeTab !== 'all')   p.set('supervisor_id', S.activeTab);
     if (S.filters.q)             p.set('q', S.filters.q);
     if (S.filters.vessel_id)     p.set('vessel_id', S.filters.vessel_id);
     if (S.filters.vessel_type)   p.set('vessel_type', S.filters.vessel_type);
     if (S.filters.priority)      p.set('priority', S.filters.priority);
-
     // status 처리 — 화면과 동일하게:
-    //  · 명시 필터 있으면 그대로
-    //  · "완료" 서브탭은 status=Closed
-    //  · "진행중" 서브탭은 status_in=Open,InProgress (다중 값)
+    //  · 명시 필터 있으면 그대로  · "완료" 서브탭은 Closed  · 그 외 진행중(Open,InProgress)
     if (S.filters.status) {
       p.set('status', S.filters.status);
     } else if (S.activeSubTab === 'closed') {
@@ -2404,7 +2401,37 @@ function wireEvents() {
     } else {
       p.set('status_in', 'Open,InProgress');
     }
-    window.location = '/api/issues/export?' + p.toString();
+    return p;
+  }
+
+  $('#btn-export-xlsx').addEventListener('click', () => {
+    window.location = '/api/issues/export?' + buildExportParams().toString();
+  });
+
+  // 영문 엑셀 추출 — 동일 템플릿에 ITEM/DESCRIPTION/ACTION PLAN 영문 번역
+  $('#btn-export-xlsx-en').addEventListener('click', () => {
+    const btn = $('#btn-export-xlsx-en');
+    const label = btn.querySelector('span');
+    const prev = label ? label.textContent : '';
+    if (label) label.textContent = '번역 중...';
+    btn.disabled = true;
+    const p = buildExportParams();
+    p.set('lang', 'en');
+    // 번역 호출로 수 초 걸릴 수 있어 fetch로 받아 파일 저장
+    fetch('/api/issues/export?' + p.toString())
+      .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.blob().then(b => ({ b, res })); })
+      .then(({ b, res }) => {
+        const cd = res.headers.get('content-disposition') || '';
+        let name = 'TRMT_Daily_EN.xlsx';
+        const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^;"']+)/i);
+        if (m) name = decodeURIComponent(m[1]);
+        const url = URL.createObjectURL(b);
+        const a = document.createElement('a');
+        a.href = url; a.download = name; document.body.appendChild(a); a.click();
+        a.remove(); URL.revokeObjectURL(url);
+      })
+      .catch(err => alert('영문 추출 실패: ' + err.message))
+      .finally(() => { if (label) label.textContent = prev; btn.disabled = false; });
   });
 
   let searchTimer;
