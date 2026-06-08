@@ -551,10 +551,14 @@ function detailRow(vt) {
   const tr = el('tr', { class: 'cs-detail-row' });
   const td = el('td', { colspan: 11, class: 'cs-detail-cell' });
 
-  // 보고서 → 지적 항목 자동 생성 (Gemini)
+  // 보고서 → 지적 항목 자동 생성 (Gemini) + 엑셀 추출
   td.append(el('div', { class: 'csx-bar' },
     el('button', { class: 'btn btn-outline btn-sm', onclick: () => openVtExtract(vt) },
-      '📄 보고서에서 자동 생성')));
+      '📄 보고서에서 자동 생성'),
+    el('button', {
+      class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
+      onclick: () => { window.location = `/api/vettings/${vt.id}/export`; },
+    }, '⬇ 엑셀 추출')));
 
   // Overall Remark
   const remarkSec = el('div', { class: 'cs-finding-section' });
