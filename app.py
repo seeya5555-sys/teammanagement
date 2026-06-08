@@ -1090,6 +1090,149 @@ def api_issue_export():
     )
 
 
+@app.route('/api/issues/summary-export')
+@login_required
+def api_issue_summary_export():
+    """필터된 이슈를 No./Vessel Name/현안업무 3열로 한국어 요약 추출 (Gemini)."""
+    from io import BytesIO
+    from datetime import datetime
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return jsonify({'error': 'openpyxl 미설치'}), 500
+    from flask import send_file
+
+    # 화면 필터와 동일
+    conds, params = ['1=1'], []
+    for key, col in [('supervisor_id', 'i.supervisor_id'), ('vessel_id', 'i.vessel_id'),
+                     ('status', 'i.status'), ('priority', 'i.priority')]:
+        val = request.args.get(key)
+        if val:
+            conds.append(f'{col} = ?'); params.append(val)
+    status_in = request.args.get('status_in')
+    if status_in:
+        vals = [v.strip() for v in status_in.split(',') if v.strip()]
+        if vals:
+            conds.append(f"i.status IN ({','.join('?' for _ in vals)})"); params += vals
+    q = request.args.get('q')
+    if q:
+        like = f'%{q}%'
+        conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
+        params += [like, like, like]
+    vt = request.args.get('vessel_type')
+    if vt:
+        conds.append('v.vessel_type = ?'); params.append(vt)
+
+    sql = f'''
+        SELECT i.*, s.display_order AS sv_order, s.id AS sv_id,
+               v.name AS vessel_name
+          FROM issues i
+          JOIN supervisors s ON s.id = i.supervisor_id
+          JOIN vessels     v ON v.id = i.vessel_id
+         WHERE {' AND '.join(conds)}
+         ORDER BY s.display_order ASC, s.id ASC, i.issue_date ASC, i.id ASC
+    '''
+    rows = [_issue_to_dict(r) for r in query(sql, params)]
+
+    # Gemini 요약 (description + 최신 action)
+    payload = [{'i': idx,
+                'description': r.get('description') or '',
+                'action': _latest_action_progress(r.get('actions'))}
+               for idx, r in enumerate(rows)]
+    summaries = _gen_issue_summaries(payload)
+
+    # 현안업무 셀 조립
+    def build_cell(idx, r):
+        s = summaries.get(idx, {})
+        desc = s.get('desc') or (r.get('description') or '').strip().split('\n')[0]
+        act_date, act_raw = _latest_action(r.get('actions'))
+        action = s.get('action') or act_raw
+        head = f"{_md_label(r.get('issue_date') or '')} {r.get('item_topic') or ''}".strip()
+        lines = [head]
+        if desc:
+            lines.append(f'1) {desc}')
+        if action:
+            md = _md_label(act_date)
+            lines.append(f'2) {md} {action}'.strip() if md else f'2) {action}')
+        return '\n'.join(lines)
+
+    # ── Workbook ──
+    wb = Workbook(); ws = wb.active; ws.title = '업무 요약'
+    F = 'Malgun Gothic'
+    HEADERS = ['No.', 'Vessel Name', '현안업무']
+    WIDTHS = [6, 24, 95]
+    for idx, w in enumerate(WIDTHS, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = w
+
+    title_fill = PatternFill('solid', start_color='1F3A5F')
+    sub_fill   = PatternFill('solid', start_color='2C5282')
+    hdr_fill   = PatternFill('solid', start_color='34495E')
+    thin = Side(style='thin', color='BBBBBB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    now = datetime.now()
+    ws.merge_cells('A1:C1')
+    c = ws.cell(row=1, column=1, value='Daily 업무 요약')
+    c.font = Font(name=F, size=14, bold=True, color='FFFFFF'); c.fill = title_fill
+    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells('A2:C2')
+    me = session.get('display_name') or session.get('username') or ''
+    c = ws.cell(row=2, column=1,
+                value=f"추출일: {now.strftime('%Y-%m-%d')}    │    총 {len(rows)}건"
+                      + (f"    │    {me}" if me else ''))
+    c.font = Font(name=F, size=10, italic=True, color='ECF0F1'); c.fill = sub_fill
+    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 6
+
+    HDR = 4
+    for ci, h in enumerate(HEADERS, start=1):
+        cc = ws.cell(row=HDR, column=ci, value=h)
+        cc.font = Font(name=F, size=11, bold=True, color='FFFFFF'); cc.fill = hdr_fill
+        cc.alignment = Alignment(horizontal='center', vertical='center')
+        cc.border = border
+    ws.row_dimensions[HDR].height = 24
+
+    body = Font(name=F, size=10)
+    top_wrap = Alignment(horizontal='left', vertical='top', wrap_text=True)
+    center = Alignment(horizontal='center', vertical='center')
+    r_idx = HDR + 1
+    for n, r in enumerate(rows, start=1):
+        ws.cell(row=r_idx, column=1, value=n).alignment = center
+        ws.cell(row=r_idx, column=1).font = body
+        ws.cell(row=r_idx, column=2, value=r.get('vessel_name') or '')
+        ws.cell(row=r_idx, column=2).alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        ws.cell(row=r_idx, column=2).font = body
+        cell = ws.cell(row=r_idx, column=3, value=build_cell(n - 1, r))
+        cell.alignment = top_wrap; cell.font = body
+        for ci in range(1, 4):
+            ws.cell(row=r_idx, column=ci).border = border
+        # 줄 수에 맞춰 행 높이 살짝 키움
+        n_lines = (build_cell(n - 1, r).count('\n') + 1)
+        ws.row_dimensions[r_idx].height = max(34, 15 * n_lines + 6)
+        r_idx += 1
+
+    ws.freeze_panes = f'A{HDR + 1}'
+    if r_idx - 1 > HDR:
+        ws.auto_filter.ref = f'A{HDR}:C{r_idx - 1}'
+    ws.print_options.horizontalCentered = True
+    ws.page_setup.orientation = 'portrait'
+    ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = f'{HDR}:{HDR}'
+
+    fname = f"TRMT_업무요약_{now.strftime('%Y%m%d')}.xlsx"
+    bio = BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(
+        bio,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True, download_name=fname)
+
+
 @app.route('/api/issues/<int:iid>')
 @login_required
 def api_issue_get(iid):
@@ -1845,6 +1988,88 @@ def _translate_batch_en(texts, group):
         if isinstance(en, str) and en.strip():
             out[i] = en
     return out
+
+
+def _gen_issue_summaries(payload_items):
+    """payload_items: [{'i':int,'description':str,'action':str}] →
+    {i: {'desc':str, 'action':str}} (한국어 요약). 키 없음/실패 시 빈 dict 부분 반환."""
+    result = {}
+    if not GEMINI_API_KEY or not payload_items:
+        return result
+
+    def run(group, depth=0):
+        if not group:
+            return
+        sub = [payload_items[k] for k in group]
+        prompt = (
+            "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 업무 항목에 대해 "
+            "두 가지를 한국어로 작성하라.\n"
+            "- desc: description의 핵심 문제를 1문장(최대 2문장)으로 짧게 요약\n"
+            "- action: action(최신 조치내용)을 한 줄로 짧게 요약 (내용 없으면 빈 문자열)\n"
+            "장비명·기술용어·약어(예: EGCS, Pump, Auto mode, Maker, BRG, RPM, LT cooler)는 영문 그대로 둔다. "
+            "과장/추측 금지, 없는 내용 추가 금지.\n"
+            "입력의 i를 그대로 사용해 JSON 객체로만 답하라.\n"
+            '형식: {"items":[{"i":0,"desc":"...","action":"..."}]}\n\n[입력]\n'
+            + json.dumps(sub, ensure_ascii=False))
+        res = _gemini_call_json([{'text': prompt}])
+        arr = _coerce_translation_items(res)  # translations/items/results/data 모두 수용
+        if arr is None:
+            if len(group) > 1 and depth < 6:
+                mid = len(group) // 2
+                run(group[:mid], depth + 1); run(group[mid:], depth + 1)
+            return
+        got = set()
+        for o in arr:
+            if not isinstance(o, dict):
+                continue
+            try:
+                i = int(o.get('i'))
+            except (TypeError, ValueError):
+                continue
+            result[i] = {
+                'desc':   (o.get('desc') or o.get('desc_summary') or '').strip(),
+                'action': (o.get('action') or o.get('action_summary') or '').strip(),
+            }
+            got.add(i)
+        missing = [k for k in group if k not in got]
+        if missing and len(group) > 1 and depth < 6:
+            mid = max(1, len(missing) // 2)
+            run(missing[:mid], depth + 1); run(missing[mid:], depth + 1)
+
+    CHUNK = 12
+    idxs = list(range(len(payload_items)))
+    for s in range(0, len(idxs), CHUNK):
+        run(idxs[s:s + CHUNK])
+    return result
+
+
+def _latest_action_progress(acts):
+    if not acts:
+        return ''
+    try:
+        best = sorted(acts, key=lambda a: (a.get('date') or ''))[-1]
+    except Exception:
+        best = acts[-1]
+    return (best.get('progress') or '').strip()
+
+
+def _latest_action(acts):
+    """최신 action(날짜 최댓값)의 (date, progress) 반환."""
+    if not acts:
+        return '', ''
+    try:
+        best = sorted(acts, key=lambda a: (a.get('date') or ''))[-1]
+    except Exception:
+        best = acts[-1]
+    return (best.get('date') or '').strip(), (best.get('progress') or '').strip()
+
+
+def _md_label(d):
+    try:
+        y, m, dd = d.split('-')
+        return f'[{int(m)}/{int(dd)}]'
+    except Exception:
+        return f'[{d}]' if d else ''
 
 
 def _translate_texts_en(texts):
