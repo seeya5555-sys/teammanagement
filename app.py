@@ -759,6 +759,10 @@ def api_issue_export():
     '''
     rows = [_issue_to_dict(r) for r in query(sql, params)]
 
+    EN = (request.args.get('lang') == 'en')
+    if EN:
+        _translate_rows_en(rows)
+
     # ── 2) 감독 → 월 → 일 → 이슈 (4단 그룹핑) ───────────────────
     sv_map  = {}   # sv_name -> {'order': sv_order, 'months': OrderedDict}
     sv_seq  = []
@@ -779,8 +783,11 @@ def api_issue_export():
         days[dkey].append(r)
 
     # ── 3) 스타일 정의 ──────────────────────────────────────────
-    HEADERS = ['NO.', '작성일', '마감일', '선박명', 'ITEM',
-               'DESCRIPTION', 'ACTION PLAN', '우선순위', '상태', '작성자']
+    HEADERS = (['NO.', 'Issue Date', 'Due Date', 'Vessel', 'ITEM',
+                'DESCRIPTION', 'ACTION PLAN', 'Priority', 'Status', 'Prepared By']
+               if EN else
+               ['NO.', '작성일', '마감일', '선박명', 'ITEM',
+                'DESCRIPTION', 'ACTION PLAN', '우선순위', '상태', '작성자'])
     COL_WIDTHS = [5, 12, 12, 22, 28, 38, 42, 13, 11, 11]
     N_COLS = len(HEADERS)
 
@@ -831,7 +838,9 @@ def api_issue_export():
         'InProgress': Font(name=F, size=10, bold=True, color='F57F17'),
         'Closed':     Font(name=F, size=10, bold=True, color='2E7D32'),
     }
-    STAT_LABEL = {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'}
+    STAT_LABEL = ({'Open': 'Open', 'InProgress': 'In Progress', 'Closed': 'Closed'}
+                  if EN else
+                  {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'})
 
     def _sheet_safe(name):
         bad = '[]:*?/\\'
@@ -852,9 +861,13 @@ def api_issue_export():
         return '\n'.join(lines)
 
     def _ko_month(ym):
-        # "2026-05" -> "2026년 5월"
+        if ym == '날짜 미정':
+            return 'Date TBD' if EN else '날짜 미정'
         try:
             y, m = ym.split('-')
+            if EN:
+                import calendar
+                return f'{calendar.month_abbr[int(m)]} {y}'
             return f'{y}년 {int(m)}월'
         except Exception:
             return ym
@@ -872,20 +885,20 @@ def api_issue_export():
     # 화면 필터 요약 (제목 영역에 노출)
     sub_chips = []
     if status_in:
-        sub_chips.append('필터: ' + status_in.replace(',', ' / '))
+        sub_chips.append(('Filter: ' if EN else '필터: ') + status_in.replace(',', ' / '))
     elif request.args.get('status'):
-        sub_chips.append('상태: ' + request.args.get('status'))
+        sub_chips.append(('Status: ' if EN else '상태: ') + request.args.get('status'))
     if request.args.get('priority'):
-        sub_chips.append('우선순위: ' + request.args.get('priority'))
+        sub_chips.append(('Priority: ' if EN else '우선순위: ') + request.args.get('priority'))
     if request.args.get('vessel_type'):
-        sub_chips.append('선종: ' + request.args.get('vessel_type'))
+        sub_chips.append(('Vessel Type: ' if EN else '선종: ') + request.args.get('vessel_type'))
     if request.args.get('vessel_id'):
         vname = query('SELECT name FROM vessels WHERE id=?',
                       (request.args.get('vessel_id'),), one=True)
-        if vname: sub_chips.append('선박: ' + vname['name'])
+        if vname: sub_chips.append(('Vessel: ' if EN else '선박: ') + vname['name'])
     if request.args.get('q'):
-        sub_chips.append('검색: ' + request.args.get('q'))
-    sub_text = ' | '.join(sub_chips) if sub_chips else '전체 항목'
+        sub_chips.append(('Search: ' if EN else '검색: ') + request.args.get('q'))
+    sub_text = ' | '.join(sub_chips) if sub_chips else ('All items' if EN else '전체 항목')
 
     if not sv_seq:
         ws = wb.create_sheet('데이터 없음')
@@ -909,7 +922,8 @@ def api_issue_export():
 
             # ── 4-1) 제목 영역 (행1-2) ──
             ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS)
-            c1 = ws.cell(row=1, column=1, value=f'Daily 업무관리   |   {sn}')
+            c1 = ws.cell(row=1, column=1,
+                         value=(f'Daily Work Log   |   {sn}' if EN else f'Daily 업무관리   |   {sn}'))
             c1.font = title_font
             c1.fill = title_fill
             c1.alignment = Alignment(horizontal='left', vertical='center', indent=1)
@@ -917,9 +931,14 @@ def api_issue_export():
 
             ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=N_COLS)
             total_cnt = sum(len(v) for m in months.values() for v in m.values())
-            sub_msg = f'추출일: {today_str}    │    총 {total_cnt}건    │    {sub_text}'
-            if me:
-                sub_msg += f'    │    출력: {me}'
+            if EN:
+                sub_msg = f'Exported: {today_str}    │    Total {total_cnt}    │    {sub_text}'
+                if me:
+                    sub_msg += f'    │    By: {me}'
+            else:
+                sub_msg = f'추출일: {today_str}    │    총 {total_cnt}건    │    {sub_text}'
+                if me:
+                    sub_msg += f'    │    출력: {me}'
             c2 = ws.cell(row=2, column=1, value=sub_msg)
             c2.font = sub_font
             c2.fill = sub_fill
@@ -969,11 +988,12 @@ def api_issue_export():
 
                 for dkey in day_keys:
                     items = days[dkey]
+                    dlabel = ('Date TBD' if EN else '날짜 미정') if dkey == '날짜 미정' else dkey
                     # 일 헤더 행
                     ws.merge_cells(start_row=cur_row, start_column=1,
                                    end_row=cur_row, end_column=N_COLS)
                     dc = ws.cell(row=cur_row, column=1,
-                                 value=f'   ▸  {dkey}   ({len(items)} item{"s" if len(items)>1 else ""})')
+                                 value=f'   ▸  {dlabel}   ({len(items)} item{"s" if len(items)>1 else ""})')
                     dc.font = day_font
                     dc.fill = day_fill
                     dc.alignment = left_mid
@@ -1053,10 +1073,11 @@ def api_issue_export():
 
     # ── 5) 파일명 ──
     today = now.strftime('%Y%m%d')
+    suffix = '_EN' if EN else ''
     if len(sv_seq) == 1:
-        fname = f'TRMT_Daily_{_sheet_safe(sv_seq[0])}_{today}.xlsx'
+        fname = f'TRMT_Daily_{_sheet_safe(sv_seq[0])}_{today}{suffix}.xlsx'
     else:
-        fname = f'TRMT_Daily_{today}.xlsx'
+        fname = f'TRMT_Daily_{today}{suffix}.xlsx'
 
     bio = BytesIO()
     wb.save(bio)
@@ -1775,6 +1796,59 @@ def _gemini_call_json(parts):
         return json.loads(text)
     except Exception:
         return {'error': 'PARSE_FAILED', 'raw': text[:300]}
+
+
+def _translate_texts_en(texts):
+    """한국어(한영 혼용) 문자열 리스트 → 선박 감독 현업 영어. 키 없음/실패 시 원문 유지."""
+    if not GEMINI_API_KEY:
+        return list(texts)
+    out = list(texts)
+    idxs = [i for i, t in enumerate(texts) if t and str(t).strip()]
+    CHUNK = 40
+    for s in range(0, len(idxs), CHUNK):
+        group = idxs[s:s + CHUNK]
+        payload = json.dumps([{'i': i, 'text': texts[i]} for i in group], ensure_ascii=False)
+        prompt = (
+            "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 한국어(또는 한영 혼용) "
+            "텍스트를 선박 관리 현업에서 자연스럽게 쓰는 영어로 번역하라.\n"
+            "- 장비명·약어·단위·수치(예: BRG, RPM, S/W pump, LT cooler, EGCS, °C, kts)는 그대로 둔다.\n"
+            "- 줄바꿈과 번호 매김(1. 2. ...) 구조를 그대로 보존한다.\n"
+            "- 이미 영어인 부분은 그대로 둔다. 의미를 바꾸거나 내용을 덧붙이지 마라.\n"
+            "입력의 i를 그대로 사용해 JSON으로만 답하라.\n"
+            '형식: {"translations":[{"i":0,"en":"..."}]}\n\n[입력]\n' + payload)
+        res = _gemini_call_json([{'text': prompt}])
+        if res.get('error'):
+            continue
+        for tr in (res.get('translations') or []):
+            try:
+                i = int(tr.get('i'))
+                en = tr.get('en')
+                if isinstance(en, str) and en.strip():
+                    out[i] = en
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def _translate_rows_en(rows):
+    """이슈 행들의 item_topic/description/actions[].progress 를 영문으로 치환(제자리)."""
+    bucket, texts = [], []
+    for r in rows:
+        if r.get('item_topic'):
+            bucket.append((r, 'item_topic', None)); texts.append(r['item_topic'])
+        if r.get('description'):
+            bucket.append((r, 'description', None)); texts.append(r['description'])
+        for ai, a in enumerate(r.get('actions') or []):
+            if a.get('progress'):
+                bucket.append((r, 'actions', ai)); texts.append(a['progress'])
+    if not texts:
+        return
+    tr = _translate_texts_en(texts)
+    for (r, field, ai), en in zip(bucket, tr):
+        if field == 'actions':
+            r['actions'][ai]['progress'] = en
+        else:
+            r[field] = en
 
 
 def _findings_prompt(kind):
