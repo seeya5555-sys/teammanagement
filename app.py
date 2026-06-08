@@ -1895,6 +1895,82 @@ def api_cs_finding_delete(fid):
 
 
 # ─── 보고서 → 항목 자동 추출 (Gemini + 엑셀 파서) ─────────────
+def _findings_workbook(title, subtitle, headers, rows, wrap_cols, widths):
+    """검사 findings → 스타일된 1시트 워크북 BytesIO 반환."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook(); ws = wb.active; ws.title = 'List'
+    F = 'Malgun Gothic'
+    N = len(headers)
+    for idx, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = w
+
+    title_fill = PatternFill('solid', start_color='1F3A5F')
+    sub_fill   = PatternFill('solid', start_color='2C5282')
+    hdr_fill   = PatternFill('solid', start_color='34495E')
+    def_fill   = PatternFill('solid', start_color='FCE8E6')   # Defect 행 연한 적색
+    thin = Side(style='thin', color='BBBBBB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N)
+    c = ws.cell(row=1, column=1, value=title)
+    c.font = Font(name=F, size=14, bold=True, color='FFFFFF'); c.fill = title_fill
+    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=N)
+    c = ws.cell(row=2, column=1, value=subtitle)
+    c.font = Font(name=F, size=10, italic=True, color='ECF0F1'); c.fill = sub_fill
+    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 6
+
+    HDR = 4
+    for ci, h in enumerate(headers, start=1):
+        cc = ws.cell(row=HDR, column=ci, value=h)
+        cc.font = Font(name=F, size=11, bold=True, color='FFFFFF'); cc.fill = hdr_fill
+        cc.alignment = Alignment(horizontal='center', vertical='center'); cc.border = border
+    ws.row_dimensions[HDR].height = 24
+
+    body = Font(name=F, size=10)
+    top_wrap = Alignment(horizontal='left', vertical='top', wrap_text=True)
+    center = Alignment(horizontal='center', vertical='top')
+    r_idx = HDR + 1
+    for row in rows:
+        max_len = 1
+        for ci, val in enumerate(row, start=1):
+            cell = ws.cell(row=r_idx, column=ci, value=val)
+            cell.font = body; cell.border = border
+            cell.alignment = top_wrap if ci in wrap_cols else center
+            if ci in wrap_cols and val:
+                w = widths[ci - 1]
+                max_len = max(max_len, sum((len(ln) // max(int(w / 1.6), 1)) + 1
+                                           for ln in str(val).split('\n')))
+        # Defect 행 살짝 음영
+        if 'Category' in headers:
+            cat_col = headers.index('Category') + 1
+            if ws.cell(row=r_idx, column=cat_col).value == 'Defect':
+                for ci in range(1, N + 1):
+                    ws.cell(row=r_idx, column=ci).fill = def_fill
+        ws.row_dimensions[r_idx].height = max(20, min(120, 15 * max_len + 4))
+        r_idx += 1
+
+    ws.freeze_panes = f'A{HDR + 1}'
+    if r_idx - 1 > HDR:
+        ws.auto_filter.ref = f'A{HDR}:{get_column_letter(N)}{r_idx - 1}'
+    ws.print_options.horizontalCentered = True
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = f'{HDR}:{HDR}'
+
+    bio = BytesIO(); wb.save(bio); bio.seek(0)
+    return bio
+
+
 def _gemini_call_json(parts):
     """parts(list) → Gemini generateContent → 파싱된 JSON dict 또는 {'error':...}."""
     if not GEMINI_API_KEY:
@@ -2333,6 +2409,33 @@ def api_cs_extract_report(sid):
     return jsonify({'ok': True, 'items': items, 'count': len(items)})
 
 
+@app.route('/api/cs/surveys/<int:sid>/export')
+@login_required
+def api_cs_survey_export(sid):
+    from flask import send_file
+    s = query('''SELECT cs.*, v.name AS vessel_name
+                   FROM cs_surveys cs JOIN vessels v ON v.id = cs.vessel_id
+                  WHERE cs.id=?''', (sid,), one=True)
+    if not s:
+        abort(404)
+    fr = query('''SELECT category, no, item, description, remark, status
+                    FROM cs_findings WHERE survey_id=?
+                   ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id''', (sid,))
+    rows = [[r['category'], r['no'], r['item'] or '', r['description'] or '',
+             r['remark'] or '', r['status'] or ''] for r in fr]
+    vessel = s['vessel_name']
+    title = f"Condition Survey — {vessel}  {s['year']} Q{s['quarter']}"
+    sub_bits = [f"수검일: {s['inspection_date'] or '-'}", f"Vendor: {s['vendor'] or '-'}",
+                f"총 {len(rows)}건 (Defect {sum(1 for r in fr if r['category']=='Defect')} / "
+                f"Observation {sum(1 for r in fr if r['category']=='Observation')})"]
+    headers = ['Category', 'No.', 'ITEM', 'DESCRIPTION', 'REMARK', 'STATUS']
+    bio = _findings_workbook(title, '   │   '.join(sub_bits), headers, rows,
+                             wrap_cols={3, 4, 5}, widths=[12, 6, 28, 50, 40, 10])
+    fname = f"CS_{_safe_filename(vessel)}_{s['year']}Q{s['quarter']}.xlsx"
+    return send_file(bio, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 # ----- CS 첨부파일 -----
 
 @app.route('/api/cs/surveys/<int:sid>/attachments', methods=['GET'])
@@ -2699,6 +2802,35 @@ def api_vt_extract_report(vid):
     if err:
         return jsonify({'ok': False, **err}), 200
     return jsonify({'ok': True, 'items': items, 'count': len(items)})
+
+
+@app.route('/api/vettings/<int:vid>/export')
+@login_required
+def api_vt_export(vid):
+    from flask import send_file
+    v = query('''SELECT vt.*, ve.name AS vessel_name
+                   FROM vettings vt JOIN vessels ve ON ve.id = vt.vessel_id
+                  WHERE vt.id=?''', (vid,), one=True)
+    if not v:
+        abort(404)
+    fr = query('''SELECT no, item, description, remark, status
+                    FROM vt_findings WHERE vetting_id=? ORDER BY no, id''', (vid,))
+    rows = [[r['no'], r['item'] or '', r['description'] or '',
+             r['remark'] or '', r['status'] or ''] for r in fr]
+    vessel = v['vessel_name']
+    rno = v['report_number'] or ''
+    title = f"SIRE Observation List — {vessel}"
+    sub_bits = [f"검사일: {v['inspection_date'] or '-'}", f"Port: {v['port'] or '-'}"]
+    if rno:
+        sub_bits.append(f"Report: {rno}")
+    sub_bits.append(f"총 {len(rows)}건")
+    headers = ['No.', 'ITEM', 'DESCRIPTION', 'REMARK', 'STATUS']
+    bio = _findings_workbook(title, '   │   '.join(sub_bits), headers, rows,
+                             wrap_cols={2, 3, 4}, widths=[6, 30, 52, 42, 10])
+    date_tag = (v['inspection_date'] or '').replace('-', '')
+    fname = f"SIRE_{_safe_filename(vessel)}_{date_tag or vid}.xlsx"
+    return send_file(bio, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route('/api/vettings/<int:vid>/attachments', methods=['GET'])
