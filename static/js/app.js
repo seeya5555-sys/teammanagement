@@ -2410,29 +2410,39 @@ function wireEvents() {
 
   // 영문 엑셀 추출 — 동일 템플릿에 ITEM/DESCRIPTION/ACTION PLAN 영문 번역
   $('#btn-export-xlsx-en').addEventListener('click', () => {
-    const btn = $('#btn-export-xlsx-en');
-    const label = btn.querySelector('span');
-    const prev = label ? label.textContent : '';
-    if (label) label.textContent = '번역 중...';
-    btn.disabled = true;
     const p = buildExportParams();
     p.set('lang', 'en');
-    // 번역 호출로 수 초 걸릴 수 있어 fetch로 받아 파일 저장
-    fetch('/api/issues/export?' + p.toString())
+    downloadExport('#btn-export-xlsx-en', '/api/issues/export?' + p.toString(), 'TRMT_Daily_EN.xlsx');
+  });
+
+  // 업무 요약 추출 — 한글 요약(Gemini) 3열 표
+  $('#btn-export-summary').addEventListener('click', () => {
+    const p = buildExportParams();
+    downloadExport('#btn-export-summary', '/api/issues/summary-export?' + p.toString(), 'TRMT_업무요약.xlsx');
+  });
+
+  // 공통: AI 호출로 시간이 걸리는 추출을 fetch로 받아 파일 저장
+  function downloadExport(btnSel, url, fallbackName) {
+    const btn = $(btnSel);
+    const label = btn.querySelector('span');
+    const prev = label ? label.textContent : '';
+    if (label) label.textContent = '생성 중...';
+    btn.disabled = true;
+    fetch(url)
       .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.blob().then(b => ({ b, res })); })
       .then(({ b, res }) => {
         const cd = res.headers.get('content-disposition') || '';
-        let name = 'TRMT_Daily_EN.xlsx';
+        let name = fallbackName;
         const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^;"']+)/i);
         if (m) name = decodeURIComponent(m[1]);
-        const url = URL.createObjectURL(b);
+        const u = URL.createObjectURL(b);
         const a = document.createElement('a');
-        a.href = url; a.download = name; document.body.appendChild(a); a.click();
-        a.remove(); URL.revokeObjectURL(url);
+        a.href = u; a.download = name; document.body.appendChild(a); a.click();
+        a.remove(); URL.revokeObjectURL(u);
       })
-      .catch(err => alert('영문 추출 실패: ' + err.message))
+      .catch(err => alert('추출 실패: ' + err.message))
       .finally(() => { if (label) label.textContent = prev; btn.disabled = false; });
-  });
+  }
 
   let searchTimer;
   $('#filter-search').addEventListener('input', (e) => {
