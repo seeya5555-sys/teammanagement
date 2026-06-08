@@ -2006,8 +2006,10 @@ def _gen_issue_summaries(payload_items):
             "두 가지를 한국어로 작성하라.\n"
             "- desc: description의 핵심 문제를 1문장(최대 2문장)으로 짧게 요약\n"
             "- action: action(최신 조치내용)을 한 줄로 짧게 요약 (내용 없으면 빈 문자열)\n"
-            "장비명·기술용어·약어(예: EGCS, Pump, Auto mode, Maker, BRG, RPM, LT cooler)는 영문 그대로 둔다. "
-            "과장/추측 금지, 없는 내용 추가 금지.\n"
+            "■ 매우 중요: 요약은 원문(description/action)에 실제로 쓰인 단어와 표현을 그대로 사용해 "
+            "압축하라. 동의어로 바꾸거나 새 표현을 지어내지 말고, 불필요한 부분만 덜어내라. "
+            "원문에 있는 장비명·기술용어·약어·표현(예: EGCS, Pump, Auto mode, Maker Trouble Shooting, BRG, RPM, LT cooler)은 "
+            "그대로 보존한다. 과장/추측/내용 추가 금지.\n"
             "입력의 i를 그대로 사용해 JSON 객체로만 답하라.\n"
             '형식: {"items":[{"i":0,"desc":"...","action":"..."}]}\n\n[입력]\n'
             + json.dumps(sub, ensure_ascii=False))
