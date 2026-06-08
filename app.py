@@ -1798,35 +1798,86 @@ def _gemini_call_json(parts):
         return {'error': 'PARSE_FAILED', 'raw': text[:300]}
 
 
+def _coerce_translation_items(res):
+    """Gemini 응답을 [{'i':int,'en':str}] 리스트로 정규화. list/dict/다양한 키 모두 수용."""
+    if isinstance(res, dict):
+        if res.get('error'):
+            return None  # 호출 자체 실패
+        arr = (res.get('translations') or res.get('items')
+               or res.get('results') or res.get('data'))
+        if arr is None:
+            # 단일 객체이거나 {i:en} 매핑일 수 있음
+            if 'i' in res and ('en' in res or 'text' in res):
+                arr = [res]
+            else:
+                arr = []
+    elif isinstance(res, list):
+        arr = res
+    else:
+        arr = []
+    return arr if isinstance(arr, list) else []
+
+
+def _translate_batch_en(texts, group):
+    """group(인덱스 리스트) 한 묶음 번역 → {원본인덱스: 영문}. 실패 시 None."""
+    payload = json.dumps([{'i': i, 'text': texts[i]} for i in group], ensure_ascii=False)
+    prompt = (
+        "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 한국어(또는 한영 혼용) "
+        "텍스트를 선박 관리 현업에서 자연스럽게 쓰는 영어로 번역하라.\n"
+        "- 장비명·약어·단위·수치(예: BRG, RPM, S/W pump, LT cooler, EGCS, °C, kts)는 그대로 둔다.\n"
+        "- 줄바꿈과 번호 매김(1. 2. ...) 구조를 그대로 보존한다.\n"
+        "- 이미 영어인 부분은 그대로 둔다. 의미를 바꾸거나 내용을 덧붙이지 마라.\n"
+        "반드시 {\"translations\":[...]} 형태의 JSON 객체로만 답하라. 입력의 i를 그대로 사용하라.\n"
+        '형식: {"translations":[{"i":0,"en":"..."}]}\n\n[입력]\n' + payload)
+    res = _gemini_call_json([{'text': prompt}])
+    arr = _coerce_translation_items(res)
+    if arr is None:
+        return None  # API 호출 실패 → 상위에서 분할 재시도
+    out = {}
+    for tr in arr:
+        if not isinstance(tr, dict):
+            continue
+        try:
+            i = int(tr.get('i'))
+        except (TypeError, ValueError):
+            continue
+        en = tr.get('en') if isinstance(tr.get('en'), str) else tr.get('text')
+        if isinstance(en, str) and en.strip():
+            out[i] = en
+    return out
+
+
 def _translate_texts_en(texts):
-    """한국어(한영 혼용) 문자열 리스트 → 선박 감독 현업 영어. 키 없음/실패 시 원문 유지."""
+    """한국어(한영 혼용) 문자열 리스트 → 선박 감독 현업 영어. 키 없음/실패 시 원문 유지.
+    묶음 실패 시 절반→1:1로 분할 재시도하여 '일부 누락'을 방지."""
     if not GEMINI_API_KEY:
         return list(texts)
     out = list(texts)
     idxs = [i for i, t in enumerate(texts) if t and str(t).strip()]
-    CHUNK = 40
+
+    def run(group, depth=0):
+        if not group:
+            return
+        res = _translate_batch_en(texts, group)
+        if res is None:
+            # 호출 실패 → 분할 재시도
+            if len(group) > 1 and depth < 6:
+                mid = len(group) // 2
+                run(group[:mid], depth + 1)
+                run(group[mid:], depth + 1)
+            return
+        missing = [i for i in group if i not in res]
+        for i, en in res.items():
+            out[i] = en
+        # 일부만 응답에 빠진 경우도 분할 재시도
+        if missing and len(group) > 1 and depth < 6:
+            mid = max(1, len(missing) // 2)
+            run(missing[:mid], depth + 1)
+            run(missing[mid:], depth + 1)
+
+    CHUNK = 12
     for s in range(0, len(idxs), CHUNK):
-        group = idxs[s:s + CHUNK]
-        payload = json.dumps([{'i': i, 'text': texts[i]} for i in group], ensure_ascii=False)
-        prompt = (
-            "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 한국어(또는 한영 혼용) "
-            "텍스트를 선박 관리 현업에서 자연스럽게 쓰는 영어로 번역하라.\n"
-            "- 장비명·약어·단위·수치(예: BRG, RPM, S/W pump, LT cooler, EGCS, °C, kts)는 그대로 둔다.\n"
-            "- 줄바꿈과 번호 매김(1. 2. ...) 구조를 그대로 보존한다.\n"
-            "- 이미 영어인 부분은 그대로 둔다. 의미를 바꾸거나 내용을 덧붙이지 마라.\n"
-            "입력의 i를 그대로 사용해 JSON으로만 답하라.\n"
-            '형식: {"translations":[{"i":0,"en":"..."}]}\n\n[입력]\n' + payload)
-        res = _gemini_call_json([{'text': prompt}])
-        if res.get('error'):
-            continue
-        for tr in (res.get('translations') or []):
-            try:
-                i = int(tr.get('i'))
-                en = tr.get('en')
-                if isinstance(en, str) and en.strip():
-                    out[i] = en
-            except (TypeError, ValueError):
-                pass
+        run(idxs[s:s + CHUNK])
     return out
 
 
@@ -1883,7 +1934,13 @@ def _findings_prompt(kind):
 
 def _normalize_findings(parsed, kind):
     out = []
-    for it in (parsed.get('items') or []):
+    if isinstance(parsed, list):
+        arr = parsed
+    elif isinstance(parsed, dict):
+        arr = parsed.get('items') or parsed.get('findings') or []
+    else:
+        arr = []
+    for it in (arr or []):
         if not isinstance(it, dict):
             continue
         rec = {
@@ -1970,12 +2027,20 @@ def _summarize_remarks(items, kind):
         "입력의 i 값을 그대로 사용해 JSON으로만 답하라.\n"
         '형식: {"summaries":[{"i":0,"remark":"요약문"}]}\n\n[입력]\n' + payload)
     res = _gemini_call_json([{'text': prompt}])
-    if res.get('error'):
-        return items
+    if isinstance(res, dict):
+        if res.get('error'):
+            return items
+        arr = res.get('summaries') or res.get('items') or res.get('translations') or []
+    elif isinstance(res, list):
+        arr = res
+    else:
+        arr = []
     by_i = {}
-    for s in (res.get('summaries') or []):
+    for s in arr:
+        if not isinstance(s, dict):
+            continue
         try:
-            by_i[int(s.get('i'))] = (s.get('remark') or '').strip()
+            by_i[int(s.get('i'))] = (s.get('remark') or s.get('en') or '').strip()
         except (TypeError, ValueError):
             pass
     for idx, it in enumerate(items):
@@ -2020,9 +2085,9 @@ def _extract_findings_from_upload(f, kind):
     else:
         return None, {'reason': 'BAD_TYPE', 'message': 'PDF, 이미지, 엑셀(xlsx) 파일만 지원합니다.'}
 
-    if parsed.get('error') == 'NO_API_KEY':
+    if isinstance(parsed, dict) and parsed.get('error') == 'NO_API_KEY':
         return None, {'reason': 'no_api_key', 'message': 'AI 자동추출이 설정되지 않았습니다(키 미설정).'}
-    if parsed.get('error'):
+    if isinstance(parsed, dict) and parsed.get('error'):
         return None, {'reason': parsed['error'], 'message': '자동 추출에 실패했습니다.',
                       'detail': parsed.get('detail') or parsed.get('raw')}
     return _normalize_findings(parsed, kind), None
