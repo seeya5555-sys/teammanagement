@@ -5563,6 +5563,11 @@ def _vkey(name):
     return (name or '').strip().lower()
 
 
+def _ref(kind, ident):
+    """외부 API용 안정 고유키(주소). DB id 기반이라 변하지 않음. 사이트 UI에는 노출 안 됨."""
+    return f'{kind}:{ident}' if ident is not None else None
+
+
 def api_key_required(fn):
     @wraps(fn)
     def wrapper(*a, **k):
@@ -5606,6 +5611,7 @@ def _ext_issues():
         except Exception:
             d['actions'] = []
         d['vessel_key'] = _vkey(d.get('vessel_name'))
+        d['ref'] = _ref('issue', d.get('id'))
         out.append(d)
     return out
 
@@ -5618,8 +5624,9 @@ def _ext_surveys():
     for s in surveys:
         d = dict(s)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
-        d['findings'] = [dict(f) for f in query(
-            """SELECT category, no, item, description, remark, status
+        d['ref'] = _ref('survey', d.get('id'))
+        d['findings'] = [dict(f) | {'ref': _ref('cs_finding', f['id'])} for f in query(
+            """SELECT id, category, no, item, description, remark, status
                  FROM cs_findings WHERE survey_id=?
                 ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id""",
             (s['id'],))]
@@ -5635,8 +5642,9 @@ def _ext_vettings():
     for v in vts:
         d = dict(v)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
-        d['findings'] = [dict(f) for f in query(
-            """SELECT no, item, description, remark, user_remark, priority, status
+        d['ref'] = _ref('vetting', d.get('id'))
+        d['findings'] = [dict(f) | {'ref': _ref('vt_finding', f['id'])} for f in query(
+            """SELECT id, no, item, description, remark, user_remark, priority, status
                  FROM vt_findings WHERE vetting_id=? ORDER BY no, id""", (v['id'],))]
         out.append(d)
     return out
@@ -5672,6 +5680,7 @@ def _ext_dock_reports():
     for r in reps:
         d = dict(r)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
+        d['ref'] = _ref('dock_report', d.get('id'))
         d['sections'] = _report_tree(r['id'], 'dock_report_sections', 'dock_report_blocks')
         out.append(d)
     return out
@@ -5686,6 +5695,7 @@ def _ext_boarding_reports():
     for r in reps:
         d = dict(r)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
+        d['ref'] = _ref('boarding_report', d.get('id'))
         d['sections'] = _report_tree(r['id'], 'boarding_report_sections', 'boarding_report_blocks')
         out.append(d)
     return out
@@ -5701,12 +5711,13 @@ def _ext_calendar():
     for r in rows:
         d = dict(r)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
+        d['ref'] = _ref('event', d.get('id'))
         out.append(d)
     return out
 
 
 def _ext_vessels():
-    return [dict(r) | {'vessel_key': _vkey(r['name'])}
+    return [dict(r) | {'vessel_key': _vkey(r['name']), 'ref': _ref('vessel', r['id'])}
             for r in query("SELECT * FROM vessels ORDER BY name")]
 
 
@@ -5719,17 +5730,19 @@ def _ext_class_status():
             v = query('SELECT name FROM vessels WHERE id=?', (cs['vessel_id'],), one=True)
             if v:
                 vname = v['name']
-        items = query('SELECT category, no, issued_date, description, due_date, remark, importance '
+        items = query('SELECT id, category, no, issued_date, description, due_date, remark, importance '
                       'FROM class_status_items WHERE cs_id=? ORDER BY category, no', (cs['id'],))
         out.append({
+            'id': cs['id'],
+            'ref': _ref('class_status', cs['id']),
             'vessel_name': vname,
             'vessel_key': _vkey(vname),
             'matched': cs['vessel_id'] is not None,
             'class_society': cs['class_society'],
             'report_date': cs['report_date'],
             'updated_at': cs['updated_at'],
-            'coc':       [dict(i) for i in items if i['category'] == 'COC'],
-            'statutory': [dict(i) for i in items if i['category'] == 'STATUTORY'],
+            'coc':       [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'COC'],
+            'statutory': [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'STATUTORY'],
         })
     return out
 
@@ -5747,8 +5760,41 @@ def _ext_summaries():
         if r['scope'] != 'all':
             sv = query('SELECT name FROM supervisors WHERE id=?', (r['scope'],), one=True)
             sup = sv['name'] if sv else None
-        out.append({'scope': r['scope'], 'supervisor_name': sup,
+        out.append({'scope': r['scope'], 'ref': _ref('summary', r['scope']),
+                    'supervisor_name': sup,
                     'generated_at': r['generated_at'], 'rows': rows})
+    return out
+
+
+def _ext_vetting_digests():
+    """선박 단위 SIRE 요약(자동 집계) — Vetting 탭 펼침 요약 패널과 동일 내용."""
+    out = []
+    for ve in query("SELECT id, name, imo FROM vessels ORDER BY name"):
+        vts = query("SELECT * FROM vettings WHERE vessel_id=? "
+                    "ORDER BY inspection_date DESC, id DESC", (ve['id'],))
+        if not vts:
+            continue
+        enr = [_vetting_with_counts(v) for v in vts]
+        latest = enr[0]
+        detail = '\n\n'.join(
+            (v.get('overall_remark') or '').strip()
+            for v in enr
+            if (v.get('open_count') or 0) > 0 and (v.get('overall_remark') or '').strip()
+        )
+        out.append({
+            'ref': _ref('vetting_digest', ve['id']),
+            'vessel_name': ve['name'],
+            'vessel_key': _vkey(ve['name']),
+            'imo': ve['imo'],
+            'status': latest.get('valid') or '',
+            'port': latest.get('port') or '',
+            'inspection_date': latest.get('inspection_date') or '',
+            'oil_major': latest.get('inspection_company') or '',
+            'obs_total': latest.get('observation_count') or 0,
+            'obs_open': latest.get('open_count') or 0,
+            'detail': detail,
+            'latest_vetting_ref': _ref('vetting', latest.get('id')),
+        })
     return out
 
 
@@ -5769,6 +5815,12 @@ def api_ext_surveys():
 @api_key_required
 def api_ext_vettings():
     return jsonify(_ext_vettings())
+
+
+@app.route('/api/ext/vetting-digests')
+@api_key_required
+def api_ext_vetting_digests():
+    return jsonify(_ext_vetting_digests())
 
 
 @app.route('/api/ext/dock-reports')
@@ -5818,6 +5870,7 @@ def api_ext_all():
         'issues':            _ext_issues(),
         'condition_surveys': _ext_surveys(),
         'vettings':          _ext_vettings(),
+        'vetting_digests':   _ext_vetting_digests(),
         'dock_reports':      _ext_dock_reports(),
         'boarding_reports':  _ext_boarding_reports(),
         'calendar_events':   _ext_calendar(),
