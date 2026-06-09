@@ -1161,8 +1161,8 @@ def api_issue_summary_export():
     # ── Workbook ──
     wb = Workbook(); ws = wb.active; ws.title = '업무 요약'
     F = 'Malgun Gothic'
-    HEADERS = ['No.', 'Vessel Name', '현안업무']
-    WIDTHS = [6, 24, 95]
+    HEADERS = ['No.', 'Vessel Name', '현안업무', 'Priority', 'Status']
+    WIDTHS = [6, 24, 85, 13, 12]
     for idx, w in enumerate(WIDTHS, start=1):
         ws.column_dimensions[get_column_letter(idx)].width = w
 
@@ -1173,13 +1173,13 @@ def api_issue_summary_export():
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     now = datetime.now()
-    ws.merge_cells('A1:C1')
+    ws.merge_cells('A1:E1')
     c = ws.cell(row=1, column=1, value='Daily 업무 요약')
     c.font = Font(name=F, size=14, bold=True, color='FFFFFF'); c.fill = title_fill
     c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
     ws.row_dimensions[1].height = 28
 
-    ws.merge_cells('A2:C2')
+    ws.merge_cells('A2:E2')
     me = session.get('display_name') or session.get('username') or ''
     c = ws.cell(row=2, column=1,
                 value=f"추출일: {now.strftime('%Y-%m-%d')}    │    총 {len(rows)}건"
@@ -1200,6 +1200,7 @@ def api_issue_summary_export():
     body = Font(name=F, size=10)
     top_wrap = Alignment(horizontal='left', vertical='top', wrap_text=True)
     center = Alignment(horizontal='center', vertical='center')
+    STAT_LABEL = {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'}
     r_idx = HDR + 1
     for n, r in enumerate(rows, start=1):
         ws.cell(row=r_idx, column=1, value=n).alignment = center
@@ -1209,7 +1210,13 @@ def api_issue_summary_export():
         ws.cell(row=r_idx, column=2).font = body
         cell = ws.cell(row=r_idx, column=3, value=build_cell(n - 1, r))
         cell.alignment = top_wrap; cell.font = body
-        for ci in range(1, 4):
+        # D열 Priority, E열 Status
+        pc = ws.cell(row=r_idx, column=4, value=r.get('priority') or '')
+        pc.alignment = center; pc.font = body
+        sc = ws.cell(row=r_idx, column=5,
+                     value=STAT_LABEL.get(r.get('status'), r.get('status') or ''))
+        sc.alignment = center; sc.font = body
+        for ci in range(1, 6):
             ws.cell(row=r_idx, column=ci).border = border
         # 줄 수에 맞춰 행 높이 살짝 키움
         n_lines = (build_cell(n - 1, r).count('\n') + 1)
@@ -1218,7 +1225,7 @@ def api_issue_summary_export():
 
     ws.freeze_panes = f'A{HDR + 1}'
     if r_idx - 1 > HDR:
-        ws.auto_filter.ref = f'A{HDR}:C{r_idx - 1}'
+        ws.auto_filter.ref = f'A{HDR}:E{r_idx - 1}'
     ws.print_options.horizontalCentered = True
     ws.page_setup.orientation = 'portrait'
     ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
