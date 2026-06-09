@@ -31,6 +31,9 @@
         <a href="{{ url_for('vetting_status') }}" class="nav-link {% if request.endpoint=='vetting_status' %}active{% endif %}">
           Vetting Status
         </a>
+        <a href="{{ url_for('class_status_page') }}" class="nav-link {% if request.endpoint=='class_status_page' %}active{% endif %}">
+          Class Status
+        </a>
         <a href="{{ url_for('dry_dock_page') }}" class="nav-link {% if request.endpoint in ['dry_dock_page','dry_dock_edit_page'] %}active{% endif %}">
           Dry Dock Report
         </a>
@@ -125,6 +128,7 @@
       <div>GET /api/ext/boarding-reports — Boarding</div>
       <div>GET /api/ext/calendar — 일정</div>
       <div>GET /api/ext/summaries — 업무 요약(요약 탭)</div>
+      <div>GET /api/ext/class-status — 선급 Class Status</div>
     </div>
 
     <label style="font-size:12px;font-weight:600;color:#333;">호출 예시</label>
