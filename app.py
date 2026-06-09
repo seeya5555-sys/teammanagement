@@ -5445,6 +5445,24 @@ def _ext_vessels():
             for r in query("SELECT * FROM vessels ORDER BY name")]
 
 
+def _ext_summaries():
+    """저장된 업무 요약(전체 + 감독별)을 scope별로 반환."""
+    _ensure_summary_table()
+    out = []
+    for r in query("SELECT scope, data, generated_at FROM issue_summaries"):
+        try:
+            rows = json.loads(r['data'])
+        except Exception:
+            rows = []
+        sup = None
+        if r['scope'] != 'all':
+            sv = query('SELECT name FROM supervisors WHERE id=?', (r['scope'],), one=True)
+            sup = sv['name'] if sv else None
+        out.append({'scope': r['scope'], 'supervisor_name': sup,
+                    'generated_at': r['generated_at'], 'rows': rows})
+    return out
+
+
 # ---- 공개(키 보호) 데이터 엔드포인트 ----
 @app.route('/api/ext/issues')
 @api_key_required
@@ -5488,6 +5506,12 @@ def api_ext_vessels():
     return jsonify(_ext_vessels())
 
 
+@app.route('/api/ext/summaries')
+@api_key_required
+def api_ext_summaries():
+    return jsonify(_ext_summaries())
+
+
 @app.route('/api/ext/all')
 @api_key_required
 def api_ext_all():
@@ -5502,6 +5526,7 @@ def api_ext_all():
         'dock_reports':      _ext_dock_reports(),
         'boarding_reports':  _ext_boarding_reports(),
         'calendar_events':   _ext_calendar(),
+        'work_summaries':    _ext_summaries(),
     })
 
 
