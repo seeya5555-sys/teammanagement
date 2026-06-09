@@ -5904,8 +5904,8 @@ def api_class_status_item_update(iid):
     for col in ('importance', 'remark', 'description', 'issued_date', 'due_date'):
         if col in d:
             val = d[col]
-            if col == 'importance' and val not in ('', 'High', 'Mid', 'Low'):
-                val = ''
+            if col == 'importance' and val not in ('', 'Urgent'):
+                val = 'Urgent' if val else ''
             fields.append(f'{col}=?'); params.append(val)
     if not fields:
         return jsonify({'ok': True})
@@ -5969,7 +5969,7 @@ def api_class_status_export(cs_id):
             it['remark'] or '',
             it['importance'] or '',
         ])
-    headers = ['Category', 'No', 'Issued', 'Description', 'Due', '한글 요약', '중요도']
+    headers = ['Category', 'No', 'Issued', 'Description', 'Due', '한글 요약', 'Urgent']
     subtitle = f"{snap['class_society'] or ''}  ·  발행 {snap['report_date'] or '-'}"
     bio = _findings_workbook(
         f'{vname} Class Status', subtitle, headers, rows,
