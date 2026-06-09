@@ -95,8 +95,32 @@
     </svg>
     <span>업무 요약 추출</span>
   </button>
+  <button class="btn btn-outline btn-sm" id="btn-summary-gen" title="현재 탭의 전체(진행중+완료)를 한글 요약하여 '요약' 탭에 갱신">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 12a9 9 0 11-3-6.7L21 7"/><polyline points="21 3 21 7 17 7"/>
+    </svg>
+    <span>업무 요약</span>
+  </button>
 
   <span class="count-label" id="count-label"></span>
+</div>
+
+<!-- 업무 요약 뷰 (요약 서브탭 전용) -->
+<div class="grid-wrap" id="summary-wrap" hidden>
+  <div id="summary-meta" style="padding:8px 4px;color:#666;font-size:12.5px;"></div>
+  <table class="ex-table" id="summary-table">
+    <colgroup>
+      <col style="width:48px"><col style="width:160px"><col>
+      <col style="width:120px"><col style="width:90px">
+    </colgroup>
+    <thead>
+      <tr><th>No.</th><th>Vessel Name</th><th>현안업무</th><th>Priority</th><th>Status</th></tr>
+    </thead>
+    <tbody id="summary-tbody"></tbody>
+  </table>
+  <div id="summary-empty" style="padding:24px;text-align:center;color:#888;" hidden>
+    아직 요약이 없습니다. 상단 <strong>"업무 요약"</strong> 버튼을 눌러 생성하세요.
+  </div>
 </div>
 
 <!-- 데스크톱: 테이블 -->
