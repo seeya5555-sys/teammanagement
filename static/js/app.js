@@ -2604,19 +2604,19 @@ function wireEvents() {
     const prev = label ? label.textContent : '';
     if (label) label.textContent = '요약 생성 중...';
     btn.disabled = true;
-    const sp = new URLSearchParams();
-    if (S.activeTab !== 'all') sp.set('supervisor_id', S.activeTab);
     try {
-      const res = await api('/api/issues/summary-generate?' + sp.toString(), { method: 'POST' });
-      S.summary = res;
+      // 어느 탭에서 누르든 항상 "전체" 스코프로 생성 (감독별 분리 저장도 함께 갱신됨)
+      const res = await api('/api/issues/summary-generate', { method: 'POST' });
       if (res.counts) Object.assign(S.summaryCounts, res.counts);
-      else {
-        const sk = (S.activeTab === 'all') ? 'all' : String(S.activeTab);
-        S.summaryCounts[sk] = (res.rows || []).length;
-      }
+      else S.summaryCounts['all'] = (res.rows || []).length;
+      // 전체 대분류 + 요약 서브탭으로 전환해 전체 요약을 표시
+      S.activeTab = 'all';
       S.activeSubTab = 'summary';
+      S.summary = res;
       try { localStorage.setItem('trmt_subtab', 'summary'); } catch (_) {}
-      renderSubTabs();
+      await loadVessels(null);
+      renderTabs();
+      renderVesselFilter();
       renderTabContext();
       render();
     } catch (e) {
