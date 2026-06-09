@@ -484,6 +484,12 @@ def vetting_status():
     return render_template('vetting_status.html')
 
 
+@app.route('/class-status')
+@login_required
+def class_status_page():
+    return render_template('class_status.html')
+
+
 @app.route('/calendar')
 @login_required
 def calendar_page():
@@ -5466,6 +5472,30 @@ def _ext_vessels():
             for r in query("SELECT * FROM vessels ORDER BY name")]
 
 
+def _ext_class_status():
+    """선급 Class Status 스냅샷(선박별 + 미매칭)."""
+    out = []
+    for cs in query('SELECT * FROM class_status ORDER BY updated_at DESC'):
+        vname = cs['vessel_name_raw']
+        if cs['vessel_id']:
+            v = query('SELECT name FROM vessels WHERE id=?', (cs['vessel_id'],), one=True)
+            if v:
+                vname = v['name']
+        items = query('SELECT category, no, issued_date, description, due_date, remark, importance '
+                      'FROM class_status_items WHERE cs_id=? ORDER BY category, no', (cs['id'],))
+        out.append({
+            'vessel_name': vname,
+            'vessel_key': _vkey(vname),
+            'matched': cs['vessel_id'] is not None,
+            'class_society': cs['class_society'],
+            'report_date': cs['report_date'],
+            'updated_at': cs['updated_at'],
+            'coc':       [dict(i) for i in items if i['category'] == 'COC'],
+            'statutory': [dict(i) for i in items if i['category'] == 'STATUTORY'],
+        })
+    return out
+
+
 def _ext_summaries():
     """저장된 업무 요약(전체 + 감독별)을 scope별로 반환."""
     _ensure_summary_table()
@@ -5533,6 +5563,12 @@ def api_ext_summaries():
     return jsonify(_ext_summaries())
 
 
+@app.route('/api/ext/class-status')
+@api_key_required
+def api_ext_class_status():
+    return jsonify(_ext_class_status())
+
+
 @app.route('/api/ext/all')
 @api_key_required
 def api_ext_all():
@@ -5548,7 +5584,400 @@ def api_ext_all():
         'boarding_reports':  _ext_boarding_reports(),
         'calendar_events':   _ext_calendar(),
         'work_summaries':    _ext_summaries(),
+        'class_status':      _ext_class_status(),
     })
+
+
+# ═════════════════════════════════════════════════════════════════
+#  CLASS STATUS (선급 Class Status Report 업로드/추출/매칭)
+# ═════════════════════════════════════════════════════════════════
+import re as _re_cls
+
+
+def _norm_vessel_name(name):
+    """선명 정규화: 대문자, M/T·M/V 접두 제거, 공백 단일화."""
+    if not name:
+        return ''
+    s = str(name).upper().strip()
+    s = _re_cls.sub(r'^(M[\./]?\s*[TV][\./]?|MT|MV)\s+', '', s)  # M/T, M.V., MT, MV ...
+    s = _re_cls.sub(r'[^A-Z0-9 ]+', ' ', s)
+    s = _re_cls.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+def _match_vessel_by_name(name):
+    """보고서 선명 → vessels 행 매칭. 정확 일치 우선, 없으면 부분포함. 실패 시 None."""
+    target = _norm_vessel_name(name)
+    if not target:
+        return None
+    rows = query('SELECT * FROM vessels WHERE active=1')
+    norm = [(v, _norm_vessel_name(v['name'])) for v in rows]
+    for v, n in norm:
+        if n == target:
+            return v
+    # 부분 포함 (한쪽이 다른 쪽을 포함)
+    for v, n in norm:
+        if n and (n in target or target in n):
+            return v
+    return None
+
+
+def _class_status_prompt():
+    return (
+        "다음은 선박 선급(Classification Society)의 'Class Status Report' 또는 "
+        "'Survey Status Report'다. (선급 예: DNV, BV, KR, ABS, LR, NK 등 — 포맷이 다를 수 있다.)\n"
+        "아래 정보를 추출해 지정한 JSON으로만 답하라.\n"
+        "■ 공통 정보\n"
+        "- vessel_name: 보고서의 선명(Name of vessel / Ship name). 대문자 원문.\n"
+        "- class_society: 발행 선급 약어 (DNV / BV / KR / ABS / LR / NK 중 하나, 식별 가능하면).\n"
+        "- report_date: 보고서 발행일/생성일 (Date of issue / Generated on). 가능하면 YYYY-MM-DD.\n"
+        "■ 추출 대상 — 'Open(미해소)' 상태인 항목만:\n"
+        "  (1) coc  = Condition of Class / 선급지적. 선급별 명칭 예:\n"
+        "      DNV 'Conditions related to class', BV 'Conditions of Class', "
+        "ABS 'Conditions of Class / Outstanding', LR 'Conditions of Class(COC)', "
+        "또한 BV 'Planned Inspection Items'의 Recommendation(R)/Condition of Class 도 포함.\n"
+        "  (2) statutory = Condition of Statutory / 기국(법정)사항. 예:\n"
+        "      DNV 'Conditions related to statutory certificates', "
+        "BV 'Statutory Recommendations' 및 'Planned Inspection Items'의 Observation(Obs)/Statutory 항목.\n"
+        "■ 제외: 단순 Survey 예정표(1-Year Planner/Surveys 목록), 인증서 목록, "
+        "Memoranda(메모란다/Class Memoranda)는 추출하지 마라. 이미 Closed/Cleared/Deleted "
+        "되었거나 조치 확인 완료된 항목도 제외. 'None'이면 빈 배열.\n"
+        "■ 각 항목 필드:\n"
+        "- issued_date: 발행/기재일 (가능하면 YYYY-MM-DD, 없으면 빈 문자열)\n"
+        "- description: 지적/기국 본문을 원문 그대로 복사(영문이면 영문 그대로). 요약·변형 금지.\n"
+        "- due_date: 마감/처리기한 (Due/Limit date, 가능하면 YYYY-MM-DD, 없으면 빈 문자열)\n"
+        "- remark: description의 핵심을 한국어 1~2문장으로 간결히 요약(전체 직역 금지). "
+        "문장은 '~함/~됨/~음' 음슴체(개조식). 기술 명칭·장비명·약어·인증명(예: COC, SEEMP, IHM, "
+        "BNWAS, Load Line, Plimsoll Mark, EGCS, BWTS)은 영문 그대로. 선박 현업 용어 사용(예: 청소→소제, "
+        "검사→수검, 교체→신환).\n"
+        "없는 내용을 지어내지 말 것.\n"
+        '형식: {"vessel_name":"","class_society":"","report_date":"",'
+        '"coc":[{"issued_date":"","description":"","due_date":"","remark":""}],'
+        '"statutory":[{"issued_date":"","description":"","due_date":"","remark":""}]}'
+    )
+
+
+def _cls_item(it):
+    if not isinstance(it, dict):
+        return None
+    rec = {
+        'issued_date': (it.get('issued_date') or '').strip(),
+        'description': (it.get('description') or '').strip(),
+        'due_date':    (it.get('due_date') or '').strip(),
+        'remark':      (it.get('remark') or '').strip(),
+    }
+    return rec if rec['description'] else None
+
+
+def _normalize_class_status(parsed):
+    if not isinstance(parsed, dict):
+        return None
+    def lst(key):
+        out = []
+        for it in (parsed.get(key) or []):
+            r = _cls_item(it)
+            if r:
+                out.append(r)
+        return out
+    return {
+        'vessel_name':   (parsed.get('vessel_name') or '').strip(),
+        'class_society': (parsed.get('class_society') or '').strip().upper(),
+        'report_date':   (parsed.get('report_date') or '').strip(),
+        'coc':           lst('coc'),
+        'statutory':     lst('statutory'),
+    }
+
+
+def _xlsx_to_text(raw_bytes):
+    import io
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
+    lines = []
+    for ws in wb.worksheets:
+        for r in ws.iter_rows(values_only=True):
+            cells = ['' if c is None else str(c).strip() for c in r]
+            if any(cells):
+                lines.append('\t'.join(cells))
+            if len(lines) > 600:
+                break
+    return '\n'.join(lines)
+
+
+def _extract_class_status_from_upload(f):
+    """업로드 FileStorage → (data, err). data = _normalize_class_status 결과."""
+    name = (f.filename or '').lower()
+    ext = name.rsplit('.', 1)[-1] if '.' in name else ''
+    raw = f.read()
+    size_mb = len(raw) / (1024 * 1024)
+    prompt = _class_status_prompt()
+
+    if ext == 'pdf':
+        if size_mb > 15:
+            return None, {'reason': 'TOO_LARGE',
+                          'message': f'PDF가 너무 큽니다({size_mb:.1f}MB). 15MB 이하로 줄여주세요.'}
+        b64 = __import__('base64').standard_b64encode(raw).decode()
+        parsed = _gemini_call_json([
+            {'inline_data': {'mime_type': 'application/pdf', 'data': b64}},
+            {'text': prompt},
+        ], model=_model_for('findings'))
+    elif ext in ('png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'):
+        if size_mb > 15:
+            return None, {'reason': 'TOO_LARGE', 'message': f'이미지가 너무 큽니다({size_mb:.1f}MB).'}
+        import mimetypes
+        media = mimetypes.guess_type(name)[0] or 'image/jpeg'
+        b64 = __import__('base64').standard_b64encode(raw).decode()
+        parsed = _gemini_call_json([
+            {'inline_data': {'mime_type': media, 'data': b64}},
+            {'text': prompt},
+        ], model=_model_for('findings'))
+    elif ext in ('xlsx', 'xls'):
+        try:
+            txt = _xlsx_to_text(raw)
+        except Exception as e:
+            return None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
+        parsed = _gemini_call_json([{'text': prompt + '\n\n[보고서 표 내용]\n' + txt}],
+                                   model=_model_for('findings'))
+    else:
+        return None, {'reason': 'BAD_TYPE', 'message': 'PDF · 이미지 · 엑셀(xlsx) 파일만 지원합니다.'}
+
+    if isinstance(parsed, dict) and parsed.get('error') == 'NO_API_KEY':
+        return None, {'reason': 'no_api_key', 'message': 'AI 자동추출이 설정되지 않았습니다(키 미설정).'}
+    if isinstance(parsed, dict) and parsed.get('error'):
+        return None, {'reason': parsed['error'], 'message': '자동 추출에 실패했습니다.',
+                      'detail': parsed.get('detail') or parsed.get('raw')}
+    data = _normalize_class_status(parsed)
+    if data is None:
+        return None, {'reason': 'PARSE_FAILED', 'message': '추출 결과를 해석하지 못했습니다.'}
+    return data, None
+
+
+def _cls_snapshot_dict(cs_row, items_by_cs):
+    items = items_by_cs.get(cs_row['id'], [])
+    coc = [dict(i) for i in items if i['category'] == 'COC']
+    stat = [dict(i) for i in items if i['category'] == 'STATUTORY']
+    return {
+        'id':              cs_row['id'],
+        'vessel_id':       cs_row['vessel_id'],
+        'vessel_name_raw': cs_row['vessel_name_raw'],
+        'class_society':   cs_row['class_society'],
+        'report_date':     cs_row['report_date'],
+        'source_filename': cs_row['source_filename'],
+        'updated_at':      cs_row['updated_at'],
+        'coc':             coc,
+        'statutory':       stat,
+    }
+
+
+def _cls_save_snapshot(vessel_id, vessel_name_raw, data, filename):
+    """선박 스냅샷 교체(최신만 유지). vessel_id None 이면 미매칭으로 저장
+    (같은 정규화 선명의 기존 미매칭은 제거 후 삽입)."""
+    conn = get_db()
+    user = session.get('username')
+    if vessel_id is not None:
+        conn.execute('DELETE FROM class_status WHERE vessel_id=?', (vessel_id,))
+    else:
+        # 같은 (정규화) 선명의 기존 미매칭 스냅샷 제거
+        tgt = _norm_vessel_name(vessel_name_raw)
+        for r in conn.execute('SELECT id, vessel_name_raw FROM class_status WHERE vessel_id IS NULL').fetchall():
+            if _norm_vessel_name(r['vessel_name_raw']) == tgt:
+                conn.execute('DELETE FROM class_status WHERE id=?', (r['id'],))
+    cur = conn.execute(
+        '''INSERT INTO class_status
+             (vessel_id, vessel_name_raw, class_society, report_date, source_filename, uploaded_by)
+           VALUES (?,?,?,?,?,?)''',
+        (vessel_id, vessel_name_raw, data.get('class_society'),
+         data.get('report_date'), filename, user))
+    cs_id = cur.lastrowid
+    for cat, key in (('COC', 'coc'), ('STATUTORY', 'statutory')):
+        for n, it in enumerate(data.get(key) or [], start=1):
+            conn.execute(
+                '''INSERT INTO class_status_items
+                     (cs_id, category, no, issued_date, description, due_date, remark)
+                   VALUES (?,?,?,?,?,?,?)''',
+                (cs_id, cat, n, it.get('issued_date'), it.get('description'),
+                 it.get('due_date'), it.get('remark')))
+    conn.commit()
+    return cs_id
+
+
+@app.route('/api/class-status', methods=['GET'])
+@login_required
+def api_class_status_list():
+    """매칭 선박별 스냅샷 + 미매칭 버킷.
+    Query: ?supervisor_id=N (지정 시 해당 감독 담당선박만, 미매칭은 미포함)"""
+    sup_id = request.args.get('supervisor_id', type=int)
+
+    all_cs = query('SELECT * FROM class_status ORDER BY updated_at DESC')
+    cs_ids = [r['id'] for r in all_cs]
+    items_by_cs = {cid: [] for cid in cs_ids}
+    if cs_ids:
+        ph = ','.join('?' * len(cs_ids))
+        for it in query(f'SELECT * FROM class_status_items WHERE cs_id IN ({ph}) '
+                        f'ORDER BY cs_id, category, no', tuple(cs_ids)):
+            items_by_cs[it['cs_id']].append(it)
+
+    snap_by_vessel = {r['vessel_id']: r for r in all_cs if r['vessel_id'] is not None}
+
+    # 대상 선박: 스냅샷 보유 선박만 (감독 필터 적용)
+    vessel_ids = list(snap_by_vessel.keys())
+    vessels = []
+    if vessel_ids:
+        ph = ','.join('?' * len(vessel_ids))
+        sql = f'SELECT * FROM vessels WHERE id IN ({ph})'
+        params = list(vessel_ids)
+        if sup_id:
+            sql += (' AND EXISTS (SELECT 1 FROM supervisor_vessels sv '
+                    'WHERE sv.vessel_id=vessels.id AND sv.supervisor_id=?)')
+            params.append(sup_id)
+        sql += ' ORDER BY name'
+        vessels = query(sql, tuple(params))
+
+    sv_map = {}
+    if vessels:
+        vids = [v['id'] for v in vessels]
+        ph2 = ','.join('?' * len(vids))
+        for r in query(f'SELECT vessel_id, supervisor_id FROM supervisor_vessels '
+                       f'WHERE vessel_id IN ({ph2})', tuple(vids)):
+            sv_map.setdefault(r['vessel_id'], []).append(r['supervisor_id'])
+
+    vessel_out = []
+    for v in vessels:
+        vd = dict(v)
+        vd['supervisor_ids'] = sv_map.get(v['id'], [])
+        vessel_out.append({
+            'vessel': vd,
+            'snapshot': _cls_snapshot_dict(snap_by_vessel[v['id']], items_by_cs),
+        })
+
+    unmatched = []
+    if not sup_id:
+        for r in all_cs:
+            if r['vessel_id'] is None:
+                unmatched.append(_cls_snapshot_dict(r, items_by_cs))
+
+    return jsonify({'vessels': vessel_out, 'unmatched': unmatched})
+
+
+@app.route('/api/class-status/upload', methods=['POST'])
+@login_required
+def api_class_status_upload():
+    files = request.files.getlist('files') or (
+        [request.files['file']] if 'file' in request.files else [])
+    files = [f for f in files if f and f.filename]
+    if not files:
+        return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
+
+    results = []
+    for f in files:
+        fname = f.filename
+        data, err = _extract_class_status_from_upload(f)
+        if err:
+            results.append({'filename': fname, 'ok': False, **err})
+            continue
+        vname = data.get('vessel_name') or ''
+        v = _match_vessel_by_name(vname)
+        vessel_id = v['id'] if v else None
+        _cls_save_snapshot(vessel_id, vname, data, fname)
+        results.append({
+            'filename': fname, 'ok': True,
+            'vessel_name': vname,
+            'matched': bool(v),
+            'vessel_id': vessel_id,
+            'matched_name': v['name'] if v else None,
+            'class_society': data.get('class_society'),
+            'report_date': data.get('report_date'),
+            'coc_count': len(data.get('coc') or []),
+            'statutory_count': len(data.get('statutory') or []),
+        })
+    ok_any = any(r.get('ok') for r in results)
+    return jsonify({'ok': ok_any, 'results': results})
+
+
+@app.route('/api/class-status/items/<int:iid>', methods=['PUT'])
+@login_required
+def api_class_status_item_update(iid):
+    row = query('SELECT * FROM class_status_items WHERE id=?', (iid,), one=True)
+    if not row:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    fields, params = [], []
+    for col in ('importance', 'remark', 'description', 'issued_date', 'due_date'):
+        if col in d:
+            val = d[col]
+            if col == 'importance' and val not in ('', 'High', 'Mid', 'Low'):
+                val = ''
+            fields.append(f'{col}=?'); params.append(val)
+    if not fields:
+        return jsonify({'ok': True})
+    fields.append("updated_at=datetime('now','localtime')")
+    params.append(iid)
+    execute(f'UPDATE class_status_items SET {", ".join(fields)} WHERE id=?', tuple(params))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/class-status/<int:cs_id>', methods=['DELETE'])
+@login_required
+def api_class_status_delete(cs_id):
+    if not query('SELECT id FROM class_status WHERE id=?', (cs_id,), one=True):
+        abort(404)
+    execute('DELETE FROM class_status WHERE id=?', (cs_id,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/class-status/<int:cs_id>/assign', methods=['POST'])
+@login_required
+def api_class_status_assign(cs_id):
+    """미매칭 스냅샷을 특정 선박에 수동 배정(기존 선박 스냅샷은 교체)."""
+    snap = query('SELECT * FROM class_status WHERE id=?', (cs_id,), one=True)
+    if not snap:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    vessel_id = d.get('vessel_id')
+    if not vessel_id or not query('SELECT id FROM vessels WHERE id=?', (vessel_id,), one=True):
+        return jsonify({'ok': False, 'message': '유효한 선박을 선택하세요.'}), 400
+    conn = get_db()
+    # 대상 선박의 기존 스냅샷 제거 후 배정
+    conn.execute('DELETE FROM class_status WHERE vessel_id=? AND id<>?', (vessel_id, cs_id))
+    conn.execute("UPDATE class_status SET vessel_id=?, updated_at=datetime('now','localtime') "
+                 "WHERE id=?", (vessel_id, cs_id))
+    conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/class-status/<int:cs_id>/export')
+@login_required
+def api_class_status_export(cs_id):
+    from flask import send_file
+    snap = query('SELECT * FROM class_status WHERE id=?', (cs_id,), one=True)
+    if not snap:
+        abort(404)
+    vname = snap['vessel_name_raw'] or ''
+    if snap['vessel_id']:
+        vrow = query('SELECT name FROM vessels WHERE id=?', (snap['vessel_id'],), one=True)
+        if vrow:
+            vname = vrow['name']
+    items = query('SELECT * FROM class_status_items WHERE cs_id=? ORDER BY category, no', (cs_id,))
+    cat_ko = {'COC': '선급지적(COC)', 'STATUTORY': '기국(Statutory)'}
+    rows = []
+    for it in items:
+        rows.append([
+            cat_ko.get(it['category'], it['category']),
+            it['no'],
+            it['issued_date'] or '',
+            it['description'] or '',
+            it['due_date'] or '',
+            it['remark'] or '',
+            it['importance'] or '',
+        ])
+    headers = ['Category', 'No', 'Issued', 'Description', 'Due', '한글 요약', '중요도']
+    subtitle = f"{snap['class_society'] or ''}  ·  발행 {snap['report_date'] or '-'}"
+    bio = _findings_workbook(
+        f'{vname} Class Status', subtitle, headers, rows,
+        wrap_cols={4, 6}, widths=[16, 5, 13, 60, 13, 40, 8])
+    safe = _re_cls.sub(r'[^A-Za-z0-9가-힣 _-]', '', vname).strip() or 'class_status'
+    return send_file(bio, as_attachment=True,
+                     download_name=f'{safe}_ClassStatus.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 # ═════════════════════════════════════════════════════════════════
