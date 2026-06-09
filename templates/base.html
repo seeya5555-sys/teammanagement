@@ -120,16 +120,21 @@
 
     <label style="font-size:12px;font-weight:600;color:#333;">엔드포인트 (Base URL: <span id="api-base"></span>)</label>
     <div style="margin:4px 0 14px;font-family:monospace;font-size:12.5px;line-height:1.9;color:#222;">
-      <div>GET <strong>/api/ext/all</strong> — 전체(선박·이슈·CS·Vetting·DD·Boarding·일정·Class Status)</div>
+      <div>GET <strong>/api/ext/all</strong> — 전체(선박·이슈·CS·Vetting·요약·DD·Boarding·일정·Class Status)</div>
       <div>GET /api/ext/issues — Daily 업무</div>
       <div>GET /api/ext/surveys — Condition Survey</div>
       <div>GET /api/ext/vettings — Vetting</div>
+      <div>GET /api/ext/vetting-digests — Vetting 선박별 SIRE 요약(상태·항구·OBS·지적상세)</div>
       <div>GET /api/ext/dock-reports — Dry Dock</div>
       <div>GET /api/ext/boarding-reports — Boarding</div>
       <div>GET /api/ext/calendar — 일정</div>
       <div>GET /api/ext/summaries — 업무 요약(요약 탭)</div>
       <div>GET /api/ext/class-status — 선급 Class Status</div>
     </div>
+    <div style="margin:-8px 0 14px;font-size:11.5px;color:#666;line-height:1.6;">
+      ※ 모든 레코드에는 변하지 않는 고유키 <code>ref</code>(예: <code>vetting:12</code>, <code>vt_finding:34</code>,
+      <code>class_status:5</code>)가 포함됩니다. 외부 사이트에서 특정 데이터를 식별·연동할 때 이 값을 주소처럼 사용하세요.
+      선박 연결은 <code>vessel_key</code>(선명 소문자)로 매칭 가능합니다. (이 키들은 API 응답에만 있고 사이트 화면에는 표시되지 않습니다.)
 
     <label style="font-size:12px;font-weight:600;color:#333;">호출 예시</label>
     <pre id="api-example" style="background:#1e1e2e;color:#e6e6e6;padding:12px;border-radius:8px;font-size:12px;overflow:auto;margin:4px 0 4px;"></pre>
