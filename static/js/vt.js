@@ -1410,6 +1410,13 @@ function bindVtExtract() {
     fileInp.value = '';
     if (f) await runVtExtract(f);
   });
+  const dz = $('#vt-extract-drop');
+  if (dz) {
+    dz.addEventListener('click', () => fileInp.click());
+    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
+    dz.addEventListener('drop', (e) => { const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) runVtExtract(f); });
+  }
   $('#vt-extract-selall').addEventListener('change', (e) => {
     document.querySelectorAll('#vt-extract-list .csx-chk').forEach(c => { c.checked = e.target.checked; });
     updateVtxAddState();
