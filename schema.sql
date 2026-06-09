@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS vettings (
     port                     TEXT,
     operation                TEXT,  -- (구) 사용 안 함, 호환 위해 유지
     sire_type                TEXT CHECK (sire_type IN ('Idle','Bunkering','Discharge') OR sire_type IS NULL OR sire_type = ''),
-    valid                    TEXT CHECK (valid IN ('Valid','Invalid') OR valid IS NULL OR valid = ''),
+    valid                    TEXT,                 -- 상태: Next Plan / Last Result (자유 텍스트)
     overall_remark           TEXT,
     manual_observation_count INTEGER,              -- NULL이면 자동 카운트
     manual_open_count        INTEGER,
