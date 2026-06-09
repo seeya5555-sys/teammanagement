@@ -518,13 +518,21 @@ function renderSummaryView() {
 }
 
 // 요약 행 → 원본 이슈로 이동 (전체 대분류/전체 소분류 + 제목 검색 필터)
+// 요약 행에서 검색용 제목 추출: item 필드 우선, 없으면 현안업무 첫 줄에서 [M/D] 제거
+function summaryTitle(r) {
+  if (r.item && String(r.item).trim()) return String(r.item).trim();
+  const first = (r.issue || '').split('\n')[0] || '';
+  return first.replace(/^\s*\[[^\]]*\]\s*/, '').trim();
+}
+
 async function gotoIssueFromSummary(r) {
+  const title = summaryTitle(r);
   S.activeTab = 'all';
   S.activeSubTab = 'all';
   try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
-  // 제목으로 필터 → 그 이슈만 보이도록 (q=검색어 + item_topic=정확일치 둘 다)
-  S.filters.item_topic = r.item || '';
-  S.filters.q = r.item || '';
+  // 제목으로 검색(q) — 직접 검색한 것과 동일하게 필터링
+  S.filters.q = title;
+  S.filters.item_topic = title;   // 새 서버면 정확일치까지 적용되어 딱 하나만
   S.filters.vessel_id = '';
   S.filters.vessel_type = '';
   S.filters.status = '';
@@ -533,12 +541,11 @@ async function gotoIssueFromSummary(r) {
   renderTabs();
   renderVesselFilter();
   renderTabContext();
-  // 셀렉트/검색 UI 동기화 (검색창엔 제목 표시)
-  const sb = $('#filter-search'); if (sb) sb.value = r.item || '';
+  const sb = $('#filter-search'); if (sb) sb.value = title;
   ['#filter-vessel', '#filter-vessel-type', '#filter-status', '#filter-priority']
     .forEach(sel => { const e = $(sel); if (e) e.value = ''; });
   await loadIssues();
-  // 링크로 들어오면 펼친 상태로 보이도록 자동 접기 해제
+  // 펼친 상태로 표시
   S.collapsedMonths.clear();
   S.collapsedDates.clear();
   for (const i of S.issues) {
