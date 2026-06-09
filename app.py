@@ -1,5172 +1,2653 @@
-"""
-TRMT3 Ship Management System
-────────────────────────────────────────────────────────────────
-Flask 메인 (DD Manager 스타일 — 단일 파일, 순수 SQL, ORM 없음)
+'use strict';
 
-로컬 실행        :  python app.py
-DB 재초기화     :  python app.py --init-db
-"""
-import os
-import sys
-import uuid
-import json
-import sqlite3
-import secrets
-from functools import wraps
-from datetime import timedelta
+/* ═══════════════════════════════════════════════════════════════
+   TRMT3  —  Daily 업무관리 (rev.3)
+     · 셀 클릭 → 인라인 편집 (모달 X)
+     · ✏ 편집 버튼    → 전체 편집 모달
+     · 📎 첨부 버튼    → 첨부 전용 모달 (미리보기/다운로드/삭제)
+     · 🗑 삭제 버튼
+     · 인라인 추가 행 (툴바의 "+ 신규 이슈" or 각 날짜 그룹의 "+ 이 날짜로 추가")
+   ═══════════════════════════════════════════════════════════════ */
 
-from flask import (
-    Flask, g, request, jsonify, session, render_template,
-    redirect, url_for, send_from_directory, abort
-)
-from werkzeug.security import generate_password_hash, check_password_hash
-from werkzeug.utils import secure_filename
+// ───────────── State ─────────────
+const S = {
+  user:         window.TRMT?.user || {},
+  supervisors:  [],
+  vessels:      [],
+  activeTab:    'all',
+  activeSubTab: localStorage.getItem('trmt_subtab') || 'open',  // 'open' = Open+진행중 / 'closed' = Closed
+  issues:       [],
+  filters: { q:'', vessel_id:'', vessel_type:'', status:'', priority:'' },
 
-# ═════════════════════════════════════════════════════════════════
-#  Config
-# ═════════════════════════════════════════════════════════════════
-BASE_DIR     = os.path.abspath(os.path.dirname(__file__))
-INSTANCE_DIR = os.path.join(BASE_DIR, 'instance')
-UPLOAD_DIR   = os.path.join(BASE_DIR, 'static', 'uploads')
-os.makedirs(INSTANCE_DIR, exist_ok=True)
-os.makedirs(UPLOAD_DIR,   exist_ok=True)
+  editingId:      null,
+  editingActions: [],
 
-DATABASE        = os.path.join(INSTANCE_DIR, 'trmt.db')
-SCHEMA_FILE     = os.path.join(BASE_DIR, 'schema.sql')
-SEED_FILE       = os.path.join(BASE_DIR, 'seed.sql')
-SECRET_KEY_FILE = os.path.join(INSTANCE_DIR, '.secret_key')
+  collapsedMonths: new Set(),
+  collapsedDates:  new Set(),
+  expandedActions: new Set(),
 
-ALLOWED_EXT = {
-    'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp',
-    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv'
+  // 사용자가 직접 클릭해서 펼치거나 접은 날짜 — 자동 접기에서 제외
+  userToggledDates: new Set(),
+
+  // 첨부 모달
+  attachIssue:  null,
+
+  // 인라인 추가
+  inlineAdd:    null,      // { date, supervisor_id, vessel_id, item_topic, priority, status }
+  _editing:     null,      // 현재 인라인 편집 중인 element (중복 방지)
+};
+
+// ───────────── Utils ─────────────
+const $ = (sel, el = document) => el.querySelector(sel);
+
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class')      e.className = v;
+    else if (k === 'html')  e.innerHTML = v;
+    else if (k.startsWith('on') && typeof v === 'function')
+                             e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (v === true)    e.setAttribute(k, '');
+    else                    e.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return e;
 }
 
-def _load_or_create_secret_key():
-    if os.path.exists(SECRET_KEY_FILE):
-        with open(SECRET_KEY_FILE, 'rb') as f:
-            return f.read()
-    key = secrets.token_bytes(32)
-    with open(SECRET_KEY_FILE, 'wb') as f:
-        f.write(key)
-    return key
-
-app = Flask(__name__)
-app.config.update(
-    SECRET_KEY=_load_or_create_secret_key(),
-    DATABASE=DATABASE,
-    UPLOAD_FOLDER=UPLOAD_DIR,
-    MAX_CONTENT_LENGTH=20 * 1024 * 1024,          # 핸드폰 사진 대비 20MB
-    PERMANENT_SESSION_LIFETIME=timedelta(days=7),
-    JSON_AS_ASCII=False,
-    SESSION_COOKIE_SAMESITE='Lax',
-)
-
-
-# ═════════════════════════════════════════════════════════════════
-#  DB helpers
-# ═════════════════════════════════════════════════════════════════
-def get_db():
-    if 'db' not in g:
-        g.db = sqlite3.connect(app.config['DATABASE'])
-        g.db.row_factory = sqlite3.Row
-        g.db.execute('PRAGMA foreign_keys = ON')
-    return g.db
-
-@app.teardown_appcontext
-def close_db(e=None):
-    db = g.pop('db', None)
-    if db is not None:
-        db.close()
-
-def query(sql, params=(), one=False):
-    cur = get_db().execute(sql, params)
-    rows = cur.fetchall()
-    cur.close()
-    return (rows[0] if rows else None) if one else rows
-
-def execute(sql, params=()):
-    db = get_db()
-    cur = db.execute(sql, params)
-    db.commit()
-    last_id = cur.lastrowid
-    cur.close()
-    return last_id
-
-def init_db(drop=False):
-    """schema + seed 실행, 기본 admin 계정 자동 생성.
-
-    재실행 안전: 이미 데이터가 있어도 schema는 IF NOT EXISTS 라 무해.
-    옛 priority 값(Critical/High/Low)이 남아있으면 새 분류로 자동 마이그레이션.
-    """
-    if drop and os.path.exists(DATABASE):
-        os.remove(DATABASE)
-        print(f'  · 기존 DB 삭제: {DATABASE}')
-
-    fresh = not os.path.exists(DATABASE)
-    conn = sqlite3.connect(DATABASE)
-    try:
-        # ── 마이그레이션 단계 ──
-        # SQLite는 CHECK 제약을 ALTER TABLE 로 못 바꿈.
-        # 옛 CHECK가 박혀있는 테이블이면 새 스키마로 재구축하면서
-        # 데이터를 새 분류로 정규화.
-        # 또한 ALTER TABLE RENAME 시 다른 테이블의 FK 참조가 자동 추적되는
-        # 동작 때문에 attachments의 FK가 깨질 수 있음 → legacy_alter_table 사용.
-        existing = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='issues'"
-        ).fetchone()
-        if existing:
-            ddl_row = conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='issues'"
-            ).fetchone()
-            ddl = ddl_row[0] if ddl_row else ''
-            # 새 분류 키워드 4개 모두 포함하는지 확인
-            needs_rebuild = ('Next DD' not in ddl)
-            if needs_rebuild:
-                old_vals = [r[0] for r in conn.execute(
-                    "SELECT DISTINCT priority FROM issues "
-                    "WHERE priority NOT IN ('Normal','Urgent','COC & Flag','Next DD')"
-                ).fetchall()]
-                if old_vals:
-                    print(f'  · priority 마이그레이션: {old_vals}')
-                print('  · issues 테이블 CHECK 제약 갱신 중...')
-
-                # legacy_alter_table=ON: RENAME 시 다른 테이블의 FK 참조가
-                # 자동으로 따라가지 않도록 해서 attachments FK 보호
-                conn.execute('PRAGMA legacy_alter_table=ON')
-                conn.execute('PRAGMA foreign_keys=OFF')
-                conn.execute('ALTER TABLE issues RENAME TO issues_old')
-                # 새 스키마 CREATE
-                with open(SCHEMA_FILE, encoding='utf-8') as f:
-                    conn.executescript(f.read())
-                # 데이터 복원하면서 priority 정규화 (Critical → COC & Flag, 그 외 → Normal)
-                conn.execute("""
-                    INSERT INTO issues
-                        (id, supervisor_id, vessel_id, issue_date, due_date,
-                         item_topic, description, actions, priority, status,
-                         created_by, created_at, updated_at)
-                    SELECT
-                         id, supervisor_id, vessel_id, issue_date, due_date,
-                         item_topic, description, COALESCE(actions, '[]'),
-                         CASE
-                             WHEN priority IN ('Normal','Urgent','COC & Flag','Next DD')
-                                 THEN priority
-                             WHEN priority = 'Critical' THEN 'COC & Flag'
-                             ELSE 'Normal'
-                         END,
-                         status, created_by,
-                         COALESCE(created_at, CURRENT_TIMESTAMP),
-                         COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
-                    FROM issues_old
-                """)
-                conn.execute('DROP TABLE issues_old')
-                conn.execute('PRAGMA legacy_alter_table=OFF')
-                conn.execute('PRAGMA foreign_keys=ON')
-                conn.commit()
-                print('  · CHECK 제약 갱신 완료')
-
-            # ── attachments FK 무결성 검증 + 자동 복원 ──
-            # 과거 마이그레이션 사고로 깨졌을 수 있는 attachments FK 보정
-            att_ddl_row = conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='attachments'"
-            ).fetchone()
-            if att_ddl_row and 'issues_old' in (att_ddl_row[0] or ''):
-                print('  · attachments FK 깨짐 감지 → 복원 중...')
-                rows = conn.execute('SELECT * FROM attachments').fetchall()
-                cols = [r[1] for r in conn.execute('PRAGMA table_info(attachments)').fetchall()]
-                conn.execute('PRAGMA foreign_keys=OFF')
-                conn.execute('ALTER TABLE attachments RENAME TO attachments_broken')
-                conn.execute("""
-                    CREATE TABLE attachments (
-                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                        issue_id    INTEGER NOT NULL,
-                        filename    TEXT    NOT NULL,
-                        stored_name TEXT    NOT NULL UNIQUE,
-                        file_size   INTEGER,
-                        mime_type   TEXT,
-                        uploaded_by TEXT,
-                        uploaded_at TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
-                        FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-                    )
-                """)
-                if rows:
-                    placeholders = ','.join(['?'] * len(cols))
-                    conn.executemany(
-                        f'INSERT INTO attachments ({",".join(cols)}) VALUES ({placeholders})',
-                        rows,
-                    )
-                conn.execute('DROP TABLE attachments_broken')
-                conn.execute('PRAGMA foreign_keys=ON')
-                conn.commit()
-                print(f'  · attachments {len(rows)}건 복원 완료')
-
-        # ── 일반 init ──
-        with open(SCHEMA_FILE, encoding='utf-8') as f:
-            conn.executescript(f.read())
-        print('  · 스키마 적용 완료')
-
-        # cs_surveys 에 manual_*_count 컬럼이 없으면 추가 (기존 DB 보강)
-        cs_cols = [r[1] for r in conn.execute('PRAGMA table_info(cs_surveys)').fetchall()]
-        if cs_cols:  # cs_surveys 테이블이 존재할 때만
-            for col in ('manual_defect_count', 'manual_observation_count', 'manual_close_count'):
-                if col not in cs_cols:
-                    conn.execute(f'ALTER TABLE cs_surveys ADD COLUMN {col} INTEGER')
-                    print(f'  · cs_surveys.{col} 컬럼 추가')
-            conn.commit()
-
-        # cs_findings 에 item 컬럼이 없으면 추가
-        cf_cols = [r[1] for r in conn.execute('PRAGMA table_info(cs_findings)').fetchall()]
-        if cf_cols and 'item' not in cf_cols:
-            conn.execute('ALTER TABLE cs_findings ADD COLUMN item TEXT')
-            print('  · cs_findings.item 컬럼 추가')
-            conn.commit()
-
-        # cs_surveys.vendor CHECK 제약 제거 (AALMAR/IDWAL 외 자유 입력 허용)
-        try:
-            sql_def = conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='cs_surveys'",
-            ).fetchone()
-            if sql_def and "CHECK (vendor IN" in (sql_def[0] or ''):
-                conn.executescript("""
-                    PRAGMA foreign_keys = OFF;
-                    BEGIN;
-                    CREATE TABLE cs_surveys_new (
-                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                        vessel_id       INTEGER NOT NULL,
-                        year            INTEGER NOT NULL,
-                        quarter         INTEGER NOT NULL CHECK (quarter IN (1,2,3,4)),
-                        vendor          TEXT,
-                        management      TEXT,
-                        inspection_date TEXT,
-                        overall_remark  TEXT,
-                        manual_defect_count      INTEGER,
-                        manual_observation_count INTEGER,
-                        manual_close_count       INTEGER,
-                        created_by      TEXT,
-                        created_at      TEXT DEFAULT (datetime('now','localtime')),
-                        updated_at      TEXT DEFAULT (datetime('now','localtime')),
-                        UNIQUE (vessel_id, year, quarter),
-                        FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE CASCADE
-                    );
-                    INSERT INTO cs_surveys_new
-                      SELECT id, vessel_id, year, quarter, vendor, management,
-                             inspection_date, overall_remark,
-                             manual_defect_count, manual_observation_count, manual_close_count,
-                             created_by, created_at, updated_at
-                      FROM cs_surveys;
-                    DROP TABLE cs_surveys;
-                    ALTER TABLE cs_surveys_new RENAME TO cs_surveys;
-                    CREATE INDEX IF NOT EXISTS idx_cs_surveys_vessel_year ON cs_surveys(vessel_id, year);
-                    COMMIT;
-                    PRAGMA foreign_keys = ON;
-                """)
-                print('  · cs_surveys.vendor CHECK 제약 제거 (자유 입력 허용)')
-        except Exception as e:
-            print(f'  · cs_surveys vendor 마이그레이션 스킵: {e}')
-
-        if fresh and os.path.exists(SEED_FILE):
-            with open(SEED_FILE, encoding='utf-8') as f:
-                conn.executescript(f.read())
-            print('  · 시드 데이터 로드 완료')
-
-        # 기본 admin 계정 자동 생성
-        if conn.execute('SELECT COUNT(*) FROM users').fetchone()[0] == 0:
-            conn.execute(
-                'INSERT INTO users (username, password_hash, display_name, role) '
-                'VALUES (?, ?, ?, ?)',
-                ('admin', generate_password_hash('admin0424'),
-                 'Administrator', 'admin'),
-            )
-            print('  · 기본 관리자 생성: admin / admin0424')
-        conn.commit()
-        print(f'[OK] DB 초기화 완료: {DATABASE}')
-    finally:
-        conn.close()
-
-
-def _seed_issues(conn):
-    """예시 이슈들 — actions 배열로 여러 팔로우업 entry 포함."""
-    SEED = [
-        dict(supervisor='손차장', vessel='KUWAIT PROSPERITY',
-             issue_date='2026-04-24', due_date='2026-04-26',
-             item_topic='Job 40.1 WBT Pipe Renewal 추가견적 Tariff 오류',
-             description='1. YiuLian 추가견적 분석 결과 Tariff 적용 오류 발견.\n'
-                         '2. 할인율 재적용 시 약 USD 16,000 절감 가능.\n'
-                         '3. 정정 견적 필요 — Ch.40 WBT Plug 기준.',
-             actions=[
-                 {'date': '2026-04-24', 'progress': 'Tariff 오류 분석 완료. 정정견적 공식 요청 메일 발송.', 'important': False},
-                 {'date': '2026-04-25', 'progress': 'Xue Jing Gang 측 중간 회신 — 내부 검토 중.', 'important': False},
-                 {'date': '2026-04-26', 'progress': '정정 견적 회신 기한. 미회신 시 상부 보고.', 'important': True},
-             ],
-             priority='COC & Flag', status='Open'),
-
-        dict(supervisor='이과장', vessel='ATLANTIC PIONEER',
-             issue_date='2026-04-24', due_date='2026-04-24',
-             item_topic='Pre-docking Meeting Agenda 회신 누락',
-             description='1. Will (CSM SG) 측 회신 미도착.\n'
-                         '2. 손차장 작성분 Agenda 수정본 공유 필요.',
-             actions=[
-                 {'date': '2026-04-23', 'progress': 'CSM Singapore 앞 Agenda 초안 송부.', 'important': False},
-                 {'date': '2026-04-24', 'progress': '금일 중 Will 에게 재요청 콜.', 'important': True},
-             ],
-             priority='Urgent', status='Open'),
-
-        dict(supervisor='김과장', vessel='SAUDI EXPORT',
-             issue_date='2026-04-23', due_date='2026-04-25',
-             item_topic='No.2 Aux Boiler 간헐 Flame Failure',
-             description='1. 항차 중 기관장 보고 — 3회 발생.\n'
-                         '2. 수동 재점화로 복귀, 운항 영향 없음.\n'
-                         '3. Flame rod / Photocell 부품 조달 검토.',
-             actions=[
-                 {'date': '2026-04-23', 'progress': '기관장 최초 보고 접수. 운항 지장 없음 확인.', 'important': False},
-                 {'date': '2026-04-24', 'progress': 'Miura 부산대리점 앞 기술지원 요청.', 'important': False},
-                 {'date': '2026-04-25', 'progress': '대리점 회신 기한. 부품 Q\'ty / 단가 확정.', 'important': True},
-             ],
-             priority='Urgent', status='Open'),
-
-        dict(supervisor='손차장', vessel='KUWAIT PROSPERITY',
-             issue_date='2026-04-22', due_date='2026-04-28',
-             item_topic='Main Engine Maker/Model 스펙 불일치',
-             description='1. DD Spec 과 YiuLian 견적서 상 M/E 메이커 기재 상이.\n'
-                         '2. Turbocharger, Governor, Alternator 동일 이슈.\n'
-                         '3. Pre-docking meeting 공식 안건 상정.',
-             actions=[
-                 {'date': '2026-04-22', 'progress': '견적서 상 메이커 기재 오류 발견 — 내부 공유.', 'important': False},
-                 {'date': '2026-04-23', 'progress': 'YiuLian 측 구두 확인 — 오기재 인정. 정정 약속.', 'important': False},
-                 {'date': '2026-04-28', 'progress': 'Pre-docking meeting 에서 공식 정정본 수령 예정.', 'important': True},
-             ],
-             priority='COC & Flag', status='InProgress'),
-
-        dict(supervisor='이과장', vessel='ATLANTIC PIONEER',
-             issue_date='2026-04-22', due_date='2026-04-30',
-             item_topic='Vetting 지적 Close-out 증빙자료 취합',
-             description='1. 본선 현장 사진 2건 회신 대기.\n'
-                         '2. SIRE 2.0 기준 CAR 2건, CR 1건.',
-             actions=[
-                 {'date': '2026-04-22', 'progress': '본선 Master 앞 현장 사진 요청 메일 발송.', 'important': False},
-                 {'date': '2026-04-24', 'progress': '사진 2건 수령. Close-out 보고서 초안 작성.', 'important': False},
-                 {'date': '2026-04-30', 'progress': 'Close-out 제출 기한.', 'important': True},
-             ],
-             priority='Urgent', status='InProgress'),
-
-        dict(supervisor='손차장', vessel='KUWAIT GLORY',
-             issue_date='2026-04-18', due_date=None,
-             item_topic='IG Scrubber Nozzle 세정 완료 보고',
-             description='1. Service Station 방문 — 세정 / 기능 테스트 완료.\n'
-                         '2. Class 입회 불요, 본선 성적서 수령.',
-             actions=[
-                 {'date': '2026-04-16', 'progress': 'Service Station 방문. 세정 작업 진행.', 'important': False},
-                 {'date': '2026-04-18', 'progress': 'Service Report 수령 완료. 선적 보관.', 'important': False},
-             ],
-             priority='Normal', status='Closed'),
-
-        # 지난 달 이슈 — 월별 접기 샘플
-        dict(supervisor='손차장', vessel='KUWAIT PROSPERITY',
-             issue_date='2026-03-28', due_date=None,
-             item_topic='DD Specification Final Review',
-             description='1. Chapter 1~44 전체 검토 완료.\n'
-                         '2. Add Spec 23건 반영.',
-             actions=[
-                 {'date': '2026-03-28', 'progress': 'Final review 완료. CSM 공유.', 'important': False},
-             ],
-             priority='Normal', status='Closed'),
-
-        dict(supervisor='김과장', vessel='SAUDI EXPORT',
-             issue_date='2026-03-15', due_date=None,
-             item_topic='Annual Crew Survey 완료',
-             description='Master 이하 주요 포지션 Annual Survey 완료.',
-             actions=[
-                 {'date': '2026-03-15', 'progress': 'Survey 완료. 특이사항 없음.', 'important': False},
-             ],
-             priority='Normal', status='Closed'),
-    ]
-
-    for i in SEED:
-        conn.execute('''
-            INSERT INTO issues
-                (supervisor_id, vessel_id, issue_date, due_date,
-                 item_topic, description, actions, priority, status, created_by)
-            VALUES (
-                (SELECT id FROM supervisors WHERE name=?),
-                (SELECT id FROM vessels     WHERE name=?),
-                ?, ?, ?, ?, ?, ?, ?, 'seed'
-            )
-        ''', (
-            i['supervisor'], i['vessel'], i['issue_date'], i['due_date'],
-            i['item_topic'], i['description'],
-            json.dumps(i['actions'], ensure_ascii=False),
-            i['priority'], i['status']
-        ))
-
-
-# ═════════════════════════════════════════════════════════════════
-#  Auth decorators
-# ═════════════════════════════════════════════════════════════════
-def login_required(f):
-    @wraps(f)
-    def wrapped(*args, **kwargs):
-        if 'user_id' not in session:
-            if request.path.startswith('/api/'):
-                return jsonify({'error': 'unauthorized'}), 401
-            return redirect(url_for('login', next=request.path))
-        return f(*args, **kwargs)
-    return wrapped
-
-def admin_required(f):
-    @wraps(f)
-    def wrapped(*args, **kwargs):
-        if 'user_id' not in session:
-            return jsonify({'error': 'unauthorized'}), 401
-        if session.get('role') != 'admin':
-            return jsonify({'error': 'forbidden'}), 403
-        return f(*args, **kwargs)
-    return wrapped
-
-
-# ═════════════════════════════════════════════════════════════════
-#  Pages
-# ═════════════════════════════════════════════════════════════════
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'GET':
-        if 'user_id' in session:
-            return redirect(url_for('index'))
-        return render_template('login.html')
-
-    username = (request.form.get('username') or '').strip()
-    password = request.form.get('password') or ''
-    u = query('SELECT * FROM users WHERE username=? AND active=1',
-              (username,), one=True)
-    if not u or not check_password_hash(u['password_hash'], password):
-        return render_template(
-            'login.html',
-            error='아이디 또는 비밀번호가 올바르지 않습니다.',
-            username=username,
-        ), 401
-
-    session.clear()
-    session.permanent = True
-    session['user_id']       = u['id']
-    session['username']      = u['username']
-    session['display_name']  = u['display_name'] or u['username']
-    session['role']          = u['role']
-    session['supervisor_id'] = u['supervisor_id']
-    execute('UPDATE users SET last_login_at=datetime("now","localtime") WHERE id=?',
-            (u['id'],))
-
-    nxt = request.args.get('next') or url_for('index')
-    # 외부 URL 리다이렉트 방지
-    if not nxt.startswith('/'):
-        nxt = url_for('index')
-    return redirect(nxt)
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
-
-@app.route('/')
-@login_required
-def index():
-    return render_template('index.html')
-
-
-@app.route('/condition-survey')
-@login_required
-def condition_survey():
-    return render_template('condition_survey.html')
-
-
-@app.route('/vetting-status')
-@login_required
-def vetting_status():
-    return render_template('vetting_status.html')
-
-
-@app.route('/calendar')
-@login_required
-def calendar_page():
-    return render_template('calendar.html')
-
-
-@app.route('/dry-dock')
-@login_required
-def dry_dock_page():
-    return render_template('dry_dock.html')
-
-
-@app.route('/dry-dock/<int:rid>/edit')
-@login_required
-def dry_dock_edit_page(rid):
-    r = query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True)
-    if not r:
-        abort(404)
-    return render_template('dry_dock_edit.html', report_id=rid)
-
-
-@app.route('/boarding')
-@login_required
-def boarding_page():
-    return render_template('boarding.html')
-
-
-@app.route('/boarding/<int:rid>/edit')
-@login_required
-def boarding_edit_page(rid):
-    r = query('SELECT id FROM boarding_reports WHERE id=?', (rid,), one=True)
-    if not r:
-        abort(404)
-    return render_template('boarding_edit.html', report_id=rid)
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — me / password
-# ═════════════════════════════════════════════════════════════════
-@app.route('/api/me')
-@login_required
-def api_me():
-    return jsonify({
-        'user_id':       session['user_id'],
-        'username':      session['username'],
-        'display_name':  session.get('display_name'),
-        'role':          session.get('role'),
-        'supervisor_id': session.get('supervisor_id'),
-    })
-
-@app.route('/api/me/password', methods=['POST'])
-@login_required
-def api_me_password():
-    d = request.get_json(silent=True) or {}
-    old = d.get('old_password') or ''
-    new = d.get('new_password') or ''
-    if len(new) < 6:
-        return jsonify({'error': '신규 비밀번호는 최소 6자 이상이어야 합니다.'}), 400
-    u = query('SELECT * FROM users WHERE id=?',
-              (session['user_id'],), one=True)
-    if not check_password_hash(u['password_hash'], old):
-        return jsonify({'error': '기존 비밀번호가 일치하지 않습니다.'}), 400
-    execute('UPDATE users SET password_hash=? WHERE id=?',
-            (generate_password_hash(new), session['user_id']))
-    return jsonify({'ok': True})
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — supervisors
-# ═════════════════════════════════════════════════════════════════
-@app.route('/api/supervisors')
-@login_required
-def api_supervisors():
-    rows = query('''
-        SELECT
-            s.id, s.name, s.color, s.display_order, s.email,
-            (SELECT COUNT(*) FROM issues i WHERE i.supervisor_id = s.id)
-                AS total,
-            (SELECT COUNT(*) FROM issues i WHERE i.supervisor_id = s.id AND i.status='Open')
-                AS open_count,
-            (SELECT COUNT(*) FROM issues i WHERE i.supervisor_id = s.id AND i.status='InProgress')
-                AS progress_count,
-            (SELECT COUNT(*) FROM issues i WHERE i.supervisor_id = s.id AND i.status='Closed')
-                AS closed_count,
-            (SELECT GROUP_CONCAT(v.name, ', ')
-                FROM supervisor_vessels sv
-                JOIN vessels v ON v.id = sv.vessel_id
-               WHERE sv.supervisor_id = s.id) AS vessels
-          FROM supervisors s
-         WHERE s.active = 1
-         ORDER BY s.display_order, s.id
-    ''')
-    return jsonify([dict(r) for r in rows])
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — vessels
-# ═════════════════════════════════════════════════════════════════
-@app.route('/api/vessels')
-@login_required
-def api_vessels():
-    sup = request.args.get('supervisor_id', type=int)
-    if sup:
-        rows = query('''
-            SELECT v.* FROM vessels v
-              JOIN supervisor_vessels sv ON sv.vessel_id = v.id
-             WHERE sv.supervisor_id = ? AND v.active = 1
-             ORDER BY v.name
-        ''', (sup,))
-    else:
-        rows = query('SELECT * FROM vessels WHERE active=1 ORDER BY name')
-    return jsonify([dict(r) for r in rows])
-
-
-# 선박별 활성(Open + InProgress) 이슈 수 — Daily 필터 드롭다운용
-#   · 다른 화면 필터(감독, 검색, 우선순위, 선종)는 적용
-#   · 선박 필터 자체는 무시 (드롭다운 라벨용이므로)
-@app.route('/api/vessels/active-counts')
-@login_required
-def api_vessel_active_counts():
-    conds = ["i.status IN ('Open', 'InProgress')"]
-    params = []
-
-    sup = request.args.get('supervisor_id')
-    if sup:
-        conds.append('i.supervisor_id = ?')
-        params.append(sup)
-
-    q = request.args.get('q')
-    if q:
-        like = f'%{q}%'
-        conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
-        params += [like, like, like]
-
-    vt = request.args.get('vessel_type')
-    if vt:
-        conds.append('v.vessel_type = ?')
-        params.append(vt)
-
-    pri = request.args.get('priority')
-    if pri:
-        conds.append('i.priority = ?')
-        params.append(pri)
-
-    sql = f'''
-        SELECT i.vessel_id, COUNT(*) AS cnt
-          FROM issues i
-          JOIN vessels v ON v.id = i.vessel_id
-         WHERE {' AND '.join(conds)}
-         GROUP BY i.vessel_id
-    '''
-    rows = query(sql, params)
-    return jsonify({str(r['vessel_id']): r['cnt'] for r in rows})
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — issues (list / get / create / update / delete)
-# ═════════════════════════════════════════════════════════════════
-@app.route('/api/issues')
-@login_required
-def api_issue_list():
-    conds, params = ['1=1'], []
-    for key, col in [('supervisor_id', 'i.supervisor_id'),
-                     ('vessel_id',     'i.vessel_id'),
-                     ('status',        'i.status'),
-                     ('priority',      'i.priority')]:
-        val = request.args.get(key)
-        if val:
-            conds.append(f'{col} = ?')
-            params.append(val)
-
-    q = request.args.get('q')
-    if q:
-        like = f'%{q}%'
-        conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
-        params += [like, like, like]
-
-    # 선종 필터 (vessels.vessel_type JOIN 기준)
-    vt = request.args.get('vessel_type')
-    if vt:
-        conds.append('v.vessel_type = ?')
-        params.append(vt)
-
-    sql = f'''
-        SELECT i.*,
-               s.name       AS supervisor_name,
-               s.color      AS supervisor_color,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               (SELECT COUNT(*) FROM attachments a WHERE a.issue_id = i.id) AS att_count
-          FROM issues i
-          JOIN supervisors s ON s.id = i.supervisor_id
-          JOIN vessels     v ON v.id = i.vessel_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY i.issue_date ASC, i.id ASC
-    '''
-    rows = [_issue_to_dict(r) for r in query(sql, params)]
-    return jsonify(rows)
-
-
-def _issue_to_dict(row):
-    d = dict(row)
-    try:
-        d['actions'] = json.loads(d['actions']) if d.get('actions') else []
-    except Exception:
-        d['actions'] = []
-    return d
-
-
-# ─────────────────────────────────────────────────────────────────
-#  Daily 업무관리 — Excel 추출 (정형 템플릿)
-#   · 화면 구조 그대로 재현: 감독 시트 → 제목 → 컬럼 헤더 →
-#     월 그룹 헤더 → 일 그룹 헤더 → 데이터 행
-#   · Excel의 행 그룹(outline) 기능으로 월·일 단위 접기/펼치기 가능
-#   · 컬럼 헤더 행에 AutoFilter 적용 → 선박명 등 자유롭게 필터
-#   · 현재 화면 필터(상태/우선순위/선박/선종/검색어/서브탭) 그대로 반영
-# ─────────────────────────────────────────────────────────────────
-@app.route('/api/issues/export')
-@login_required
-def api_issue_export():
-    from io import BytesIO
-    from datetime import datetime
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-        from openpyxl.utils import get_column_letter
-    except ImportError:
-        return jsonify({'error': 'openpyxl 미설치 — 서버에 pip install openpyxl 필요'}), 500
-    from flask import send_file
-
-    # ── 1) 화면 필터와 동일한 조건 ──────────────────────────────
-    conds, params = ['1=1'], []
-    for key, col in [('supervisor_id', 'i.supervisor_id'),
-                     ('vessel_id',     'i.vessel_id'),
-                     ('status',        'i.status'),
-                     ('priority',      'i.priority')]:
-        val = request.args.get(key)
-        if val:
-            conds.append(f'{col} = ?')
-            params.append(val)
-
-    status_in = request.args.get('status_in')
-    if status_in:
-        vals = [v.strip() for v in status_in.split(',') if v.strip()]
-        if vals:
-            placeholders = ','.join('?' for _ in vals)
-            conds.append(f'i.status IN ({placeholders})')
-            params += vals
-
-    q = request.args.get('q')
-    if q:
-        like = f'%{q}%'
-        conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
-        params += [like, like, like]
-
-    vt = request.args.get('vessel_type')
-    if vt:
-        conds.append('v.vessel_type = ?')
-        params.append(vt)
-
-    sql = f'''
-        SELECT i.*,
-               s.id            AS sv_id,
-               s.name          AS supervisor_name,
-               s.display_order AS sv_order,
-               v.name          AS vessel_name
-          FROM issues i
-          JOIN supervisors s ON s.id = i.supervisor_id
-          JOIN vessels     v ON v.id = i.vessel_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY s.display_order ASC, s.id ASC,
-                  i.issue_date ASC, i.id ASC
-    '''
-    rows = [_issue_to_dict(r) for r in query(sql, params)]
-
-    EN = (request.args.get('lang') == 'en')
-    if EN:
-        _translate_rows_en(rows)
-
-    # ── 2) 감독 → 월 → 일 → 이슈 (4단 그룹핑) ───────────────────
-    sv_map  = {}   # sv_name -> {'order': sv_order, 'months': OrderedDict}
-    sv_seq  = []
-    for r in rows:
-        sn = r['supervisor_name']
-        if sn not in sv_map:
-            sv_map[sn] = {'order': r.get('sv_order') or 0, 'months': {}}
-            sv_seq.append(sn)
-        d = r.get('issue_date') or ''
-        ym = d[:7] if len(d) >= 7 else '날짜 미정'
-        months = sv_map[sn]['months']
-        if ym not in months:
-            months[ym] = {}
-        days = months[ym]
-        dkey = d if d else '날짜 미정'
-        if dkey not in days:
-            days[dkey] = []
-        days[dkey].append(r)
-
-    # ── 3) 스타일 정의 ──────────────────────────────────────────
-    HEADERS = (['NO.', 'Issue Date', 'Due Date', 'Vessel', 'ITEM',
-                'DESCRIPTION', 'ACTION PLAN', 'Priority', 'Status', 'Prepared By']
-               if EN else
-               ['NO.', '작성일', '마감일', '선박명', 'ITEM',
-                'DESCRIPTION', 'ACTION PLAN', '우선순위', '상태', '작성자'])
-    COL_WIDTHS = [5, 12, 12, 22, 28, 38, 42, 13, 11, 11]
-    N_COLS = len(HEADERS)
-
-    F = 'Malgun Gothic'   # Windows 환경의 한글 폰트, macOS도 대체 잘 됨
-    title_font   = Font(name=F, size=14, bold=True, color='FFFFFF')
-    sub_font     = Font(name=F, size=10, color='ECF0F1', italic=True)
-    title_fill   = PatternFill('solid', start_color='1F3A5F')   # 짙은 네이비
-    sub_fill     = PatternFill('solid', start_color='2C5282')
-
-    col_hdr_font = Font(name=F, size=10, bold=True, color='FFFFFF')
-    col_hdr_fill = PatternFill('solid', start_color='34495E')   # 슬레이트
-
-    month_font   = Font(name=F, size=11, bold=True, color='FFFFFF')
-    month_fill   = PatternFill('solid', start_color='7F8C8D')   # 미디엄 그레이
-
-    day_font     = Font(name=F, size=10, bold=True, color='2C3E50')
-    day_fill     = PatternFill('solid', start_color='D5DBDB')   # 라이트 그레이
-
-    body_font    = Font(name=F, size=10)
-    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    body_align   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
-    cent_top     = Alignment(horizontal='center', vertical='top',    wrap_text=True)
-    left_mid     = Alignment(horizontal='left',   vertical='center', wrap_text=False)
-
-    thin = Side(style='thin',   color='BDC3C7')
-    med  = Side(style='medium', color='34495E')
-    border_thin = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    PRI_FILL = {
-        'COC & Flag': PatternFill('solid', start_color='F8CECC'),
-        'Urgent':     PatternFill('solid', start_color='FFE6CC'),
-        'Next DD':    PatternFill('solid', start_color='FFF2CC'),
-        'Normal':     None,
+function escHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function todayISO() {
+  const t = new Date();
+  return t.toISOString().slice(0, 10);
+}
+
+function dDay(due) {
+  if (!due) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(due + 'T00:00:00');
+  return Math.round((d - today) / 86400000);
+}
+function dDayBadge(due) {
+  const n = dDay(due);
+  if (n === null) return null;
+  let cls, txt;
+  if (n < 0)       { cls = 'dday-overdue'; txt = `D${n}`; }
+  else if (n === 0){ cls = 'dday-today';   txt = 'D-DAY'; }
+  else if (n <= 3) { cls = 'dday-soon';    txt = `D+${n}`; }
+  else             { cls = 'dday-later';   txt = `D+${n}`; }
+  return el('span', { class: `dday ${cls}`, title: `마감: ${due}` }, txt);
+}
+
+const PRI_MAP = {
+  'COC & Flag': { cls: 'pri-cocflag', label: 'COC & Flag' },
+  Urgent:       { cls: 'pri-urgent',  label: 'Urgent'     },
+  'Next DD':    { cls: 'pri-nextdd',  label: 'Next DD'    },
+  Normal:       { cls: 'pri-normal',  label: 'Normal'     },
+};
+const STAT_MAP = {
+  Open:       { cls: 'status-open', label: 'Open'   },
+  InProgress: { cls: 'status-prog', label: '진행중' },
+  Closed:     { cls: 'status-done', label: 'Closed' },
+};
+function priBadge(p) {
+  const m = PRI_MAP[p] || PRI_MAP.Normal;
+  return el('span', { class: `bd ${m.cls}` }, m.label);
+}
+function statBadge(s) {
+  const m = STAT_MAP[s] || STAT_MAP.Open;
+  return el('span', { class: `bd ${m.cls}` }, m.label);
+}
+
+function monthKey(s) { return s ? s.slice(0, 7) : '(미정)'; }
+
+function groupByMonthAndDate(issues) {
+  const months = new Map();
+  for (const i of issues) {
+    const mk = monthKey(i.issue_date);
+    const dk = i.issue_date || '(미정)';
+    if (!months.has(mk)) months.set(mk, new Map());
+    const dayMap = months.get(mk);
+    (dayMap.get(dk) || dayMap.set(dk, []).get(dk)).push(i);
+  }
+  return [...months.entries()].map(([month, dayMap]) => ({
+    month,
+    items: [...dayMap.entries()].map(([date, issues]) => ({ date, issues })),
+  }));
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function isImageFile(name) {
+  return /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(name);
+}
+
+// ───────────── API ─────────────
+async function api(url, opts = {}) {
+  const isForm = opts.body instanceof FormData;
+  const headers = isForm ? {} : { 'Content-Type': 'application/json' };
+  const res = await fetch(url, {
+    credentials: 'same-origin',
+    headers: { ...headers, ...(opts.headers || {}) },
+    ...opts,
+  });
+  if (res.status === 401) {
+    location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('unauthorized');
+  }
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) {
+    const msg = data?.error || text || ('HTTP ' + res.status);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function loadSupervisors() { S.supervisors = await api('/api/supervisors'); }
+async function loadVessels(supId) {
+  const url = supId && supId !== 'all' ? `/api/vessels?supervisor_id=${supId}` : '/api/vessels';
+  S.vessels = await api(url);
+}
+async function loadIssues() {
+  const p = new URLSearchParams();
+  if (S.activeTab !== 'all') p.set('supervisor_id', S.activeTab);
+  if (S.filters.q)           p.set('q', S.filters.q);
+  if (S.filters.vessel_id)   p.set('vessel_id', S.filters.vessel_id);
+  if (S.filters.vessel_type) p.set('vessel_type', S.filters.vessel_type);
+  if (S.filters.priority)    p.set('priority', S.filters.priority);
+
+  // status: 사용자가 명시적으로 status 필터를 골랐으면 그게 우선,
+  //         아니면 서브 탭 기준으로 자동 적용
+  if (S.filters.status) {
+    p.set('status', S.filters.status);
+  } else if (S.activeSubTab === 'closed') {
+    p.set('status', 'Closed');
+  } else if (S.activeSubTab === 'all') {
+    // '전체' 서브 탭 = 진행중 + 완료 (status 미지정 → 전부)
+  } else {
+    // 'open' 서브 탭 = Open + InProgress
+    const [openIssues, progIssues] = await Promise.all([
+      (() => { const q = new URLSearchParams(p); q.set('status', 'Open'); return api('/api/issues?' + q); })(),
+      (() => { const q = new URLSearchParams(p); q.set('status', 'InProgress'); return api('/api/issues?' + q); })(),
+    ]);
+    S.issues = [...openIssues, ...progIssues].sort((a, b) => {
+      if (a.issue_date !== b.issue_date) return a.issue_date < b.issue_date ? -1 : 1;
+      return a.id - b.id;
+    });
+    autoCollapseNewDates();
+    return;
+  }
+
+  S.issues = await api('/api/issues?' + p);
+  autoCollapseNewDates();
+}
+
+// 새로 로드된 이슈 중 사용자가 손대지 않은 날짜는 자동으로 접기
+function autoCollapseNewDates() {
+  for (const i of S.issues) {
+    if (i.issue_date && !S.userToggledDates.has(i.issue_date)) {
+      S.collapsedDates.add(i.issue_date);
     }
-    PRI_FONT = {
-        'COC & Flag': Font(name=F, size=10, bold=True, color='B71C1C'),
-        'Urgent':     Font(name=F, size=10, bold=True, color='E65100'),
-        'Next DD':    Font(name=F, size=10, bold=True, color='6D4C0F'),
-        'Normal':     Font(name=F, size=10, color='5D6D7E'),
+  }
+}
+
+// ───────────── Tabs / Filter / Summary ─────────────
+function renderTabs() {
+  const bar = $('#tab-bar');
+  bar.innerHTML = '';
+  // 탭 카운트는 "진행중"(Open + InProgress)만 표시 — 완료(Closed)는 제외
+  const totalActive = S.supervisors.reduce(
+    (a, s) => a + (s.open_count || 0) + (s.progress_count || 0), 0,
+  );
+  bar.append(tabEl('all', '전체', 'gray', totalActive, S.activeTab === 'all'));
+  for (const s of S.supervisors) {
+    const active = (s.open_count || 0) + (s.progress_count || 0);
+    bar.append(tabEl(s.id, s.name, s.color, active, S.activeTab == s.id));
+  }
+  renderSubTabs();
+}
+
+// 서브 탭 (진행중 = Open+InProgress / 완료 = Closed)
+function renderSubTabs() {
+  const bar = $('#subtab-bar');
+  bar.innerHTML = '';
+
+  // 카운트 계산 (현재 활성 메인 탭 기준)
+  let openCnt = 0, doneCnt = 0;
+  if (S.activeTab === 'all') {
+    for (const s of S.supervisors) {
+      openCnt += (s.open_count || 0) + (s.progress_count || 0);
+      doneCnt += (s.closed_count || 0);
     }
-    STAT_FILL = {
-        'Open':       PatternFill('solid', start_color='E1F5FE'),
-        'InProgress': PatternFill('solid', start_color='FFF9C4'),
-        'Closed':     PatternFill('solid', start_color='E8F5E9'),
+  } else {
+    const s = S.supervisors.find(x => x.id == S.activeTab);
+    if (s) {
+      openCnt = (s.open_count || 0) + (s.progress_count || 0);
+      doneCnt = (s.closed_count || 0);
     }
-    STAT_FONT = {
-        'Open':       Font(name=F, size=10, bold=True, color='0277BD'),
-        'InProgress': Font(name=F, size=10, bold=True, color='F57F17'),
-        'Closed':     Font(name=F, size=10, bold=True, color='2E7D32'),
+  }
+
+  bar.append(subtabEl('all',    '전체',   openCnt + doneCnt, S.activeSubTab === 'all'));
+  bar.append(subtabEl('open',   '진행중', openCnt, S.activeSubTab === 'open'));
+  bar.append(subtabEl('closed', '완료',   doneCnt, S.activeSubTab === 'closed'));
+}
+
+function subtabEl(id, label, count, active) {
+  const t = el('div', {
+    class: 'subtab' + (active ? ' active' : ''),
+    'data-sub': id,
+    onclick: () => switchSubTab(id),
+  },
+    el('span', { class: 'subtab-dot' }),
+    label,
+    el('span', { class: 'subtab-count' }, String(count))
+  );
+  return t;
+}
+
+async function switchSubTab(id) {
+  if (S.activeSubTab === id) return;
+  S.activeSubTab = id;
+  try { localStorage.setItem('trmt_subtab', id); } catch (_) {}
+  S.inlineAdd = null;
+  renderSubTabs();
+  renderTabContext();
+  await loadIssues();
+  render();
+}
+function tabEl(id, name, color, count, active) {
+  const t = el('div', { class: 'tab' + (active ? ' active' : ''), 'data-id': id },
+    el('span', { class: `tab-dot dot-${color}` }),
+    name,
+    el('span', { class: 'tab-count' }, count));
+  t.addEventListener('click', () => switchTab(id));
+  return t;
+}
+async function switchTab(id) {
+  S.activeTab = id;
+  S.inlineAdd = null;
+  renderTabs();
+  await loadVessels(id);
+  renderVesselFilter();
+  renderTabContext();
+  await loadIssues();
+  render();
+}
+function renderVesselFilter() {
+  const sel = $('#filter-vessel');
+  const cur = sel.value;
+  sel.innerHTML = '';
+  sel.append(el('option', { value: '' }, 'All 선박'));
+  for (const v of S.vessels) sel.append(el('option', { value: v.id }, v.name));
+  sel.value = S.vessels.find(v => v.id == cur) ? cur : '';
+  S.filters.vessel_id = sel.value;
+
+  // 비동기로 활성 이슈 카운트 받아서 옵션 라벨에 추가
+  refreshVesselFilterCounts();
+}
+
+async function refreshVesselFilterCounts() {
+  const sel = $('#filter-vessel');
+  if (!sel || !S.vessels.length) return;
+
+  const p = new URLSearchParams();
+  if (S.activeTab !== 'all')   p.set('supervisor_id', S.activeTab);
+  if (S.filters.q)             p.set('q', S.filters.q);
+  if (S.filters.vessel_type)   p.set('vessel_type', S.filters.vessel_type);
+  if (S.filters.priority)      p.set('priority', S.filters.priority);
+  // vessel_id는 의도적으로 제외 (드롭다운 라벨용)
+
+  let counts = {};
+  try {
+    counts = await api('/api/vessels/active-counts?' + p);
+  } catch (e) {
+    return;   // 실패해도 조용히 — 기본 라벨 유지
+  }
+
+  // 옵션 라벨 갱신 ("All 선박"은 총합으로 업데이트)
+  const total = Object.values(counts).reduce((a, b) => a + (b || 0), 0);
+  for (const opt of sel.options) {
+    if (opt.value === '') {
+      opt.textContent = `All 선박 (${total})`;
+    } else {
+      const v = S.vessels.find(x => String(x.id) === opt.value);
+      if (!v) continue;
+      const c = counts[opt.value] || 0;
+      opt.textContent = c > 0 ? `${v.name}  ·  ${c}건` : v.name;
     }
-    STAT_LABEL = ({'Open': 'Open', 'InProgress': 'In Progress', 'Closed': 'Closed'}
-                  if EN else
-                  {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'})
-
-    def _sheet_safe(name):
-        bad = '[]:*?/\\'
-        out = ''.join('_' if c in bad else c for c in name)
-        return (out[:31] or 'Sheet')
-
-    def _fmt_actions(acts):
-        if not acts:
-            return ''
-        lines = []
-        for a in acts:
-            d = (a.get('date') or '').strip()
-            p = (a.get('progress') or '').strip()
-            mark = '★ ' if a.get('important') else ''
-            if d and p:   lines.append(f'{mark}[{d}] {p}')
-            elif d:       lines.append(f'{mark}[{d}]')
-            elif p:       lines.append(f'{mark}{p}')
-        return '\n'.join(lines)
-
-    def _ko_month(ym):
-        if ym == '날짜 미정':
-            return 'Date TBD' if EN else '날짜 미정'
-        try:
-            y, m = ym.split('-')
-            if EN:
-                import calendar
-                return f'{calendar.month_abbr[int(m)]} {y}'
-            return f'{y}년 {int(m)}월'
-        except Exception:
-            return ym
-
-    # ── 4) Workbook 생성 ────────────────────────────────────────
-    wb = Workbook()
-    wb.remove(wb.active)
-
-    now = datetime.now()
-    today_str = now.strftime('%Y-%m-%d')
-
-    # 현재 사용자 (서명용)
-    me = session.get('display_name') or session.get('username') or ''
-
-    # 화면 필터 요약 (제목 영역에 노출)
-    sub_chips = []
-    if status_in:
-        sub_chips.append(('Filter: ' if EN else '필터: ') + status_in.replace(',', ' / '))
-    elif request.args.get('status'):
-        sub_chips.append(('Status: ' if EN else '상태: ') + request.args.get('status'))
-    if request.args.get('priority'):
-        sub_chips.append(('Priority: ' if EN else '우선순위: ') + request.args.get('priority'))
-    if request.args.get('vessel_type'):
-        sub_chips.append(('Vessel Type: ' if EN else '선종: ') + request.args.get('vessel_type'))
-    if request.args.get('vessel_id'):
-        vname = query('SELECT name FROM vessels WHERE id=?',
-                      (request.args.get('vessel_id'),), one=True)
-        if vname: sub_chips.append(('Vessel: ' if EN else '선박: ') + vname['name'])
-    if request.args.get('q'):
-        sub_chips.append(('Search: ' if EN else '검색: ') + request.args.get('q'))
-    sub_text = ' | '.join(sub_chips) if sub_chips else ('All items' if EN else '전체 항목')
-
-    if not sv_seq:
-        ws = wb.create_sheet('데이터 없음')
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS)
-        c = ws.cell(row=1, column=1, value='Daily 업무관리 — 데이터 없음')
-        c.font = title_font
-        c.fill = title_fill
-        c.alignment = center_align
-        ws.cell(row=3, column=1,
-                value='필터 조건에 해당하는 이슈가 없습니다.').font = Font(name=F, size=11, italic=True)
-        for idx, w in enumerate(COL_WIDTHS, start=1):
-            ws.column_dimensions[get_column_letter(idx)].width = w
-    else:
-        for sn in sv_seq:
-            ws = wb.create_sheet(_sheet_safe(sn))
-            months = sv_map[sn]['months']
-
-            # 컬럼 너비
-            for idx, w in enumerate(COL_WIDTHS, start=1):
-                ws.column_dimensions[get_column_letter(idx)].width = w
-
-            # ── 4-1) 제목 영역 (행1-2) ──
-            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS)
-            c1 = ws.cell(row=1, column=1,
-                         value=(f'Daily Work Log   |   {sn}' if EN else f'Daily 업무관리   |   {sn}'))
-            c1.font = title_font
-            c1.fill = title_fill
-            c1.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-            ws.row_dimensions[1].height = 30
-
-            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=N_COLS)
-            total_cnt = sum(len(v) for m in months.values() for v in m.values())
-            if EN:
-                sub_msg = f'Exported: {today_str}    │    Total {total_cnt}    │    {sub_text}'
-                if me:
-                    sub_msg += f'    │    By: {me}'
-            else:
-                sub_msg = f'추출일: {today_str}    │    총 {total_cnt}건    │    {sub_text}'
-                if me:
-                    sub_msg += f'    │    출력: {me}'
-            c2 = ws.cell(row=2, column=1, value=sub_msg)
-            c2.font = sub_font
-            c2.fill = sub_fill
-            c2.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-            ws.row_dimensions[2].height = 20
-
-            # 행 3: 빈 줄 (시각적 분리)
-            ws.row_dimensions[3].height = 6
-
-            # ── 4-2) 컬럼 헤더 (행4) — AutoFilter 시작점 ──
-            HDR_ROW = 4
-            for col_idx, h in enumerate(HEADERS, start=1):
-                c = ws.cell(row=HDR_ROW, column=col_idx, value=h)
-                c.font = col_hdr_font
-                c.fill = col_hdr_fill
-                c.alignment = center_align
-                c.border = Border(left=thin, right=thin, top=med, bottom=med)
-            ws.row_dimensions[HDR_ROW].height = 26
-
-            # ── 4-3) 본문: 월 → 일 → 데이터 ──
-            cur_row = HDR_ROW + 1
-            no = 0
-            # 월 키 정렬 (날짜 미정은 맨 뒤)
-            month_keys = sorted([k for k in months.keys() if k != '날짜 미정'])
-            if '날짜 미정' in months:
-                month_keys.append('날짜 미정')
-
-            for ym in month_keys:
-                days = months[ym]
-                m_cnt = sum(len(v) for v in days.values())
-
-                # 월 헤더 행
-                ws.merge_cells(start_row=cur_row, start_column=1,
-                               end_row=cur_row, end_column=N_COLS)
-                mc = ws.cell(row=cur_row, column=1,
-                             value=f'▼  {_ko_month(ym)}    ({m_cnt} item{"s" if m_cnt > 1 else ""})')
-                mc.font = month_font
-                mc.fill = month_fill
-                mc.alignment = left_mid
-                ws.row_dimensions[cur_row].height = 22
-                # 월 헤더 자체에도 outline level 0 (접기 기준점)
-                cur_row += 1
-
-                day_keys = sorted([k for k in days.keys() if k != '날짜 미정'])
-                if '날짜 미정' in days:
-                    day_keys.append('날짜 미정')
-
-                for dkey in day_keys:
-                    items = days[dkey]
-                    dlabel = ('Date TBD' if EN else '날짜 미정') if dkey == '날짜 미정' else dkey
-                    # 일 헤더 행
-                    ws.merge_cells(start_row=cur_row, start_column=1,
-                                   end_row=cur_row, end_column=N_COLS)
-                    dc = ws.cell(row=cur_row, column=1,
-                                 value=f'   ▸  {dlabel}   ({len(items)} item{"s" if len(items)>1 else ""})')
-                    dc.font = day_font
-                    dc.fill = day_fill
-                    dc.alignment = left_mid
-                    ws.row_dimensions[cur_row].height = 19
-                    # 일 헤더는 outline level 1 (월 단위로 접으면 같이 사라짐)
-                    ws.row_dimensions[cur_row].outline_level = 1
-                    cur_row += 1
-
-                    # 데이터 행
-                    for r in items:
-                        no += 1
-                        vals = [
-                            no,
-                            r.get('issue_date') or '',
-                            r.get('due_date') or '',
-                            r.get('vessel_name') or '',
-                            r.get('item_topic') or '',
-                            r.get('description') or '',
-                            _fmt_actions(r.get('actions')),
-                            r.get('priority') or '',
-                            STAT_LABEL.get(r.get('status'), r.get('status') or ''),
-                            r.get('created_by') or '',
-                        ]
-                        for col_idx, v in enumerate(vals, start=1):
-                            c = ws.cell(row=cur_row, column=col_idx, value=v)
-                            c.font = body_font
-                            c.border = border_thin
-                            if col_idx in (1, 2, 3, 10):
-                                c.alignment = cent_top
-                            elif col_idx == 4:
-                                c.alignment = Alignment(horizontal='left',
-                                                        vertical='top', wrap_text=True)
-                            elif col_idx in (8, 9):
-                                c.alignment = center_align
-                            else:
-                                c.alignment = body_align
-
-                        # 우선순위 / 상태 색상
-                        pri = r.get('priority')
-                        pf = PRI_FILL.get(pri)
-                        if pf:
-                            ws.cell(row=cur_row, column=8).fill = pf
-                        if pri in PRI_FONT:
-                            ws.cell(row=cur_row, column=8).font = PRI_FONT[pri]
-
-                        st = r.get('status')
-                        sf = STAT_FILL.get(st)
-                        if sf:
-                            ws.cell(row=cur_row, column=9).fill = sf
-                        if st in STAT_FONT:
-                            ws.cell(row=cur_row, column=9).font = STAT_FONT[st]
-
-                        # 데이터 행은 outline level 2 (일/월 단위 접기 모두에 영향)
-                        ws.row_dimensions[cur_row].outline_level = 2
-                        cur_row += 1
-
-            # ── 4-4) AutoFilter — 컬럼 헤더부터 마지막 데이터까지 ──
-            last_col = get_column_letter(N_COLS)
-            last_row = cur_row - 1
-            if last_row > HDR_ROW:
-                ws.auto_filter.ref = f'A{HDR_ROW}:{last_col}{last_row}'
-
-            # ── 4-5) Freeze panes — 컬럼 헤더 행 아래 고정 ──
-            ws.freeze_panes = f'A{HDR_ROW + 1}'
-
-            # outline 방향: 요약(부모) 행이 위에 있으므로 summary_below=False
-            ws.sheet_properties.outlinePr.summaryBelow = False
-            ws.sheet_properties.outlinePr.summaryRight = False
-
-            # 인쇄 설정
-            ws.print_options.horizontalCentered = True
-            ws.page_setup.orientation = 'landscape'
-            ws.page_setup.fitToWidth  = 1
-            ws.page_setup.fitToHeight = 0
-            ws.sheet_properties.pageSetUpPr.fitToPage = True
-            ws.print_title_rows = f'{HDR_ROW}:{HDR_ROW}'  # 컬럼 헤더는 매 페이지 반복
-
-    # ── 5) 파일명 ──
-    today = now.strftime('%Y%m%d')
-    suffix = '_EN' if EN else ''
-    if len(sv_seq) == 1:
-        fname = f'TRMT_Daily_{_sheet_safe(sv_seq[0])}_{today}{suffix}.xlsx'
-    else:
-        fname = f'TRMT_Daily_{today}{suffix}.xlsx'
-
-    bio = BytesIO()
-    wb.save(bio)
-    bio.seek(0)
-    return send_file(
-        bio,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        as_attachment=True,
-        download_name=fname,
-    )
-
-
-@app.route('/api/issues/summary-export')
-@login_required
-def api_issue_summary_export():
-    """필터된 이슈를 No./Vessel Name/현안업무 3열로 한국어 요약 추출 (Gemini)."""
-    from io import BytesIO
-    from datetime import datetime
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-        from openpyxl.utils import get_column_letter
-    except ImportError:
-        return jsonify({'error': 'openpyxl 미설치'}), 500
-    from flask import send_file
-
-    # 화면 필터와 동일
-    conds, params = ['1=1'], []
-    for key, col in [('supervisor_id', 'i.supervisor_id'), ('vessel_id', 'i.vessel_id'),
-                     ('status', 'i.status'), ('priority', 'i.priority')]:
-        val = request.args.get(key)
-        if val:
-            conds.append(f'{col} = ?'); params.append(val)
-    status_in = request.args.get('status_in')
-    if status_in:
-        vals = [v.strip() for v in status_in.split(',') if v.strip()]
-        if vals:
-            conds.append(f"i.status IN ({','.join('?' for _ in vals)})"); params += vals
-    q = request.args.get('q')
-    if q:
-        like = f'%{q}%'
-        conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
-        params += [like, like, like]
-    vt = request.args.get('vessel_type')
-    if vt:
-        conds.append('v.vessel_type = ?'); params.append(vt)
-
-    sql = f'''
-        SELECT i.*, s.display_order AS sv_order, s.id AS sv_id,
-               v.name AS vessel_name
-          FROM issues i
-          JOIN supervisors s ON s.id = i.supervisor_id
-          JOIN vessels     v ON v.id = i.vessel_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY s.display_order ASC, s.id ASC, i.issue_date ASC, i.id ASC
-    '''
-    rows = [_issue_to_dict(r) for r in query(sql, params)]
-
-    # Gemini 요약 (description + 최신 action)
-    payload = [{'i': idx,
-                'description': r.get('description') or '',
-                'action': _latest_action_progress(r.get('actions'))}
-               for idx, r in enumerate(rows)]
-    summaries = _gen_issue_summaries(payload)
-
-    # 현안업무 셀 조립
-    def build_cell(idx, r):
-        s = summaries.get(idx, {})
-        desc = s.get('desc') or (r.get('description') or '').strip().split('\n')[0]
-        act_date, act_raw = _latest_action(r.get('actions'))
-        action = s.get('action') or act_raw
-        head = f"{_md_label(r.get('issue_date') or '')} {r.get('item_topic') or ''}".strip()
-        lines = [head]
-        if desc:
-            lines.append(f'1) {desc}')
-        if action:
-            md = _md_label(act_date)
-            lines.append(f'2) {md} {action}'.strip() if md else f'2) {action}')
-        return '\n'.join(lines)
-
-    # ── Workbook ──
-    wb = Workbook(); ws = wb.active; ws.title = '업무 요약'
-    F = 'Malgun Gothic'
-    HEADERS = ['No.', 'Vessel Name', '현안업무']
-    WIDTHS = [6, 24, 95]
-    for idx, w in enumerate(WIDTHS, start=1):
-        ws.column_dimensions[get_column_letter(idx)].width = w
-
-    title_fill = PatternFill('solid', start_color='1F3A5F')
-    sub_fill   = PatternFill('solid', start_color='2C5282')
-    hdr_fill   = PatternFill('solid', start_color='34495E')
-    thin = Side(style='thin', color='BBBBBB')
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    now = datetime.now()
-    ws.merge_cells('A1:C1')
-    c = ws.cell(row=1, column=1, value='Daily 업무 요약')
-    c.font = Font(name=F, size=14, bold=True, color='FFFFFF'); c.fill = title_fill
-    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-    ws.row_dimensions[1].height = 28
-
-    ws.merge_cells('A2:C2')
-    me = session.get('display_name') or session.get('username') or ''
-    c = ws.cell(row=2, column=1,
-                value=f"추출일: {now.strftime('%Y-%m-%d')}    │    총 {len(rows)}건"
-                      + (f"    │    {me}" if me else ''))
-    c.font = Font(name=F, size=10, italic=True, color='ECF0F1'); c.fill = sub_fill
-    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-    ws.row_dimensions[2].height = 18
-    ws.row_dimensions[3].height = 6
-
-    HDR = 4
-    for ci, h in enumerate(HEADERS, start=1):
-        cc = ws.cell(row=HDR, column=ci, value=h)
-        cc.font = Font(name=F, size=11, bold=True, color='FFFFFF'); cc.fill = hdr_fill
-        cc.alignment = Alignment(horizontal='center', vertical='center')
-        cc.border = border
-    ws.row_dimensions[HDR].height = 24
-
-    body = Font(name=F, size=10)
-    top_wrap = Alignment(horizontal='left', vertical='top', wrap_text=True)
-    center = Alignment(horizontal='center', vertical='center')
-    r_idx = HDR + 1
-    for n, r in enumerate(rows, start=1):
-        ws.cell(row=r_idx, column=1, value=n).alignment = center
-        ws.cell(row=r_idx, column=1).font = body
-        ws.cell(row=r_idx, column=2, value=r.get('vessel_name') or '')
-        ws.cell(row=r_idx, column=2).alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
-        ws.cell(row=r_idx, column=2).font = body
-        cell = ws.cell(row=r_idx, column=3, value=build_cell(n - 1, r))
-        cell.alignment = top_wrap; cell.font = body
-        for ci in range(1, 4):
-            ws.cell(row=r_idx, column=ci).border = border
-        # 줄 수에 맞춰 행 높이 살짝 키움
-        n_lines = (build_cell(n - 1, r).count('\n') + 1)
-        ws.row_dimensions[r_idx].height = max(34, 15 * n_lines + 6)
-        r_idx += 1
-
-    ws.freeze_panes = f'A{HDR + 1}'
-    if r_idx - 1 > HDR:
-        ws.auto_filter.ref = f'A{HDR}:C{r_idx - 1}'
-    ws.print_options.horizontalCentered = True
-    ws.page_setup.orientation = 'portrait'
-    ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.print_title_rows = f'{HDR}:{HDR}'
-
-    fname = f"TRMT_업무요약_{now.strftime('%Y%m%d')}.xlsx"
-    bio = BytesIO(); wb.save(bio); bio.seek(0)
-    return send_file(
-        bio,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        as_attachment=True, download_name=fname)
-
-
-@app.route('/api/issues/<int:iid>')
-@login_required
-def api_issue_get(iid):
-    r = query('''
-        SELECT i.*,
-               s.name       AS supervisor_name,
-               s.color      AS supervisor_color,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short
-          FROM issues i
-          JOIN supervisors s ON s.id = i.supervisor_id
-          JOIN vessels     v ON v.id = i.vessel_id
-         WHERE i.id = ?
-    ''', (iid,), one=True)
-    if not r:
-        abort(404)
-    out = _issue_to_dict(r)
-    out['attachments'] = [dict(a) for a in query(
-        'SELECT id, filename, stored_name, file_size, mime_type, uploaded_at '
-        'FROM attachments WHERE issue_id=? ORDER BY id', (iid,))]
-    return jsonify(out)
-
-
-@app.route('/api/issues', methods=['POST'])
-@login_required
-def api_issue_create():
-    d = request.get_json(silent=True) or {}
-    for k in ('supervisor_id', 'vessel_id', 'issue_date', 'item_topic'):
-        if not d.get(k):
-            return jsonify({'error': f'필수 항목 누락: {k}'}), 400
-
-    actions = d.get('actions') or []
-    if not isinstance(actions, list):
-        actions = []
-    actions_json = json.dumps(actions, ensure_ascii=False)
-
-    iid = execute('''
-        INSERT INTO issues
-            (supervisor_id, vessel_id, issue_date, due_date,
-             item_topic, description, actions,
-             priority, status, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        d['supervisor_id'], d['vessel_id'], d['issue_date'],
-        d.get('due_date') or None,
-        d['item_topic'],
-        d.get('description') or '',
-        actions_json,
-        d.get('priority') or 'Normal',
-        d.get('status')   or 'Open',
-        session.get('username'),
-    ))
-    return jsonify({'id': iid}), 201
-
-
-@app.route('/api/issues/<int:iid>', methods=['PUT'])
-@login_required
-def api_issue_update(iid):
-    if not query('SELECT id FROM issues WHERE id=?', (iid,), one=True):
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    fields = ['supervisor_id', 'vessel_id', 'issue_date', 'due_date',
-              'item_topic',    'description', 'actions',
-              'priority',      'status']
-    sets, params = [], []
-    for f in fields:
-        if f in d:
-            val = d[f]
-            if f == 'actions':
-                if not isinstance(val, list):
-                    val = []
-                val = json.dumps(val, ensure_ascii=False)
-            elif val == '':
-                val = None
-            sets.append(f'{f} = ?')
-            params.append(val)
-    if not sets:
-        return jsonify({'error': '수정할 필드가 없습니다.'}), 400
-    sets.append('updated_at = datetime("now","localtime")')
-    params.append(iid)
-    execute(f'UPDATE issues SET {", ".join(sets)} WHERE id = ?', params)
-    return jsonify({'id': iid})
-
-
-@app.route('/api/issues/<int:iid>', methods=['DELETE'])
-@login_required
-def api_issue_delete(iid):
-    atts = query('SELECT stored_name FROM attachments WHERE issue_id=?', (iid,))
-    for a in atts:
-        p = os.path.join(UPLOAD_DIR, a['stored_name'])
-        if os.path.exists(p):
-            os.remove(p)
-    execute('DELETE FROM issues WHERE id=?', (iid,))
-    return jsonify({'ok': True})
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — admin: supervisors / vessels / users
-# ═════════════════════════════════════════════════════════════════
-
-# ----- 감독 (CREATE / UPDATE / DELETE) -----
-@app.route('/api/supervisors', methods=['POST'])
-@admin_required
-def api_supervisor_create():
-    d = request.get_json(silent=True) or {}
-    name = (d.get('name') or '').strip()
-    if not name:
-        return jsonify({'error': '감독명은 필수입니다.'}), 400
-    if query('SELECT id FROM supervisors WHERE name=?', (name,), one=True):
-        return jsonify({'error': '이미 존재하는 감독명입니다.'}), 400
-    max_order = query('SELECT COALESCE(MAX(display_order),0)+1 AS n FROM supervisors',
-                      one=True)['n']
-    sid = execute('''
-        INSERT INTO supervisors (name, color, display_order, email, active)
-        VALUES (?, ?, ?, ?, 1)
-    ''', (name, d.get('color') or 'blue',
-          d.get('display_order') or max_order,
-          d.get('email') or ''))
-    return jsonify({'id': sid}), 201
-
-
-@app.route('/api/supervisors/<int:sid>', methods=['PUT'])
-@admin_required
-def api_supervisor_update(sid):
-    if not query('SELECT id FROM supervisors WHERE id=?', (sid,), one=True):
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    sets, params = [], []
-    for f in ('name', 'color', 'display_order', 'email', 'active'):
-        if f in d:
-            sets.append(f'{f} = ?')
-            params.append(d[f])
-    if not sets:
-        return jsonify({'error': '수정할 필드 없음'}), 400
-    params.append(sid)
-    execute(f'UPDATE supervisors SET {", ".join(sets)} WHERE id = ?', params)
-    return jsonify({'id': sid})
-
-
-@app.route('/api/supervisors/<int:sid>', methods=['DELETE'])
-@admin_required
-def api_supervisor_delete(sid):
-    # 이슈 있으면 soft delete 만 수행
-    n = query('SELECT COUNT(*) AS n FROM issues WHERE supervisor_id=?',
-              (sid,), one=True)['n']
-    if n > 0:
-        execute('UPDATE supervisors SET active=0 WHERE id=?', (sid,))
-        return jsonify({'ok': True, 'soft_delete': True, 'issues': n})
-    # Hard delete: FK 해제 먼저
-    execute('UPDATE users SET supervisor_id=NULL WHERE supervisor_id=?', (sid,))
-    execute('DELETE FROM supervisor_vessels WHERE supervisor_id=?', (sid,))
-    execute('DELETE FROM supervisors WHERE id=?', (sid,))
-    return jsonify({'ok': True})
-
-
-# ----- 선박 (CREATE / UPDATE / DELETE / 전체 조회) -----
-@app.route('/api/vessels/all')
-@login_required
-def api_vessels_all():
-    """관리 UI용 — 담당 감독 함께."""
-    rows = query('''
-        SELECT v.*,
-          (SELECT GROUP_CONCAT(s.name, ', ')
-             FROM supervisor_vessels sv
-             JOIN supervisors s ON s.id = sv.supervisor_id
-            WHERE sv.vessel_id = v.id) AS supervisor_names,
-          (SELECT GROUP_CONCAT(s.id)
-             FROM supervisor_vessels sv
-             JOIN supervisors s ON s.id = sv.supervisor_id
-            WHERE sv.vessel_id = v.id) AS supervisor_ids_csv
-          FROM vessels v
-         ORDER BY v.active DESC, v.name
-    ''')
-    out = []
-    for r in rows:
-        d = dict(r)
-        d['supervisor_ids'] = [int(x) for x in (d.pop('supervisor_ids_csv') or '').split(',') if x]
-        out.append(d)
-    return jsonify(out)
-
-
-@app.route('/api/vessels', methods=['POST'])
-@login_required
-def api_vessel_create():
-    d = request.get_json(silent=True) or {}
-    name = (d.get('name') or '').strip()
-    if not name:
-        return jsonify({'error': '선박명은 필수입니다.'}), 400
-    if query('SELECT id FROM vessels WHERE name=?', (name,), one=True):
-        return jsonify({'error': '이미 존재하는 선박명입니다.'}), 400
-
-    sids = [int(x) for x in (d.get('supervisor_ids') or [])]
-
-    # 일반 사용자(member) 권한 제약:
-    #   - 반드시 본인의 감독 1명에게만 연결 가능
-    #   - 다른 감독이나 복수 감독, 미할당은 불가
-    if session.get('role') != 'admin':
-        my_sup = session.get('supervisor_id')
-        if not my_sup:
-            return jsonify({'error': '담당 감독이 연결되지 않은 계정입니다. 관리자에게 요청하세요.'}), 403
-        if sids != [my_sup]:
-            return jsonify({'error': '본인 담당 감독으로만 선박을 추가할 수 있습니다.'}), 403
-
-    vid = execute('''
-        INSERT INTO vessels (name, short_name, vessel_type, imo, class_society, active)
-        VALUES (?, ?, ?, ?, ?, 1)
-    ''', (name,
-          (d.get('short_name') or name[:12]).strip(),
-          d.get('vessel_type') or '',
-          d.get('imo') or '',
-          d.get('class_society') or ''))
-    for sid in sids:
-        execute('INSERT OR IGNORE INTO supervisor_vessels (vessel_id, supervisor_id) VALUES (?, ?)',
-                (vid, sid))
-    return jsonify({'id': vid}), 201
-
-
-@app.route('/api/vessels/<int:vid>', methods=['PUT'])
-@login_required
-def api_vessel_update(vid):
-    if not query('SELECT id FROM vessels WHERE id=?', (vid,), one=True):
-        abort(404)
-    d = request.get_json(silent=True) or {}
-
-    # 일반 사용자(member) 권한 제약:
-    #   - 본인 담당 감독에 연결된 선박만 수정 가능
-    #   - 담당 감독 변경(supervisor_ids), 비활성화(active) 는 불가
-    if session.get('role') != 'admin':
-        my_sup = session.get('supervisor_id')
-        if not my_sup:
-            return jsonify({'error': '담당 감독이 연결되지 않은 계정입니다.'}), 403
-        owned = query(
-            'SELECT 1 FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id=?',
-            (vid, my_sup), one=True,
-        )
-        if not owned:
-            return jsonify({'error': '본인 담당 선박만 수정할 수 있습니다.'}), 403
-        # 민감 필드는 서버에서 무시 (이중 방어)
-        d.pop('supervisor_ids', None)
-        d.pop('active', None)
-
-    sets, params = [], []
-    for f in ('name', 'short_name', 'vessel_type', 'imo', 'class_society', 'active'):
-        if f in d:
-            sets.append(f'{f} = ?')
-            params.append(d[f])
-    if sets:
-        params.append(vid)
-        execute(f'UPDATE vessels SET {", ".join(sets)} WHERE id = ?', params)
-    # supervisor 매핑 갱신 (admin만 가능 — member는 위에서 pop됨)
-    if 'supervisor_ids' in d:
-        execute('DELETE FROM supervisor_vessels WHERE vessel_id = ?', (vid,))
-        for sid in (d.get('supervisor_ids') or []):
-            execute('INSERT OR IGNORE INTO supervisor_vessels (vessel_id, supervisor_id) VALUES (?, ?)',
-                    (vid, int(sid)))
-    return jsonify({'id': vid})
-
-
-@app.route('/api/vessels/<int:vid>', methods=['DELETE'])
-@login_required
-def api_vessel_delete(vid):
-    if not query('SELECT id FROM vessels WHERE id=?', (vid,), one=True):
-        abort(404)
-
-    # 일반 사용자(member) 권한 제약:
-    #   - 본인 담당 선박만 삭제 가능
-    #   - 다른 감독에게도 공유된 선박 → 본인 담당만 제거 (선박 자체는 유지)
-    #   - 본인만 담당 → 아래 공통 로직으로 진행 (이슈 있으면 soft, 없으면 hard)
-    if session.get('role') != 'admin':
-        my_sup = session.get('supervisor_id')
-        if not my_sup:
-            return jsonify({'error': '담당 감독이 연결되지 않은 계정입니다.'}), 403
-        owned = query(
-            'SELECT 1 FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id=?',
-            (vid, my_sup), one=True,
-        )
-        if not owned:
-            return jsonify({'error': '본인 담당 선박만 삭제할 수 있습니다.'}), 403
-        # 다른 감독도 담당하는지?
-        other = query(
-            'SELECT COUNT(*) AS n FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id<>?',
-            (vid, my_sup), one=True,
-        )
-        if other['n'] > 0:
-            # 본인 담당만 해제하고 종료
-            execute('DELETE FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id=?',
-                    (vid, my_sup))
-            return jsonify({'ok': True, 'unassigned_only': True})
-
-    # 이슈가 있으면 soft delete
-    n = query('SELECT COUNT(*) AS n FROM issues WHERE vessel_id=?',
-              (vid,), one=True)['n']
-    if n > 0:
-        execute('UPDATE vessels SET active=0 WHERE id=?', (vid,))
-        return jsonify({'ok': True, 'soft_delete': True, 'issues': n})
-    execute('DELETE FROM supervisor_vessels WHERE vessel_id=?', (vid,))
-    execute('DELETE FROM vessels WHERE id=?', (vid,))
-    return jsonify({'ok': True})
-
-
-# ----- 사용자 (admin 전용 CRUD) -----
-@app.route('/api/users')
-@admin_required
-def api_users_list():
-    rows = query('''
-        SELECT u.id, u.username, u.display_name, u.role, u.supervisor_id, u.active,
-               u.created_at, u.last_login_at,
-               s.name AS supervisor_name
-          FROM users u
-          LEFT JOIN supervisors s ON s.id = u.supervisor_id
-         ORDER BY u.active DESC, u.role DESC, u.id
-    ''')
-    return jsonify([dict(r) for r in rows])
-
-
-@app.route('/api/users', methods=['POST'])
-@admin_required
-def api_user_create():
-    d = request.get_json(silent=True) or {}
-    username = (d.get('username') or '').strip()
-    password = d.get('password') or ''
-    if not username:
-        return jsonify({'error': '사용자명은 필수입니다.'}), 400
-    if len(password) < 6:
-        return jsonify({'error': '비밀번호는 6자 이상이어야 합니다.'}), 400
-    if query('SELECT id FROM users WHERE username=?', (username,), one=True):
-        return jsonify({'error': '이미 사용 중인 사용자명입니다.'}), 400
-    role = d.get('role') or 'member'
-    if role not in ('admin', 'member'):
-        role = 'member'
-    uid = execute('''
-        INSERT INTO users (username, password_hash, display_name, role, supervisor_id, active)
-        VALUES (?, ?, ?, ?, ?, 1)
-    ''', (username, generate_password_hash(password),
-          d.get('display_name') or username,
-          role,
-          d.get('supervisor_id') or None))
-    return jsonify({'id': uid}), 201
-
-
-@app.route('/api/users/<int:uid>', methods=['PUT'])
-@admin_required
-def api_user_update(uid):
-    if not query('SELECT id FROM users WHERE id=?', (uid,), one=True):
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    sets, params = [], []
-    for f in ('display_name', 'role', 'supervisor_id', 'active'):
-        if f in d:
-            sets.append(f'{f} = ?')
-            params.append(d[f])
-    if not sets:
-        return jsonify({'error': '수정할 필드 없음'}), 400
-    params.append(uid)
-    execute(f'UPDATE users SET {", ".join(sets)} WHERE id = ?', params)
-    return jsonify({'id': uid})
-
-
-@app.route('/api/users/<int:uid>', methods=['DELETE'])
-@admin_required
-def api_user_delete(uid):
-    if uid == session.get('user_id'):
-        return jsonify({'error': '자기 자신은 삭제할 수 없습니다.'}), 400
-    # admin 계정이 하나만 남을 땐 삭제 금지
-    u = query('SELECT role FROM users WHERE id=?', (uid,), one=True)
-    if not u:
-        abort(404)
-    if u['role'] == 'admin':
-        n = query("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1 AND id<>?",
-                  (uid,), one=True)['n']
-        if n == 0:
-            return jsonify({'error': '최소 1명의 관리자 계정은 유지되어야 합니다.'}), 400
-    execute('UPDATE users SET active=0 WHERE id=?', (uid,))
-    return jsonify({'ok': True})
-
-
-@app.route('/api/users/<int:uid>/password', methods=['POST'])
-@admin_required
-def api_user_reset_password(uid):
-    d = request.get_json(silent=True) or {}
-    new = d.get('new_password') or ''
-    if len(new) < 6:
-        return jsonify({'error': '비밀번호는 6자 이상이어야 합니다.'}), 400
-    if not query('SELECT id FROM users WHERE id=?', (uid,), one=True):
-        abort(404)
-    execute('UPDATE users SET password_hash=? WHERE id=?',
-            (generate_password_hash(new), uid))
-    return jsonify({'ok': True})
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — Condition Survey
-# ═════════════════════════════════════════════════════════════════
-
-def _cs_survey_with_counts(s):
-    """단일 survey에 카운트 컬럼들 포함시켜 반환 (dict).
-    manual_*_count 가 NULL이 아니면 수동 입력값을 우선."""
-    sid = s['id']
-    rows = query("""
-        SELECT category, status, COUNT(*) AS n
-          FROM cs_findings
-         WHERE survey_id = ?
-         GROUP BY category, status
-    """, (sid,))
-    def_open = def_closed = obs_open = obs_closed = 0
-    for r in rows:
-        if r['category'] == 'Defect':
-            if r['status'] == 'Closed': def_closed = r['n']
-            else: def_open = r['n']
-        else:
-            if r['status'] == 'Closed': obs_closed = r['n']
-            else: obs_open = r['n']
-    auto_def   = def_open + def_closed
-    auto_obs   = obs_open + obs_closed
-    auto_close = def_closed + obs_closed
-
-    d = dict(s)
-    # 수동 override가 있으면 그 값을, 없으면 자동 카운트
-    d['defect_count']      = s['manual_defect_count']      if s['manual_defect_count']      is not None else auto_def
-    d['observation_count'] = s['manual_observation_count'] if s['manual_observation_count'] is not None else auto_obs
-    d['close_count']       = s['manual_close_count']       if s['manual_close_count']       is not None else auto_close
-    d['total_count']       = d['defect_count'] + d['observation_count']
-    # Open 카운트는 항상 자동 (전체 - 완료)
-    d['open_count']        = max(0, d['total_count'] - d['close_count'])
-    # manual flag (UI에서 자동/수동 구분)
-    d['defect_manual']      = s['manual_defect_count']      is not None
-    d['observation_manual'] = s['manual_observation_count'] is not None
-    d['close_manual']       = s['manual_close_count']       is not None
-    # 첨부 카운트
-    ar = query('SELECT COUNT(*) AS n FROM cs_attachments WHERE survey_id=?',
-               (sid,), one=True)
-    d['attach_count'] = ar['n'] if ar else 0
-    return d
-
-
-@app.route('/api/cs/surveys')
-@login_required
-def api_cs_surveys_list():
-    """연도 + (선택)감독별 모든 선박의 분기별 서베이 목록.
-    응답 구조: [{vessel: {...}, surveys: {1: {...}, 2: {...}}}]"""
-    year = int(request.args.get('year') or 2026)
-    sup_id = request.args.get('supervisor_id')
-
-    # 선박 목록 — 감독 필터 적용
-    if sup_id and sup_id != 'all':
-        vessels = query("""
-            SELECT v.* FROM vessels v
-              JOIN supervisor_vessels sv ON sv.vessel_id = v.id
-             WHERE v.active = 1 AND sv.supervisor_id = ?
-             ORDER BY v.name
-        """, (sup_id,))
-    else:
-        vessels = query('SELECT * FROM vessels WHERE active=1 ORDER BY name')
-
-    # 해당 연도의 모든 서베이 한번에
-    surveys = query('SELECT * FROM cs_surveys WHERE year = ?', (year,))
-
-    # 한번에 findings 모두 가져와서 survey_id 별로 매핑 (N+1 회피)
-    sids = [s['id'] for s in surveys]
-    findings_by_sid = {sid: [] for sid in sids}
-    if sids:
-        placeholders = ','.join('?' * len(sids))
-        all_findings = query(
-            f'SELECT * FROM cs_findings WHERE survey_id IN ({placeholders}) ORDER BY survey_id, category, no',
-            tuple(sids),
-        )
-        for f in all_findings:
-            findings_by_sid[f['survey_id']].append(dict(f))
-
-    by_vessel = {}
-    for s in surveys:
-        d = _cs_survey_with_counts(s)
-        d['findings'] = findings_by_sid.get(s['id'], [])
-        by_vessel.setdefault(s['vessel_id'], {})[s['quarter']] = d
-
-    # 선박별 last_updated (해당 선박의 모든 surveys 중 가장 최근 updated_at)
-    last_by_vessel = {}
-    for s in surveys:
-        u = s['updated_at']
-        if u and (s['vessel_id'] not in last_by_vessel or u > last_by_vessel[s['vessel_id']]):
-            last_by_vessel[s['vessel_id']] = u
-
-    out = []
-    for v in vessels:
-        out.append({
-            'vessel': dict(v),
-            'surveys': by_vessel.get(v['id'], {}),
-            'last_updated': last_by_vessel.get(v['id']),
-        })
-    return jsonify(out)
-
-
-@app.route('/api/cs/surveys', methods=['POST'])
-@login_required
-def api_cs_survey_create():
-    """헤더(분기 셀) 생성 또는 upsert."""
-    d = request.get_json(silent=True) or {}
-    vid = d.get('vessel_id'); year = d.get('year'); q = d.get('quarter')
-    if not (vid and year and q in (1,2,3,4)):
-        return jsonify({'error': 'vessel_id, year, quarter 필수'}), 400
-    if not query('SELECT id FROM vessels WHERE id=?', (vid,), one=True):
-        return jsonify({'error': '선박 없음'}), 404
-
-    existing = query(
-        'SELECT id FROM cs_surveys WHERE vessel_id=? AND year=? AND quarter=?',
-        (vid, year, q), one=True,
-    )
-    if existing:
-        return jsonify({'id': existing['id'], 'existed': True})
-
-    sid = execute("""
-        INSERT INTO cs_surveys
-            (vessel_id, year, quarter, vendor, management, inspection_date,
-             overall_remark, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (vid, year, q,
-          d.get('vendor') or None,
-          d.get('management') or None,
-          d.get('inspection_date') or None,
-          d.get('overall_remark') or None,
-          session.get('username')))
-    return jsonify({'id': sid}), 201
-
-
-@app.route('/api/cs/surveys/<int:sid>', methods=['GET'])
-@login_required
-def api_cs_survey_get(sid):
-    s = query('SELECT * FROM cs_surveys WHERE id=?', (sid,), one=True)
-    if not s: abort(404)
-    d = _cs_survey_with_counts(s)
-    findings = query(
-        "SELECT * FROM cs_findings WHERE survey_id=? ORDER BY category, no",
-        (sid,),
-    )
-    d['findings'] = [dict(f) for f in findings]
-    return jsonify(d)
-
-
-@app.route('/api/cs/surveys/<int:sid>', methods=['PUT'])
-@login_required
-def api_cs_survey_update(sid):
-    if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    sets, params = [], []
-    for f in ('vendor','management','inspection_date','overall_remark',
-              'manual_defect_count','manual_observation_count','manual_close_count'):
-        if f in d:
-            sets.append(f'{f} = ?')
-            v = d[f]
-            # 빈 문자열은 NULL로 저장 (자동 카운트로 복귀)
-            params.append(None if v == '' else v)
-    if not sets:
-        return jsonify({'error': '수정할 필드 없음'}), 400
-    sets.append("updated_at = datetime('now','localtime')")
-    params.append(sid)
-    execute(f'UPDATE cs_surveys SET {", ".join(sets)} WHERE id = ?', params)
-    return jsonify({'id': sid})
-
-
-@app.route('/api/cs/surveys/<int:sid>', methods=['DELETE'])
-@login_required
-def api_cs_survey_delete(sid):
-    execute('DELETE FROM cs_surveys WHERE id=?', (sid,))
-    return jsonify({'ok': True})
-
-
-# ----- Findings (세부 항목) -----
-
-def _next_finding_no(survey_id, category):
-    r = query(
-        'SELECT COALESCE(MAX(no), 0) + 1 AS n FROM cs_findings WHERE survey_id=? AND category=?',
-        (survey_id, category), one=True,
-    )
-    return r['n']
-
-
-@app.route('/api/cs/surveys/<int:sid>/findings', methods=['POST'])
-@login_required
-def api_cs_finding_create(sid):
-    """단건 또는 배치(엑셀 붙여넣기) 추가.
-    body: { category: 'Defect'|'Observation', items: [{description,remark,status},...] }
-    또는 단건: { category, description, remark, status }
-    """
-    if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    cat = d.get('category')
-    if cat not in ('Defect','Observation'):
-        return jsonify({'error': "category는 Defect 또는 Observation"}), 400
-
-    items = d.get('items')
-    if items is None:
-        items = [{
-            'item':        d.get('item'),
-            'description': d.get('description'),
-            'remark':      d.get('remark'),
-            'status':      d.get('status') or 'Open',
-        }]
-
-    next_no = _next_finding_no(sid, cat)
-    created_ids = []
-    for it in items:
-        st = it.get('status') or 'Open'
-        if st not in ('Open','Closed'): st = 'Open'
-        fid = execute("""
-            INSERT INTO cs_findings (survey_id, category, no, item, description, remark, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (sid, cat, next_no,
-              it.get('item') or '',
-              it.get('description') or '',
-              it.get('remark') or '',
-              st))
-        created_ids.append(fid)
-        next_no += 1
-    return jsonify({'ids': created_ids, 'count': len(created_ids)}), 201
-
-
-@app.route('/api/cs/findings/<int:fid>', methods=['PUT'])
-@login_required
-def api_cs_finding_update(fid):
-    cur = query('SELECT survey_id, status FROM cs_findings WHERE id=?', (fid,), one=True)
-    if not cur:
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    sets, params = [], []
-    for f in ('item','description','remark','status'):
-        if f in d:
-            sets.append(f'{f} = ?')
-            params.append(d[f])
-    if not sets:
-        return jsonify({'error': '수정할 필드 없음'}), 400
-    sets.append("updated_at = datetime('now','localtime')")
-    params.append(fid)
-    execute(f'UPDATE cs_findings SET {", ".join(sets)} WHERE id = ?', params)
-
-    # status 변경 시 cs_surveys.updated_at 갱신 (선박 헤더의 Last update에 반영)
-    if 'status' in d and d['status'] != cur['status']:
-        execute(
-            "UPDATE cs_surveys SET updated_at = datetime('now','localtime') WHERE id=?",
-            (cur['survey_id'],),
-        )
-    return jsonify({'id': fid})
-
-
-@app.route('/api/cs/findings/<int:fid>', methods=['DELETE'])
-@login_required
-def api_cs_finding_delete(fid):
-    f = query('SELECT survey_id, category, no FROM cs_findings WHERE id=?', (fid,), one=True)
-    if not f: abort(404)
-    execute('DELETE FROM cs_findings WHERE id=?', (fid,))
-    # No 재정렬: 같은 survey + category 내에서
-    rows = query(
-        'SELECT id FROM cs_findings WHERE survey_id=? AND category=? ORDER BY no, id',
-        (f['survey_id'], f['category']),
-    )
-    for idx, r in enumerate(rows, 1):
-        execute('UPDATE cs_findings SET no=? WHERE id=?', (idx, r['id']))
-    return jsonify({'ok': True})
-
-
-# ─── 보고서 → 항목 자동 추출 (Gemini + 엑셀 파서) ─────────────
-def _findings_workbook(title, subtitle, headers, rows, wrap_cols, widths):
-    """검사 findings → 스타일된 1시트 워크북 BytesIO 반환."""
-    from io import BytesIO
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
-
-    wb = Workbook(); ws = wb.active; ws.title = 'List'
-    F = 'Malgun Gothic'
-    N = len(headers)
-    for idx, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(idx)].width = w
-
-    title_fill = PatternFill('solid', start_color='1F3A5F')
-    sub_fill   = PatternFill('solid', start_color='2C5282')
-    hdr_fill   = PatternFill('solid', start_color='34495E')
-    def_fill   = PatternFill('solid', start_color='FCE8E6')   # Defect 행 연한 적색
-    thin = Side(style='thin', color='BBBBBB')
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N)
-    c = ws.cell(row=1, column=1, value=title)
-    c.font = Font(name=F, size=14, bold=True, color='FFFFFF'); c.fill = title_fill
-    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-    ws.row_dimensions[1].height = 28
-
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=N)
-    c = ws.cell(row=2, column=1, value=subtitle)
-    c.font = Font(name=F, size=10, italic=True, color='ECF0F1'); c.fill = sub_fill
-    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-    ws.row_dimensions[2].height = 18
-    ws.row_dimensions[3].height = 6
-
-    HDR = 4
-    for ci, h in enumerate(headers, start=1):
-        cc = ws.cell(row=HDR, column=ci, value=h)
-        cc.font = Font(name=F, size=11, bold=True, color='FFFFFF'); cc.fill = hdr_fill
-        cc.alignment = Alignment(horizontal='center', vertical='center'); cc.border = border
-    ws.row_dimensions[HDR].height = 24
-
-    body = Font(name=F, size=10)
-    top_wrap = Alignment(horizontal='left', vertical='top', wrap_text=True)
-    center = Alignment(horizontal='center', vertical='top')
-    r_idx = HDR + 1
-    for row in rows:
-        max_len = 1
-        for ci, val in enumerate(row, start=1):
-            cell = ws.cell(row=r_idx, column=ci, value=val)
-            cell.font = body; cell.border = border
-            cell.alignment = top_wrap if ci in wrap_cols else center
-            if ci in wrap_cols and val:
-                w = widths[ci - 1]
-                max_len = max(max_len, sum((len(ln) // max(int(w / 1.6), 1)) + 1
-                                           for ln in str(val).split('\n')))
-        # Defect 행 살짝 음영
-        if 'Category' in headers:
-            cat_col = headers.index('Category') + 1
-            if ws.cell(row=r_idx, column=cat_col).value == 'Defect':
-                for ci in range(1, N + 1):
-                    ws.cell(row=r_idx, column=ci).fill = def_fill
-        ws.row_dimensions[r_idx].height = max(20, min(120, 15 * max_len + 4))
-        r_idx += 1
-
-    ws.freeze_panes = f'A{HDR + 1}'
-    if r_idx - 1 > HDR:
-        ws.auto_filter.ref = f'A{HDR}:{get_column_letter(N)}{r_idx - 1}'
-    ws.print_options.horizontalCentered = True
-    ws.page_setup.orientation = 'landscape'
-    ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.print_title_rows = f'{HDR}:{HDR}'
-
-    bio = BytesIO(); wb.save(bio); bio.seek(0)
-    return bio
-
-
-def _gemini_call_json(parts):
-    """parts(list) → Gemini generateContent → 파싱된 JSON dict 또는 {'error':...}."""
-    if not GEMINI_API_KEY:
-        return {'error': 'NO_API_KEY'}
-    import urllib.request, urllib.error
-    body = {'contents': [{'parts': parts}],
-            'generationConfig': {'response_mime_type': 'application/json'}}
-    url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-           f'{GEMINI_MODEL}:generateContent')
-    req = urllib.request.Request(
-        url, data=json.dumps(body).encode('utf-8'),
-        headers={'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY},
-        method='POST')
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as he:
-        try:
-            detail = he.read().decode('utf-8')[:300]
-        except Exception:
-            detail = str(he)
-        return {'error': 'API_CALL_FAILED', 'detail': detail}
-    except Exception as e:
-        return {'error': 'API_CALL_FAILED', 'detail': str(e)}
-    text = ''
-    try:
-        cands = data.get('candidates') or []
-        if not cands:
-            return {'error': 'API_CALL_FAILED', 'detail': json.dumps(data)[:300]}
-        for part in (cands[0].get('content', {}).get('parts') or []):
-            if isinstance(part.get('text'), str):
-                text += part['text']
-    except Exception as e:
-        return {'error': 'PARSE_FAILED', 'raw': str(e)}
-    text = text.strip()
-    if text.startswith('```'):
-        text = text.strip('`')
-        if text[:4].lower() == 'json':
-            text = text[4:]
-        text = text.strip()
-    try:
-        return json.loads(text)
-    except Exception:
-        return {'error': 'PARSE_FAILED', 'raw': text[:300]}
-
-
-def _coerce_translation_items(res):
-    """Gemini 응답을 [{'i':int,'en':str}] 리스트로 정규화. list/dict/다양한 키 모두 수용."""
-    if isinstance(res, dict):
-        if res.get('error'):
-            return None  # 호출 자체 실패
-        arr = (res.get('translations') or res.get('items')
-               or res.get('results') or res.get('data'))
-        if arr is None:
-            # 단일 객체이거나 {i:en} 매핑일 수 있음
-            if 'i' in res and ('en' in res or 'text' in res):
-                arr = [res]
-            else:
-                arr = []
-    elif isinstance(res, list):
-        arr = res
-    else:
-        arr = []
-    return arr if isinstance(arr, list) else []
-
-
-def _translate_batch_en(texts, group):
-    """group(인덱스 리스트) 한 묶음 번역 → {원본인덱스: 영문}. 실패 시 None."""
-    payload = json.dumps([{'i': i, 'text': texts[i]} for i in group], ensure_ascii=False)
-    prompt = (
-        "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 한국어(또는 한영 혼용) "
-        "텍스트를 선박 관리 현업에서 자연스럽게 쓰는 영어로 번역하라.\n"
-        "- 장비명·약어·단위·수치(예: BRG, RPM, S/W pump, LT cooler, EGCS, °C, kts)는 그대로 둔다.\n"
-        "- 줄바꿈과 번호 매김(1. 2. ...) 구조를 그대로 보존한다.\n"
-        "- 이미 영어인 부분은 그대로 둔다. 의미를 바꾸거나 내용을 덧붙이지 마라.\n"
-        "반드시 {\"translations\":[...]} 형태의 JSON 객체로만 답하라. 입력의 i를 그대로 사용하라.\n"
-        '형식: {"translations":[{"i":0,"en":"..."}]}\n\n[입력]\n' + payload)
-    res = _gemini_call_json([{'text': prompt}])
-    arr = _coerce_translation_items(res)
-    if arr is None:
-        return None  # API 호출 실패 → 상위에서 분할 재시도
-    out = {}
-    for tr in arr:
-        if not isinstance(tr, dict):
-            continue
-        try:
-            i = int(tr.get('i'))
-        except (TypeError, ValueError):
-            continue
-        en = tr.get('en') if isinstance(tr.get('en'), str) else tr.get('text')
-        if isinstance(en, str) and en.strip():
-            out[i] = en
-    return out
-
-
-def _gen_issue_summaries(payload_items):
-    """payload_items: [{'i':int,'description':str,'action':str}] →
-    {i: {'desc':str, 'action':str}} (한국어 요약). 키 없음/실패 시 빈 dict 부분 반환."""
-    result = {}
-    if not GEMINI_API_KEY or not payload_items:
-        return result
-
-    def run(group, depth=0):
-        if not group:
-            return
-        sub = [payload_items[k] for k in group]
-        prompt = (
-            "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 업무 항목에 대해 "
-            "두 가지를 한국어로 작성하라.\n"
-            "- desc: description의 핵심 문제를 1문장(최대 2문장)으로 짧게 요약\n"
-            "- action: action(최신 조치내용)을 한 줄로 짧게 요약 (내용 없으면 빈 문자열)\n"
-            "■ 매우 중요: 요약은 원문(description/action)에 실제로 쓰인 단어와 표현을 그대로 사용해 "
-            "압축하라. 동의어로 바꾸거나 새 표현을 지어내지 말고, 불필요한 부분만 덜어내라. "
-            "원문에 있는 장비명·기술용어·약어·표현(예: EGCS, Pump, Auto mode, Maker Trouble Shooting, BRG, RPM, LT cooler)은 "
-            "그대로 보존한다. 과장/추측/내용 추가 금지.\n"
-            "입력의 i를 그대로 사용해 JSON 객체로만 답하라.\n"
-            '형식: {"items":[{"i":0,"desc":"...","action":"..."}]}\n\n[입력]\n'
-            + json.dumps(sub, ensure_ascii=False))
-        res = _gemini_call_json([{'text': prompt}])
-        arr = _coerce_translation_items(res)  # translations/items/results/data 모두 수용
-        if arr is None:
-            if len(group) > 1 and depth < 6:
-                mid = len(group) // 2
-                run(group[:mid], depth + 1); run(group[mid:], depth + 1)
-            return
-        got = set()
-        for o in arr:
-            if not isinstance(o, dict):
-                continue
-            try:
-                i = int(o.get('i'))
-            except (TypeError, ValueError):
-                continue
-            result[i] = {
-                'desc':   (o.get('desc') or o.get('desc_summary') or '').strip(),
-                'action': (o.get('action') or o.get('action_summary') or '').strip(),
-            }
-            got.add(i)
-        missing = [k for k in group if k not in got]
-        if missing and len(group) > 1 and depth < 6:
-            mid = max(1, len(missing) // 2)
-            run(missing[:mid], depth + 1); run(missing[mid:], depth + 1)
-
-    CHUNK = 12
-    idxs = list(range(len(payload_items)))
-    for s in range(0, len(idxs), CHUNK):
-        run(idxs[s:s + CHUNK])
-    return result
-
-
-def _latest_action_progress(acts):
-    if not acts:
-        return ''
-    try:
-        best = sorted(acts, key=lambda a: (a.get('date') or ''))[-1]
-    except Exception:
-        best = acts[-1]
-    return (best.get('progress') or '').strip()
-
-
-def _latest_action(acts):
-    """최신 action(날짜 최댓값)의 (date, progress) 반환."""
-    if not acts:
-        return '', ''
-    try:
-        best = sorted(acts, key=lambda a: (a.get('date') or ''))[-1]
-    except Exception:
-        best = acts[-1]
-    return (best.get('date') or '').strip(), (best.get('progress') or '').strip()
-
-
-def _md_label(d):
-    try:
-        y, m, dd = d.split('-')
-        return f'[{int(m)}/{int(dd)}]'
-    except Exception:
-        return f'[{d}]' if d else ''
-
-
-def _translate_texts_en(texts):
-    """한국어(한영 혼용) 문자열 리스트 → 선박 감독 현업 영어. 키 없음/실패 시 원문 유지.
-    묶음 실패 시 절반→1:1로 분할 재시도하여 '일부 누락'을 방지."""
-    if not GEMINI_API_KEY:
-        return list(texts)
-    out = list(texts)
-    idxs = [i for i, t in enumerate(texts) if t and str(t).strip()]
-
-    def run(group, depth=0):
-        if not group:
-            return
-        res = _translate_batch_en(texts, group)
-        if res is None:
-            # 호출 실패 → 분할 재시도
-            if len(group) > 1 and depth < 6:
-                mid = len(group) // 2
-                run(group[:mid], depth + 1)
-                run(group[mid:], depth + 1)
-            return
-        missing = [i for i in group if i not in res]
-        for i, en in res.items():
-            out[i] = en
-        # 일부만 응답에 빠진 경우도 분할 재시도
-        if missing and len(group) > 1 and depth < 6:
-            mid = max(1, len(missing) // 2)
-            run(missing[:mid], depth + 1)
-            run(missing[mid:], depth + 1)
-
-    CHUNK = 12
-    for s in range(0, len(idxs), CHUNK):
-        run(idxs[s:s + CHUNK])
-    return out
-
-
-def _translate_rows_en(rows):
-    """이슈 행들의 item_topic/description/actions[].progress 를 영문으로 치환(제자리)."""
-    bucket, texts = [], []
-    for r in rows:
-        if r.get('item_topic'):
-            bucket.append((r, 'item_topic', None)); texts.append(r['item_topic'])
-        if r.get('description'):
-            bucket.append((r, 'description', None)); texts.append(r['description'])
-        for ai, a in enumerate(r.get('actions') or []):
-            if a.get('progress'):
-                bucket.append((r, 'actions', ai)); texts.append(a['progress'])
-    if not texts:
-        return
-    tr = _translate_texts_en(texts)
-    for (r, field, ai), en in zip(bucket, tr):
-        if field == 'actions':
-            r['actions'][ai]['progress'] = en
-        else:
-            r[field] = en
-
-
-def _findings_prompt(kind):
-    if kind == 'cs':
-        return (
-            "다음은 선박 컨디션 서베이(상태검사) 보고서다. 보고서에 적힌 지적/관찰 항목을 "
-            "빠짐없이 추출해 지정한 JSON으로만 답하라. 각 항목 필드:\n"
-            "- category: 'Defect' 또는 'Observation' (시정이 필요한 지적은 Defect, 권고/관찰사항은 Observation)\n"
-            "- item: 짧은 제목 한 줄 (예: 'Main deck 부식')\n"
-            "- description: 지적 상세 내용을 원문 그대로 복사한다(영문이면 영문 그대로). 요약·변형 금지.\n"
-            "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺는다. "
-            "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다.\n"
-            "없는 내용을 지어내지 말 것. 항목이 하나도 없으면 items를 빈 배열로.\n"
-            '형식: {"items":[{"category":"Defect","item":"","description":"","remark":""}]}'
-        )
-    return (
-        "다음은 선박 SIRE 2.0 점검 보고서다. 지적(결함) 사항만 추출한다.\n"
-        "■ 포함 대상: 'Observable or detectable deficiency' 또는 'Not as expected'로 표시된 부정적 지적 "
-        "(보고서에서 빨간색 글씨로 적힌 항목).\n"
-        "■ 제외 대상: 'Exceeded normal expectation' 등 칭찬/긍정 평가(초록색 글씨)는 절대 포함하지 마라.\n"
-        "각 지적 항목의 필드:\n"
-        "- item: 항목 왼쪽에 표시된 분류(Hardware 또는 Human)를 괄호로 먼저 붙이고, 그 뒤에 굵게 표시된 "
-        "지적 제목을 그대로 이어 붙인다. 예: '(Hardware)Misc Nautical Equipment – Maintenance deferred, awaiting spares', "
-        "'(Human)Senior Engineer Officer – Not as expected'.\n"
-        "- description: 제목 아래의 상세 본문(이탤릭 문장)을 영어 원문 그대로 복사한다. 요약·변형 금지.\n"
-        "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺는다. "
-        "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm, turn table 등)는 번역하지 말고 영문 그대로 둔다.\n"
-        "없는 내용을 지어내지 말 것. 지적이 하나도 없으면 items를 빈 배열로.\n"
-        '형식: {"items":[{"item":"","description":"","remark":""}]}'
-    )
-
-
-def _normalize_findings(parsed, kind):
-    out = []
-    if isinstance(parsed, list):
-        arr = parsed
-    elif isinstance(parsed, dict):
-        arr = parsed.get('items') or parsed.get('findings') or []
-    else:
-        arr = []
-    for it in (arr or []):
-        if not isinstance(it, dict):
-            continue
-        rec = {
-            'item':        (it.get('item') or '').strip(),
-            'description': (it.get('description') or '').strip(),
-            'remark':      (it.get('remark') or '').strip(),
+  }
+}
+function renderTabContext() {
+  const c = $('#tab-context');
+  c.innerHTML = '';
+
+  const isClosedSub = S.activeSubTab === 'closed';
+  const isAllSub = S.activeSubTab === 'all';
+
+  if (S.activeTab === 'all') {
+    const open = S.supervisors.reduce((a,s)=>a+s.open_count, 0);
+    const prog = S.supervisors.reduce((a,s)=>a+s.progress_count, 0);
+    const done = S.supervisors.reduce((a,s)=>a+s.closed_count, 0);
+    const parts = [`전체 감독 · <strong>${S.supervisors.length}</strong>명`];
+    if (isClosedSub) {
+      parts.push(`Closed <strong>${done}</strong>`);
+    } else if (isAllSub) {
+      parts.push(`Open <strong>${open}</strong>`);
+      parts.push(`진행중 <strong>${prog}</strong>`);
+      parts.push(`Closed <strong>${done}</strong>`);
+    } else {
+      parts.push(`Open <strong>${open}</strong>`);
+      parts.push(`진행중 <strong>${prog}</strong>`);
+    }
+    c.innerHTML = parts.join(' · ');
+    return;
+  }
+  const s = S.supervisors.find(x => x.id == S.activeTab);
+  if (!s) return;
+
+  const vesCount = (s.vessels || '').split(',').filter(x => x.trim()).length;
+  const trigger = el('button', {
+    class: 'myves-trigger',
+    title: `${s.name} 담당 선박 상세 보기`,
+    onclick: openMyVessels,
+  },
+    el('span', { class: 'ves-icon' }, '🛥'),
+    `담당 선박 ${vesCount}척`,
+    el('span', { class: 'caret' }, '▸'));
+  c.append(trigger);
+
+  const ctx = el('span', { style: 'margin-left: 10px;' });
+  if (isClosedSub) {
+    ctx.append('· Closed ', el('strong', {}, String(s.closed_count)));
+  } else if (isAllSub) {
+    ctx.append(
+      '· Open ', el('strong', {}, String(s.open_count)),
+      ' · 진행중 ', el('strong', {}, String(s.progress_count)),
+      ' · Closed ', el('strong', {}, String(s.closed_count)),
+    );
+  } else {
+    ctx.append(
+      '· Open ', el('strong', {}, String(s.open_count)),
+      ' · 진행중 ', el('strong', {}, String(s.progress_count)),
+    );
+  }
+  c.append(ctx);
+}
+function renderSummary() {
+  const n  = S.issues.length;
+  const op = S.issues.filter(i => i.status === 'Open').length;
+  const pg = S.issues.filter(i => i.status === 'InProgress').length;
+  const cl = S.issues.filter(i => i.status === 'Closed').length;
+
+  const isClosedSub = S.activeSubTab === 'closed';
+  const isAllSub = S.activeSubTab === 'all';
+  const parts = [`<span>총 <strong>${n}</strong>건</span>`];
+  if (isClosedSub) {
+    parts.push(`<span>· Closed <strong>${cl}</strong></span>`);
+  } else if (isAllSub) {
+    parts.push(`<span>· Open <strong>${op}</strong></span>`);
+    parts.push(`<span>· 진행중 <strong>${pg}</strong></span>`);
+    parts.push(`<span>· Closed <strong>${cl}</strong></span>`);
+  } else {
+    parts.push(`<span>· Open <strong>${op}</strong></span>`);
+    parts.push(`<span>· 진행중 <strong>${pg}</strong></span>`);
+  }
+  $('#summary-row').innerHTML = parts.join('');
+  $('#count-label').textContent = `${n} items`;
+}
+
+// ───────────── Render — main ─────────────
+function render() {
+  const hasIssues = S.issues.length > 0;
+  $('#empty-state').hidden = hasIssues || !!S.inlineAdd;
+  renderTable();
+  renderCards();
+  renderSummary();
+  updateToggleAllButton();
+  // 다른 필터(검색/우선순위/선종)가 바뀐 후에도 선박 드롭다운의 카운트가
+  // 일관되게 보이도록 갱신 (select 값은 유지됨)
+  refreshVesselFilterCounts();
+}
+
+function renderTable() {
+  const tbody = $('#issue-tbody');
+  tbody.innerHTML = '';
+
+  // 이슈가 없는데 인라인 추가만 있는 경우
+  if (!S.issues.length) {
+    if (S.inlineAdd) tbody.append(inlineAddRow());
+    return;
+  }
+
+  const addDate = S.inlineAdd?.date;
+  let addedInline = false;
+  let no = 0;
+
+  const groups = groupByMonthAndDate(S.issues);
+  for (const mg of groups) {
+    const mCollapsed = S.collapsedMonths.has(mg.month);
+    const mTotalCnt = mg.items.reduce((a,d) => a + d.issues.length, 0);
+    tbody.append(monthBarRow(mg.month, mCollapsed, mTotalCnt));
+    if (mCollapsed) continue;
+
+    for (const dg of mg.items) {
+      const dCollapsed = S.collapsedDates.has(dg.date);
+      tbody.append(dateBarRow(dg.date, dCollapsed, dg.issues.length));
+      if (dCollapsed) continue;
+      for (const i of dg.issues) {
+        no++;
+        tbody.append(rowEl(i, no));
+      }
+      // 인라인 추가 행 — 해당 날짜 그룹 "맨 아래"에
+      if (S.inlineAdd && dg.date === addDate) {
+        tbody.append(inlineAddRow());
+        addedInline = true;
+      }
+    }
+  }
+
+  // 날짜 그룹에 없으면 (신규 날짜) — 최상단에 폴백
+  if (S.inlineAdd && !addedInline) {
+    tbody.insertBefore(inlineAddRow(), tbody.firstChild);
+  }
+}
+
+function monthBarRow(month, collapsed, count) {
+  const tr = el('tr', { class: 'month-bar' });
+  const td = el('td', { colspan: '8' },
+    el('div', { class: 'group-bar-inner' },
+      el('span', { class: 'gb-caret' }, collapsed ? '▶' : '▼'),
+      el('span', { class: 'gb-date' }, month),
+      el('span', { class: 'gb-count' }, `${count} items`)));
+  tr.append(td);
+  tr.addEventListener('click', () => toggleMonth(month));
+  return tr;
+}
+
+function dateBarRow(date, collapsed, count) {
+  const tr = el('tr', { class: 'group-bar nested' });
+  const inner = el('div', { class: 'group-bar-inner' },
+    el('span', { class: 'gb-caret' }, collapsed ? '▶' : '▼'),
+    el('span', { class: 'gb-date' }, date),
+    el('span', { class: 'gb-count' }, `${count} item${count>1?'s':''}`));
+
+  // + Add Issue 트리거
+  const addBtn = el('span', {
+    class: 'inline-add-trigger',
+    title: `Add issue for ${date}`,
+    onclick: (e) => {
+      e.stopPropagation();
+      openInlineAdd(date);
+    },
+  }, '+ Add Issue');
+  inner.append(addBtn);
+
+  const td = el('td', { colspan: '8' }, inner);
+  tr.append(td);
+  // 셀 전체 클릭 → 접기. 단, 트리거 버튼 클릭은 stopPropagation 덕에 무시
+  tr.addEventListener('click', (e) => {
+    if (e.target.closest('.inline-add-trigger')) return;
+    toggleDate(date);
+  });
+  return tr;
+}
+
+function toggleMonth(m) {
+  if (S.collapsedMonths.has(m)) S.collapsedMonths.delete(m);
+  else S.collapsedMonths.add(m);
+  renderTable(); renderCards();
+}
+function toggleDate(d) {
+  if (S.collapsedDates.has(d)) S.collapsedDates.delete(d);
+  else S.collapsedDates.add(d);
+  S.userToggledDates.add(d);   // 사용자가 직접 토글했음 — 자동 접기에서 제외
+  renderTable(); renderCards();
+}
+
+// ───────────── Row 렌더 (셀별 인라인 편집) ─────────────
+function rowEl(i, no) {
+  const tr = el('tr', { class: 'data-row', 'data-id': i.id });
+
+  // NO
+  tr.append(el('td', { class: 'no-cell' }, String(no)));
+
+  // 선박 — 클릭 시 select, 풀네임 + 공백 줄바꿈
+  const vTd = el('td', { class: 'vessel-cell cell-edit', title: '클릭하여 선박 변경' },
+    i.vessel_name);
+  vTd.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    startEditVessel(vTd, i);
+  });
+  tr.append(vTd);
+
+  // ITEM (topic)
+  const topicTd = el('td', { class: 'topic-cell cell-edit', title: '클릭하여 제목 편집' });
+  if (S.activeTab === 'all') {
+    topicTd.append(
+      el('div', { class: `sup-chip c-${i.supervisor_color}` },
+        el('span', { class: `tab-dot dot-${i.supervisor_color}` }),
+        i.supervisor_name),
+      el('div', { class: 'topic-text' }, i.item_topic));
+  } else {
+    topicTd.append(el('div', { class: 'topic-text' }, i.item_topic));
+  }
+  topicTd.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const target = topicTd.querySelector('.topic-text');
+    startEditInline(target, i, 'item_topic', 'text');
+  });
+  tr.append(topicTd);
+
+  // Description — textarea
+  const descTd = el('td', { class: 'desc-cell cell-edit', title: '클릭하여 상세 편집' },
+    i.description || '—');
+  descTd.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    startEditInline(descTd, i, 'description', 'textarea');
+  });
+  tr.append(descTd);
+
+  // Action Plan — 각 entry 별 편집
+  tr.append(el('td', { class: 'action-cell' }, renderActionCell(i)));
+
+  // Priority + D-day (priority 클릭 → select, due 클릭 → date input)
+  const priTd = el('td', { class: 'cell-edit', title: '클릭하여 우선순위 / 마감일 편집' });
+  const priStack = el('div', { class: 'pri-stack' }, priBadge(i.priority));
+  const ddBd = dDayBadge(i.due_date);
+  if (ddBd) priStack.append(ddBd); else {
+    priStack.append(el('span', {
+      class: 'dday dday-later',
+      style: 'opacity:0.5; cursor:pointer',
+      title: '마감일 설정',
+    }, '+ 마감'));
+  }
+  priTd.append(priStack);
+  priTd.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    // D-day 뱃지 클릭 → 마감일 편집
+    if (ev.target.closest('.dday')) {
+      startEditInline(priTd, i, 'due_date', 'date');
+    } else {
+      // 나머지 클릭 → 우선순위 select
+      startEditSelect(priTd, i, 'priority', [
+        ['Normal', 'Normal'], ['Urgent', 'Urgent'], ['Next DD', 'Next DD'], ['COC & Flag', 'COC & Flag'],
+      ]);
+    }
+  });
+  tr.append(priTd);
+
+  // Status
+  const statTd = el('td', { class: 'cell-edit', title: '클릭하여 상태 변경' }, statBadge(i.status));
+  statTd.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    startEditSelect(statTd, i, 'status', [
+      ['Open', 'Open'], ['InProgress', '진행중'], ['Closed', 'Closed'],
+    ]);
+  });
+  tr.append(statTd);
+
+  // Actions (edit / attach / delete)
+  const editBtn = mkIconBtn('edit', '전체 편집', () => openEdit(i.id));
+  const attBtn  = mkIconBtn('attach', '첨부 관리', () => openAttach(i.id));
+  if (i.att_count > 0) {
+    attBtn.classList.add('has-attach');
+    attBtn.append(el('span', { class: 'att-count-badge' }, String(i.att_count)));
+  }
+  const delBtn  = mkIconBtn('delete', '삭제', () => confirmDelete(i.id));
+  const calBtn  = mkIconBtn('calendar', '일정에 등록', () => addIssueToCalendar(i));
+
+  tr.append(el('td', {}, el('div', { class: 'row-actions' }, editBtn, attBtn, calBtn, delBtn)));
+  return tr;
+}
+
+function mkIconBtn(kind, title, onclick) {
+  const svg = {
+    edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
+    attach: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>`,
+    delete: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`,
+    calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+      <line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/>
+      <line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+  };
+  const b = el('button', {
+    class: 'icon-btn' + (kind === 'delete' ? ' danger' : kind === 'attach' ? ' attach' : ''),
+    title,
+    onclick: (ev) => { ev.stopPropagation(); onclick(); },
+  });
+  b.innerHTML = svg[kind];
+  return b;
+}
+
+// ───────────── Action cell (entries + 인라인 편집) ─────────────
+function renderActionCell(issue) {
+  const list = Array.isArray(issue.actions) ? issue.actions : [];
+  const expanded = S.expandedActions.has(issue.id);
+  const showAll = list.length <= 1 || expanded;
+
+  const wrap = el('div', { class: 'act-cell-wrap' });
+  const entries = el('div', {
+    class: 'act-entries' + (showAll ? '' : ' collapsed'),
+  });
+
+  if (!list.length) {
+    entries.append(el('div', { class: 'act-empty', style: 'font-size:11px; color:var(--text-tertiary)' }, '—'));
+  } else {
+    for (let idx = 0; idx < list.length; idx++) {
+      const a = list[idx];
+      const entry = el('div', {
+        class: 'act-entry' + (a.important ? ' important' : ''),
+        'data-idx': idx,
+      });
+
+      // Arrow (접기/펼치기) — 2+이면 최신 entry에만, 펼치면 첫 entry에
+      if (list.length > 1) {
+        const shouldShowArrow = expanded ? (idx === 0) : (idx === list.length - 1);
+        if (shouldShowArrow) {
+          entry.append(el('span', {
+            class: 'act-arrow',
+            title: expanded ? '접기' : '모두 보기',
+            onclick: (ev) => { ev.stopPropagation(); toggleActionExpand(issue.id); },
+          }, expanded ? '▼' : '▶'));
+        } else {
+          entry.append(el('span', { class: 'act-arrow', style: 'visibility:hidden' }, '▶'));
         }
-        if kind == 'cs':
-            cat = it.get('category')
-            rec['category'] = cat if cat in ('Defect', 'Observation') else 'Observation'
-        if rec['item'] or rec['description']:
-            out.append(rec)
-    return out
+      }
 
+      if (a.date) entry.append(el('span', { class: 'act-date' }, a.date));
+      else        entry.append(el('span', { class: 'act-date', style: 'visibility:hidden' }, '-'));
+      entry.append(el('span', { class: 'act-progress' }, a.progress || ''));
 
-def _xlsx_extract(raw_bytes, kind):
-    """엑셀: 헤더가 명확하면 직접 매핑(AI 불필요), 자유양식이면 텍스트화 후 Gemini.
-    반환: ('items', [...])  또는  ('text', '<탭구분 텍스트>')."""
-    import io
-    from openpyxl import load_workbook
-    wb = load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
-    ws = wb.active
-    rows = []
-    for r in ws.iter_rows(values_only=True):
-        rows.append(['' if c is None else str(c).strip() for c in r])
-    if not rows:
-        return ('items', [])
-
-    KEY = {
-        'category':    ['category', '구분', '분류', 'type', 'def/obs'],
-        'item':        ['item', '항목', 'title', 'subject', '제목', 'short gen name', 'gen name', 'short name'],
-        'description': ['description', 'detail', 'details', '내용', '상세', 'finding', 'observation', 'remarks/finding'],
-        'remark':      ['remark', 'remarks', '비고', 'note', 'notes', 'comment', 'action', '조치'],
+      // entry 본체(날짜/내용) 클릭 시 인라인 편집
+      entry.addEventListener('click', (ev) => {
+        if (ev.target.closest('.act-arrow')) return;
+        ev.stopPropagation();
+        startEditActionEntry(entry, issue, idx);
+      });
+      entries.append(entry);
     }
-    header_idx, colmap = None, {}
-    for i, row in enumerate(rows[:6]):
-        m = {}
-        for ci, cell in enumerate(row):
-            lc = cell.lower()
-            for field, keys in KEY.items():
-                if field in m:
-                    continue
-                if any(k == lc or k in lc for k in keys):
-                    m[field] = ci
-        if 'description' in m or ('item' in m and len(m) >= 2):
-            header_idx, colmap = i, m
-            break
-
-    if header_idx is not None:
-        items = []
-        for row in rows[header_idx + 1:]:
-            if not any(row):
-                continue
-            def g(f):
-                ci = colmap.get(f)
-                return row[ci] if ci is not None and ci < len(row) else ''
-            rec = {'item': g('item'), 'description': g('description'), 'remark': g('remark')}
-            if kind == 'cs':
-                cat = (g('category') or '').strip().lower()
-                rec['category'] = 'Defect' if cat.startswith('def') or '지적' in cat else 'Observation'
-            if not rec['description'] and rec['item']:
-                rec['description'] = rec['item']
-            if rec['item'] or rec['description']:
-                items.append(rec)
-        return ('items', items)
-
-    # 자유 양식 → 텍스트(TSV)로 변환
-    lines = ['\t'.join(r) for r in rows if any(r)]
-    return ('text', '\n'.join(lines[:400]))
-
-
-def _summarize_remarks(items, kind):
-    """엑셀 직접매핑 항목들의 remark를, 각 description의 한글 요약으로 채운다(배치 1회 호출).
-    GEMINI 키 없거나 실패 시 기존 remark 값을 그대로 유지."""
-    if not GEMINI_API_KEY or not items:
-        return items
-    payload = json.dumps(
-        [{'i': idx, 'description': (it.get('description') or '')} for idx, it in enumerate(items)],
-        ensure_ascii=False)
-    prompt = (
-        "아래는 선박 점검 지적 항목들의 description 목록(JSON 배열)이다. 각 항목의 description을 "
-        "한국어로 1~2문장으로 간결하게 요약하라(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺어라. 기술 명칭·장비명·약어"
-        "(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다. "
-        "입력의 i 값을 그대로 사용해 JSON으로만 답하라.\n"
-        '형식: {"summaries":[{"i":0,"remark":"요약문"}]}\n\n[입력]\n' + payload)
-    res = _gemini_call_json([{'text': prompt}])
-    if isinstance(res, dict):
-        if res.get('error'):
-            return items
-        arr = res.get('summaries') or res.get('items') or res.get('translations') or []
-    elif isinstance(res, list):
-        arr = res
-    else:
-        arr = []
-    by_i = {}
-    for s in arr:
-        if not isinstance(s, dict):
-            continue
-        try:
-            by_i[int(s.get('i'))] = (s.get('remark') or s.get('en') or '').strip()
-        except (TypeError, ValueError):
-            pass
-    for idx, it in enumerate(items):
-        if by_i.get(idx):
-            it['remark'] = by_i[idx]
-    return items
-
-
-def _extract_findings_from_upload(f, kind):
-    """업로드 FileStorage → 항목 리스트. (items, err) 반환."""
-    name = (f.filename or '').lower()
-    ext = name.rsplit('.', 1)[-1] if '.' in name else ''
-    raw = f.read()
-    size_mb = len(raw) / (1024 * 1024)
-
-    if ext in ('xlsx', 'xls'):
-        try:
-            mode, data = _xlsx_extract(raw, kind)
-        except Exception as e:
-            return None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
-        if mode == 'items':
-            return _summarize_remarks(data, kind), None
-        parsed = _gemini_call_json([{'text': _findings_prompt(kind) + '\n\n[보고서 표 내용]\n' + data}])
-    elif ext == 'pdf':
-        if size_mb > 15:
-            return None, {'reason': 'TOO_LARGE', 'message': f'PDF가 너무 큽니다({size_mb:.1f}MB). 15MB 이하로 줄이거나 페이지를 나눠 올려주세요.'}
-        b64 = __import__('base64').standard_b64encode(raw).decode()
-        parsed = _gemini_call_json([
-            {'inline_data': {'mime_type': 'application/pdf', 'data': b64}},
-            {'text': _findings_prompt(kind)},
-        ])
-    elif ext in ('png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'):
-        if size_mb > 15:
-            return None, {'reason': 'TOO_LARGE', 'message': f'이미지가 너무 큽니다({size_mb:.1f}MB).'}
-        import mimetypes
-        media = mimetypes.guess_type(name)[0] or 'image/jpeg'
-        b64 = __import__('base64').standard_b64encode(raw).decode()
-        parsed = _gemini_call_json([
-            {'inline_data': {'mime_type': media, 'data': b64}},
-            {'text': _findings_prompt(kind)},
-        ])
-    else:
-        return None, {'reason': 'BAD_TYPE', 'message': 'PDF, 이미지, 엑셀(xlsx) 파일만 지원합니다.'}
-
-    if isinstance(parsed, dict) and parsed.get('error') == 'NO_API_KEY':
-        return None, {'reason': 'no_api_key', 'message': 'AI 자동추출이 설정되지 않았습니다(키 미설정).'}
-    if isinstance(parsed, dict) and parsed.get('error'):
-        return None, {'reason': parsed['error'], 'message': '자동 추출에 실패했습니다.',
-                      'detail': parsed.get('detail') or parsed.get('raw')}
-    return _normalize_findings(parsed, kind), None
-
-
-@app.route('/api/cs/surveys/<int:sid>/extract-report', methods=['POST'])
-@login_required
-def api_cs_extract_report(sid):
-    if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
-        abort(404)
-    if 'file' not in request.files or not request.files['file'].filename:
-        return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
-    items, err = _extract_findings_from_upload(request.files['file'], 'cs')
-    if err:
-        return jsonify({'ok': False, **err}), 200
-    return jsonify({'ok': True, 'items': items, 'count': len(items)})
-
-
-@app.route('/api/cs/surveys/<int:sid>/export')
-@login_required
-def api_cs_survey_export(sid):
-    from flask import send_file
-    s = query('''SELECT cs.*, v.name AS vessel_name
-                   FROM cs_surveys cs JOIN vessels v ON v.id = cs.vessel_id
-                  WHERE cs.id=?''', (sid,), one=True)
-    if not s:
-        abort(404)
-    fr = query('''SELECT category, no, item, description, remark, status
-                    FROM cs_findings WHERE survey_id=?
-                   ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id''', (sid,))
-    rows = [[r['category'], r['no'], r['item'] or '', r['description'] or '',
-             r['remark'] or '', r['status'] or ''] for r in fr]
-    vessel = s['vessel_name']
-    title = f"Condition Survey — {vessel}  {s['year']} Q{s['quarter']}"
-    sub_bits = [f"수검일: {s['inspection_date'] or '-'}", f"Vendor: {s['vendor'] or '-'}",
-                f"총 {len(rows)}건 (Defect {sum(1 for r in fr if r['category']=='Defect')} / "
-                f"Observation {sum(1 for r in fr if r['category']=='Observation')})"]
-    headers = ['Category', 'No.', 'ITEM', 'DESCRIPTION', 'REMARK', 'STATUS']
-    bio = _findings_workbook(title, '   │   '.join(sub_bits), headers, rows,
-                             wrap_cols={3, 4, 5}, widths=[12, 6, 28, 50, 40, 10])
-    fname = f"CS_{_safe_filename(vessel)}_{s['year']}Q{s['quarter']}.xlsx"
-    return send_file(bio, as_attachment=True, download_name=fname,
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-
-# ----- CS 첨부파일 -----
-
-@app.route('/api/cs/surveys/<int:sid>/attachments', methods=['GET'])
-@login_required
-def api_cs_attachments_list(sid):
-    rows = query(
-        'SELECT * FROM cs_attachments WHERE survey_id=? ORDER BY id DESC',
-        (sid,),
-    )
-    return jsonify([dict(r) for r in rows])
-
-
-@app.route('/api/cs/surveys/<int:sid>/attachments', methods=['POST'])
-@login_required
-def api_cs_attachment_upload(sid):
-    if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
-        abort(404)
-    if 'file' not in request.files:
-        return jsonify({'error': '파일이 없습니다.'}), 400
-    f = request.files['file']
-    if not f.filename:
-        return jsonify({'error': '파일명이 없습니다.'}), 400
-
-    ext = os.path.splitext(f.filename)[1]
-    stored = f"cs_{uuid.uuid4().hex}{ext}"
-    save_path = os.path.join(UPLOAD_DIR, stored)
-    f.save(save_path)
-    size = os.path.getsize(save_path)
-
-    aid = execute("""
-        INSERT INTO cs_attachments
-            (survey_id, filename, stored_name, file_size, mime_type, uploaded_by)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (sid, f.filename, stored, size, f.mimetype, session.get('username')))
-    return jsonify({'id': aid, 'filename': f.filename, 'file_size': size}), 201
-
-
-@app.route('/api/cs/attachments/<int:aid>', methods=['GET'])
-@login_required
-def api_cs_attachment_get(aid):
-    a = query('SELECT * FROM cs_attachments WHERE id=?', (aid,), one=True)
-    if not a:
-        abort(404)
-    inline = request.args.get('inline')
-    return send_from_directory(
-        UPLOAD_DIR, a['stored_name'],
-        as_attachment=not inline,
-        download_name=a['filename'],
-    )
-
-
-@app.route('/api/cs/attachments/<int:aid>', methods=['DELETE'])
-@login_required
-def api_cs_attachment_delete(aid):
-    a = query('SELECT * FROM cs_attachments WHERE id=?', (aid,), one=True)
-    if not a:
-        abort(404)
-    p = os.path.join(UPLOAD_DIR, a['stored_name'])
-    if os.path.exists(p):
-        try: os.remove(p)
-        except OSError: pass
-    execute('DELETE FROM cs_attachments WHERE id=?', (aid,))
-    return jsonify({'ok': True})
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — Vetting Status (비정기, 선박당 0~N건, CNTR 제외)
-# ═════════════════════════════════════════════════════════════════
-VETTING_TYPES = ('VLCC', 'AFRAMAX', 'LR', 'MR')
-
-
-def _vetting_with_counts(v):
-    """vetting dict에 카운트 추가. manual override 적용."""
-    vid = v['id']
-    rows = query("""
-        SELECT status, COUNT(*) AS n
-          FROM vt_findings
-         WHERE vetting_id = ?
-         GROUP BY status
-    """, (vid,))
-    auto_open = auto_closed = 0
-    for r in rows:
-        if r['status'] == 'Closed': auto_closed = r['n']
-        else: auto_open = r['n']
-    auto_total = auto_open + auto_closed
-
-    d = dict(v)
-    d['observation_count'] = v['manual_observation_count'] if v['manual_observation_count'] is not None else auto_total
-    d['close_count']       = v['manual_close_count']       if v['manual_close_count']       is not None else auto_closed
-    d['open_count']        = v['manual_open_count']        if v['manual_open_count']        is not None else max(0, d['observation_count'] - d['close_count'])
-    d['observation_manual'] = v['manual_observation_count'] is not None
-    d['open_manual']        = v['manual_open_count']        is not None
-    d['close_manual']       = v['manual_close_count']       is not None
-    # 첨부 카운트
-    ar = query('SELECT COUNT(*) AS n FROM vt_attachments WHERE vetting_id=?',
-               (vid,), one=True)
-    d['attach_count'] = ar['n'] if ar else 0
-    return d
-
-
-# ----- Vettings (vessel별 그룹) -----
-
-@app.route('/api/vettings', methods=['GET'])
-@login_required
-def api_vettings_list():
-    """선박별 vetting 그룹 응답.
-    Query: ?year=2026&supervisor_id=N
-    응답: [ { vessel: {...}, vettings: [...with findings...] } ]
-    """
-    year = request.args.get('year', type=int)
-    sup_id = request.args.get('supervisor_id', type=int)
-
-    # 대상 선박: VLCC/AFRAMAX/LR/MR만
-    placeholders = ','.join('?' * len(VETTING_TYPES))
-    sql = f'SELECT v.* FROM vessels v WHERE v.active=1 AND v.vessel_type IN ({placeholders})'
-    params = list(VETTING_TYPES)
-    if sup_id:
-        sql += ' AND EXISTS (SELECT 1 FROM supervisor_vessels sv WHERE sv.vessel_id=v.id AND sv.supervisor_id=?)'
-        params.append(sup_id)
-    sql += ' ORDER BY v.name'
-    vessels = query(sql, tuple(params))
-
-    # vetting 한번에
-    # vetting 필터:
-    #  - 검사일이 있는 것은 해당 연도와 일치할 때만
-    #  - 검사일이 없는 것 (방금 + 새 Vetting 추가 한 빈 행)은 모든 연도에 항상 표시
-    if year:
-        vettings = query('SELECT * FROM vettings')
-        vettings = [v for v in vettings
-                    if (not v['inspection_date'])
-                    or (v['inspection_date'].startswith(str(year)))]
-    else:
-        vettings = query('SELECT * FROM vettings')
-
-    # findings 한번에
-    vids = [v['id'] for v in vettings]
-    findings_by_vid = {vid: [] for vid in vids}
-    if vids:
-        ph = ','.join('?' * len(vids))
-        all_f = query(
-            f'SELECT * FROM vt_findings WHERE vetting_id IN ({ph}) ORDER BY vetting_id, no',
-            tuple(vids),
-        )
-        for f in all_f:
-            findings_by_vid[f['vetting_id']].append(dict(f))
-
-    by_vessel = {}
-    for v in vettings:
-        d = _vetting_with_counts(v)
-        d['findings'] = findings_by_vid.get(v['id'], [])
-        by_vessel.setdefault(v['vessel_id'], []).append(d)
-
-    # 검사일 내림차순 정렬 (최신이 위)
-    for vid in by_vessel:
-        by_vessel[vid].sort(key=lambda x: (x.get('inspection_date') or ''), reverse=True)
-
-    # 선박별 담당 감독 ID 매핑 (Daily 이슈 등록 시 필요)
-    sv_map = {}
-    if vessels:
-        v_ids = [v['id'] for v in vessels]
-        ph2 = ','.join('?' * len(v_ids))
-        rows = query(
-            f'SELECT vessel_id, supervisor_id FROM supervisor_vessels WHERE vessel_id IN ({ph2})',
-            tuple(v_ids),
-        )
-        for r in rows:
-            sv_map.setdefault(r['vessel_id'], []).append(r['supervisor_id'])
-
-    # 선박별 last_updated (해당 선박의 모든 vettings 중 가장 최근 updated_at)
-    last_by_vessel = {}
-    for v in vettings:
-        u = v['updated_at']
-        if u and (v['vessel_id'] not in last_by_vessel or u > last_by_vessel[v['vessel_id']]):
-            last_by_vessel[v['vessel_id']] = u
-
-    out = []
-    for ves in vessels:
-        vd = dict(ves)
-        vd['supervisor_ids'] = sv_map.get(ves['id'], [])
-        out.append({
-            'vessel': vd,
-            'vettings': by_vessel.get(ves['id'], []),
-            'last_updated': last_by_vessel.get(ves['id']),
-        })
-    return jsonify(out)
-
-
-@app.route('/api/vettings', methods=['POST'])
-@login_required
-def api_vetting_create():
-    """단일 vetting 생성. 선박 ID만 필수, 나머지는 선택."""
-    d = request.get_json() or {}
-    vid = d.get('vessel_id')
-    if not vid:
-        return jsonify({'error': 'vessel_id 가 필요합니다.'}), 400
-    v = query('SELECT vessel_type FROM vessels WHERE id=?', (vid,), one=True)
-    if not v:
-        return jsonify({'error': '선박을 찾을 수 없습니다.'}), 404
-    if v['vessel_type'] not in VETTING_TYPES:
-        return jsonify({'error': f'Vetting은 {", ".join(VETTING_TYPES)} 선박에만 적용됩니다.'}), 400
-
-    op = d.get('operation') or None
-    if op and op not in ('Loading','Discharging','Idle'):
-        op = None
-
-    new_id = execute("""
-        INSERT INTO vettings
-            (vessel_id, report_number, inspection_date, inspection_company,
-             inspector, port, operation, overall_remark, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (vid,
-          d.get('report_number') or '',
-          d.get('inspection_date') or None,
-          d.get('inspection_company') or '',
-          d.get('inspector') or '',
-          d.get('port') or '',
-          op,
-          d.get('overall_remark') or '',
-          session.get('username')))
-    row = query('SELECT * FROM vettings WHERE id=?', (new_id,), one=True)
-    return jsonify(_vetting_with_counts(row)), 201
-
-
-@app.route('/api/vettings/<int:vid>', methods=['GET'])
-@login_required
-def api_vetting_get(vid):
-    v = query('SELECT * FROM vettings WHERE id=?', (vid,), one=True)
-    if not v:
-        abort(404)
-    d = _vetting_with_counts(v)
-    d['findings'] = [dict(f) for f in query(
-        'SELECT * FROM vt_findings WHERE vetting_id=? ORDER BY no', (vid,))]
-    return jsonify(d)
-
-
-@app.route('/api/vettings/<int:vid>', methods=['PUT'])
-@login_required
-def api_vetting_update(vid):
-    if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
-        abort(404)
-    d = request.get_json() or {}
-    sets, params = [], []
-    for f in ('report_number','inspection_date','inspection_company','inspector',
-              'port','operation','overall_remark',
-              'manual_observation_count','manual_open_count','manual_close_count'):
-        if f in d:
-            sets.append(f'{f} = ?')
-            v = d[f]
-            params.append(None if v == '' else v)
-    if not sets:
-        return jsonify({'ok': True})
-    sets.append("updated_at = datetime('now','localtime')")
-    execute(f'UPDATE vettings SET {", ".join(sets)} WHERE id=?', tuple(params + [vid]))
-    return jsonify({'ok': True})
-
-
-@app.route('/api/vettings/<int:vid>', methods=['DELETE'])
-@login_required
-def api_vetting_delete(vid):
-    # 첨부 파일도 같이 삭제 (CASCADE는 DB만, 파일은 직접)
-    atts = query('SELECT stored_name FROM vt_attachments WHERE vetting_id=?', (vid,))
-    for a in atts:
-        p = os.path.join(UPLOAD_DIR, a['stored_name'])
-        if os.path.exists(p):
-            try: os.remove(p)
-            except OSError: pass
-    execute('DELETE FROM vettings WHERE id=?', (vid,))
-    return jsonify({'ok': True})
-
-
-# ----- Findings -----
-
-def _vt_next_no(vid):
-    r = query('SELECT COALESCE(MAX(no), 0) + 1 AS next FROM vt_findings WHERE vetting_id=?',
-              (vid,), one=True)
-    return r['next']
-
-
-@app.route('/api/vettings/<int:vid>/findings', methods=['POST'])
-@login_required
-def api_vt_findings_create(vid):
-    """단건 또는 배치(items 배열) 생성."""
-    if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
-        abort(404)
-    d = request.get_json() or {}
-    items = d.get('items')
-    if items is None:
-        items = [{
-            'item':        d.get('item'),
-            'description': d.get('description'),
-            'remark':      d.get('remark'),
-            'status':      d.get('status') or 'Open',
-        }]
-
-    next_no = _vt_next_no(vid)
-    created = []
-    for it in items:
-        st = it.get('status') or 'Open'
-        if st not in ('Open','Closed'): st = 'Open'
-        fid = execute("""
-            INSERT INTO vt_findings (vetting_id, no, item, description, remark, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (vid, next_no,
-              it.get('item') or '',
-              it.get('description') or '',
-              it.get('remark') or '',
-              st))
-        created.append(fid)
-        next_no += 1
-    return jsonify({'ids': created, 'count': len(created)}), 201
-
-
-@app.route('/api/vt-findings/<int:fid>', methods=['PUT'])
-@login_required
-def api_vt_finding_update(fid):
-    cur = query('SELECT vetting_id, status FROM vt_findings WHERE id=?', (fid,), one=True)
-    if not cur:
-        abort(404)
-    d = request.get_json() or {}
-    sets, params = [], []
-    for f in ('item','description','remark','status'):
-        if f in d:
-            sets.append(f'{f} = ?')
-            params.append(d[f] or '')
-    if not sets:
-        return jsonify({'ok': True})
-    sets.append("updated_at = datetime('now','localtime')")
-    execute(f'UPDATE vt_findings SET {", ".join(sets)} WHERE id=?', tuple(params + [fid]))
-
-    # status 변경 시 vettings.updated_at 갱신 (선박 헤더의 Last update에 반영)
-    if 'status' in d and d['status'] != cur['status']:
-        execute(
-            "UPDATE vettings SET updated_at = datetime('now','localtime') WHERE id=?",
-            (cur['vetting_id'],),
-        )
-    return jsonify({'ok': True})
-
-
-@app.route('/api/vt-findings/<int:fid>', methods=['DELETE'])
-@login_required
-def api_vt_finding_delete(fid):
-    f = query('SELECT vetting_id FROM vt_findings WHERE id=?', (fid,), one=True)
-    if not f:
-        abort(404)
-    vid = f['vetting_id']
-    execute('DELETE FROM vt_findings WHERE id=?', (fid,))
-    # No 재정렬
-    rows = query('SELECT id FROM vt_findings WHERE vetting_id=? ORDER BY no', (vid,))
-    for new_no, r in enumerate(rows, start=1):
-        execute('UPDATE vt_findings SET no=? WHERE id=?', (new_no, r['id']))
-    return jsonify({'ok': True})
-
-
-# ----- Attachments -----
-
-@app.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
-@login_required
-def api_vt_extract_report(vid):
-    if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
-        abort(404)
-    if 'file' not in request.files or not request.files['file'].filename:
-        return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
-    items, err = _extract_findings_from_upload(request.files['file'], 'sire')
-    if err:
-        return jsonify({'ok': False, **err}), 200
-    return jsonify({'ok': True, 'items': items, 'count': len(items)})
-
-
-@app.route('/api/vettings/<int:vid>/export')
-@login_required
-def api_vt_export(vid):
-    from flask import send_file
-    v = query('''SELECT vt.*, ve.name AS vessel_name
-                   FROM vettings vt JOIN vessels ve ON ve.id = vt.vessel_id
-                  WHERE vt.id=?''', (vid,), one=True)
-    if not v:
-        abort(404)
-    fr = query('''SELECT no, item, description, remark, status
-                    FROM vt_findings WHERE vetting_id=? ORDER BY no, id''', (vid,))
-    rows = [[r['no'], r['item'] or '', r['description'] or '',
-             r['remark'] or '', r['status'] or ''] for r in fr]
-    vessel = v['vessel_name']
-    rno = v['report_number'] or ''
-    title = f"SIRE Observation List — {vessel}"
-    sub_bits = [f"검사일: {v['inspection_date'] or '-'}", f"Port: {v['port'] or '-'}"]
-    if rno:
-        sub_bits.append(f"Report: {rno}")
-    sub_bits.append(f"총 {len(rows)}건")
-    headers = ['No.', 'ITEM', 'DESCRIPTION', 'REMARK', 'STATUS']
-    bio = _findings_workbook(title, '   │   '.join(sub_bits), headers, rows,
-                             wrap_cols={2, 3, 4}, widths=[6, 30, 52, 42, 10])
-    date_tag = (v['inspection_date'] or '').replace('-', '')
-    fname = f"SIRE_{_safe_filename(vessel)}_{date_tag or vid}.xlsx"
-    return send_file(bio, as_attachment=True, download_name=fname,
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-
-@app.route('/api/vettings/<int:vid>/attachments', methods=['GET'])
-@login_required
-def api_vt_attachments_list(vid):
-    rows = query(
-        'SELECT * FROM vt_attachments WHERE vetting_id=? ORDER BY id DESC',
-        (vid,),
-    )
-    return jsonify([dict(r) for r in rows])
-
-
-@app.route('/api/vettings/<int:vid>/attachments', methods=['POST'])
-@login_required
-def api_vt_attachment_upload(vid):
-    if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
-        abort(404)
-    if 'file' not in request.files:
-        return jsonify({'error': '파일이 없습니다.'}), 400
-    f = request.files['file']
-    if not f.filename:
-        return jsonify({'error': '파일명이 없습니다.'}), 400
-
-    ext = os.path.splitext(f.filename)[1]
-    stored = f"vt_{uuid.uuid4().hex}{ext}"
-    save_path = os.path.join(UPLOAD_DIR, stored)
-    f.save(save_path)
-    size = os.path.getsize(save_path)
-
-    aid = execute("""
-        INSERT INTO vt_attachments
-            (vetting_id, filename, stored_name, file_size, mime_type, uploaded_by)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (vid, f.filename, stored, size, f.mimetype, session.get('username')))
-    return jsonify({'id': aid, 'filename': f.filename, 'file_size': size}), 201
-
-
-@app.route('/api/vt-attachments/<int:aid>', methods=['GET'])
-@login_required
-def api_vt_attachment_get(aid):
-    a = query('SELECT * FROM vt_attachments WHERE id=?', (aid,), one=True)
-    if not a:
-        abort(404)
-    inline = request.args.get('inline')
-    return send_from_directory(
-        UPLOAD_DIR, a['stored_name'],
-        as_attachment=not inline,
-        download_name=a['filename'],
-    )
-
-
-@app.route('/api/vt-attachments/<int:aid>', methods=['DELETE'])
-@login_required
-def api_vt_attachment_delete(aid):
-    a = query('SELECT * FROM vt_attachments WHERE id=?', (aid,), one=True)
-    if not a:
-        abort(404)
-    p = os.path.join(UPLOAD_DIR, a['stored_name'])
-    if os.path.exists(p):
-        try: os.remove(p)
-        except OSError: pass
-    execute('DELETE FROM vt_attachments WHERE id=?', (aid,))
-    return jsonify({'ok': True})
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — Calendar Events (일정 모듈)
-# ═════════════════════════════════════════════════════════════════
-CAL_VALID_COLORS = ('gray','red','amber','yellow','green','blue','purple','pink')
-
-
-@app.route('/api/cal/events', methods=['GET'])
-@login_required
-def api_cal_events_list():
-    """기간 내 일정 조회.
-    Query: ?start=YYYY-MM-DD&end=YYYY-MM-DD&supervisor_id=N
-    - supervisor_id 없거나 'all' = 전체 (공용 + 모든 감독)
-    - supervisor_id=N = 해당 감독의 일정 + 공용(supervisor_id IS NULL)
-    """
-    start = request.args.get('start')
-    end   = request.args.get('end')
-    sup   = request.args.get('supervisor_id')
-
-    sql = 'SELECT * FROM calendar_events WHERE 1=1'
-    params = []
-    if start:
-        # 시작일이 end 보다 작거나, end_date가 start보다 크거나 (멀티데이 겹침)
-        sql += ' AND (COALESCE(end_date, start_date) >= ?)'
-        params.append(start)
-    if end:
-        sql += ' AND (start_date <= ?)'
-        params.append(end)
-    if sup and sup != 'all':
-        sql += ' AND (supervisor_id = ? OR supervisor_id IS NULL)'
-        params.append(int(sup))
-    sql += ' ORDER BY start_date, COALESCE(start_time, "00:00")'
-
-    rows = query(sql, tuple(params))
-    return jsonify([dict(r) for r in rows])
-
-
-@app.route('/api/cal/events/find', methods=['GET'])
-@login_required
-def api_cal_event_find():
-    """source_type + source_id 로 기존 일정 조회 (중복 체크용).
-    Query: ?source_type=issue|cs|vetting&source_id=N
-    응답: event dict 또는 null
-    """
-    src_type = request.args.get('source_type')
-    src_id   = request.args.get('source_id', type=int)
-    if not src_type or not src_id:
-        return jsonify(None)
-    r = query('SELECT * FROM calendar_events WHERE source_type=? AND source_id=?',
-              (src_type, src_id), one=True)
-    return jsonify(dict(r) if r else None)
-
-
-@app.route('/api/cal/events', methods=['POST'])
-@login_required
-def api_cal_event_create():
-    d = request.get_json() or {}
-    if not d.get('title'):
-        return jsonify({'error': 'title 이 필요합니다.'}), 400
-    if not d.get('start_date'):
-        return jsonify({'error': 'start_date 가 필요합니다.'}), 400
-
-    color = (d.get('color') or 'blue').lower()
-    if color not in CAL_VALID_COLORS:
-        color = 'blue'
-
-    all_day = 1 if d.get('all_day', True) else 0
-
-    new_id = execute("""
-        INSERT INTO calendar_events
-            (supervisor_id, vessel_id, title, start_date, end_date,
-             all_day, start_time, end_time, category, color, location, notes,
-             source_type, source_id, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        d.get('supervisor_id') or None,
-        d.get('vessel_id') or None,
-        d['title'],
-        d['start_date'],
-        d.get('end_date') or None,
-        all_day,
-        d.get('start_time') or None,
-        d.get('end_time') or None,
-        d.get('category') or '',
-        color,
-        d.get('location') or '',
-        d.get('notes') or '',
-        d.get('source_type') or 'manual',
-        d.get('source_id') or None,
-        session.get('username'),
-    ))
-    return jsonify({'id': new_id}), 201
-
-
-@app.route('/api/cal/events/<int:eid>', methods=['GET'])
-@login_required
-def api_cal_event_get(eid):
-    r = query('SELECT * FROM calendar_events WHERE id=?', (eid,), one=True)
-    if not r:
-        abort(404)
-    return jsonify(dict(r))
-
-
-@app.route('/api/cal/events/<int:eid>', methods=['PUT'])
-@login_required
-def api_cal_event_update(eid):
-    if not query('SELECT id FROM calendar_events WHERE id=?', (eid,), one=True):
-        abort(404)
-    d = request.get_json() or {}
-    sets, params = [], []
-    for f in ('supervisor_id','vessel_id','title','start_date','end_date',
-              'all_day','start_time','end_time','category','color',
-              'location','notes'):
-        if f in d:
-            v = d[f]
-            if f == 'color' and v:
-                v = v.lower()
-                if v not in CAL_VALID_COLORS:
-                    v = 'blue'
-            if f == 'all_day':
-                v = 1 if v else 0
-            sets.append(f'{f} = ?')
-            params.append(None if v == '' else v)
-    if not sets:
-        return jsonify({'ok': True})
-    sets.append("updated_at = datetime('now','localtime')")
-    execute(f'UPDATE calendar_events SET {", ".join(sets)} WHERE id=?',
-            tuple(params + [eid]))
-    return jsonify({'ok': True})
-
-
-@app.route('/api/cal/events/<int:eid>', methods=['DELETE'])
-@login_required
-def api_cal_event_delete(eid):
-    execute('DELETE FROM calendar_events WHERE id=?', (eid,))
-    return jsonify({'ok': True})
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — Dry Dock Report (메타 CRUD)
-#   · Step 1: 보고서 자체의 생성/조회/수정/삭제만
-#   · 섹션·블록 편집 / 추출은 Step 2~3에서 추가
-# ═════════════════════════════════════════════════════════════════
-def _dock_to_dict(row):
-    d = dict(row)
-    # 출력 시 None → '' 변환은 프론트에서 처리
-    return d
-
-
-def _can_edit_dock_report(report_row_or_id):
-    """
-    현재 세션 사용자가 이 보고서를 편집할 권한이 있는가?
-      · admin: 항상 True
-      · 담당 감독(supervisor_id 일치): True
-      · 그 외: False
-    인자로 report 행(dict 또는 sqlite Row) 또는 id(int) 모두 받음.
-    """
-    if session.get('role') == 'admin':
-        return True
-    my_sv = session.get('supervisor_id')
-    if not my_sv:
-        return False
-
-    if isinstance(report_row_or_id, int):
-        r = query('SELECT supervisor_id FROM dock_reports WHERE id=?',
-                  (report_row_or_id,), one=True)
-        if not r:
-            return False
-        report_sv = r['supervisor_id']
-    else:
-        report_sv = report_row_or_id.get('supervisor_id') \
-                    if hasattr(report_row_or_id, 'get') \
-                    else report_row_or_id['supervisor_id']
-
-    return report_sv is not None and report_sv == my_sv
-
-
-def _require_dock_edit(rid):
-    """편집 권한 없으면 403. 통과 시 None 반환."""
-    if not query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True):
-        abort(404)
-    if not _can_edit_dock_report(rid):
-        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다. (담당 감독 또는 관리자만 수정 가능)'}), 403
-    return None
-
-
-def _require_dock_edit_via_section(sid):
-    """섹션 ID → 보고서 ID → 권한 검사"""
-    r = query('SELECT report_id FROM dock_report_sections WHERE id=?', (sid,), one=True)
-    if not r:
-        abort(404)
-    rid = r['report_id']
-    if not _can_edit_dock_report(rid):
-        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다.'}), 403
-    return None
-
-
-def _require_dock_edit_via_block(bid):
-    """블록 ID → 섹션 → 보고서 → 권한 검사"""
-    r = query('''
-        SELECT s.report_id FROM dock_report_blocks b
-          JOIN dock_report_sections s ON s.id = b.section_id
-         WHERE b.id = ?
-    ''', (bid,), one=True)
-    if not r:
-        abort(404)
-    rid = r['report_id']
-    if not _can_edit_dock_report(rid):
-        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다.'}), 403
-    return None
-
-
-@app.route('/api/dock-reports', methods=['GET'])
-@login_required
-def api_dock_list():
-    """목록 조회 — 필터: vessel_id, status, is_template, q"""
-    conds, params = ['1=1'], []
-
-    is_tmpl = request.args.get('is_template')
-    if is_tmpl is not None:
-        conds.append('d.is_template = ?')
-        params.append(1 if is_tmpl in ('1', 'true', 'yes') else 0)
-    else:
-        # 기본은 보고서만 (템플릿 제외)
-        conds.append('d.is_template = 0')
-
-    if request.args.get('vessel_id'):
-        conds.append('d.vessel_id = ?')
-        params.append(request.args.get('vessel_id'))
-
-    if request.args.get('status'):
-        conds.append('d.status = ?')
-        params.append(request.args.get('status'))
-
-    if request.args.get('q'):
-        like = f'%{request.args.get("q")}%'
-        conds.append('(d.title LIKE ? OR d.shipyard LIKE ? OR d.dock_no LIKE ?)')
-        params += [like, like, like]
-
-    sql = f'''
-        SELECT d.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               s.name       AS supervisor_name
-          FROM dock_reports d
-          JOIN vessels       v ON v.id = d.vessel_id
-          LEFT JOIN supervisors s ON s.id = d.supervisor_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY d.updated_at DESC, d.id DESC
-    '''
-    rows = query(sql, params)
-    out = []
-    for r in rows:
-        d = _dock_to_dict(r)
-        d['can_edit'] = _can_edit_dock_report(r)
-        out.append(d)
-    return jsonify(out)
-
-
-@app.route('/api/dock-reports', methods=['POST'])
-@login_required
-def api_dock_create():
-    d = request.get_json(silent=True) or {}
-    vessel_id = d.get('vessel_id')
-    title     = (d.get('title') or '').strip()
-    if not vessel_id:
-        return jsonify({'error': '선박을 선택하세요.'}), 400
-    if not title:
-        return jsonify({'error': '제목을 입력하세요.'}), 400
-    if not query('SELECT id FROM vessels WHERE id=?', (vessel_id,), one=True):
-        return jsonify({'error': '존재하지 않는 선박입니다.'}), 400
-
-    # 권한: admin이거나, 자기 자신을 담당 감독으로 지정하는 경우만 생성 허용
-    supervisor_id = d.get('supervisor_id') or None
-    if session.get('role') != 'admin':
-        my_sv = session.get('supervisor_id')
-        if not my_sv:
-            return jsonify({'error': '보고서 작성 권한이 없습니다. (담당 감독으로 등록된 계정만 가능)'}), 403
-        # member는 자기 자신을 담당으로만 지정 가능
-        if supervisor_id and int(supervisor_id) != my_sv:
-            return jsonify({'error': '본인을 담당 감독으로 지정한 경우에만 생성할 수 있습니다.'}), 403
-        # 미지정 시 자동으로 본인 지정
-        if not supervisor_id:
-            supervisor_id = my_sv
-
-    is_template = 1 if d.get('is_template') else 0
-
-    new_id = execute('''
-        INSERT INTO dock_reports
-            (vessel_id, supervisor_id, title, dock_no, shipyard,
-             period_start, period_end, imo_no, gross_tonnage, dead_weight,
-             approval_drafter, approval_team_lead, approval_director, approval_ceo,
-             status, is_template, template_name, created_by)
-        VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?, ?,?,?,?)
-    ''', (
-        vessel_id,
-        supervisor_id,
+  }
+  wrap.append(entries);
+
+  // + 엔트리 추가 (항상 표시)
+  wrap.append(el('button', {
+    type: 'button',
+    class: 'act-add-inline',
+    title: '새 조치 엔트리 추가',
+    onclick: (ev) => {
+      ev.stopPropagation();
+      addActionInline(issue);
+    },
+  }, '+ 추가'));
+
+  return wrap;
+}
+
+function toggleActionExpand(issueId) {
+  if (S.expandedActions.has(issueId)) S.expandedActions.delete(issueId);
+  else S.expandedActions.add(issueId);
+  renderTable(); renderCards();
+}
+
+// ───────────── 인라인 편집 — 공통 ─────────────
+/** text / textarea / date 필드 인라인 편집 */
+async function startEditInline(cellEl, issue, field, kind) {
+  if (S._editing) return;
+  S._editing = cellEl;
+  const orig = issue[field] ?? '';
+  const prevHTML = cellEl.innerHTML;
+
+  let input;
+  if (kind === 'textarea') {
+    input = document.createElement('textarea');
+    input.className = 'inline-textarea';
+    input.value = orig || '';
+    input.rows = Math.max(3, (orig.match(/\n/g) || []).length + 1);
+  } else if (kind === 'date') {
+    input = document.createElement('input');
+    input.type = 'date';
+    input.className = 'inline-input';
+    input.value = orig || '';
+  } else {
+    input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'inline-input';
+    input.value = orig || '';
+  }
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return; done = true;
+    S._editing = null;
+    if (save) {
+      const newVal = (kind === 'date' ? (input.value || null) : input.value);
+      if (newVal !== orig && !(newVal === null && !orig)) {
+        try {
+          await api('/api/issues/' + issue.id, {
+            method: 'PUT',
+            body: JSON.stringify({ [field]: newVal }),
+          });
+          issue[field] = newVal;
+          await reloadAll();
+          return;
+        } catch (err) {
+          alert('저장 실패: ' + err.message);
+        }
+      }
+    }
+    cellEl.innerHTML = prevHTML;
+  };
+
+  // textarea 모드: 저장/취소 버튼 명시적 사용 (blur 자동저장 X)
+  if (kind === 'textarea') {
+    cellEl.innerHTML = '';
+    const wrap = el('div', { class: 'inline-edit-wrap' });
+    wrap.append(input);
+
+    const saveBtn = el('button', { type: 'button', class: 'inline-save-btn' });
+    saveBtn.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline-block;vertical-align:-1px;margin-right:2px">
+      <polyline points="20 6 9 17 4 12"/></svg>저장`;
+    saveBtn.addEventListener('click', (e) => { e.stopPropagation(); finish(true); });
+
+    const cancelBtn = el('button', { type: 'button', class: 'inline-cancel-btn' }, '취소');
+    cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); finish(false); });
+
+    wrap.append(el('div', { class: 'inline-edit-btns' }, saveBtn, cancelBtn));
+    cellEl.append(wrap);
+    input.focus();
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    return;   // textarea 모드는 여기서 끝 (blur 저장 사용 안 함)
+  }
+
+  // text / date 모드: blur 시 자동 저장
+  cellEl.innerHTML = '';
+  cellEl.append(input);
+  input.focus();
+  if (input.select) input.select();
+
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') {
+      done = true; S._editing = null;
+      cellEl.innerHTML = prevHTML;
+    }
+  });
+}
+
+/** select 인라인 편집 */
+async function startEditSelect(cellEl, issue, field, options) {
+  if (S._editing) return;
+  S._editing = cellEl;
+  const orig = issue[field] ?? '';
+
+  const sel = document.createElement('select');
+  sel.className = 'inline-select';
+  for (const [v, label] of options) {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = label;
+    if (v === orig) opt.selected = true;
+    sel.append(opt);
+  }
+  const prevHTML = cellEl.innerHTML;
+  cellEl.innerHTML = '';
+  cellEl.append(sel);
+  sel.focus();
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return; done = true;
+    S._editing = null;
+    if (save && sel.value !== orig) {
+      try {
+        await api('/api/issues/' + issue.id, {
+          method: 'PUT',
+          body: JSON.stringify({ [field]: sel.value }),
+        });
+        issue[field] = sel.value;
+        await reloadAll();
+        return;
+      } catch (err) { alert('저장 실패: ' + err.message); }
+    }
+    cellEl.innerHTML = prevHTML;
+  };
+  sel.addEventListener('change', () => finish(true));
+  sel.addEventListener('blur', () => setTimeout(() => finish(true), 80));
+  sel.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { done = true; S._editing = null; cellEl.innerHTML = prevHTML; }
+  });
+}
+
+/** 선박 select — 감독 담당 선박만 */
+async function startEditVessel(cellEl, issue) {
+  if (S._editing) return;
+  try {
+    const vs = await api(`/api/vessels?supervisor_id=${issue.supervisor_id}`);
+    const opts = vs.map(v => [v.id, v.short_name || v.name]);
+    await startEditSelect(cellEl, issue, 'vessel_id', opts);
+  } catch (err) { alert('선박 목록 로드 실패: ' + err.message); }
+}
+
+// ───────────── Action entry 인라인 편집 ─────────────
+function startEditActionEntry(entryEl, issue, idx) {
+  if (S._editing) return;
+  S._editing = entryEl;
+
+  const a = issue.actions[idx] || { date: '', progress: '', important: false };
+  const orig = { date: a.date || '', progress: a.progress || '', important: !!a.important };
+  let imp = orig.important;
+
+  entryEl.innerHTML = '';
+  entryEl.classList.add('editing');
+  entryEl.classList.remove('important');
+
+  const dateIn = el('input', { type: 'date', value: orig.date });
+  const progIn = el('input', { type: 'text', value: orig.progress, placeholder: '조치 내용' });
+  const impBtn = el('button', {
+    type: 'button', class: 'mini-btn imp' + (imp ? ' on' : ''),
+    title: '중요 표시', onclick: (ev) => {
+      ev.stopPropagation();
+      imp = !imp;
+      impBtn.classList.toggle('on', imp);
+      impBtn.textContent = imp ? '●' : '○';
+    },
+  }, imp ? '●' : '○');
+  const okBtn = el('button', { type: 'button', class: 'mini-btn ok', title: '저장',
+    onclick: (ev) => { ev.stopPropagation(); finish('save'); } }, '✓');
+  const rmBtn = el('button', { type: 'button', class: 'mini-btn rm', title: '엔트리 삭제',
+    onclick: (ev) => { ev.stopPropagation(); finish('remove'); } }, '×');
+
+  entryEl.append(dateIn, progIn, impBtn, okBtn, rmBtn);
+  setTimeout(() => { progIn.focus(); progIn.select(); }, 10);
+
+  let done = false;
+  const finish = async (mode) => {
+    if (done) return; done = true;
+    S._editing = null;
+
+    if (mode === 'save') {
+      const progVal = progIn.value.trim();
+      if (!progVal) {       // 내용 비어있으면 삭제로 처리
+        mode = 'remove';
+      } else {
+        issue.actions[idx] = {
+          date: dateIn.value || null,
+          progress: progVal,
+          important: imp,
+        };
+      }
+    }
+    if (mode === 'remove') {
+      issue.actions.splice(idx, 1);
+    }
+
+    if (mode === 'cancel') {
+      renderTable(); renderCards();
+      return;
+    }
+
+    try {
+      await api('/api/issues/' + issue.id, {
+        method: 'PUT',
+        body: JSON.stringify({ actions: issue.actions }),
+      });
+      renderTable(); renderCards();
+    } catch (err) {
+      alert('저장 실패: ' + err.message);
+      await reloadAll();
+    }
+  };
+
+  progIn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish('save'); }
+    if (e.key === 'Escape') finish('cancel');
+  });
+  dateIn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish('save'); }
+    if (e.key === 'Escape') finish('cancel');
+  });
+}
+
+async function addActionInline(issue) {
+  if (S._editing) return;
+  if (!Array.isArray(issue.actions)) issue.actions = [];
+  // 임시 빈 entry 추가 후 그 entry 편집 진입
+  issue.actions.push({ date: todayISO(), progress: '', important: false });
+  if (!S.expandedActions.has(issue.id)) S.expandedActions.add(issue.id);
+  renderTable(); renderCards();
+
+  setTimeout(() => {
+    const tr = document.querySelector(`tr[data-id="${issue.id}"]`);
+    if (!tr) return;
+    const entries = tr.querySelectorAll('.act-cell-wrap .act-entry');
+    const last = entries[entries.length - 1];
+    if (last) startEditActionEntry(last, issue, issue.actions.length - 1);
+  }, 30);
+}
+
+// ───────────── Cards (모바일) ─────────────
+function renderCards() {
+  const list = $('#card-list');
+  list.innerHTML = '';
+
+  if (!S.issues.length) {
+    if (S.inlineAdd) list.append(inlineAddCardHint());
+    return;
+  }
+
+  const addDate = S.inlineAdd?.date;
+  let addedInline = false;
+
+  const groups = groupByMonthAndDate(S.issues);
+  for (const mg of groups) {
+    const mCollapsed = S.collapsedMonths.has(mg.month);
+    const totalCnt = mg.items.reduce((a,d) => a + d.issues.length, 0);
+    const mBar = el('div', {
+      class: 'card-date-bar',
+      style: 'background:#0F172A; font-size:13px; font-weight:700',
+    },
+      el('span', {}, mCollapsed ? '▶' : '▼'),
+      el('span', {}, mg.month),
+      el('span', { style: 'opacity:0.7' }, `${totalCnt} items`));
+    mBar.addEventListener('click', () => toggleMonth(mg.month));
+    list.append(mBar);
+    if (mCollapsed) continue;
+
+    for (const dg of mg.items) {
+      const dCollapsed = S.collapsedDates.has(dg.date);
+      const dBar = el('div', {
+        class: 'card-date-bar',
+        style: 'background:#1E293B; margin-left:12px',
+      },
+        el('span', {}, dCollapsed ? '▶' : '▼'),
+        el('span', {}, dg.date),
+        el('span', { style: 'opacity:0.7' }, `${dg.issues.length} item${dg.issues.length>1?'s':''}`));
+      dBar.addEventListener('click', () => toggleDate(dg.date));
+      list.append(dBar);
+      if (dCollapsed) continue;
+      for (const i of dg.issues) list.append(cardEl(i));
+
+      if (S.inlineAdd && dg.date === addDate) {
+        list.append(inlineAddCardHint());
+        addedInline = true;
+      }
+    }
+  }
+
+  if (S.inlineAdd && !addedInline) {
+    list.insertBefore(inlineAddCardHint(), list.firstChild);
+  }
+}
+
+function inlineAddCardHint() {
+  return el('div', {
+    style: 'background:var(--blue-bg); border:1px solid var(--blue-border); padding:10px 12px; border-radius:8px; font-size:12px; color:var(--blue-text); margin-bottom:10px',
+  }, '📝 데스크톱에서 상단 인라인 입력 폼을 이용해 새 이슈를 추가하세요.');
+}
+
+function cardEl(i) {
+  const card = el('div', { class: 'issue-card', 'data-id': i.id });
+  // 카드 click → edit 모달 (모바일은 인라인 편집 어려우므로 모달로)
+  card.addEventListener('click', (ev) => {
+    if (ev.target.closest('.icon-btn') || ev.target.closest('.act-arrow')) return;
+    openEdit(i.id);
+  });
+
+  const head = el('div', { class: 'issue-card-head' });
+  if (S.activeTab === 'all') {
+    head.append(el('span', { class: `sup-chip c-${i.supervisor_color}` },
+      el('span', { class: `tab-dot dot-${i.supervisor_color}` }),
+      i.supervisor_name));
+  }
+  head.append(el('span', { class: 'vessel-cell' }, i.vessel_name));
+  head.append(priBadge(i.priority));
+  const dd = dDayBadge(i.due_date);
+  if (dd) head.append(dd);
+  head.append(statBadge(i.status));
+  card.append(head);
+
+  const body = el('div', { class: 'issue-card-body' },
+    el('div', { class: 'issue-card-title' }, i.item_topic));
+  if (i.description) body.append(el('div', { class: 'issue-card-desc' }, i.description));
+  const actions = Array.isArray(i.actions) ? i.actions : [];
+  if (actions.length) {
+    body.append(el('div', { class: 'issue-card-action' }, renderActionCell(i)));
+  }
+  card.append(body);
+
+  const foot = el('div', { class: 'issue-card-foot' });
+  const editBtn = mkIconBtn('edit', '편집', () => openEdit(i.id));
+  const attBtn  = mkIconBtn('attach', '첨부', () => openAttach(i.id));
+  if (i.att_count > 0) {
+    attBtn.classList.add('has-attach');
+    attBtn.append(el('span', { class: 'att-count-badge' }, String(i.att_count)));
+  }
+  const delBtn  = mkIconBtn('delete', '삭제', () => confirmDelete(i.id));
+  const calBtn  = mkIconBtn('calendar', '일정에 등록', () => addIssueToCalendar(i));
+  foot.append(editBtn, attBtn, calBtn, delBtn);
+  card.append(foot);
+  return card;
+}
+
+// ───────────── Toggle All ─────────────
+function getAllMonths() {
+  return [...new Set(S.issues.map(i => monthKey(i.issue_date)))];
+}
+function getAllDates() {
+  return [...new Set(S.issues.map(i => i.issue_date || '(미정)'))];
+}
+function isAllCollapsed() {
+  const ms = getAllMonths();
+  return ms.length > 0 && ms.every(m => S.collapsedMonths.has(m));
+}
+function updateToggleAllButton() {
+  const collapsed = isAllCollapsed();
+  $('#toggle-all-icon').textContent  = collapsed ? '▶' : '▼';
+  $('#toggle-all-label').textContent = collapsed ? '전체 펼치기' : '전체 접기';
+}
+function toggleAll() {
+  if (isAllCollapsed()) {
+    S.collapsedMonths.clear();
+    S.collapsedDates.clear();
+  } else {
+    getAllMonths().forEach(m => S.collapsedMonths.add(m));
+    getAllDates().forEach(d => S.collapsedDates.add(d));
+  }
+  renderTable(); renderCards(); updateToggleAllButton();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Inline Add (새 이슈 인라인 입력 행)
+// ═══════════════════════════════════════════════════════════
+function openInlineAdd(date = null) {
+  S.inlineAdd = {
+    date: date || todayISO(),
+    supervisor_id: S.activeTab === 'all'
+      ? (S.user.supervisor_id || (S.supervisors[0] && S.supervisors[0].id))
+      : S.activeTab,
+    vessel_id: null,
+    item_topic: '',
+    priority: 'Normal',
+    status: 'Open',
+  };
+  renderTable(); renderCards();
+  setTimeout(() => {
+    const input = document.querySelector('.inline-add-row .ins-topic');
+    input?.focus();
+  }, 30);
+}
+
+function cancelInlineAdd() {
+  S.inlineAdd = null;
+  renderTable(); renderCards();
+}
+
+async function saveInlineAdd() {
+  const add = S.inlineAdd;
+  if (!add.item_topic.trim()) {
+    alert('제목을 입력하세요.');
+    document.querySelector('.inline-add-row .ins-topic')?.focus();
+    return;
+  }
+  if (!add.vessel_id) {
+    alert('선박을 선택하세요.');
+    return;
+  }
+  try {
+    await api('/api/issues', {
+      method: 'POST',
+      body: JSON.stringify({
+        supervisor_id: add.supervisor_id,
+        vessel_id:     add.vessel_id,
+        issue_date:    add.date,
+        item_topic:    add.item_topic.trim(),
+        description:   '',
+        actions:       [],
+        priority:      add.priority,
+        status:        add.status,
+      }),
+    });
+    S.inlineAdd = null;
+    await reloadAll();
+  } catch (err) {
+    alert('저장 실패: ' + err.message);
+  }
+}
+
+function inlineAddRow() {
+  const add = S.inlineAdd;
+  const tr = el('tr', { class: 'inline-add-row' });
+
+  // NO
+  tr.append(el('td', { class: 'ins-num' }, '+'));
+
+  // 선박 select
+  const vSel = el('select', { class: 'inline-select' });
+  vSel.append(el('option', { value: '' }, '선박 선택...'));
+  vSel.addEventListener('change', (e) => {
+    add.vessel_id = Number(e.target.value) || null;
+  });
+  // 비동기로 선박 옵션 로드
+  loadVesselsForSupervisor(add.supervisor_id).then(vs => {
+    vSel.innerHTML = '';
+    vSel.append(el('option', { value: '' }, '선박 선택...'));
+    for (const v of vs) vSel.append(el('option', { value: v.id }, v.short_name || v.name));
+    if (add.vessel_id) vSel.value = add.vessel_id;
+  });
+  tr.append(el('td', {}, vSel));
+
+  // ITEM cell — 감독 select + 제목 input
+  const topicTd = el('td');
+  if (S.activeTab === 'all') {
+    const supSel = el('select', { class: 'inline-select', style: 'margin-bottom:4px; display:block; width:100%' });
+    for (const s of S.supervisors) {
+      supSel.append(el('option', { value: s.id }, s.name));
+    }
+    supSel.value = add.supervisor_id;
+    supSel.addEventListener('change', async (e) => {
+      add.supervisor_id = Number(e.target.value);
+      add.vessel_id = null;
+      const vs = await loadVesselsForSupervisor(add.supervisor_id);
+      vSel.innerHTML = '';
+      vSel.append(el('option', { value: '' }, '선박 선택...'));
+      for (const v of vs) vSel.append(el('option', { value: v.id }, v.short_name || v.name));
+    });
+    topicTd.append(supSel);
+  }
+  const topicIn = el('input', {
+    type: 'text', class: 'inline-input ins-topic',
+    placeholder: '이슈 제목 입력...',
+    value: add.item_topic,
+  });
+  topicIn.addEventListener('input', (e) => { add.item_topic = e.target.value; });
+  topicIn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveInlineAdd(); }
+    if (e.key === 'Escape') cancelInlineAdd();
+  });
+  topicTd.append(topicIn);
+  tr.append(topicTd);
+
+  // DESC / ACTION placeholder
+  tr.append(el('td', { class: 'desc-cell' },
+    el('span', { class: 'ins-placeholder' }, '저장 후 클릭하여 추가')));
+  tr.append(el('td', { class: 'action-cell' },
+    el('span', { class: 'ins-placeholder' }, '저장 후 +추가 가능')));
+
+  // Priority
+  const priSel = el('select', { class: 'inline-select' });
+  for (const [v, l] of [['Normal','Normal'], ['Urgent','Urgent'], ['Next DD','Next DD'], ['COC & Flag','COC & Flag']]) {
+    priSel.append(el('option', { value: v }, l));
+  }
+  priSel.value = add.priority;
+  priSel.addEventListener('change', (e) => { add.priority = e.target.value; });
+  tr.append(el('td', {}, priSel));
+
+  // Status
+  const statSel = el('select', { class: 'inline-select' });
+  for (const [v, l] of [['Open','Open'], ['InProgress','진행중'], ['Closed','Closed']]) {
+    statSel.append(el('option', { value: v }, l));
+  }
+  statSel.value = add.status;
+  statSel.addEventListener('change', (e) => { add.status = e.target.value; });
+  tr.append(el('td', {}, statSel));
+
+  // Actions: ✓ 저장 / × 취소
+  const okBtn = el('button', {
+    class: 'icon-btn ok', title: '저장 (Enter)',
+    onclick: saveInlineAdd,
+  });
+  okBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+    <polyline points="20 6 9 17 4 12"/></svg>`;
+  const cancelBtn = el('button', {
+    class: 'icon-btn', title: '취소 (Esc)',
+    onclick: cancelInlineAdd,
+  });
+  cancelBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+  tr.append(el('td', {}, el('div', { class: 'row-actions' }, okBtn, cancelBtn)));
+
+  return tr;
+}
+
+// 간단한 vessel cache
+const _vesselCache = new Map();
+async function loadVesselsForSupervisor(supId) {
+  if (!supId) return [];
+  if (_vesselCache.has(supId)) return _vesselCache.get(supId);
+  const vs = await api(`/api/vessels?supervisor_id=${supId}`);
+  _vesselCache.set(supId, vs);
+  return vs;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Edit Modal (✏ 버튼 — 전체 편집)
+// ═══════════════════════════════════════════════════════════
+function fillFormSelects() {
+  const sup = $('#f-supervisor');
+  sup.innerHTML = '';
+  for (const s of S.supervisors) {
+    sup.append(el('option', { value: s.id }, s.name));
+  }
+  refillVesselSelect(S.activeTab === 'all' ? null : S.activeTab);
+}
+
+async function refillVesselSelect(supervisorId) {
+  const vs = await loadVesselsForSupervisor(supervisorId);
+  const v = $('#f-vessel');
+  const cur = v.value;
+  v.innerHTML = '';
+  for (const vv of vs) v.append(el('option', { value: vv.id }, vv.name));
+  if (vs.find(x => x.id == cur)) v.value = cur;
+}
+
+function renderActionEditor() {
+  const box = $('#f-action-editor');
+  box.innerHTML = '';
+  if (!S.editingActions.length) return;
+
+  S.editingActions.forEach((a, idx) => {
+    const row = el('div', { class: 'act-edit-row' });
+    const dateIn = el('input', {
+      type: 'date', value: a.date || '',
+      onchange: (e) => { S.editingActions[idx].date = e.target.value; },
+    });
+    const progIn = el('input', {
+      type: 'text', value: a.progress || '',
+      placeholder: '조치 / 팔로우업 내용',
+      oninput: (e) => { S.editingActions[idx].progress = e.target.value; },
+    });
+    const impBtn = el('button', {
+      type: 'button',
+      class: 'imp-toggle' + (a.important ? ' on' : ''),
+      title: '중요 표시',
+      onclick: () => {
+        S.editingActions[idx].important = !S.editingActions[idx].important;
+        renderActionEditor();
+      },
+    }, a.important ? '● 중요' : '○ 중요');
+    const rmBtn = el('button', {
+      type: 'button', class: 'act-remove', title: '엔트리 삭제',
+      onclick: () => {
+        S.editingActions.splice(idx, 1);
+        renderActionEditor();
+      },
+    }, '×');
+    row.append(dateIn, progIn, impBtn, rmBtn);
+    box.append(row);
+  });
+}
+
+function addActionEntry() {
+  S.editingActions.push({ date: todayISO(), progress: '', important: false });
+  renderActionEditor();
+  const rows = $('#f-action-editor').querySelectorAll('.act-edit-row');
+  const last = rows[rows.length - 1];
+  last?.querySelector('input[type="text"]')?.focus();
+}
+
+function openNew() {
+  S.editingId = null;
+  S.editingActions = [];
+  $('#modal-title').textContent = '신규 이슈';
+  $('#btn-delete').hidden = true;
+
+  $('#f-id').value       = '';
+  $('#f-topic').value    = '';
+  $('#f-desc').value     = '';
+  $('#f-priority').value = 'Normal';
+  $('#f-status').value   = 'Open';
+  $('#f-issue-date').value = todayISO();
+  $('#f-due-date').value   = '';
+
+  // 감독: 현재 탭 기준 (전체 탭이면 본인 감독 or 첫 감독)
+  let supId = S.activeTab !== 'all' ? S.activeTab
+            : (S.user.supervisor_id || (S.supervisors[0] && S.supervisors[0].id));
+  if (supId) {
+    $('#f-supervisor').value = supId;
+    refillVesselSelect(supId);
+  }
+
+  renderActionEditor();
+  showModal();
+}
+
+async function openEdit(iid) {
+  try {
+    const i = await api('/api/issues/' + iid);
+    S.editingId = iid;
+    S.editingActions = Array.isArray(i.actions)
+      ? JSON.parse(JSON.stringify(i.actions))
+      : [];
+
+    $('#modal-title').textContent = `이슈 #${iid} 편집`;
+    $('#btn-delete').hidden = false;
+
+    $('#f-id').value       = i.id;
+    $('#f-supervisor').value = i.supervisor_id;
+    await refillVesselSelect(i.supervisor_id);
+    $('#f-vessel').value   = i.vessel_id;
+    $('#f-issue-date').value = i.issue_date;
+    $('#f-due-date').value = i.due_date || '';
+    $('#f-priority').value = i.priority;
+    $('#f-status').value   = i.status;
+    $('#f-topic').value    = i.item_topic;
+    $('#f-desc').value     = i.description || '';
+
+    renderActionEditor();
+    showModal();
+  } catch (err) {
+    alert('이슈 로드 실패: ' + err.message);
+  }
+}
+
+function showModal() { $('#issue-modal').hidden = false; document.body.style.overflow = 'hidden'; }
+function closeModal() { $('#issue-modal').hidden = true; document.body.style.overflow = ''; }
+
+async function saveIssue(ev) {
+  ev.preventDefault();
+  const cleanActions = S.editingActions
+    .filter(a => (a.progress || '').trim() !== '')
+    .map(a => ({
+      date: (a.date || '').trim() || null,
+      progress: (a.progress || '').trim(),
+      important: !!a.important,
+    }));
+
+  const payload = {
+    supervisor_id: Number($('#f-supervisor').value),
+    vessel_id:     Number($('#f-vessel').value),
+    issue_date:    $('#f-issue-date').value,
+    due_date:      $('#f-due-date').value || null,
+    item_topic:    $('#f-topic').value.trim(),
+    description:   $('#f-desc').value,
+    actions:       cleanActions,
+    priority:      $('#f-priority').value,
+    status:        $('#f-status').value,
+  };
+  if (!payload.item_topic) { alert('제목을 입력하세요.'); return; }
+  if (!payload.vessel_id)  { alert('선박을 선택하세요.'); return; }
+
+  try {
+    if (S.editingId) {
+      await api('/api/issues/' + S.editingId, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await api('/api/issues', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    }
+    closeModal();
+    await reloadAll();
+  } catch (err) {
+    alert('저장 실패: ' + err.message);
+  }
+}
+
+async function confirmDelete(iid) {
+  if (!confirm(`이슈 #${iid}를 삭제하시겠습니까?\n첨부 파일도 모두 삭제됩니다.`)) return;
+  try {
+    await api('/api/issues/' + iid, { method: 'DELETE' });
+    if (S.editingId === iid) closeModal();
+    if (S.attachIssue?.id === iid) closeAttach();
+    await reloadAll();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ───────────── 캘린더(일정)에 등록 ─────────────
+async function addIssueToCalendar(i) {
+  // 중복 체크
+  let existing = null;
+  try {
+    existing = await api(`/api/cal/events/find?source_type=issue&source_id=${i.id}`);
+  } catch (_) {}
+
+  if (existing) {
+    if (confirm(
+        `이 이슈는 이미 일정에 등록되어 있습니다.\n\n` +
+        `제목: ${existing.title}\n날짜: ${existing.start_date}\n\n` +
+        `일정 페이지에서 확인/편집하시겠습니까?`
+    )) {
+      window.location.href = '/calendar';
+    }
+    return;
+  }
+
+  // priority별 색상 매핑
+  const colorMap = {
+    'COC & Flag': 'red',
+    'Urgent':     'amber',
+    'Next DD':    'blue',
+    'Normal':     'gray',
+  };
+  const color = colorMap[i.priority] || 'blue';
+
+  // 미리 채워진 데이터
+  const vesselName = (S.vessels.find(v => v.id === i.vessel_id) || {}).name || '';
+  const supName    = (S.supervisors.find(s => s.id === i.supervisor_id) || {}).name || '';
+  const title = (vesselName ? `[${vesselName}] ` : '') + (i.item_topic || '(이슈)');
+  const startDate = i.due_date || i.issue_date;
+  const endDate   = (i.due_date && i.issue_date && i.due_date !== i.issue_date) ? i.due_date : null;
+
+  const summary =
+    `다음 정보로 일정에 등록합니다:\n\n` +
+    `  제목: ${title}\n` +
+    `  날짜: ${startDate}${endDate ? ' ~ ' + endDate : ''}\n` +
+    `  감독: ${supName || '(미지정)'}\n` +
+    `  선박: ${vesselName || '(미지정)'}\n` +
+    `  우선순위: ${i.priority} → 색상: ${color}\n\n` +
+    `진행하시겠습니까? (저장 후 일정 페이지에서 시간/메모 등 추가 편집 가능)`;
+  if (!confirm(summary)) return;
+
+  try {
+    await api('/api/cal/events', {
+      method: 'POST',
+      body: JSON.stringify({
         title,
-        d.get('dock_no') or None,
-        d.get('shipyard') or None,
-        d.get('period_start') or None,
-        d.get('period_end') or None,
-        d.get('imo_no') or None,
-        d.get('gross_tonnage') or None,
-        d.get('dead_weight') or None,
-        d.get('approval_drafter') or None,
-        d.get('approval_team_lead') or None,
-        d.get('approval_director') or None,
-        d.get('approval_ceo') or None,
-        d.get('status') or 'draft',
-        is_template,
-        d.get('template_name') if is_template else None,
-        session.get('display_name') or session.get('username') or '',
-    ))
-    return jsonify({'id': new_id, 'ok': True}), 201
-
-
-@app.route('/api/dock-reports/<int:rid>', methods=['GET'])
-@login_required
-def api_dock_get(rid):
-    """보고서 상세 — 메타 + 섹션 트리 + 블록 모두 포함"""
-    r = query('''
-        SELECT d.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               s.name       AS supervisor_name
-          FROM dock_reports d
-          JOIN vessels       v ON v.id = d.vessel_id
-          LEFT JOIN supervisors s ON s.id = d.supervisor_id
-         WHERE d.id = ?
-    ''', (rid,), one=True)
-    if not r:
-        abort(404)
-
-    out = _dock_to_dict(r)
-    out['can_edit'] = _can_edit_dock_report(r)
-
-    # 섹션 + 블록 (Step 2에서 활용; 현재는 빈 리스트라도 채워줌)
-    secs = query('''
-        SELECT * FROM dock_report_sections
-         WHERE report_id = ?
-         ORDER BY display_order, id
-    ''', (rid,))
-    sec_list = [dict(s) for s in secs]
-
-    sec_ids = [s['id'] for s in sec_list]
-    blocks = []
-    if sec_ids:
-        placeholders = ','.join('?' for _ in sec_ids)
-        blocks = query(f'''
-            SELECT * FROM dock_report_blocks
-             WHERE section_id IN ({placeholders})
-             ORDER BY section_id, display_order, id
-        ''', sec_ids)
-    blocks_by_sec = {}
-    for b in blocks:
-        bd = dict(b)
-        try:
-            bd['content'] = json.loads(bd.pop('content_json'))
-        except Exception:
-            bd['content'] = {}
-        blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
-
-    for s in sec_list:
-        s['blocks'] = blocks_by_sec.get(s['id'], [])
-
-    out['sections'] = sec_list
-    return jsonify(out)
-
-
-@app.route('/api/dock-reports/<int:rid>', methods=['PUT'])
-@login_required
-def api_dock_update(rid):
-    """메타 정보 수정"""
-    err = _require_dock_edit(rid)
-    if err:
-        return err
-    d = request.get_json(silent=True) or {}
-
-    updatable = {
-        'vessel_id', 'supervisor_id', 'title', 'dock_no', 'shipyard',
-        'period_start', 'period_end', 'imo_no', 'gross_tonnage', 'dead_weight',
-        'approval_drafter', 'approval_team_lead', 'approval_director', 'approval_ceo',
-        'status', 'template_name',
+        start_date: startDate,
+        end_date:   endDate,
+        all_day:    true,
+        supervisor_id: i.supervisor_id || null,
+        vessel_id:     i.vessel_id || null,
+        category:   '업무',
+        color,
+        notes:      i.description || '',
+        source_type: 'issue',
+        source_id:   i.id,
+      }),
+    });
+    if (confirm('일정에 등록되었습니다. 일정 페이지로 이동하시겠습니까?')) {
+      window.location.href = '/calendar';
     }
-    # supervisor_id 변경은 admin만 가능 (담당자가 자기 보고서를 남에게 넘기는 것 방지)
-    if 'supervisor_id' in d and session.get('role') != 'admin':
-        d.pop('supervisor_id', None)
-
-    sets, params = [], []
-    for k in updatable:
-        if k in d:
-            sets.append(f'{k} = ?')
-            v = d.get(k)
-            params.append(v if (v not in ('',)) else None)
-
-    if not sets:
-        return jsonify({'ok': True, 'updated': 0})
-
-    sets.append("updated_at = datetime('now','localtime')")
-    params.append(rid)
-    execute(f'UPDATE dock_reports SET {", ".join(sets)} WHERE id = ?', params)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/dock-reports/<int:rid>', methods=['DELETE'])
-@login_required
-def api_dock_delete(rid):
-    err = _require_dock_edit(rid)
-    if err:
-        return err
-    execute('DELETE FROM dock_reports WHERE id = ?', (rid,))
-    # 섹션/블록은 ON DELETE CASCADE로 자동 삭제
-    return jsonify({'ok': True})
-
-
-def _touch_dock_report(rid):
-    """보고서 updated_at 갱신 — 섹션/블록 변경 시 호출"""
-    execute("UPDATE dock_reports SET updated_at=datetime('now','localtime') WHERE id=?",
-            (rid,))
-
-
-def _section_report_id(sid):
-    r = query('SELECT report_id FROM dock_report_sections WHERE id=?', (sid,), one=True)
-    return r['report_id'] if r else None
-
-
-def _block_report_id(bid):
-    r = query('''
-        SELECT s.report_id FROM dock_report_blocks b
-          JOIN dock_report_sections s ON s.id = b.section_id
-         WHERE b.id = ?
-    ''', (bid,), one=True)
-    return r['report_id'] if r else None
-
-
-# ─── Sections ─────────────────────────────────────────────────
-@app.route('/api/dock-reports/<int:rid>/sections', methods=['POST'])
-@login_required
-def api_dock_section_create(rid):
-    err = _require_dock_edit(rid)
-    if err:
-        return err
-    d = request.get_json(silent=True) or {}
-    title = (d.get('title') or '').strip() or '새 섹션'
-    parent_id = d.get('parent_id')
-    if parent_id:
-        # parent가 같은 report 내인지 확인
-        p = query('SELECT report_id FROM dock_report_sections WHERE id=?',
-                  (parent_id,), one=True)
-        if not p or p['report_id'] != rid:
-            return jsonify({'error': '잘못된 상위 섹션입니다.'}), 400
-
-    # 같은 부모 아래 마지막 순서
-    cond = 'parent_id IS NULL' if not parent_id else 'parent_id = ?'
-    cp = (rid,) if not parent_id else (parent_id,)
-    last = query(f'''
-        SELECT COALESCE(MAX(display_order), -1) AS mx
-          FROM dock_report_sections
-         WHERE report_id = ? AND {cond}
-    ''', (rid, *([parent_id] if parent_id else [])), one=True)
-    next_order = (last['mx'] if last else -1) + 1
-
-    new_id = execute('''
-        INSERT INTO dock_report_sections (report_id, parent_id, title, display_order)
-        VALUES (?,?,?,?)
-    ''', (rid, parent_id, title, next_order))
-    _touch_dock_report(rid)
-    return jsonify({'id': new_id, 'ok': True}), 201
-
-
-@app.route('/api/dock-sections/<int:sid>', methods=['PUT'])
-@login_required
-def api_dock_section_update(sid):
-    err = _require_dock_edit_via_section(sid)
-    if err:
-        return err
-    rid = _section_report_id(sid)
-    if not rid:
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    title = (d.get('title') or '').strip()
-    if not title:
-        return jsonify({'error': '제목을 입력하세요.'}), 400
-    execute('UPDATE dock_report_sections SET title=? WHERE id=?', (title, sid))
-    _touch_dock_report(rid)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/dock-sections/<int:sid>', methods=['DELETE'])
-@login_required
-def api_dock_section_delete(sid):
-    err = _require_dock_edit_via_section(sid)
-    if err:
-        return err
-    rid = _section_report_id(sid)
-    if not rid:
-        abort(404)
-    execute('DELETE FROM dock_report_sections WHERE id=?', (sid,))
-    # 자식 섹션·블록 모두 CASCADE
-    _touch_dock_report(rid)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/dock-sections/<int:sid>/move', methods=['POST'])
-@login_required
-def api_dock_section_move(sid):
-    """같은 부모 아래에서 위/아래로 한 칸 이동"""
-    err = _require_dock_edit_via_section(sid)
-    if err:
-        return err
-    rid = _section_report_id(sid)
-    if not rid:
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    direction = d.get('direction')
-    if direction not in ('up', 'down'):
-        return jsonify({'error': 'invalid direction'}), 400
-
-    me = query('SELECT * FROM dock_report_sections WHERE id=?', (sid,), one=True)
-    cond = 'parent_id IS NULL' if me['parent_id'] is None else 'parent_id = ?'
-    args = (me['report_id'],) if me['parent_id'] is None else (me['report_id'], me['parent_id'])
-
-    if direction == 'up':
-        nb = query(f'''
-            SELECT * FROM dock_report_sections
-             WHERE report_id=? AND {cond} AND display_order < ?
-             ORDER BY display_order DESC LIMIT 1
-        ''', (*args, me['display_order']), one=True)
-    else:
-        nb = query(f'''
-            SELECT * FROM dock_report_sections
-             WHERE report_id=? AND {cond} AND display_order > ?
-             ORDER BY display_order ASC LIMIT 1
-        ''', (*args, me['display_order']), one=True)
-
-    if not nb:
-        return jsonify({'ok': True, 'moved': False})
-
-    execute('UPDATE dock_report_sections SET display_order=? WHERE id=?',
-            (nb['display_order'], me['id']))
-    execute('UPDATE dock_report_sections SET display_order=? WHERE id=?',
-            (me['display_order'], nb['id']))
-    _touch_dock_report(rid)
-    return jsonify({'ok': True, 'moved': True})
-
-
-@app.route('/api/dock-sections/<int:sid>/reparent', methods=['POST'])
-@login_required
-def api_dock_section_reparent(sid):
-    """섹션을 다른 부모로 이동.
-       body: { "new_parent_id": null | int }
-            null/None을 보내면 최상위(루트)로 이동.
-    """
-    err = _require_dock_edit_via_section(sid)
-    if err:
-        return err
-    rid = _section_report_id(sid)
-    if not rid:
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    new_parent_id = d.get('new_parent_id')
-    # 정수 또는 None만 허용
-    if new_parent_id is not None:
-        try:
-            new_parent_id = int(new_parent_id)
-        except (TypeError, ValueError):
-            return jsonify({'error': 'invalid new_parent_id'}), 400
-
-    me = query('SELECT * FROM dock_report_sections WHERE id=?', (sid,), one=True)
-    if not me:
-        abort(404)
-
-    # 새 부모가 같은 보고서 안에 있어야 함
-    if new_parent_id is not None:
-        new_parent = query('SELECT * FROM dock_report_sections WHERE id=?',
-                           (new_parent_id,), one=True)
-        if not new_parent or new_parent['report_id'] != me['report_id']:
-            return jsonify({'error': '같은 보고서의 섹션만 부모로 지정할 수 있습니다.'}), 400
-
-        # 자기 자신을 부모로 설정 금지
-        if new_parent_id == sid:
-            return jsonify({'error': '자기 자신을 부모로 지정할 수 없습니다.'}), 400
-
-        # 자손에게 옮기는 것 금지 (순환 참조 방지) - 후손 검사
-        descendants = set()
-        stack = [sid]
-        while stack:
-            cur = stack.pop()
-            children = query(
-                'SELECT id FROM dock_report_sections WHERE parent_id=?',
-                (cur,))
-            for c in children:
-                if c['id'] in descendants:
-                    continue
-                descendants.add(c['id'])
-                stack.append(c['id'])
-        if new_parent_id in descendants:
-            return jsonify({'error': '자기 자신의 하위 섹션으로 이동할 수 없습니다.'}), 400
-
-    # 변경 사항 없음
-    if (me['parent_id'] or None) == new_parent_id:
-        return jsonify({'ok': True, 'moved': False})
-
-    # 새 부모 아래의 마지막 display_order + 1로 배치
-    if new_parent_id is None:
-        max_ord = query('''
-            SELECT MAX(display_order) AS m FROM dock_report_sections
-             WHERE report_id=? AND parent_id IS NULL
-        ''', (me['report_id'],), one=True)
-    else:
-        max_ord = query('''
-            SELECT MAX(display_order) AS m FROM dock_report_sections
-             WHERE report_id=? AND parent_id=?
-        ''', (me['report_id'], new_parent_id), one=True)
-
-    new_order = (max_ord['m'] or 0) + 1
-
-    execute('''
-        UPDATE dock_report_sections
-           SET parent_id=?, display_order=?
-         WHERE id=?
-    ''', (new_parent_id, new_order, sid))
-    _touch_dock_report(rid)
-    return jsonify({'ok': True, 'moved': True,
-                    'new_parent_id': new_parent_id,
-                    'new_display_order': new_order})
-
-
-# ─── Blocks ──────────────────────────────────────────────────
-def _default_block_content(block_type):
-    if block_type == 'paragraph':   return {'text': ''}
-    if block_type == 'bullet_list': return {'items': ['']}
-    if block_type == 'table':
-        return {
-            'headers': ['항목', '내용'],
-            'rows':    [['', '']],
-            'col_widths': [],   # 비어있으면 균등 배분, 있으면 px 단위 너비
-        }
-    if block_type == 'image':
-        # 갤러리: 여러 장 가능. images=[] (비어있음) + columns=2 (2장씩 한 줄)
-        return {'images': [], 'columns': 2}
-    return {}
-
-
-@app.route('/api/dock-sections/<int:sid>/blocks', methods=['POST'])
-@login_required
-def api_dock_block_create(sid):
-    err = _require_dock_edit_via_section(sid)
-    if err:
-        return err
-    rid = _section_report_id(sid)
-    if not rid:
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    bt = d.get('block_type')
-    if bt not in ('paragraph', 'bullet_list', 'table', 'image'):
-        return jsonify({'error': 'invalid block_type'}), 400
-    content = d.get('content') or _default_block_content(bt)
-
-    last = query('''
-        SELECT COALESCE(MAX(display_order), -1) AS mx
-          FROM dock_report_blocks WHERE section_id=?
-    ''', (sid,), one=True)
-    next_order = (last['mx'] if last else -1) + 1
-
-    new_id = execute('''
-        INSERT INTO dock_report_blocks (section_id, block_type, content_json, display_order)
-        VALUES (?,?,?,?)
-    ''', (sid, bt, json.dumps(content, ensure_ascii=False), next_order))
-    _touch_dock_report(rid)
-    return jsonify({'id': new_id, 'ok': True, 'content': content}), 201
-
-
-@app.route('/api/dock-blocks/<int:bid>', methods=['PUT'])
-@login_required
-def api_dock_block_update(bid):
-    err = _require_dock_edit_via_block(bid)
-    if err:
-        return err
-    rid = _block_report_id(bid)
-    if not rid:
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    content = d.get('content')
-    if content is None:
-        return jsonify({'error': 'content가 필요합니다.'}), 400
-    execute('UPDATE dock_report_blocks SET content_json=? WHERE id=?',
-            (json.dumps(content, ensure_ascii=False), bid))
-    _touch_dock_report(rid)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/dock-blocks/<int:bid>', methods=['DELETE'])
-@login_required
-def api_dock_block_delete(bid):
-    err = _require_dock_edit_via_block(bid)
-    if err:
-        return err
-    rid = _block_report_id(bid)
-    if not rid:
-        abort(404)
-    execute('DELETE FROM dock_report_blocks WHERE id=?', (bid,))
-    _touch_dock_report(rid)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/dock-blocks/<int:bid>/move', methods=['POST'])
-@login_required
-def api_dock_block_move(bid):
-    err = _require_dock_edit_via_block(bid)
-    if err:
-        return err
-    rid = _block_report_id(bid)
-    if not rid:
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    direction = d.get('direction')
-    if direction not in ('up', 'down'):
-        return jsonify({'error': 'invalid direction'}), 400
-
-    me = query('SELECT * FROM dock_report_blocks WHERE id=?', (bid,), one=True)
-    if direction == 'up':
-        nb = query('''
-            SELECT * FROM dock_report_blocks
-             WHERE section_id=? AND display_order < ?
-             ORDER BY display_order DESC LIMIT 1
-        ''', (me['section_id'], me['display_order']), one=True)
-    else:
-        nb = query('''
-            SELECT * FROM dock_report_blocks
-             WHERE section_id=? AND display_order > ?
-             ORDER BY display_order ASC LIMIT 1
-        ''', (me['section_id'], me['display_order']), one=True)
-
-    if not nb:
-        return jsonify({'ok': True, 'moved': False})
-
-    execute('UPDATE dock_report_blocks SET display_order=? WHERE id=?',
-            (nb['display_order'], me['id']))
-    execute('UPDATE dock_report_blocks SET display_order=? WHERE id=?',
-            (me['display_order'], nb['id']))
-    _touch_dock_report(rid)
-    return jsonify({'ok': True, 'moved': True})
-
-
-# ─── Image upload ────────────────────────────────────────────
-# Word "그림 압축 — 웹(150ppi)" 기준에 맞춤
-#   · 16cm 본문폭 × 150ppi ≈ 944px → 안전 마진 두고 장변 1280px
-#   · JPEG quality 85 (사진용 표준 압축)
-#   · EXIF orientation 적용 (스마트폰 회전 자동 보정)
-DOCK_IMAGE_MAX_LONG_SIDE = 1280
-DOCK_IMAGE_JPEG_QUALITY  = 85
-
-
-def _process_uploaded_image(file_storage, dest_path,
-                            max_long_side=DOCK_IMAGE_MAX_LONG_SIDE,
-                            jpeg_quality=DOCK_IMAGE_JPEG_QUALITY):
-    """
-    업로드된 이미지를 리사이즈 + 재인코딩하여 dest_path에 저장.
-    실패 시 원본을 그대로 저장하고 False 반환.
-    성공 시 (final_path, original_size_bytes, final_size_bytes) 반환.
-    dest_path의 확장자는 결과에 따라 .jpg로 변경될 수 있음 (PNG 투명 X일 때).
-    """
-    try:
-        from PIL import Image, ImageOps
-    except ImportError:
-        # Pillow 없으면 그냥 저장
-        file_storage.save(dest_path)
-        return dest_path, os.path.getsize(dest_path), os.path.getsize(dest_path)
-
-    # 원본을 메모리에 읽어두기 (저장 실패 시 fallback용)
-    file_storage.stream.seek(0)
-    raw_bytes = file_storage.stream.read()
-    original_size = len(raw_bytes)
-
-    try:
-        from io import BytesIO
-        im = Image.open(BytesIO(raw_bytes))
-
-        # EXIF orientation 적용
-        try:
-            im = ImageOps.exif_transpose(im)
-        except Exception:
-            pass
-
-        w, h = im.size
-        long_side = max(w, h)
-
-        # 리사이즈 필요 시
-        if long_side > max_long_side:
-            ratio = max_long_side / long_side
-            new_w = int(w * ratio)
-            new_h = int(h * ratio)
-            im = im.resize((new_w, new_h), Image.LANCZOS)
-
-        # 저장 — PNG 투명도 있으면 PNG 유지, 아니면 JPEG로 통일
-        ext_lower = dest_path.rsplit('.', 1)[-1].lower()
-        has_alpha = (im.mode in ('RGBA', 'LA')) or (
-            im.mode == 'P' and 'transparency' in im.info
-        )
-
-        if ext_lower == 'png' and has_alpha:
-            # PNG 투명도 보존
-            im.save(dest_path, 'PNG', optimize=True)
-            final_path = dest_path
-        else:
-            # JPEG로 통일 (용량 작음)
-            if im.mode != 'RGB':
-                im = im.convert('RGB')
-            # 확장자 .jpg로 통일
-            base = dest_path.rsplit('.', 1)[0]
-            final_path = base + '.jpg'
-            im.save(final_path, 'JPEG',
-                    quality=jpeg_quality,
-                    optimize=True, progressive=True)
-
-        return final_path, original_size, os.path.getsize(final_path)
-
-    except Exception as e:
-        # 처리 실패 → 원본 그대로 저장
-        with open(dest_path, 'wb') as f:
-            f.write(raw_bytes)
-        return dest_path, original_size, len(raw_bytes)
-
-
-@app.route('/api/dock-reports/<int:rid>/upload-image', methods=['POST'])
-@login_required
-def api_dock_upload_image(rid):
-    err = _require_dock_edit(rid)
-    if err:
-        return err
-    if 'file' not in request.files:
-        return jsonify({'error': '파일이 없습니다.'}), 400
-    f = request.files['file']
-    if not f.filename:
-        return jsonify({'error': '파일명이 비어있습니다.'}), 400
-
-    # 확장자 화이트리스트 (이미지만)
-    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
-    if ext not in {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'}:
-        return jsonify({'error': '이미지 파일만 업로드 가능합니다.'}), 400
-
-    # static/uploads/dock/ 폴더
-    dock_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'dock')
-    os.makedirs(dock_dir, exist_ok=True)
-
-    # 임시 파일명 (확장자는 처리 함수가 결정)
-    import time
-    base_fname = f'dock-{rid}-{int(time.time()*1000)}-{secrets.token_hex(4)}'
-    initial_path = os.path.join(dock_dir, f'{base_fname}.{ext}')
-
-    # 리사이즈 + 재인코딩
-    final_path, orig_size, final_size = _process_uploaded_image(f, initial_path)
-    final_fname = os.path.basename(final_path)
-
-    url = url_for('static', filename=f'uploads/dock/{final_fname}')
-
-    # 압축률 계산 (로깅용)
-    reduction = 0
-    if orig_size > 0:
-        reduction = int((1 - final_size / orig_size) * 100)
-
-    return jsonify({
-        'ok': True,
-        'filename': final_fname,
-        'url': url,
-        'original_kb': round(orig_size / 1024, 1),
-        'final_kb':    round(final_size / 1024, 1),
-        'reduction_pct': reduction,
-    }), 201
-
-
-# ─── Word / PDF Export ───────────────────────────────────────
-def _get_full_report_data(rid):
-    """build_docx에 넘길 보고서 데이터 빌드 — api_dock_get과 동일한 구조"""
-    r = query('''
-        SELECT d.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               v.vessel_type AS vessel_type,
-               s.name       AS supervisor_name
-          FROM dock_reports d
-          JOIN vessels       v ON v.id = d.vessel_id
-          LEFT JOIN supervisors s ON s.id = d.supervisor_id
-         WHERE d.id = ?
-    ''', (rid,), one=True)
-    if not r:
-        return None
-    out = dict(r)
-
-    secs = query('''
-        SELECT * FROM dock_report_sections
-         WHERE report_id = ?
-         ORDER BY display_order, id
-    ''', (rid,))
-    sec_list = [dict(s) for s in secs]
-    sec_ids = [s['id'] for s in sec_list]
-    blocks_by_sec = {}
-    if sec_ids:
-        placeholders = ','.join('?' for _ in sec_ids)
-        blocks = query(f'''
-            SELECT * FROM dock_report_blocks
-             WHERE section_id IN ({placeholders})
-             ORDER BY section_id, display_order, id
-        ''', sec_ids)
-        for b in blocks:
-            bd = dict(b)
-            try:
-                bd['content'] = json.loads(bd.pop('content_json'))
-            except Exception:
-                bd['content'] = {}
-            blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
-    for s in sec_list:
-        s['blocks'] = blocks_by_sec.get(s['id'], [])
-    out['sections'] = sec_list
-    return out
-
-
-def _safe_filename(s):
-    """파일명에서 OS 비호환 문자 제거"""
-    import re
-    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', s)
-    s = s.strip().strip('.')
-    return s[:80] or 'report'
-
-
-@app.route('/api/dock-reports/<int:rid>/export/docx')
-@login_required
-def api_dock_export_docx(rid):
-    try:
-        from dock_report_docx import build_docx
-    except ImportError as e:
-        return jsonify({'error': f'docx 생성 모듈 로드 실패: {e}'}), 500
-
-    data = _get_full_report_data(rid)
-    if not data:
-        abort(404)
-
-    try:
-        docx_bytes = build_docx(data)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
-
-    from io import BytesIO
-    from flask import send_file
-    fname = _safe_filename(data.get('title') or f'DryDock_Report_{rid}') + '.docx'
-    return send_file(
-        BytesIO(docx_bytes),
-        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        as_attachment=True,
-        download_name=fname,
-    )
-
-
-@app.route('/api/dock-reports/<int:rid>/export/pdf')
-@login_required
-def api_dock_export_pdf(rid):
-    try:
-        from dock_report_docx import build_docx
-    except ImportError as e:
-        return jsonify({'error': f'docx 생성 모듈 로드 실패: {e}'}), 500
-
-    data = _get_full_report_data(rid)
-    if not data:
-        abort(404)
-
-    # 1) docx 생성
-    try:
-        docx_bytes = build_docx(data)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
-
-    # 2) docx → pdf (LibreOffice headless)
-    import tempfile, subprocess, shutil, os as _os
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            docx_path = _os.path.join(tmp, 'report.docx')
-            with open(docx_path, 'wb') as f:
-                f.write(docx_bytes)
-
-            soffice = shutil.which('soffice') or shutil.which('libreoffice')
-            if not soffice:
-                return jsonify({
-                    'error': 'PDF 변환 도구(LibreOffice)가 설치되지 않았습니다. '
-                             '서버에 sudo dnf install -y libreoffice-core libreoffice-writer 명령으로 설치해주세요.'
-                }), 500
-
-            proc = subprocess.run(
-                [soffice, '--headless', '--convert-to', 'pdf',
-                 '--outdir', tmp, docx_path],
-                capture_output=True, timeout=120,
-            )
-            if proc.returncode != 0:
-                return jsonify({
-                    'error': f'PDF 변환 실패: {proc.stderr.decode("utf-8", errors="ignore")[:500]}'
-                }), 500
-
-            pdf_path = _os.path.join(tmp, 'report.pdf')
-            if not _os.path.exists(pdf_path):
-                return jsonify({'error': 'PDF 파일이 생성되지 않았습니다.'}), 500
-
-            with open(pdf_path, 'rb') as f:
-                pdf_bytes = f.read()
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'PDF 변환 시간 초과 (2분).'}), 500
-    except Exception as e:
-        return jsonify({'error': f'PDF 변환 오류: {e}'}), 500
-
-    from io import BytesIO
-    from flask import send_file
-    fname = _safe_filename(data.get('title') or f'DryDock_Report_{rid}') + '.pdf'
-    return send_file(
-        BytesIO(pdf_bytes),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=fname,
-    )
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — Boarding Report (방선보고서)
-#   · 구조는 Dry Dock Report와 거의 동일 (별도 테이블, 별도 권한 체크)
-#   · 메타 필드만 다름 (port / boarding_start_end / master / chief_eng 등)
-# ═════════════════════════════════════════════════════════════════
-def _can_edit_boarding_report(report_row_or_id):
-    if session.get('role') == 'admin':
-        return True
-    my_sv = session.get('supervisor_id')
-    if not my_sv:
-        return False
-    if isinstance(report_row_or_id, int):
-        r = query('SELECT supervisor_id FROM boarding_reports WHERE id=?',
-                  (report_row_or_id,), one=True)
-        if not r:
-            return False
-        report_sv = r['supervisor_id']
-    else:
-        report_sv = report_row_or_id.get('supervisor_id') if hasattr(report_row_or_id, 'get') \
-                    else report_row_or_id['supervisor_id']
-    return report_sv is not None and report_sv == my_sv
-
-
-def _require_brep_edit(rid):
-    if not query('SELECT id FROM boarding_reports WHERE id=?', (rid,), one=True):
-        abort(404)
-    if not _can_edit_boarding_report(rid):
-        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다. (담당 감독 또는 관리자만 수정 가능)'}), 403
-    return None
-
-
-def _brep_section_report_id(sid):
-    r = query('SELECT report_id FROM boarding_report_sections WHERE id=?', (sid,), one=True)
-    return r['report_id'] if r else None
-
-
-def _brep_block_report_id(bid):
-    r = query('''
-        SELECT s.report_id FROM boarding_report_blocks b
-          JOIN boarding_report_sections s ON s.id = b.section_id
-         WHERE b.id = ?
-    ''', (bid,), one=True)
-    return r['report_id'] if r else None
-
-
-def _require_brep_edit_via_section(sid):
-    rid = _brep_section_report_id(sid)
-    if not rid:
-        abort(404)
-    if not _can_edit_boarding_report(rid):
-        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다.'}), 403
-    return None
-
-
-def _require_brep_edit_via_block(bid):
-    rid = _brep_block_report_id(bid)
-    if not rid:
-        abort(404)
-    if not _can_edit_boarding_report(rid):
-        return jsonify({'error': '이 보고서를 편집할 권한이 없습니다.'}), 403
-    return None
-
-
-def _touch_brep(rid):
-    execute("UPDATE boarding_reports SET updated_at=datetime('now','localtime') WHERE id=?",
-            (rid,))
-
-
-def _brep_to_dict(row):
-    return dict(row)
-
-
-# ─── Boarding Report — 보고서 메타 CRUD ─────────────────────────
-@app.route('/api/boarding-reports', methods=['GET'])
-@login_required
-def api_brep_list():
-    conds, params = ['1=1'], []
-
-    is_tmpl = request.args.get('is_template')
-    if is_tmpl is not None:
-        conds.append('b.is_template = ?')
-        params.append(1 if is_tmpl in ('1', 'true', 'yes') else 0)
-    else:
-        conds.append('b.is_template = 0')
-
-    if request.args.get('vessel_id'):
-        conds.append('b.vessel_id = ?')
-        params.append(request.args.get('vessel_id'))
-
-    if request.args.get('status'):
-        conds.append('b.status = ?')
-        params.append(request.args.get('status'))
-
-    if request.args.get('q'):
-        like = f'%{request.args.get("q")}%'
-        conds.append('(b.title LIKE ? OR b.port LIKE ?)')
-        params += [like, like]
-
-    sql = f'''
-        SELECT b.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               s.name       AS supervisor_name
-          FROM boarding_reports b
-          JOIN vessels       v ON v.id = b.vessel_id
-          LEFT JOIN supervisors s ON s.id = b.supervisor_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY b.updated_at DESC, b.id DESC
-    '''
-    rows = query(sql, params)
-    out = []
-    for r in rows:
-        d = _brep_to_dict(r)
-        d['can_edit'] = _can_edit_boarding_report(r)
-        out.append(d)
-    return jsonify(out)
-
-
-@app.route('/api/boarding-reports', methods=['POST'])
-@login_required
-def api_brep_create():
-    d = request.get_json(silent=True) or {}
-    vessel_id = d.get('vessel_id')
-    title     = (d.get('title') or '').strip()
-    if not vessel_id:
-        return jsonify({'error': '선박을 선택하세요.'}), 400
-    if not title:
-        return jsonify({'error': '제목을 입력하세요.'}), 400
-    if not query('SELECT id FROM vessels WHERE id=?', (vessel_id,), one=True):
-        return jsonify({'error': '존재하지 않는 선박입니다.'}), 400
-
-    supervisor_id = d.get('supervisor_id') or None
-    if session.get('role') != 'admin':
-        my_sv = session.get('supervisor_id')
-        if not my_sv:
-            return jsonify({'error': '보고서 작성 권한이 없습니다. (담당 감독으로 등록된 계정만 가능)'}), 403
-        if supervisor_id and int(supervisor_id) != my_sv:
-            return jsonify({'error': '본인을 담당 감독으로 지정한 경우에만 생성할 수 있습니다.'}), 403
-        if not supervisor_id:
-            supervisor_id = my_sv
-
-    is_template = 1 if d.get('is_template') else 0
-
-    new_id = execute('''
-        INSERT INTO boarding_reports
-            (vessel_id, supervisor_id, title, port,
-             boarding_start, boarding_end,
-             master_name, master_board_date, chief_eng_name, chief_eng_board_date,
-             sv_checklist_score,
-             approval_drafter, approval_team_lead, approval_director, approval_ceo,
-             status, is_template, template_name, created_by)
-        VALUES (?,?,?,?, ?,?, ?,?,?,?, ?, ?,?,?,?, ?,?,?,?)
-    ''', (
-        vessel_id, supervisor_id, title,
-        d.get('port') or None,
-        d.get('boarding_start') or None,
-        d.get('boarding_end') or None,
-        d.get('master_name') or None,
-        d.get('master_board_date') or None,
-        d.get('chief_eng_name') or None,
-        d.get('chief_eng_board_date') or None,
-        d.get('sv_checklist_score') or None,
-        d.get('approval_drafter') or None,
-        d.get('approval_team_lead') or None,
-        d.get('approval_director') or None,
-        d.get('approval_ceo') or None,
-        d.get('status') or 'draft',
-        is_template,
-        d.get('template_name') if is_template else None,
-        session.get('display_name') or session.get('username') or '',
-    ))
-
-    # Step 2에서 활용: 신규 보고서 생성 시 기본 섹션 자동 생성
-    # (방선보고서 + Defect List 통합본 양식)
-    default_sections = [
-        ('Inspector Opinion', None),
-        ('Vessel General Condition & Deficiencies', None),
-        ('첨부 사진', None),
-        ('Defect List', None),
-    ]
-    for idx, (title_text, parent) in enumerate(default_sections):
-        execute('''
-            INSERT INTO boarding_report_sections
-                (report_id, parent_id, title, display_order)
-            VALUES (?, ?, ?, ?)
-        ''', (new_id, parent, title_text, idx))
-
-    return jsonify({'id': new_id, 'ok': True}), 201
-
-
-@app.route('/api/boarding-reports/<int:rid>', methods=['GET'])
-@login_required
-def api_brep_get(rid):
-    r = query('''
-        SELECT b.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               s.name       AS supervisor_name
-          FROM boarding_reports b
-          JOIN vessels       v ON v.id = b.vessel_id
-          LEFT JOIN supervisors s ON s.id = b.supervisor_id
-         WHERE b.id = ?
-    ''', (rid,), one=True)
-    if not r:
-        abort(404)
-
-    out = _brep_to_dict(r)
-    out['can_edit'] = _can_edit_boarding_report(r)
-
-    secs = query('''
-        SELECT * FROM boarding_report_sections
-         WHERE report_id = ?
-         ORDER BY display_order, id
-    ''', (rid,))
-    sec_list = [dict(s) for s in secs]
-
-    sec_ids = [s['id'] for s in sec_list]
-    blocks = []
-    if sec_ids:
-        placeholders = ','.join('?' for _ in sec_ids)
-        blocks = query(f'''
-            SELECT * FROM boarding_report_blocks
-             WHERE section_id IN ({placeholders})
-             ORDER BY section_id, display_order, id
-        ''', sec_ids)
-    blocks_by_sec = {}
-    for b in blocks:
-        bd = dict(b)
-        try:
-            bd['content'] = json.loads(bd.pop('content_json'))
-        except Exception:
-            bd['content'] = {}
-        blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
-
-    for s in sec_list:
-        s['blocks'] = blocks_by_sec.get(s['id'], [])
-
-    out['sections'] = sec_list
-    return jsonify(out)
-
-
-@app.route('/api/boarding-reports/<int:rid>', methods=['PUT'])
-@login_required
-def api_brep_update(rid):
-    err = _require_brep_edit(rid)
-    if err:
-        return err
-    d = request.get_json(silent=True) or {}
-
-    updatable = {
-        'vessel_id', 'supervisor_id', 'title', 'port',
-        'boarding_start', 'boarding_end',
-        'master_name', 'master_board_date', 'chief_eng_name', 'chief_eng_board_date',
-        'sv_checklist_score',
-        'approval_drafter', 'approval_team_lead', 'approval_director', 'approval_ceo',
-        'status', 'template_name',
+  } catch (err) {
+    alert('일정 등록 실패: ' + err.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Attach Modal (📎 버튼)
+// ═══════════════════════════════════════════════════════════
+async function openAttach(iid) {
+  try {
+    const i = await api('/api/issues/' + iid);
+    S.attachIssue = { id: iid, topic: i.item_topic, attachments: i.attachments || [] };
+    $('#attach-issue-id').textContent = iid;
+    $('#attach-issue-topic').textContent = i.item_topic;
+    renderAttachGrid();
+    $('#attach-modal').hidden = false;
+    document.body.style.overflow = 'hidden';
+  } catch (err) { alert('첨부 로드 실패: ' + err.message); }
+}
+
+async function closeAttach() {
+  S.attachIssue = null;
+  $('#attach-modal').hidden = true;
+  document.body.style.overflow = '';
+  // 리스트의 첨부 카운트 뱃지 업데이트
+  await reloadAll();
+}
+
+function renderAttachGrid() {
+  const grid = $('#attach-grid');
+  grid.innerHTML = '';
+  if (!S.attachIssue.attachments.length) {
+    grid.append(el('div', { class: 'attach-empty' }, '첨부 파일이 없습니다. 위 영역으로 파일을 드래그하거나 클릭해 업로드하세요.'));
+    return;
+  }
+  for (const a of S.attachIssue.attachments) {
+    grid.append(attachItemEl(a));
+  }
+}
+
+function attachItemEl(a) {
+  const item = el('div', { class: 'attach-item' });
+
+  const thumb = el('div', { class: 'attach-thumb' });
+  if (isImageFile(a.filename)) {
+    thumb.append(el('img', {
+      src: `/api/attachments/${a.id}?inline=1`,
+      alt: a.filename, loading: 'lazy',
+    }));
+  } else {
+    thumb.append(fileIcon(a.filename));
+  }
+  item.append(thumb);
+
+  item.append(el('div', { class: 'attach-name', title: a.filename }, a.filename));
+  item.append(el('div', { class: 'attach-meta' },
+    `${formatFileSize(a.file_size || 0)} · ${(a.uploaded_at || '').slice(0, 10)}`));
+
+  const actions = el('div', { class: 'attach-actions' });
+  // 미리보기 (이미지 + PDF)
+  if (isImageFile(a.filename) || /\.pdf$/i.test(a.filename)) {
+    const prevBtn = el('button', {
+      class: 'icon-btn', title: '미리보기 (새 탭)',
+      onclick: () => window.open(`/api/attachments/${a.id}?inline=1`, '_blank'),
+    });
+    prevBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+      <circle cx="12" cy="12" r="3"/></svg>`;
+    actions.append(prevBtn);
+  }
+  // 다운로드
+  const dlLink = el('a', {
+    class: 'icon-btn', title: '다운로드',
+    href: `/api/attachments/${a.id}`,
+  });
+  dlLink.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+    <polyline points="7 10 12 15 17 10"/>
+    <line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+  actions.append(dlLink);
+  // 삭제
+  const delBtn = el('button', {
+    class: 'icon-btn danger', title: '삭제',
+    onclick: () => deleteAttach(a.id),
+  });
+  delBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+  actions.append(delBtn);
+  item.append(actions);
+
+  return item;
+}
+
+function fileIcon(filename) {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  let icon = '📄';
+  if (ext === 'pdf') icon = '📕';
+  else if (['doc','docx','rtf'].includes(ext)) icon = '📘';
+  else if (['xls','xlsx','csv'].includes(ext))  icon = '📗';
+  else if (['ppt','pptx'].includes(ext))         icon = '📙';
+  else if (['zip','rar','7z'].includes(ext))     icon = '🗜';
+  else if (['txt','md','log'].includes(ext))     icon = '📝';
+
+  return el('div', { class: 'attach-fileicon' },
+    el('span', { style: 'font-size:40px; line-height:1' }, icon),
+    el('span', { style: 'font-size:10px; color:var(--text-tertiary); text-transform:uppercase; margin-top:4px; font-weight:600' }, ext || 'FILE'));
+}
+
+async function deleteAttach(aid) {
+  if (!confirm('이 첨부파일을 삭제하시겠습니까?')) return;
+  try {
+    await api('/api/attachments/' + aid, { method: 'DELETE' });
+    S.attachIssue.attachments = S.attachIssue.attachments.filter(a => a.id !== aid);
+    renderAttachGrid();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+async function uploadAttachFile(file) {
+  if (!S.attachIssue) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const a = await api(`/api/issues/${S.attachIssue.id}/attachments`, {
+      method: 'POST', body: fd,
+    });
+    S.attachIssue.attachments.push({
+      id: a.id, filename: a.filename,
+      stored_name: a.stored_name, file_size: a.file_size,
+      uploaded_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    });
+    renderAttachGrid();
+  } catch (err) { alert(`업로드 실패 (${file.name}): ` + err.message); }
+}
+
+async function uploadAttachFiles(files) {
+  for (const f of files) {
+    await uploadAttachFile(f);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  User Menu Dropdown (비밀번호 변경 / 로그아웃)
+// ═══════════════════════════════════════════════════════════
+function toggleUserMenu(force) {
+  const dd = $('#user-dropdown');
+  const show = force !== undefined ? force : dd.hidden;
+  dd.hidden = !show;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Password Change Modal
+// ═══════════════════════════════════════════════════════════
+function openPasswordModal() {
+  $('#pw-old').value = '';
+  $('#pw-new').value = '';
+  $('#pw-new2').value = '';
+  $('#password-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => $('#pw-old').focus(), 40);
+}
+function closePasswordModal() {
+  $('#password-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+async function submitPasswordChange(ev) {
+  ev.preventDefault();
+  const oldP = $('#pw-old').value;
+  const newP = $('#pw-new').value;
+  const new2 = $('#pw-new2').value;
+  if (newP.length < 6) { alert('새 비밀번호는 6자 이상이어야 합니다.'); return; }
+  if (newP !== new2)   { alert('새 비밀번호 확인이 일치하지 않습니다.'); return; }
+  try {
+    await api('/api/me/password', {
+      method: 'POST',
+      body: JSON.stringify({ old_password: oldP, new_password: newP }),
+    });
+    closePasswordModal();
+    alert('비밀번호가 변경되었습니다. 다시 로그인하세요.');
+    location.href = '/logout';
+  } catch (err) {
+    alert('변경 실패: ' + err.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Admin Modal (감독 / 선박 / 사용자)
+// ═══════════════════════════════════════════════════════════
+const ADMIN = {
+  selectedColor:  'blue',
+  selectedSupIds: new Set(),   // 선박 추가 시 선택된 감독들
+  supervisors:    [],
+  vessels:        [],
+  users:          [],
+};
+
+function openAdminModal() {
+  $('#admin-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+  switchAdminTab('supervisors');
+}
+function closeAdminModal() {
+  $('#admin-modal').hidden = true;
+  document.body.style.overflow = '';
+  // 감독/선박이 바뀌었을 수 있으므로 목록 새로고침
+  reloadAll();
+}
+function switchAdminTab(which) {
+  document.querySelectorAll('.admin-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.adminTab === which);
+  });
+  document.querySelectorAll('.admin-panel').forEach(p => {
+    p.classList.toggle('active', p.dataset.adminPanel === which);
+  });
+  if (which === 'supervisors') loadAdminSupervisors();
+  else if (which === 'vessels')  loadAdminVessels();
+  else if (which === 'users')    loadAdminUsers();
+}
+
+// ---------- 감독 ----------
+async function loadAdminSupervisors() {
+  ADMIN.supervisors = await api('/api/supervisors');
+  renderAdminSupList();
+}
+function renderAdminSupList() {
+  const list = $('#admin-sup-list');
+  list.innerHTML = '';
+  if (!ADMIN.supervisors.length) {
+    list.append(el('div', { class: 'attach-empty' }, '등록된 감독이 없습니다.'));
+    return;
+  }
+  const total = ADMIN.supervisors.length;
+  ADMIN.supervisors.forEach((s, idx) => {
+    const item = el('div', { class: 'admin-list-item' });
+    item.append(el('span', { class: `tab-dot dot-${s.color}`, style: 'width:10px;height:10px;flex-shrink:0' }));
+    item.append(el('div', { class: 'item-main' },
+      el('strong', {}, s.name),
+      el('div', { class: 'item-sub' },
+        `담당 선박: ${escHtml(s.vessels || '없음')} · 이슈 ${s.total}건`)));
+    item.append(el('div', { class: 'item-tags' },
+      el('span', { class: 'item-tag' }, s.email || '(이메일 없음)')));
+    const actions = el('div', { class: 'item-actions' });
+
+    // ↑ 위로
+    const upBtn = el('button', {
+      class: 'icon-btn', title: '위로 이동',
+      disabled: idx === 0,
+      onclick: () => moveSupervisor(s.id, 'up'),
+    });
+    upBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:12px;height:12px">
+      <polyline points="18 15 12 9 6 15"/></svg>`;
+    actions.append(upBtn);
+
+    // ↓ 아래로
+    const downBtn = el('button', {
+      class: 'icon-btn', title: '아래로 이동',
+      disabled: idx === total - 1,
+      onclick: () => moveSupervisor(s.id, 'down'),
+    });
+    downBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:12px;height:12px">
+      <polyline points="6 9 12 15 18 9"/></svg>`;
+    actions.append(downBtn);
+
+    // 편집
+    const ed = el('button', {
+      class: 'icon-btn', title: '감독 편집',
+      onclick: () => openSupervisorEdit(s),
+    });
+    ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+    actions.append(ed);
+    // 삭제
+    const rm = el('button', {
+      class: 'icon-btn danger', title: '감독 삭제',
+      onclick: () => deleteSupervisor(s.id, s.name),
+    });
+    rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+    actions.append(rm);
+    item.append(actions);
+    list.append(item);
+  });
+}
+
+// 감독 순서 ↑↓ 이동 (display_order 기준)
+async function moveSupervisor(sid, direction) {
+  const list = [...ADMIN.supervisors];
+  const idx = list.findIndex(s => s.id === sid);
+  if (idx < 0) return;
+  const target = direction === 'up' ? idx - 1 : idx + 1;
+  if (target < 0 || target >= list.length) return;
+
+  // 배열에서 swap
+  [list[idx], list[target]] = [list[target], list[idx]];
+
+  // 전체 display_order를 1..N 으로 재정규화 (변경 필요한 것만 PUT)
+  try {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].display_order !== i + 1) {
+        await api(`/api/supervisors/${list[i].id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ display_order: i + 1 }),
+        });
+      }
     }
-    if 'supervisor_id' in d and session.get('role') != 'admin':
-        d.pop('supervisor_id', None)
-
-    sets, params = [], []
-    for k in updatable:
-        if k in d:
-            sets.append(f'{k} = ?')
-            v = d.get(k)
-            params.append(v if (v not in ('',)) else None)
-
-    if not sets:
-        return jsonify({'ok': True, 'updated': 0})
-
-    sets.append("updated_at = datetime('now','localtime')")
-    params.append(rid)
-    execute(f'UPDATE boarding_reports SET {", ".join(sets)} WHERE id = ?', params)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/boarding-reports/<int:rid>', methods=['DELETE'])
-@login_required
-def api_brep_delete(rid):
-    err = _require_brep_edit(rid)
-    if err:
-        return err
-    execute('DELETE FROM boarding_reports WHERE id = ?', (rid,))
-    return jsonify({'ok': True})
-
-
-# ─── Boarding Report — 섹션 CRUD ────────────────────────────────
-@app.route('/api/boarding-reports/<int:rid>/sections', methods=['POST'])
-@login_required
-def api_brep_section_create(rid):
-    err = _require_brep_edit(rid)
-    if err:
-        return err
-    d = request.get_json(silent=True) or {}
-    title = (d.get('title') or '').strip() or '새 섹션'
-    parent_id = d.get('parent_id')
-    if parent_id:
-        p = query('SELECT report_id FROM boarding_report_sections WHERE id=?',
-                  (parent_id,), one=True)
-        if not p or p['report_id'] != rid:
-            return jsonify({'error': '잘못된 상위 섹션입니다.'}), 400
-
-    cond = 'parent_id IS NULL' if not parent_id else 'parent_id = ?'
-    last = query(f'''
-        SELECT COALESCE(MAX(display_order), -1) AS mx
-          FROM boarding_report_sections
-         WHERE report_id = ? AND {cond}
-    ''', (rid, *([parent_id] if parent_id else [])), one=True)
-    next_order = (last['mx'] if last else -1) + 1
-
-    new_id = execute('''
-        INSERT INTO boarding_report_sections (report_id, parent_id, title, display_order)
-        VALUES (?,?,?,?)
-    ''', (rid, parent_id, title, next_order))
-    _touch_brep(rid)
-    return jsonify({'id': new_id, 'ok': True}), 201
-
-
-@app.route('/api/boarding-sections/<int:sid>', methods=['PUT'])
-@login_required
-def api_brep_section_update(sid):
-    err = _require_brep_edit_via_section(sid)
-    if err:
-        return err
-    rid = _brep_section_report_id(sid)
-    d = request.get_json(silent=True) or {}
-    title = (d.get('title') or '').strip()
-    if not title:
-        return jsonify({'error': '제목을 입력하세요.'}), 400
-    execute('UPDATE boarding_report_sections SET title=? WHERE id=?', (title, sid))
-    _touch_brep(rid)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/boarding-sections/<int:sid>', methods=['DELETE'])
-@login_required
-def api_brep_section_delete(sid):
-    err = _require_brep_edit_via_section(sid)
-    if err:
-        return err
-    rid = _brep_section_report_id(sid)
-    execute('DELETE FROM boarding_report_sections WHERE id=?', (sid,))
-    _touch_brep(rid)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/boarding-sections/<int:sid>/move', methods=['POST'])
-@login_required
-def api_brep_section_move(sid):
-    err = _require_brep_edit_via_section(sid)
-    if err:
-        return err
-    rid = _brep_section_report_id(sid)
-    d = request.get_json(silent=True) or {}
-    direction = d.get('direction')
-    if direction not in ('up', 'down'):
-        return jsonify({'error': 'invalid direction'}), 400
-
-    me = query('SELECT * FROM boarding_report_sections WHERE id=?', (sid,), one=True)
-    cond = 'parent_id IS NULL' if me['parent_id'] is None else 'parent_id = ?'
-    args = (me['report_id'],) if me['parent_id'] is None else (me['report_id'], me['parent_id'])
-
-    if direction == 'up':
-        nb = query(f'''
-            SELECT * FROM boarding_report_sections
-             WHERE report_id=? AND {cond} AND display_order < ?
-             ORDER BY display_order DESC LIMIT 1
-        ''', (*args, me['display_order']), one=True)
-    else:
-        nb = query(f'''
-            SELECT * FROM boarding_report_sections
-             WHERE report_id=? AND {cond} AND display_order > ?
-             ORDER BY display_order ASC LIMIT 1
-        ''', (*args, me['display_order']), one=True)
-
-    if not nb:
-        return jsonify({'ok': True, 'moved': False})
-
-    execute('UPDATE boarding_report_sections SET display_order=? WHERE id=?',
-            (nb['display_order'], me['id']))
-    execute('UPDATE boarding_report_sections SET display_order=? WHERE id=?',
-            (me['display_order'], nb['id']))
-    _touch_brep(rid)
-    return jsonify({'ok': True, 'moved': True})
-
-
-@app.route('/api/boarding-sections/<int:sid>/reparent', methods=['POST'])
-@login_required
-def api_brep_section_reparent(sid):
-    """섹션을 다른 부모로 이동.
-       body: { "new_parent_id": null | int }
-    """
-    err = _require_brep_edit_via_section(sid)
-    if err:
-        return err
-    rid = _brep_section_report_id(sid)
-    if not rid:
-        abort(404)
-    d = request.get_json(silent=True) or {}
-    new_parent_id = d.get('new_parent_id')
-    if new_parent_id is not None:
-        try:
-            new_parent_id = int(new_parent_id)
-        except (TypeError, ValueError):
-            return jsonify({'error': 'invalid new_parent_id'}), 400
-
-    me = query('SELECT * FROM boarding_report_sections WHERE id=?', (sid,), one=True)
-    if not me:
-        abort(404)
-
-    if new_parent_id is not None:
-        new_parent = query('SELECT * FROM boarding_report_sections WHERE id=?',
-                           (new_parent_id,), one=True)
-        if not new_parent or new_parent['report_id'] != me['report_id']:
-            return jsonify({'error': '같은 보고서의 섹션만 부모로 지정할 수 있습니다.'}), 400
-        if new_parent_id == sid:
-            return jsonify({'error': '자기 자신을 부모로 지정할 수 없습니다.'}), 400
-
-        descendants = set()
-        stack = [sid]
-        while stack:
-            cur = stack.pop()
-            children = query(
-                'SELECT id FROM boarding_report_sections WHERE parent_id=?',
-                (cur,))
-            for c in children:
-                if c['id'] in descendants:
-                    continue
-                descendants.add(c['id'])
-                stack.append(c['id'])
-        if new_parent_id in descendants:
-            return jsonify({'error': '자기 자신의 하위 섹션으로 이동할 수 없습니다.'}), 400
-
-    if (me['parent_id'] or None) == new_parent_id:
-        return jsonify({'ok': True, 'moved': False})
-
-    if new_parent_id is None:
-        max_ord = query('''
-            SELECT MAX(display_order) AS m FROM boarding_report_sections
-             WHERE report_id=? AND parent_id IS NULL
-        ''', (me['report_id'],), one=True)
-    else:
-        max_ord = query('''
-            SELECT MAX(display_order) AS m FROM boarding_report_sections
-             WHERE report_id=? AND parent_id=?
-        ''', (me['report_id'], new_parent_id), one=True)
-
-    new_order = (max_ord['m'] or 0) + 1
-
-    execute('''
-        UPDATE boarding_report_sections
-           SET parent_id=?, display_order=?
-         WHERE id=?
-    ''', (new_parent_id, new_order, sid))
-    _touch_brep(rid)
-    return jsonify({'ok': True, 'moved': True,
-                    'new_parent_id': new_parent_id,
-                    'new_display_order': new_order})
-
-
-# ─── Boarding Report — 블록 CRUD ────────────────────────────────
-def _brep_default_block_content(block_type):
-    if block_type == 'paragraph':   return {'text': ''}
-    if block_type == 'bullet_list': return {'items': [{'text': '', 'indent': 0}], 'marker': 'bullet'}
-    if block_type == 'table':
-        return {'headers': ['항목', '내용'], 'rows': [['', '']], 'col_widths': []}
-    if block_type == 'image':
-        return {'images': [], 'columns': 2}
-    if block_type == 'info_table':
-        # 방선보고서 헤더용 (Label-Value 쌍)
-        return {'rows': [
-            {'label': 'Vessel',    'value': ''},
-            {'label': 'Port',      'value': ''},
-            {'label': 'Inspector', 'value': ''},
-            {'label': 'Date/Time', 'value': ''},
-        ]}
-    if block_type == 'defect_table':
-        # Defect List 항목 리스트 (각 항목: 사진 + 발견사항 + 조치사항 + Risk)
-        return {'items': []}
-    return {}
-
-
-@app.route('/api/boarding-sections/<int:sid>/blocks', methods=['POST'])
-@login_required
-def api_brep_block_create(sid):
-    err = _require_brep_edit_via_section(sid)
-    if err:
-        return err
-    rid = _brep_section_report_id(sid)
-    d = request.get_json(silent=True) or {}
-    bt = d.get('block_type')
-    if bt not in ('paragraph','bullet_list','table','image','info_table','defect_table'):
-        return jsonify({'error': 'invalid block_type'}), 400
-    content = d.get('content') or _brep_default_block_content(bt)
-
-    last = query('''
-        SELECT COALESCE(MAX(display_order), -1) AS mx
-          FROM boarding_report_blocks WHERE section_id=?
-    ''', (sid,), one=True)
-    next_order = (last['mx'] if last else -1) + 1
-
-    new_id = execute('''
-        INSERT INTO boarding_report_blocks (section_id, block_type, content_json, display_order)
-        VALUES (?,?,?,?)
-    ''', (sid, bt, json.dumps(content, ensure_ascii=False), next_order))
-    _touch_brep(rid)
-    return jsonify({'id': new_id, 'ok': True, 'content': content}), 201
-
-
-@app.route('/api/boarding-blocks/<int:bid>', methods=['PUT'])
-@login_required
-def api_brep_block_update(bid):
-    err = _require_brep_edit_via_block(bid)
-    if err:
-        return err
-    rid = _brep_block_report_id(bid)
-    d = request.get_json(silent=True) or {}
-    content = d.get('content')
-    if content is None:
-        return jsonify({'error': 'content가 필요합니다.'}), 400
-    execute('UPDATE boarding_report_blocks SET content_json=? WHERE id=?',
-            (json.dumps(content, ensure_ascii=False), bid))
-    _touch_brep(rid)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/boarding-blocks/<int:bid>', methods=['DELETE'])
-@login_required
-def api_brep_block_delete(bid):
-    err = _require_brep_edit_via_block(bid)
-    if err:
-        return err
-    rid = _brep_block_report_id(bid)
-    execute('DELETE FROM boarding_report_blocks WHERE id=?', (bid,))
-    _touch_brep(rid)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/boarding-blocks/<int:bid>/move', methods=['POST'])
-@login_required
-def api_brep_block_move(bid):
-    err = _require_brep_edit_via_block(bid)
-    if err:
-        return err
-    rid = _brep_block_report_id(bid)
-    d = request.get_json(silent=True) or {}
-    direction = d.get('direction')
-    if direction not in ('up', 'down'):
-        return jsonify({'error': 'invalid direction'}), 400
-
-    me = query('SELECT * FROM boarding_report_blocks WHERE id=?', (bid,), one=True)
-    if direction == 'up':
-        nb = query('''
-            SELECT * FROM boarding_report_blocks
-             WHERE section_id=? AND display_order < ?
-             ORDER BY display_order DESC LIMIT 1
-        ''', (me['section_id'], me['display_order']), one=True)
-    else:
-        nb = query('''
-            SELECT * FROM boarding_report_blocks
-             WHERE section_id=? AND display_order > ?
-             ORDER BY display_order ASC LIMIT 1
-        ''', (me['section_id'], me['display_order']), one=True)
-
-    if not nb:
-        return jsonify({'ok': True, 'moved': False})
-
-    execute('UPDATE boarding_report_blocks SET display_order=? WHERE id=?',
-            (nb['display_order'], me['id']))
-    execute('UPDATE boarding_report_blocks SET display_order=? WHERE id=?',
-            (me['display_order'], nb['id']))
-    _touch_brep(rid)
-    return jsonify({'ok': True, 'moved': True})
-
-
-# ─── Boarding Report — 이미지 업로드 ────────────────────────────
-# (dock/ 폴더와 분리하기 위해 별도 boarding/ 폴더 사용)
-@app.route('/api/boarding-reports/<int:rid>/upload-image', methods=['POST'])
-@login_required
-def api_brep_upload_image(rid):
-    err = _require_brep_edit(rid)
-    if err:
-        return err
-    if 'file' not in request.files:
-        return jsonify({'error': '파일이 없습니다.'}), 400
-    f = request.files['file']
-    if not f.filename:
-        return jsonify({'error': '파일명이 비어있습니다.'}), 400
-
-    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
-    if ext not in {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'}:
-        return jsonify({'error': '이미지 파일만 업로드 가능합니다.'}), 400
-
-    boarding_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'boarding')
-    os.makedirs(boarding_dir, exist_ok=True)
-
-    import time
-    base_fname = f'brep-{rid}-{int(time.time()*1000)}-{secrets.token_hex(4)}'
-    initial_path = os.path.join(boarding_dir, f'{base_fname}.{ext}')
-
-    # Dock Report와 동일한 이미지 압축 로직 사용
-    final_path, orig_size, final_size = _process_uploaded_image(f, initial_path)
-    final_fname = os.path.basename(final_path)
-
-    url = url_for('static', filename=f'uploads/boarding/{final_fname}')
-    reduction = 0
-    if orig_size > 0:
-        reduction = int((1 - final_size / orig_size) * 100)
-
-    return jsonify({
-        'ok': True,
-        'filename': final_fname,
-        'url': url,
-        'original_kb': round(orig_size / 1024, 1),
-        'final_kb':    round(final_size / 1024, 1),
-        'reduction_pct': reduction,
-    }), 201
-
-
-# ─── Boarding Report Word/PDF Export ────────────────────────────
-def _get_full_brep_data(rid):
-    r = query('''
-        SELECT b.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               s.name       AS supervisor_name
-          FROM boarding_reports b
-          JOIN vessels       v ON v.id = b.vessel_id
-          LEFT JOIN supervisors s ON s.id = b.supervisor_id
-         WHERE b.id = ?
-    ''', (rid,), one=True)
-    if not r:
-        return None
-    out = dict(r)
-
-    secs = query('''
-        SELECT * FROM boarding_report_sections
-         WHERE report_id = ?
-         ORDER BY display_order, id
-    ''', (rid,))
-    sec_list = [dict(s) for s in secs]
-    sec_ids = [s['id'] for s in sec_list]
-    blocks_by_sec = {}
-    if sec_ids:
-        placeholders = ','.join('?' for _ in sec_ids)
-        blocks = query(f'''
-            SELECT * FROM boarding_report_blocks
-             WHERE section_id IN ({placeholders})
-             ORDER BY section_id, display_order, id
-        ''', sec_ids)
-        for b in blocks:
-            bd = dict(b)
-            try:
-                bd['content'] = json.loads(bd.pop('content_json'))
-            except Exception:
-                bd['content'] = {}
-            blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
-    for s in sec_list:
-        s['blocks'] = blocks_by_sec.get(s['id'], [])
-    out['sections'] = sec_list
-    return out
-
-
-@app.route('/api/boarding-reports/<int:rid>/export/docx')
-@login_required
-def api_brep_export_docx(rid):
-    try:
-        from boarding_report_docx import build_docx
-    except ImportError as e:
-        return jsonify({'error': f'docx 생성 모듈 로드 실패: {e}'}), 500
-
-    data = _get_full_brep_data(rid)
-    if not data:
-        abort(404)
-    try:
-        docx_bytes = build_docx(data)
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
-
-    from io import BytesIO
-    from flask import send_file
-    fname = _safe_filename(data.get('title') or f'BoardingReport_{rid}') + '.docx'
-    return send_file(
-        BytesIO(docx_bytes),
-        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        as_attachment=True,
-        download_name=fname,
-    )
-
-
-@app.route('/api/boarding-reports/<int:rid>/export/pdf')
-@login_required
-def api_brep_export_pdf(rid):
-    try:
-        from boarding_report_docx import build_docx
-    except ImportError as e:
-        return jsonify({'error': f'docx 생성 모듈 로드 실패: {e}'}), 500
-
-    data = _get_full_brep_data(rid)
-    if not data:
-        abort(404)
-    try:
-        docx_bytes = build_docx(data)
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
-
-    import tempfile, subprocess, shutil, os as _os
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            docx_path = _os.path.join(tmp, 'report.docx')
-            with open(docx_path, 'wb') as f:
-                f.write(docx_bytes)
-            soffice = shutil.which('soffice') or shutil.which('libreoffice')
-            if not soffice:
-                return jsonify({
-                    'error': 'PDF 변환 도구(LibreOffice)가 설치되지 않았습니다. '
-                             'sudo dnf install -y libreoffice-core libreoffice-writer'
-                }), 500
-            proc = subprocess.run(
-                [soffice, '--headless', '--convert-to', 'pdf',
-                 '--outdir', tmp, docx_path],
-                capture_output=True, timeout=120,
-            )
-            if proc.returncode != 0:
-                return jsonify({
-                    'error': f'PDF 변환 실패: {proc.stderr.decode("utf-8", errors="ignore")[:500]}'
-                }), 500
-            pdf_path = _os.path.join(tmp, 'report.pdf')
-            if not _os.path.exists(pdf_path):
-                return jsonify({'error': 'PDF 파일이 생성되지 않았습니다.'}), 500
-            with open(pdf_path, 'rb') as f:
-                pdf_bytes = f.read()
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'PDF 변환 시간 초과 (2분).'}), 500
-    except Exception as e:
-        return jsonify({'error': f'PDF 변환 오류: {e}'}), 500
-
-    from io import BytesIO
-    from flask import send_file
-    fname = _safe_filename(data.get('title') or f'BoardingReport_{rid}') + '.pdf'
-    return send_file(
-        BytesIO(pdf_bytes),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=fname,
-    )
-
-
-# ═════════════════════════════════════════════════════════════════
-#  API — attachments
-# ═════════════════════════════════════════════════════════════════
-def _ext_allowed(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXT
-
-
-@app.route('/api/issues/<int:iid>/attachments', methods=['POST'])
-@login_required
-def api_attachment_upload(iid):
-    if not query('SELECT id FROM issues WHERE id=?', (iid,), one=True):
-        abort(404)
-    if 'file' not in request.files:
-        return jsonify({'error': '파일이 없습니다.'}), 400
-    f = request.files['file']
-    if not f.filename:
-        return jsonify({'error': '파일명이 비어있습니다.'}), 400
-    if not _ext_allowed(f.filename):
-        return jsonify({'error': '허용되지 않는 파일 형식입니다.'}), 400
-
-    ext = f.filename.rsplit('.', 1)[1].lower()
-    stored = f'{uuid.uuid4().hex}.{ext}'
-    save_path = os.path.join(UPLOAD_DIR, stored)
-    f.save(save_path)
-    size = os.path.getsize(save_path)
-    aid = execute('''
-        INSERT INTO attachments
-            (issue_id, filename, stored_name, file_size, mime_type, uploaded_by)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (iid, secure_filename(f.filename), stored, size,
-          f.mimetype or '', session.get('username')))
-    return jsonify({
-        'id': aid,
-        'filename': f.filename,
-        'stored_name': stored,
-        'file_size': size,
-    }), 201
-
-
-@app.route('/api/attachments/<int:aid>')
-@login_required
-def api_attachment_download(aid):
-    a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
-    if not a:
-        abort(404)
-    # ?inline=1 이면 브라우저에서 바로 표시 (이미지 썸네일 / PDF 미리보기용)
-    inline = request.args.get('inline') == '1'
-    return send_from_directory(
-        UPLOAD_DIR, a['stored_name'],
-        as_attachment=not inline,
-        download_name=a['filename'],
-    )
-
-
-@app.route('/api/attachments/<int:aid>', methods=['DELETE'])
-@login_required
-def api_attachment_delete(aid):
-    a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
-    if not a:
-        abort(404)
-    p = os.path.join(UPLOAD_DIR, a['stored_name'])
-    if os.path.exists(p):
-        os.remove(p)
-    execute('DELETE FROM attachments WHERE id=?', (aid,))
-    return jsonify({'ok': True})
-
-
-# ═════════════════════════════════════════════════════════════════
-#  출장 경비 (Business Trip Expense) — 영수증 추출/증빙
-# ═════════════════════════════════════════════════════════════════
-RECEIPT_IMAGE_MAX_LONG_SIDE = 1568   # 영수증 작은 글씨 가독성 위해 dock(1280)보다 크게
-RECEIPT_IMAGE_JPEG_QUALITY  = 88
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
-GEMINI_MODEL   = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash-lite')
-
-
-def _trip_owned(t):
-    if session.get('role') == 'admin':
-        return True
-    return t['supervisor_id'] is not None and t['supervisor_id'] == session.get('supervisor_id')
-
-
-def _get_trip_for_edit(tid):
-    """편집용 trip row 조회. (trip, None) 또는 (None, error_response)."""
-    t = query('SELECT * FROM biz_trips WHERE id=?', (tid,), one=True)
-    if not t:
-        return None, (jsonify({'error': 'not found'}), 404)
-    if not _trip_owned(t):
-        return None, (jsonify({'error': '권한이 없습니다.'}), 403)
-    return t, None
-
-
-def _trip_to_dict(r):
-    d = dict(r)
-    try:
-        d['corp_cards'] = json.loads(r['corp_cards']) if r['corp_cards'] else []
-    except Exception:
-        d['corp_cards'] = []
-    return d
-
-
-def _delete_receipt_image(fname):
-    if not fname:
-        return
-    p = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt', fname)
-    try:
-        if os.path.exists(p):
-            os.remove(p)
-    except Exception:
-        pass
-
-
-def _parse_amount(v):
-    """'1,200.50' / '₩48,000' / 1200 등 다양한 입력을 float 또는 None으로."""
-    if v is None or v == '':
-        return None
-    if isinstance(v, (int, float)):
-        return float(v)
-    import re
-    m = re.search(r'-?\d[\d,]*(\.\d+)?', str(v))
-    if not m:
-        return None
-    try:
-        return float(m.group().replace(',', ''))
-    except ValueError:
-        return None
-
-
-# ─── Pages ───────────────────────────────────────────────────
-@app.route('/expenses')
-@login_required
-def expenses_page():
-    return render_template('expenses.html')
-
-
-@app.route('/expenses/<int:tid>')
-@login_required
-def expense_detail_page(tid):
-    t = query('SELECT id FROM biz_trips WHERE id=?', (tid,), one=True)
-    if not t:
-        abort(404)
-    return render_template('expense_detail.html', trip_id=tid)
-
-
-# ─── API : 출장 카드 ─────────────────────────────────────────
-@app.route('/api/biz-trips', methods=['GET'])
-@login_required
-def api_trips_list():
-    conds, params = ['1=1'], []
-    if session.get('role') != 'admin':
-        conds.append('t.supervisor_id = ?')
-        params.append(session.get('supervisor_id'))
-    if request.args.get('status'):
-        conds.append('t.status = ?')
-        params.append(request.args.get('status'))
-    if request.args.get('q'):
-        conds.append('t.title LIKE ?')
-        params.append(f"%{request.args.get('q')}%")
-    sql = f'''
-        SELECT t.*, s.name AS supervisor_name
-          FROM biz_trips t
-          LEFT JOIN supervisors s ON s.id = t.supervisor_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY t.updated_at DESC, t.id DESC
-    '''
-    rows = query(sql, params)
-    out = []
-    for r in rows:
-        d = _trip_to_dict(r)
-        d['can_edit'] = _trip_owned(r)
-        cnt = query('SELECT COUNT(*) AS c FROM biz_receipts WHERE trip_id=?', (r['id'],), one=True)['c']
-        d['receipt_count'] = cnt
-        sums = query('SELECT currency, COALESCE(SUM(amount),0) AS s FROM biz_receipts WHERE trip_id=? GROUP BY currency', (r['id'],))
-        d['totals'] = {(row['currency'] or '?'): row['s'] for row in sums}
-        out.append(d)
-    return jsonify(out)
-
-
-@app.route('/api/biz-trips', methods=['POST'])
-@login_required
-def api_trips_create():
-    d = request.get_json(silent=True) or {}
-    title = (d.get('title') or '').strip()
-    if not title:
-        return jsonify({'error': '출장명을 입력하세요.'}), 400
-    sup = session.get('supervisor_id')
-    if session.get('role') == 'admin' and d.get('supervisor_id'):
-        sup = d.get('supervisor_id')
-    cards = d.get('corp_cards') or []
-    if isinstance(cards, str):
-        cards = [c.strip() for c in cards.split(',') if c.strip()]
-    new_id = execute('''
-        INSERT INTO biz_trips
-            (supervisor_id, title, trip_start, trip_end, corp_cards, status, created_by)
-        VALUES (?,?,?,?,?,?,?)
-    ''', (
-        sup, title, d.get('trip_start') or None, d.get('trip_end') or None,
-        json.dumps(cards, ensure_ascii=False), d.get('status') or 'open',
-        session.get('display_name') or session.get('username') or '',
-    ))
-    return jsonify({'id': new_id, 'ok': True}), 201
-
-
-@app.route('/api/biz-trips/<int:tid>', methods=['GET'])
-@login_required
-def api_trip_get(tid):
-    t = query('''SELECT t.*, s.name AS supervisor_name
-                   FROM biz_trips t LEFT JOIN supervisors s ON s.id=t.supervisor_id
-                  WHERE t.id=?''', (tid,), one=True)
-    if not t:
-        abort(404)
-    if not _trip_owned(t):
-        return jsonify({'error': '권한이 없습니다.'}), 403
-    d = _trip_to_dict(t)
-    d['can_edit'] = _trip_owned(t)
-    recs = query('SELECT * FROM biz_receipts WHERE trip_id=? ORDER BY display_order, id', (tid,))
-    d['receipts'] = [dict(r) for r in recs]
-    sums = query('SELECT currency, COALESCE(SUM(amount),0) AS s FROM biz_receipts WHERE trip_id=? GROUP BY currency', (tid,))
-    d['totals'] = {(row['currency'] or '?'): row['s'] for row in sums}
-    return jsonify(d)
-
-
-@app.route('/api/biz-trips/<int:tid>', methods=['PUT'])
-@login_required
-def api_trip_update(tid):
-    t, err = _get_trip_for_edit(tid)
-    if err:
-        return err
-    d = request.get_json(silent=True) or {}
-    sets, params = [], []
-    if 'title' in d:
-        sets.append('title=?'); params.append((d.get('title') or '').strip())
-    for k in ('trip_start', 'trip_end', 'status'):
-        if k in d:
-            sets.append(f'{k}=?'); params.append(d.get(k) or None)
-    if 'corp_cards' in d:
-        cards = d.get('corp_cards') or []
-        if isinstance(cards, str):
-            cards = [c.strip() for c in cards.split(',') if c.strip()]
-        sets.append('corp_cards=?'); params.append(json.dumps(cards, ensure_ascii=False))
-    if not sets:
-        return jsonify({'ok': True, 'updated': 0})
-    sets.append("updated_at=datetime('now','localtime')")
-    params.append(tid)
-    execute(f'UPDATE biz_trips SET {", ".join(sets)} WHERE id=?', params)
-    return jsonify({'ok': True})
-
-
-@app.route('/api/biz-trips/<int:tid>', methods=['DELETE'])
-@login_required
-def api_trip_delete(tid):
-    t, err = _get_trip_for_edit(tid)
-    if err:
-        return err
-    for r in query('SELECT image_filename FROM biz_receipts WHERE trip_id=?', (tid,)):
-        _delete_receipt_image(r['image_filename'])
-    execute('DELETE FROM biz_receipts WHERE trip_id=?', (tid,))
-    execute('DELETE FROM biz_trips WHERE id=?', (tid,))
-    return jsonify({'ok': True})
-
-
-# ─── API : 영수증 이미지 업로드 ──────────────────────────────
-@app.route('/api/biz-trips/<int:tid>/upload-receipt', methods=['POST'])
-@login_required
-def api_receipt_upload(tid):
-    t, err = _get_trip_for_edit(tid)
-    if err:
-        return err
-    if 'file' not in request.files:
-        return jsonify({'error': '파일이 없습니다.'}), 400
-    f = request.files['file']
-    if not f.filename:
-        return jsonify({'error': '파일명이 비어있습니다.'}), 400
-    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
-    if ext not in {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'}:
-        return jsonify({'error': '이미지 파일만 업로드 가능합니다.'}), 400
-    rdir = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt')
-    os.makedirs(rdir, exist_ok=True)
-    import time
-    base = f'rcpt-{tid}-{int(time.time()*1000)}-{secrets.token_hex(4)}'
-    initial = os.path.join(rdir, f'{base}.{ext}')
-    final_path, orig, final = _process_uploaded_image(
-        f, initial, RECEIPT_IMAGE_MAX_LONG_SIDE, RECEIPT_IMAGE_JPEG_QUALITY)
-    fname = os.path.basename(final_path)
-    url = url_for('static', filename=f'uploads/receipt/{fname}')
-    return jsonify({'ok': True, 'filename': fname, 'url': url,
-                    'original_kb': round(orig / 1024, 1),
-                    'final_kb': round(final / 1024, 1)}), 201
-
-
-# ─── Gemini 비전 추출 (Gemini 3.1 Flash Lite) ────────────────
-def _gemini_vision_extract(image_path):
-    """저장된 영수증 이미지를 Gemini 3.1 Flash Lite로 추출 (vendor/date/currency/amount + 품질 판정)."""
-    if not GEMINI_API_KEY:
-        return {'error': 'NO_API_KEY'}
-    import base64, mimetypes, urllib.request, urllib.error
-    with open(image_path, 'rb') as fp:
-        raw = fp.read()
-    media = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
-    b64 = base64.standard_b64encode(raw).decode()
-    prompt = (
-        "이 이미지는 출장 경비 영수증/인보이스다. 아래 항목만 추출해 지정한 JSON 형식으로만 답하라.\n"
-        "- vendor: 상호/가맹점명 (없으면 null)\n"
-        "- date: 거래 일자 YYYY-MM-DD (확실치 않으면 null)\n"
-        "- currency: 통화 ISO 코드 (KRW/CNY/USD/JPY/EUR 등, 기호는 코드로 변환, 불명확하면 null)\n"
-        "- amount: 총 결제 금액 숫자만 (콤마/통화기호 제거, 소수 허용, 불명확하면 null)\n"
-        "글자가 흐리거나 잘려 확신할 수 없으면 해당 필드는 null로 두고, "
-        "readable(true/false), confidence(high/medium/low), "
-        "issues(배열: blurry/glare/cropped/dark/unclear_amount 등)를 채워라.\n"
-        '형식: {"readable":true,"confidence":"high","issues":[],'
-        '"vendor":null,"date":null,"currency":null,"amount":null}'
-    )
-    body = {
-        'contents': [{
-            'parts': [
-                {'inline_data': {'mime_type': media, 'data': b64}},
-                {'text': prompt},
-            ],
-        }],
-        'generationConfig': {'response_mime_type': 'application/json'},
+    await loadAdminSupervisors();
+    await reloadAll();   // 실제 화면 탭 바도 갱신
+  } catch (err) {
+    alert('순서 변경 실패: ' + err.message);
+  }
+}
+async function addSupervisor() {
+  const name = $('#sup-add-name').value.trim();
+  if (!name) { alert('이름을 입력하세요.'); return; }
+  try {
+    await api('/api/supervisors', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        email: $('#sup-add-email').value.trim(),
+        color: ADMIN.selectedColor,
+      }),
+    });
+    $('#sup-add-name').value = '';
+    $('#sup-add-email').value = '';
+    await loadAdminSupervisors();
+  } catch (err) { alert('추가 실패: ' + err.message); }
+}
+async function deleteSupervisor(id, name) {
+  if (!confirm(`감독 "${name}"을(를) 삭제하시겠습니까?\n(이슈가 있으면 비활성 처리됩니다)`)) return;
+  try {
+    await api('/api/supervisors/' + id, { method: 'DELETE' });
+    await loadAdminSupervisors();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ---------- 선박 ----------
+async function loadAdminVessels() {
+  [ADMIN.vessels, ADMIN.supervisors] = await Promise.all([
+    api('/api/vessels/all'),
+    api('/api/supervisors'),
+  ]);
+  renderAdminVesList();
+  renderSupChipGroup();
+}
+function renderAdminVesList() {
+  const list = $('#admin-ves-list');
+  list.innerHTML = '';
+  if (!ADMIN.vessels.length) {
+    list.append(el('div', { class: 'attach-empty' }, '등록된 선박이 없습니다.'));
+    return;
+  }
+  for (const v of ADMIN.vessels) {
+    const item = el('div', { class: 'admin-list-item' + (v.active ? '' : ' inactive') });
+    item.append(el('span', { class: 'item-tag type' }, v.vessel_type || '?'));
+    item.append(el('div', { class: 'item-main' },
+      el('strong', {}, v.name),
+      el('div', { class: 'item-sub' },
+        `${v.short_name ? v.short_name + ' · ' : ''}${v.imo ? 'IMO ' + v.imo + ' · ' : ''}담당: ${escHtml(v.supervisor_names || '없음')}`)));
+    item.append(el('div', {}));
+
+    const actions = el('div', { class: 'item-actions' });
+    // 편집 버튼
+    const ed = el('button', {
+      class: 'icon-btn', title: '선박 편집',
+      onclick: () => openVesselEdit(v.id, 'admin'),
+    });
+    ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+    actions.append(ed);
+    // 삭제 버튼
+    const rm = el('button', {
+      class: 'icon-btn danger', title: '선박 삭제',
+      onclick: () => deleteVessel(v.id, v.name),
+    });
+    rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+    actions.append(rm);
+    item.append(actions);
+    list.append(item);
+  }
+}
+function renderSupChipGroup() {
+  const box = $('#ves-add-sups');
+  box.innerHTML = '';
+  if (!ADMIN.supervisors.length) {
+    box.append(el('span', { style: 'color:var(--text-tertiary); font-size:11.5px' }, '감독을 먼저 등록하세요.'));
+    return;
+  }
+  for (const s of ADMIN.supervisors) {
+    const chip = el('span', {
+      class: 'admin-chip' + (ADMIN.selectedSupIds.has(s.id) ? ' selected' : ''),
+      'data-sid': s.id,
+      onclick: () => {
+        if (ADMIN.selectedSupIds.has(s.id)) ADMIN.selectedSupIds.delete(s.id);
+        else ADMIN.selectedSupIds.add(s.id);
+        renderSupChipGroup();
+      },
+    }, s.name);
+    box.append(chip);
+  }
+}
+async function addVessel() {
+  const name = $('#ves-add-name').value.trim();
+  if (!name) { alert('선박명을 입력하세요.'); return; }
+  if (!ADMIN.selectedSupIds.size) { alert('담당 감독을 최소 1명 선택하세요.'); return; }
+  try {
+    await api('/api/vessels', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        short_name:    $('#ves-add-short').value.trim() || name.slice(0, 12),
+        vessel_type:   $('#ves-add-type').value,
+        imo:           $('#ves-add-imo').value.trim(),
+        class_society: $('#ves-add-class').value.trim(),
+        supervisor_ids: [...ADMIN.selectedSupIds],
+      }),
+    });
+    $('#ves-add-name').value = '';
+    $('#ves-add-short').value = '';
+    $('#ves-add-imo').value = '';
+    $('#ves-add-class').value = '';
+    ADMIN.selectedSupIds.clear();
+    await loadAdminVessels();
+  } catch (err) { alert('추가 실패: ' + err.message); }
+}
+async function deleteVessel(id, name) {
+  if (!confirm(`선박 "${name}"을(를) 삭제하시겠습니까?\n(이슈가 있으면 비활성 처리됩니다)`)) return;
+  try {
+    await api('/api/vessels/' + id, { method: 'DELETE' });
+    await loadAdminVessels();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
+
+// ---------- 사용자 ----------
+async function loadAdminUsers() {
+  [ADMIN.users, ADMIN.supervisors] = await Promise.all([
+    api('/api/users'),
+    api('/api/supervisors'),
+  ]);
+  renderAdminUserList();
+  renderUserAddSupSelect();
+}
+function renderAdminUserList() {
+  const list = $('#admin-user-list');
+  list.innerHTML = '';
+  if (!ADMIN.users.length) {
+    list.append(el('div', { class: 'attach-empty' }, '사용자가 없습니다.'));
+    return;
+  }
+  for (const u of ADMIN.users) {
+    const item = el('div', { class: 'admin-list-item' + (u.active ? '' : ' inactive') });
+    item.append(el('span', { class: `role-pill role-${u.role === 'admin' ? 'admin' : 'user'}` },
+      u.role === 'admin' ? 'ADMIN' : 'USER'));
+    item.append(el('div', { class: 'item-main' },
+      el('strong', {}, u.display_name || u.username),
+      el('div', { class: 'item-sub' },
+        `@${u.username}${u.supervisor_name ? ' · 담당: ' + u.supervisor_name : ''} · 마지막 로그인: ${u.last_login_at || '없음'}`)));
+    item.append(el('div', {}));
+
+    const actions = el('div', { class: 'item-actions' });
+    // 편집
+    const ed = el('button', {
+      class: 'icon-btn', title: '사용자 편집',
+      onclick: () => openUserEdit(u),
+    });
+    ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+    actions.append(ed);
+    // 비밀번호 리셋
+    const pwBtn = el('button', {
+      class: 'icon-btn', title: '비밀번호 리셋',
+      onclick: () => resetUserPassword(u.id, u.username),
+    });
+    pwBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>`;
+    actions.append(pwBtn);
+
+    if (u.active) {
+      const rm = el('button', {
+        class: 'icon-btn danger', title: '사용자 비활성',
+        onclick: () => deleteUser(u.id, u.username),
+      });
+      rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+        <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+        <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+      actions.append(rm);
     }
-    url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-           f'{GEMINI_MODEL}:generateContent')
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode('utf-8'),
-        headers={
-            'content-type': 'application/json',
-            'x-goog-api-key': GEMINI_API_KEY,
-        }, method='POST')
-    try:
-        with urllib.request.urlopen(req, timeout=40) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as he:
-        try:
-            detail = he.read().decode('utf-8')[:300]
-        except Exception:
-            detail = str(he)
-        return {'error': 'API_CALL_FAILED', 'detail': detail}
-    except Exception as e:
-        return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+    item.append(actions);
+    list.append(item);
+  }
+}
+function renderUserAddSupSelect() {
+  const sel = $('#user-add-supervisor');
+  sel.innerHTML = '';
+  sel.append(el('option', { value: '' }, '(연결 없음)'));
+  for (const s of ADMIN.supervisors) {
+    sel.append(el('option', { value: s.id }, s.name));
+  }
+}
+async function addUser() {
+  const username = $('#user-add-username').value.trim();
+  const password = $('#user-add-password').value;
+  if (!username) { alert('사용자명을 입력하세요.'); return; }
+  if (password.length < 6) { alert('비밀번호는 6자 이상이어야 합니다.'); return; }
+  try {
+    await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({
+        username, password,
+        display_name:  $('#user-add-display').value.trim() || username,
+        role:          $('#user-add-role').value,
+        supervisor_id: Number($('#user-add-supervisor').value) || null,
+      }),
+    });
+    $('#user-add-username').value = '';
+    $('#user-add-password').value = '';
+    $('#user-add-display').value  = '';
+    await loadAdminUsers();
+  } catch (err) { alert('추가 실패: ' + err.message); }
+}
+async function deleteUser(id, username) {
+  if (!confirm(`사용자 "${username}"을(를) 비활성 처리하시겠습니까?`)) return;
+  try {
+    await api('/api/users/' + id, { method: 'DELETE' });
+    await loadAdminUsers();
+  } catch (err) { alert('처리 실패: ' + err.message); }
+}
+async function resetUserPassword(id, username) {
+  const pw = prompt(`"${username}"의 새 비밀번호를 입력하세요 (6자 이상):`);
+  if (!pw) return;
+  if (pw.length < 6) { alert('비밀번호는 6자 이상이어야 합니다.'); return; }
+  try {
+    await api(`/api/users/${id}/password`, {
+      method: 'POST',
+      body: JSON.stringify({ new_password: pw }),
+    });
+    alert('비밀번호가 변경되었습니다.');
+  } catch (err) { alert('실패: ' + err.message); }
+}
 
-    # candidates[0].content.parts[*].text 취합
-    text = ''
-    try:
-        cands = data.get('candidates') or []
-        if not cands:
-            return {'error': 'API_CALL_FAILED', 'detail': json.dumps(data)[:300]}
-        for part in (cands[0].get('content', {}).get('parts') or []):
-            if isinstance(part.get('text'), str):
-                text += part['text']
-    except Exception as e:
-        return {'error': 'PARSE_FAILED', 'raw': str(e)}
+// ═══════════════════════════════════════════════════════════
+//  My Vessels Modal (담당 선박 조회/추가)
+// ═══════════════════════════════════════════════════════════
+async function openMyVessels() {
+  if (S.activeTab === 'all') return;
+  const sup = S.supervisors.find(s => s.id == S.activeTab);
+  if (!sup) return;
 
-    text = text.strip()
-    if text.startswith('```'):
-        text = text.strip('`')
-        if text[:4].lower() == 'json':
-            text = text[4:]
-        text = text.strip()
-    try:
-        return json.loads(text)
-    except Exception:
-        return {'error': 'PARSE_FAILED', 'raw': text}
+  S.myVesSupId = sup.id;
+  $('#myves-title').textContent = `${sup.name} 담당 선박`;
+  await renderMyVesList();
 
-
-@app.route('/api/biz-trips/<int:tid>/extract', methods=['POST'])
-@login_required
-def api_receipt_extract(tid):
-    t, err = _get_trip_for_edit(tid)
-    if err:
-        return err
-    d = request.get_json(silent=True) or {}
-    fname = d.get('filename') or ''
-    if not fname or '/' in fname or '\\' in fname or '..' in fname:
-        return jsonify({'error': '잘못된 파일명'}), 400
-    path = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt', fname)
-    if not os.path.exists(path):
-        return jsonify({'error': '파일을 찾을 수 없습니다.'}), 404
-    result = _gemini_vision_extract(path)
-    if result.get('error') == 'NO_API_KEY':
-        return jsonify({'ok': False, 'reason': 'no_api_key',
-                        'message': 'AI 자동추출이 설정되지 않았습니다. 직접 입력해 주세요.'}), 200
-    if result.get('error'):
-        return jsonify({'ok': False, 'reason': result['error'],
-                        'message': '자동 추출에 실패했습니다. 다시 시도하거나 직접 입력해 주세요.',
-                        'detail': result.get('detail') or result.get('raw')}), 200
-    fields = {
-        'vendor':     result.get('vendor'),
-        'occur_date': result.get('date'),
-        'currency':   result.get('currency'),
-        'amount':     result.get('amount'),
+  // 선박 추가 폼 표시 조건:
+  //  - admin: 항상 표시
+  //  - member: 본인 감독 탭일 때만 표시 (본인 담당 선박으로만 추가 가능)
+  const canAdd = (S.user.role === 'admin')
+                 || (S.user.supervisor_id && S.user.supervisor_id === sup.id);
+  const addForm = $('#myves-add-form');
+  if (addForm) {
+    addForm.hidden = !canAdd;
+    if (canAdd) {
+      $('#myves-add-name').value = '';
+      $('#myves-add-short').value = '';
+      $('#myves-add-imo').value = '';
+      $('#myves-add-class').value = '';
+      $('#myves-add-type').value = 'VLCC';
     }
-    missing = [k for k in ('occur_date', 'currency', 'amount') if not fields.get(k)]
-    need_retake = (result.get('readable') is False) or bool(missing) or (result.get('confidence') == 'low')
-    return jsonify({
-        'ok': True,
-        'fields': fields,
-        'readable': result.get('readable', True),
-        'confidence': result.get('confidence'),
-        'issues': result.get('issues') or [],
-        'missing': missing,
-        'need_retake': need_retake,
-        'raw': json.dumps(result, ensure_ascii=False),
-    })
+  }
 
+  $('#myves-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
 
-# ─── API : 영수증 (표의 한 줄) ───────────────────────────────
-@app.route('/api/biz-trips/<int:tid>/receipts', methods=['POST'])
-@login_required
-def api_receipt_create(tid):
-    t, err = _get_trip_for_edit(tid)
-    if err:
-        return err
-    d = request.get_json(silent=True) or {}
-    mx = query('SELECT COALESCE(MAX(display_order),-1) AS m FROM biz_receipts WHERE trip_id=?', (tid,), one=True)['m']
-    amount = _parse_amount(d.get('amount'))
-    new_id = execute('''
-        INSERT INTO biz_receipts
-            (trip_id, image_filename, image_url, vendor, cost_type, use_type,
-             occur_date, card_no, remark, currency, amount, extracted_raw, display_order)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ''', (
-        tid, d.get('image_filename') or None, d.get('image_url') or None,
-        d.get('vendor') or None, d.get('cost_type') or None, d.get('use_type') or None,
-        d.get('occur_date') or None, d.get('card_no') or None, d.get('remark') or None,
-        d.get('currency') or None, amount, d.get('extracted_raw') or None, mx + 1,
-    ))
-    execute("UPDATE biz_trips SET updated_at=datetime('now','localtime') WHERE id=?", (tid,))
-    r = query('SELECT * FROM biz_receipts WHERE id=?', (new_id,), one=True)
-    return jsonify({'ok': True, 'receipt': dict(r)}), 201
+async function closeMyVessels() {
+  $('#myves-modal').hidden = true;
+  document.body.style.overflow = '';
+  await reloadAll();   // 담당 선박 변경 반영
+}
 
+async function renderMyVesList() {
+  const list = $('#myves-list');
+  list.innerHTML = '';
+  const vs = await api(`/api/vessels?supervisor_id=${S.myVesSupId}`);
+  if (!vs.length) {
+    const isAdmin    = S.user.role === 'admin';
+    const isOwnerSup = S.user.supervisor_id && S.user.supervisor_id === S.myVesSupId;
+    const msg = (isAdmin || isOwnerSup)
+      ? '담당 선박이 없습니다. 아래에서 추가하세요.'
+      : '담당 선박이 없습니다. 관리자에게 요청하세요.';
+    list.append(el('div', { class: 'attach-empty' }, msg));
+    return;
+  }
+  for (const v of vs) {
+    const item = el('div', { class: 'admin-list-item' });
+    item.append(el('span', { class: 'item-tag type' }, v.vessel_type || '?'));
+    item.append(el('div', { class: 'item-main' },
+      el('strong', {}, v.name),
+      el('div', { class: 'item-sub' },
+        [
+          v.short_name && `${v.short_name}`,
+          v.imo && `IMO ${v.imo}`,
+          v.class_society,
+        ].filter(Boolean).join(' · ') || '-')));
+    item.append(el('div', {}));
 
-@app.route('/api/biz-receipts/<int:rid>', methods=['PUT'])
-@login_required
-def api_receipt_update(rid):
-    r = query('SELECT * FROM biz_receipts WHERE id=?', (rid,), one=True)
-    if not r:
-        abort(404)
-    t, err = _get_trip_for_edit(r['trip_id'])
-    if err:
-        return err
-    d = request.get_json(silent=True) or {}
-    sets, params = [], []
-    for k in ('vendor', 'cost_type', 'use_type', 'occur_date', 'card_no', 'remark', 'currency'):
-        if k in d:
-            sets.append(f'{k}=?'); params.append(d.get(k) or None)
-    if 'amount' in d:
-        sets.append('amount=?'); params.append(_parse_amount(d.get('amount')))
-    if 'display_order' in d:
-        sets.append('display_order=?'); params.append(int(d.get('display_order') or 0))
-    if not sets:
-        return jsonify({'ok': True, 'updated': 0})
-    params.append(rid)
-    execute(f'UPDATE biz_receipts SET {", ".join(sets)} WHERE id=?', params)
-    execute("UPDATE biz_trips SET updated_at=datetime('now','localtime') WHERE id=?", (r['trip_id'],))
-    return jsonify({'ok': True})
+    // 권한별 버튼 노출
+    const isAdmin    = S.user.role === 'admin';
+    const isOwnerSup = S.user.supervisor_id && S.user.supervisor_id === S.myVesSupId;
 
+    if (isAdmin) {
+      const actions = el('div', { class: 'item-actions' });
+      // 편집
+      const ed = el('button', {
+        class: 'icon-btn', title: '선박 편집',
+        onclick: () => openVesselEdit(v.id, 'myves'),
+      });
+      ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+      actions.append(ed);
+      // 담당 해제
+      const rm = el('button', {
+        class: 'icon-btn danger', title: '이 감독의 담당에서 제외',
+        onclick: () => unassignMyVessel(v.id, v.name),
+      });
+      rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+      actions.append(rm);
+      item.append(actions);
+    } else if (isOwnerSup) {
+      // member: 본인 담당 탭에서 편집 + 삭제 가능
+      const actions = el('div', { class: 'item-actions' });
+      const ed = el('button', {
+        class: 'icon-btn', title: '선박 편집',
+        onclick: () => openVesselEdit(v.id, 'myves'),
+      });
+      ed.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+      actions.append(ed);
+      const rm = el('button', {
+        class: 'icon-btn danger', title: '선박 삭제',
+        onclick: () => deleteMyVessel(v.id, v.name),
+      });
+      rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+        <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+        <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+      actions.append(rm);
+      item.append(actions);
+    } else {
+      item.append(el('div', {}));
+    }
+    list.append(item);
+  }
+}
 
-@app.route('/api/biz-receipts/<int:rid>', methods=['DELETE'])
-@login_required
-def api_receipt_delete(rid):
-    r = query('SELECT * FROM biz_receipts WHERE id=?', (rid,), one=True)
-    if not r:
-        abort(404)
-    t, err = _get_trip_for_edit(r['trip_id'])
-    if err:
-        return err
-    _delete_receipt_image(r['image_filename'])
-    execute('DELETE FROM biz_receipts WHERE id=?', (rid,))
-    return jsonify({'ok': True})
+async function deleteMyVessel(vid, vname) {
+  if (!confirm(`"${vname}"을(를) 삭제하시겠습니까?\n\n· 다른 감독도 담당 중이라면 → 본인 담당에서만 제외됩니다\n· 본인만 담당 + 이슈 있음 → 비활성 처리됩니다\n· 본인만 담당 + 이슈 없음 → 완전히 삭제됩니다`)) return;
+  try {
+    const r = await api('/api/vessels/' + vid, { method: 'DELETE' });
+    if (r.unassigned_only) {
+      alert('다른 감독이 담당 중이어서, 본인 담당에서만 제외되었습니다.');
+    } else if (r.soft_delete) {
+      alert(`이슈 ${r.issues}건이 있어 비활성 처리되었습니다.`);
+    }
+    await renderMyVesList();
+    await reloadAll();
+  } catch (err) { alert('삭제 실패: ' + err.message); }
+}
 
+async function unassignMyVessel(vid, vname) {
+  if (!confirm(`"${vname}"을(를) 이 감독의 담당에서 제외하시겠습니까?\n(선박 자체는 삭제되지 않으며, 다른 감독의 담당이면 계속 유지됩니다)`)) return;
+  try {
+    const all = await api('/api/vessels/all');
+    const v = all.find(x => x.id === vid);
+    if (!v) throw new Error('선박을 찾을 수 없습니다.');
+    const newSids = (v.supervisor_ids || []).filter(s => s !== S.myVesSupId);
+    await api(`/api/vessels/${vid}`, {
+      method: 'PUT',
+      body: JSON.stringify({ supervisor_ids: newSids }),
+    });
+    await renderMyVesList();
+  } catch (err) { alert('실패: ' + err.message); }
+}
 
-# ═════════════════════════════════════════════════════════════════
-#  Error handlers
-# ═════════════════════════════════════════════════════════════════
-@app.errorhandler(413)
-def _too_large(e):
-    return jsonify({'error': '파일 크기는 20MB 이하여야 합니다.'}), 413
+async function addVesselFromMyVes() {
+  const name = $('#myves-add-name').value.trim();
+  if (!name) { alert('선박명을 입력하세요.'); return; }
+  try {
+    await api('/api/vessels', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        short_name:    $('#myves-add-short').value.trim() || name.slice(0, 12),
+        vessel_type:   $('#myves-add-type').value,
+        imo:           $('#myves-add-imo').value.trim(),
+        class_society: $('#myves-add-class').value.trim(),
+        supervisor_ids: [S.myVesSupId],
+      }),
+    });
+    $('#myves-add-name').value = '';
+    $('#myves-add-short').value = '';
+    $('#myves-add-imo').value = '';
+    $('#myves-add-class').value = '';
+    await renderMyVesList();
+  } catch (err) { alert('추가 실패: ' + err.message); }
+}
 
-@app.errorhandler(404)
-def _not_found(e):
-    if request.path.startswith('/api/'):
-        return jsonify({'error': 'not found'}), 404
-    return render_template('index.html'), 404
+// ═══════════════════════════════════════════════════════════
+//  Vessel Edit Modal (선박 정보 수정 — admin 전용)
+// ═══════════════════════════════════════════════════════════
+const VEDIT = {
+  id: null,
+  selectedSupIds: new Set(),
+  context: null,   // 'admin' | 'myves' — 어느 리스트를 갱신할지
+};
 
+async function openVesselEdit(vid, context) {
+  VEDIT.id = vid;
+  VEDIT.context = context || 'admin';
 
-# ═════════════════════════════════════════════════════════════════
-#  CLI entry
-# ═════════════════════════════════════════════════════════════════
-if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] == '--init-db':
-        init_db(drop=True)
-        sys.exit(0)
+  // 현재 선박 정보 조회
+  const all = await api('/api/vessels/all');
+  const v = all.find(x => x.id === vid);
+  if (!v) { alert('선박 정보를 찾을 수 없습니다.'); return; }
 
-    if not os.path.exists(DATABASE):
-        print('[INFO] DB 파일이 없어 자동 초기화합니다.')
-        init_db(drop=False)
+  $('#vedit-name').value  = v.name || '';
+  $('#vedit-short').value = v.short_name || '';
+  $('#vedit-type').value  = v.vessel_type || 'VLCC';
+  $('#vedit-imo').value   = v.imo || '';
+  $('#vedit-class').value = v.class_society || '';
 
-    # 개발 환경
-    app.run(host='0.0.0.0', port=5000, debug=True)
+  VEDIT.selectedSupIds = new Set(v.supervisor_ids || []);
+  renderVeditSups();
+
+  // member는 담당 감독 변경 불가 — 섹션 숨김
+  const supsField = $('#vedit-sups').closest('.form-field');
+  if (supsField) {
+    supsField.style.display = (S.user.role === 'admin') ? '' : 'none';
+  }
+
+  $('#vessel-edit-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function renderVeditSups() {
+  const box = $('#vedit-sups');
+  box.innerHTML = '';
+  // S.supervisors 또는 ADMIN.supervisors 사용
+  const sups = (ADMIN.supervisors && ADMIN.supervisors.length) ? ADMIN.supervisors : S.supervisors;
+  if (!sups || !sups.length) {
+    box.append(el('span', { style: 'color:var(--text-tertiary); font-size:11.5px' },
+      '감독이 없습니다.'));
+    return;
+  }
+  for (const s of sups) {
+    const chip = el('span', {
+      class: 'admin-chip' + (VEDIT.selectedSupIds.has(s.id) ? ' selected' : ''),
+      onclick: () => {
+        if (VEDIT.selectedSupIds.has(s.id)) VEDIT.selectedSupIds.delete(s.id);
+        else VEDIT.selectedSupIds.add(s.id);
+        renderVeditSups();
+      },
+    }, s.name);
+    box.append(chip);
+  }
+}
+
+function closeVesselEdit() {
+  $('#vessel-edit-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+
+async function saveVesselEdit() {
+  const name = $('#vedit-name').value.trim();
+  if (!name) { alert('선박명을 입력하세요.'); return; }
+  const isAdmin = S.user.role === 'admin';
+  if (isAdmin && !VEDIT.selectedSupIds.size) {
+    if (!confirm('담당 감독이 선택되지 않았습니다. 저장하면 미할당 상태가 됩니다. 계속할까요?')) return;
+  }
+  try {
+    const payload = {
+      name,
+      short_name:    $('#vedit-short').value.trim(),
+      vessel_type:   $('#vedit-type').value,
+      imo:           $('#vedit-imo').value.trim(),
+      class_society: $('#vedit-class').value.trim(),
+    };
+    if (isAdmin) {
+      payload.supervisor_ids = [...VEDIT.selectedSupIds];
+    }
+    await api(`/api/vessels/${VEDIT.id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    closeVesselEdit();
+    if (VEDIT.context === 'myves') {
+      await renderMyVesList();
+    } else {
+      await loadAdminVessels();
+    }
+    await reloadAll();
+  } catch (err) { alert('저장 실패: ' + err.message); }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Supervisor Edit Modal (감독 정보 수정)
+// ═══════════════════════════════════════════════════════════
+const SEDIT = { id: null, selectedColor: 'blue' };
+
+function openSupervisorEdit(sup) {
+  SEDIT.id = sup.id;
+  SEDIT.selectedColor = sup.color || 'blue';
+  $('#sedit-name').value  = sup.name || '';
+  $('#sedit-email').value = sup.email || '';
+  document.querySelectorAll('#sedit-colors .color-swatch').forEach(sw => {
+    sw.classList.toggle('selected', sw.dataset.color === SEDIT.selectedColor);
+  });
+  $('#supervisor-edit-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+function closeSupervisorEdit() {
+  $('#supervisor-edit-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+async function saveSupervisorEdit() {
+  const name = $('#sedit-name').value.trim();
+  if (!name) { alert('이름을 입력하세요.'); return; }
+  try {
+    await api(`/api/supervisors/${SEDIT.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name,
+        email: $('#sedit-email').value.trim(),
+        color: SEDIT.selectedColor,
+      }),
+    });
+    closeSupervisorEdit();
+    await loadAdminSupervisors();
+    await reloadAll();
+  } catch (err) { alert('저장 실패: ' + err.message); }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  User Edit Modal (사용자 정보 수정)
+// ═══════════════════════════════════════════════════════════
+const UEDIT = { id: null };
+
+function openUserEdit(user) {
+  UEDIT.id = user.id;
+  $('#uedit-username').value = user.username || '';
+  $('#uedit-display').value  = user.display_name || '';
+  $('#uedit-role').value     = user.role || 'member';
+  $('#uedit-active').value   = String(user.active != null ? user.active : 1);
+
+  // 감독 셀렉트 옵션 채우기
+  const sel = $('#uedit-supervisor');
+  sel.innerHTML = '';
+  sel.append(el('option', { value: '' }, '(연결 없음)'));
+  for (const s of ADMIN.supervisors) {
+    sel.append(el('option', { value: s.id }, s.name));
+  }
+  sel.value = user.supervisor_id != null ? String(user.supervisor_id) : '';
+
+  $('#user-edit-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+function closeUserEdit() {
+  $('#user-edit-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+async function saveUserEdit() {
+  try {
+    const supVal = $('#uedit-supervisor').value;
+    await api(`/api/users/${UEDIT.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        display_name: $('#uedit-display').value.trim(),
+        role:         $('#uedit-role').value,
+        active:       Number($('#uedit-active').value),
+        supervisor_id: supVal ? Number(supVal) : null,
+      }),
+    });
+    closeUserEdit();
+    await loadAdminUsers();
+  } catch (err) { alert('저장 실패: ' + err.message); }
+}
+
+// ───────────── reloadAll ─────────────
+async function reloadAll() {
+  await loadSupervisors();
+  renderTabs();
+  await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
+  renderVesselFilter();
+  renderTabContext();
+  await loadIssues();
+  _vesselCache.clear();
+  render();
+}
+
+// ───────────── Event wiring ─────────────
+function wireEvents() {
+  // 툴바의 "+ 신규 이슈" → 모달
+  $('#btn-new-issue').addEventListener('click', openNew);
+
+  $('#btn-today').addEventListener('click', () => {
+    const t = todayISO();
+    S.filters.q = t;
+    $('#filter-search').value = t;
+    loadIssues().then(render);
+  });
+
+  $('#btn-toggle-all').addEventListener('click', toggleAll);
+
+  // 엑셀 추출 — 현재 필터 상태 그대로 백엔드에 넘김
+  function buildExportParams() {
+    const p = new URLSearchParams();
+    if (S.activeTab !== 'all')   p.set('supervisor_id', S.activeTab);
+    if (S.filters.q)             p.set('q', S.filters.q);
+    if (S.filters.vessel_id)     p.set('vessel_id', S.filters.vessel_id);
+    if (S.filters.vessel_type)   p.set('vessel_type', S.filters.vessel_type);
+    if (S.filters.priority)      p.set('priority', S.filters.priority);
+    // status 처리 — 화면과 동일하게:
+    //  · 명시 필터 있으면 그대로  · "완료" 서브탭은 Closed  · 그 외 진행중(Open,InProgress)
+    if (S.filters.status) {
+      p.set('status', S.filters.status);
+    } else if (S.activeSubTab === 'closed') {
+      p.set('status', 'Closed');
+    } else if (S.activeSubTab === 'all') {
+      // 전체 서브 탭 = status 미지정 → 진행중+완료 모두
+    } else {
+      p.set('status_in', 'Open,InProgress');
+    }
+    return p;
+  }
+
+  $('#btn-export-xlsx').addEventListener('click', () => {
+    window.location = '/api/issues/export?' + buildExportParams().toString();
+  });
+
+  // 영문 엑셀 추출 — 동일 템플릿에 ITEM/DESCRIPTION/ACTION PLAN 영문 번역
+  $('#btn-export-xlsx-en').addEventListener('click', () => {
+    const p = buildExportParams();
+    p.set('lang', 'en');
+    downloadExport('#btn-export-xlsx-en', '/api/issues/export?' + p.toString(), 'TRMT_Daily_EN.xlsx');
+  });
+
+  // 업무 요약 추출 — 한글 요약(Gemini) 3열 표
+  $('#btn-export-summary').addEventListener('click', () => {
+    const p = buildExportParams();
+    downloadExport('#btn-export-summary', '/api/issues/summary-export?' + p.toString(), 'TRMT_업무요약.xlsx');
+  });
+
+  // 공통: AI 호출로 시간이 걸리는 추출을 fetch로 받아 파일 저장
+  function downloadExport(btnSel, url, fallbackName) {
+    const btn = $(btnSel);
+    const label = btn.querySelector('span');
+    const prev = label ? label.textContent : '';
+    if (label) label.textContent = '생성 중...';
+    btn.disabled = true;
+    fetch(url)
+      .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.blob().then(b => ({ b, res })); })
+      .then(({ b, res }) => {
+        const cd = res.headers.get('content-disposition') || '';
+        let name = fallbackName;
+        const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^;"']+)/i);
+        if (m) name = decodeURIComponent(m[1]);
+        const u = URL.createObjectURL(b);
+        const a = document.createElement('a');
+        a.href = u; a.download = name; document.body.appendChild(a); a.click();
+        a.remove(); URL.revokeObjectURL(u);
+      })
+      .catch(err => alert('추출 실패: ' + err.message))
+      .finally(() => { if (label) label.textContent = prev; btn.disabled = false; });
+  }
+
+  let searchTimer;
+  $('#filter-search').addEventListener('input', (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      S.filters.q = e.target.value.trim();
+      loadIssues().then(render);
+    }, 220);
+  });
+
+  $('#filter-vessel').addEventListener('change', (e) => {
+    S.filters.vessel_id = e.target.value;
+    loadIssues().then(render);
+  });
+  $('#filter-vessel-type').addEventListener('change', (e) => {
+    S.filters.vessel_type = e.target.value;
+    loadIssues().then(render);
+  });
+  $('#filter-status').addEventListener('change', (e) => {
+    S.filters.status = e.target.value;
+    loadIssues().then(render);
+  });
+  $('#filter-priority').addEventListener('change', (e) => {
+    S.filters.priority = e.target.value;
+    loadIssues().then(render);
+  });
+
+  // Edit Modal
+  $('#issue-modal').addEventListener('click', (ev) => {
+    if (ev.target.dataset.close === '1') closeModal();
+  });
+  $('#issue-form').addEventListener('submit', saveIssue);
+  $('#btn-delete').addEventListener('click', () => {
+    if (S.editingId) confirmDelete(S.editingId);
+  });
+  $('#f-supervisor').addEventListener('change', (e) => {
+    refillVesselSelect(e.target.value);
+  });
+  $('#btn-add-action').addEventListener('click', addActionEntry);
+
+  // Attach Modal
+  $('#attach-modal').addEventListener('click', (ev) => {
+    if (ev.target.dataset.closeAttach === '1') closeAttach();
+  });
+  const dz = $('#attach-dropzone');
+  const fileIn = $('#attach-file-input');
+  dz.addEventListener('click', () => fileIn.click());
+  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dz.classList.remove('dragover');
+    if (e.dataTransfer.files.length) uploadAttachFiles([...e.dataTransfer.files]);
+  });
+  fileIn.addEventListener('change', (e) => {
+    const files = [...(e.target.files || [])];
+    if (files.length) uploadAttachFiles(files);
+    e.target.value = '';
+  });
+
+  // 전역 ESC
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    // 2차 모달(편집) 먼저 체크
+    if ($('#vessel-edit-modal') && !$('#vessel-edit-modal').hidden) { closeVesselEdit(); return; }
+    if ($('#supervisor-edit-modal') && !$('#supervisor-edit-modal').hidden) { closeSupervisorEdit(); return; }
+    if ($('#user-edit-modal') && !$('#user-edit-modal').hidden) { closeUserEdit(); return; }
+    // 1차 모달
+    if (!$('#issue-modal').hidden) closeModal();
+    else if (!$('#attach-modal').hidden) closeAttach();
+    else if (!$('#myves-modal').hidden) closeMyVessels();
+    else if (!$('#password-modal').hidden) closePasswordModal();
+    else if ($('#admin-modal') && !$('#admin-modal').hidden) closeAdminModal();
+    else if (S.inlineAdd) cancelInlineAdd();
+  });
+
+  // ───── 선박 편집 모달 (admin 전용) ─────
+  const vEditModal = $('#vessel-edit-modal');
+  if (vEditModal) {
+    vEditModal.addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeVesedit === '1') closeVesselEdit();
+    });
+    $('#btn-vedit-save').addEventListener('click', saveVesselEdit);
+  }
+
+  // ───── 감독 편집 모달 (admin 전용) ─────
+  const sEditModal = $('#supervisor-edit-modal');
+  if (sEditModal) {
+    sEditModal.addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeSupedit === '1') closeSupervisorEdit();
+    });
+    $('#btn-sedit-save').addEventListener('click', saveSupervisorEdit);
+    $('#sedit-colors').addEventListener('click', (ev) => {
+      const sw = ev.target.closest('.color-swatch');
+      if (!sw) return;
+      SEDIT.selectedColor = sw.dataset.color;
+      document.querySelectorAll('#sedit-colors .color-swatch')
+        .forEach(x => x.classList.toggle('selected', x === sw));
+    });
+  }
+
+  // ───── 사용자 편집 모달 (admin 전용) ─────
+  const uEditModal = $('#user-edit-modal');
+  if (uEditModal) {
+    uEditModal.addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeUseredit === '1') closeUserEdit();
+    });
+    $('#btn-uedit-save').addEventListener('click', saveUserEdit);
+  }
+
+  // ───── 담당 선박 모달 ─────
+  $('#myves-modal').addEventListener('click', (ev) => {
+    if (ev.target.dataset.closeMyves === '1') closeMyVessels();
+  });
+  $('#btn-myves-add')?.addEventListener('click', addVesselFromMyVes);
+
+  // ───── User Menu (네비 우측 드롭다운) ─────
+  const umTrig = $('#user-menu-trigger');
+  const umDrop = $('#user-dropdown');
+  if (umTrig) {
+    umTrig.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleUserMenu();
+    });
+    document.addEventListener('click', (e) => {
+      if (!umDrop.hidden && !e.target.closest('#user-dropdown') && !e.target.closest('#user-menu-trigger')) {
+        toggleUserMenu(false);
+      }
+    });
+  }
+
+  // ───── Password Change ─────
+  $('#btn-change-password')?.addEventListener('click', () => {
+    toggleUserMenu(false);
+    openPasswordModal();
+  });
+  $('#password-modal').addEventListener('click', (ev) => {
+    if (ev.target.dataset.closePw === '1') closePasswordModal();
+  });
+  $('#password-form').addEventListener('submit', submitPasswordChange);
+
+  // ───── Admin Modal ─────
+  const adminBtn = $('#btn-open-admin');
+  if (adminBtn) {
+    adminBtn.addEventListener('click', openAdminModal);
+    $('#admin-modal').addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeAdmin === '1') closeAdminModal();
+    });
+    document.querySelectorAll('.admin-tab').forEach(t => {
+      t.addEventListener('click', () => switchAdminTab(t.dataset.adminTab));
+    });
+    // 감독 추가
+    $('#btn-sup-add').addEventListener('click', addSupervisor);
+    $('#sup-add-colors').addEventListener('click', (ev) => {
+      const sw = ev.target.closest('.color-swatch');
+      if (!sw) return;
+      ADMIN.selectedColor = sw.dataset.color;
+      document.querySelectorAll('#sup-add-colors .color-swatch')
+        .forEach(x => x.classList.toggle('selected', x === sw));
+    });
+    // 선박 추가
+    $('#btn-ves-add').addEventListener('click', addVessel);
+    // 사용자 추가
+    $('#btn-user-add').addEventListener('click', addUser);
+  }
+}
+
+// ───────────── Init ─────────────
+(async function init() {
+  try {
+    await loadSupervisors();
+    S.activeTab = S.user.supervisor_id
+      ? S.user.supervisor_id
+      : (S.supervisors[0] ? S.supervisors[0].id : 'all');
+    await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
+    renderTabs();
+    renderVesselFilter();
+    renderTabContext();
+    await loadIssues();
+    fillFormSelects();
+    render();
+    wireEvents();
+  } catch (err) {
+    console.error(err);
+    alert('초기 로드 실패: ' + err.message);
+  }
+})();
