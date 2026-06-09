@@ -1090,6 +1090,86 @@ def api_issue_export():
     )
 
 
+def _gen_summary_rows(supervisor_id=None):
+    """해당 스코프(특정 감독 또는 전체)의 모든 이슈(진행중+완료)를 Gemini 요약하여
+    [{no, vessel_name, issue, priority, status}] 반환."""
+    conds, params = ['1=1'], []
+    if supervisor_id:
+        conds.append('i.supervisor_id = ?'); params.append(supervisor_id)
+    sql = f'''
+        SELECT i.*, s.display_order AS sv_order, v.name AS vessel_name
+          FROM issues i
+          JOIN supervisors s ON s.id = i.supervisor_id
+          JOIN vessels     v ON v.id = i.vessel_id
+         WHERE {' AND '.join(conds)}
+         ORDER BY s.display_order ASC, s.id ASC, i.issue_date ASC, i.id ASC
+    '''
+    rows = [_issue_to_dict(r) for r in query(sql, params)]
+    payload = [{'i': idx,
+                'description': r.get('description') or '',
+                'action': _latest_action_progress(r.get('actions'))}
+               for idx, r in enumerate(rows)]
+    summaries = _gen_issue_summaries(payload)
+    STAT = {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'}
+    out = []
+    for idx, r in enumerate(rows):
+        s = summaries.get(idx, {})
+        desc = s.get('desc') or (r.get('description') or '').strip().split('\n')[0]
+        ad, araw = _latest_action(r.get('actions'))
+        action = s.get('action') or araw
+        head = f"{_md_label(r.get('issue_date') or '')} {r.get('item_topic') or ''}".strip()
+        lines = [head]
+        if desc:
+            lines.append(f'1) {desc}')
+        if action:
+            md = _md_label(ad)
+            lines.append(f'2) {md} {action}'.strip() if md else f'2) {action}')
+        out.append({'no': idx + 1,
+                    'vessel_name': r.get('vessel_name') or '',
+                    'issue': '\n'.join(lines),
+                    'priority': r.get('priority') or '',
+                    'status': STAT.get(r.get('status'), r.get('status') or '')})
+    return out
+
+
+def _ensure_summary_table():
+    execute("""CREATE TABLE IF NOT EXISTS issue_summaries (
+                 scope TEXT PRIMARY KEY, data TEXT, generated_at TEXT )""")
+
+
+def _summary_scope():
+    sid = request.args.get('supervisor_id')
+    return str(sid) if sid else 'all'
+
+
+@app.route('/api/issues/summary', methods=['GET'])
+@login_required
+def api_issue_summary_get():
+    _ensure_summary_table()
+    row = query('SELECT data, generated_at FROM issue_summaries WHERE scope=?',
+                (_summary_scope(),), one=True)
+    if not row:
+        return jsonify({'rows': [], 'generated_at': None})
+    try:
+        rows = json.loads(row['data'])
+    except Exception:
+        rows = []
+    return jsonify({'rows': rows, 'generated_at': row['generated_at']})
+
+
+@app.route('/api/issues/summary-generate', methods=['POST'])
+@login_required
+def api_issue_summary_generate():
+    from datetime import datetime
+    _ensure_summary_table()
+    sid = request.args.get('supervisor_id') or None
+    rows = _gen_summary_rows(sid)
+    gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+    execute("INSERT OR REPLACE INTO issue_summaries (scope, data, generated_at) VALUES (?, ?, ?)",
+            (_summary_scope(), json.dumps(rows, ensure_ascii=False), gen_at))
+    return jsonify({'rows': rows, 'generated_at': gen_at})
+
+
 @app.route('/api/issues/summary-export')
 @login_required
 def api_issue_summary_export():
