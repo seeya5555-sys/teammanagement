@@ -4438,3 +4438,4 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 .cls-up-results + .form-hint, .modal-foot .form-hint { font-size: 12px; color: var(--text-tertiary); }
 .cs-toolbar .form-hint { font-size: 12px; color: var(--text-tertiary); }
 .cls-bulk-toggle { display: inline-flex; gap: 6px; }
+.csx-dropzone { padding: 18px 16px; margin-bottom: 10px; cursor: pointer; }
