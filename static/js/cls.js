@@ -9,8 +9,6 @@ const $ = (sel) => document.querySelector(sel);
 const HIDDEN_SUP = ['FLEET AGENDA'];
 const isHiddenSup = (s) => HIDDEN_SUP.includes((s.name || '').toUpperCase());
 
-const IMP_LABEL = { '': '미지정', High: '상', Mid: '중', Low: '하' };
-
 function loadExpanded() {
   try {
     const raw = localStorage.getItem('trmt_cls_collapsed');
@@ -187,7 +185,7 @@ function catSection(title, cls, items) {
     el('th', { class: 'c-desc' }, 'Description (원문)'),
     el('th', { class: 'c-date' }, 'Due'),
     el('th', { class: 'c-rmk' }, '한글 요약'),
-    el('th', { class: 'c-imp' }, '중요도'))));
+    el('th', { class: 'c-imp' }, 'Urgent'))));
   const tb = el('tbody');
   items.forEach(it => tb.append(itemRow(it)));
   tbl.append(tb);
@@ -205,28 +203,27 @@ function editCell(value, field, id, extraClass) {
 }
 
 function itemRow(it) {
-  const imp = el('select', {
-    class: 'cls-imp-sel imp-' + (it.importance || 'none'),
+  const chk = el('input', {
+    type: 'checkbox',
+    class: 'cls-urgent-chk',
     'data-id': it.id,
-    onchange: (e) => {
-      const val = e.target.value;
-      e.target.className = 'cls-imp-sel imp-' + (val || 'none');
-      saveItem(it.id, { importance: val });
-    },
+    title: 'Urgent 표시',
   });
-  ['', 'High', 'Mid', 'Low'].forEach(v => {
-    const o = el('option', { value: v }, IMP_LABEL[v]);
-    if ((it.importance || '') === v) o.selected = true;
-    imp.append(o);
+  chk.checked = (it.importance === 'Urgent');
+  chk.addEventListener('change', (e) => {
+    const val = e.target.checked ? 'Urgent' : '';
+    it.importance = val;
+    e.target.closest('tr').classList.toggle('cls-urgent-row', !!val);
+    saveItem(it.id, { importance: val });
   });
 
-  return el('tr', { class: 'imp-row-' + (it.importance || 'none') },
+  return el('tr', { class: it.importance === 'Urgent' ? 'cls-urgent-row' : '' },
     el('td', { class: 'c-no' }, it.no),
     editCell(it.issued_date, 'issued_date', it.id, 'c-date'),
     editCell(it.description, 'description', it.id, 'c-desc'),
     editCell(it.due_date, 'due_date', it.id, 'c-date'),
     editCell(it.remark, 'remark', it.id, 'c-rmk'),
-    el('td', { class: 'c-imp' }, imp));
+    el('td', { class: 'c-imp cls-urgent-cell' }, chk));
 }
 
 // 인라인 편집 저장 (contenteditable blur)
