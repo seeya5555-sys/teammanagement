@@ -288,6 +288,16 @@ async function assignSnap(csId, vesselId) {
   catch (e) { alert('배정 실패: ' + e.message); }
 }
 
+// ───────────── 전체 접기/펼치기 ─────────────
+function collapseAll() {
+  (S.data.vessels || []).forEach(g => S.collapsed.add(g.snapshot.id));
+  saveExpanded(); render();
+}
+function expandAll() {
+  S.collapsed.clear();
+  saveExpanded(); render();
+}
+
 // ───────────── 업로드 ─────────────
 function openUpload() {
   $('#cls-upload-results').innerHTML = '';
@@ -359,6 +369,8 @@ function wireSearch() {
 async function init() {
   wireUpload();
   wireSearch();
+  $('#cls-collapse-all').addEventListener('click', collapseAll);
+  $('#cls-expand-all').addEventListener('click', expandAll);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeUpload(); });
   try {
     S.supervisors = await api('/api/supervisors');
