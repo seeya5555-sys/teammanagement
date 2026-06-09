@@ -47,6 +47,15 @@
 
       <div class="user-menu">
         {% if session.role == 'admin' %}
+        <button class="admin-trigger" id="btn-open-api" title="외부 연동용 데이터 API" style="margin-right:6px">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+          </svg>
+          <span class="trig-label">API 연동</span>
+        </button>
+        {% endif %}
+        {% if session.role == 'admin' %}
         <button class="admin-trigger" id="btn-open-admin" title="감독/선박/사용자 관리">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
@@ -86,6 +95,97 @@
     {% block content %}{% endblock %}
   </main>
 {% endblock %}
+
+{% if session.role == 'admin' %}
+<div class="modal" id="api-modal" hidden style="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;">
+  <div class="modal-backdrop" id="api-modal-bd" style="position:absolute;inset:0;background:rgba(0,0,0,.45);"></div>
+  <div class="modal-box" role="dialog" aria-modal="true"
+       style="position:relative;width:min(760px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:12px;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <h2 style="margin:0;font-size:18px;">외부 연동 데이터 API</h2>
+      <button id="api-modal-x" style="border:none;background:none;font-size:22px;cursor:pointer;line-height:1;">&times;</button>
+    </div>
+    <p style="color:#555;font-size:13px;margin:4px 0 14px;">
+      이 키를 가진 외부 사이트가 아래 주소로 TRMT 데이터를 <strong>읽기 전용(JSON)</strong>으로 가져갈 수 있습니다.
+      출장 경비는 제외됩니다. 키는 외부에 노출되지 않도록 주의하세요.
+    </p>
+
+    <label style="font-size:12px;font-weight:600;color:#333;">API Key</label>
+    <div style="display:flex;gap:6px;margin:4px 0 14px;">
+      <input id="api-key-field" readonly value="불러오는 중..."
+             style="flex:1;font-family:monospace;font-size:13px;padding:8px 10px;border:1px solid #ccc;border-radius:6px;background:#f7f7f8;">
+      <button class="btn btn-outline btn-sm" id="api-key-copy">복사</button>
+      <button class="btn btn-outline btn-sm" id="api-key-regen" title="새 키 발급(기존 키는 즉시 무효)">재발급</button>
+    </div>
+
+    <label style="font-size:12px;font-weight:600;color:#333;">엔드포인트 (Base URL: <span id="api-base"></span>)</label>
+    <div style="margin:4px 0 14px;font-family:monospace;font-size:12.5px;line-height:1.9;color:#222;">
+      <div>GET <strong>/api/ext/all</strong> — 전체(선박·이슈·CS·Vetting·DD·Boarding·일정)</div>
+      <div>GET /api/ext/issues — Daily 업무</div>
+      <div>GET /api/ext/surveys — Condition Survey</div>
+      <div>GET /api/ext/vettings — Vetting</div>
+      <div>GET /api/ext/dock-reports — Dry Dock</div>
+      <div>GET /api/ext/boarding-reports — Boarding</div>
+      <div>GET /api/ext/calendar — 일정</div>
+    </div>
+
+    <label style="font-size:12px;font-weight:600;color:#333;">호출 예시</label>
+    <pre id="api-example" style="background:#1e1e2e;color:#e6e6e6;padding:12px;border-radius:8px;font-size:12px;overflow:auto;margin:4px 0 4px;"></pre>
+    <p style="color:#777;font-size:12px;margin:6px 0 0;">
+      인증: 헤더 <code>X-API-Key: 키</code> 또는 쿼리 <code>?key=키</code>. 선박 매칭은 <code>vessel_key</code>(선박명 소문자) 사용.
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const modal = document.getElementById('api-modal');
+  const open = document.getElementById('btn-open-api');
+  if (!open) return;
+  const field = document.getElementById('api-key-field');
+  const base = document.getElementById('api-base');
+  const example = document.getElementById('api-example');
+  let loaded = false;
+
+  function render(key, baseUrl) {
+    field.value = key;
+    base.textContent = baseUrl;
+    example.textContent =
+      'curl -H "X-API-Key: ' + key + '" \\\n     ' + baseUrl + '/api/ext/all\n\n' +
+      '# 또는\n' + baseUrl + '/api/ext/issues?key=' + key;
+  }
+  async function load() {
+    try {
+      const r = await fetch('/api/ext/key');
+      const j = await r.json();
+      render(j.api_key, j.base_url);
+      loaded = true;
+    } catch (e) { field.value = '불러오기 실패'; }
+  }
+  function show() { modal.hidden = false; if (!loaded) load(); }
+  function hide() { modal.hidden = true; }
+
+  open.addEventListener('click', show);
+  document.getElementById('api-modal-x').addEventListener('click', hide);
+  document.getElementById('api-modal-bd').addEventListener('click', hide);
+  document.getElementById('api-key-copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(field.value).then(() => {
+      const b = document.getElementById('api-key-copy');
+      const t = b.textContent; b.textContent = '복사됨'; setTimeout(() => b.textContent = t, 1200);
+    });
+  });
+  document.getElementById('api-key-regen').addEventListener('click', async () => {
+    if (!confirm('새 키를 발급하면 기존 키는 즉시 사용할 수 없습니다. 진행할까요?')) return;
+    try {
+      const r = await fetch('/api/ext/key/regenerate', { method: 'POST' });
+      const j = await r.json();
+      render(j.api_key, base.textContent);
+      alert('새 API 키가 발급되었습니다. 외부 사이트에 새 키를 전달하세요.');
+    } catch (e) { alert('재발급 실패'); }
+  });
+})();
+</script>
+{% endif %}
 
   {% block scripts %}{% endblock %}
 </body>
