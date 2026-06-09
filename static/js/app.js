@@ -163,6 +163,20 @@ async function loadVessels(supId) {
 async function loadIssues() {
   const p = new URLSearchParams();
   if (S.activeTab !== 'all') p.set('supervisor_id', S.activeTab);
+
+  // 요약 서브탭: 저장된 요약만 불러오고 일반 이슈 로딩은 건너뜀
+  if (S.activeSubTab === 'summary') {
+    const sp = new URLSearchParams();
+    if (S.activeTab !== 'all') sp.set('supervisor_id', S.activeTab);
+    try {
+      S.summary = await api('/api/issues/summary?' + sp.toString());
+    } catch (_) {
+      S.summary = { rows: [], generated_at: null };
+    }
+    S.issues = [];
+    return;
+  }
+
   if (S.filters.q)           p.set('q', S.filters.q);
   if (S.filters.vessel_id)   p.set('vessel_id', S.filters.vessel_id);
   if (S.filters.vessel_type) p.set('vessel_type', S.filters.vessel_type);
@@ -242,6 +256,7 @@ function renderSubTabs() {
   bar.append(subtabEl('all',    '전체',   openCnt + doneCnt, S.activeSubTab === 'all'));
   bar.append(subtabEl('open',   '진행중', openCnt, S.activeSubTab === 'open'));
   bar.append(subtabEl('closed', '완료',   doneCnt, S.activeSubTab === 'closed'));
+  bar.append(subtabEl('summary', '요약',  null,    S.activeSubTab === 'summary'));
 }
 
 function subtabEl(id, label, count, active) {
@@ -252,8 +267,10 @@ function subtabEl(id, label, count, active) {
   },
     el('span', { class: 'subtab-dot' }),
     label,
-    el('span', { class: 'subtab-count' }, String(count))
   );
+  if (count !== null && count !== undefined) {
+    t.append(el('span', { class: 'subtab-count' }, String(count)));
+  }
   return t;
 }
 
@@ -410,15 +427,60 @@ function renderSummary() {
 
 // ───────────── Render — main ─────────────
 function render() {
+  const isSummary = S.activeSubTab === 'summary';
+  // 뷰 전환
+  const tw = $('#table-wrap'), cl = $('#card-list'), sw = $('#summary-wrap'),
+        es = $('#empty-state'), sr = $('#summary-row');
+  if (sw) sw.hidden = !isSummary;
+  if (isSummary) {
+    if (tw) tw.hidden = true;
+    if (cl) cl.style.display = 'none';
+    if (es) es.hidden = true;
+    if (sr) sr.innerHTML = '';
+    renderSummaryView();
+    updateToggleAllButton();
+    return;
+  }
+  if (tw) tw.hidden = false;
+  if (cl) cl.style.display = '';
+
   const hasIssues = S.issues.length > 0;
   $('#empty-state').hidden = hasIssues || !!S.inlineAdd;
   renderTable();
   renderCards();
   renderSummary();
   updateToggleAllButton();
-  // 다른 필터(검색/우선순위/선종)가 바뀐 후에도 선박 드롭다운의 카운트가
-  // 일관되게 보이도록 갱신 (select 값은 유지됨)
   refreshVesselFilterCounts();
+}
+
+// 요약 서브탭 뷰 렌더
+function renderSummaryView() {
+  const tbody = $('#summary-tbody');
+  const meta = $('#summary-meta');
+  const empty = $('#summary-empty');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const data = S.summary || { rows: [], generated_at: null };
+  const rows = data.rows || [];
+  if (meta) {
+    meta.textContent = data.generated_at
+      ? `마지막 갱신: ${data.generated_at}  ·  ${rows.length}건`
+      : '';
+  }
+  if (!rows.length) {
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+  for (const r of rows) {
+    tbody.append(el('tr', {},
+      el('td', { style: 'text-align:center;vertical-align:top;' }, String(r.no)),
+      el('td', { style: 'vertical-align:top;' }, r.vessel_name || ''),
+      el('td', { style: 'white-space:pre-wrap;vertical-align:top;line-height:1.5;' }, r.issue || ''),
+      el('td', { style: 'text-align:center;vertical-align:top;' }, r.priority || ''),
+      el('td', { style: 'text-align:center;vertical-align:top;' }, r.status || ''),
+    ));
+  }
 }
 
 function renderTable() {
@@ -2440,6 +2502,31 @@ function wireEvents() {
   $('#btn-export-summary').addEventListener('click', () => {
     const p = buildExportParams();
     downloadExport('#btn-export-summary', '/api/issues/summary-export?' + p.toString(), 'TRMT_업무요약.xlsx');
+  });
+
+  // 업무 요약 — 현재 탭(전체/감독)의 전체 이슈를 요약하여 '요약' 탭에 저장·갱신
+  $('#btn-summary-gen').addEventListener('click', async () => {
+    const btn = $('#btn-summary-gen');
+    const label = btn.querySelector('span');
+    const prev = label ? label.textContent : '';
+    if (label) label.textContent = '요약 생성 중...';
+    btn.disabled = true;
+    const sp = new URLSearchParams();
+    if (S.activeTab !== 'all') sp.set('supervisor_id', S.activeTab);
+    try {
+      const res = await api('/api/issues/summary-generate?' + sp.toString(), { method: 'POST' });
+      S.summary = res;
+      S.activeSubTab = 'summary';
+      try { localStorage.setItem('trmt_subtab', 'summary'); } catch (_) {}
+      renderSubTabs();
+      renderTabContext();
+      render();
+    } catch (e) {
+      alert('요약 생성 실패: ' + e.message);
+    } finally {
+      if (label) label.textContent = prev;
+      btn.disabled = false;
+    }
   });
 
   // 공통: AI 호출로 시간이 걸리는 추출을 fetch로 받아 파일 저장
