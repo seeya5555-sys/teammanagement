@@ -2644,22 +2644,26 @@ def api_vetting_create():
     if v['vessel_type'] not in VETTING_TYPES:
         return jsonify({'error': f'Vetting은 {", ".join(VETTING_TYPES)} 선박에만 적용됩니다.'}), 400
 
-    op = d.get('operation') or None
-    if op and op not in ('Loading','Discharging','Idle'):
-        op = None
+    st = d.get('sire_type') or None
+    if st and st not in ('Idle', 'Bunkering', 'Discharge'):
+        st = None
+    valid = d.get('valid') or None
+    if valid and valid not in ('Valid', 'Invalid'):
+        valid = None
 
     new_id = execute("""
         INSERT INTO vettings
             (vessel_id, report_number, inspection_date, inspection_company,
-             inspector, port, operation, overall_remark, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             inspector, port, sire_type, valid, overall_remark, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (vid,
           d.get('report_number') or '',
           d.get('inspection_date') or None,
           d.get('inspection_company') or '',
           d.get('inspector') or '',
           d.get('port') or '',
-          op,
+          st,
+          valid,
           d.get('overall_remark') or '',
           session.get('username')))
     row = query('SELECT * FROM vettings WHERE id=?', (new_id,), one=True)
@@ -2686,7 +2690,7 @@ def api_vetting_update(vid):
     d = request.get_json() or {}
     sets, params = [], []
     for f in ('report_number','inspection_date','inspection_company','inspector',
-              'port','operation','overall_remark',
+              'port','sire_type','valid','overall_remark',
               'manual_observation_count','manual_open_count','manual_close_count'):
         if f in d:
             sets.append(f'{f} = ?')
