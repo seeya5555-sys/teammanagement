@@ -4406,14 +4406,10 @@ body.dde-readonly .bre-defect-photo-thumb {
 .cls-edit:focus { box-shadow: inset 0 0 0 2px var(--blue); background: #fff; }
 .cls-edit.c-rmk { background: #fcfcf7; }
 
-.cls-imp-sel {
-  width: 100%; font-size: 12px; padding: 3px 4px; border-radius: 5px;
-  border: 1px solid var(--border); background: var(--surface); cursor: pointer;
-}
-.cls-imp-sel.imp-High { background: #fee2e2; color: #b91c1c; border-color: #fecaca; font-weight: 700; }
-.cls-imp-sel.imp-Mid  { background: #fef3c7; color: #92400e; border-color: #fde68a; font-weight: 600; }
-.cls-imp-sel.imp-Low  { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
-tr.imp-row-High td { background: #fff5f5; }
+.cls-urgent-cell { text-align: center; }
+.cls-urgent-chk { width: 16px; height: 16px; cursor: pointer; accent-color: #dc2626; }
+tr.cls-urgent-row td { background: #fff5f5; }
+tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 
 /* 미매칭 */
 .cls-unm-title {
