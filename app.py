@@ -5168,6 +5168,249 @@ def _not_found(e):
 
 
 # ═════════════════════════════════════════════════════════════════
+#  외부 연동용 데이터 API (읽기 전용, API 키 보호)
+#  · 출장 경비(biz_*) 제외 — 그 외 전체 탭 공개
+# ═════════════════════════════════════════════════════════════════
+def _ensure_api_table():
+    execute("""CREATE TABLE IF NOT EXISTS api_settings (
+                 k TEXT PRIMARY KEY, v TEXT )""")
+
+
+def _get_api_key(create=True):
+    _ensure_api_table()
+    row = query("SELECT v FROM api_settings WHERE k='api_key'", one=True)
+    if row and row['v']:
+        return row['v']
+    if not create:
+        return None
+    key = secrets.token_hex(24)
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)", (key,))
+    return key
+
+
+def _check_api_key():
+    provided = (request.headers.get('X-API-Key')
+                or request.args.get('key') or '').strip()
+    if not provided:
+        return False
+    real = _get_api_key(create=False)
+    if not real:
+        return False
+    return secrets.compare_digest(provided, real)
+
+
+def _vkey(name):
+    return (name or '').strip().lower()
+
+
+def api_key_required(fn):
+    @wraps(fn)
+    def wrapper(*a, **k):
+        if not _check_api_key():
+            return jsonify({'error': 'unauthorized',
+                            'message': 'valid API key required (X-API-Key header or ?key=)'}), 401
+        return fn(*a, **k)
+    return wrapper
+
+
+# ---- 내부(로그인) : 키 조회/재발급 ----
+@app.route('/api/ext/key', methods=['GET'])
+@login_required
+def api_ext_key_get():
+    return jsonify({'api_key': _get_api_key(),
+                    'base_url': request.host_url.rstrip('/')})
+
+
+@app.route('/api/ext/key/regenerate', methods=['POST'])
+@login_required
+def api_ext_key_regen():
+    _ensure_api_table()
+    key = secrets.token_hex(24)
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)", (key,))
+    return jsonify({'api_key': key})
+
+
+# ---- 데이터 빌더 ----
+def _ext_issues():
+    rows = query("""SELECT i.*, v.name AS vessel_name, v.imo AS imo,
+                           s.name AS supervisor_name
+                      FROM issues i
+                      LEFT JOIN vessels v ON v.id = i.vessel_id
+                      LEFT JOIN supervisors s ON s.id = i.supervisor_id
+                     ORDER BY i.issue_date, i.id""")
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['actions'] = json.loads(d['actions']) if d.get('actions') else []
+        except Exception:
+            d['actions'] = []
+        d['vessel_key'] = _vkey(d.get('vessel_name'))
+        out.append(d)
+    return out
+
+
+def _ext_surveys():
+    surveys = query("""SELECT cs.*, v.name AS vessel_name, v.imo AS imo
+                         FROM cs_surveys cs LEFT JOIN vessels v ON v.id = cs.vessel_id
+                        ORDER BY cs.year DESC, cs.quarter DESC, cs.id""")
+    out = []
+    for s in surveys:
+        d = dict(s)
+        d['vessel_key'] = _vkey(d.get('vessel_name'))
+        d['findings'] = [dict(f) for f in query(
+            """SELECT category, no, item, description, remark, status
+                 FROM cs_findings WHERE survey_id=?
+                ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id""",
+            (s['id'],))]
+        out.append(d)
+    return out
+
+
+def _ext_vettings():
+    vts = query("""SELECT vt.*, v.name AS vessel_name, v.imo AS imo
+                     FROM vettings vt LEFT JOIN vessels v ON v.id = vt.vessel_id
+                    ORDER BY vt.inspection_date DESC, vt.id""")
+    out = []
+    for v in vts:
+        d = dict(v)
+        d['vessel_key'] = _vkey(d.get('vessel_name'))
+        d['findings'] = [dict(f) for f in query(
+            """SELECT no, item, description, remark, status
+                 FROM vt_findings WHERE vetting_id=? ORDER BY no, id""", (v['id'],))]
+        out.append(d)
+    return out
+
+
+def _report_tree(report_id, sec_table, blk_table):
+    secs = query(f"SELECT * FROM {sec_table} WHERE report_id=? ORDER BY display_order, id",
+                 (report_id,))
+    out = []
+    for s in secs:
+        sd = dict(s)
+        blocks = []
+        for b in query(f"SELECT * FROM {blk_table} WHERE section_id=? ORDER BY display_order, id",
+                       (s['id'],)):
+            bd = dict(b)
+            try:
+                bd['content'] = json.loads(bd['content_json']) if bd.get('content_json') else None
+            except Exception:
+                bd['content'] = None
+            bd.pop('content_json', None)
+            blocks.append(bd)
+        sd['blocks'] = blocks
+        out.append(sd)
+    return out
+
+
+def _ext_dock_reports():
+    reps = query("""SELECT d.*, v.name AS vessel_name, v.imo AS imo
+                      FROM dock_reports d LEFT JOIN vessels v ON v.id = d.vessel_id
+                     WHERE COALESCE(d.is_template,0)=0
+                     ORDER BY d.id DESC""")
+    out = []
+    for r in reps:
+        d = dict(r)
+        d['vessel_key'] = _vkey(d.get('vessel_name'))
+        d['sections'] = _report_tree(r['id'], 'dock_report_sections', 'dock_report_blocks')
+        out.append(d)
+    return out
+
+
+def _ext_boarding_reports():
+    reps = query("""SELECT b.*, v.name AS vessel_name, v.imo AS imo
+                      FROM boarding_reports b LEFT JOIN vessels v ON v.id = b.vessel_id
+                     WHERE COALESCE(b.is_template,0)=0
+                     ORDER BY b.id DESC""")
+    out = []
+    for r in reps:
+        d = dict(r)
+        d['vessel_key'] = _vkey(d.get('vessel_name'))
+        d['sections'] = _report_tree(r['id'], 'boarding_report_sections', 'boarding_report_blocks')
+        out.append(d)
+    return out
+
+
+def _ext_calendar():
+    rows = query("""SELECT c.*, v.name AS vessel_name, s.name AS supervisor_name
+                      FROM calendar_events c
+                      LEFT JOIN vessels v ON v.id = c.vessel_id
+                      LEFT JOIN supervisors s ON s.id = c.supervisor_id
+                     ORDER BY c.start_date, c.id""")
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['vessel_key'] = _vkey(d.get('vessel_name'))
+        out.append(d)
+    return out
+
+
+def _ext_vessels():
+    return [dict(r) | {'vessel_key': _vkey(r['name'])}
+            for r in query("SELECT * FROM vessels ORDER BY name")]
+
+
+# ---- 공개(키 보호) 데이터 엔드포인트 ----
+@app.route('/api/ext/issues')
+@api_key_required
+def api_ext_issues():
+    return jsonify(_ext_issues())
+
+
+@app.route('/api/ext/surveys')
+@api_key_required
+def api_ext_surveys():
+    return jsonify(_ext_surveys())
+
+
+@app.route('/api/ext/vettings')
+@api_key_required
+def api_ext_vettings():
+    return jsonify(_ext_vettings())
+
+
+@app.route('/api/ext/dock-reports')
+@api_key_required
+def api_ext_dock():
+    return jsonify(_ext_dock_reports())
+
+
+@app.route('/api/ext/boarding-reports')
+@api_key_required
+def api_ext_boarding():
+    return jsonify(_ext_boarding_reports())
+
+
+@app.route('/api/ext/calendar')
+@api_key_required
+def api_ext_calendar():
+    return jsonify(_ext_calendar())
+
+
+@app.route('/api/ext/vessels')
+@api_key_required
+def api_ext_vessels():
+    return jsonify(_ext_vessels())
+
+
+@app.route('/api/ext/all')
+@api_key_required
+def api_ext_all():
+    from datetime import datetime as _dt
+    return jsonify({
+        'generated_at': _dt.now().isoformat(timespec='seconds'),
+        'source': 'TRMT3',
+        'vessels':           _ext_vessels(),
+        'issues':            _ext_issues(),
+        'condition_surveys': _ext_surveys(),
+        'vettings':          _ext_vettings(),
+        'dock_reports':      _ext_dock_reports(),
+        'boarding_reports':  _ext_boarding_reports(),
+        'calendar_events':   _ext_calendar(),
+    })
+
+
+# ═════════════════════════════════════════════════════════════════
 #  CLI entry
 # ═════════════════════════════════════════════════════════════════
 if __name__ == '__main__':
