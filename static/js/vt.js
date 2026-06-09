@@ -293,8 +293,13 @@ function vettingDigest(item) {
     .join('\n\n');
 
   const detailCell = el('td', { class: 'vt-dg-detail' });
-  if (detail) detailCell.textContent = detail;
-  else detailCell.append(el('span', { class: 'placeholder' }, '–'));
+  if (detail) {
+    detail.split('\n').forEach(line => {
+      detailCell.append(el('div', { class: 'vt-dg-line' }, line.trim() ? line : '\u00A0'));
+    });
+  } else {
+    detailCell.append(el('span', { class: 'placeholder' }, '–'));
+  }
 
   const table = el('table', { class: 'vt-digest-table' });
   table.append(el('thead', {}, el('tr', {},
