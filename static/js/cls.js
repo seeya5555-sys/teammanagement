@@ -167,6 +167,7 @@ function vesselCard(g) {
       el('button', { class: 'btn btn-outline btn-sm cls-del', onclick: () => deleteSnap(snap.id, v.name) }, '삭제')));
 
   const body = el('div', { class: 'cls-card-body', hidden: collapsed });
+  body.append(clsDigestPanel(snap));
   if (!coc.length && !stat.length) {
     body.append(el('div', { class: 'cls-noitems' }, 'Open 선급지적 / 기국 사항 없음'));
   } else {
@@ -174,6 +175,54 @@ function vesselCard(g) {
     body.append(catSection('기국 (Statutory)', 'stat', stat));
   }
   return el('div', { class: 'cls-card' }, head, body);
+}
+
+// ───────────── 선박 단위 CLASS 요약 (자동 집계, 읽기전용) ─────────────
+function clsDigest(snap) {
+  const coc = snap.coc || [], stat = snap.statutory || [];
+  const total = coc.length + stat.length;
+  const norm = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const text = it => (it.remark || it.description || '').trim();
+
+  const statMatched = new Set();
+  const lines = [];
+  // 선급지적 먼저: 동일한 기국 항목(원문 기준)이 있으면 한 번만 + 중복 표기
+  coc.forEach(c => {
+    const key = norm(c.description);
+    const mi = key ? stat.findIndex((s, i) => !statMatched.has(i) && norm(s.description) === key) : -1;
+    if (mi >= 0) {
+      statMatched.add(mi);
+      lines.push(text(c) + ' (선급지적 / 기국사항 중복)');
+    } else {
+      lines.push(text(c));
+    }
+  });
+  // 중복되지 않은 기국 항목
+  stat.forEach((s, i) => { if (!statMatched.has(i)) lines.push(text(s)); });
+
+  const detail = lines.filter(l => l).map((l, i) => `${i + 1}. ${l}`).join('\n');
+  return { society: snap.class_society || '-', total, detail };
+}
+
+function clsDigestPanel(snap) {
+  const d = clsDigest(snap);
+  const detailCell = el('td', { class: 'cls-dg-detail' });
+  if (d.detail) {
+    d.detail.split('\n').forEach(line =>
+      detailCell.append(el('div', { class: 'cls-dg-line' }, line.trim() ? line : '\u00A0')));
+  } else {
+    detailCell.append(el('span', { class: 'placeholder' }, '–'));
+  }
+  const table = el('table', { class: 'cls-digest-table' });
+  table.append(el('thead', {}, el('tr', {},
+    el('th', {}, '선급'),
+    el('th', {}, 'COC'),
+    el('th', {}, 'COC / 수리 상세'))));
+  table.append(el('tbody', {}, el('tr', {},
+    el('td', { class: 'cls-dg-society' }, d.society),
+    el('td', { class: 'cls-dg-coc' }, String(d.total)),
+    detailCell)));
+  return el('div', { class: 'cls-digest' }, table);
 }
 
 function catSection(title, cls, items) {
