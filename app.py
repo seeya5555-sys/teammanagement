@@ -2927,7 +2927,8 @@ def _vetting_full_prompt():
         "- inspection_date: 점검 실시일 (반드시 YYYY-MM-DD 형식. 다른 형식이면 YYYY-MM-DD로 변환)\n"
         "- inspection_company: 점검 주체 / Oil Major / 제출사 (예: VIVA ENERGY, BP, SHELL, TOTAL)\n"
         "- inspector: 점검관(Inspector) 성명\n"
-        "- port: 점검 항구(Port)\n"
+        "- port: 점검 항구명만 추출한다(도시/항구 이름). 국가명·UNLOCODE 코드(예: [SGSIN])·중복 표기는 제거. "
+        "예: 'Singapore - Singapore [SGSIN]' → 'Singapore', 'Fujairah - UAE [AEFJR]' → 'Fujairah'.\n"
         "- sire_type: 점검 시 운항 상태. 반드시 'Idle' · 'Bunkering' · 'Discharge' 중 하나로만. 식별 불가 시 빈 문자열.\n"
         "- valid: 보고서 유효성. 'Valid' 또는 'Invalid'. 식별 불가 시 빈 문자열.\n"
         "■ items: 지적(결함) 사항만 추출한다.\n"
@@ -2948,6 +2949,18 @@ def _vetting_full_prompt():
     )
 
 
+def _clean_port(p):
+    """'Singapore - Singapore [SGSIN]' → 'Singapore'. 국가/코드/중복 제거, 항구명만."""
+    s = (p or '').strip()
+    if not s:
+        return ''
+    s = _re_cls.sub(r'\[[^\]]*\]', '', s)      # [SGSIN] 등 코드 제거
+    s = s.split(' - ')[0]                       # ' - ' 앞 항구명만
+    s = s.split(' / ')[0].split('/')[0]         # '/' 구분도 첫 토큰
+    s = _re_cls.sub(r'\s+', ' ', s).strip(' -,')
+    return s
+
+
 def _norm_vetting_meta(m):
     m = m if isinstance(m, dict) else {}
     g = lambda k: (m.get(k) or '').strip()
@@ -2958,7 +2971,7 @@ def _norm_vetting_meta(m):
         'inspection_date':    g('inspection_date'),
         'inspection_company': g('inspection_company'),
         'inspector':          g('inspector'),
-        'port':               g('port'),
+        'port':               _clean_port(g('port')),
         'sire_type':          sire if sire in ('Idle', 'Bunkering', 'Discharge') else '',
         'valid':              valid if valid in ('Valid', 'Invalid') else '',
     }
