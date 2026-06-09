@@ -446,3 +446,41 @@ CREATE TABLE IF NOT EXISTS biz_receipts (
     FOREIGN KEY (trip_id) REFERENCES biz_trips(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_biz_receipts_trip ON biz_receipts(trip_id, display_order, id);
+
+-- =============================================================
+--  CLASS STATUS (선급 Class Status Report 업로드/추출)
+--   · 선박당 "최신 스냅샷 1개"만 유지 (UNIQUE vessel_id)
+--   · 미매칭(선명 매칭 실패) 업로드는 vessel_id NULL 로 별도 보관
+--     (SQLite UNIQUE 컬럼은 NULL 다중 허용)
+-- =============================================================
+CREATE TABLE IF NOT EXISTS class_status (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id        INTEGER,                       -- 매칭된 선박 (미매칭이면 NULL)
+    vessel_name_raw  TEXT,                          -- 보고서에서 읽은 선명 원문
+    class_society    TEXT,                          -- DNV / BV / KR / ABS / LR / NK ...
+    report_date      TEXT,                          -- 보고서 발행일 (YYYY-MM-DD)
+    source_filename  TEXT,                          -- 업로드 원본 파일명
+    uploaded_by      TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE (vessel_id),
+    FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_class_status_vessel ON class_status(vessel_id);
+
+-- 개별 지적/기국 항목 (Open 케이스만)
+CREATE TABLE IF NOT EXISTS class_status_items (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    cs_id        INTEGER NOT NULL,                  -- class_status.id
+    category     TEXT NOT NULL CHECK (category IN ('COC','STATUTORY')),  -- 선급지적 / 기국
+    no           INTEGER NOT NULL DEFAULT 0,        -- category 내 번호
+    issued_date  TEXT,                              -- Issued / 발행일
+    description  TEXT,                              -- 원문 그대로
+    due_date     TEXT,                              -- Due / 마감일
+    remark       TEXT,                              -- 한글 음슴체 요약
+    importance   TEXT NOT NULL DEFAULT '',          -- 중요도(수동): '' / High / Mid / Low
+    created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (cs_id) REFERENCES class_status(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_class_status_items_cs ON class_status_items(cs_id, category, no);
