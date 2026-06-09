@@ -2865,13 +2865,14 @@ def api_vt_findings_create(vid):
         st = it.get('status') or 'Open'
         if st not in ('Open','Closed'): st = 'Open'
         fid = execute("""
-            INSERT INTO vt_findings (vetting_id, no, item, description, remark, user_remark, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO vt_findings (vetting_id, no, item, description, remark, user_remark, priority, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (vid, next_no,
               it.get('item') or '',
               it.get('description') or '',
               it.get('remark') or '',
               it.get('user_remark') or '',
+              1 if it.get('priority') else 0,
               st))
         created.append(fid)
         next_no += 1
@@ -2890,6 +2891,9 @@ def api_vt_finding_update(fid):
         if f in d:
             sets.append(f'{f} = ?')
             params.append(d[f] or '')
+    if 'priority' in d:
+        sets.append('priority = ?')
+        params.append(1 if d.get('priority') else 0)
     if not sets:
         return jsonify({'ok': True})
     sets.append("updated_at = datetime('now','localtime')")
@@ -3049,6 +3053,108 @@ def api_vt_extract_report(vid):
         execute(f'UPDATE vettings SET {", ".join(sets)} WHERE id=?', tuple(params))
     return jsonify({'ok': True, 'items': items, 'count': len(items),
                     'meta': meta, 'applied': applied})
+
+
+def _md_from_date(d):
+    """'2026-04-30' → '4/30'. 파싱 실패 시 원문."""
+    try:
+        y, m, dd = (d or '').split('-')
+        return f'{int(m)}/{int(dd)}'
+    except Exception:
+        return (d or '').strip()
+
+
+def _company_abbr(c):
+    """'VIVA ENERGY' → 'VIVA' (첫 토큰 대문자). 빈 값이면 ''."""
+    c = (c or '').strip()
+    if not c:
+        return ''
+    return c.split()[0].upper()
+
+
+def _sire_abbr(s):
+    return {'Bunkering': 'BUNKER', 'Discharge': 'DISCHARGE', 'Idle': 'IDLE'}.get(
+        (s or '').strip(), (s or '').strip().upper())
+
+
+def _condense_obs(items):
+    """[{i,summary,description,user_remark}] → {i: short}. 선박 약어체 한 줄.
+    GEMINI 키 없거나 실패 시 빈 dict (상위에서 번역요약으로 폴백)."""
+    out = {}
+    if not GEMINI_API_KEY or not items:
+        return out
+    payload = json.dumps([{'i': it['i'], 'summary': it.get('summary', ''),
+                           'description': it.get('description', '')} for it in items],
+                         ensure_ascii=False)
+    prompt = (
+        "아래는 선박 SIRE 점검 지적 항목들이다(JSON 배열). 각 항목의 핵심 결함을 "
+        "선박 현업 약어체로 아주 짧게 한 줄로 요약하라.\n"
+        "- 장비명은 선박 약어로 대문자 표기: Cargo Oil Tank→COT, Ballast Water Treatment System→BWTS, "
+        "Main Engine→M/E, Auxiliary Engine→A/E, pressure→PRESS., No.3 Port→3P, Vapour return manifold→VAP. RETURN MANIFOLD 등.\n"
+        "- 결함은 '불량/파손/누설/마모/고장' 등 한 단어로 압축. 군더더기·서술 제거.\n"
+        "- 예: 'Cargo tank high level alarm display 결함으로 상시 점등됨' → 'COT HIGH LEVEL ALARM DISPLAY 불량', "
+        "'3 Port cargo tank 압력 센서 결함' → '3P COT PRESS. SENSOR 불량'.\n"
+        + _MARITIME_TERMS +
+        "입력의 i를 그대로 사용해 JSON으로만 답하라.\n"
+        '형식: {"items":[{"i":0,"short":"..."}]}\n\n[입력]\n' + payload)
+    res = _gemini_call_json([{'text': prompt}], model=_model_for('summary'))
+    arr = _coerce_translation_items(res)
+    for o in (arr or []):
+        if not isinstance(o, dict):
+            continue
+        try:
+            i = int(o.get('i'))
+        except (TypeError, ValueError):
+            continue
+        sh = (o.get('short') or o.get('en') or '').strip()
+        if sh:
+            out[i] = sh
+    return out
+
+
+@app.route('/api/vettings/<int:vid>/obs-summary', methods=['POST'])
+@login_required
+def api_vt_obs_summary(vid):
+    """Priority 체크 + Open 항목 기준으로 '지적 상세' 요약을 생성해 overall_remark에 기록."""
+    v = query('SELECT * FROM vettings WHERE id=?', (vid,), one=True)
+    if not v:
+        abort(404)
+    findings = query('SELECT * FROM vt_findings WHERE vetting_id=? ORDER BY no, id', (vid,))
+    open_f = [f for f in findings if (f['status'] or 'Open') == 'Open']
+    def _is_prio(f):
+        try:
+            return bool(f['priority'])
+        except (KeyError, IndexError):
+            return False
+    prio = [f for f in open_f if _is_prio(f)]
+    total_open = len(open_f)
+    minor = total_open - len(prio)
+
+    header_bits = [b for b in (_md_from_date(v['inspection_date']),
+                               _company_abbr(v['inspection_company']),
+                               _sire_abbr(v['sire_type'])) if b]
+    header = (' '.join(header_bits) + ' ' if header_bits else '') + \
+             f'SIRE OBS 잔여 {total_open}건 조치 중'
+
+    shorts = _condense_obs([
+        {'i': i, 'summary': f['remark'] or '', 'description': f['description'] or '',
+         'user_remark': f['user_remark'] or ''}
+        for i, f in enumerate(prio)
+    ])
+
+    lines = [header]
+    for i, f in enumerate(prio):
+        short = shorts.get(i) or (f['remark'] or f['item'] or '').strip()
+        ur = (f['user_remark'] or '').strip()
+        lines.append(f'{i + 1}. {short}' + (f' - {ur}' if ur else ''))
+    if minor > 0:
+        lines.append(f'그 외 Minor 지적 {minor}건')
+    text = '\n'.join(lines)
+
+    execute("UPDATE vettings SET overall_remark=?, updated_at=datetime('now','localtime') WHERE id=?",
+            (text, vid))
+    return jsonify({'ok': True, 'summary': text,
+                    'total_open': total_open, 'priority_open': len(prio), 'minor': minor})
 
 
 @app.route('/api/vettings/<int:vid>/export')
@@ -5532,7 +5638,7 @@ def _ext_vettings():
         d = dict(v)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
         d['findings'] = [dict(f) for f in query(
-            """SELECT no, item, description, remark, user_remark, status
+            """SELECT no, item, description, remark, user_remark, priority, status
                  FROM vt_findings WHERE vetting_id=? ORDER BY no, id""", (v['id'],))]
         out.append(d)
     return out
@@ -6130,14 +6236,17 @@ def _auto_migrate():
                 conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
         except Exception as e:
             print(f'[auto_migrate] schema 재적용 건너뜀: {e}')
-        # vt_findings.user_remark (자율 입력 Remark)
+        # vt_findings.user_remark (자율 입력 Remark), priority (중요 체크)
         try:
             cols = [r[1] for r in conn.execute('PRAGMA table_info(vt_findings)').fetchall()]
             if cols and 'user_remark' not in cols:
                 conn.execute("ALTER TABLE vt_findings ADD COLUMN user_remark TEXT NOT NULL DEFAULT ''")
                 print('[auto_migrate] vt_findings.user_remark 추가됨')
+            if cols and 'priority' not in cols:
+                conn.execute("ALTER TABLE vt_findings ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+                print('[auto_migrate] vt_findings.priority 추가됨')
         except Exception as e:
-            print(f'[auto_migrate] user_remark 점검 건너뜀: {e}')
+            print(f'[auto_migrate] vt_findings 컬럼 점검 건너뜀: {e}')
         conn.commit()
     finally:
         conn.close()
