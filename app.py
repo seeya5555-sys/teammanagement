@@ -1222,7 +1222,7 @@ def api_issue_summary_counts():
 @app.route('/api/issues/summary-export')
 @login_required
 def api_issue_summary_export():
-    """필터된 이슈를 No./Vessel Name/현안업무 3열로 한국어 요약 추출 (Gemini)."""
+    """현재 탭(대분류)의 저장된 요약(요약 탭 내용)을 엑셀로 추출 — AI 미사용."""
     from io import BytesIO
     from datetime import datetime
     try:
@@ -1233,59 +1233,19 @@ def api_issue_summary_export():
         return jsonify({'error': 'openpyxl 미설치'}), 500
     from flask import send_file
 
-    # 화면 필터와 동일
-    conds, params = ['1=1'], []
-    for key, col in [('supervisor_id', 'i.supervisor_id'), ('vessel_id', 'i.vessel_id'),
-                     ('status', 'i.status'), ('priority', 'i.priority')]:
-        val = request.args.get(key)
-        if val:
-            conds.append(f'{col} = ?'); params.append(val)
-    status_in = request.args.get('status_in')
-    if status_in:
-        vals = [v.strip() for v in status_in.split(',') if v.strip()]
-        if vals:
-            conds.append(f"i.status IN ({','.join('?' for _ in vals)})"); params += vals
-    q = request.args.get('q')
-    if q:
-        like = f'%{q}%'
-        conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
-        params += [like, like, like]
-    vt = request.args.get('vessel_type')
-    if vt:
-        conds.append('v.vessel_type = ?'); params.append(vt)
+    # 저장된 요약(요약 탭 내용)을 그대로 사용
+    _ensure_summary_table()
+    srow = query('SELECT data FROM issue_summaries WHERE scope=?',
+                 (_summary_scope(),), one=True)
+    rows = []
+    if srow:
+        try:
+            rows = json.loads(srow['data'])
+        except Exception:
+            rows = []
 
-    sql = f'''
-        SELECT i.*, s.display_order AS sv_order, s.id AS sv_id,
-               v.name AS vessel_name
-          FROM issues i
-          JOIN supervisors s ON s.id = i.supervisor_id
-          JOIN vessels     v ON v.id = i.vessel_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY s.display_order ASC, s.id ASC, i.issue_date ASC, i.id ASC
-    '''
-    rows = [_issue_to_dict(r) for r in query(sql, params)]
-
-    # Gemini 요약 (description + 최신 action)
-    payload = [{'i': idx,
-                'description': r.get('description') or '',
-                'action': _latest_action_progress(r.get('actions'))}
-               for idx, r in enumerate(rows)]
-    summaries = _gen_issue_summaries(payload)
-
-    # 현안업무 셀 조립
     def build_cell(idx, r):
-        s = summaries.get(idx, {})
-        desc = s.get('desc') or (r.get('description') or '').strip().split('\n')[0]
-        act_date, act_raw = _latest_action(r.get('actions'))
-        action = s.get('action') or act_raw
-        head = f"{_md_label(r.get('issue_date') or '')} {r.get('item_topic') or ''}".strip()
-        lines = [head]
-        if desc:
-            lines.append(f'1) {desc}')
-        if action:
-            md = _md_label(act_date)
-            lines.append(f'2) {md} {action}'.strip() if md else f'2) {action}')
-        return '\n'.join(lines)
+        return r.get('issue') or ''
 
     # ── Workbook ──
     wb = Workbook(); ws = wb.active; ws.title = '업무 요약'
@@ -1361,7 +1321,13 @@ def api_issue_summary_export():
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = f'{HDR}:{HDR}'
 
-    fname = f"TRMT_업무요약_{now.strftime('%Y%m%d')}.xlsx"
+    scope = _summary_scope()
+    tag = ''
+    if scope != 'all':
+        sv = query('SELECT name FROM supervisors WHERE id=?', (scope,), one=True)
+        if sv:
+            tag = '_' + _safe_filename(sv['name'])
+    fname = f"TRMT_업무요약{tag}_{now.strftime('%Y%m%d')}.xlsx"
     bio = BytesIO(); wb.save(bio); bio.seek(0)
     return send_file(
         bio,
