@@ -97,7 +97,7 @@
 {% endblock %}
 
 {% if session.role == 'admin' %}
-<div class="modal" id="api-modal" hidden style="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;">
+<div class="modal" id="api-modal" hidden style="position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;">
   <div class="modal-backdrop" id="api-modal-bd" style="position:absolute;inset:0;background:rgba(0,0,0,.45);"></div>
   <div class="modal-box" role="dialog" aria-modal="true"
        style="position:relative;width:min(760px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:12px;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
@@ -162,8 +162,8 @@
       loaded = true;
     } catch (e) { field.value = '불러오기 실패'; }
   }
-  function show() { modal.hidden = false; if (!loaded) load(); }
-  function hide() { modal.hidden = true; }
+  function show() { modal.style.display = 'flex'; modal.hidden = false; if (!loaded) load(); }
+  function hide() { modal.style.display = 'none'; modal.hidden = true; }
 
   open.addEventListener('click', show);
   document.getElementById('api-modal-x').addEventListener('click', hide);
