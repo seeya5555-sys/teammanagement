@@ -570,6 +570,12 @@ function detailRow(vt) {
     el('button', {
       class: 'btn btn-outline btn-sm',
       style: 'margin-left:auto',
+      onclick: () => generateObsSummary(vt),
+      title: 'Priority 체크 + 현재 Open Status 기준으로 지적 상세 요약을 Overall Remark에 자동 작성',
+    }, '📝 지적 상세'),
+    el('button', {
+      class: 'btn btn-outline btn-sm',
+      style: 'margin-left:6px',
       onclick: () => editOverallRemark(vt),
     }, '✏ 편집'),
   ));
@@ -599,6 +605,7 @@ function findingsSection(vt, findings) {
     el('th', { class: 'cs-th-desc' }, 'Description'),
     el('th', { class: 'cs-th-trans' }, '번역 요약'),
     el('th', { class: 'cs-th-urem' }, 'Remark'),
+    el('th', { class: 'cs-th-prio', style: 'width:64px; text-align:center' }, 'Priority'),
     el('th', { style: 'width:90px; text-align:center' }, 'Status'),
     el('th', { style: 'width:80px' }, ''),
   )));
@@ -606,7 +613,7 @@ function findingsSection(vt, findings) {
   const tbody = el('tbody');
   if (!findings.length && !(vt._inlineAdd)) {
     tbody.append(el('tr', {},
-      el('td', { colspan: 7, class: 'vt-empty-row' },
+      el('td', { colspan: 8, class: 'vt-empty-row' },
         '아직 Observation이 없습니다. 아래 + 버튼으로 추가하세요.')
     ));
   } else {
@@ -648,6 +655,7 @@ function findingRow(vt, f) {
   tr.append(findingEditableCell(f, 'description', vt));
   tr.append(findingEditableCell(f, 'remark', vt));
   tr.append(findingEditableCell(f, 'user_remark', vt));
+  tr.append(findingPriorityCell(f));
 
   const stTd = el('td', { class: 'cs-status', style: 'text-align:center' });
   const badge = el('span', {
@@ -682,6 +690,40 @@ function findingRow(vt, f) {
   tr.append(acts);
 
   return tr;
+}
+
+function findingPriorityCell(f) {
+  const td = el('td', { class: 'cs-prio', style: 'text-align:center' });
+  const chk = el('input', { type: 'checkbox', class: 'vt-prio-chk', title: 'Priority(중요) 표시' });
+  chk.checked = !!f.priority;
+  chk.addEventListener('change', async () => {
+    const val = chk.checked ? 1 : 0;
+    try {
+      await api(`/api/vt-findings/${f.id}`, {
+        method: 'PUT', body: JSON.stringify({ priority: val }),
+      });
+      f.priority = val;
+    } catch (err) {
+      alert('저장 실패: ' + err.message);
+      chk.checked = !chk.checked;
+    }
+  });
+  td.append(chk);
+  return td;
+}
+
+async function generateObsSummary(vt) {
+  const hasPrio = (vt.findings || []).some(f => f.priority && (f.status || 'Open') === 'Open');
+  const msg = hasPrio
+    ? 'Priority 체크 항목과 현재 Open Status 기준으로 지적 상세 요약을 만들어 Overall Remark에 기록합니다.\n(기존 Overall Remark 내용은 대체됩니다.) 진행할까요?'
+    : 'Priority로 체크된 Open 항목이 없습니다. 헤더(잔여 건수)만 작성됩니다.\n(기존 Overall Remark 내용은 대체됩니다.) 진행할까요?';
+  if (!confirm(msg)) return;
+  try {
+    await api(`/api/vettings/${vt.id}/obs-summary`, { method: 'POST' });
+    await reloadData();
+  } catch (e) {
+    alert('지적 상세 생성 실패: ' + e.message);
+  }
 }
 
 function findingEditableCell(f, field, vt) {
@@ -901,8 +943,9 @@ function inlineAddRow(vt, row, idx, baseNo) {
   const td1 = el('td'); td1.append(descInput);
   const td2 = el('td'); td2.append(remarkInput);
   const td3 = el('td'); td3.append(uremInput);
+  const tdp = el('td', { class: 'cs-prio', style: 'text-align:center', title: '저장 후 Priority 체크 가능' }, '–');
   const td4 = el('td', { style: 'text-align:center' }); td4.append(statusSel);
-  tr.append(td0, td1, td2, td3, td4);
+  tr.append(td0, td1, td2, td3, tdp, td4);
 
   const acts = el('td', { class: 'cs-actions' });
   const rm = el('button', {
