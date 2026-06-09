@@ -194,7 +194,9 @@ CREATE TABLE IF NOT EXISTS vettings (
     inspection_company       TEXT,
     inspector                TEXT,
     port                     TEXT,
-    operation                TEXT CHECK (operation IN ('Loading','Discharging','Idle') OR operation IS NULL OR operation = ''),
+    operation                TEXT,  -- (구) 사용 안 함, 호환 위해 유지
+    sire_type                TEXT CHECK (sire_type IN ('Idle','Bunkering','Discharge') OR sire_type IS NULL OR sire_type = ''),
+    valid                    TEXT CHECK (valid IN ('Valid','Invalid') OR valid IS NULL OR valid = ''),
     overall_remark           TEXT,
     manual_observation_count INTEGER,              -- NULL이면 자동 카운트
     manual_open_count        INTEGER,
