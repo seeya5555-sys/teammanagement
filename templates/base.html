@@ -46,7 +46,6 @@
       </nav>
 
       <div class="user-menu">
-        {% if session.role == 'admin' %}
         <button class="admin-trigger" id="btn-open-api" title="외부 연동용 데이터 API" style="margin-right:6px">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
@@ -54,7 +53,6 @@
           </svg>
           <span class="trig-label">API 연동</span>
         </button>
-        {% endif %}
         {% if session.role == 'admin' %}
         <button class="admin-trigger" id="btn-open-admin" title="감독/선박/사용자 관리">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
@@ -96,7 +94,6 @@
   </main>
 {% endblock %}
 
-{% if session.role == 'admin' %}
 <div class="modal" id="api-modal" hidden style="position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;">
   <div class="modal-backdrop" id="api-modal-bd" style="position:absolute;inset:0;background:rgba(0,0,0,.45);"></div>
   <div class="modal-box" role="dialog" aria-modal="true"
@@ -185,7 +182,6 @@
   });
 })();
 </script>
-{% endif %}
 
   {% block scripts %}{% endblock %}
 </body>
