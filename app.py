@@ -2855,6 +2855,7 @@ def api_vt_findings_create(vid):
             'item':        d.get('item'),
             'description': d.get('description'),
             'remark':      d.get('remark'),
+            'user_remark': d.get('user_remark'),
             'status':      d.get('status') or 'Open',
         }]
 
@@ -2864,12 +2865,13 @@ def api_vt_findings_create(vid):
         st = it.get('status') or 'Open'
         if st not in ('Open','Closed'): st = 'Open'
         fid = execute("""
-            INSERT INTO vt_findings (vetting_id, no, item, description, remark, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO vt_findings (vetting_id, no, item, description, remark, user_remark, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (vid, next_no,
               it.get('item') or '',
               it.get('description') or '',
               it.get('remark') or '',
+              it.get('user_remark') or '',
               st))
         created.append(fid)
         next_no += 1
@@ -2884,7 +2886,7 @@ def api_vt_finding_update(fid):
         abort(404)
     d = request.get_json() or {}
     sets, params = [], []
-    for f in ('item','description','remark','status'):
+    for f in ('item','description','remark','user_remark','status'):
         if f in d:
             sets.append(f'{f} = ?')
             params.append(d[f] or '')
@@ -3058,10 +3060,10 @@ def api_vt_export(vid):
                   WHERE vt.id=?''', (vid,), one=True)
     if not v:
         abort(404)
-    fr = query('''SELECT no, item, description, remark, status
+    fr = query('''SELECT no, item, description, remark, user_remark, status
                     FROM vt_findings WHERE vetting_id=? ORDER BY no, id''', (vid,))
     rows = [[r['no'], r['item'] or '', r['description'] or '',
-             r['remark'] or '', r['status'] or ''] for r in fr]
+             r['remark'] or '', r['user_remark'] or '', r['status'] or ''] for r in fr]
     vessel = v['vessel_name']
     rno = v['report_number'] or ''
     title = f"SIRE Observation List — {vessel}"
@@ -3069,9 +3071,9 @@ def api_vt_export(vid):
     if rno:
         sub_bits.append(f"Report: {rno}")
     sub_bits.append(f"총 {len(rows)}건")
-    headers = ['No.', 'ITEM', 'DESCRIPTION', 'REMARK', 'STATUS']
+    headers = ['No.', 'ITEM', 'DESCRIPTION', '번역 요약', 'Remark', 'STATUS']
     bio = _findings_workbook(title, '   │   '.join(sub_bits), headers, rows,
-                             wrap_cols={2, 3, 4}, widths=[6, 30, 52, 42, 10])
+                             wrap_cols={2, 3, 4, 5}, widths=[6, 26, 46, 38, 30, 10])
     date_tag = (v['inspection_date'] or '').replace('-', '')
     fname = f"SIRE_{_safe_filename(vessel)}_{date_tag or vid}.xlsx"
     return send_file(bio, as_attachment=True, download_name=fname,
@@ -5530,7 +5532,7 @@ def _ext_vettings():
         d = dict(v)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
         d['findings'] = [dict(f) for f in query(
-            """SELECT no, item, description, remark, status
+            """SELECT no, item, description, remark, user_remark, status
                  FROM vt_findings WHERE vetting_id=? ORDER BY no, id""", (v['id'],))]
         out.append(d)
     return out
