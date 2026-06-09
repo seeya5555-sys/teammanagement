@@ -2822,9 +2822,15 @@ function wireEvents() {
   try {
     await loadSupervisors();
     try { S.summaryCounts = await api('/api/issues/summary-counts') || {}; } catch (_) {}
-    S.activeTab = S.user.supervisor_id
-      ? S.user.supervisor_id
-      : (S.supervisors[0] ? S.supervisors[0].id : 'all');
+    if (S.user.supervisor_id) {
+      // 연결 감독이 있으면 해당 감독 탭 (소분류는 저장된 값 유지)
+      S.activeTab = S.user.supervisor_id;
+    } else {
+      // 연결 감독 없음 → 전체 대분류 + 전체 소분류로 시작
+      S.activeTab = 'all';
+      S.activeSubTab = 'all';
+      try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
+    }
     await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
     renderTabs();
     renderVesselFilter();
