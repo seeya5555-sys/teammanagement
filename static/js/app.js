@@ -467,26 +467,77 @@ function renderSummaryView() {
   if (!tbody) return;
   tbody.innerHTML = '';
   const data = S.summary || { rows: [], generated_at: null };
-  const rows = data.rows || [];
+  let rows = data.rows || [];
+
+  // 툴바 필터 적용 (저장된 요약 행을 화면에서 필터링)
+  const f = S.filters;
+  rows = rows.filter(r => {
+    if (f.vessel_id && String(r.vessel_id) !== String(f.vessel_id)) return false;
+    if (f.vessel_type && r.vessel_type !== f.vessel_type) return false;
+    if (f.status && r.status_raw !== f.status) return false;
+    if (f.priority && r.priority !== f.priority) return false;
+    if (f.q) {
+      const q = f.q.toLowerCase();
+      if (!((r.issue || '') + (r.vessel_name || '')).toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
   if (meta) {
+    const total = (data.rows || []).length;
+    const shown = rows.length;
     meta.textContent = data.generated_at
-      ? `마지막 갱신: ${data.generated_at}  ·  ${rows.length}건`
+      ? `마지막 갱신: ${data.generated_at}  ·  ${shown}/${total}건`
       : '';
   }
   if (!rows.length) {
-    if (empty) empty.hidden = false;
+    if (empty) { empty.hidden = false; empty.innerHTML = (data.generated_at ? '필터 조건에 맞는 항목이 없습니다.' : '아직 요약이 없습니다. 상단 <strong>"업무 요약"</strong> 버튼을 눌러 생성하세요.'); }
     return;
   }
   if (empty) empty.hidden = true;
+  let n = 0;
   for (const r of rows) {
+    n++;
+    const linkBtn = el('button', {
+      class: 'icon-btn', title: '원본 이슈로 이동',
+      onclick: () => gotoIssueFromSummary(r),
+      style: 'margin-left:6px;',
+    });
+    linkBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+      <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>`;
     tbody.append(el('tr', {},
-      el('td', { style: 'text-align:center;vertical-align:top;' }, String(r.no)),
+      el('td', { style: 'text-align:center;vertical-align:top;' }, String(n)),
       el('td', { style: 'vertical-align:top;' }, r.vessel_name || ''),
       el('td', { style: 'white-space:pre-wrap;vertical-align:top;line-height:1.5;' }, r.issue || ''),
       el('td', { style: 'text-align:center;vertical-align:top;' }, r.priority || ''),
-      el('td', { style: 'text-align:center;vertical-align:top;' }, r.status || ''),
+      el('td', { style: 'text-align:center;vertical-align:top;white-space:nowrap;' },
+        (r.status || ''), linkBtn),
     ));
   }
+}
+
+// 요약 행 → 원본 이슈로 이동 (전체 대분류/전체 소분류 + 제목 검색 필터)
+async function gotoIssueFromSummary(r) {
+  S.activeTab = 'all';
+  S.activeSubTab = 'all';
+  try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
+  // 제목 검색만 남기고 나머지 필터 초기화 → 그 이슈만 보이도록
+  S.filters.q = r.item || '';
+  S.filters.vessel_id = '';
+  S.filters.vessel_type = '';
+  S.filters.status = '';
+  S.filters.priority = '';
+  await loadVessels(null);
+  renderTabs();
+  renderVesselFilter();
+  renderTabContext();
+  // 셀렉트/검색 UI 동기화
+  const sb = $('#filter-search'); if (sb) sb.value = S.filters.q;
+  ['#filter-vessel', '#filter-vessel-type', '#filter-status', '#filter-priority']
+    .forEach(sel => { const e = $(sel); if (e) e.value = ''; });
+  await loadIssues();
+  render();
 }
 
 function renderTable() {
