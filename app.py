@@ -2765,7 +2765,7 @@ def api_vetting_create():
     if st and st not in ('Idle', 'Bunkering', 'Discharge'):
         st = None
     valid = d.get('valid') or None
-    if valid and valid not in ('Valid', 'Invalid'):
+    if valid and valid not in ('Next Plan', 'Last Result'):
         valid = None
 
     new_id = execute("""
@@ -2936,7 +2936,6 @@ def _vetting_full_prompt():
         "- port: 점검 항구명만 추출한다(도시/항구 이름). 국가명·UNLOCODE 코드(예: [SGSIN])·중복 표기는 제거. "
         "예: 'Singapore - Singapore [SGSIN]' → 'Singapore', 'Fujairah - UAE [AEFJR]' → 'Fujairah'.\n"
         "- sire_type: 점검 시 운항 상태. 반드시 'Idle' · 'Bunkering' · 'Discharge' 중 하나로만. 식별 불가 시 빈 문자열.\n"
-        "- valid: 보고서 유효성. 'Valid' 또는 'Invalid'. 식별 불가 시 빈 문자열.\n"
         "■ items: 지적(결함) 사항만 추출한다.\n"
         "■ 포함: 'Observable or detectable deficiency' / 'Not as expected'로 표시된 부정적 지적(빨간 글씨). "
         "또한 'Photograph' 분류의 지적(예: 'Photo not representative', 'Photograph supplied: ...' 아래 빨간 이탤릭 설명)처럼 "
@@ -2951,7 +2950,7 @@ def _vetting_full_prompt():
         "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
         "없는 내용을 지어내지 말 것. 지적이 하나도 없으면 items를 빈 배열로.\n"
         '형식: {"meta":{"report_number":"","inspection_date":"","inspection_company":"","inspector":"",'
-        '"port":"","sire_type":"","valid":""},"items":[{"item":"","description":"","remark":""}]}'
+        '"port":"","sire_type":""},"items":[{"item":"","description":"","remark":""}]}'
     )
 
 
@@ -2971,7 +2970,6 @@ def _norm_vetting_meta(m):
     m = m if isinstance(m, dict) else {}
     g = lambda k: (m.get(k) or '').strip()
     sire = g('sire_type')
-    valid = g('valid')
     return {
         'report_number':      g('report_number'),
         'inspection_date':    g('inspection_date'),
@@ -2979,7 +2977,7 @@ def _norm_vetting_meta(m):
         'inspector':          g('inspector'),
         'port':               _clean_port(g('port')),
         'sire_type':          sire if sire in ('Idle', 'Bunkering', 'Discharge') else '',
-        'valid':              valid if valid in ('Valid', 'Invalid') else '',
+        'valid':              '',   # '상태'(Next Plan/Last Result)는 수동 입력 — 보고서에서 추출하지 않음
     }
 
 
@@ -6247,6 +6245,41 @@ def _auto_migrate():
                 print('[auto_migrate] vt_findings.priority 추가됨')
         except Exception as e:
             print(f'[auto_migrate] vt_findings 컬럼 점검 건너뜀: {e}')
+
+        # vettings.valid: 옛 CHECK(valid IN ('Valid','Invalid')) 제거 → 'Next Plan'/'Last Result' 허용
+        try:
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='vettings'"
+            ).fetchone()
+            ddl = (row[0] if row else '') or ''
+            if "'Valid','Invalid'" in ddl.replace(' ', ''):
+                print('[auto_migrate] vettings.valid CHECK 제약 갱신 중...')
+                conn.execute('PRAGMA legacy_alter_table=ON')
+                conn.execute('PRAGMA foreign_keys=OFF')
+                conn.execute('ALTER TABLE vettings RENAME TO _vettings_old')
+                with open(SCHEMA_FILE, encoding='utf-8') as fh:
+                    conn.executescript(fh.read())   # 새 vettings(CHECK 없음) 생성, 나머지 no-op
+                conn.execute("""
+                    INSERT INTO vettings
+                        (id, vessel_id, report_number, inspection_date, inspection_company,
+                         inspector, port, operation, sire_type, valid, overall_remark,
+                         manual_observation_count, manual_open_count, manual_close_count,
+                         created_by, created_at, updated_at)
+                    SELECT
+                         id, vessel_id, report_number, inspection_date, inspection_company,
+                         inspector, port, operation, sire_type, valid, overall_remark,
+                         manual_observation_count, manual_open_count, manual_close_count,
+                         created_by, created_at, updated_at
+                    FROM _vettings_old
+                """)
+                conn.execute('DROP TABLE _vettings_old')
+                conn.execute('PRAGMA legacy_alter_table=OFF')
+                conn.execute('PRAGMA foreign_keys=ON')
+                conn.commit()
+                print('[auto_migrate] vettings.valid CHECK 제약 갱신 완료')
+        except Exception as e:
+            print(f'[auto_migrate] vettings 재생성 건너뜀: {e}')
+
         conn.commit()
     finally:
         conn.close()
