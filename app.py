@@ -6116,6 +6116,33 @@ def api_class_status_export(cs_id):
 # ═════════════════════════════════════════════════════════════════
 #  CLI entry
 # ═════════════════════════════════════════════════════════════════
+def _auto_migrate():
+    """기존 DB에 대한 idempotent 스키마 보강 — 배포 시 마이그레이션 누락 방지.
+    · schema.sql 의 CREATE TABLE/INDEX IF NOT EXISTS 재적용(누락 테이블 생성)
+    · ALTER 가 필요한 신규 컬럼은 개별 점검 후 추가
+    """
+    if not os.path.exists(DATABASE):
+        return
+    conn = sqlite3.connect(DATABASE)
+    try:
+        try:
+            with open(SCHEMA_FILE, encoding='utf-8') as fh:
+                conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
+        except Exception as e:
+            print(f'[auto_migrate] schema 재적용 건너뜀: {e}')
+        # vt_findings.user_remark (자율 입력 Remark)
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(vt_findings)').fetchall()]
+            if cols and 'user_remark' not in cols:
+                conn.execute("ALTER TABLE vt_findings ADD COLUMN user_remark TEXT NOT NULL DEFAULT ''")
+                print('[auto_migrate] vt_findings.user_remark 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] user_remark 점검 건너뜀: {e}')
+        conn.commit()
+    finally:
+        conn.close()
+
+
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--init-db':
         init_db(drop=True)
@@ -6124,6 +6151,8 @@ if __name__ == '__main__':
     if not os.path.exists(DATABASE):
         print('[INFO] DB 파일이 없어 자동 초기화합니다.')
         init_db(drop=False)
+    else:
+        _auto_migrate()
 
     # 개발 환경
     app.run(host='0.0.0.0', port=5000, debug=True)
