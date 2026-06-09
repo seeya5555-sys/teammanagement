@@ -174,6 +174,8 @@ async function loadIssues() {
     p.set('status', S.filters.status);
   } else if (S.activeSubTab === 'closed') {
     p.set('status', 'Closed');
+  } else if (S.activeSubTab === 'all') {
+    // '전체' 서브 탭 = 진행중 + 완료 (status 미지정 → 전부)
   } else {
     // 'open' 서브 탭 = Open + InProgress
     const [openIssues, progIssues] = await Promise.all([
@@ -237,6 +239,7 @@ function renderSubTabs() {
     }
   }
 
+  bar.append(subtabEl('all',    '전체',   openCnt + doneCnt, S.activeSubTab === 'all'));
   bar.append(subtabEl('open',   '진행중', openCnt, S.activeSubTab === 'open'));
   bar.append(subtabEl('closed', '완료',   doneCnt, S.activeSubTab === 'closed'));
 }
@@ -331,6 +334,7 @@ function renderTabContext() {
   c.innerHTML = '';
 
   const isClosedSub = S.activeSubTab === 'closed';
+  const isAllSub = S.activeSubTab === 'all';
 
   if (S.activeTab === 'all') {
     const open = S.supervisors.reduce((a,s)=>a+s.open_count, 0);
@@ -338,6 +342,10 @@ function renderTabContext() {
     const done = S.supervisors.reduce((a,s)=>a+s.closed_count, 0);
     const parts = [`전체 감독 · <strong>${S.supervisors.length}</strong>명`];
     if (isClosedSub) {
+      parts.push(`Closed <strong>${done}</strong>`);
+    } else if (isAllSub) {
+      parts.push(`Open <strong>${open}</strong>`);
+      parts.push(`진행중 <strong>${prog}</strong>`);
       parts.push(`Closed <strong>${done}</strong>`);
     } else {
       parts.push(`Open <strong>${open}</strong>`);
@@ -363,6 +371,12 @@ function renderTabContext() {
   const ctx = el('span', { style: 'margin-left: 10px;' });
   if (isClosedSub) {
     ctx.append('· Closed ', el('strong', {}, String(s.closed_count)));
+  } else if (isAllSub) {
+    ctx.append(
+      '· Open ', el('strong', {}, String(s.open_count)),
+      ' · 진행중 ', el('strong', {}, String(s.progress_count)),
+      ' · Closed ', el('strong', {}, String(s.closed_count)),
+    );
   } else {
     ctx.append(
       '· Open ', el('strong', {}, String(s.open_count)),
@@ -378,8 +392,13 @@ function renderSummary() {
   const cl = S.issues.filter(i => i.status === 'Closed').length;
 
   const isClosedSub = S.activeSubTab === 'closed';
+  const isAllSub = S.activeSubTab === 'all';
   const parts = [`<span>총 <strong>${n}</strong>건</span>`];
   if (isClosedSub) {
+    parts.push(`<span>· Closed <strong>${cl}</strong></span>`);
+  } else if (isAllSub) {
+    parts.push(`<span>· Open <strong>${op}</strong></span>`);
+    parts.push(`<span>· 진행중 <strong>${pg}</strong></span>`);
     parts.push(`<span>· Closed <strong>${cl}</strong></span>`);
   } else {
     parts.push(`<span>· Open <strong>${op}</strong></span>`);
@@ -2398,6 +2417,8 @@ function wireEvents() {
       p.set('status', S.filters.status);
     } else if (S.activeSubTab === 'closed') {
       p.set('status', 'Closed');
+    } else if (S.activeSubTab === 'all') {
+      // 전체 서브 탭 = status 미지정 → 진행중+완료 모두
     } else {
       p.set('status_in', 'Open,InProgress');
     }
