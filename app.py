@@ -2073,15 +2073,16 @@ def _findings_workbook(title, subtitle, headers, rows, wrap_cols, widths):
     return bio
 
 
-def _gemini_call_json(parts):
+def _gemini_call_json(parts, model=None):
     """parts(list) → Gemini generateContent → 파싱된 JSON dict 또는 {'error':...}."""
     if not GEMINI_API_KEY:
         return {'error': 'NO_API_KEY'}
     import urllib.request, urllib.error
+    mdl = model or GEMINI_MODEL
     body = {'contents': [{'parts': parts}],
             'generationConfig': {'response_mime_type': 'application/json'}}
     url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-           f'{GEMINI_MODEL}:generateContent')
+           f'{mdl}:generateContent')
     req = urllib.request.Request(
         url, data=json.dumps(body).encode('utf-8'),
         headers={'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY},
@@ -2150,7 +2151,7 @@ def _translate_batch_en(texts, group):
         "- 이미 영어인 부분은 그대로 둔다. 의미를 바꾸거나 내용을 덧붙이지 마라.\n"
         "반드시 {\"translations\":[...]} 형태의 JSON 객체로만 답하라. 입력의 i를 그대로 사용하라.\n"
         '형식: {"translations":[{"i":0,"en":"..."}]}\n\n[입력]\n' + payload)
-    res = _gemini_call_json([{'text': prompt}])
+    res = _gemini_call_json([{'text': prompt}], model=_model_for('translate'))
     arr = _coerce_translation_items(res)
     if arr is None:
         return None  # API 호출 실패 → 상위에서 분할 재시도
@@ -2191,7 +2192,7 @@ def _gen_issue_summaries(payload_items):
             "입력의 i를 그대로 사용해 JSON 객체로만 답하라.\n"
             '형식: {"items":[{"i":0,"desc":"...","action":"..."}]}\n\n[입력]\n'
             + json.dumps(sub, ensure_ascii=False))
-        res = _gemini_call_json([{'text': prompt}])
+        res = _gemini_call_json([{'text': prompt}], model=_model_for('summary'))
         arr = _coerce_translation_items(res)  # translations/items/results/data 모두 수용
         if arr is None:
             if len(group) > 1 and depth < 6:
@@ -2431,7 +2432,7 @@ def _summarize_remarks(items, kind):
         "(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다. "
         "입력의 i 값을 그대로 사용해 JSON으로만 답하라.\n"
         '형식: {"summaries":[{"i":0,"remark":"요약문"}]}\n\n[입력]\n' + payload)
-    res = _gemini_call_json([{'text': prompt}])
+    res = _gemini_call_json([{'text': prompt}], model=_model_for('remark'))
     if isinstance(res, dict):
         if res.get('error'):
             return items
@@ -2468,7 +2469,7 @@ def _extract_findings_from_upload(f, kind):
             return None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
         if mode == 'items':
             return _summarize_remarks(data, kind), None
-        parsed = _gemini_call_json([{'text': _findings_prompt(kind) + '\n\n[보고서 표 내용]\n' + data}])
+        parsed = _gemini_call_json([{'text': _findings_prompt(kind) + '\n\n[보고서 표 내용]\n' + data}], model=_model_for('findings'))
     elif ext == 'pdf':
         if size_mb > 15:
             return None, {'reason': 'TOO_LARGE', 'message': f'PDF가 너무 큽니다({size_mb:.1f}MB). 15MB 이하로 줄이거나 페이지를 나눠 올려주세요.'}
@@ -2476,7 +2477,7 @@ def _extract_findings_from_upload(f, kind):
         parsed = _gemini_call_json([
             {'inline_data': {'mime_type': 'application/pdf', 'data': b64}},
             {'text': _findings_prompt(kind)},
-        ])
+        ], model=_model_for('findings'))
     elif ext in ('png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'):
         if size_mb > 15:
             return None, {'reason': 'TOO_LARGE', 'message': f'이미지가 너무 큽니다({size_mb:.1f}MB).'}
@@ -2486,7 +2487,7 @@ def _extract_findings_from_upload(f, kind):
         parsed = _gemini_call_json([
             {'inline_data': {'mime_type': media, 'data': b64}},
             {'text': _findings_prompt(kind)},
-        ])
+        ], model=_model_for('findings'))
     else:
         return None, {'reason': 'BAD_TYPE', 'message': 'PDF, 이미지, 엑셀(xlsx) 파일만 지원합니다.'}
 
@@ -4850,6 +4851,26 @@ RECEIPT_IMAGE_JPEG_QUALITY  = 88
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 GEMINI_MODEL   = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash-lite')
 
+# 용도별 모델 — /etc/trmt.env 에서 지정 (미지정 시 GEMINI_MODEL 사용)
+#   MODEL_SUMMARY  : 요약        (텍스트)
+#   MODEL_TRANSLATE: 영문 번역    (텍스트)
+#   MODEL_FINDINGS : 리포트 추출  (멀티모달 필요)
+#   MODEL_REMARK   : 리마크 요약  (텍스트)
+#   MODEL_RECEIPT  : 영수증 비전  (멀티모달 필수)
+_MODEL_ENV = {
+    'summary':   'MODEL_SUMMARY',
+    'translate': 'MODEL_TRANSLATE',
+    'findings':  'MODEL_FINDINGS',
+    'remark':    'MODEL_REMARK',
+    'receipt':   'MODEL_RECEIPT',
+}
+
+
+def _model_for(purpose):
+    """용도별 모델 ID 반환 (환경변수 우선, 없으면 기본 GEMINI_MODEL)."""
+    env = _MODEL_ENV.get(purpose)
+    return (os.environ.get(env) if env else None) or GEMINI_MODEL
+
 
 def _trip_owned(t):
     if session.get('role') == 'admin':
@@ -5097,7 +5118,7 @@ def _gemini_vision_extract(image_path):
         'generationConfig': {'response_mime_type': 'application/json'},
     }
     url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-           f'{GEMINI_MODEL}:generateContent')
+           f'{_model_for("receipt")}:generateContent')
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode('utf-8'),
