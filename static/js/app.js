@@ -522,9 +522,9 @@ async function gotoIssueFromSummary(r) {
   S.activeTab = 'all';
   S.activeSubTab = 'all';
   try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
-  // 제목 검색만 남기고 나머지 필터 초기화 → 그 이슈만 보이도록
+  // 제목으로 필터 → 그 이슈만 보이도록 (q=검색어 + item_topic=정확일치 둘 다)
   S.filters.item_topic = r.item || '';
-  S.filters.q = '';
+  S.filters.q = r.item || '';
   S.filters.vessel_id = '';
   S.filters.vessel_type = '';
   S.filters.status = '';
