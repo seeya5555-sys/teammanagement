@@ -501,7 +501,6 @@ function renderSummaryView() {
     const linkBtn = el('button', {
       class: 'icon-btn', title: '원본 이슈로 이동',
       onclick: () => gotoIssueFromSummary(r),
-      style: 'margin-left:6px;',
     });
     linkBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
@@ -511,8 +510,8 @@ function renderSummaryView() {
       el('td', { style: 'vertical-align:top;' }, r.vessel_name || ''),
       el('td', { style: 'white-space:pre-wrap;vertical-align:top;line-height:1.5;' }, r.issue || ''),
       el('td', { style: 'text-align:center;vertical-align:top;' }, r.priority || ''),
-      el('td', { style: 'text-align:center;vertical-align:top;white-space:nowrap;' },
-        (r.status || ''), linkBtn),
+      el('td', { style: 'text-align:center;vertical-align:top;' }, (r.status || '')),
+      el('td', { style: 'text-align:center;vertical-align:top;' }, linkBtn),
     ));
   }
 }
@@ -537,6 +536,12 @@ async function gotoIssueFromSummary(r) {
   ['#filter-vessel', '#filter-vessel-type', '#filter-status', '#filter-priority']
     .forEach(sel => { const e = $(sel); if (e) e.value = ''; });
   await loadIssues();
+  // 링크로 들어오면 펼친 상태로 보이도록 자동 접기 해제
+  S.collapsedMonths.clear();
+  S.collapsedDates.clear();
+  for (const i of S.issues) {
+    if (i.issue_date) S.userToggledDates.add(i.issue_date);
+  }
   render();
 }
 
