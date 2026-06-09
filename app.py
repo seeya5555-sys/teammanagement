@@ -2916,6 +2916,93 @@ def api_vt_finding_delete(fid):
 
 # ----- Attachments -----
 
+def _vetting_full_prompt():
+    return (
+        "다음은 선박 SIRE 2.0 점검(Vetting Inspection) 보고서다. 두 가지를 추출해 지정한 JSON으로만 답하라.\n"
+        "■ meta: 보고서 표지/상단의 점검 메타정보. 보고서에 해당 정보가 없으면 반드시 빈 문자열로 둔다(지어내지 말 것).\n"
+        "- report_number: Report No / Report # / 보고서 번호\n"
+        "- inspection_date: 점검 실시일 (반드시 YYYY-MM-DD 형식. 다른 형식이면 YYYY-MM-DD로 변환)\n"
+        "- inspection_company: 점검 주체 / Oil Major / 제출사 (예: VIVA ENERGY, BP, SHELL, TOTAL)\n"
+        "- inspector: 점검관(Inspector) 성명\n"
+        "- port: 점검 항구(Port)\n"
+        "- sire_type: 점검 시 운항 상태. 반드시 'Idle' · 'Bunkering' · 'Discharge' 중 하나로만. 식별 불가 시 빈 문자열.\n"
+        "- valid: 보고서 유효성. 'Valid' 또는 'Invalid'. 식별 불가 시 빈 문자열.\n"
+        "■ items: 지적(결함) 사항만 추출한다.\n"
+        "■ 포함: 'Observable or detectable deficiency' / 'Not as expected'로 표시된 부정적 지적(빨간 글씨).\n"
+        "■ 제외: 'Exceeded normal expectation' 등 칭찬/긍정 평가(초록 글씨)는 절대 포함하지 마라.\n"
+        "- item: 항목 왼쪽 분류(Hardware 또는 Human)를 괄호로 먼저 붙이고, 그 뒤 굵게 표시된 지적 제목을 그대로 이어 붙인다. "
+        "예: '(Hardware)Misc Nautical Equipment – Maintenance deferred, awaiting spares', '(Human)Senior Engineer Officer – Not as expected'.\n"
+        "- description: 제목 아래 상세 본문(이탤릭 문장)을 영어 원문 그대로 복사. 요약·변형 금지.\n"
+        "- remark: description의 핵심 지적사항을 한국어 1~2문장으로 간결하게 요약(전체 직역 금지). 문장은 '~함/~됨/~음' 음슴체(개조식). "
+        "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
+        "없는 내용을 지어내지 말 것. 지적이 하나도 없으면 items를 빈 배열로.\n"
+        '형식: {"meta":{"report_number":"","inspection_date":"","inspection_company":"","inspector":"",'
+        '"port":"","sire_type":"","valid":""},"items":[{"item":"","description":"","remark":""}]}'
+    )
+
+
+def _norm_vetting_meta(m):
+    m = m if isinstance(m, dict) else {}
+    g = lambda k: (m.get(k) or '').strip()
+    sire = g('sire_type')
+    valid = g('valid')
+    return {
+        'report_number':      g('report_number'),
+        'inspection_date':    g('inspection_date'),
+        'inspection_company': g('inspection_company'),
+        'inspector':          g('inspector'),
+        'port':               g('port'),
+        'sire_type':          sire if sire in ('Idle', 'Bunkering', 'Discharge') else '',
+        'valid':              valid if valid in ('Valid', 'Invalid') else '',
+    }
+
+
+def _extract_vetting_from_upload(f):
+    """SIRE 보고서 업로드 → (items, meta, err). 헤더 메타 + 지적 항목을 한 번에 추출."""
+    name = (f.filename or '').lower()
+    ext = name.rsplit('.', 1)[-1] if '.' in name else ''
+    raw = f.read()
+    size_mb = len(raw) / (1024 * 1024)
+    prompt = _vetting_full_prompt()
+
+    if ext == 'pdf':
+        if size_mb > 15:
+            return None, None, {'reason': 'TOO_LARGE', 'message': f'PDF가 너무 큽니다({size_mb:.1f}MB). 15MB 이하로 줄여주세요.'}
+        b64 = __import__('base64').standard_b64encode(raw).decode()
+        parsed = _gemini_call_json([
+            {'inline_data': {'mime_type': 'application/pdf', 'data': b64}},
+            {'text': prompt},
+        ], model=_model_for('findings'))
+    elif ext in ('png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'):
+        if size_mb > 15:
+            return None, None, {'reason': 'TOO_LARGE', 'message': f'이미지가 너무 큽니다({size_mb:.1f}MB).'}
+        import mimetypes
+        media = mimetypes.guess_type(name)[0] or 'image/jpeg'
+        b64 = __import__('base64').standard_b64encode(raw).decode()
+        parsed = _gemini_call_json([
+            {'inline_data': {'mime_type': media, 'data': b64}},
+            {'text': prompt},
+        ], model=_model_for('findings'))
+    elif ext in ('xlsx', 'xls'):
+        try:
+            txt = _xlsx_to_text(raw)
+        except Exception as e:
+            return None, None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
+        parsed = _gemini_call_json([{'text': prompt + '\n\n[보고서 표 내용]\n' + txt}],
+                                   model=_model_for('findings'))
+    else:
+        return None, None, {'reason': 'BAD_TYPE', 'message': 'PDF · 이미지 · 엑셀(xlsx) 파일만 지원합니다.'}
+
+    if isinstance(parsed, dict) and parsed.get('error') == 'NO_API_KEY':
+        return None, None, {'reason': 'no_api_key', 'message': 'AI 자동추출이 설정되지 않았습니다(키 미설정).'}
+    if isinstance(parsed, dict) and parsed.get('error'):
+        return None, None, {'reason': parsed['error'], 'message': '자동 추출에 실패했습니다.',
+                            'detail': parsed.get('detail') or parsed.get('raw')}
+    items = _normalize_findings(parsed, 'sire')
+    meta = _norm_vetting_meta(parsed.get('meta') if isinstance(parsed, dict) else None)
+    return items, meta, None
+
+
 @app.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
 @login_required
 def api_vt_extract_report(vid):
@@ -2923,10 +3010,23 @@ def api_vt_extract_report(vid):
         abort(404)
     if 'file' not in request.files or not request.files['file'].filename:
         return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
-    items, err = _extract_findings_from_upload(request.files['file'], 'sire')
+    items, meta, err = _extract_vetting_from_upload(request.files['file'])
     if err:
         return jsonify({'ok': False, **err}), 200
-    return jsonify({'ok': True, 'items': items, 'count': len(items)})
+    # 헤더 메타 자동 반영: 추출값이 있는 필드만 갱신 (없으면 기존값 유지)
+    applied = {}
+    sets, params = [], []
+    for col in ('report_number', 'inspection_date', 'inspection_company',
+                'inspector', 'port', 'sire_type', 'valid'):
+        val = (meta or {}).get(col, '')
+        if val:
+            sets.append(f'{col}=?'); params.append(val); applied[col] = val
+    if sets:
+        sets.append("updated_at=datetime('now','localtime')")
+        params.append(vid)
+        execute(f'UPDATE vettings SET {", ".join(sets)} WHERE id=?', tuple(params))
+    return jsonify({'ok': True, 'items': items, 'count': len(items),
+                    'meta': meta, 'applied': applied})
 
 
 @app.route('/api/vettings/<int:vid>/export')
