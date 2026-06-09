@@ -4465,4 +4465,5 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 .vt-dg-open { color: #dc2626; font-weight: 700; }
 .vt-dg-open-zero { color: var(--text-tertiary); font-weight: 700; }
 .vt-dg-sep { color: var(--text-tertiary); }
-.vt-dg-detail { white-space: pre-line; line-height: 1.55; min-width: 280px; color: var(--text); }
+.vt-dg-detail { min-width: 280px; color: var(--text); }
+.vt-dg-line { line-height: 1.55; min-height: 1.55em; white-space: normal; }
