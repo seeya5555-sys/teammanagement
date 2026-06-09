@@ -110,6 +110,15 @@
       <button class="modal-close" data-csx-close="1">&times;</button>
     </div>
     <div class="modal-body">
+      <div class="attach-dropzone csx-dropzone" id="cs-extract-drop">
+        <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p class="attach-dropzone-title">파일을 끌어다 놓거나 클릭하여 선택</p>
+        <p class="attach-dropzone-sub">PDF · 이미지 · 엑셀 · 한 번에 한 개 (최대 15MB)</p>
+      </div>
       <div class="csx-pick">
         <input type="file" id="cs-extract-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif,.xlsx,.xls" hidden>
         <button class="btn btn-outline" id="cs-extract-pick" type="button">파일 선택 (PDF · 이미지 · 엑셀)</button>
