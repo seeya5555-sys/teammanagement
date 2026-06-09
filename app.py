@@ -661,6 +661,12 @@ def api_issue_list():
         conds.append('(i.item_topic LIKE ? OR i.description LIKE ? OR i.actions LIKE ?)')
         params += [like, like, like]
 
+    # 제목(ITEM) 정확 일치 — 요약 링크에서 해당 이슈만 보기 위함
+    item_exact = request.args.get('item_topic')
+    if item_exact:
+        conds.append('i.item_topic = ?')
+        params.append(item_exact)
+
     # 선종 필터 (vessels.vessel_type JOIN 기준)
     vt = request.args.get('vessel_type')
     if vt:
