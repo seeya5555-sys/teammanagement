@@ -5732,6 +5732,14 @@ def _class_digest(coc_list, stat_list, society):
     """CLASS STATUS 요약 — 선급 / COC합 / 중복표기 번호목록 (Class Status 탭 요약 패널과 동일)."""
     norm = lambda s: ' '.join((s or '').strip().lower().split())
     text = lambda it: (it.get('remark') or it.get('description') or '').strip()
+    def fmt(it, dup):
+        s = text(it)
+        if dup:
+            s += ' (선급지적 / 기국사항 중복)'
+        due = (it.get('due_date') or '').strip()
+        if due:
+            s += ' // ' + due
+        return s
     stat_matched = set()
     lines = []
     for c in coc_list:
@@ -5744,12 +5752,12 @@ def _class_digest(coc_list, stat_list, society):
                     break
         if mi >= 0:
             stat_matched.add(mi)
-            lines.append(text(c) + ' (선급지적 / 기국사항 중복)')
+            lines.append(fmt(c, True))
         else:
-            lines.append(text(c))
+            lines.append(fmt(c, False))
     for i, s in enumerate(stat_list):
         if i not in stat_matched:
-            lines.append(text(s))
+            lines.append(fmt(s, False))
     lines = [l for l in lines if l]
     detail = '\n'.join(f'{i + 1}. {l}' for i, l in enumerate(lines))
     return {'society': society or '-', 'coc_total': len(coc_list) + len(stat_list), 'detail': detail}
