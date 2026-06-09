@@ -226,6 +226,9 @@ function vesselBlock(item) {
 
   if (!isExpanded) return block;
 
+  const digest = vettingDigest(item);
+  if (digest) block.append(digest);
+
   const table = el('table', { class: 'vt-vetting-table' });
   table.append(el('thead', {},
     el('tr', {},
@@ -269,6 +272,52 @@ function vesselBlock(item) {
   block.append(addBar);
 
   return block;
+}
+
+// ───────────── 선박 단위 SIRE 요약 (자동 집계, 읽기전용) ─────────────
+function vettingDigest(item) {
+  const vts = (item.vettings || []).slice().sort((a, b) =>
+    (b.inspection_date || '').localeCompare(a.inspection_date || ''));
+  if (!vts.length) return null;
+  const latest = vts[0];
+  const status = latest.valid || '';
+  const statusCls = status === 'Next Plan' ? 'vt-dg-next'
+    : status === 'Last Result' ? 'vt-dg-last' : '';
+  const total = (latest.observation_count != null) ? latest.observation_count : 0;
+  const openCnt = (latest.open_count != null) ? latest.open_count : 0;
+
+  // 지적 상세: Open 항목이 있는 모든 Report의 Overall Remark, 최신순, 빈 줄 구분
+  const detail = vts
+    .filter(v => (v.open_count || 0) > 0 && (v.overall_remark || '').trim())
+    .map(v => v.overall_remark.trim())
+    .join('\n\n');
+
+  const detailCell = el('td', { class: 'vt-dg-detail' });
+  if (detail) detailCell.textContent = detail;
+  else detailCell.append(el('span', { class: 'placeholder' }, '–'));
+
+  const table = el('table', { class: 'vt-digest-table' });
+  table.append(el('thead', {}, el('tr', {},
+    el('th', {}, '상태'),
+    el('th', {}, '항구'),
+    el('th', {}, 'DATE'),
+    el('th', {}, 'OIL MAJOR'),
+    el('th', {}, 'OBS (전체 / 잔여)'),
+    el('th', {}, '지적 상세'),
+  )));
+  table.append(el('tbody', {}, el('tr', {},
+    el('td', { class: 'vt-dg-status ' + statusCls }, status || '–'),
+    el('td', {}, latest.port || '–'),
+    el('td', {}, latest.inspection_date || '–'),
+    el('td', {}, latest.inspection_company || '–'),
+    el('td', { class: 'vt-dg-obs' },
+      el('span', { class: 'vt-dg-total' }, String(total)),
+      el('span', { class: 'vt-dg-sep' }, ' / '),
+      el('span', { class: (openCnt > 0 ? 'vt-dg-open' : 'vt-dg-open-zero') }, String(openCnt))),
+    detailCell,
+  )));
+
+  return el('div', { class: 'vt-digest' }, table);
 }
 
 function lastUpdateLabelVT(updatedAt) {
