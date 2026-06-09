@@ -5612,6 +5612,9 @@ def _ext_issues():
             d['actions'] = []
         d['vessel_key'] = _vkey(d.get('vessel_name'))
         d['ref'] = _ref('issue', d.get('id'))
+        for ai, a in enumerate(d['actions']):
+            if isinstance(a, dict):
+                a['ref'] = f"{d['ref']}#action:{ai}"
         out.append(d)
     return out
 
@@ -5651,15 +5654,19 @@ def _ext_vettings():
 
 
 def _report_tree(report_id, sec_table, blk_table):
+    sec_kind = sec_table[:-1]   # dock_report_sections → dock_report_section
+    blk_kind = blk_table[:-1]   # dock_report_blocks   → dock_report_block
     secs = query(f"SELECT * FROM {sec_table} WHERE report_id=? ORDER BY display_order, id",
                  (report_id,))
     out = []
     for s in secs:
         sd = dict(s)
+        sd['ref'] = _ref(sec_kind, s['id'])
         blocks = []
         for b in query(f"SELECT * FROM {blk_table} WHERE section_id=? ORDER BY display_order, id",
                        (s['id'],)):
             bd = dict(b)
+            bd['ref'] = _ref(blk_kind, b['id'])
             try:
                 bd['content'] = json.loads(bd['content_json']) if bd.get('content_json') else None
             except Exception:
