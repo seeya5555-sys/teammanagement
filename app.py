@@ -2314,6 +2314,18 @@ def _translate_rows_en(rows):
             r[field] = en
 
 
+_MARITIME_TERMS = (
+    " 요약은 선박 현업(감독/기관부) 용어로 옮긴다. 일반어 → 현업어 매핑: "
+    "repair=수리(※'보수'로 쓰지 말 것), cleaning/clean=소제, replace/renew/renewal=신환, "
+    "install/fitting=설치, overhaul=O/H(분해점검), inspection/survey=수검, maintenance=정비, "
+    "check/verify=확인, adjust/adjustment=조정, calibration=교정, test=시험, crack=균열, "
+    "corrosion/rust=부식, leak/leakage=누설(누유/누수), wear/weardown=마모, deformation=변형, "
+    "spare parts=예비품, weld/welding=용접, coating/painting=도장, submit=제출, "
+    "place onboard=본선 비치. "
+    "목록에 없어도 선박에서 통용되는 자연스러운 표현을 우선 사용한다. "
+)
+
+
 def _findings_prompt(kind):
     if kind == 'cs':
         return (
@@ -2323,7 +2335,7 @@ def _findings_prompt(kind):
             "- item: 짧은 제목 한 줄 (예: 'Main deck 부식')\n"
             "- description: 지적 상세 내용을 원문 그대로 복사한다(영문이면 영문 그대로). 요약·변형 금지.\n"
             "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺는다. "
-            "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다.\n"
+            "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
             "없는 내용을 지어내지 말 것. 항목이 하나도 없으면 items를 빈 배열로.\n"
             '형식: {"items":[{"category":"Defect","item":"","description":"","remark":""}]}'
         )
@@ -2338,7 +2350,7 @@ def _findings_prompt(kind):
         "'(Human)Senior Engineer Officer – Not as expected'.\n"
         "- description: 제목 아래의 상세 본문(이탤릭 문장)을 영어 원문 그대로 복사한다. 요약·변형 금지.\n"
         "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺는다. "
-        "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm, turn table 등)는 번역하지 말고 영문 그대로 둔다.\n"
+        "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm, turn table 등)는 번역하지 말고 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
         "없는 내용을 지어내지 말 것. 지적이 하나도 없으면 items를 빈 배열로.\n"
         '형식: {"items":[{"item":"","description":"","remark":""}]}'
     )
@@ -2435,7 +2447,7 @@ def _summarize_remarks(items, kind):
     prompt = (
         "아래는 선박 점검 지적 항목들의 description 목록(JSON 배열)이다. 각 항목의 description을 "
         "한국어로 1~2문장으로 간결하게 요약하라(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺어라. 기술 명칭·장비명·약어"
-        "(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다. "
+        "(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
         "입력의 i 값을 그대로 사용해 JSON으로만 답하라.\n"
         '형식: {"summaries":[{"i":0,"remark":"요약문"}]}\n\n[입력]\n' + payload)
     res = _gemini_call_json([{'text': prompt}], model=_model_for('remark'))
@@ -5648,8 +5660,7 @@ def _class_status_prompt():
         "- due_date: 마감/처리기한 (Due/Limit date, 가능하면 YYYY-MM-DD, 없으면 빈 문자열)\n"
         "- remark: description의 핵심을 한국어 1~2문장으로 간결히 요약(전체 직역 금지). "
         "문장은 '~함/~됨/~음' 음슴체(개조식). 기술 명칭·장비명·약어·인증명(예: COC, SEEMP, IHM, "
-        "BNWAS, Load Line, Plimsoll Mark, EGCS, BWTS)은 영문 그대로. 선박 현업 용어 사용(예: 청소→소제, "
-        "검사→수검, 교체→신환).\n"
+        "BNWAS, Load Line, Plimsoll Mark, EGCS, BWTS)은 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
         "없는 내용을 지어내지 말 것.\n"
         '형식: {"vessel_name":"","class_society":"","report_date":"",'
         '"coc":[{"issued_date":"","description":"","due_date":"","remark":""}],'
