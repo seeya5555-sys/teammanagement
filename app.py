@@ -1097,7 +1097,8 @@ def _gen_summary_rows(supervisor_id=None):
     if supervisor_id:
         conds.append('i.supervisor_id = ?'); params.append(supervisor_id)
     sql = f'''
-        SELECT i.*, s.display_order AS sv_order, v.name AS vessel_name
+        SELECT i.*, s.display_order AS sv_order, v.name AS vessel_name,
+               v.vessel_type AS vessel_type
           FROM issues i
           JOIN supervisors s ON s.id = i.supervisor_id
           JOIN vessels     v ON v.id = i.vessel_id
@@ -1125,10 +1126,15 @@ def _gen_summary_rows(supervisor_id=None):
             md = _md_label(ad)
             lines.append(f'2) {md} {action}'.strip() if md else f'2) {action}')
         out.append({'no': idx + 1,
+                    'issue_id': r.get('id'),
+                    'item': r.get('item_topic') or '',
                     'supervisor_id': r.get('supervisor_id'),
+                    'vessel_id': r.get('vessel_id'),
                     'vessel_name': r.get('vessel_name') or '',
+                    'vessel_type': r.get('vessel_type') or '',
                     'issue': '\n'.join(lines),
                     'priority': r.get('priority') or '',
+                    'status_raw': r.get('status') or '',
                     'status': STAT.get(r.get('status'), r.get('status') or '')})
     return out
 
