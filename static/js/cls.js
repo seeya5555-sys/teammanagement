@@ -183,6 +183,13 @@ function clsDigest(snap) {
   const total = coc.length + stat.length;
   const norm = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const text = it => (it.remark || it.description || '').trim();
+  const fmt = (it, dup) => {
+    let s = text(it);
+    if (dup) s += ' (선급지적 / 기국사항 중복)';
+    const due = (it.due_date || '').trim();
+    if (due) s += ' // ' + due;
+    return s;
+  };
 
   const statMatched = new Set();
   const lines = [];
@@ -192,13 +199,13 @@ function clsDigest(snap) {
     const mi = key ? stat.findIndex((s, i) => !statMatched.has(i) && norm(s.description) === key) : -1;
     if (mi >= 0) {
       statMatched.add(mi);
-      lines.push(text(c) + ' (선급지적 / 기국사항 중복)');
+      lines.push(fmt(c, true));
     } else {
-      lines.push(text(c));
+      lines.push(fmt(c, false));
     }
   });
   // 중복되지 않은 기국 항목
-  stat.forEach((s, i) => { if (!statMatched.has(i)) lines.push(text(s)); });
+  stat.forEach((s, i) => { if (!statMatched.has(i)) lines.push(fmt(s, false)); });
 
   const detail = lines.filter(l => l).map((l, i) => `${i + 1}. ${l}`).join('\n');
   return { society: snap.class_society || '-', total, detail };
