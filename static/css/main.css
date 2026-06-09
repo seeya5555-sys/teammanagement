@@ -1837,13 +1837,16 @@ col.c-edit   { width: 156px; }
 
 /* Item 20% : Description 50% : Remark 30% 비율 */
 .cs-findings-table .cs-th-item {
-  width: calc((100% - 50px - 90px - 48px) * 0.2);
+  width: calc((100% - 50px - 90px - 80px) * 0.18);
 }
 .cs-findings-table .cs-th-desc {
-  width: calc((100% - 50px - 90px - 48px) * 0.5);
+  width: calc((100% - 50px - 90px - 80px) * 0.40);
 }
-.cs-findings-table .cs-th-remark {
-  width: calc((100% - 50px - 90px - 48px) * 0.3);
+.cs-findings-table .cs-th-trans {
+  width: calc((100% - 50px - 90px - 80px) * 0.24);
+}
+.cs-findings-table .cs-th-urem {
+  width: calc((100% - 50px - 90px - 80px) * 0.18);
 }
 
 /* finding 행의 셀별 디스플레이도 멀티라인 깔끔히 */
