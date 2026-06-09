@@ -597,7 +597,8 @@ function findingsSection(vt, findings) {
     el('th', { style: 'width:50px' }, 'No'),
     el('th', { class: 'cs-th-item' }, 'Item'),
     el('th', { class: 'cs-th-desc' }, 'Description'),
-    el('th', { class: 'cs-th-remark' }, 'Remark'),
+    el('th', { class: 'cs-th-trans' }, '번역 요약'),
+    el('th', { class: 'cs-th-urem' }, 'Remark'),
     el('th', { style: 'width:90px; text-align:center' }, 'Status'),
     el('th', { style: 'width:80px' }, ''),
   )));
@@ -605,7 +606,7 @@ function findingsSection(vt, findings) {
   const tbody = el('tbody');
   if (!findings.length && !(vt._inlineAdd)) {
     tbody.append(el('tr', {},
-      el('td', { colspan: 6, class: 'vt-empty-row' },
+      el('td', { colspan: 7, class: 'vt-empty-row' },
         '아직 Observation이 없습니다. 아래 + 버튼으로 추가하세요.')
     ));
   } else {
@@ -646,6 +647,7 @@ function findingRow(vt, f) {
   tr.append(findingEditableCell(f, 'item', vt));
   tr.append(findingEditableCell(f, 'description', vt));
   tr.append(findingEditableCell(f, 'remark', vt));
+  tr.append(findingEditableCell(f, 'user_remark', vt));
 
   const stTd = el('td', { class: 'cs-status', style: 'text-align:center' });
   const badge = el('span', {
@@ -757,7 +759,7 @@ async function bulkUpdateFindings(vt, startF, field, values) {
   const willUpdate = Math.min(values.length, remaining);
   const skipped = values.length - willUpdate;
 
-  const fieldLabel = { item: 'Item', description: 'Description', remark: 'Remark' }[field] || field;
+  const fieldLabel = { item: 'Item', description: 'Description', remark: '번역 요약', user_remark: 'Remark' }[field] || field;
   const startNo = startF.no;
   const endNo = list[startIdx + willUpdate - 1].no;
   let msg = `Observation ${startNo}번 ~ ${endNo}번 항목의 ${fieldLabel}을(를) 일괄 수정합니다.\n총 ${willUpdate}개 항목.`;
@@ -809,11 +811,11 @@ function addBlankRow(vt) {
     }
   }
   if (!vt._inlineAdd) vt._inlineAdd = { rows: [] };
-  vt._inlineAdd.rows.push({ item: '', description: '', remark: '', status: 'Open' });
+  vt._inlineAdd.rows.push({ item: '', description: '', remark: '', user_remark: '', status: 'Open' });
   render();
   setTimeout(() => {
     const inputs = document.querySelectorAll('.cs-inline-add-row .cs-inline-input');
-    const targetIdx = (vt._inlineAdd.rows.length - 1) * 4;
+    const targetIdx = (vt._inlineAdd.rows.length - 1) * 5;
     if (inputs[targetIdx]) inputs[targetIdx].focus();
   }, 50);
 }
@@ -832,7 +834,10 @@ function inlineAddRow(vt, row, idx, baseNo) {
     value: row.description,
   });
   const remarkInput = el('input', {
-    type: 'text', class: 'cs-inline-input', placeholder: 'Remark', value: row.remark,
+    type: 'text', class: 'cs-inline-input', placeholder: '번역 요약', value: row.remark,
+  });
+  const uremInput = el('input', {
+    type: 'text', class: 'cs-inline-input', placeholder: 'Remark (자율 입력)', value: row.user_remark || '',
   });
   const statusSel = document.createElement('select');
   statusSel.className = 'cs-inline-input';
@@ -845,6 +850,7 @@ function inlineAddRow(vt, row, idx, baseNo) {
   itemInput  .addEventListener('input',  () => { row.item        = itemInput.value; });
   descInput  .addEventListener('input',  () => { row.description = descInput.value; });
   remarkInput.addEventListener('input',  () => { row.remark      = remarkInput.value; });
+  uremInput  .addEventListener('input',  () => { row.user_remark = uremInput.value; });
   statusSel  .addEventListener('change', () => { row.status      = statusSel.value; });
 
   const onPaste = (ev) => {
@@ -857,14 +863,15 @@ function inlineAddRow(vt, row, idx, baseNo) {
     rows.forEach((cols, k) => {
       const targetIdx = idx + k;
       while (vt._inlineAdd.rows.length <= targetIdx) {
-        vt._inlineAdd.rows.push({ item: '', description: '', remark: '', status: 'Open' });
+        vt._inlineAdd.rows.push({ item: '', description: '', remark: '', user_remark: '', status: 'Open' });
       }
       const target = vt._inlineAdd.rows[targetIdx];
       if (cols[0] !== undefined && cols[0] !== '') target.item        = cols[0].trim();
       if (cols[1] !== undefined && cols[1] !== '') target.description = cols[1].trim();
       if (cols[2] !== undefined && cols[2] !== '') target.remark      = cols[2].trim();
-      if (cols[3] !== undefined && cols[3] !== '') {
-        const st = cols[3].trim();
+      if (cols[3] !== undefined && cols[3] !== '') target.user_remark = cols[3].trim();
+      if (cols[4] !== undefined && cols[4] !== '') {
+        const st = cols[4].trim();
         target.status = (st === 'Closed' || st.toLowerCase() === 'closed') ? 'Closed' : 'Open';
       }
     });
@@ -873,15 +880,16 @@ function inlineAddRow(vt, row, idx, baseNo) {
   itemInput.addEventListener('paste', onPaste);
   descInput.addEventListener('paste', onPaste);
   remarkInput.addEventListener('paste', onPaste);
+  uremInput.addEventListener('paste', onPaste);
 
-  for (const inp of [itemInput, descInput, remarkInput]) {
+  for (const inp of [itemInput, descInput, remarkInput, uremInput]) {
     inp.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' && !ev.shiftKey) {
         ev.preventDefault();
         if (idx === vt._inlineAdd.rows.length - 1) addBlankRow(vt);
         else {
           const inputs = document.querySelectorAll('.cs-inline-add-row .cs-inline-input');
-          const nextIdx = (idx + 1) * 4;
+          const nextIdx = (idx + 1) * 5;
           if (inputs[nextIdx]) inputs[nextIdx].focus();
         }
       }
@@ -892,8 +900,9 @@ function inlineAddRow(vt, row, idx, baseNo) {
   const td0 = el('td'); td0.append(itemInput);
   const td1 = el('td'); td1.append(descInput);
   const td2 = el('td'); td2.append(remarkInput);
-  const td3 = el('td', { style: 'text-align:center' }); td3.append(statusSel);
-  tr.append(td0, td1, td2, td3);
+  const td3 = el('td'); td3.append(uremInput);
+  const td4 = el('td', { style: 'text-align:center' }); td4.append(statusSel);
+  tr.append(td0, td1, td2, td3, td4);
 
   const acts = el('td', { class: 'cs-actions' });
   const rm = el('button', {
@@ -920,6 +929,7 @@ async function saveAllInlineRows(vt) {
       item:        (r.item || '').trim(),
       description: (r.description || '').trim(),
       remark:      (r.remark || '').trim(),
+      user_remark: (r.user_remark || '').trim(),
       status:      r.status || 'Open',
     }));
   if (!valid.length) {
