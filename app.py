@@ -5738,7 +5738,7 @@ def _class_digest(coc_list, stat_list, society):
             s += ' (선급지적 / 기국사항 중복)'
         due = (it.get('due_date') or '').strip()
         if due:
-            s += ' // ' + due
+            s += ' // DUE DATE : ' + due
         return s
     stat_matched = set()
     lines = []
