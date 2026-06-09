@@ -4441,3 +4441,4 @@ tr.imp-row-High td { background: #fff5f5; }
 
 .cls-up-results + .form-hint, .modal-foot .form-hint { font-size: 12px; color: var(--text-tertiary); }
 .cs-toolbar .form-hint { font-size: 12px; color: var(--text-tertiary); }
+.cls-bulk-toggle { display: inline-flex; gap: 6px; }
