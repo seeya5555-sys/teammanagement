@@ -19,7 +19,7 @@ const S = {
   issues:       [],
   summary:      { rows: [], generated_at: null },
   summaryCounts: {},   // { scopeKey: n }
-  filters: { q:'', vessel_id:'', vessel_type:'', status:'', priority:'' },
+  filters: { q:'', vessel_id:'', vessel_type:'', status:'', priority:'', item_topic:'' },
 
   editingId:      null,
   editingActions: [],
@@ -182,6 +182,7 @@ async function loadIssues() {
   }
 
   if (S.filters.q)           p.set('q', S.filters.q);
+  if (S.filters.item_topic)  p.set('item_topic', S.filters.item_topic);
   if (S.filters.vessel_id)   p.set('vessel_id', S.filters.vessel_id);
   if (S.filters.vessel_type) p.set('vessel_type', S.filters.vessel_type);
   if (S.filters.priority)    p.set('priority', S.filters.priority);
@@ -522,7 +523,8 @@ async function gotoIssueFromSummary(r) {
   S.activeSubTab = 'all';
   try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
   // 제목 검색만 남기고 나머지 필터 초기화 → 그 이슈만 보이도록
-  S.filters.q = r.item || '';
+  S.filters.item_topic = r.item || '';
+  S.filters.q = '';
   S.filters.vessel_id = '';
   S.filters.vessel_type = '';
   S.filters.status = '';
@@ -531,8 +533,8 @@ async function gotoIssueFromSummary(r) {
   renderTabs();
   renderVesselFilter();
   renderTabContext();
-  // 셀렉트/검색 UI 동기화
-  const sb = $('#filter-search'); if (sb) sb.value = S.filters.q;
+  // 셀렉트/검색 UI 동기화 (검색창엔 제목 표시)
+  const sb = $('#filter-search'); if (sb) sb.value = r.item || '';
   ['#filter-vessel', '#filter-vessel-type', '#filter-status', '#filter-priority']
     .forEach(sel => { const e = $(sel); if (e) e.value = ''; });
   await loadIssues();
@@ -2623,6 +2625,7 @@ function wireEvents() {
   $('#filter-search').addEventListener('input', (e) => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
+      S.filters.item_topic = '';   // 수동 검색 시 제목 정확일치 해제
       S.filters.q = e.target.value.trim();
       loadIssues().then(render);
     }, 220);
