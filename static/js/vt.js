@@ -235,7 +235,8 @@ function vesselBlock(item) {
       el('th', { class: 'vt-th-comp' }, 'Company'),
       el('th', { class: 'vt-th-insp' }, 'Inspector'),
       el('th', { class: 'vt-th-port' }, 'Port'),
-      el('th', { class: 'vt-th-op'   }, 'Operation'),
+      el('th', { class: 'vt-th-op'   }, 'SIRE Type'),
+      el('th', { class: 'vt-th-op'   }, 'Valid'),
       el('th', { class: 'vt-th-cnt'  }, 'Obs'),
       el('th', { class: 'vt-th-cnt'  }, 'Open'),
       el('th', { class: 'vt-th-cnt'  }, 'Close'),
@@ -246,7 +247,7 @@ function vesselBlock(item) {
   const tbody = el('tbody');
   if (!item.vettings.length) {
     tbody.append(el('tr', {},
-      el('td', { colspan: 11, class: 'vt-empty-row' },
+      el('td', { colspan: 12, class: 'vt-empty-row' },
         '아직 Vetting 기록이 없습니다.')
     ));
   } else {
@@ -340,7 +341,8 @@ function vettingRow(item, vt) {
   tr.append(vtEditCell(vt, 'inspection_company'));
   tr.append(vtEditCell(vt, 'inspector'));
   tr.append(vtEditCell(vt, 'port'));
-  tr.append(vtEditCellSelect(vt, 'operation', ['', 'Loading', 'Discharging', 'Idle']));
+  tr.append(vtEditCellSelect(vt, 'sire_type', ['', 'Idle', 'Bunkering', 'Discharge']));
+  tr.append(vtEditCellSelect(vt, 'valid', ['', 'Invalid', 'Valid']));
 
   tr.append(countCell(vt, 'manual_observation_count', vt.observation_count, vt.observation_manual));
   tr.append(countCell(vt, 'manual_open_count',        vt.open_count,        vt.open_manual,  'cs-cnt-open'));
@@ -549,7 +551,7 @@ function countCell(vt, field, value, isManual, extraClass = '') {
 // ───────────── Detail Row ─────────────
 function detailRow(vt) {
   const tr = el('tr', { class: 'cs-detail-row' });
-  const td = el('td', { colspan: 11, class: 'cs-detail-cell' });
+  const td = el('td', { colspan: 12, class: 'cs-detail-cell' });
 
   // 보고서 → 지적 항목 자동 생성 (Gemini) + 엑셀 추출
   td.append(el('div', { class: 'csx-bar' },
@@ -1009,7 +1011,7 @@ async function addVtToCalendar(item, vt) {
     `  제목: ${title}\n` +
     `  날짜: ${vt.inspection_date}\n` +
     `  선박: ${v.name}\n` +
-    `  Operation: ${vt.operation || '-'}\n` +
+    `  SIRE Type: ${vt.sire_type || '-'} (${vt.valid || '-'})\n` +
     `  카테고리: 검사  (색상: 호박)\n\n` +
     `진행하시겠습니까? (저장 후 일정 페이지에서 추가 편집 가능)`;
   if (!confirm(summary)) return;
@@ -1017,7 +1019,7 @@ async function addVtToCalendar(item, vt) {
   const notes =
     `Inspector: ${vt.inspector || '-'}\n` +
     `Port: ${vt.port || '-'}\n` +
-    `Operation: ${vt.operation || '-'}\n` +
+    `SIRE Type: ${vt.sire_type || '-'} (${vt.valid || '-'})\n` +
     (vt.overall_remark ? `\n${vt.overall_remark}` : '');
 
   try {
