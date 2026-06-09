@@ -2592,7 +2592,8 @@ function wireEvents() {
 
   // 업무 요약 추출 — 한글 요약(Gemini) 3열 표
   $('#btn-export-summary').addEventListener('click', () => {
-    const p = buildExportParams();
+    const p = new URLSearchParams();
+    if (S.activeTab !== 'all') p.set('supervisor_id', S.activeTab);
     downloadExport('#btn-export-summary', '/api/issues/summary-export?' + p.toString(), 'TRMT_업무요약.xlsx');
   });
 
