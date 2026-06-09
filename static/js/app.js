@@ -472,10 +472,31 @@ function renderSummaryView() {
 
   // 툴바 필터 적용 (저장된 요약 행을 화면에서 필터링)
   const f = S.filters;
+  // 선박/선종 역조회용 맵 + 상태 라벨 맵 (옛 요약 데이터에 새 필드가 없어도 동작)
+  const vById = {}, vByName = {};
+  for (const v of S.vessels) { vById[v.id] = v; vByName[(v.name || '').toLowerCase()] = v; }
+  const STAT_LABEL = { Open: 'Open', InProgress: '진행중', Closed: 'Closed' };
+
   rows = rows.filter(r => {
-    if (f.vessel_id && String(r.vessel_id) !== String(f.vessel_id)) return false;
-    if (f.vessel_type && r.vessel_type !== f.vessel_type) return false;
-    if (f.status && r.status_raw !== f.status) return false;
+    const vByNameHit = vByName[(r.vessel_name || '').toLowerCase()];
+    // 선박: vessel_id 우선, 없으면 선박명으로
+    if (f.vessel_id) {
+      const rid = r.vessel_id || (vByNameHit && vByNameHit.id);
+      if (String(rid) !== String(f.vessel_id)) return false;
+    }
+    // 선종: row.vessel_type 우선, 없으면 선박명으로 조회
+    if (f.vessel_type) {
+      const vt = r.vessel_type || (vByNameHit && vByNameHit.vessel_type) || '';
+      if (vt !== f.vessel_type) return false;
+    }
+    // 상태: status_raw 우선, 없으면 표시 라벨로 매칭
+    if (f.status) {
+      if (r.status_raw) {
+        if (r.status_raw !== f.status) return false;
+      } else if ((r.status || '') !== (STAT_LABEL[f.status] || f.status)) {
+        return false;
+      }
+    }
     if (f.priority && r.priority !== f.priority) return false;
     if (f.q) {
       const q = f.q.toLowerCase();
