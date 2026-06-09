@@ -15,8 +15,10 @@ const S = {
   supervisors:  [],
   vessels:      [],
   activeTab:    'all',
-  activeSubTab: localStorage.getItem('trmt_subtab') || 'open',  // 'open' = Open+진행중 / 'closed' = Closed
+  activeSubTab: localStorage.getItem('trmt_subtab') || 'open',  // 'open' = Open+진행중 / 'closed' = Closed / 'all' / 'summary'
   issues:       [],
+  summary:      { rows: [], generated_at: null },
+  summaryCounts: {},   // { scopeKey: n }
   filters: { q:'', vessel_id:'', vessel_type:'', status:'', priority:'' },
 
   editingId:      null,
@@ -173,6 +175,8 @@ async function loadIssues() {
     } catch (_) {
       S.summary = { rows: [], generated_at: null };
     }
+    const scopeKey = (S.activeTab === 'all') ? 'all' : String(S.activeTab);
+    S.summaryCounts[scopeKey] = (S.summary.rows || []).length;
     S.issues = [];
     return;
   }
@@ -256,7 +260,9 @@ function renderSubTabs() {
   bar.append(subtabEl('all',    '전체',   openCnt + doneCnt, S.activeSubTab === 'all'));
   bar.append(subtabEl('open',   '진행중', openCnt, S.activeSubTab === 'open'));
   bar.append(subtabEl('closed', '완료',   doneCnt, S.activeSubTab === 'closed'));
-  bar.append(subtabEl('summary', '요약',  null,    S.activeSubTab === 'summary'));
+  const scopeKey = (S.activeTab === 'all') ? 'all' : String(S.activeTab);
+  const sumCnt = S.summaryCounts[scopeKey];
+  bar.append(subtabEl('summary', '요약', (sumCnt === undefined ? null : sumCnt), S.activeSubTab === 'summary'));
 }
 
 function subtabEl(id, label, count, active) {
@@ -2516,6 +2522,11 @@ function wireEvents() {
     try {
       const res = await api('/api/issues/summary-generate?' + sp.toString(), { method: 'POST' });
       S.summary = res;
+      if (res.counts) Object.assign(S.summaryCounts, res.counts);
+      else {
+        const sk = (S.activeTab === 'all') ? 'all' : String(S.activeTab);
+        S.summaryCounts[sk] = (res.rows || []).length;
+      }
       S.activeSubTab = 'summary';
       try { localStorage.setItem('trmt_subtab', 'summary'); } catch (_) {}
       renderSubTabs();
@@ -2722,6 +2733,7 @@ function wireEvents() {
 (async function init() {
   try {
     await loadSupervisors();
+    try { S.summaryCounts = await api('/api/issues/summary-counts') || {}; } catch (_) {}
     S.activeTab = S.user.supervisor_id
       ? S.user.supervisor_id
       : (S.supervisors[0] ? S.supervisors[0].id : 'all');
