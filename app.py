@@ -1125,6 +1125,7 @@ def _gen_summary_rows(supervisor_id=None):
             md = _md_label(ad)
             lines.append(f'2) {md} {action}'.strip() if md else f'2) {action}')
         out.append({'no': idx + 1,
+                    'supervisor_id': r.get('supervisor_id'),
                     'vessel_name': r.get('vessel_name') or '',
                     'issue': '\n'.join(lines),
                     'priority': r.get('priority') or '',
@@ -1149,12 +1150,12 @@ def api_issue_summary_get():
     row = query('SELECT data, generated_at FROM issue_summaries WHERE scope=?',
                 (_summary_scope(),), one=True)
     if not row:
-        return jsonify({'rows': [], 'generated_at': None})
+        return jsonify({'rows': [], 'generated_at': None, 'count': 0})
     try:
         rows = json.loads(row['data'])
     except Exception:
         rows = []
-    return jsonify({'rows': rows, 'generated_at': row['generated_at']})
+    return jsonify({'rows': rows, 'generated_at': row['generated_at'], 'count': len(rows)})
 
 
 @app.route('/api/issues/summary-generate', methods=['POST'])
@@ -1165,9 +1166,45 @@ def api_issue_summary_generate():
     sid = request.args.get('supervisor_id') or None
     rows = _gen_summary_rows(sid)
     gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
-    execute("INSERT OR REPLACE INTO issue_summaries (scope, data, generated_at) VALUES (?, ?, ?)",
-            (_summary_scope(), json.dumps(rows, ensure_ascii=False), gen_at))
-    return jsonify({'rows': rows, 'generated_at': gen_at})
+
+    def _save(scope, scope_rows):
+        # scope 내에서 No. 재넘버링
+        renum = []
+        for i, r in enumerate(scope_rows, start=1):
+            rr = dict(r); rr['no'] = i; renum.append(rr)
+        execute("INSERT OR REPLACE INTO issue_summaries (scope, data, generated_at) VALUES (?, ?, ?)",
+                (scope, json.dumps(renum, ensure_ascii=False), gen_at))
+        return len(renum)
+
+    counts = {}
+    if sid:
+        counts[str(sid)] = _save(str(sid), rows)
+    else:
+        # 전체 저장
+        counts['all'] = _save('all', rows)
+        # 감독별로 분리 저장 (각 감독 탭의 요약도 동시 갱신)
+        by_sv = {}
+        for r in rows:
+            by_sv.setdefault(r.get('supervisor_id'), []).append(r)
+        # 이슈가 있는 감독은 그 행으로, 이슈가 없는 감독은 빈 요약으로 갱신
+        all_sv = [s['id'] for s in query('SELECT id FROM supervisors')]
+        for sv_id in all_sv:
+            counts[str(sv_id)] = _save(str(sv_id), by_sv.get(sv_id, []))
+
+    return jsonify({'rows': rows, 'generated_at': gen_at, 'counts': counts})
+
+
+@app.route('/api/issues/summary-counts', methods=['GET'])
+@login_required
+def api_issue_summary_counts():
+    _ensure_summary_table()
+    out = {}
+    for r in query('SELECT scope, data FROM issue_summaries'):
+        try:
+            out[r['scope']] = len(json.loads(r['data']))
+        except Exception:
+            out[r['scope']] = 0
+    return jsonify(out)
 
 
 @app.route('/api/issues/summary-export')
