@@ -232,11 +232,11 @@ function vesselBlock(item) {
       el('th', { class: 'vt-th-caret' }, ''),
       el('th', { class: 'vt-th-rep'  }, 'Report #'),
       el('th', { class: 'vt-th-date' }, '검사일'),
-      el('th', { class: 'vt-th-comp' }, 'Company'),
+      el('th', { class: 'vt-th-comp' }, 'OIL MAJOR'),
       el('th', { class: 'vt-th-insp' }, 'Inspector'),
       el('th', { class: 'vt-th-port' }, 'Port'),
       el('th', { class: 'vt-th-op'   }, 'SIRE Type'),
-      el('th', { class: 'vt-th-op'   }, 'Valid'),
+      el('th', { class: 'vt-th-op'   }, '상태'),
       el('th', { class: 'vt-th-cnt'  }, 'Obs'),
       el('th', { class: 'vt-th-cnt'  }, 'Open'),
       el('th', { class: 'vt-th-cnt'  }, 'Close'),
@@ -342,7 +342,7 @@ function vettingRow(item, vt) {
   tr.append(vtEditCell(vt, 'inspector'));
   tr.append(vtEditCell(vt, 'port'));
   tr.append(vtEditCellSelect(vt, 'sire_type', ['', 'Idle', 'Bunkering', 'Discharge']));
-  tr.append(vtEditCellSelect(vt, 'valid', ['', 'Invalid', 'Valid']));
+  tr.append(vtEditCellSelect(vt, 'valid', ['Next Plan', 'Last Result']));
 
   tr.append(countCell(vt, 'manual_observation_count', vt.observation_count, vt.observation_manual));
   tr.append(countCell(vt, 'manual_open_count',        vt.open_count,        vt.open_manual,  'cs-cnt-open'));
