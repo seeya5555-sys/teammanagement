@@ -5728,6 +5728,33 @@ def _ext_vessels():
             for r in query("SELECT * FROM vessels ORDER BY name")]
 
 
+def _class_digest(coc_list, stat_list, society):
+    """CLASS STATUS 요약 — 선급 / COC합 / 중복표기 번호목록 (Class Status 탭 요약 패널과 동일)."""
+    norm = lambda s: ' '.join((s or '').strip().lower().split())
+    text = lambda it: (it.get('remark') or it.get('description') or '').strip()
+    stat_matched = set()
+    lines = []
+    for c in coc_list:
+        key = norm(c.get('description'))
+        mi = -1
+        if key:
+            for i, s in enumerate(stat_list):
+                if i not in stat_matched and norm(s.get('description')) == key:
+                    mi = i
+                    break
+        if mi >= 0:
+            stat_matched.add(mi)
+            lines.append(text(c) + ' (선급지적 / 기국사항 중복)')
+        else:
+            lines.append(text(c))
+    for i, s in enumerate(stat_list):
+        if i not in stat_matched:
+            lines.append(text(s))
+    lines = [l for l in lines if l]
+    detail = '\n'.join(f'{i + 1}. {l}' for i, l in enumerate(lines))
+    return {'society': society or '-', 'coc_total': len(coc_list) + len(stat_list), 'detail': detail}
+
+
 def _ext_class_status():
     """선급 Class Status 스냅샷(선박별 + 미매칭)."""
     out = []
@@ -5739,6 +5766,8 @@ def _ext_class_status():
                 vname = v['name']
         items = query('SELECT id, category, no, issued_date, description, due_date, remark, importance '
                       'FROM class_status_items WHERE cs_id=? ORDER BY category, no', (cs['id'],))
+        coc_l = [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'COC']
+        stat_l = [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'STATUTORY']
         out.append({
             'id': cs['id'],
             'ref': _ref('class_status', cs['id']),
@@ -5748,8 +5777,9 @@ def _ext_class_status():
             'class_society': cs['class_society'],
             'report_date': cs['report_date'],
             'updated_at': cs['updated_at'],
-            'coc':       [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'COC'],
-            'statutory': [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'STATUTORY'],
+            'coc':       coc_l,
+            'statutory': stat_l,
+            'digest':    _class_digest(coc_l, stat_l, cs['class_society']),
         })
     return out
 
