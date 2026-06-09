@@ -1441,11 +1441,15 @@ async function runVtExtract(file) {
   }
   if (!res.ok) { $('#vt-extract-status').textContent = res.message || '추출 실패'; return; }
   VTX.items = res.items || [];
+  // 헤더 메타 자동 반영 → 목록 새로고침 (행 헤더가 즉시 채워짐)
+  const appliedKeys = res.applied ? Object.keys(res.applied) : [];
+  if (appliedKeys.length) { try { await reloadData(); } catch (_) {} }
+  const metaNote = appliedKeys.length ? ` · 헤더 ${appliedKeys.length}개 항목 자동 입력됨` : '';
   if (!VTX.items.length) {
-    $('#vt-extract-status').textContent = '추출된 지적 항목이 없습니다 (긍정 평가만 있는 보고서일 수 있어요).';
+    $('#vt-extract-status').textContent = '추출된 지적 항목이 없습니다 (긍정 평가만 있는 보고서일 수 있어요).' + metaNote;
     return;
   }
-  $('#vt-extract-status').textContent = `${VTX.items.length}개 지적 항목을 찾았습니다. 확인 후 추가하세요.`;
+  $('#vt-extract-status').textContent = `${VTX.items.length}개 지적 항목을 찾았습니다. 확인 후 추가하세요.${metaNote}`;
   renderVtxList();
 }
 
