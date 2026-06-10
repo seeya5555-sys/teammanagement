@@ -283,8 +283,13 @@ function vettingDigest(item) {
   const status = latest.valid || '';
   const statusCls = status === 'Next Plan' ? 'vt-dg-next'
     : status === 'Last Result' ? 'vt-dg-last' : '';
-  const total = (latest.observation_count != null) ? latest.observation_count : 0;
-  const openCnt = (latest.open_count != null) ? latest.open_count : 0;
+  // OBS(전체/잔여): 최신이 'Next Plan'이면 그 이전(Next Plan 아닌 최신) Report 수치 사용
+  let obsSrc = latest;
+  if (status === 'Next Plan') {
+    obsSrc = vts.find(v => (v.valid || '') !== 'Next Plan') || latest;
+  }
+  const total = (obsSrc.observation_count != null) ? obsSrc.observation_count : 0;
+  const openCnt = (obsSrc.open_count != null) ? obsSrc.open_count : 0;
 
   // 지적 상세: Open 항목이 있는 모든 Report의 Overall Remark, 최신순, 빈 줄 구분
   const detail = vts
