@@ -1,0 +1,10 @@
+[Unit]
+Description=TRMT auto-deploy from GitHub main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+WorkingDirectory=/home/opc/app
+ExecStart=/home/opc/app/deploy/autodeploy.sh
