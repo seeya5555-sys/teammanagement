@@ -6064,18 +6064,30 @@ def api_ext_issue_match():
     subject = request.args.get('subject', '')
     conv_id = request.args.get('conv_id', '')
     norm = _norm_subject(subject)
+ 
+    def _flat(t):
+        return ' '.join((t or '').lower().split())
+ 
     rows = query(
         'SELECT i.*, v.name AS vessel_name, s.name AS supervisor_name '
         'FROM issues i '
         'LEFT JOIN vessels v ON v.id=i.vessel_id '
         'LEFT JOIN supervisors s ON s.id=i.supervisor_id '
-        'WHERE (? != "" AND i.email_conv_id = ?) '
-        '   OR (? != "" AND i.email_subject_norm = ?) '
-        'ORDER BY i.id DESC',
-        (conv_id, conv_id, norm, norm))
+        'ORDER BY i.id DESC')
     matches = []
     for r in rows:
         d = dict(r)
+        why = None
+        if conv_id and d.get('email_conv_id') and d['email_conv_id'] == conv_id:
+            why = 'conv_id'
+        elif norm and d.get('email_subject_norm') and d['email_subject_norm'] == norm:
+            why = 'subject_key'
+        elif norm and len(norm) >= 12 and norm in _flat(d.get('description')):
+            why = 'description'
+        elif norm and len(norm) >= 12 and norm in _flat(d.get('item_topic')):
+            why = 'item_topic'
+        if not why:
+            continue
         try:
             acts = json.loads(d['actions']) if d.get('actions') else []
         except Exception:
@@ -6084,9 +6096,8 @@ def api_ext_issue_match():
             'id': d.get('id'), 'ref': _ref('issue', d.get('id')),
             'item_topic': d.get('item_topic'), 'status': d.get('status'),
             'priority': d.get('priority'), 'vessel_name': d.get('vessel_name'),
-            'supervisor_name': d.get('supervisor_name'), 'actions': acts,
-            'email_subject_norm': d.get('email_subject_norm'),
-            'email_conv_id': d.get('email_conv_id'),
+            'supervisor_name': d.get('supervisor_name'),
+            'actions': acts, 'match_by': why,
         })
     return jsonify({'query_subject_norm': norm, 'count': len(matches),
                     'matches': matches})
