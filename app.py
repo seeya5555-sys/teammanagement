@@ -5928,7 +5928,7 @@ def api_ext_all():
     })
 
 
-# ---- 보조: 이름→id 매칭 (MCP 자동화는 선박/감독을 이름으로 넘김) ----
+# ---- helper: name -> id (MCP automation passes vessel/supervisor by name) ----
 def _resolve_vessel_id(d):
     vid = d.get('vessel_id')
     if vid:
@@ -5953,7 +5953,6 @@ def _resolve_supervisor_id(d):
     return None
 
 
-# ---- 읽기(키 보호): 감독 목록 (자동화에서 감독명 매핑용) ----
 @app.route('/api/ext/supervisors')
 @api_key_required
 def api_ext_supervisors():
@@ -5961,7 +5960,6 @@ def api_ext_supervisors():
                     query('SELECT id, name, color FROM supervisors ORDER BY name')])
 
 
-# ---- 쓰기(키 보호): 이슈 생성/수정 (MCP 자동화용) ----
 @app.route('/api/ext/issues', methods=['POST'])
 @api_key_required
 def api_ext_issue_create():
@@ -5970,30 +5968,28 @@ def api_ext_issue_create():
     vid = _resolve_vessel_id(d)
     sid = _resolve_supervisor_id(d)
     if not vid:
-        return jsonify({'error': 'vessel not found',
-                        'hint': 'vessel_id 또는 vessel_name 필요'}), 400
+        return jsonify({'error': 'vessel not found', 'hint': 'need vessel_id or vessel_name'}), 400
     if not sid:
-        return jsonify({'error': 'supervisor not found',
-                        'hint': 'supervisor_id 또는 supervisor_name 필요'}), 400
+        return jsonify({'error': 'supervisor not found', 'hint': 'need supervisor_id or supervisor_name'}), 400
     item_topic = (d.get('item_topic') or '').strip()
     if not item_topic:
-        return jsonify({'error': 'item_topic 필수'}), 400
+        return jsonify({'error': 'item_topic required'}), 400
     issue_date = (d.get('issue_date') or '').strip() or _date.today().isoformat()
     actions = d.get('actions') or []
     if not isinstance(actions, list):
         actions = []
     priority = d.get('priority') or 'Normal'
-    status   = d.get('status')   or 'Open'
+    status = d.get('status') or 'Open'
     if priority not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
         priority = 'Normal'
     if status not in ('Open', 'InProgress', 'Closed'):
         status = 'Open'
-    iid = execute('''
+    iid = execute("""
         INSERT INTO issues
             (supervisor_id, vessel_id, issue_date, due_date, item_topic,
              description, actions, priority, status, created_by)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
+    """, (
         sid, vid, issue_date, d.get('due_date') or None, item_topic,
         d.get('description') or '', json.dumps(actions, ensure_ascii=False),
         priority, status, d.get('created_by') or 'mcp',
@@ -6027,13 +6023,13 @@ def api_ext_issue_update(iid):
                 val = json.dumps(val, ensure_ascii=False)
             elif val == '':
                 val = None
-            sets.append(f'{f} = ?')
+            sets.append(f + ' = ?')
             params.append(val)
     if not sets:
         return jsonify({'error': 'no fields'}), 400
     sets.append('updated_at = datetime("now","localtime")')
     params.append(iid)
-    execute(f'UPDATE issues SET {", ".join(sets)} WHERE id = ?', params)
+    execute('UPDATE issues SET ' + ', '.join(sets) + ' WHERE id = ?', params)
     return jsonify({'id': iid, 'ref': _ref('issue', iid)})
 
 
@@ -6428,4 +6424,84 @@ def api_class_status_export(cs_id):
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-# ══════════════════════════════════════════════════════════�
+# ═════════════════════════════════════════════════════════════════
+#  CLI entry
+# ═════════════════════════════════════════════════════════════════
+def _auto_migrate():
+    """기존 DB에 대한 idempotent 스키마 보강 — 배포 시 마이그레이션 누락 방지.
+    · schema.sql 의 CREATE TABLE/INDEX IF NOT EXISTS 재적용(누락 테이블 생성)
+    · ALTER 가 필요한 신규 컬럼은 개별 점검 후 추가
+    """
+    if not os.path.exists(DATABASE):
+        return
+    conn = sqlite3.connect(DATABASE)
+    try:
+        try:
+            with open(SCHEMA_FILE, encoding='utf-8') as fh:
+                conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
+        except Exception as e:
+            print(f'[auto_migrate] schema 재적용 건너뜀: {e}')
+        # vt_findings.user_remark (자율 입력 Remark), priority (중요 체크)
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(vt_findings)').fetchall()]
+            if cols and 'user_remark' not in cols:
+                conn.execute("ALTER TABLE vt_findings ADD COLUMN user_remark TEXT NOT NULL DEFAULT ''")
+                print('[auto_migrate] vt_findings.user_remark 추가됨')
+            if cols and 'priority' not in cols:
+                conn.execute("ALTER TABLE vt_findings ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+                print('[auto_migrate] vt_findings.priority 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] vt_findings 컬럼 점검 건너뜀: {e}')
+
+        # vettings.valid: 옛 CHECK(valid IN ('Valid','Invalid')) 제거 → 'Next Plan'/'Last Result' 허용
+        try:
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='vettings'"
+            ).fetchone()
+            ddl = (row[0] if row else '') or ''
+            if "'Valid','Invalid'" in ddl.replace(' ', ''):
+                print('[auto_migrate] vettings.valid CHECK 제약 갱신 중...')
+                conn.execute('PRAGMA legacy_alter_table=ON')
+                conn.execute('PRAGMA foreign_keys=OFF')
+                conn.execute('ALTER TABLE vettings RENAME TO _vettings_old')
+                with open(SCHEMA_FILE, encoding='utf-8') as fh:
+                    conn.executescript(fh.read())   # 새 vettings(CHECK 없음) 생성, 나머지 no-op
+                conn.execute("""
+                    INSERT INTO vettings
+                        (id, vessel_id, report_number, inspection_date, inspection_company,
+                         inspector, port, operation, sire_type, valid, overall_remark,
+                         manual_observation_count, manual_open_count, manual_close_count,
+                         created_by, created_at, updated_at)
+                    SELECT
+                         id, vessel_id, report_number, inspection_date, inspection_company,
+                         inspector, port, operation, sire_type, valid, overall_remark,
+                         manual_observation_count, manual_open_count, manual_close_count,
+                         created_by, created_at, updated_at
+                    FROM _vettings_old
+                """)
+                conn.execute('DROP TABLE _vettings_old')
+                conn.execute('PRAGMA legacy_alter_table=OFF')
+                conn.execute('PRAGMA foreign_keys=ON')
+                conn.commit()
+                print('[auto_migrate] vettings.valid CHECK 제약 갱신 완료')
+        except Exception as e:
+            print(f'[auto_migrate] vettings 재생성 건너뜀: {e}')
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == '--init-db':
+        init_db(drop=True)
+        sys.exit(0)
+
+    if not os.path.exists(DATABASE):
+        print('[INFO] DB 파일이 없어 자동 초기화합니다.')
+        init_db(drop=False)
+    else:
+        _auto_migrate()
+
+    # 개발 환경
+    app.run(host='0.0.0.0', port=5000, debug=True)
