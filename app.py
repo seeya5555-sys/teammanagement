@@ -220,6 +220,15 @@ def init_db(drop=False):
             print('  · cs_findings.item 컬럼 추가')
             conn.commit()
 
+        # issues 에 Outlook 매칭용 컬럼 추가 (메일 dedup)
+        iss_cols = [r[1] for r in conn.execute('PRAGMA table_info(issues)').fetchall()]
+        if iss_cols:
+            for _c in ('email_subject_norm', 'email_conv_id'):
+                if _c not in iss_cols:
+                    conn.execute(f'ALTER TABLE issues ADD COLUMN {_c} TEXT')
+                    print(f'  - issues.{_c} column added')
+            conn.commit()
+
         # cs_surveys.vendor CHECK 제약 제거 (AALMAR/IDWAL 외 자유 입력 허용)
         try:
             sql_def = conn.execute(
@@ -6032,6 +6041,96 @@ def api_ext_issue_update(iid):
     execute('UPDATE issues SET ' + ', '.join(sets) + ' WHERE id = ?', params)
     return jsonify({'id': iid, 'ref': _ref('issue', iid)})
 
+# ---- Phase 2: 메일 제목 정규화 + 매칭/액션/메일키 (additive) ----
+def _norm_subject(s):
+    """메일 제목 정규화: 앞쪽 RE/FW/회신/전달/[EXTERNAL] 등 반복 제거 + 공백/소문자."""
+    import re as _re_s
+    if not s:
+        return ''
+    t = str(s).strip()
+    pat = _re_s.compile(
+        r'^\s*(\[[^\]]*\]\s*|re\s*:|fw\s*:|fwd\s*:|회신\s*:|전달\s*:|답장\s*:)\s*',
+        _re_s.IGNORECASE)
+    prev = None
+    while prev != t:
+        prev = t
+        t = pat.sub('', t)
+    return _re_s.sub(r'\s+', ' ', t).strip().lower()
+ 
+ 
+@app.route('/api/ext/issues/match')
+@api_key_required
+def api_ext_issue_match():
+    subject = request.args.get('subject', '')
+    conv_id = request.args.get('conv_id', '')
+    norm = _norm_subject(subject)
+    rows = query(
+        'SELECT i.*, v.name AS vessel_name, s.name AS supervisor_name '
+        'FROM issues i '
+        'LEFT JOIN vessels v ON v.id=i.vessel_id '
+        'LEFT JOIN supervisors s ON s.id=i.supervisor_id '
+        'WHERE (? != "" AND i.email_conv_id = ?) '
+        '   OR (? != "" AND i.email_subject_norm = ?) '
+        'ORDER BY i.id DESC',
+        (conv_id, conv_id, norm, norm))
+    matches = []
+    for r in rows:
+        d = dict(r)
+        try:
+            acts = json.loads(d['actions']) if d.get('actions') else []
+        except Exception:
+            acts = []
+        matches.append({
+            'id': d.get('id'), 'ref': _ref('issue', d.get('id')),
+            'item_topic': d.get('item_topic'), 'status': d.get('status'),
+            'priority': d.get('priority'), 'vessel_name': d.get('vessel_name'),
+            'supervisor_name': d.get('supervisor_name'), 'actions': acts,
+            'email_subject_norm': d.get('email_subject_norm'),
+            'email_conv_id': d.get('email_conv_id'),
+        })
+    return jsonify({'query_subject_norm': norm, 'count': len(matches),
+                    'matches': matches})
+ 
+ 
+@app.route('/api/ext/issues/<int:iid>/actions', methods=['POST'])
+@api_key_required
+def api_ext_issue_add_action(iid):
+    from datetime import date as _date
+    row = query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    progress = (d.get('progress') or '').strip()
+    if not progress:
+        return jsonify({'error': 'progress required'}), 400
+    try:
+        actions = json.loads(row['actions']) if row['actions'] else []
+        if not isinstance(actions, list):
+            actions = []
+    except Exception:
+        actions = []
+    actions.append({
+        'date': (d.get('date') or '').strip() or _date.today().isoformat(),
+        'progress': progress,
+        'important': bool(d.get('important')),
+    })
+    execute('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
+            'WHERE id=?', (json.dumps(actions, ensure_ascii=False), iid))
+    return jsonify({'id': iid, 'ref': _ref('issue', iid),
+                    'actions_count': len(actions)})
+ 
+ 
+@app.route('/api/ext/issues/<int:iid>/email-key', methods=['POST'])
+@api_key_required
+def api_ext_issue_set_email_key(iid):
+    if not query('SELECT id FROM issues WHERE id=?', (iid,), one=True):
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    norm = _norm_subject(d.get('email_subject') or '')
+    conv = d.get('email_conv_id') or None
+    execute('UPDATE issues SET email_subject_norm=?, email_conv_id=? WHERE id=?',
+            (norm or None, conv, iid))
+    return jsonify({'id': iid, 'ref': _ref('issue', iid)})
 
 # ═════════════════════════════════════════════════════════════════
 #  CLASS STATUS (선급 Class Status Report 업로드/추출/매칭)
