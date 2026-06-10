@@ -7,4 +7,4 @@ Wants=network-online.target
 Type=oneshot
 User=opc
 WorkingDirectory=/home/opc/app
-ExecStart=/home/opc/app/deploy/autodeploy.sh
+ExecStart=/bin/bash /home/opc/app/deploy/autodeploy.sh
