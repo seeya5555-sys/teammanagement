@@ -5821,6 +5821,10 @@ def _ext_vetting_digests():
             continue
         enr = [_vetting_with_counts(v) for v in vts]
         latest = enr[0]
+        # OBS: 최신이 'Next Plan'이면 그 이전(Next Plan 아닌 최신) Report 수치 사용
+        obs_src = latest
+        if (latest.get('valid') or '') == 'Next Plan':
+            obs_src = next((v for v in enr if (v.get('valid') or '') != 'Next Plan'), latest)
         detail = '\n\n'.join(
             (v.get('overall_remark') or '').strip()
             for v in enr
@@ -5835,8 +5839,8 @@ def _ext_vetting_digests():
             'port': latest.get('port') or '',
             'inspection_date': latest.get('inspection_date') or '',
             'oil_major': latest.get('inspection_company') or '',
-            'obs_total': latest.get('observation_count') or 0,
-            'obs_open': latest.get('open_count') or 0,
+            'obs_total': obs_src.get('observation_count') or 0,
+            'obs_open': obs_src.get('open_count') or 0,
             'detail': detail,
             'latest_vetting_ref': _ref('vetting', latest.get('id')),
         })
