@@ -236,6 +236,52 @@ def init_db(drop=False):
             print('  - wf2_reply.summary_ko column added')
             conn.commit()
 
+        # WF1+WF2 → mail_card 통합 마이그레이션 (pending만, 멱등: 이미 있는 msg_id skip)
+        try:
+            mc = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='mail_card'").fetchone()
+            if mc:
+                seen = set(r[0] for r in conn.execute(
+                    "SELECT email_msg_id FROM mail_card WHERE email_msg_id IS NOT NULL").fetchall())
+                migrated = 0
+                # wf1_draft pending → 이슈측
+                if conn.execute("SELECT name FROM sqlite_master WHERE name='wf1_draft'").fetchone():
+                    for row in conn.execute(
+                        "SELECT email_subject,email_from,email_date,email_msg_id,proposed_item,"
+                        "proposed_desc,match_issue_id,priority,vessel_name,supervisor_name "
+                        "FROM wf1_draft WHERE status='pending'").fetchall():
+                        subj, frm, dt, mid, item, desc, match, prio, ves, sup = row
+                        if mid and mid in seen:
+                            continue
+                        conn.execute(
+                            "INSERT INTO mail_card (email_subject,email_from,email_date,email_msg_id,"
+                            "issue_item,issue_desc,issue_match_id,issue_priority,issue_vessel,issue_supervisor,"
+                            "issue_status,reply_status) VALUES (?,?,?,?,?,?,?,?,?,?,'pending','none')",
+                            (subj, frm, dt, mid, item, desc, match, prio or 'Normal', ves, sup))
+                        if mid: seen.add(mid)
+                        migrated += 1
+                # wf2_reply pending → 이메일+요약 (이슈 없으면 not_applicable)
+                if conn.execute("SELECT name FROM sqlite_master WHERE name='wf2_reply'").fetchone():
+                    for row in conn.execute(
+                        "SELECT email_subject,email_from,email_date,email_msg_id,summary_ko "
+                        "FROM wf2_reply WHERE status='pending'").fetchall():
+                        subj, frm, dt, mid, summ = row
+                        if mid and mid in seen:
+                            if summ:
+                                conn.execute("UPDATE mail_card SET summary_ko=COALESCE(summary_ko,?) "
+                                             "WHERE email_msg_id=?", (summ, mid))
+                            continue
+                        conn.execute(
+                            "INSERT INTO mail_card (email_subject,email_from,email_date,email_msg_id,"
+                            "summary_ko,issue_status,reply_status) VALUES (?,?,?,?,?,'not_applicable','none')",
+                            (subj, frm, dt, mid, summ))
+                        if mid: seen.add(mid)
+                        migrated += 1
+                if migrated:
+                    conn.commit()
+                    print(f'  - mail_card 통합 마이그레이션: {migrated}건')
+        except Exception as _e:
+            print('  - mail_card 마이그레이션 skip:', _e)
+
         # cs_surveys.vendor CHECK 제약 제거 (AALMAR/IDWAL 외 자유 입력 허용)
         try:
             sql_def = conn.execute(
@@ -6525,6 +6571,331 @@ def api_wf_pull_now():
 def api_wf_pull_flag():
     row = query("SELECT v FROM api_settings WHERE k='wf_pull_request'", one=True)
     return jsonify({'ts': int(row['v']) if row and (row['v'] or '').isdigit() else 0})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  mail_card — WF1+WF2 통합 (메일 1건 = 카드 1개: 이슈등록 + 회신작성)
+#   · 이슈측: 기존 WF1 로직(이름→id 리졸브, 신규/append)
+#   · 회신측: 손유석 한글지시 → 서버 Gemini 영문번역(스타일 하네스) → 맥미니 Outlook Draft
+#   · 자동발송 절대 없음. 회신 LLM = Gemini(무료).
+# ═════════════════════════════════════════════════════════════════
+def _gemini_text(prompt, model=None):
+    """plain-text Gemini 호출(번역용). returns (text, err)."""
+    if not GEMINI_API_KEY:
+        return None, 'NO_API_KEY'
+    import urllib.request
+    mdl = model or GEMINI_MODEL
+    body = {'contents': [{'parts': [{'text': prompt}]}]}
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{mdl}:generateContent'
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode('utf-8'),
+        headers={'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY},
+        method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = json.loads(r.read().decode('utf-8'))
+    except Exception as e:
+        return None, str(e)[:200]
+    try:
+        t = ''
+        for p in (data['candidates'][0]['content'].get('parts') or []):
+            if isinstance(p.get('text'), str):
+                t += p['text']
+        t = t.strip()
+        return (t if t else None), (None if t else 'EMPTY')
+    except Exception as e:
+        return None, 'parse:' + str(e)[:120]
+
+_MAIL_REPLY_HARNESS = (
+ "You render You Seok Son's (Owner's Technical Superintendent, Sinokor Tanker Mgmt Team 3) Korean reply "
+ "instruction into a polished English business email.\n"
+ "RULES:\n"
+ "- The Korean instruction is the SOURCE OF TRUTH for content. Render it faithfully. "
+ "Do NOT invent facts, attachments, numbers, dates, names, or requests not in the instruction.\n"
+ "- Format: 'Dear [the recipient named in the instruction],' then a line 'Good day.' then go straight to the point.\n"
+ "- Use a numbered list '1) 2) 3)' for requests/actions. Concise, direct, active voice.\n"
+ "- NO pleasantries ('Thank you for your email', 'I hope this finds you well', etc.).\n"
+ "- Preserve ALL numbers, dates, ports, vessel names, reference numbers and abbreviations EXACTLY "
+ "(M/E, A/E, T/C, AOR, SIRE, SOA, BWTS, ETA/ETB/ETD, OPEX, PO etc.).\n"
+ "- Do NOT write any signature. Output ONLY the email body text (plain), nothing else.\n\n"
+ "EXAMPLE\nKorean: Giorgos에게. 6/4 Sikka항 SIRE observation 7건 — 첨부 엑셀 'Action Plan'란에 진행사항·조치예정 작성, "
+ "'Status'란에 Open/Close 기록해 회신 요청. 미결은 Estimated Rectification Date도 기재.\n"
+ "English:\nDear Giorgos,\nGood day.\nPlease refer to the SIRE inspection carried out at Sikka on 04 June, which raised 7 observations.\n"
+ "Kindly complete the attached Excel file and revert as follows:\n"
+ "1) \"Action Plan\" column - describe the progress to date and the corrective action planned for each observation.\n"
+ "2) \"Status\" column - record either Open or Close for each item.\n"
+ "3) For any open item, state the Estimated Rectification Date in the Action Plan column.\n"
+ "Await prompt response."
+)
+
+def _mail_translate_card(card):
+    """card(dict) reply_ko → 영문 reply_en. returns (en, err)."""
+    ko = (card.get('reply_ko') or '').strip()
+    if not ko:
+        return None, 'NO_INSTRUCTION'
+    style = (card.get('reply_style') or '').strip()
+    ctx = []
+    if card.get('email_subject'): ctx.append(f"(Context only — original mail subject: {card['email_subject']})")
+    if card.get('summary_ko'):    ctx.append(f"(Context only — mail summary: {card['summary_ko']})")
+    prompt = (_MAIL_REPLY_HARNESS + "\n\nNOW DO THIS ONE.\n" +
+              ("\n".join(ctx) + "\n" if ctx else "") +
+              (f"Tone/style: {style}\n" if style else "") +
+              f"Korean: {ko}\nEnglish:")
+    en, err = _gemini_text(prompt)
+    if err:
+        return None, err
+    # faithful 가드(라이트): 지시에 숫자 있는데 결과에 하나도 없으면 의심
+    import re as _re
+    if _re.search(r'\d', ko) and not _re.search(r'\d', en or ''):
+        return en, 'WARN_NO_DIGITS'
+    return en, None
+
+
+@app.route('/mail')
+@admin_required
+def mail_page():
+    return render_template('mailcard.html')
+
+
+@app.route('/api/mail/cards')
+@admin_required
+def api_mail_list():
+    status = (request.args.get('status') or 'active').strip()
+    if status == 'all':
+        rows = query("SELECT * FROM mail_card ORDER BY card_status, id DESC")
+    else:
+        rows = query("SELECT * FROM mail_card WHERE card_status=? ORDER BY id DESC", (status,))
+    pend = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active'", one=True)
+    return jsonify({'count': len(rows), 'active': pend['c'], 'cards': [dict(r) for r in rows]})
+
+
+def _mail_get(cid):
+    return query("SELECT * FROM mail_card WHERE id=?", (cid,), one=True)
+
+
+def _mail_maybe_archive(cid):
+    """이슈/회신 둘 다 종결이면 자동 archive."""
+    r = _mail_get(cid)
+    if not r:
+        return
+    issue_done = r['issue_status'] in ('registered', 'rejected', 'not_applicable')
+    reply_done = r['reply_status'] in ('draft_created', 'dismissed', 'none')
+    # reply 'none'은 회신 안 쓴 것 — 이슈만 처리하고 회신 불필요면 종결로 봄
+    if issue_done and reply_done and r['reply_status'] != 'translated' and r['reply_status'] != 'draft_requested':
+        execute("UPDATE mail_card SET card_status='archived' WHERE id=?", (cid,))
+
+
+# ---- 이슈측 (WF1) ----
+@app.route('/api/mail/<int:cid>/issue/register', methods=['POST'])
+@admin_required
+def api_mail_issue_register(cid):
+    from datetime import date as _date
+    r = _mail_get(cid)
+    if not r:
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    mode = (d.get('mode') or 'new').strip()
+    user = session.get('username') or 'web'
+    if mode == 'append':
+        mid = d.get('match_id') or r['issue_match_id']
+        if not mid or not query('SELECT id FROM issues WHERE id=?', (mid,), one=True):
+            return jsonify({'error': 'match issue not found'}), 400
+        prog = (d.get('desc') or r['issue_desc'] or r['issue_item'] or '').strip()
+        if not prog:
+            return jsonify({'error': 'action text empty'}), 400
+        arow = query('SELECT actions FROM issues WHERE id=?', (mid,), one=True)
+        try:
+            acts = json.loads(arow['actions']) if arow['actions'] else []
+            if not isinstance(acts, list): acts = []
+        except Exception:
+            acts = []
+        acts.append({'date': _date.today().isoformat(), 'progress': prog, 'important': False})
+        execute('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") WHERE id=?',
+                (json.dumps(acts, ensure_ascii=False), mid))
+        iid = mid
+    else:
+        item = (d.get('item') if 'item' in d else r['issue_item']) or ''
+        item = item.strip()
+        if not item:
+            return jsonify({'error': 'item empty'}), 400
+        desc = (d.get('desc') if 'desc' in d else r['issue_desc']) or ''
+        ves = d.get('vessel') if 'vessel' in d else r['issue_vessel']
+        sup = d.get('supervisor') if 'supervisor' in d else r['issue_supervisor']
+        prio = d.get('priority') or r['issue_priority'] or 'Normal'
+        if prio not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
+            prio = 'Normal'
+        vid = _resolve_vessel_id({'vessel_name': ves})
+        sid = _resolve_supervisor_id({'supervisor_name': sup}) or session.get('supervisor_id')
+        if not vid:
+            return jsonify({'error': 'vessel unresolved', 'field': 'vessel',
+                            'hint': '선박명 고쳐 다시'}), 400
+        if not sid:
+            return jsonify({'error': 'supervisor unresolved', 'field': 'supervisor'}), 400
+        iid = execute("""INSERT INTO issues
+            (supervisor_id, vessel_id, issue_date, due_date, item_topic, description,
+             actions, priority, status, created_by)
+            VALUES (?, ?, ?, NULL, ?, ?, '[]', ?, 'Open', ?)""",
+            (sid, vid, _date.today().isoformat(), item, desc, prio, 'mail:' + user))
+    execute("UPDATE mail_card SET issue_status='registered', issue_id=?, "
+            "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?", (iid, user, cid))
+    _mail_maybe_archive(cid)
+    return jsonify({'id': cid, 'issue_status': 'registered', 'issue_id': iid, 'ref': _ref('issue', iid)})
+
+
+@app.route('/api/mail/<int:cid>/issue/<action>', methods=['POST'])
+@admin_required
+def api_mail_issue_status(cid, action):
+    if action not in ('reject', 'na'):
+        return jsonify({'error': 'bad action'}), 400
+    if not _mail_get(cid):
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    st = 'rejected' if action == 'reject' else 'not_applicable'
+    execute("UPDATE mail_card SET issue_status=?, reject_reason=?, "
+            "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?",
+            (st, (d.get('reason') or '').strip() or None, session.get('username') or 'web', cid))
+    _mail_maybe_archive(cid)
+    return jsonify({'id': cid, 'issue_status': st})
+
+
+# ---- 회신측 (WF2: 한글지시 → Gemini 영문) ----
+@app.route('/api/mail/<int:cid>/reply/save', methods=['POST'])
+@admin_required
+def api_mail_reply_save(cid):
+    if not _mail_get(cid):
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    ko = (d.get('reply_ko') or '').strip()
+    style = (d.get('reply_style') or '').strip()
+    st = 'none' if not ko else 'needs_info'  # 저장만 — 번역 전
+    execute("UPDATE mail_card SET reply_ko=?, reply_style=?, reply_status=CASE "
+            "WHEN reply_status IN ('draft_created','dismissed') THEN reply_status ELSE ? END WHERE id=?",
+            (ko or None, style or None, st, cid))
+    return jsonify({'id': cid, 'saved': True})
+
+
+@app.route('/api/mail/<int:cid>/reply/translate', methods=['POST'])
+@admin_required
+def api_mail_reply_translate(cid):
+    r = _mail_get(cid)
+    if not r:
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    ko = (d.get('reply_ko') or r['reply_ko'] or '').strip()
+    style = (d.get('reply_style') if 'reply_style' in d else r['reply_style']) or ''
+    if not ko:
+        execute("UPDATE mail_card SET reply_status='needs_info' WHERE id=?", (cid,))
+        return jsonify({'error': 'reply_ko empty', 'reply_status': 'needs_info'}), 400
+    card = dict(r); card['reply_ko'] = ko; card['reply_style'] = style
+    en, err = _mail_translate_card(card)
+    if err in ('NO_API_KEY', 'NO_INSTRUCTION') or en is None:
+        return jsonify({'error': 'translate failed', 'detail': err}), 502
+    execute("UPDATE mail_card SET reply_ko=?, reply_style=?, reply_en=?, "
+            "reply_en_at=datetime('now','localtime'), reply_status='translated' WHERE id=?",
+            (ko, style or None, en, cid))
+    return jsonify({'id': cid, 'reply_en': en, 'reply_status': 'translated',
+                    'warn': err if err == 'WARN_NO_DIGITS' else None})
+
+
+@app.route('/api/mail/translate-all', methods=['POST'])
+@admin_required
+def api_mail_translate_all():
+    rows = query("SELECT * FROM mail_card WHERE card_status='active' AND reply_ko IS NOT NULL "
+                 "AND reply_ko<>'' AND reply_status IN ('none','needs_info') ORDER BY id LIMIT 20")
+    done = 0; errs = []
+    for r in rows:
+        en, err = _mail_translate_card(dict(r))
+        if en and err in (None, 'WARN_NO_DIGITS'):
+            execute("UPDATE mail_card SET reply_en=?, reply_en_at=datetime('now','localtime'), "
+                    "reply_status='translated' WHERE id=?", (en, r['id']))
+            done += 1
+        else:
+            errs.append({'id': r['id'], 'err': err})
+    return jsonify({'translated': done, 'errors': errs})
+
+
+@app.route('/api/mail/<int:cid>/reply/draft-request', methods=['POST'])
+@admin_required
+def api_mail_reply_draft_request(cid):
+    r = _mail_get(cid)
+    if not r:
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    en = (d.get('reply_en') or r['reply_en'] or '').strip()
+    if not en:
+        return jsonify({'error': 'no english draft — translate first'}), 400
+    execute("UPDATE mail_card SET reply_en=?, reply_en_at=datetime('now','localtime'), "
+            "reply_status='draft_requested' WHERE id=?", (en, cid))
+    return jsonify({'id': cid, 'reply_status': 'draft_requested'})
+
+
+@app.route('/api/mail/<int:cid>/reply/dismiss', methods=['POST'])
+@admin_required
+def api_mail_reply_dismiss(cid):
+    if not _mail_get(cid):
+        return jsonify({'error': 'not found'}), 404
+    execute("UPDATE mail_card SET reply_status='dismissed' WHERE id=?", (cid,))
+    _mail_maybe_archive(cid)
+    return jsonify({'id': cid, 'reply_status': 'dismissed'})
+
+
+@app.route('/api/mail/<int:cid>/archive', methods=['POST'])
+@admin_required
+def api_mail_archive(cid):
+    if not _mail_get(cid):
+        return jsonify({'error': 'not found'}), 404
+    execute("UPDATE mail_card SET card_status='archived' WHERE id=?", (cid,))
+    return jsonify({'id': cid, 'card_status': 'archived'})
+
+
+# ---- ext (맥미니) ----
+@app.route('/api/ext/mail/cards', methods=['POST'])
+@api_key_required
+def api_ext_mail_create():
+    """맥미니 ingest: 스캔한 메일 + 요약 + 이슈제안 적재."""
+    d = request.get_json(silent=True) or {}
+    msg_id = (d.get('email_msg_id') or '').strip() or None
+    if msg_id:
+        dup = query("SELECT id FROM mail_card WHERE email_msg_id=? AND card_status='active'",
+                    (msg_id,), one=True)
+        if dup:
+            return jsonify({'id': dup['id'], 'dedup': True}), 200
+    issue_status = (d.get('issue_status') or 'pending').strip()
+    if issue_status not in ('pending', 'not_applicable'):
+        issue_status = 'pending'
+    prio = d.get('issue_priority') or 'Normal'
+    if prio not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
+        prio = 'Normal'
+    cid = execute("""INSERT INTO mail_card
+        (email_subject, email_from, email_date, email_msg_id, summary_ko,
+         issue_item, issue_desc, issue_match_id, issue_priority, issue_vessel, issue_supervisor,
+         issue_status, reply_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
+        d.get('email_subject') or None, d.get('email_from') or None, d.get('email_date') or None,
+        msg_id, d.get('summary_ko') or None, d.get('issue_item') or None, d.get('issue_desc') or None,
+        d.get('issue_match_id'), prio, d.get('issue_vessel') or None, d.get('issue_supervisor') or None,
+        issue_status))
+    return jsonify({'id': cid}), 201
+
+
+@app.route('/api/ext/mail/draft-queue')
+@api_key_required
+def api_ext_mail_draft_queue():
+    """맥미니 폴링: 회신 Outlook Draft 만들 카드(reply_status=draft_requested)."""
+    rows = query("SELECT id, email_msg_id, reply_en, reply_en_at FROM mail_card "
+                 "WHERE reply_status='draft_requested' ORDER BY id")
+    return jsonify({'count': len(rows), 'queue': [dict(r) for r in rows]})
+
+
+@app.route('/api/ext/mail/<int:cid>/mark-draft', methods=['POST'])
+@api_key_required
+def api_ext_mail_mark_draft(cid):
+    if not _mail_get(cid):
+        return jsonify({'error': 'not found'}), 404
+    execute("UPDATE mail_card SET reply_status='draft_created', "
+            "decided_at=datetime('now','localtime') WHERE id=?", (cid,))
+    _mail_maybe_archive(cid)
+    return jsonify({'id': cid, 'reply_status': 'draft_created'})
 
 
 # ═════════════════════════════════════════════════════════════════

@@ -142,6 +142,46 @@ CREATE TABLE IF NOT EXISTS wf2_reply (
 );
 
 -- -------------------------------------------------------------
+--  mail_card — WF1+WF2 통합 (메일 1건 = 카드 1개)
+--   · 한 카드에서 ① TRMT 이슈 등록(WF1) ② 회신 작성(WF2) 둘 다
+--   · 회신: 손유석 한글지시 → 서버 Gemini 영문번역(스타일 하네스) → 맥미니 Outlook Draft
+--   · 이슈/회신 독립 상태머신. 둘 다 종결(done/dismissed/na)이면 archive.
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mail_card (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    -- 원본 메일
+    email_subject   TEXT,
+    email_from      TEXT,
+    email_date      TEXT,
+    email_msg_id    TEXT,                            -- Outlook 메시지 id (dedup/회신 타겟)
+    summary_ko      TEXT,                            -- 수신메일 한국어 요약(맥락)
+    -- ① 이슈측 (WF1)
+    issue_item      TEXT,                            -- 제안 item_topic
+    issue_desc      TEXT,                            -- 제안 description (하우스스타일)
+    issue_match_id  INTEGER,                         -- dedup 매칭 기존이슈(있으면 append 후보)
+    issue_priority  TEXT    DEFAULT 'Normal',
+    issue_vessel    TEXT,                            -- 승인 시 vessel 매칭용
+    issue_supervisor TEXT,
+    issue_status    TEXT    NOT NULL DEFAULT 'pending'
+                    CHECK (issue_status IN ('pending','registered','rejected','not_applicable')),
+    issue_id        INTEGER,                         -- 등록 결과 연결
+    -- ② 회신측 (WF2)
+    reply_ko        TEXT,                            -- 손유석 한글 회신 지시(내용 정답)
+    reply_style     TEXT,                            -- 간결/강경/정중 + 메모
+    reply_en        TEXT,                            -- Gemini 번역 결과(영문, 서명 제외 저장)
+    reply_en_at     TEXT,                            -- reply_en 최종 갱신시각(편집중 draft 방지 버전체크)
+    reply_status    TEXT    NOT NULL DEFAULT 'none'
+                    CHECK (reply_status IN ('none','needs_info','translated','draft_requested','draft_created','dismissed')),
+    -- 카드 종합
+    card_status     TEXT    NOT NULL DEFAULT 'active'
+                    CHECK (card_status IN ('active','archived')),
+    reject_reason   TEXT,
+    decided_at      TEXT,
+    decided_by      TEXT
+);
+
+-- -------------------------------------------------------------
 --  첨부파일 (Attachments)
 --   · 실제 파일은 static/uploads/ 에 stored_name 으로 저장
 --   · 현장에서 핸드폰 사진 업로드 대비
