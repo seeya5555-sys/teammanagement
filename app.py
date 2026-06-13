@@ -6867,6 +6867,16 @@ def api_mail_archive(cid):
     return jsonify({'id': cid, 'card_status': 'archived'})
 
 
+@app.route('/api/mail/<int:cid>/delete', methods=['POST', 'DELETE'])
+@admin_required
+def api_mail_delete(cid):
+    """카드 영구삭제. 등록된 이슈(issue_id)는 건드리지 않고 카드만 제거."""
+    if not _mail_get(cid):
+        return jsonify({'error': 'not found'}), 404
+    execute("DELETE FROM mail_card WHERE id=?", (cid,))
+    return jsonify({'id': cid, 'deleted': True})
+
+
 # ---- ext (맥미니) ----
 @app.route('/api/ext/mail/cards', methods=['POST'])
 @api_key_required

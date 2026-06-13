@@ -104,7 +104,7 @@
       ${c.summary_ko?`<div class="mc-sum">📨 <b>받은메일(한글 번역)</b> : ${esc(c.summary_ko)}</div>`:''}
       <div class="mc-sec"><div class="mc-sh">📋 TRMT 이슈</div>${issueHtml}</div>
       <div class="mc-sec"><div class="mc-sh">✉️ 회신 작성</div>${replyHtml}</div>
-      <div class="mc-sec" style="padding:8px 15px;text-align:right"><button class="btn btn-sm act-arch">📦 archive</button></div>`;
+      <div class="mc-sec" style="padding:8px 15px;text-align:right"><button class="btn btn-sm act-arch">📦 archive</button> <button class="btn btn-sm act-del" style="color:#c0392b">🗑 삭제</button></div>`;
     wire(el,c);return el;
   }
 
@@ -120,6 +120,7 @@
     if(q('.act-rdraft'))q('.act-rdraft').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/draft-request`,{reply_en:gv(el,'.r-en')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else load();};
     if(q('.act-rdismiss'))q('.act-rdismiss').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/reply/dismiss`,{});load();};
     if(q('.act-arch'))q('.act-arch').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/archive`,{});load();};
+    if(q('.act-del'))q('.act-del').onclick=async()=>{if(!confirm('이 카드를 영구삭제할까요? (등록된 이슈는 유지, 카드만 삭제)'))return;busy(el,1);await api('POST',`/api/mail/${c.id}/delete`,{});load();};
   }
 
   document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filter=b.dataset.f;document.querySelectorAll('[data-f]').forEach(x=>{x.classList.toggle('btn-p',x===b);});load();});
