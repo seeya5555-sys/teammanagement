@@ -6326,6 +6326,182 @@ def api_wf1_delete(did):
 
 
 # ═════════════════════════════════════════════════════════════════
+#  WF2 — 메일 회신 드래프트 승인 큐
+#   · 맥미니가 회신안(간결/강경 2옵션) 생성 → POST /api/ext/wf2/replies
+#   · 사람이 /wf2 탭에서 옵션 선택/리젝 (admin)
+#   · 맥미니가 selected 폴링 → 그 1건만 Outlook 회신 Draft 생성 → mark-draft
+#   · 자동발송 절대 없음 — 최종 Send는 사람이 Outlook에서
+# ═════════════════════════════════════════════════════════════════
+@app.route('/wf2')
+@admin_required
+def wf2_page():
+    return render_template('wf2.html')
+
+
+@app.route('/api/wf2/replies')
+@admin_required
+def api_wf2_list():
+    status = (request.args.get('status') or 'pending').strip()
+    if status == 'all':
+        rows = query("SELECT * FROM wf2_reply "
+                     "ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'selected' THEN 1 ELSE 2 END, id DESC")
+    else:
+        rows = query('SELECT * FROM wf2_reply WHERE status=? ORDER BY id DESC', (status,))
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['options'] = json.loads(d['options']) if d.get('options') else []
+        except Exception:
+            d['options'] = []
+        out.append(d)
+    pending = query("SELECT COUNT(*) c FROM wf2_reply WHERE status='pending'", one=True)
+    return jsonify({'count': len(out), 'pending': pending['c'], 'replies': out})
+
+
+@app.route('/api/ext/wf2/replies', methods=['POST'])
+@api_key_required
+def api_ext_wf2_create():
+    """맥미니 ingest: 회신안(옵션 배열)을 큐에 넣는다."""
+    d = request.get_json(silent=True) or {}
+    opts = d.get('options')
+    if not isinstance(opts, list) or not opts:
+        return jsonify({'error': 'options (non-empty list) required'}), 400
+    # 각 옵션 정규화
+    norm = []
+    for o in opts:
+        if not isinstance(o, dict):
+            continue
+        norm.append({
+            'tone': (o.get('tone') or '').strip() or '표준',
+            'reply': (o.get('reply') or '').strip(),
+            'ko': (o.get('ko') or '').strip(),
+        })
+    norm = [o for o in norm if o['reply']]
+    if not norm:
+        return jsonify({'error': 'no valid option (reply text empty)'}), 400
+    msg_id = (d.get('email_msg_id') or '').strip() or None
+    if msg_id:
+        dup = query("SELECT id FROM wf2_reply WHERE email_msg_id=? AND status='pending'",
+                    (msg_id,), one=True)
+        if dup:
+            return jsonify({'id': dup['id'], 'dedup': True,
+                            'message': 'already queued (same email_msg_id)'}), 200
+    lang = (d.get('lang') or 'en').strip()
+    if lang not in ('en', 'ko'):
+        lang = 'en'
+    intent = (d.get('intent') or '').strip()
+    if intent not in ('proceed', 'clarify'):
+        intent = 'clarify'
+    conf = d.get('confidence')
+    try:
+        conf = int(conf)
+    except Exception:
+        conf = None
+    rid = execute("""
+        INSERT INTO wf2_reply
+            (email_subject, email_from, email_date, email_msg_id,
+             category, stage, lang, intent, confidence, missing_fields, options)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        d.get('email_subject') or None, d.get('email_from') or None,
+        d.get('email_date') or None, msg_id,
+        d.get('category') or None, d.get('stage') or None, lang, intent, conf,
+        d.get('missing_fields') or None, json.dumps(norm, ensure_ascii=False),
+    ))
+    return jsonify({'id': rid, 'status': 'pending'}), 201
+
+
+@app.route('/api/wf2/replies/<int:rid>/select', methods=['POST'])
+@admin_required
+def api_wf2_select(rid):
+    row = query('SELECT * FROM wf2_reply WHERE id=?', (rid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] not in ('pending', 'selected'):
+        return jsonify({'error': 'already decided', 'status': row['status']}), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        idx = int(d.get('idx'))
+    except Exception:
+        return jsonify({'error': 'idx (option index) required'}), 400
+    try:
+        opts = json.loads(row['options']) if row['options'] else []
+    except Exception:
+        opts = []
+    if idx < 0 or idx >= len(opts):
+        return jsonify({'error': 'idx out of range', 'n_options': len(opts)}), 400
+    user = session.get('username') or 'web'
+    # 선택 시 옵션 본문 수정 허용(편집후선택)
+    edited = (d.get('reply') or '').strip()
+    if edited:
+        opts[idx]['reply'] = edited
+    execute("UPDATE wf2_reply SET status='selected', selected_idx=?, options=?, "
+            "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?",
+            (idx, json.dumps(opts, ensure_ascii=False), user, rid))
+    return jsonify({'id': rid, 'status': 'selected', 'selected_idx': idx})
+
+
+@app.route('/api/wf2/replies/<int:rid>/reject', methods=['POST'])
+@admin_required
+def api_wf2_reject(rid):
+    row = query('SELECT status FROM wf2_reply WHERE id=?', (rid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] not in ('pending', 'selected'):
+        return jsonify({'error': 'already decided', 'status': row['status']}), 409
+    d = request.get_json(silent=True) or {}
+    user = session.get('username') or 'web'
+    execute("UPDATE wf2_reply SET status='rejected', reject_reason=?, "
+            "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?",
+            ((d.get('reason') or '').strip() or None, user, rid))
+    return jsonify({'id': rid, 'status': 'rejected'})
+
+
+@app.route('/api/ext/wf2/replies/selected')
+@api_key_required
+def api_ext_wf2_selected():
+    """맥미니 폴링: 선택됐지만 아직 Outlook Draft 안 만든 건."""
+    rows = query("SELECT * FROM wf2_reply WHERE status='selected' ORDER BY id")
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            opts = json.loads(d['options']) if d.get('options') else []
+        except Exception:
+            opts = []
+        idx = d.get('selected_idx')
+        chosen = opts[idx] if (idx is not None and 0 <= idx < len(opts)) else None
+        out.append({
+            'id': d['id'], 'email_msg_id': d['email_msg_id'],
+            'email_subject': d['email_subject'], 'lang': d['lang'],
+            'selected_idx': idx, 'reply': (chosen or {}).get('reply', ''),
+        })
+    return jsonify({'count': len(out), 'selected': out})
+
+
+@app.route('/api/ext/wf2/replies/<int:rid>/mark-draft', methods=['POST'])
+@api_key_required
+def api_ext_wf2_mark_draft(rid):
+    """맥미니가 Outlook Draft 생성 완료 보고."""
+    row = query('SELECT status FROM wf2_reply WHERE id=?', (rid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    execute("UPDATE wf2_reply SET status='draft_created', "
+            "decided_at=datetime('now','localtime') WHERE id=?", (rid,))
+    return jsonify({'id': rid, 'status': 'draft_created'})
+
+
+@app.route('/api/wf2/replies/<int:rid>', methods=['DELETE'])
+@admin_required
+def api_wf2_delete(rid):
+    if not query('SELECT id FROM wf2_reply WHERE id=?', (rid,), one=True):
+        return jsonify({'error': 'not found'}), 404
+    execute('DELETE FROM wf2_reply WHERE id=?', (rid,))
+    return jsonify({'id': rid, 'deleted': True})
+
+
+# ═════════════════════════════════════════════════════════════════
 #  CLASS STATUS (선급 Class Status Report 업로드/추출/매칭)
 # ═════════════════════════════════════════════════════════════════
 import re as _re_cls

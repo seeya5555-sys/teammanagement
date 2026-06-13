@@ -109,6 +109,38 @@ CREATE TABLE IF NOT EXISTS wf1_draft (
 );
 
 -- -------------------------------------------------------------
+--  WF2 — 메일 회신 드래프트 승인 큐
+--   · 맥미니가 '00.손유석' 폴더 수신메일 → 회신안(간결/강경 2옵션) 생성 → 적재
+--   · 사람이 /wf2 탭에서 옵션 선택 → 맥미니가 그 1건만 Outlook 회신 Draft 생성 → 사람이 Outlook서 최종 Send
+--   · 방향(진행지시/추가질문)은 보수적 게이트가 단일 결정, 2옵션은 톤(간결/강경)
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wf2_reply (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    -- 원본 메일
+    email_subject   TEXT,
+    email_from      TEXT,
+    email_date      TEXT,
+    email_msg_id    TEXT,                            -- Outlook 메시지 id (dedup/회신 타겟)
+    -- 분류·판단 (카드 근거 표시)
+    category        TEXT,                            -- AOR/Dock/Defect/Invoice/SOA/Claim/Vetting/문의/Warranty/...
+    stage           TEXT,                            -- R/S/P코드·Rev·PO·Invoice·SOA·AC/V-no 등
+    lang            TEXT    DEFAULT 'en',            -- en | ko (회신 언어)
+    intent          TEXT,                            -- proceed(진행지시) | clarify(추가질문)
+    confidence      INTEGER,                         -- 0~100
+    missing_fields  TEXT,                            -- 빠진 핵심필드(진행 못한 이유)
+    -- 회신 옵션 (JSON 배열): [{tone:'간결'|'강경', reply:'회신본문(메일언어)', ko:'한국어번역(영문메일만)'}]
+    options         TEXT    DEFAULT '[]',
+    -- 상태
+    status          TEXT    NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','selected','draft_created','rejected','archived')),
+    selected_idx    INTEGER,                         -- 고른 옵션 인덱스
+    reject_reason   TEXT,
+    decided_at      TEXT,
+    decided_by      TEXT
+);
+
+-- -------------------------------------------------------------
 --  첨부파일 (Attachments)
 --   · 실제 파일은 static/uploads/ 에 stored_name 으로 저장
 --   · 현장에서 핸드폰 사진 업로드 대비
