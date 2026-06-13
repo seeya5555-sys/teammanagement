@@ -77,6 +77,38 @@ CREATE TABLE IF NOT EXISTS issues (
 );
 
 -- -------------------------------------------------------------
+--  WF1 — 이메일→이슈 draft 승인 큐
+--   · 데쿠(외부, API키)가 메일에서 만든 draft 를 밀어넣음
+--   · 사람이 사이트 WF1 탭에서 승인/수정/리젝 (데쿠 안 끼고)
+--   · 승인 시 issues 에 신규 생성(new) 또는 기존 이슈에 액션 추가(append)
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wf1_draft (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    -- 원본 메일
+    email_subject   TEXT,
+    email_from      TEXT,
+    email_date      TEXT,
+    email_msg_id    TEXT,                            -- Outlook 메시지 id (dedup/추적)
+    -- 제안 내용
+    mode            TEXT    NOT NULL DEFAULT 'new'
+                    CHECK (mode IN ('new','append')),
+    match_issue_id  INTEGER,                         -- dedup 후보 / append 대상
+    vessel_name     TEXT,                            -- 승인 시 vessel 매칭용
+    supervisor_name TEXT,                            -- 승인 시 supervisor 매칭용
+    proposed_item   TEXT,                            -- new: item_topic
+    proposed_desc   TEXT,                            -- new: description / append: action progress
+    priority        TEXT    DEFAULT 'Normal',
+    -- 상태
+    status          TEXT    NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','approved','rejected')),
+    issue_id        INTEGER,                         -- 승인 결과 연결 (생성/추가된 이슈)
+    reject_reason   TEXT,
+    decided_at      TEXT,
+    decided_by      TEXT
+);
+
+-- -------------------------------------------------------------
 --  첨부파일 (Attachments)
 --   · 실제 파일은 static/uploads/ 에 stored_name 으로 저장
 --   · 현장에서 핸드폰 사진 업로드 대비

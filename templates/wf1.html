@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block title %}WF1 메일승인 · TRMT3{% endblock %}
+
+{% block head %}
+<style>
+  .wf1-head { display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+  .wf1-filter { display:flex; gap:6px; }
+  .wf1-count { color:#64748b; font-size:13px; }
+  .wf1-list { display:flex; flex-direction:column; gap:14px; max-width:920px; }
+  .wf1-card { border:1px solid #e2e8f0; border-radius:12px; background:#fff;
+              box-shadow:0 1px 2px rgba(0,0,0,.04); overflow:hidden; }
+  .wf1-card.is-busy { opacity:.55; pointer-events:none; }
+  .wf1-card-top { display:flex; align-items:flex-start; gap:10px; padding:12px 14px;
+                  background:#f8fafc; border-bottom:1px solid #eef2f7; }
+  .wf1-mail-subj { font-weight:600; color:#0f172a; line-height:1.35; }
+  .wf1-mail-meta { font-size:12px; color:#64748b; margin-top:3px; }
+  .wf1-badges { margin-left:auto; display:flex; gap:6px; flex-shrink:0; }
+  .wf1-badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; }
+  .wf1-badge.new { background:#dbeafe; color:#1d4ed8; }
+  .wf1-badge.append { background:#fef3c7; color:#b45309; }
+  .wf1-badge.prio-Urgent { background:#fee2e2; color:#b91c1c; }
+  .wf1-badge.prio-Normal { background:#f1f5f9; color:#475569; }
+  .wf1-badge.prio-COCFlag { background:#ede9fe; color:#6d28d9; }
+  .wf1-badge.prio-NextDD { background:#dcfce7; color:#15803d; }
+  .wf1-body { padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .wf1-match { font-size:13px; background:#fffbeb; border:1px solid #fde68a;
+               border-radius:8px; padding:8px 10px; color:#92400e; }
+  .wf1-match a { color:#b45309; font-weight:600; }
+  .wf1-row { display:flex; gap:10px; flex-wrap:wrap; }
+  .wf1-field { display:flex; flex-direction:column; gap:3px; flex:1; min-width:160px; }
+  .wf1-field label { font-size:11px; font-weight:600; color:#64748b; }
+  .wf1-field input, .wf1-field select, .wf1-field textarea {
+      border:1px solid #cbd5e1; border-radius:7px; padding:7px 9px; font-size:14px;
+      font-family:inherit; }
+  .wf1-field textarea { min-height:96px; resize:vertical; line-height:1.5; }
+  .wf1-foot { display:flex; align-items:center; gap:8px; padding:10px 14px;
+              border-top:1px solid #eef2f7; background:#fcfcfd; }
+  .wf1-err { color:#b91c1c; font-size:13px; }
+  .wf1-decided { font-size:12px; color:#64748b; }
+  .wf1-empty { color:#94a3b8; padding:40px 0; text-align:center; }
+  .flex-spacer { flex:1; }
+  .btn-danger { background:#dc2626; color:#fff; border:1px solid #dc2626; }
+  .btn-danger:hover { background:#b91c1c; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">WF1 — 메일 → 이슈 승인</h1>
+
+<div class="wf1-head">
+  <div class="wf1-filter">
+    <button class="btn btn-primary btn-sm" data-filter="pending" type="button">대기</button>
+    <button class="btn btn-outline btn-sm" data-filter="all" type="button">전체</button>
+  </div>
+  <span class="wf1-count" id="wf1-count"></span>
+  <span class="flex-spacer"></span>
+  <button class="btn btn-outline btn-sm" id="wf1-refresh" type="button">새로고침</button>
+</div>
+
+<div class="wf1-list" id="wf1-list"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const PRIOS = ['Normal', 'Urgent', 'COC & Flag', 'Next DD'];
+  const listEl = document.getElementById('wf1-list');
+  const countEl = document.getElementById('wf1-count');
+  let filter = 'pending';
+
+  const esc = s => (s == null ? '' : String(s).replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
+  const prioClass = p => 'prio-' + (p || 'Normal').replace(/[^A-Za-z]/g, '');
+
+  async function load() {
+    listEl.innerHTML = '<div class="wf1-empty">불러오는 중…</div>';
+    let data;
+    try {
+      const r = await fetch('/api/wf1/drafts?status=' + filter, {headers: {'Accept': 'application/json'}});
+      data = await r.json();
+    } catch (e) {
+      listEl.innerHTML = '<div class="wf1-err" style="padding:20px">불러오기 실패: ' + esc(e.message) + '</div>';
+      return;
+    }
+    countEl.textContent = '대기 ' + (data.pending || 0) + '건' +
+      (filter === 'all' ? ' · 표시 ' + data.count + '건' : '');
+    if (!data.drafts.length) {
+      listEl.innerHTML = '<div class="wf1-empty">' +
+        (filter === 'pending' ? '대기 중인 draft 없음 👍' : 'draft 없음') + '</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    data.drafts.forEach(d => listEl.appendChild(card(d)));
+  }
+
+  function card(d) {
+    const el = document.createElement('div');
+    el.className = 'wf1-card';
+    el.dataset.id = d.id;
+    const isAppend = d.mode === 'append';
+    const decided = d.status !== 'pending';
+
+    const prioOpts = PRIOS.map(p =>
+      `<option value="${esc(p)}"${p === d.priority ? ' selected' : ''}>${esc(p)}</option>`).join('');
+
+    const matchBox = d.match_issue ? `
+      <div class="wf1-match">
+        🔗 매칭 후보 → <a href="/?issue=${d.match_issue.id}" target="_blank">issue:${d.match_issue.id}</a>
+        · ${esc(d.match_issue.vessel_name || '')} · ${esc(d.match_issue.item_topic || '')}
+        <span style="color:#a16207">(${esc(d.match_issue.status)})</span>
+      </div>` : (isAppend ? '<div class="wf1-match">⚠️ append 대상 이슈를 찾지 못함 — 검토 필요</div>' : '');
+
+    let bodyFields;
+    if (isAppend) {
+      bodyFields = `
+        <div class="wf1-field">
+          <label>추가할 Action (progress)</label>
+          <textarea class="f-desc">${esc(d.proposed_desc || d.proposed_item || '')}</textarea>
+        </div>`;
+    } else {
+      bodyFields = `
+        <div class="wf1-row">
+          <div class="wf1-field"><label>선박명 (vessel)</label>
+            <input class="f-vessel" value="${esc(d.vessel_name || '')}" placeholder="예: PACIFIC MONACO"></div>
+          <div class="wf1-field"><label>담당 감독 (supervisor)</label>
+            <input class="f-sup" value="${esc(d.supervisor_name || '')}" placeholder="감독명"></div>
+          <div class="wf1-field" style="max-width:150px"><label>Priority</label>
+            <select class="f-prio">${prioOpts}</select></div>
+        </div>
+        <div class="wf1-field"><label>Item (제목)</label>
+          <input class="f-item" value="${esc(d.proposed_item || '')}"></div>
+        <div class="wf1-field"><label>Description</label>
+          <textarea class="f-desc">${esc(d.proposed_desc || '')}</textarea></div>`;
+    }
+
+    el.innerHTML = `
+      <div class="wf1-card-top">
+        <div>
+          <div class="wf1-mail-subj">${esc(d.email_subject || '(제목 없음)')}</div>
+          <div class="wf1-mail-meta">
+            ${esc(d.email_from || '?')} · ${esc(d.email_date || '')} · draft #${d.id}
+          </div>
+        </div>
+        <div class="wf1-badges">
+          <span class="wf1-badge ${isAppend ? 'append' : 'new'}">${isAppend ? 'APPEND' : 'NEW'}</span>
+          <span class="wf1-badge ${prioClass(d.priority)}">${esc(d.priority || 'Normal')}</span>
+        </div>
+      </div>
+      <div class="wf1-body">
+        ${matchBox}
+        ${bodyFields}
+      </div>
+      <div class="wf1-foot">
+        ${decided ? `<span class="wf1-decided">${esc(d.status)} · ${esc(d.decided_by || '')} · ${esc(d.decided_at || '')}` +
+            (d.issue_id ? ` → <a href="/?issue=${d.issue_id}" target="_blank">issue:${d.issue_id}</a>` : '') +
+            (d.reject_reason ? ` · 사유: ${esc(d.reject_reason)}` : '') + `</span>
+          <span class="flex-spacer"></span>
+          <button class="btn btn-outline btn-sm act-del" type="button">삭제</button>`
+        : `<span class="wf1-err" hidden></span>
+          <span class="flex-spacer"></span>
+          <button class="btn btn-outline btn-sm act-reject" type="button">리젝</button>
+          <button class="btn btn-primary btn-sm act-approve" type="button">${isAppend ? 'issue:' + (d.match_issue_id || '?') + '에 추가 승인' : '승인 (이슈 생성)'}</button>`}
+      </div>`;
+
+    if (!decided) {
+      el.querySelector('.act-approve').addEventListener('click', () => approve(el, d));
+      el.querySelector('.act-reject').addEventListener('click', () => reject(el, d));
+    } else {
+      const del = el.querySelector('.act-del');
+      if (del) del.addEventListener('click', () => removeDraft(el, d));
+    }
+    return el;
+  }
+
+  function gather(el, d) {
+    const g = sel => { const n = el.querySelector(sel); return n ? n.value.trim() : undefined; };
+    const body = {mode: d.mode};
+    body.proposed_desc = g('.f-desc');
+    if (d.mode !== 'append') {
+      body.proposed_item = g('.f-item');
+      body.vessel_name = g('.f-vessel');
+      body.supervisor_name = g('.f-sup');
+      body.priority = g('.f-prio');
+    } else {
+      body.match_issue_id = d.match_issue_id;
+    }
+    return body;
+  }
+
+  async function approve(el, d) {
+    const errEl = el.querySelector('.wf1-err');
+    errEl.hidden = true;
+    el.classList.add('is-busy');
+    try {
+      const r = await fetch('/api/wf1/drafts/' + d.id + '/approve', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(gather(el, d))
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        errEl.textContent = '✕ ' + (j.hint || j.error || '승인 실패');
+        errEl.hidden = false;
+        el.classList.remove('is-busy');
+        return;
+      }
+      load();
+    } catch (e) {
+      errEl.textContent = '✕ ' + e.message; errEl.hidden = false;
+      el.classList.remove('is-busy');
+    }
+  }
+
+  async function reject(el, d) {
+    const reason = prompt('리젝 사유 (선택):', '');
+    if (reason === null) return;
+    el.classList.add('is-busy');
+    await fetch('/api/wf1/drafts/' + d.id + '/reject', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason})
+    });
+    load();
+  }
+
+  async function removeDraft(el, d) {
+    if (!confirm('이 draft 기록을 삭제할까요?')) return;
+    el.classList.add('is-busy');
+    await fetch('/api/wf1/drafts/' + d.id, {method: 'DELETE'});
+    load();
+  }
+
+  document.querySelectorAll('[data-filter]').forEach(b =>
+    b.addEventListener('click', () => {
+      filter = b.dataset.filter;
+      document.querySelectorAll('[data-filter]').forEach(x => {
+        x.classList.toggle('btn-primary', x === b);
+        x.classList.toggle('btn-outline', x !== b);
+      });
+      load();
+    }));
+  document.getElementById('wf1-refresh').addEventListener('click', load);
+  load();
+})();
+</script>
+{% endblock %}

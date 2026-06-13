@@ -25,6 +25,9 @@
         <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint=='index' %}active{% endif %}">
           Daily 업무관리
         </a>
+        <a href="{{ url_for('wf1_page') }}" class="nav-link {% if request.endpoint=='wf1_page' %}active{% endif %}">
+          WF1 메일승인
+        </a>
         <a href="{{ url_for('condition_survey') }}" class="nav-link {% if request.endpoint=='condition_survey' %}active{% endif %}">
           Condition Survey
         </a>

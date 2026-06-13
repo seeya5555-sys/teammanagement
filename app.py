@@ -6143,6 +6143,186 @@ def api_ext_issue_set_email_key(iid):
             (norm or None, conv, iid))
     return jsonify({'id': iid, 'ref': _ref('issue', iid)})
 
+
+# ═════════════════════════════════════════════════════════════════
+#  WF1 — 이메일→이슈 draft 승인 큐
+#   · 데쿠(외부, API키)가 메일에서 만든 draft 를 POST /api/ext/wf1/drafts 로 넣음
+#   · 사람이 /wf1 탭에서 승인/수정/리젝 (데쿠 안 끼고)
+#   · 승인 → issues 신규 생성(new) 또는 기존 이슈에 액션 추가(append)
+# ═════════════════════════════════════════════════════════════════
+@app.route('/wf1')
+@login_required
+def wf1_page():
+    return render_template('wf1.html')
+
+
+@app.route('/api/wf1/drafts')
+@login_required
+def api_wf1_list():
+    status = (request.args.get('status') or 'pending').strip()
+    if status == 'all':
+        rows = query("SELECT * FROM wf1_draft "
+                     "ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, id DESC")
+    else:
+        rows = query('SELECT * FROM wf1_draft WHERE status=? ORDER BY id DESC', (status,))
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d.get('match_issue_id'):
+            mi = query('SELECT i.id, i.item_topic, i.status, v.name AS vessel_name '
+                       'FROM issues i LEFT JOIN vessels v ON v.id=i.vessel_id '
+                       'WHERE i.id=?', (d['match_issue_id'],), one=True)
+            d['match_issue'] = dict(mi) if mi else None
+        else:
+            d['match_issue'] = None
+        out.append(d)
+    pending = query("SELECT COUNT(*) c FROM wf1_draft WHERE status='pending'", one=True)
+    return jsonify({'count': len(out), 'pending': pending['c'], 'drafts': out})
+
+
+@app.route('/api/ext/wf1/drafts', methods=['POST'])
+@api_key_required
+def api_ext_wf1_create():
+    """데쿠 ingest: 메일에서 만든 issue draft 를 큐에 넣는다."""
+    d = request.get_json(silent=True) or {}
+    mode = (d.get('mode') or 'new').strip()
+    if mode not in ('new', 'append'):
+        mode = 'new'
+    item = (d.get('proposed_item') or d.get('item_topic') or '').strip()
+    desc = (d.get('proposed_desc') or d.get('description') or '').strip()
+    match_id = d.get('match_issue_id')
+    if mode == 'new' and not item:
+        return jsonify({'error': 'proposed_item required for mode=new'}), 400
+    if mode == 'append':
+        if not match_id:
+            return jsonify({'error': 'match_issue_id required for mode=append'}), 400
+        if not desc:
+            return jsonify({'error': 'proposed_desc (action) required for mode=append'}), 400
+    priority = d.get('priority') or 'Normal'
+    if priority not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
+        priority = 'Normal'
+    # dedup: 같은 메일 msg_id 가 이미 pending 이면 중복 등록 방지
+    msg_id = (d.get('email_msg_id') or '').strip() or None
+    if msg_id:
+        dup = query("SELECT id FROM wf1_draft WHERE email_msg_id=? AND status='pending'",
+                    (msg_id,), one=True)
+        if dup:
+            return jsonify({'id': dup['id'], 'dedup': True,
+                            'message': 'already queued (same email_msg_id)'}), 200
+    did = execute("""
+        INSERT INTO wf1_draft
+            (email_subject, email_from, email_date, email_msg_id,
+             mode, match_issue_id, vessel_name, supervisor_name,
+             proposed_item, proposed_desc, priority)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        d.get('email_subject') or None, d.get('email_from') or None,
+        d.get('email_date') or None, msg_id,
+        mode, match_id or None,
+        d.get('vessel_name') or None, d.get('supervisor_name') or None,
+        item or None, desc or None, priority,
+    ))
+    return jsonify({'id': did, 'status': 'pending'}), 201
+
+
+@app.route('/api/wf1/drafts/<int:did>/approve', methods=['POST'])
+@login_required
+def api_wf1_approve(did):
+    """승인. 본문에 수정값 오면 그걸로 덮어써서 처리(= 수정후승인)."""
+    from datetime import date as _date
+    row = query('SELECT * FROM wf1_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] != 'pending':
+        return jsonify({'error': 'already decided', 'status': row['status']}), 409
+    d = request.get_json(silent=True) or {}
+
+    def _ov(key):
+        return d[key] if key in d else row[key]
+
+    mode = (d.get('mode') or row['mode'] or 'new').strip()
+    item = (_ov('proposed_item') or '').strip()
+    desc = (_ov('proposed_desc') or '')
+    priority = d.get('priority') or row['priority'] or 'Normal'
+    if priority not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
+        priority = 'Normal'
+    match_id = _ov('match_issue_id')
+    vessel_name = _ov('vessel_name')
+    supervisor_name = _ov('supervisor_name')
+    user = session.get('username') or 'web'
+
+    if mode == 'append':
+        if not match_id:
+            return jsonify({'error': 'match_issue_id required for append'}), 400
+        if not query('SELECT id FROM issues WHERE id=?', (match_id,), one=True):
+            return jsonify({'error': 'match issue not found'}), 400
+        prog = (desc or item).strip()
+        if not prog:
+            return jsonify({'error': 'action text empty'}), 400
+        arow = query('SELECT actions FROM issues WHERE id=?', (match_id,), one=True)
+        try:
+            acts = json.loads(arow['actions']) if arow['actions'] else []
+            if not isinstance(acts, list):
+                acts = []
+        except Exception:
+            acts = []
+        acts.append({'date': _date.today().isoformat(), 'progress': prog,
+                     'important': bool(d.get('important'))})
+        execute('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") WHERE id=?',
+                (json.dumps(acts, ensure_ascii=False), match_id))
+        issue_id = match_id
+    else:
+        if not item:
+            return jsonify({'error': 'proposed_item empty'}), 400
+        vid = _resolve_vessel_id({'vessel_name': vessel_name})
+        sid = _resolve_supervisor_id({'supervisor_name': supervisor_name})
+        if not vid:
+            return jsonify({'error': 'vessel unresolved',
+                            'hint': 'vessel_name 매칭 실패 — 카드에서 선박명 고쳐 다시 승인',
+                            'field': 'vessel_name'}), 400
+        if not sid:
+            return jsonify({'error': 'supervisor unresolved',
+                            'hint': 'supervisor_name 매칭 실패 — 담당 감독 지정 후 다시 승인',
+                            'field': 'supervisor_name'}), 400
+        issue_id = execute("""
+            INSERT INTO issues
+                (supervisor_id, vessel_id, issue_date, due_date, item_topic,
+                 description, actions, priority, status, created_by)
+            VALUES (?, ?, ?, NULL, ?, ?, '[]', ?, 'Open', ?)
+        """, (sid, vid, _date.today().isoformat(), item, desc, priority, 'wf1:' + user))
+
+    execute("UPDATE wf1_draft SET status='approved', issue_id=?, "
+            "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?",
+            (issue_id, user, did))
+    return jsonify({'id': did, 'status': 'approved', 'issue_id': issue_id,
+                    'ref': _ref('issue', issue_id)})
+
+
+@app.route('/api/wf1/drafts/<int:did>/reject', methods=['POST'])
+@login_required
+def api_wf1_reject(did):
+    row = query('SELECT status FROM wf1_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] != 'pending':
+        return jsonify({'error': 'already decided', 'status': row['status']}), 409
+    d = request.get_json(silent=True) or {}
+    user = session.get('username') or 'web'
+    execute("UPDATE wf1_draft SET status='rejected', reject_reason=?, "
+            "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?",
+            ((d.get('reason') or '').strip() or None, user, did))
+    return jsonify({'id': did, 'status': 'rejected'})
+
+
+@app.route('/api/wf1/drafts/<int:did>', methods=['DELETE'])
+@login_required
+def api_wf1_delete(did):
+    if not query('SELECT id FROM wf1_draft WHERE id=?', (did,), one=True):
+        return jsonify({'error': 'not found'}), 404
+    execute('DELETE FROM wf1_draft WHERE id=?', (did,))
+    return jsonify({'id': did, 'deleted': True})
+
+
 # ═════════════════════════════════════════════════════════════════
 #  CLASS STATUS (선급 Class Status Report 업로드/추출/매칭)
 # ═════════════════════════════════════════════════════════════════
