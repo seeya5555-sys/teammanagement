@@ -6151,13 +6151,13 @@ def api_ext_issue_set_email_key(iid):
 #   · 승인 → issues 신규 생성(new) 또는 기존 이슈에 액션 추가(append)
 # ═════════════════════════════════════════════════════════════════
 @app.route('/wf1')
-@login_required
+@admin_required
 def wf1_page():
     return render_template('wf1.html')
 
 
 @app.route('/api/wf1/drafts')
-@login_required
+@admin_required
 def api_wf1_list():
     status = (request.args.get('status') or 'pending').strip()
     if status == 'all':
@@ -6226,7 +6226,7 @@ def api_ext_wf1_create():
 
 
 @app.route('/api/wf1/drafts/<int:did>/approve', methods=['POST'])
-@login_required
+@admin_required
 def api_wf1_approve(did):
     """승인. 본문에 수정값 오면 그걸로 덮어써서 처리(= 수정후승인)."""
     from datetime import date as _date
@@ -6276,6 +6276,8 @@ def api_wf1_approve(did):
             return jsonify({'error': 'proposed_item empty'}), 400
         vid = _resolve_vessel_id({'vessel_name': vessel_name})
         sid = _resolve_supervisor_id({'supervisor_name': supervisor_name})
+        if not sid:
+            sid = session.get('supervisor_id')   # 미해결 시 로그인한 감독 본인에게 배정
         if not vid:
             return jsonify({'error': 'vessel unresolved',
                             'hint': 'vessel_name 매칭 실패 — 카드에서 선박명 고쳐 다시 승인',
@@ -6299,7 +6301,7 @@ def api_wf1_approve(did):
 
 
 @app.route('/api/wf1/drafts/<int:did>/reject', methods=['POST'])
-@login_required
+@admin_required
 def api_wf1_reject(did):
     row = query('SELECT status FROM wf1_draft WHERE id=?', (did,), one=True)
     if not row:
@@ -6315,7 +6317,7 @@ def api_wf1_reject(did):
 
 
 @app.route('/api/wf1/drafts/<int:did>', methods=['DELETE'])
-@login_required
+@admin_required
 def api_wf1_delete(did):
     if not query('SELECT id FROM wf1_draft WHERE id=?', (did,), one=True):
         return jsonify({'error': 'not found'}), 404
