@@ -101,7 +101,7 @@
     el.innerHTML=`<div class="mc-top"><div><div class="mc-subj">${esc(c.email_subject||'(제목없음)')}</div>
         <div class="mc-meta">${esc(c.email_from||'?')} · ${esc(c.email_date||'')} · #${c.id}</div></div>
       <div class="mc-badges">${issueBadge(c.issue_status)}${replyBadge(c.reply_status)}</div></div>
-      ${c.summary_ko?`<div class="mc-sum">📨 <b>요약</b> : ${esc(c.summary_ko)}</div>`:''}
+      ${c.summary_ko?`<div class="mc-sum">📨 <b>받은메일(한글 번역)</b> : ${esc(c.summary_ko)}</div>`:''}
       <div class="mc-sec"><div class="mc-sh">📋 TRMT 이슈</div>${issueHtml}</div>
       <div class="mc-sec"><div class="mc-sh">✉️ 회신 작성</div>${replyHtml}</div>
       <div class="mc-sec" style="padding:8px 15px;text-align:right"><button class="btn btn-sm act-arch">📦 archive</button></div>`;

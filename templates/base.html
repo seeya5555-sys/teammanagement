@@ -29,12 +29,6 @@
         <a href="{{ url_for('mail_page') }}" class="nav-link {% if request.endpoint=='mail_page' %}active{% endif %}">
           📬 메일 처리
         </a>
-        <a href="{{ url_for('wf1_page') }}" class="nav-link {% if request.endpoint=='wf1_page' %}active{% endif %}">
-          WF1 메일승인
-        </a>
-        <a href="{{ url_for('wf2_page') }}" class="nav-link {% if request.endpoint=='wf2_page' %}active{% endif %}">
-          WF2 회신
-        </a>
         {% endif %}
         <a href="{{ url_for('condition_survey') }}" class="nav-link {% if request.endpoint=='condition_survey' %}active{% endif %}">
           Condition Survey
