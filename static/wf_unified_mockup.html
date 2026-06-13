@@ -53,6 +53,10 @@
   <h1>📬 메일 처리 (WF1 + WF2 통합) — <span class="muted">설계 목업</span></h1>
   <div class="sub">'00.손유석' 폴더 메일 1건 = 카드 1개. 한 카드에서 ① TRMT 이슈 등록 ② 회신 작성 둘 다. (이 페이지는 동작 안 하는 시안 — 데이터는 예시)</div>
   <div class="note">⚠️ 목업입니다. 버튼은 동작 안 함. 레이아웃·흐름·문구만 봐주세요. OK하면 이대로 실제 구현(launchd·서명·Outlook draft·자동발송0 그대로).</div>
+  <div class="row" style="margin-bottom:14px;gap:10px">
+    <button class="btn btn-p btn-sm">🌐 전체 번역 (한글 적어둔 카드 일괄 — Gemini)</button>
+    <span class="ko-tip">여러 카드에 한글만 미리 적어두고 한 번에 영문화. 번역은 <b>서버 Gemini·즉시</b>(대기 없음).</span>
+  </div>
   <div class="legend">
     상태 뱃지:
     <span class="badge b-issue">이슈감</span>
@@ -100,8 +104,9 @@
         <span class="k" style="font-size:11px">스타일</span>
         <select class="box"><option>간결·직설(기본)</option><option>정중</option><option>강경</option></select>
         <input class="box" placeholder="추가 메모 (예: 기한 강조)" style="flex:1;min-width:140px">
-        <button class="btn btn-g btn-sm">영문 생성 → Outlook Draft</button>
+        <button class="btn btn-p btn-sm">🌐 번역 (Gemini·즉시)</button>
       </div>
+      <div class="ko-tip" style="margin-top:6px">↓ 번역 결과 (사이트서 즉시 표시·편집 가능). 확인 후 ↓ Outlook Draft 생성.</div>
       <div class="preview">Dear Giorgos,
 
 Please refer to the SIRE inspection carried out at Sikka on 04 June, which raised 7 observations.
@@ -113,7 +118,10 @@ Await prompt response.
 
 Best regards,
 You Seok, Son (Mr.)  ·  Technical Superintendent  ·  Tanker Ship Management Team 3  ·  SINOKOR  (서명 자동첨부)</div>
-      <div class="ko-tip">생성하면 위 영문으로 <b>Outlook Draft 1개</b> 생성(원 메일에 reply). 최종 검토·발송은 Outlook에서. <b>자동발송 절대 없음.</b></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn btn-g btn-sm">✉️ 이 영문으로 Outlook Draft 생성</button>
+        <span class="ko-tip">→ 원 메일에 reply Draft 1개. 최종 검토·발송은 Outlook에서. <b>자동발송 절대 없음.</b></span>
+      </div>
     </div>
   </div>
 
