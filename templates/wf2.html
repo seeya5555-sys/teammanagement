@@ -54,6 +54,7 @@
   </div>
   <span class="wf2-count" id="wf2-count"></span>
   <span class="flex-spacer"></span>
+  <button class="btn btn-primary btn-sm" id="wf2-pull" type="button" title="맥미니에 지금 메일 스캔·드래프트 작성을 요청 (수분 내 반영)">📥 메일 지금 풀링</button>
   <button class="btn btn-outline btn-sm" id="wf2-refresh" type="button">새로고침</button>
 </div>
 
@@ -217,6 +218,16 @@
       load();
     }));
   document.getElementById('wf2-refresh').addEventListener('click', load);
+  document.getElementById('wf2-pull').addEventListener('click', async (e) => {
+    const btn = e.currentTarget; const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '요청 중…';
+    try {
+      const r = await fetch('/api/wf/pull-now', {method: 'POST', headers: {'Content-Type': 'application/json'}});
+      if (r.ok) { btn.textContent = '✅ 요청됨 — 수분 내 반영'; }
+      else { btn.textContent = '✕ 실패'; }
+    } catch (_) { btn.textContent = '✕ 실패'; }
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 4000);
+  });
   load();
 })();
 </script>
