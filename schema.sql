@@ -126,10 +126,11 @@ CREATE TABLE IF NOT EXISTS wf2_reply (
     category        TEXT,                            -- AOR/Dock/Defect/Invoice/SOA/Claim/Vetting/문의/Warranty/...
     stage           TEXT,                            -- R/S/P코드·Rev·PO·Invoice·SOA·AC/V-no 등
     lang            TEXT    DEFAULT 'en',            -- en | ko (회신 언어)
-    intent          TEXT,                            -- proceed(진행지시) | clarify(추가질문)
+    intent          TEXT,                            -- proceed(진행지시) | clarify(추가질문) — recommended 힌트
     confidence      INTEGER,                         -- 0~100
     missing_fields  TEXT,                            -- 빠진 핵심필드(진행 못한 이유)
-    -- 회신 옵션 (JSON 배열): [{tone:'간결'|'강경', reply:'회신본문(메일언어)', ko:'한국어번역(영문메일만)'}]
+    summary_ko      TEXT,                            -- 수신메일 한국어 요약(맥락, 선택 판단용)
+    -- 회신 옵션 (JSON 배열): [{label:'진행안'|'확인요청안', reply:'회신본문(메일언어,서명포함)', ko:'한국어번역(영문메일만,서명제외)'}]
     options         TEXT    DEFAULT '[]',
     -- 상태
     status          TEXT    NOT NULL DEFAULT 'pending'

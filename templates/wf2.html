@@ -112,19 +112,27 @@
 
     const optsHtml = opts.map((o, i) => {
       const isSel = d.selected_idx === i;
+      const label = o.label || o.tone || ('옵션 ' + (i+1));
+      const rec = (!decided) && ((d.intent === 'proceed' && /진행|승인/.test(label)) ||
+                                 (d.intent === 'clarify' && /확인|질의/.test(label)));
       const koBlock = o.ko ? `
         <div class="wf2-ko"><div class="wf2-ko-label">한국어 번역 (확인용)</div>${esc(o.ko)}</div>` : '';
       const actions = decided ? '' : `
         <button class="btn btn-primary btn-sm act-select" data-idx="${i}" type="button">이 옵션 선택 → Outlook Draft</button>`;
       return `
         <div class="wf2-opt ${isSel ? 'sel' : ''}">
-          <div class="wf2-opt-h"><span class="wf2-opt-tone">${esc(o.tone || ('옵션 ' + (i+1)))}</span>
+          <div class="wf2-opt-h"><span class="wf2-opt-tone">${esc(label)}</span>
+            ${rec ? '<span class="wf2-badge b-proceed" title="코드 게이트 추천">추천</span>' : ''}
             ${isSel ? '<span class="wf2-badge b-proceed">선택됨</span>' : ''}</div>
           <textarea class="f-reply" data-idx="${i}" ${decided ? 'readonly' : ''}>${esc(o.reply || '')}</textarea>
           ${koBlock}
           ${actions}
         </div>`;
     }).join('');
+
+    const summaryBox = d.summary_ko ? `
+      <div class="wf2-reason" style="background:#eff6ff;border-color:#bfdbfe">
+        <b>📨 수신메일 요약</b>: ${esc(d.summary_ko)}</div>` : '';
 
     el.innerHTML = `
       <div class="wf2-top">
@@ -138,6 +146,7 @@
           ${d.category ? '<span class="wf2-badge b-cat">' + esc(d.category) + '</span>' : ''}
         </div>
       </div>
+      ${summaryBox}
       ${reasonBox}
       <div class="wf2-opts">${optsHtml || '<div class="wf2-empty">옵션 없음</div>'}</div>
       <div class="wf2-foot">

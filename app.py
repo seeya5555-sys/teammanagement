@@ -229,6 +229,13 @@ def init_db(drop=False):
                     print(f'  - issues.{_c} column added')
             conn.commit()
 
+        # wf2_reply 에 수신메일 한국어 요약 컬럼 추가 (v2)
+        w2_cols = [r[1] for r in conn.execute('PRAGMA table_info(wf2_reply)').fetchall()]
+        if w2_cols and 'summary_ko' not in w2_cols:
+            conn.execute('ALTER TABLE wf2_reply ADD COLUMN summary_ko TEXT')
+            print('  - wf2_reply.summary_ko column added')
+            conn.commit()
+
         # cs_surveys.vendor CHECK 제약 제거 (AALMAR/IDWAL 외 자유 입력 허용)
         try:
             sql_def = conn.execute(
@@ -6373,7 +6380,7 @@ def api_ext_wf2_create():
         if not isinstance(o, dict):
             continue
         norm.append({
-            'tone': (o.get('tone') or '').strip() or '표준',
+            'label': (o.get('label') or o.get('tone') or '').strip() or '옵션',
             'reply': (o.get('reply') or '').strip(),
             'ko': (o.get('ko') or '').strip(),
         })
@@ -6401,13 +6408,14 @@ def api_ext_wf2_create():
     rid = execute("""
         INSERT INTO wf2_reply
             (email_subject, email_from, email_date, email_msg_id,
-             category, stage, lang, intent, confidence, missing_fields, options)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             category, stage, lang, intent, confidence, missing_fields, summary_ko, options)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         d.get('email_subject') or None, d.get('email_from') or None,
         d.get('email_date') or None, msg_id,
         d.get('category') or None, d.get('stage') or None, lang, intent, conf,
-        d.get('missing_fields') or None, json.dumps(norm, ensure_ascii=False),
+        d.get('missing_fields') or None, d.get('summary_ko') or None,
+        json.dumps(norm, ensure_ascii=False),
     ))
     return jsonify({'id': rid, 'status': 'pending'}), 201
 
