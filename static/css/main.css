@@ -116,6 +116,7 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
   transition: background 0.1s;
 }
 .nav-link:hover   { background: var(--surface-2); color: var(--text-primary); }
@@ -862,7 +863,17 @@ col.c-edit   { width: 156px; }
   .main-content { padding: 14px; }
   .page-title { font-size: 18px; }
   .brand-sub { display: none; }
-  .main-nav .nav-link { padding: 6px 10px; font-size: 12px; }
+  /* 모바일 nav: 가로 스크롤(탭 줄바꿈/세로쪼개짐 방지), 탭은 자연폭 유지 */
+  .main-nav {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .main-nav::-webkit-scrollbar { display: none; }
+  .main-nav .nav-link { padding: 6px 10px; font-size: 12px; flex: 0 0 auto; }
   .user-name { display: none; }
   .topnav-inner { gap: 10px; padding: 0 14px; }
 
