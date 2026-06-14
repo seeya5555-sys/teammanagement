@@ -138,13 +138,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-  window.TRMT = { user: {{ {
-      'username': session.username,
-      'display_name': session.display_name,
-      'role': session.role,
-      'supervisor_id': session.supervisor_id
-    } | tojson }} };
-</script>
 <script src="{{ url_for('static', filename='js/cs.js') }}"></script>
 {% endblock %}

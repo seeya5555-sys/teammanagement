@@ -5661,7 +5661,7 @@ def _too_large(e):
 def _not_found(e):
     if request.path.startswith('/api/'):
         return jsonify({'error': 'not found'}), 404
-    return render_template('index.html'), 404
+    return render_template('404.html'), 404
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -6449,6 +6449,14 @@ def api_aor_delete(did):
         return jsonify({'error': 'not found'}), 404
     execute('DELETE FROM aor_draft WHERE id=?', (did,))
     return jsonify({'id': did, 'deleted': True})
+
+
+@app.route('/api/aor/drafts/decided', methods=['DELETE'])
+@admin_required
+def api_aor_clear_decided():
+    """처리완료(승인·리젝 등) 일괄 삭제 — 대기(pending)·보류(hold)·진행중(submitting)은 보존."""
+    n = execute_rc("DELETE FROM aor_draft WHERE status NOT IN ('pending','hold','submitting')")
+    return jsonify({'ok': True, 'deleted': n})
 
 
 # ---- ext (맥 러너: 상신 실행) ----

@@ -2533,6 +2533,7 @@ async function saveUserEdit() {
 
 // ───────────── reloadAll ─────────────
 async function reloadAll() {
+  if (!document.getElementById('btn-new-issue')) return;  // Daily 페이지 아니면 no-op
   await loadSupervisors();
   renderTabs();
   await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
@@ -2765,7 +2766,10 @@ function wireEvents() {
     if (ev.target.dataset.closeMyves === '1') closeMyVessels();
   });
   $('#btn-myves-add')?.addEventListener('click', addVesselFromMyVes);
+}
 
+// ───────────── 공용 와이어링 (모든 페이지: 유저메뉴/비번/관리) ─────────────
+function wireCommon() {
   // ───── User Menu (네비 우측 드롭다운) ─────
   const umTrig = $('#user-menu-trigger');
   const umDrop = $('#user-dropdown');
@@ -2818,7 +2822,8 @@ function wireEvents() {
 }
 
 // ───────────── Init ─────────────
-(async function init() {
+wireCommon();  // 유저메뉴/관리/비번 — 모든 페이지 공통
+if (document.getElementById('btn-new-issue')) (async function init() {
   try {
     await loadSupervisors();
     try { S.summaryCounts = await api('/api/issues/summary-counts') || {}; } catch (_) {}
