@@ -111,7 +111,11 @@
       return;
     }
     countEl.textContent = '대기 ' + (data.pending || 0) + '건' +
-      (filter === 'all' ? ' · 표시 ' + data.count + '건' : '');
+      (filter === 'all' ? ' · 표시 ' + data.count + '건' : '') +
+      (data.crew_submitted != null
+        ? '    🧑‍✈️ Crew dept submitted ' + data.crew_submitted + '건'
+          + (data.crew_at ? ' (' + String(data.crew_at).slice(5, 16) + ' 기준)' : '')
+        : '');
     if (!data.drafts.length) {
       listEl.innerHTML = '<div class="aor-empty">' +
         (filter === 'pending' ? '대기 중인 AOR 없음 👍' : 'AOR draft 없음') + '</div>';

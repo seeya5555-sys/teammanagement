@@ -6473,7 +6473,12 @@ def api_aor_list():
     else:
         rows = query('SELECT * FROM aor_draft WHERE status=? ORDER BY id DESC', (status,))
     pending = query("SELECT COUNT(*) c FROM aor_draft WHERE status='pending'", one=True)
+    _ensure_api_table()
+    crew = query("SELECT v FROM api_settings WHERE k='aor_crew_submitted'", one=True)
+    at = query("SELECT v FROM api_settings WHERE k='aor_stats_at'", one=True)
     return jsonify({'count': len(rows), 'pending': pending['c'],
+                    'crew_submitted': (int(crew['v']) if crew and str(crew['v']).isdigit() else None),
+                    'crew_at': (at['v'] if at else None),
                     'drafts': [dict(r) for r in rows]})
 
 
@@ -6676,6 +6681,22 @@ def api_ext_aor_reject_result(did):
     rc = execute_rc("UPDATE aor_draft SET status=?, submitted_at=datetime('now','localtime'), "
                     "submit_result=? WHERE id=? AND status='rejecting'", (new, result, did))
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
+@app.route('/api/ext/aor/stats', methods=['POST'])
+@api_key_required
+def api_ext_aor_stats():
+    """prep 실행 시 부가 통계(예: Crew dept submitted 건수) 갱신 — 참고 표시용."""
+    d = request.get_json(silent=True) or {}
+    try:
+        n = int(d.get('crew_submitted') or 0)
+    except (TypeError, ValueError):
+        n = 0
+    _ensure_api_table()
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('aor_crew_submitted', ?)", (str(n),))
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES "
+            "('aor_stats_at', datetime('now','localtime'))")
+    return jsonify({'ok': True, 'crew_submitted': n})
 
 
 # ═════════════════════════════════════════════════════════════════
