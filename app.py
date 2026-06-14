@@ -59,6 +59,7 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
     JSON_AS_ASCII=False,
     SESSION_COOKIE_SAMESITE='Lax',
+    SEND_FILE_MAX_AGE_DEFAULT=0,                   # static(css/js) 매번 재검증 — 모바일 캐시 stale 방지
 )
 
 
