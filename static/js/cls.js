@@ -400,6 +400,17 @@ function uploadResultRow(res) {
 // ───────────── Init ─────────────
 function wireUpload() {
   $('#cls-upload-btn').addEventListener('click', openUpload);
+  const pushBtn = $('#cls-push-btn');
+  if (pushBtn) pushBtn.addEventListener('click', async () => {
+    if (!confirm('BV VeriSTAR에서 담당선박 Class Status를 받아 업데이트합니다.\n(맥 러너가 1~2분 내 처리, 텔레그램으로 결과 보고)\n진행할까요?')) return;
+    pushBtn.disabled = true;
+    try {
+      const r = await fetch('/api/class-status/push', { method: 'POST' });
+      if (r.ok) alert('요청됨 📥 — BV에서 가져오는 중입니다. 1~2분 후 목록을 새로고침하세요. (결과는 텔레그램 보고)');
+      else alert('요청 실패 (' + r.status + ')');
+    } catch (e) { alert('요청 실패: ' + e.message); }
+    finally { pushBtn.disabled = false; }
+  });
   document.querySelectorAll('[data-cls-close]').forEach(b => b.addEventListener('click', closeUpload));
   const dz = $('#cls-dropzone'), input = $('#cls-file-input');
   dz.addEventListener('click', () => input.click());

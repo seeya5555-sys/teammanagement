@@ -6102,6 +6102,26 @@ def api_ext_class_status():
     return jsonify(_ext_class_status())
 
 
+@app.route('/api/ext/class-status/push-flag')
+@api_key_required
+def api_ext_class_status_push_flag():
+    """맥 러너 폴링용 — 'BV Pushing' 버튼이 찍은 플래그 시각 반환."""
+    r = query("SELECT v FROM api_settings WHERE k='cls_push_flag'", one=True)
+    return jsonify({'flag': r['v'] if r else None})
+
+
+@app.route('/api/ext/class-status/upload', methods=['POST'])
+@api_key_required
+def api_ext_class_status_upload():
+    """맥 러너가 BV에서 받은 Ship Status PDF 업로드 → 기존 AI추출·매칭·저장 파이프라인."""
+    files = request.files.getlist('files') or (
+        [request.files['file']] if 'file' in request.files else [])
+    if not [f for f in files if f and f.filename]:
+        return jsonify({'ok': False, 'message': '파일 없음'}), 400
+    results = _cls_handle_files(files)
+    return jsonify({'ok': any(r.get('ok') for r in results), 'results': results})
+
+
 @app.route('/api/ext/all')
 @api_key_required
 def api_ext_all():
@@ -7344,17 +7364,10 @@ def api_class_status_list():
     return jsonify({'vessels': vessel_out, 'unmatched': unmatched})
 
 
-@app.route('/api/class-status/upload', methods=['POST'])
-@login_required
-def api_class_status_upload():
-    files = request.files.getlist('files') or (
-        [request.files['file']] if 'file' in request.files else [])
-    files = [f for f in files if f and f.filename]
-    if not files:
-        return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
-
+def _cls_handle_files(files):
+    """업로드 파일들 → AI추출 → 선박매칭 → 저장. (UI 버튼·BV Pushing 공용)"""
     results = []
-    for f in files:
+    for f in [x for x in files if x and x.filename]:
         fname = f.filename
         data, err = _extract_class_status_from_upload(f)
         if err:
@@ -7375,8 +7388,28 @@ def api_class_status_upload():
             'coc_count': len(data.get('coc') or []),
             'statutory_count': len(data.get('statutory') or []),
         })
-    ok_any = any(r.get('ok') for r in results)
-    return jsonify({'ok': ok_any, 'results': results})
+    return results
+
+
+@app.route('/api/class-status/upload', methods=['POST'])
+@login_required
+def api_class_status_upload():
+    files = request.files.getlist('files') or (
+        [request.files['file']] if 'file' in request.files else [])
+    if not [f for f in files if f and f.filename]:
+        return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
+    results = _cls_handle_files(files)
+    return jsonify({'ok': any(r.get('ok') for r in results), 'results': results})
+
+
+@app.route('/api/class-status/push', methods=['POST'])
+@admin_required
+def api_class_status_push():
+    """'BV에서 Pushing' 버튼 — 맥 러너가 폴링해서 BV→Class Status 동기화하도록 플래그."""
+    _ensure_api_table()
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('cls_push_flag', ?)", (now,))
+    return jsonify({'ok': True, 'flagged_at': now})
 
 
 @app.route('/api/class-status/items/<int:iid>', methods=['PUT'])

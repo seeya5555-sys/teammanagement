@@ -19,6 +19,13 @@
     </svg>
     Class Status 올리기
   </button>
+  {% if session.role == 'admin' %}
+  <button class="btn btn-outline" id="cls-push-btn" type="button"
+          title="BV VeriSTAR에서 담당선박 Class Status를 자동으로 받아 업데이트"
+          style="border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8">
+    📥 BV에서 Pushing
+  </button>
+  {% endif %}
   <div class="cls-bulk-toggle">
     <button class="btn btn-outline btn-sm" id="cls-collapse-all" type="button" title="모든 선박 카드 접기">전체 접기</button>
     <button class="btn btn-outline btn-sm" id="cls-expand-all" type="button" title="모든 선박 카드 펼치기">전체 펼치기</button>
