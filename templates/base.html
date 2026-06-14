@@ -21,41 +21,52 @@
         </span>
       </a>
 
+      {% set survey_eps = ['class_status_page','condition_survey','vetting_status'] %}
+      {% set report_eps = ['dry_dock_page','dry_dock_edit_page','boarding_page','boarding_edit_page'] %}
+      {% set auto_eps = ['automation_page','mail_page','wf1_page','wf2_page','aor_page'] %}
       <nav class="main-nav">
+        <a href="{{ url_for('dashboard') }}" class="nav-link {% if request.endpoint=='dashboard' %}active{% endif %}">
+          📊 대시보드
+        </a>
         <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint=='index' %}active{% endif %}">
-          Daily 업무관리
+          📋 Daily 업무관리
         </a>
+
         {% if session.role == 'admin' %}
-        <a href="{{ url_for('mail_page') }}" class="nav-link {% if request.endpoint=='mail_page' %}active{% endif %}">
-          📬 메일 처리
-        </a>
-        <a href="{{ url_for('automation_page') }}" class="nav-link {% if request.endpoint=='automation_page' %}active{% endif %}">
-          🤖 자동화
-        </a>
-        <a href="{{ url_for('aor_page') }}" class="nav-link {% if request.endpoint=='aor_page' %}active{% endif %}">
-          📋 AOR
-        </a>
+        <div class="nav-group {% if request.endpoint in auto_eps %}active{% endif %}">
+          <button type="button" class="nav-trigger">🤖 자동화 <span class="caret-sm">▾</span></button>
+          <div class="nav-submenu">
+            <a href="{{ url_for('automation_page') }}" class="nav-link {% if request.endpoint=='automation_page' %}active{% endif %}">자동화 허브</a>
+            <a href="{{ url_for('mail_page') }}" class="nav-link {% if request.endpoint=='mail_page' %}active{% endif %}">📬 메일 처리</a>
+            <a href="{{ url_for('wf1_page') }}" class="nav-link {% if request.endpoint=='wf1_page' %}active{% endif %}">WF1 메일승인</a>
+            <a href="{{ url_for('wf2_page') }}" class="nav-link {% if request.endpoint=='wf2_page' %}active{% endif %}">WF2 회신</a>
+            <a href="{{ url_for('aor_page') }}" class="nav-link {% if request.endpoint=='aor_page' %}active{% endif %}">AOR</a>
+          </div>
+        </div>
         {% endif %}
-        <a href="{{ url_for('condition_survey') }}" class="nav-link {% if request.endpoint=='condition_survey' %}active{% endif %}">
-          Condition Survey
-        </a>
-        <a href="{{ url_for('vetting_status') }}" class="nav-link {% if request.endpoint=='vetting_status' %}active{% endif %}">
-          Vetting Status
-        </a>
-        <a href="{{ url_for('class_status_page') }}" class="nav-link {% if request.endpoint=='class_status_page' %}active{% endif %}">
-          Class Status
-        </a>
-        <a href="{{ url_for('dry_dock_page') }}" class="nav-link {% if request.endpoint in ['dry_dock_page','dry_dock_edit_page'] %}active{% endif %}">
-          Dry Dock Report
-        </a>
-        <a href="{{ url_for('boarding_page') }}" class="nav-link {% if request.endpoint in ['boarding_page','boarding_edit_page'] %}active{% endif %}">
-          Boarding Report
-        </a>
+
+        <div class="nav-group {% if request.endpoint in survey_eps %}active{% endif %}">
+          <button type="button" class="nav-trigger">🔍 Survey <span class="caret-sm">▾</span></button>
+          <div class="nav-submenu">
+            <a href="{{ url_for('class_status_page') }}" class="nav-link {% if request.endpoint=='class_status_page' %}active{% endif %}">Class Status</a>
+            <a href="{{ url_for('condition_survey') }}" class="nav-link {% if request.endpoint=='condition_survey' %}active{% endif %}">Condition Survey</a>
+            <a href="{{ url_for('vetting_status') }}" class="nav-link {% if request.endpoint=='vetting_status' %}active{% endif %}">Vetting Status</a>
+          </div>
+        </div>
+
+        <div class="nav-group {% if request.endpoint in report_eps %}active{% endif %}">
+          <button type="button" class="nav-trigger">📄 Report <span class="caret-sm">▾</span></button>
+          <div class="nav-submenu">
+            <a href="{{ url_for('dry_dock_page') }}" class="nav-link {% if request.endpoint in ['dry_dock_page','dry_dock_edit_page'] %}active{% endif %}">Dry Dock Report</a>
+            <a href="{{ url_for('boarding_page') }}" class="nav-link {% if request.endpoint in ['boarding_page','boarding_edit_page'] %}active{% endif %}">Boarding Report</a>
+          </div>
+        </div>
+
         <a href="{{ url_for('calendar_page') }}" class="nav-link {% if request.endpoint=='calendar_page' %}active{% endif %}">
-          일정
+          📅 Calendar
         </a>
         <a href="{{ url_for('expenses_page') }}" class="nav-link {% if request.endpoint in ['expenses_page','expense_detail_page'] %}active{% endif %}">
-          출장 경비
+          💰 Expenses
         </a>
       </nav>
 
@@ -203,6 +214,28 @@
   });
 })();
 </script>
+
+  <script>
+  (function () {
+    const groups = Array.from(document.querySelectorAll('.nav-group'));
+    if (!groups.length) return;
+    function closeAll(except) {
+      groups.forEach(g => { if (g !== except) g.classList.remove('open'); });
+    }
+    groups.forEach(g => {
+      const trig = g.querySelector('.nav-trigger');
+      if (!trig) return;
+      trig.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !g.classList.contains('open');
+        closeAll(g);
+        g.classList.toggle('open', willOpen);
+      });
+    });
+    document.addEventListener('click', () => closeAll(null));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(null); });
+  })();
+  </script>
 
   {% block scripts %}{% endblock %}
 </body>

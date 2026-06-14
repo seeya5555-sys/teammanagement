@@ -13,7 +13,7 @@ import json
 import sqlite3
 import secrets
 from functools import wraps
-from datetime import timedelta
+from datetime import timedelta, date
 
 from flask import (
     Flask, g, request, jsonify, session, render_template,
@@ -597,6 +597,62 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    """주요 현황 한눈에 — 카드 클릭 시 해당 탭 이동. (MVP 위젯)"""
+    today   = date.today().isoformat()
+    horizon = (date.today() + timedelta(days=30)).isoformat()
+    cal_end = (date.today() + timedelta(days=7)).isoformat()
+    is_admin = (session.get('role') == 'admin')
+
+    # 1) 현안 요약 (open=Closed 아닌 것)
+    iss = query(
+        "SELECT "
+        "SUM(CASE WHEN status!='Closed' THEN 1 ELSE 0 END) open_cnt, "
+        "SUM(CASE WHEN status!='Closed' AND priority='Urgent' THEN 1 ELSE 0 END) urgent_cnt, "
+        "SUM(CASE WHEN status!='Closed' AND priority='COC & Flag' THEN 1 ELSE 0 END) coc_cnt, "
+        "SUM(CASE WHEN status!='Closed' AND priority='Next DD' THEN 1 ELSE 0 END) dd_cnt "
+        "FROM issues", one=True)
+
+    # 4) Class 만기 임박 (due_date D-30 이내, open 항목)
+    class_due = query(
+        "SELECT COUNT(*) c FROM class_status_items "
+        "WHERE due_date IS NOT NULL AND due_date != '' "
+        "AND due_date >= ? AND due_date <= ?", (today, horizon), one=True)['c']
+
+    # 5) 다가오는 일정 (7일 이내)
+    events = query(
+        "SELECT title, start_date, category, color FROM calendar_events "
+        "WHERE start_date >= ? AND start_date <= ? "
+        "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
+        (today, cal_end))
+
+    stats = {
+        'issues_open':   (iss['open_cnt']   or 0) if iss else 0,
+        'issues_urgent': (iss['urgent_cnt'] or 0) if iss else 0,
+        'issues_coc':    (iss['coc_cnt']    or 0) if iss else 0,
+        'issues_dd':     (iss['dd_cnt']     or 0) if iss else 0,
+        'class_due':     class_due,
+        'aor_pending':   0,
+        'aor_crew_submitted': 0,
+        'wf1_pending':   0,
+    }
+    # 자동화 위젯은 admin 만 (탭 자체가 admin 전용)
+    if is_admin:
+        ap = query("SELECT COUNT(*) c FROM aor_draft WHERE status='pending'", one=True)
+        stats['aor_pending'] = ap['c'] if ap else 0
+        wp = query("SELECT COUNT(*) c FROM wf1_draft WHERE status='pending'", one=True)
+        stats['wf1_pending'] = wp['c'] if wp else 0
+        try:
+            r = query("SELECT v FROM api_settings WHERE k='aor_crew_submitted'", one=True)
+            stats['aor_crew_submitted'] = int(r['v'] or 0) if r else 0
+        except sqlite3.Error:
+            pass
+
+    return render_template('dashboard.html', stats=stats, events=events, is_admin=is_admin)
 
 
 @app.route('/')

@@ -123,6 +123,29 @@ a { color: inherit; text-decoration: none; }
 .nav-link.active  { color: var(--blue); background: var(--blue-bg); }
 .nav-link.disabled { color: var(--text-tertiary); pointer-events: none; opacity: 0.55; }
 
+/* ── nav 대분류 드롭다운 (click 방식) ── */
+.nav-group { position: relative; display: inline-flex; }
+.nav-group > .nav-trigger {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 8px 14px; border-radius: 6px;
+  color: var(--text-secondary); font-size: 13px; font-weight: 500;
+  white-space: nowrap; cursor: pointer; background: none; border: none;
+  font-family: inherit; transition: background 0.1s;
+}
+.nav-group > .nav-trigger:hover { background: var(--surface-2); color: var(--text-primary); }
+.nav-group.active > .nav-trigger { color: var(--blue); background: var(--blue-bg); }
+.nav-group > .nav-trigger .caret-sm { font-size: 9px; opacity: .65; transition: transform .12s; }
+.nav-group.open > .nav-trigger .caret-sm { transform: rotate(180deg); }
+.nav-submenu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 200;
+  min-width: 184px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.16);
+  display: none; flex-direction: column; gap: 2px;
+}
+.nav-group.open > .nav-submenu { display: flex; }
+.nav-submenu .nav-link { padding: 8px 12px; border-radius: 6px; }
+
 .user-menu { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .user-name { font-size: 13px; color: var(--text-secondary); }
 .logout-btn {
