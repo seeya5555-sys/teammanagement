@@ -1358,12 +1358,10 @@ def api_issue_summary_get():
     return jsonify({'rows': rows, 'generated_at': row['generated_at'], 'count': len(rows)})
 
 
-@app.route('/api/issues/summary-generate', methods=['POST'])
-@login_required
-def api_issue_summary_generate():
+def _run_summary_generate(sid=None):
+    """업무요약 생성+저장 코어 (UI 버튼·API키 스케줄러 공용). (rows, gen_at, counts) 반환."""
     from datetime import datetime
     _ensure_summary_table()
-    sid = request.args.get('supervisor_id') or None
     rows = _gen_summary_rows(sid)
     gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
 
@@ -1380,17 +1378,22 @@ def api_issue_summary_generate():
     if sid:
         counts[str(sid)] = _save(str(sid), rows)
     else:
-        # 전체 저장
         counts['all'] = _save('all', rows)
         # 감독별로 분리 저장 (각 감독 탭의 요약도 동시 갱신)
         by_sv = {}
         for r in rows:
             by_sv.setdefault(r.get('supervisor_id'), []).append(r)
-        # 이슈가 있는 감독은 그 행으로, 이슈가 없는 감독은 빈 요약으로 갱신
         all_sv = [s['id'] for s in query('SELECT id FROM supervisors')]
         for sv_id in all_sv:
             counts[str(sv_id)] = _save(str(sv_id), by_sv.get(sv_id, []))
+    return rows, gen_at, counts
 
+
+@app.route('/api/issues/summary-generate', methods=['POST'])
+@login_required
+def api_issue_summary_generate():
+    sid = request.args.get('supervisor_id') or None
+    rows, gen_at, counts = _run_summary_generate(sid)
     return jsonify({'rows': rows, 'generated_at': gen_at, 'counts': counts})
 
 
@@ -6034,6 +6037,15 @@ def _ext_vetting_digests():
 @api_key_required
 def api_ext_issues():
     return jsonify(_ext_issues())
+
+
+@app.route('/api/ext/summary-generate', methods=['POST'])
+@api_key_required
+def api_ext_summary_generate():
+    """스케줄러용(맥 launchd, 매일 18시): 전체 업무요약 생성·갱신. API 키 인증."""
+    rows, gen_at, counts = _run_summary_generate(None)
+    return jsonify({'ok': True, 'generated_at': gen_at,
+                    'total': counts.get('all', len(rows)), 'counts': counts})
 
 
 @app.route('/api/ext/surveys')
