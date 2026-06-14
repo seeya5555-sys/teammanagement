@@ -73,6 +73,7 @@
   </div>
   <span class="aor-count" id="aor-count"></span>
   <span class="flex-spacer"></span>
+  <button class="btn btn-primary btn-sm" id="aor-pull" type="button">🔄 SVMS에서 불러오기</button>
   <button class="btn btn-outline btn-sm" id="aor-refresh" type="button">새로고침</button>
 </div>
 
@@ -267,8 +268,9 @@
   }
 
   async function reject(el, d) {
-    const reason = prompt(`[${d.vsl_nm || d.aor_cd}] 리젝하면 SVMS STATUS=R + 관리사 통보메일이 발송됩니다 (메일은 SVMS 템플릿).\n리젝 사유 (선택, TRMT 기록용):`, '');
+    const reason = prompt(`[${d.vsl_nm || d.aor_cd}] 리젝하면 SVMS STATUS=R + 관리사 통보메일이 발송됩니다 (메일은 SVMS 템플릿).\n리젝 사유 (SVMS Owner Remark에 기록됨):`, '');
     if (reason === null) return;
+    if (!reason.trim() && !confirm('리젝 사유가 비어있습니다.\nOwner Remark 공란으로 리젝할까요?')) return;
     el.classList.add('is-busy');
     await fetch('/api/aor/drafts/' + d.id + '/reject', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({reason})
@@ -293,6 +295,21 @@
       load();
     }));
   document.getElementById('aor-refresh').addEventListener('click', load);
+  document.getElementById('aor-pull').addEventListener('click', async () => {
+    if (!confirm('SVMS에서 결재대기 Technical AOR을 다시 불러올까요?\n(맥 러너 경유 — 1~2분 후 새 카드가 적재됩니다. 이미 처리한 건은 제외)')) return;
+    const btn = document.getElementById('aor-pull');
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = '불러오는 중…';
+    try {
+      const r = await fetch('/api/automation/run', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({task: 'aor_prep', mode: 'verify'})
+      });
+      const j = await r.json();
+      alert(r.ok ? '✅ 불러오기 요청됨 — 1~2분 뒤 [새로고침] 누르면 새 카드가 나타납니다.'
+                 : '✕ ' + (j.error || '실패'));
+    } catch (e) { alert('✕ ' + e.message); }
+    btn.disabled = false; btn.textContent = orig;
+  });
   load();
 })();
 </script>
