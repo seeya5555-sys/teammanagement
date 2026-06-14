@@ -1,4 +1,6 @@
 'use strict';
+// 전역 누출 방지 IIFE — 다른 탭 JS(cal/cs/vt/cls/exp 등)와 const $/S/api 충돌 방지.
+(function () {
 
 /* ═══════════════════════════════════════════════════════════════
    TRMT3  —  Daily 업무관리 (rev.3)
@@ -2849,3 +2851,5 @@ if (document.getElementById('btn-new-issue')) (async function init() {
     alert('초기 로드 실패: ' + err.message);
   }
 })();
+
+})();  // ← 전역 누출 방지 IIFE 끝
