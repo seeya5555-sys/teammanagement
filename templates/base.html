@@ -29,6 +29,9 @@
         <a href="{{ url_for('mail_page') }}" class="nav-link {% if request.endpoint=='mail_page' %}active{% endif %}">
           📬 메일 처리
         </a>
+        <a href="{{ url_for('automation_page') }}" class="nav-link {% if request.endpoint=='automation_page' %}active{% endif %}">
+          🤖 자동화
+        </a>
         {% endif %}
         <a href="{{ url_for('condition_survey') }}" class="nav-link {% if request.endpoint=='condition_survey' %}active{% endif %}">
           Condition Survey

@@ -338,6 +338,23 @@ def init_db(drop=False):
         except Exception as e:
             print(f'  · cs_surveys vendor 마이그레이션 스킵: {e}')
 
+        # 자동화 모음(자동화 실행 큐+상태+audit)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS automation_run (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id        TEXT NOT NULL,
+                task          TEXT NOT NULL,
+                mode          TEXT NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'queued',
+                requested_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                requested_by  TEXT,
+                started_at    TEXT,
+                finished_at   TEXT,
+                exit_code     INTEGER,
+                summary       TEXT
+            )
+        """)
+
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
                 conn.executescript(f.read())
@@ -6584,6 +6601,109 @@ def api_wf_pull_now():
 def api_wf_pull_flag():
     row = query("SELECT v FROM api_settings WHERE k='wf_pull_request'", one=True)
     return jsonify({'ts': int(row['v']) if row and (row['v'] or '').isdigit() else 0})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  자동화 모음 (SOA/전자결재 온디맨드 버튼 → 맥미니 launchd 폴링 실행)
+# ═════════════════════════════════════════════════════════════════
+# task = 실행단위. mode: 'verify'(읽기전용 DRY) | 'live'(자동 승인/상신).
+# 맥미니가 task+mode를 스크립트+env로 매핑(서버는 명령어를 모름 — 안전).
+AUTOMATION_TASKS = {
+    'soa_g1':   'SOA 실버 G1 (ATBG·ATGR·ATGV·ATMT)',
+    'soa_g2':   'SOA 실버 G2 (ATNH·ATSH·ATSL·JATX)',
+    'soa_g3':   'SOA 실버 G3 (PCBJ·PCBS·PCGV·PCMC)',
+    'soa_skrt': 'SOA 장금 (CPPS·INPS·KWPS·SAPS) +출금상신',
+    'jeonja':   '전자결재 자동상신',
+}
+AUTOMATION_MODES = ('verify', 'live')
+
+
+def _automation_enabled():
+    row = query("SELECT v FROM api_settings WHERE k='automation_enabled'", one=True)
+    return (row['v'] if row else '1') != '0'
+
+
+@app.route('/automation')
+@admin_required
+def automation_page():
+    return render_template('automation.html')
+
+
+@app.route('/api/automation/run', methods=['POST'])
+@admin_required
+def api_automation_run():
+    _ensure_api_table()
+    d = request.get_json(silent=True) or {}
+    task = (d.get('task') or '').strip()
+    mode = (d.get('mode') or 'verify').strip()
+    if task not in AUTOMATION_TASKS or mode not in AUTOMATION_MODES:
+        return jsonify({'error': 'bad task/mode'}), 400
+    if not _automation_enabled():
+        return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
+    # lock: 같은 task가 queued/running이면 거부(중복클릭·동시실행 방지)
+    busy = query("SELECT 1 FROM automation_run WHERE task=? AND status IN ('queued','running') LIMIT 1",
+                 (task,), one=True)
+    if busy:
+        return jsonify({'error': '이미 실행 대기/진행중입니다.'}), 409
+    import uuid
+    rid = uuid.uuid4().hex[:12]
+    execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by) "
+            "VALUES (?,?,?, 'queued', ?)", (rid, task, mode, session.get('username', '')))
+    return jsonify({'ok': True, 'run_id': rid})
+
+
+@app.route('/api/automation/runs')
+@admin_required
+def api_automation_runs():
+    rows = query("SELECT run_id,task,mode,status,requested_at,started_at,finished_at,exit_code,summary "
+                 "FROM automation_run ORDER BY id DESC LIMIT 40")
+    return jsonify({
+        'enabled': _automation_enabled(),
+        'tasks': AUTOMATION_TASKS,
+        'runs': [dict(r) for r in rows],
+    })
+
+
+@app.route('/api/automation/killswitch', methods=['POST'])
+@admin_required
+def api_automation_killswitch():
+    _ensure_api_table()
+    d = request.get_json(silent=True) or {}
+    on = bool(d.get('enabled'))
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('automation_enabled', ?)",
+            ('1' if on else '0',))
+    return jsonify({'ok': True, 'enabled': on})
+
+
+# ---- ext (맥미니 launchd 폴링) ----
+@app.route('/api/ext/automation/claim', methods=['POST'])
+@api_key_required
+def api_ext_automation_claim():
+    if not _automation_enabled():
+        return jsonify({'run': None, 'disabled': True})
+    # 진행중이 있으면 신규 claim 안 함(스크립트 순차 실행 — SVMS 세션 충돌 방지)
+    running = query("SELECT 1 FROM automation_run WHERE status='running' LIMIT 1", one=True)
+    if running:
+        return jsonify({'run': None, 'busy': True})
+    row = query("SELECT id,run_id,task,mode FROM automation_run WHERE status='queued' ORDER BY id ASC LIMIT 1",
+                one=True)
+    if not row:
+        return jsonify({'run': None})
+    execute("UPDATE automation_run SET status='running', started_at=datetime('now','localtime') "
+            "WHERE id=? AND status='queued'", (row['id'],))
+    return jsonify({'run': {'run_id': row['run_id'], 'task': row['task'], 'mode': row['mode']}})
+
+
+@app.route('/api/ext/automation/<run_id>/done', methods=['POST'])
+@api_key_required
+def api_ext_automation_done(run_id):
+    d = request.get_json(silent=True) or {}
+    status = 'failed' if (d.get('status') == 'failed' or d.get('exit_code')) else 'done'
+    summary = (d.get('summary') or '')[:4000]
+    execute("UPDATE automation_run SET status=?, finished_at=datetime('now','localtime'), "
+            "exit_code=?, summary=? WHERE run_id=?",
+            (status, d.get('exit_code'), summary, run_id))
+    return jsonify({'ok': True})
 
 
 # ═════════════════════════════════════════════════════════════════
