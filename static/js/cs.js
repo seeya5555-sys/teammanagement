@@ -310,7 +310,7 @@ function vesselBlock(item) {
     }
   }
   table.append(tbody);
-  block.append(table);
+  block.append(el('div', { class: 'tbl-scroll' }, table));
 
   return block;
 }
@@ -705,7 +705,7 @@ function findingsSection(survey, category, findings) {
   }
 
   table.append(tbody);
-  sec.append(table);
+  sec.append(el('div', { class: 'tbl-scroll' }, table));
 
   // 버튼 영역 — + 추가 / 💾 저장 / 취소
   const btnRow = el('div', { class: 'cs-add-btn-row' });

@@ -4501,19 +4501,22 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 /* 데스크탑: 투명 래퍼(레이아웃 영향 0). 모바일에서만 가로스크롤로 표 컬럼 짓눌림 방지 */
 .tbl-scroll { width: 100%; }
 @media (max-width: 768px) {
-  .tbl-scroll {
+  .tbl-scroll, .cls-digest, .vt-digest {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     max-width: 100%;
   }
   /* 모바일: fixed 레이아웃 해제 → 셀 내용을 한 줄로(nowrap) 유지해 자연폭 확보 → 래퍼가 가로스크롤 */
-  .tbl-scroll > table {
+  .tbl-scroll > table,
+  .cls-digest > table,
+  .vt-digest > table {
     table-layout: auto !important;
     width: auto !important;
     min-width: 100%;
   }
-  .tbl-scroll > table th,
-  .tbl-scroll > table td {
+  .tbl-scroll > table th, .tbl-scroll > table td,
+  .cls-digest > table th, .cls-digest > table td,
+  .vt-digest > table th, .vt-digest > table td {
     white-space: nowrap !important;
     width: auto !important;
   }

@@ -246,7 +246,8 @@ function catSection(title, cls, items) {
   items.forEach(it => tb.append(itemRow(it)));
   tbl.append(tb);
   return el('section', { class: 'cls-cat' },
-    el('h4', { class: 'cls-cat-title ' + cls }, `${title} · ${items.length}`), tbl);
+    el('h4', { class: 'cls-cat-title ' + cls }, `${title} · ${items.length}`),
+    el('div', { class: 'tbl-scroll' }, tbl));
 }
 
 function editCell(value, field, id, extraClass) {
