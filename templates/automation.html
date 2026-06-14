@@ -53,6 +53,9 @@
   <div class="au-sec">전자결재</div>
   <div id="au-jeonja"></div>
 
+  <div class="au-sec">AOR (Technical)</div>
+  <div id="au-aor"></div>
+
   <div class="au-log">
     <h3>실행 로그 (audit)</h3>
     <div id="au-runs"></div>
@@ -90,6 +93,8 @@
     } else if(opts.money){   // 전자결재
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>🔍 검증</button>
             <button class="au-b live money" data-task="${task}" data-mode="live" ${dis}>▶ 자동상신</button>`;
+    } else if(opts.prep){    // AOR prep — Submitted AOR 카드화(/aor 큐 적재). 상신 아님(읽기+적재)
+      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>▶ AOR prep 실행 (/aor 큐 적재)</button>`;
     } else {                 // SOA 그룹: 승인 + 리젝 워크플로우
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>🔍 검증</button>
             <button class="au-b live" data-task="${task}" data-mode="live" ${dis}>▶ 자동승인</button>
@@ -117,6 +122,7 @@
     $('#au-master-sub').textContent=ENABLED?'— 전체 자동화 ON. 버튼이 작동합니다.':'— 킬스위치 ON. 모든 자동화 정지중.';
     $('#au-soa').innerHTML=SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
+    $('#au-aor').innerHTML=row('aor_prep',{prep:true});
     $('#au-runs').innerHTML=RUNS.length?RUNS.map(fmt).join(''):'<div class="au-note">아직 실행 기록 없음.</div>';
     document.querySelectorAll('.au-b').forEach(btn=>btn.onclick=onRun);
   }

@@ -105,6 +105,16 @@ def execute(sql, params=()):
     cur.close()
     return last_id
 
+
+def execute_rc(sql, params=()):
+    """UPDATE/DELETE 영향 행수 반환 — 조건부(낙관적 락) 갱신 race 판정용."""
+    db = get_db()
+    cur = db.execute(sql, params)
+    db.commit()
+    rc = cur.rowcount
+    cur.close()
+    return rc
+
 def init_db(drop=False):
     """schema + seed 실행, 기본 admin 계정 자동 생성.
 
@@ -354,6 +364,37 @@ def init_db(drop=False):
                 summary       TEXT
             )
         """)
+
+        # AOR(Technical) 검토→상신 draft 큐 (prep 엔진이 ingest, 사람이 /aor 탭서 승인→맥이 SVMS 상신)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS aor_draft (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                aor_cd           TEXT NOT NULL,                       -- SVMS 문서번호(dedup 키)
+                vsl_cd           TEXT,
+                vsl_nm           TEXT,
+                subj             TEXT,
+                amt              REAL,                                -- AOR 금액(SVMS)
+                cur_cd           TEXT,
+                req_user_nm      TEXT,                                -- 요청자(관리사)
+                cost_proposed    REAL,                               -- 이메일서 추출한 제안비용
+                cost_match       INTEGER,                            -- 1=일치 0=불일치 NULL=미상
+                match_conf       INTEGER,                            -- 이메일 매칭 신뢰도 0-100
+                email_subj       TEXT,                               -- 매칭된 메일 제목
+                proposed_comment TEXT,                               -- Comment 3단 초안
+                approval_app_no  TEXT,                               -- 추천 결재라인 APP_NO
+                approval_line    TEXT,                               -- 결재자 표시용 JSON(이름)
+                attach_files     TEXT,                               -- 첨부 견적서 파일명 JSON 배열
+                raw_row          TEXT,                               -- SP_GET_AOR 행 전체 JSON(상신때 재사용)
+                status           TEXT NOT NULL DEFAULT 'pending',    -- pending/approved/submitting/submitted/failed/rejected
+                decided_at       TEXT,
+                decided_by       TEXT,
+                submitted_at     TEXT,
+                submit_result    TEXT,
+                reject_reason    TEXT,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_aor_draft_status ON aor_draft(status)")
 
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
@@ -6409,6 +6450,211 @@ def api_wf1_delete(did):
 
 
 # ═════════════════════════════════════════════════════════════════
+#  AOR(Technical) — 검토→상신 draft 승인 큐
+#   · prep 엔진(맥)이 Submitted Tech AOR + 이메일매칭 카드를 POST /api/ext/aor/drafts
+#   · 사람이 /aor 탭서 cost·comment·결재라인 확인/수정 → 승인 → status='approved'
+#   · approve 가 automation_run(aor_submit) 큐 적재 → 맥이 claim → SP_SET_AOR 상신
+#   · 완전자동 상신 금지 — 사람 승인 게이트 필수
+# ═════════════════════════════════════════════════════════════════
+@app.route('/aor')
+@admin_required
+def aor_page():
+    return render_template('aor.html')
+
+
+@app.route('/api/aor/drafts')
+@admin_required
+def api_aor_list():
+    status = (request.args.get('status') or 'pending').strip()
+    if status == 'all':
+        rows = query("SELECT * FROM aor_draft ORDER BY CASE status "
+                     "WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 WHEN 'submitting' THEN 2 "
+                     "WHEN 'failed' THEN 3 ELSE 4 END, id DESC")
+    else:
+        rows = query('SELECT * FROM aor_draft WHERE status=? ORDER BY id DESC', (status,))
+    pending = query("SELECT COUNT(*) c FROM aor_draft WHERE status='pending'", one=True)
+    return jsonify({'count': len(rows), 'pending': pending['c'],
+                    'drafts': [dict(r) for r in rows]})
+
+
+@app.route('/api/ext/aor/drafts', methods=['POST'])
+@api_key_required
+def api_ext_aor_create():
+    """prep 엔진 ingest: Submitted AOR 카드 적재. 같은 aor_cd 가 pending이면 갱신(중복 방지)."""
+    d = request.get_json(silent=True) or {}
+    aor_cd = (d.get('aor_cd') or '').strip()
+    if not aor_cd:
+        return jsonify({'error': 'aor_cd required'}), 400
+    ex = query("SELECT id, status FROM aor_draft WHERE aor_cd=? "
+               "AND status IN ('pending','approved','submitting','submitted') "
+               "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
+    cm = d.get('cost_match')
+    cols = dict(
+        vsl_cd=d.get('vsl_cd'), vsl_nm=d.get('vsl_nm'), subj=d.get('subj'),
+        amt=d.get('amt'), cur_cd=d.get('cur_cd'), req_user_nm=d.get('req_user_nm'),
+        cost_proposed=d.get('cost_proposed'),
+        cost_match=(1 if cm is True else 0 if cm is False else None),
+        match_conf=d.get('match_conf'), email_subj=d.get('email_subj'),
+        proposed_comment=d.get('proposed_comment'), approval_app_no=d.get('approval_app_no'),
+        approval_line=(json.dumps(d.get('approval_line'), ensure_ascii=False)
+                       if d.get('approval_line') is not None else None),
+        attach_files=(json.dumps(d.get('attach_files'), ensure_ascii=False)
+                      if d.get('attach_files') is not None else None),
+        raw_row=(json.dumps(d.get('raw_row'), ensure_ascii=False)
+                 if d.get('raw_row') is not None else None),
+    )
+    if ex and ex['status'] == 'pending':
+        sets = ', '.join(f"{k}=?" for k in cols)
+        execute(f"UPDATE aor_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
+        return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
+    if ex:   # approved/submitting/submitted — 진행중이므로 손대지 않음
+        return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
+    did = execute(
+        "INSERT INTO aor_draft (aor_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, req_user_nm, "
+        "cost_proposed, cost_match, match_conf, email_subj, proposed_comment, "
+        "approval_app_no, approval_line, attach_files, raw_row) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (aor_cd, *cols.values()))
+    return jsonify({'id': did, 'status': 'pending'}), 201
+
+
+def _queue_aor(task, user):
+    """approve/reject 시 aor_submit·aor_reject run 큐 적재(대기/진행중이면 재사용 — claim이 해당 상태 전부 처리)."""
+    if not _automation_enabled():
+        return None
+    busy = query("SELECT run_id FROM automation_run WHERE task=? "
+                 "AND status IN ('queued','running') ORDER BY id DESC LIMIT 1", (task,), one=True)
+    if busy:
+        return busy['run_id']
+    rid = uuid.uuid4().hex[:12]
+    execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by) "
+            "VALUES (?, ?, 'live', 'queued', ?)", (rid, task, user))
+    return rid
+
+
+@app.route('/api/aor/drafts/<int:did>/approve', methods=['POST'])
+@admin_required
+def api_aor_approve(did):
+    """승인 = 상신 지시. 본문 수정값(comment·app_no) 반영 후 status='approved' + 상신큐 적재."""
+    row = query('SELECT * FROM aor_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] != 'pending':
+        return jsonify({'error': 'already decided', 'status': row['status']}), 409
+    d = request.get_json(silent=True) or {}
+    comment = d['proposed_comment'] if 'proposed_comment' in d else row['proposed_comment']
+    app_no = (d.get('approval_app_no') or row['approval_app_no'] or '').strip()
+    if not app_no:
+        return jsonify({'error': '결재라인(approval_app_no) 미지정 — 카드에서 결재라인 선택 후 승인',
+                        'field': 'approval_app_no'}), 400
+    if not row['raw_row']:
+        return jsonify({'error': 'raw_row 없음 — prep 데이터 손상, 리젝 후 재적재 필요'}), 400
+    if not _automation_enabled():
+        return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
+    user = session.get('username') or 'web'
+    rc = execute_rc("UPDATE aor_draft SET status='approved', proposed_comment=?, approval_app_no=?, "
+                    "decided_at=datetime('now','localtime'), decided_by=? WHERE id=? AND status='pending'",
+                    (comment, app_no, user, did))
+    if not rc:   # race — 그 사이 다른 처리(리젝/중복승인)로 pending 아님
+        cur = query('SELECT status FROM aor_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': 'already decided', 'status': cur['status'] if cur else '?'}), 409
+    rid = _queue_aor('aor_submit', user)
+    return jsonify({'id': did, 'status': 'approved', 'submit_run': rid,
+                    'message': '승인됨 — 맥 러너가 곧 SVMS 상신(최대 1~2분)'})
+
+
+@app.route('/api/aor/drafts/<int:did>/reject', methods=['POST'])
+@admin_required
+def api_aor_reject(did):
+    """리젝 = SVMS STATUS=R + 관리사 통보메일. 맥 러너가 처리(automation_run aor_reject 큐)."""
+    row = query('SELECT * FROM aor_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] not in ('pending', 'failed'):
+        return jsonify({'error': 'already decided', 'status': row['status']}), 409
+    if not row['raw_row']:
+        return jsonify({'error': 'raw_row 없음 — 리젝 불가, 카드 삭제 후 재적재'}), 400
+    if not _automation_enabled():
+        return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
+    d = request.get_json(silent=True) or {}
+    user = session.get('username') or 'web'
+    rc = execute_rc("UPDATE aor_draft SET status='rejecting', reject_reason=?, "
+                    "decided_at=datetime('now','localtime'), decided_by=? "
+                    "WHERE id=? AND status IN ('pending','failed')",
+                    ((d.get('reason') or '').strip() or None, user, did))
+    if not rc:   # race — 이미 처리됨
+        cur = query('SELECT status FROM aor_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': 'already decided', 'status': cur['status'] if cur else '?'}), 409
+    rid = _queue_aor('aor_reject', user)
+    return jsonify({'id': did, 'status': 'rejecting', 'reject_run': rid,
+                    'message': '리젝 접수 — 맥 러너가 곧 SVMS 리젝+통보메일(최대 1~2분)'})
+
+
+@app.route('/api/aor/drafts/<int:did>', methods=['DELETE'])
+@admin_required
+def api_aor_delete(did):
+    if not query('SELECT id FROM aor_draft WHERE id=?', (did,), one=True):
+        return jsonify({'error': 'not found'}), 404
+    execute('DELETE FROM aor_draft WHERE id=?', (did,))
+    return jsonify({'id': did, 'deleted': True})
+
+
+# ---- ext (맥 러너: 상신 실행) ----
+@app.route('/api/ext/aor/approved')
+@api_key_required
+def api_ext_aor_approved():
+    """맥 러너가 상신할 approved 건 목록을 가져가며 status='submitting'으로 락."""
+    cols = "id, aor_cd, proposed_comment, approval_app_no, raw_row"
+    if request.args.get('peek'):   # dry 검증 — 락 안 하고 조회만
+        rows = query(f"SELECT {cols} FROM aor_draft WHERE status='approved' ORDER BY id ASC")
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    # claim 전 기존 submitting = 이전 run 중단 잔류(stuck). 단일 러너라 정상 진행분과 안 겹침 → 멱등 재처리.
+    out = [dict(r) for r in
+           query(f"SELECT {cols} FROM aor_draft WHERE status='submitting' ORDER BY id ASC")]
+    for r in query(f"SELECT {cols} FROM aor_draft WHERE status='approved' ORDER BY id ASC"):
+        # 조건부 claim — 'approved'→'submitting' 락 성공분만 추가(동시 호출 중복 방지)
+        if execute_rc("UPDATE aor_draft SET status='submitting' WHERE id=? AND status='approved'",
+                      (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'drafts': out})
+
+
+@app.route('/api/ext/aor/drafts/<int:did>/result', methods=['POST'])
+@api_key_required
+def api_ext_aor_result(did):
+    """맥 러너의 상신 결과 보고: ok=True → submitted, else failed(사람 재검토)."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    result = (d.get('result') or '')[:2000]
+    new = 'submitted' if ok else 'failed'
+    rc = execute_rc("UPDATE aor_draft SET status=?, submitted_at=datetime('now','localtime'), "
+                    "submit_result=? WHERE id=? AND status='submitting'", (new, result, did))
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
+@app.route('/api/ext/aor/rejecting')
+@api_key_required
+def api_ext_aor_rejecting():
+    """맥 러너가 리젝할 rejecting 건 목록(STATUS=R 처리 + 통보메일 대상)."""
+    rows = query("SELECT id, aor_cd, reject_reason, raw_row FROM aor_draft "
+                 "WHERE status='rejecting' ORDER BY id ASC")
+    return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows]})
+
+
+@app.route('/api/ext/aor/drafts/<int:did>/reject-result', methods=['POST'])
+@api_key_required
+def api_ext_aor_reject_result(did):
+    """맥 러너의 리젝 결과: ok=True → rejected(완료), else reject_failed(사람 재검토)."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    result = (d.get('result') or '')[:2000]
+    new = 'rejected' if ok else 'reject_failed'
+    rc = execute_rc("UPDATE aor_draft SET status=?, submitted_at=datetime('now','localtime'), "
+                    "submit_result=? WHERE id=? AND status='rejecting'", (new, result, did))
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
+# ═════════════════════════════════════════════════════════════════
 #  WF2 — 메일 회신 드래프트 승인 큐
 #   · 맥미니가 회신안(간결/강경 2옵션) 생성 → POST /api/ext/wf2/replies
 #   · 사람이 /wf2 탭에서 옵션 선택/리젝 (admin)
@@ -6615,6 +6861,9 @@ AUTOMATION_TASKS = {
     'soa_skrt': 'SOA 장금 (CPPS·INPS·KWPS·SAPS) +출금상신',
     'jeonja':   '전자결재 자동상신',
     'soa_resend': '리젝 통보메일 재발송 (실패분)',
+    'aor_prep':   'AOR(Technical) prep — Submitted AOR 카드화 (/aor 큐 적재)',
+    'aor_submit': 'AOR 상신 — 승인된 건 SVMS 제출 (approve 시 자동큐)',
+    'aor_reject': 'AOR 리젝 — STATUS=R + 관리사 통보메일 (reject 시 자동큐)',
 }
 # verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일
 AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit')

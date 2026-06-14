@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+
+{% block title %}AOR 승인 · TRMT3{% endblock %}
+
+{% block head %}
+<style>
+  .aor-head { display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+  .aor-filter { display:flex; gap:6px; }
+  .aor-count { color:#64748b; font-size:13px; }
+  .aor-list { display:flex; flex-direction:column; gap:14px; max-width:920px; }
+  .aor-card { border:1px solid #e2e8f0; border-radius:12px; background:#fff;
+              box-shadow:0 1px 2px rgba(0,0,0,.04); overflow:hidden; }
+  .aor-card.is-busy { opacity:.55; pointer-events:none; }
+  .aor-card-top { display:flex; align-items:flex-start; gap:10px; padding:12px 14px;
+                  background:#f8fafc; border-bottom:1px solid #eef2f7; }
+  .aor-subj { font-weight:600; color:#0f172a; line-height:1.35; }
+  .aor-meta { font-size:12px; color:#64748b; margin-top:3px; }
+  .aor-badges { margin-left:auto; display:flex; gap:6px; flex-shrink:0; align-items:center; }
+  .aor-badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+  .aor-badge.conf-hi { background:#dcfce7; color:#15803d; }
+  .aor-badge.conf-mid { background:#fef3c7; color:#b45309; }
+  .aor-badge.conf-lo { background:#fee2e2; color:#b91c1c; }
+  .aor-badge.st-approved { background:#dbeafe; color:#1d4ed8; }
+  .aor-badge.st-submitting { background:#fef9c3; color:#a16207; }
+  .aor-badge.st-submitted { background:#dcfce7; color:#15803d; }
+  .aor-badge.st-failed { background:#fee2e2; color:#b91c1c; }
+  .aor-badge.st-rejecting { background:#fef9c3; color:#a16207; }
+  .aor-badge.st-reject_failed { background:#fee2e2; color:#b91c1c; }
+  .aor-badge.st-rejected { background:#f1f5f9; color:#64748b; }
+  .aor-body { padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .aor-cost { display:flex; gap:18px; align-items:center; font-size:14px;
+              border-radius:8px; padding:9px 12px; flex-wrap:wrap; }
+  .aor-cost.ok { background:#f0fdf4; border:1px solid #bbf7d0; }
+  .aor-cost.bad { background:#fef2f2; border:1px solid #fecaca; }
+  .aor-cost.unk { background:#f8fafc; border:1px solid #e2e8f0; }
+  .aor-cost .k { font-size:11px; color:#64748b; display:block; }
+  .aor-cost .v { font-weight:700; color:#0f172a; }
+  .aor-cost .verdict { margin-left:auto; font-weight:700; }
+  .aor-cost.ok .verdict { color:#15803d; } .aor-cost.bad .verdict { color:#b91c1c; }
+  .aor-cost.unk .verdict { color:#94a3b8; }
+  .aor-field { display:flex; flex-direction:column; gap:3px; }
+  .aor-field label { font-size:11px; font-weight:600; color:#64748b; }
+  .aor-field textarea, .aor-field select {
+      border:1px solid #cbd5e1; border-radius:7px; padding:7px 9px; font-size:14px; font-family:inherit; }
+  .aor-field textarea { min-height:104px; resize:vertical; line-height:1.55; }
+  .aor-emailref { font-size:12px; color:#64748b; }
+  .aor-emailref b { color:#475569; }
+  .aor-rmk { font-size:12px; color:#475569; background:#fafafa; border:1px solid #eef2f7;
+             border-radius:7px; padding:8px 10px; white-space:pre-wrap; max-height:130px; overflow:auto; }
+  .aor-foot { display:flex; align-items:center; gap:8px; padding:10px 14px;
+              border-top:1px solid #eef2f7; background:#fcfcfd; }
+  .aor-err { color:#b91c1c; font-size:13px; }
+  .aor-decided { font-size:12px; color:#64748b; }
+  .aor-empty { color:#94a3b8; padding:40px 0; text-align:center; }
+  .flex-spacer { flex:1; }
+  .warn-note { font-size:12px; color:#b45309; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">AOR — 검토 → 상신 승인</h1>
+<p style="color:#64748b;font-size:13px;margin:-6px 0 14px">
+  Submitted Technical AOR 검토 카드. cost·Comment·결재라인 확인/수정 후 <b>승인</b>하면 맥 러너가 SVMS에 상신함(최대 1~2분).
+  <b style="color:#b91c1c">완전자동 아님 — 사람 승인 필수.</b>
+</p>
+
+<div class="aor-head">
+  <div class="aor-filter">
+    <button class="btn btn-primary btn-sm" data-filter="pending" type="button">대기</button>
+    <button class="btn btn-outline btn-sm" data-filter="all" type="button">전체</button>
+  </div>
+  <span class="aor-count" id="aor-count"></span>
+  <span class="flex-spacer"></span>
+  <button class="btn btn-outline btn-sm" id="aor-refresh" type="button">새로고침</button>
+</div>
+
+<div class="aor-list" id="aor-list"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const listEl = document.getElementById('aor-list');
+  const countEl = document.getElementById('aor-count');
+  let filter = 'pending';
+
+  const esc = s => (s == null ? '' : String(s).replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
+  const fmtAmt = (a, c) => (a == null || a === '') ? '—'
+    : Number(a).toLocaleString('en-US', {maximumFractionDigits: 2}) + ' ' + (c || '');
+
+  function parseLines(raw) {
+    // approval_line JSON = {recommend:"0003", lines:[{app_no,label}]} (구버전: 그냥 배열/문자열 허용)
+    if (!raw) return {recommend: '', lines: []};
+    let o; try { o = JSON.parse(raw); } catch (e) { return {recommend: '', lines: []}; }
+    if (Array.isArray(o)) return {recommend: '', lines: o};
+    return {recommend: o.recommend || '', lines: o.lines || []};
+  }
+
+  async function load() {
+    listEl.innerHTML = '<div class="aor-empty">불러오는 중…</div>';
+    let data;
+    try {
+      const r = await fetch('/api/aor/drafts?status=' + filter, {headers: {'Accept': 'application/json'}});
+      data = await r.json();
+    } catch (e) {
+      listEl.innerHTML = '<div class="aor-err" style="padding:20px">불러오기 실패: ' + esc(e.message) + '</div>';
+      return;
+    }
+    countEl.textContent = '대기 ' + (data.pending || 0) + '건' +
+      (filter === 'all' ? ' · 표시 ' + data.count + '건' : '');
+    if (!data.drafts.length) {
+      listEl.innerHTML = '<div class="aor-empty">' +
+        (filter === 'pending' ? '대기 중인 AOR 없음 👍' : 'AOR draft 없음') + '</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    data.drafts.forEach(d => listEl.appendChild(card(d)));
+  }
+
+  function confBadge(c) {
+    if (c == null) return '';
+    const cls = c >= 70 ? 'conf-hi' : c >= 40 ? 'conf-mid' : 'conf-lo';
+    return `<span class="aor-badge ${cls}">매칭 ${c}%</span>`;
+  }
+
+  function card(d) {
+    const el = document.createElement('div');
+    el.className = 'aor-card';
+    el.dataset.id = d.id;
+    const editable = d.status === 'pending';
+    const ln = parseLines(d.approval_line);
+    const curApp = d.approval_app_no || ln.recommend || '';
+
+    // 청구액 + 첨부 견적서 (cost 자동판정 없음 — 사람이 견적서·RMK 보고 판단)
+    let files = [];
+    try { files = JSON.parse(d.attach_files || '[]') || []; } catch (e) { files = []; }
+    const amtBox = `
+      <div class="aor-cost unk">
+        <div><span class="k">청구액 (SVMS AMT)</span><span class="v">${fmtAmt(d.amt, d.cur_cd)}</span></div>
+        <span class="verdict" style="color:#475569;font-weight:600">📎 견적서 ${files.length}개</span>
+      </div>`;
+
+    // 결재라인 select
+    let lineCtrl;
+    if (ln.lines.length) {
+      const opts = ln.lines.map(l =>
+        `<option value="${esc(l.app_no)}"${l.app_no === curApp ? ' selected' : ''}>${esc(l.label || l.app_no)}${l.app_no === ln.recommend ? ' (추천)' : ''}</option>`).join('');
+      lineCtrl = `<select class="f-app"${editable ? '' : ' disabled'}>${opts}</select>`;
+    } else {
+      lineCtrl = `<input class="f-app" value="${esc(curApp)}" placeholder="APP_NO (예: 0003)"${editable ? '' : ' disabled'}
+                   style="border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font-size:14px">`;
+    }
+
+    const fileBox = files.length
+      ? `<div class="aor-emailref">📎 첨부 견적서: <b>${files.map(esc).join(', ')}</b> <span style="color:#94a3b8">(SVMS서 열람)</span></div>`
+      : `<div class="aor-emailref warn-note">📎 첨부 견적서 없음 — 비용 근거 직접 확인 필요</div>`;
+
+    const rmk = d.raw_row ? (function () {
+      try { const r = JSON.parse(d.raw_row); return r.RMK || ''; } catch (e) { return ''; }
+    })() : '';
+
+    el.innerHTML = `
+      <div class="aor-card-top">
+        <div>
+          <div class="aor-subj">${esc(d.vsl_nm || d.vsl_cd || '')} — ${esc(d.subj || '(제목 없음)')}</div>
+          <div class="aor-meta">${esc(d.aor_cd)} · 요청 ${esc(d.req_user_nm || '?')} · draft #${d.id}</div>
+        </div>
+        <div class="aor-badges">
+          ${d.status !== 'pending' ? `<span class="aor-badge st-${esc(d.status)}">${esc(d.status)}</span>` : ''}
+        </div>
+      </div>
+      <div class="aor-body">
+        ${amtBox}
+        ${fileBox}
+        ${rmk ? `<details><summary style="font-size:12px;color:#64748b;cursor:pointer">관리사 RMK 보기</summary><div class="aor-rmk">${esc(rmk)}</div></details>` : ''}
+        <div class="aor-field">
+          <label>Comment (RMK_APP — 결재 상신 코멘트, 비우면 공란)</label>
+          <textarea class="f-cmt"${editable ? '' : ' readonly'}>${esc(d.proposed_comment || '')}</textarea>
+        </div>
+        <div class="aor-field">
+          <label>결재라인 (Approval)</label>
+          ${lineCtrl}
+        </div>
+      </div>
+      <div class="aor-foot">
+        ${editable
+          ? `<span class="aor-err" hidden></span>
+             <span class="flex-spacer"></span>
+             <button class="btn btn-outline btn-sm act-reject" type="button">리젝</button>
+             <button class="btn btn-primary btn-sm act-approve" type="button">승인 → SVMS 상신</button>`
+          : `<span class="aor-decided">${esc(d.status)}` +
+              (d.decided_by ? ` · ${esc(d.decided_by)}` : '') +
+              (d.decided_at ? ` · ${esc(d.decided_at)}` : '') +
+              (d.submitted_at ? ` · 상신 ${esc(d.submitted_at)}` : '') +
+              (d.submit_result ? ` · ${esc(d.submit_result)}` : '') +
+              (d.reject_reason ? ` · 사유: ${esc(d.reject_reason)}` : '') + `</span>
+             <span class="flex-spacer"></span>` +
+             (d.status === 'failed' ? `<button class="btn btn-outline btn-sm act-reject" type="button">리젝</button>` : '') +
+             `<button class="btn btn-outline btn-sm act-del" type="button">삭제</button>`}
+      </div>`;
+
+    const ap = el.querySelector('.act-approve');
+    if (ap) ap.addEventListener('click', () => approve(el, d));
+    const rj = el.querySelector('.act-reject');
+    if (rj) rj.addEventListener('click', () => reject(el, d));
+    const del = el.querySelector('.act-del');
+    if (del) del.addEventListener('click', () => removeDraft(el, d));
+    return el;
+  }
+
+  function gather(el) {
+    const cmt = el.querySelector('.f-cmt');
+    const app = el.querySelector('.f-app');
+    return {
+      proposed_comment: cmt ? cmt.value : '',
+      approval_app_no: app ? app.value.trim() : ''
+    };
+  }
+
+  async function approve(el, d) {
+    const errEl = el.querySelector('.aor-err');
+    const body = gather(el);
+    if (!body.approval_app_no) {
+      errEl.textContent = '✕ 결재라인을 선택하세요'; errEl.hidden = false; return;
+    }
+    if (!confirm(`[${d.vsl_nm || d.aor_cd}] 이 AOR을 승인하면 맥 러너가 SVMS에 실제 상신합니다. 진행할까요?`)) return;
+    errEl.hidden = true;
+    el.classList.add('is-busy');
+    try {
+      const r = await fetch('/api/aor/drafts/' + d.id + '/approve', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        errEl.textContent = '✕ ' + (j.error || '승인 실패'); errEl.hidden = false;
+        el.classList.remove('is-busy'); return;
+      }
+      load();
+    } catch (e) {
+      errEl.textContent = '✕ ' + e.message; errEl.hidden = false;
+      el.classList.remove('is-busy');
+    }
+  }
+
+  async function reject(el, d) {
+    const reason = prompt(`[${d.vsl_nm || d.aor_cd}] 리젝하면 SVMS STATUS=R + 관리사 통보메일이 발송됩니다 (메일은 SVMS 템플릿).\n리젝 사유 (선택, TRMT 기록용):`, '');
+    if (reason === null) return;
+    el.classList.add('is-busy');
+    await fetch('/api/aor/drafts/' + d.id + '/reject', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({reason})
+    });
+    load();
+  }
+
+  async function removeDraft(el, d) {
+    if (!confirm('이 AOR draft 기록을 삭제할까요?')) return;
+    el.classList.add('is-busy');
+    await fetch('/api/aor/drafts/' + d.id, {method: 'DELETE'});
+    load();
+  }
+
+  document.querySelectorAll('[data-filter]').forEach(b =>
+    b.addEventListener('click', () => {
+      filter = b.dataset.filter;
+      document.querySelectorAll('[data-filter]').forEach(x => {
+        x.classList.toggle('btn-primary', x === b);
+        x.classList.toggle('btn-outline', x !== b);
+      });
+      load();
+    }));
+  document.getElementById('aor-refresh').addEventListener('click', load);
+  load();
+})();
+</script>
+{% endblock %}
