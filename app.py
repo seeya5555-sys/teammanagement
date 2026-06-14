@@ -6607,6 +6607,24 @@ def api_ext_aor_stats():
     return jsonify({'ok': True, 'crew_submitted': n})
 
 
+# ---- 온디맨드 '메일 풀링하기' 플래그 (사이트 버튼 → 맥미니가 저빈도 폴링) ----
+@app.route('/api/wf/pull-now', methods=['POST'])
+@admin_required
+def api_wf_pull_now():
+    import time as _t
+    _ensure_api_table()
+    ts = str(int(_t.time()))
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('wf_pull_request', ?)", (ts,))
+    return jsonify({'ok': True, 'ts': int(ts)})
+
+
+@app.route('/api/wf/pull-flag')
+@api_key_required
+def api_wf_pull_flag():
+    row = query("SELECT v FROM api_settings WHERE k='wf_pull_request'", one=True)
+    return jsonify({'ts': int(row['v']) if row and (row['v'] or '').isdigit() else 0})
+
+
 # ═════════════════════════════════════════════════════════════════
 #  자동화 모음 (SOA/전자결재 온디맨드 버튼 → 맥미니 launchd 폴링 실행)
 # ═════════════════════════════════════════════════════════════════
