@@ -550,33 +550,75 @@ def logout():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    """주요 현황 한눈에 — 카드 클릭 시 해당 탭 이동. (MVP 위젯)"""
+    """주요 현황 한눈에 — 카드 클릭 시 해당 탭 이동.
+    로그인 사용자가 감독에 연결돼 있으면(supervisor_id) 그 감독 담당선박 기준으로 집계,
+    아니면(미연결 admin 등) 전체 기준."""
     today   = date.today().isoformat()
     horizon = (date.today() + timedelta(days=30)).isoformat()
     cal_end = (date.today() + timedelta(days=7)).isoformat()
     is_admin = (session.get('role') == 'admin')
 
-    # 1) 현안 요약 (open=Closed 아닌 것)
+    sup_id = session.get('supervisor_id')
+    scoped = bool(sup_id)
+    sup_name = None
+    vessel_ids = []
+    if scoped:
+        srow = query("SELECT name FROM supervisors WHERE id=?", (sup_id,), one=True)
+        sup_name = srow['name'] if srow else None
+        vessel_ids = [r['vessel_id'] for r in
+                      query("SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?", (sup_id,))]
+
+    def vin(col):
+        """담당선박 IN 절. 미연결=전체(1=1), 연결+선박없음=0건(0=1)."""
+        if not scoped:
+            return ("1=1", [])
+        if not vessel_ids:
+            return ("0=1", [])
+        return (f"{col} IN ({','.join('?' * len(vessel_ids))})", list(vessel_ids))
+
+    # 1) 현안 요약 — 감독 연결 시 그 감독 이슈만(issues.supervisor_id)
+    iss_where = "WHERE supervisor_id=?" if scoped else ""
+    iss_params = (sup_id,) if scoped else ()
     iss = query(
         "SELECT "
         "SUM(CASE WHEN status!='Closed' THEN 1 ELSE 0 END) open_cnt, "
         "SUM(CASE WHEN status!='Closed' AND priority='Urgent' THEN 1 ELSE 0 END) urgent_cnt, "
         "SUM(CASE WHEN status!='Closed' AND priority='COC & Flag' THEN 1 ELSE 0 END) coc_cnt, "
         "SUM(CASE WHEN status!='Closed' AND priority='Next DD' THEN 1 ELSE 0 END) dd_cnt "
-        "FROM issues", one=True)
+        f"FROM issues {iss_where}", iss_params, one=True)
 
-    # 4) Class 만기 임박 (due_date D-30 이내, open 항목)
+    # 2) Class 만기 임박 (due_date D-30, 담당선박)
+    cvf, cvp = vin("cs.vessel_id")
     class_due = query(
-        "SELECT COUNT(*) c FROM class_status_items "
-        "WHERE due_date IS NOT NULL AND due_date != '' "
-        "AND due_date >= ? AND due_date <= ?", (today, horizon), one=True)['c']
+        "SELECT COUNT(*) c FROM class_status_items i JOIN class_status cs ON cs.id=i.cs_id "
+        "WHERE i.due_date IS NOT NULL AND i.due_date != '' "
+        f"AND i.due_date >= ? AND i.due_date <= ? AND {cvf}",
+        (today, horizon, *cvp), one=True)['c']
 
-    # 5) 다가오는 일정 (7일 이내)
-    events = query(
-        "SELECT title, start_date, category, color FROM calendar_events "
-        "WHERE start_date >= ? AND start_date <= ? "
-        "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
-        (today, cal_end))
+    # 3) Vetting 미해결 (Open observation, 담당선박)
+    vvf, vvp = vin("vt.vessel_id")
+    vrow = query(
+        "SELECT "
+        "SUM(CASE WHEN f.status='Open' THEN 1 ELSE 0 END) open_cnt, "
+        "SUM(CASE WHEN f.status='Open' AND f.priority=1 THEN 1 ELSE 0 END) pri_cnt "
+        "FROM vt_findings f JOIN vettings vt ON vt.id=f.vetting_id "
+        f"WHERE {vvf}", (*vvp,), one=True)
+
+    # 4) 다가오는 일정 (7일) — 담당선박/본인/공용
+    if scoped:
+        evf, evp = vin("vessel_id")
+        events = query(
+            "SELECT title, start_date, category, color FROM calendar_events "
+            "WHERE start_date >= ? AND start_date <= ? "
+            f"AND (supervisor_id=? OR supervisor_id IS NULL OR {evf}) "
+            "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
+            (today, cal_end, sup_id, *evp))
+    else:
+        events = query(
+            "SELECT title, start_date, category, color FROM calendar_events "
+            "WHERE start_date >= ? AND start_date <= ? "
+            "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
+            (today, cal_end))
 
     stats = {
         'issues_open':   (iss['open_cnt']   or 0) if iss else 0,
@@ -584,11 +626,13 @@ def dashboard():
         'issues_coc':    (iss['coc_cnt']    or 0) if iss else 0,
         'issues_dd':     (iss['dd_cnt']     or 0) if iss else 0,
         'class_due':     class_due,
+        'vetting_open':  (vrow['open_cnt'] or 0) if vrow else 0,
+        'vetting_pri':   (vrow['pri_cnt']  or 0) if vrow else 0,
         'aor_pending':   0,
         'aor_crew_submitted': 0,
         'mail_active':   0,
     }
-    # 자동화 위젯은 admin 만 (탭 자체가 admin 전용)
+    # 자동화 위젯은 admin 만 (탭 자체가 admin 전용) — 전사 큐라 감독 스코프 무관
     if is_admin:
         ap = query("SELECT COUNT(*) c FROM aor_draft WHERE status='pending'", one=True)
         stats['aor_pending'] = ap['c'] if ap else 0
@@ -600,7 +644,8 @@ def dashboard():
         except sqlite3.Error:
             pass
 
-    return render_template('dashboard.html', stats=stats, events=events, is_admin=is_admin)
+    return render_template('dashboard.html', stats=stats, events=events, is_admin=is_admin,
+                           scoped=scoped, sup_name=sup_name)
 
 
 @app.route('/')

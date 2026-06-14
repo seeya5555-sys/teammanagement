@@ -51,6 +51,9 @@
 {% block content %}
 <div class="dash-wrap">
   <h1 class="page-title">📊 대시보드</h1>
+  <p style="margin:-6px 0 14px;font-size:13px;color:var(--text-secondary)">
+    {% if scoped %}<b>{{ sup_name }}</b> 감독 담당 선박 기준 집계{% else %}전체 선박 기준 집계{% endif %}
+  </p>
 
   <div class="dash-grid">
 
@@ -71,6 +74,16 @@
       <div class="dash-card-head"><span>🔍 Class 만기 임박</span><span class="arrow">→</span></div>
       <div class="dash-main"><span class="dash-num">{{ stats.class_due }}</span><span class="dash-unit">건 (D-30 이내)</span></div>
       <div class="dash-sub"><span class="dash-empty">선급/기국 지적 due_date 기준</span></div>
+    </a>
+
+    {# 3) Vetting 미해결 #}
+    <a class="dash-card {% if not stats.vetting_open %}dash-zero{% endif %}" href="{{ url_for('vetting_status') }}">
+      <div class="dash-card-head"><span>🛡 Vetting 미해결</span><span class="arrow">→</span></div>
+      <div class="dash-main"><span class="dash-num">{{ stats.vetting_open }}</span><span class="dash-unit">건 Open observation</span></div>
+      <div class="dash-sub">
+        {% if stats.vetting_pri %}<span class="dash-pill red">⭐ 중요 {{ stats.vetting_pri }}</span>
+        {% else %}<span class="dash-empty">미해결 SIRE 지적 기준</span>{% endif %}
+      </div>
     </a>
 
     {% if is_admin %}
