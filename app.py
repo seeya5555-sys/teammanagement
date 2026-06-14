@@ -63,6 +63,18 @@ app.config.update(
 )
 
 
+# static(css/js) URL에 파일 수정시각을 ?v= 로 자동 부착 — 파일 변경 시 URL이 바뀌어
+# 브라우저(특히 iOS Safari) 캐시를 강제 무효화. 템플릿 수정 불필요(모든 url_for('static') 적용).
+@app.url_defaults
+def _add_static_version(endpoint, values):
+    if endpoint == 'static' and values.get('filename'):
+        try:
+            fp = os.path.join(app.static_folder, values['filename'])
+            values['v'] = int(os.path.getmtime(fp))
+        except OSError:
+            pass
+
+
 # ═════════════════════════════════════════════════════════════════
 #  DB helpers
 # ═════════════════════════════════════════════════════════════════
