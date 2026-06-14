@@ -262,7 +262,7 @@ function vesselBlock(item) {
     }
   }
   table.append(tbody);
-  block.append(table);
+  block.append(el('div', { class: 'tbl-scroll' }, table));
 
   const addBar = el('div', { class: 'vt-add-bar' });
   addBar.append(el('button', {
@@ -684,7 +684,7 @@ function findingsSection(vt, findings) {
     });
   }
   table.append(tbody);
-  sec.append(table);
+  sec.append(el('div', { class: 'tbl-scroll' }, table));
 
   const btnRow = el('div', { class: 'cs-add-btn-row' });
   btnRow.append(el('button', {

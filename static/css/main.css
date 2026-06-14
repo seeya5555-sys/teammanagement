@@ -4496,3 +4496,16 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 .cls-dg-coc { font-weight: 700; color: #b45309; }
 .cls-dg-detail { min-width: 280px; color: var(--text); }
 .cls-dg-line { line-height: 1.55; min-height: 1.55em; white-space: normal; }
+
+/* ─────────── 모바일 테이블 가로스크롤 래퍼 ─────────── */
+/* 데스크탑: 투명 래퍼(레이아웃 영향 0). 모바일에서만 가로스크롤로 표 컬럼 짓눌림 방지 */
+.tbl-scroll { width: 100%; }
+@media (max-width: 768px) {
+  .tbl-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* fixed 레이아웃 표가 폰 폭에서 1글자/줄로 터지지 않게 최소폭 확보 후 스크롤 */
+  .tbl-scroll > .vt-vetting-table { min-width: 620px; }
+  .tbl-scroll > .cs-findings-table { min-width: 680px; }
+}
