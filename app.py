@@ -638,14 +638,14 @@ def dashboard():
         'class_due':     class_due,
         'aor_pending':   0,
         'aor_crew_submitted': 0,
-        'wf1_pending':   0,
+        'mail_active':   0,
     }
     # 자동화 위젯은 admin 만 (탭 자체가 admin 전용)
     if is_admin:
         ap = query("SELECT COUNT(*) c FROM aor_draft WHERE status='pending'", one=True)
         stats['aor_pending'] = ap['c'] if ap else 0
-        wp = query("SELECT COUNT(*) c FROM wf1_draft WHERE status='pending'", one=True)
-        stats['wf1_pending'] = wp['c'] if wp else 0
+        mc = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active'", one=True)
+        stats['mail_active'] = mc['c'] if mc else 0
         try:
             r = query("SELECT v FROM api_settings WHERE k='aor_crew_submitted'", one=True)
             stats['aor_crew_submitted'] = int(r['v'] or 0) if r else 0
