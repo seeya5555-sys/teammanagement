@@ -6614,8 +6614,10 @@ AUTOMATION_TASKS = {
     'soa_g3':   'SOA 실버 G3 (PCBJ·PCBS·PCGV·PCMC)',
     'soa_skrt': 'SOA 장금 (CPPS·INPS·KWPS·SAPS) +출금상신',
     'jeonja':   '전자결재 자동상신',
+    'soa_resend': '리젝 통보메일 재발송 (실패분)',
 }
-AUTOMATION_MODES = ('verify', 'live')
+# verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일
+AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit')
 
 
 def _automation_enabled():
