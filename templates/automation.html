@@ -26,7 +26,16 @@
   .st-queued{background:#fef9c3;color:#854d0e}.st-running{background:#dbeafe;color:#1d4ed8}
   .st-done{background:#dcfce7;color:#15803d}.st-failed{background:#fee2e2;color:#b91c1c}
   .au-log{margin-top:22px}
-  .au-log h3{font-size:13px;font-weight:700;color:#334155;margin-bottom:8px}
+  .au-log-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 4px;border-radius:8px;user-select:none}
+  .au-log-head:hover{background:#f8fafc}
+  .au-log-caret{font-size:12px;color:#64748b;transition:transform .12s;display:inline-block}
+  .au-log-head.open .au-log-caret{transform:rotate(90deg)}
+  .au-log h3{font-size:13px;font-weight:700;color:#334155;margin:0}
+  .au-log-meta{font-size:11.5px;color:#64748b;display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .au-log-clear{margin-left:auto;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .au-log-clear:disabled{opacity:.45;cursor:not-allowed}
+  #au-runs{margin-top:8px}
+  .au-log-cleared{font-size:11px;color:#94a3b8;margin-top:6px;padding-left:4px}
   .au-logrow{border:1px solid #eef2f7;border-radius:9px;padding:9px 12px;margin-bottom:7px;background:#fff;font-size:12.5px}
   .au-logmeta{color:#64748b;font-size:11.5px;margin-bottom:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .au-logsum{white-space:pre-wrap;color:#0f172a;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;max-height:170px;overflow:auto}
@@ -57,8 +66,14 @@
   <div id="au-aor"></div>
 
   <div class="au-log">
-    <h3>실행 로그 (audit)</h3>
-    <div id="au-runs"></div>
+    <div class="au-log-head" id="au-log-head">
+      <span class="au-log-caret" id="au-log-caret">▸</span>
+      <h3>실행 로그 (audit)</h3>
+      <span class="au-log-meta" id="au-log-meta"></span>
+      <button class="au-log-clear" id="au-log-clear" type="button" title="완료/실패 로그 비우기 (진행중은 보존)">🗑 비우기</button>
+    </div>
+    <div id="au-runs" hidden></div>
+    <div class="au-log-cleared" id="au-log-cleared"></div>
   </div>
 </div>
 {% endblock %}
@@ -66,8 +81,9 @@
 <script>
 (function(){
   const SOA=['soa_g1','soa_g2','soa_g3','soa_skrt'];
-  let TASKS={}, ENABLED=true, RUNS=[];
+  let TASKS={}, ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
   const $=s=>document.querySelector(s);
+  const esc=s=>String(s).replace(/</g,'&lt;');
   async function api(method,url,body){
     const o={method,headers:{}};
     if(body){o.headers['Content-type']='application/json';o.body=JSON.stringify(body);}
@@ -123,8 +139,28 @@
     $('#au-soa').innerHTML=SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
     $('#au-aor').innerHTML=row('aor_prep',{prep:true});
-    $('#au-runs').innerHTML=RUNS.length?RUNS.map(fmt).join(''):'<div class="au-note">아직 실행 기록 없음.</div>';
+    renderLog();
     document.querySelectorAll('.au-b').forEach(btn=>btn.onclick=onRun);
+  }
+  function renderLog(){
+    const head=$('#au-log-head'), runsEl=$('#au-runs'), metaEl=$('#au-log-meta');
+    head.classList.toggle('open',LOG_OPEN);
+    $('#au-log-caret').textContent='▸';
+    // 접힘 요약: N건 · 진행중 · 최근 실패
+    const active=RUNS.filter(r=>r.status==='queued'||r.status==='running').length;
+    const lastFail=RUNS.find(r=>r.status==='failed');
+    let meta=`총 ${TOTAL}건`;
+    if(active) meta+=` · <span style="color:#1d4ed8;font-weight:700">진행중 ${active}</span>`;
+    if(lastFail) meta+=` · <span style="color:#b91c1c;font-weight:700">최근 실패 있음</span>`;
+    metaEl.innerHTML=meta;
+    // 펼침일 때만 리스트 DOM 렌더(비용↓)
+    runsEl.hidden=!LOG_OPEN;
+    if(LOG_OPEN){
+      runsEl.innerHTML=RUNS.length?RUNS.map(fmt).join(''):'<div class="au-note">아직 실행 기록 없음.</div>';
+    }
+    $('#au-log-clear').disabled=!RUNS.some(r=>r.status==='done'||r.status==='failed');
+    const cl=$('#au-log-cleared');
+    cl.textContent=CLEARED?`마지막 비움: ${CLEARED.at} · ${CLEARED.by||'?'} · ${CLEARED.n}건 삭제`:'';
   }
   async function onRun(e){
     const task=e.target.dataset.task, mode=e.target.dataset.mode;
@@ -148,9 +184,18 @@
     const {ok,j}=await api('GET','/api/automation/runs');
     if(!ok)return;
     TASKS=j.tasks||{};ENABLED=j.enabled!==false;RUNS=j.runs||[];
+    TOTAL=j.total||RUNS.length;CLEARED=j.cleared||null;
     render();
   }
+  async function clearLog(){
+    if(!confirm('완료/실패 실행 로그를 비웁니다.\n(진행중 작업은 보존됩니다)\n진행할까요?'))return;
+    const {ok,j}=await api('DELETE','/api/automation/runs');
+    if(ok){ alert(`로그 ${j.deleted}건 삭제됨`); await load(); }
+    else { alert((j&&j.error)||'삭제 실패'); }
+  }
   $('#au-ks').onclick=toggleKs;
+  $('#au-log-head').onclick=(e)=>{ if(e.target.closest('#au-log-clear'))return; LOG_OPEN=!LOG_OPEN; renderLog(); };
+  $('#au-log-clear').onclick=(e)=>{ e.stopPropagation(); clearLog(); };
   load();
   setInterval(load,7000);  // 상태/로그 자동 갱신
 })();

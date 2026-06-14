@@ -146,6 +146,41 @@ a { color: inherit; text-decoration: none; }
 .nav-group.open > .nav-submenu { display: flex; }
 .nav-submenu .nav-link { padding: 8px 12px; border-radius: 6px; }
 
+/* ── 모바일 햄버거 + 시트 메뉴 (≤768px 에서만 노출) ── */
+.nav-burger {
+  display: none; margin-left: auto; flex: 0 0 auto;
+  width: 38px; height: 34px; padding: 8px 8px;
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  cursor: pointer; flex-direction: column; justify-content: space-between;
+}
+.nav-burger span { display: block; height: 2px; width: 100%; background: var(--text-secondary); border-radius: 2px; transition: transform .15s, opacity .15s; }
+.nav-burger.is-open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.nav-burger.is-open span:nth-child(2) { opacity: 0; }
+.nav-burger.is-open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+.mobile-menu { position: fixed; inset: 0; z-index: 900; }
+.mobile-menu[hidden] { display: none; }
+.mm-backdrop { position: absolute; inset: 0; background: rgba(15,23,42,.42); }
+.mm-panel {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(82vw, 320px); background: var(--surface);
+  box-shadow: -8px 0 28px rgba(0,0,0,.22);
+  padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.mm-panel .nav-link {
+  display: block; padding: 11px 14px; border-radius: 8px; font-size: 14.5px;
+  color: var(--text-primary);
+}
+.mm-panel .nav-link.active { color: var(--blue); background: var(--blue-bg); }
+.mm-section {
+  font-size: 11px; font-weight: 700; letter-spacing: .4px;
+  color: var(--text-tertiary); text-transform: uppercase;
+  margin: 12px 6px 3px; padding-top: 10px; border-top: 1px solid var(--border-subtle);
+}
+.mm-section:empty { padding: 0; margin: 6px 6px; }
+body.mm-lock { overflow: hidden; }
+
 .user-menu { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .user-name { font-size: 13px; color: var(--text-secondary); }
 .logout-btn {
@@ -886,17 +921,9 @@ col.c-edit   { width: 156px; }
   .main-content { padding: 14px; }
   .page-title { font-size: 18px; }
   .brand-sub { display: none; }
-  /* 모바일 nav: 가로 스크롤(탭 줄바꿈/세로쪼개짐 방지), 탭은 자연폭 유지 */
-  .main-nav {
-    flex: 1 1 auto;
-    min-width: 0;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  .main-nav::-webkit-scrollbar { display: none; }
-  .main-nav .nav-link { padding: 6px 10px; font-size: 12px; flex: 0 0 auto; }
+  /* 모바일: 데스크탑 가로 nav 숨기고 햄버거 시트로 대체 (드롭다운 클리핑·가로스크롤 해소) */
+  .main-nav { display: none; }
+  .nav-burger { display: flex; }
   .user-name { display: none; }
   .topnav-inner { gap: 10px; padding: 0 14px; }
 

@@ -24,21 +24,22 @@
       {% set survey_eps = ['class_status_page','condition_survey','vetting_status'] %}
       {% set report_eps = ['dry_dock_page','dry_dock_edit_page','boarding_page','boarding_edit_page'] %}
       {% set auto_eps = ['automation_page','mail_page','aor_page'] %}
+      {% set expense_eps = ['expenses_page','expense_detail_page'] %}
+      {# 한 곳에서 active 판정 — 데스크탑/모바일 공통 #}
+      {% macro nlink(ep, label, eps=None) -%}
+        <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}">{{ label }}</a>
+      {%- endmacro %}
       <nav class="main-nav">
-        <a href="{{ url_for('dashboard') }}" class="nav-link {% if request.endpoint=='dashboard' %}active{% endif %}">
-          📊 대시보드
-        </a>
-        <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint=='index' %}active{% endif %}">
-          📋 Daily 업무관리
-        </a>
+        {{ nlink('dashboard', '📊 대시보드') }}
+        {{ nlink('index', '📋 Daily 업무관리') }}
 
         {% if session.role == 'admin' %}
         <div class="nav-group {% if request.endpoint in auto_eps %}active{% endif %}">
           <button type="button" class="nav-trigger">🤖 자동화 <span class="caret-sm">▾</span></button>
           <div class="nav-submenu">
-            <a href="{{ url_for('automation_page') }}" class="nav-link {% if request.endpoint=='automation_page' %}active{% endif %}">자동화 허브</a>
-            <a href="{{ url_for('mail_page') }}" class="nav-link {% if request.endpoint=='mail_page' %}active{% endif %}">📬 메일 처리</a>
-            <a href="{{ url_for('aor_page') }}" class="nav-link {% if request.endpoint=='aor_page' %}active{% endif %}">AOR</a>
+            {{ nlink('automation_page', '자동화 허브') }}
+            {{ nlink('mail_page', '📬 메일 처리') }}
+            {{ nlink('aor_page', 'AOR') }}
           </div>
         </div>
         {% endif %}
@@ -46,27 +47,27 @@
         <div class="nav-group {% if request.endpoint in survey_eps %}active{% endif %}">
           <button type="button" class="nav-trigger">🔍 Survey <span class="caret-sm">▾</span></button>
           <div class="nav-submenu">
-            <a href="{{ url_for('class_status_page') }}" class="nav-link {% if request.endpoint=='class_status_page' %}active{% endif %}">Class Status</a>
-            <a href="{{ url_for('condition_survey') }}" class="nav-link {% if request.endpoint=='condition_survey' %}active{% endif %}">Condition Survey</a>
-            <a href="{{ url_for('vetting_status') }}" class="nav-link {% if request.endpoint=='vetting_status' %}active{% endif %}">Vetting Status</a>
+            {{ nlink('class_status_page', 'Class Status') }}
+            {{ nlink('condition_survey', 'Condition Survey') }}
+            {{ nlink('vetting_status', 'Vetting Status') }}
           </div>
         </div>
 
         <div class="nav-group {% if request.endpoint in report_eps %}active{% endif %}">
           <button type="button" class="nav-trigger">📄 Report <span class="caret-sm">▾</span></button>
           <div class="nav-submenu">
-            <a href="{{ url_for('dry_dock_page') }}" class="nav-link {% if request.endpoint in ['dry_dock_page','dry_dock_edit_page'] %}active{% endif %}">Dry Dock Report</a>
-            <a href="{{ url_for('boarding_page') }}" class="nav-link {% if request.endpoint in ['boarding_page','boarding_edit_page'] %}active{% endif %}">Boarding Report</a>
+            {{ nlink('dry_dock_page', 'Dry Dock Report', report_eps) }}
+            {{ nlink('boarding_page', 'Boarding Report', report_eps) }}
           </div>
         </div>
 
-        <a href="{{ url_for('calendar_page') }}" class="nav-link {% if request.endpoint=='calendar_page' %}active{% endif %}">
-          📅 Calendar
-        </a>
-        <a href="{{ url_for('expenses_page') }}" class="nav-link {% if request.endpoint in ['expenses_page','expense_detail_page'] %}active{% endif %}">
-          💰 Expenses
-        </a>
+        {{ nlink('calendar_page', '📅 Calendar') }}
+        {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
       </nav>
+
+      <button type="button" class="nav-burger" id="nav-burger" aria-label="메뉴 열기" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
 
       <div class="user-menu">
         <button class="admin-trigger" id="btn-open-api" title="외부 연동용 데이터 API" style="margin-right:6px">
@@ -110,6 +111,30 @@
       </div>
     </div>
   </header>
+
+  <div class="mobile-menu" id="mobile-menu" hidden>
+    <div class="mm-backdrop" id="mm-backdrop"></div>
+    <nav class="mm-panel">
+      {{ nlink('dashboard', '📊 대시보드') }}
+      {{ nlink('index', '📋 Daily 업무관리') }}
+      {% if session.role == 'admin' %}
+      <div class="mm-section">🤖 자동화</div>
+      {{ nlink('automation_page', '자동화 허브') }}
+      {{ nlink('mail_page', '📬 메일 처리') }}
+      {{ nlink('aor_page', 'AOR') }}
+      {% endif %}
+      <div class="mm-section">🔍 Survey</div>
+      {{ nlink('class_status_page', 'Class Status') }}
+      {{ nlink('condition_survey', 'Condition Survey') }}
+      {{ nlink('vetting_status', 'Vetting Status') }}
+      <div class="mm-section">📄 Report</div>
+      {{ nlink('dry_dock_page', 'Dry Dock Report', report_eps) }}
+      {{ nlink('boarding_page', 'Boarding Report', report_eps) }}
+      <div class="mm-section"></div>
+      {{ nlink('calendar_page', '📅 Calendar') }}
+      {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
+    </nav>
+  </div>
   {% endblock %}
 
   <main class="main-content">
@@ -232,6 +257,37 @@
     });
     document.addEventListener('click', () => closeAll(null));
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(null); });
+  })();
+  </script>
+
+  <script>
+  (function () {
+    const burger = document.getElementById('nav-burger');
+    const menu = document.getElementById('mobile-menu');
+    const backdrop = document.getElementById('mm-backdrop');
+    if (!burger || !menu) return;
+    function open() {
+      menu.hidden = false;
+      document.body.classList.add('mm-lock');
+      burger.classList.add('is-open');
+      burger.setAttribute('aria-expanded', 'true');
+    }
+    function close() {
+      menu.hidden = true;
+      document.body.classList.remove('mm-lock');
+      burger.classList.remove('is-open');
+      burger.setAttribute('aria-expanded', 'false');
+    }
+    burger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden ? open() : close();
+    });
+    backdrop.addEventListener('click', close);
+    // 링크 누르면 닫기(이동)
+    menu.querySelectorAll('.nav-link').forEach(a => a.addEventListener('click', close));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    // 데스크탑으로 넓어지면 자동 닫기(상태 충돌 방지)
+    window.addEventListener('resize', () => { if (window.innerWidth >= 769 && !menu.hidden) close(); });
   })();
   </script>
 

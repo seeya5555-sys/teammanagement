@@ -6581,11 +6581,34 @@ def api_automation_run():
 def api_automation_runs():
     rows = query("SELECT run_id,task,mode,status,requested_at,started_at,finished_at,exit_code,summary "
                  "FROM automation_run ORDER BY id DESC LIMIT 40")
+    total = query("SELECT COUNT(*) c FROM automation_run", one=True)['c']
+    cleared = None
+    try:
+        r = query("SELECT v FROM api_settings WHERE k='automation_log_cleared'", one=True)
+        if r and r['v']:
+            cleared = json.loads(r['v'])
+    except (sqlite3.Error, ValueError):
+        pass
     return jsonify({
         'enabled': _automation_enabled(),
         'tasks': AUTOMATION_TASKS,
         'runs': [dict(r) for r in rows],
+        'total': total,
+        'cleared': cleared,
     })
+
+
+@app.route('/api/automation/runs', methods=['DELETE'])
+@admin_required
+def api_automation_runs_clear():
+    """완료/실패 로그만 삭제(진행중 보존). 삭제 행위 자체는 api_settings 에 기록."""
+    _ensure_api_table()
+    n = execute_rc("DELETE FROM automation_run WHERE status IN ('done','failed')")
+    user = session.get('username', '')
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('automation_log_cleared', ?)",
+            (json.dumps({'at': now, 'by': user, 'n': n}, ensure_ascii=False),))
+    return jsonify({'ok': True, 'deleted': n})
 
 
 @app.route('/api/automation/killswitch', methods=['POST'])
