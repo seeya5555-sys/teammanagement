@@ -6709,11 +6709,14 @@ def _mail_maybe_archive(cid):
     r = _mail_get(cid)
     if not r:
         return
-    issue_done = r['issue_status'] in ('registered', 'rejected', 'not_applicable')
-    # 회신은 명시적 종결만(draft_created/dismissed). 'none'(회신 안 씀)은 자동 archive 안 함 —
-    # 이슈만 처리하고 회신 잊는 것 방지(올마이트). 사용자가 '회신 안함' 또는 수동 archive 눌러야.
-    reply_done = r['reply_status'] in ('draft_created', 'dismissed')
-    if issue_done and reply_done:
+    # 이슈를 rejected/not_applicable로 판정 = 비업무/추적불요 → 회신도 기대 안 함 → 바로 archive
+    # (이런 카드가 reply 'none'으로 active에 영구히 남아 클러터되는 것 방지)
+    if r['issue_status'] in ('rejected', 'not_applicable'):
+        execute("UPDATE mail_card SET card_status='archived' WHERE id=?", (cid,))
+        return
+    # 이슈를 registered(실제 현안) 처리한 경우만, 회신 명시적 종결(draft_created/dismissed)까지 돼야 archive —
+    # 이슈만 처리하고 회신 잊는 것 방지(올마이트).
+    if r['issue_status'] == 'registered' and r['reply_status'] in ('draft_created', 'dismissed'):
         execute("UPDATE mail_card SET card_status='archived' WHERE id=?", (cid,))
 
 
