@@ -881,6 +881,18 @@ col.c-edit   { width: 156px; }
   .grid-wrap { display: none; }
   .card-list { display: block; }
 
+  /* 월/날짜 바: inline-flex라 2열로 들쭉날쭉 → 한 줄 전체폭으로 깔끔히 쌓기, 카운트 우측정렬 */
+  .card-date-bar {
+    display: flex;
+    width: auto;
+    box-sizing: border-box;
+    margin: 12px 0 6px;
+    padding: 7px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+  .card-date-bar > span:last-child { margin-left: auto; opacity: 0.75; }
+
   /* Toolbar: stack cleaner */
   .toolbar { gap: 6px; }
   .search-input { min-width: 100%; order: -1; }
