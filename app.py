@@ -6468,8 +6468,8 @@ def api_aor_list():
     status = (request.args.get('status') or 'pending').strip()
     if status == 'all':
         rows = query("SELECT * FROM aor_draft ORDER BY CASE status "
-                     "WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 WHEN 'submitting' THEN 2 "
-                     "WHEN 'failed' THEN 3 ELSE 4 END, id DESC")
+                     "WHEN 'pending' THEN 0 WHEN 'hold' THEN 1 WHEN 'approved' THEN 2 "
+                     "WHEN 'submitting' THEN 3 WHEN 'failed' THEN 4 ELSE 5 END, id DESC")
     else:
         rows = query('SELECT * FROM aor_draft WHERE status=? ORDER BY id DESC', (status,))
     pending = query("SELECT COUNT(*) c FROM aor_draft WHERE status='pending'", one=True)
@@ -6588,6 +6588,30 @@ def api_aor_reject(did):
     rid = _queue_aor('aor_reject', user)
     return jsonify({'id': did, 'status': 'rejecting', 'reject_run': rid,
                     'message': '리젝 접수 — 맥 러너가 곧 SVMS 리젝+통보메일(최대 1~2분)'})
+
+
+@app.route('/api/aor/drafts/<int:did>/hold', methods=['POST'])
+@admin_required
+def api_aor_hold(did):
+    """보류 — TRMT 카드만 hold 로 이동(SVMS 무영향). 나중에 unhold 로 검토 복귀."""
+    rc = execute_rc("UPDATE aor_draft SET status='hold', "
+                    "decided_at=datetime('now','localtime'), decided_by=? "
+                    "WHERE id=? AND status='pending'", (session.get('username') or 'web', did))
+    if not rc:
+        cur = query('SELECT status FROM aor_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': 'pending 상태만 보류 가능', 'status': cur['status'] if cur else '?'}), 409
+    return jsonify({'id': did, 'status': 'hold'})
+
+
+@app.route('/api/aor/drafts/<int:did>/unhold', methods=['POST'])
+@admin_required
+def api_aor_unhold(did):
+    """보류 해제 — 다시 검토 대기(pending)로. SVMS 무영향."""
+    rc = execute_rc("UPDATE aor_draft SET status='pending', decided_at=NULL, decided_by=NULL "
+                    "WHERE id=? AND status='hold'", (did,))
+    if not rc:
+        return jsonify({'error': 'hold 상태만 복귀 가능'}), 409
+    return jsonify({'id': did, 'status': 'pending'})
 
 
 @app.route('/api/aor/drafts/<int:did>', methods=['DELETE'])

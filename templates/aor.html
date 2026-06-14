@@ -27,6 +27,7 @@
   .aor-badge.st-rejecting { background:#fef9c3; color:#a16207; }
   .aor-badge.st-reject_failed { background:#fee2e2; color:#b91c1c; }
   .aor-badge.st-rejected { background:#f1f5f9; color:#64748b; }
+  .aor-badge.st-hold { background:#e0e7ff; color:#4338ca; }
   .aor-body { padding:14px; display:flex; flex-direction:column; gap:10px; }
   .aor-cost { display:flex; gap:18px; align-items:center; font-size:14px;
               border-radius:8px; padding:9px 12px; flex-wrap:wrap; }
@@ -67,6 +68,7 @@
 <div class="aor-head">
   <div class="aor-filter">
     <button class="btn btn-primary btn-sm" data-filter="pending" type="button">대기</button>
+    <button class="btn btn-outline btn-sm" data-filter="hold" type="button">⏸ 보류</button>
     <button class="btn btn-outline btn-sm" data-filter="all" type="button">전체</button>
   </div>
   <span class="aor-count" id="aor-count"></span>
@@ -187,8 +189,14 @@
         ${editable
           ? `<span class="aor-err" hidden></span>
              <span class="flex-spacer"></span>
+             <button class="btn btn-outline btn-sm act-hold" type="button">⏸ 보류</button>
              <button class="btn btn-outline btn-sm act-reject" type="button">리젝</button>
              <button class="btn btn-primary btn-sm act-approve" type="button">승인 → SVMS 상신</button>`
+          : d.status === 'hold'
+          ? `<span class="aor-decided">⏸ 보류 중 — 나중에 결정</span>
+             <span class="flex-spacer"></span>
+             <button class="btn btn-primary btn-sm act-unhold" type="button">▶ 다시 검토</button>
+             <button class="btn btn-outline btn-sm act-del" type="button">삭제</button>`
           : `<span class="aor-decided">${esc(d.status)}` +
               (d.decided_by ? ` · ${esc(d.decided_by)}` : '') +
               (d.decided_at ? ` · ${esc(d.decided_at)}` : '') +
@@ -206,7 +214,22 @@
     if (rj) rj.addEventListener('click', () => reject(el, d));
     const del = el.querySelector('.act-del');
     if (del) del.addEventListener('click', () => removeDraft(el, d));
+    const hd = el.querySelector('.act-hold');
+    if (hd) hd.addEventListener('click', () => holdDraft(el, d));
+    const uh = el.querySelector('.act-unhold');
+    if (uh) uh.addEventListener('click', () => unhold(el, d));
     return el;
+  }
+
+  async function holdDraft(el, d) {
+    el.classList.add('is-busy');
+    await fetch('/api/aor/drafts/' + d.id + '/hold', {method: 'POST'});
+    load();
+  }
+  async function unhold(el, d) {
+    el.classList.add('is-busy');
+    await fetch('/api/aor/drafts/' + d.id + '/unhold', {method: 'POST'});
+    load();
   }
 
   function gather(el) {
