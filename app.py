@@ -510,7 +510,7 @@ def admin_required(f):
 def login():
     if request.method == 'GET':
         if 'user_id' in session:
-            return redirect(url_for('index'))
+            return redirect(url_for('dashboard'))
         return render_template('login.html')
 
     username = (request.form.get('username') or '').strip()
@@ -534,10 +534,10 @@ def login():
     execute('UPDATE users SET last_login_at=datetime("now","localtime") WHERE id=?',
             (u['id'],))
 
-    nxt = request.args.get('next') or url_for('index')
+    nxt = request.args.get('next') or url_for('dashboard')
     # 외부 URL 리다이렉트 방지
     if not nxt.startswith('/'):
-        nxt = url_for('index')
+        nxt = url_for('dashboard')
     return redirect(nxt)
 
 
