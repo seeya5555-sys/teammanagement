@@ -602,6 +602,20 @@
       supervisor_id: {{ session.get('supervisor_id')|tojson }}
     } };
   </script>
+  <script>
+  /* 모든 데이터 입력 모달: backdrop(모달 바깥 어둑한 영역) 클릭으로 닫히지 않게.
+     실수로 바깥을 눌러 입력 내용이 저장 안 된 채 닫히는 것 방지(2026-06-15 손유석 요청).
+     · X·취소 버튼은 backdrop 클래스가 아니므로 정상 닫힘 유지.
+     · 모바일 네비 메뉴(mm-backdrop)는 제외 — 바깥 클릭 닫힘이 정상 UX.
+     · capture 단계에서 backdrop 클릭만 전파 차단 → 각 모달의 close 핸들러가 안 불림. */
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t && t.classList &&
+        (t.classList.contains('modal-backdrop') || t.classList.contains('dde-modal-backdrop'))) {
+      ev.stopPropagation();
+    }
+  }, true);
+  </script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
