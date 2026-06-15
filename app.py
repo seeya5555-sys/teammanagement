@@ -344,6 +344,35 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_aor_draft_status ON aor_draft(status)")
 
+        # 비용청구(Fund Request) 2단게이트 draft 큐 (review 엔진 ingest → 사람이 /fundreq 탭서 승인/리젝 결정 → 맥이 SVMS 상신/리젝+통보메일)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fundreq_draft (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                opex_cd       TEXT NOT NULL,                       -- SVMS Fund Request 문서번호(dedup 키)
+                vsl_cd        TEXT,
+                vsl_nm        TEXT,
+                subj          TEXT,
+                amt           REAL,                                -- Cost(청구비용)
+                cur_cd        TEXT,
+                tp            TEXT,                                -- A=AOR / P=Pre-delivery / O=OPEX
+                ref_no        TEXT,                                -- 연동 AOR 문서번호
+                ref_amt       REAL,                                -- 연동 AOR 금액
+                dn            TEXT,                                -- 첨부 DN/인보이스 판독 결과(금액+통화)
+                diff          REAL,                                -- AOR차액(cost-ref_amt)
+                verdict       TEXT,                                -- 검토결과 pass/escalate/mismatch/flag
+                why           TEXT,                                -- 미상신 사유(검토)
+                raw_row       TEXT,                                -- SP_GET_OPEX 행 전체 JSON(상신/리젝때 재조회 키만 사용)
+                status        TEXT NOT NULL DEFAULT 'pending',     -- pending/approved/submitting/submitted/rejecting/rejected/failed/reject_failed
+                reject_reason TEXT,
+                decided_at    TEXT,
+                decided_by    TEXT,
+                done_at       TEXT,
+                result        TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fundreq_draft_status ON fundreq_draft(status)")
+
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
                 conn.executescript(f.read())
@@ -6630,6 +6659,181 @@ def api_wf_pull_flag():
 # ═════════════════════════════════════════════════════════════════
 # task = 실행단위. mode: 'verify'(읽기전용 DRY) | 'live'(자동 승인/상신).
 # 맥미니가 task+mode를 스크립트+env로 매핑(서버는 명령어를 모름 — 안전).
+# ===== 비용청구(Fund Request) 2단게이트 =====
+#   · review 엔진(맥)이 장금 Technical Submitted 검토결과를 POST /api/ext/fundreq/drafts (카드 적재, [검증] 버튼)
+#   · 사람이 /fundreq 탭서 카드마다 승인(approved) / 리젝(rejecting, 사유) 결정
+#   · [자동상신] 버튼 → 맥 fundreq_exec 가 approved=SP_SET_OPEX 상신(STATUS=U) / rejecting=STATUS=R+통보메일
+@app.route('/fundreq')
+@admin_required
+def fundreq_page():
+    return render_template('fundreq.html')
+
+
+@app.route('/api/fundreq/drafts')
+@admin_required
+def api_fundreq_list():
+    status = request.args.get('status')
+    if status:
+        rows = query('SELECT * FROM fundreq_draft WHERE status=? ORDER BY id DESC', (status,))
+    else:
+        rows = query("SELECT * FROM fundreq_draft ORDER BY CASE status WHEN 'pending' THEN 0 "
+                     "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
+    pending = query("SELECT COUNT(*) c FROM fundreq_draft WHERE status='pending'", one=True)
+    return jsonify({'drafts': [dict(r) for r in rows], 'pending': pending['c'],
+                    'enabled': _automation_enabled()})
+
+
+@app.route('/api/ext/fundreq/drafts', methods=['POST'])
+@api_key_required
+def api_ext_fundreq_create():
+    """review 엔진 ingest: 검토결과 카드 적재. 같은 opex_cd 가 pending이면 갱신(중복 방지)."""
+    d = request.get_json(silent=True) or {}
+    opex_cd = (d.get('opex_cd') or '').strip()
+    if not opex_cd:
+        return jsonify({'error': 'opex_cd required'}), 400
+    ex = query("SELECT id, status FROM fundreq_draft WHERE opex_cd=? "
+               "AND status IN ('pending','approved','submitting','submitted','rejecting','rejected') "
+               "ORDER BY id DESC LIMIT 1", (opex_cd,), one=True)
+    cols = dict(
+        vsl_cd=d.get('vsl_cd'), vsl_nm=d.get('vsl_nm'), subj=d.get('subj'),
+        amt=d.get('amt'), cur_cd=d.get('cur_cd'), tp=d.get('tp'),
+        ref_no=d.get('ref_no'), ref_amt=d.get('ref_amt'), dn=d.get('dn'),
+        diff=d.get('diff'), verdict=d.get('verdict'), why=d.get('why'),
+        raw_row=(json.dumps(d.get('raw_row'), ensure_ascii=False) if d.get('raw_row') is not None else None),
+    )
+    if ex and ex['status'] == 'pending':
+        sets = ', '.join(f"{k}=?" for k in cols)
+        execute(f"UPDATE fundreq_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
+        return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
+    if ex:   # 이미 결정/진행중 — 손대지 않음
+        return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
+    did = execute(
+        "INSERT INTO fundreq_draft (opex_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, tp, ref_no, "
+        "ref_amt, dn, diff, verdict, why, raw_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (opex_cd, *cols.values()))
+    return jsonify({'id': did, 'status': 'pending'}), 201
+
+
+@app.route('/api/fundreq/drafts/<int:did>/approve', methods=['POST'])
+@admin_required
+def api_fundreq_approve(did):
+    """승인 마킹 — status='approved'. 실제 상신은 [자동상신] 버튼이 맥 러너로 실행."""
+    row = query('SELECT * FROM fundreq_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if not row['raw_row']:
+        return jsonify({'error': 'raw_row 없음 — 재검토 필요'}), 400
+    rc = execute_rc("UPDATE fundreq_draft SET status='approved', "
+                    "decided_at=datetime('now','localtime'), decided_by=? "
+                    "WHERE id=? AND status IN ('pending','rejecting')",
+                    (session.get('username') or 'web', did))
+    if not rc:
+        cur = query('SELECT status FROM fundreq_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': 'already decided', 'status': cur['status'] if cur else '?'}), 409
+    return jsonify({'id': did, 'status': 'approved'})
+
+
+@app.route('/api/fundreq/drafts/<int:did>/reject', methods=['POST'])
+@admin_required
+def api_fundreq_reject(did):
+    """리젝 마킹(사유 필수) — status='rejecting'. 실제 리젝+통보메일은 [자동상신] 버튼이 맥 러너로 실행."""
+    row = query('SELECT * FROM fundreq_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if not row['raw_row']:
+        return jsonify({'error': 'raw_row 없음 — 재검토 필요'}), 400
+    d = request.get_json(silent=True) or {}
+    reason = (d.get('reason') or '').strip()
+    if not reason:
+        return jsonify({'error': '리젝 사유(reason) 필수', 'field': 'reason'}), 400
+    rc = execute_rc("UPDATE fundreq_draft SET status='rejecting', reject_reason=?, "
+                    "decided_at=datetime('now','localtime'), decided_by=? "
+                    "WHERE id=? AND status IN ('pending','approved')",
+                    (reason, session.get('username') or 'web', did))
+    if not rc:
+        cur = query('SELECT status FROM fundreq_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': 'already decided', 'status': cur['status'] if cur else '?'}), 409
+    return jsonify({'id': did, 'status': 'rejecting'})
+
+
+@app.route('/api/fundreq/drafts/<int:did>/reset', methods=['POST'])
+@admin_required
+def api_fundreq_reset(did):
+    """결정 취소 — 실행 전(approved/rejecting)만 pending 으로 되돌림."""
+    rc = execute_rc("UPDATE fundreq_draft SET status='pending', reject_reason=NULL, "
+                    "decided_at=NULL, decided_by=NULL WHERE id=? AND status IN ('approved','rejecting')", (did,))
+    if not rc:
+        cur = query('SELECT status FROM fundreq_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': '실행 전(approved/rejecting)만 취소 가능', 'status': cur['status'] if cur else '?'}), 409
+    return jsonify({'id': did, 'status': 'pending'})
+
+
+@app.route('/api/fundreq/drafts/<int:did>', methods=['DELETE'])
+@admin_required
+def api_fundreq_delete(did):
+    if not query('SELECT id FROM fundreq_draft WHERE id=?', (did,), one=True):
+        return jsonify({'error': 'not found'}), 404
+    execute('DELETE FROM fundreq_draft WHERE id=?', (did,))
+    return jsonify({'id': did, 'deleted': True})
+
+
+@app.route('/api/fundreq/drafts/decided', methods=['DELETE'])
+@admin_required
+def api_fundreq_clear_decided():
+    """처리완료 일괄 삭제 — 대기(pending)·결정대기(approved/rejecting)·진행중(submitting)은 보존."""
+    n = execute_rc("DELETE FROM fundreq_draft WHERE status IN ('submitted','rejected','failed','reject_failed')")
+    return jsonify({'ok': True, 'deleted': n})
+
+
+# ---- ext (맥 러너) ----
+@app.route('/api/ext/fundreq/approved')
+@api_key_required
+def api_ext_fundreq_approved():
+    """맥 러너가 상신할 approved 건 → status='submitting' 락(조건부)."""
+    cols = "id, opex_cd, vsl_cd, raw_row"
+    if request.args.get('peek'):
+        rows = query(f"SELECT {cols} FROM fundreq_draft WHERE status='approved' ORDER BY id ASC")
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    out = [dict(r) for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='submitting' ORDER BY id ASC")]
+    for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='approved' ORDER BY id ASC"):
+        if execute_rc("UPDATE fundreq_draft SET status='submitting' WHERE id=? AND status='approved'", (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'drafts': out})
+
+
+@app.route('/api/ext/fundreq/rejecting')
+@api_key_required
+def api_ext_fundreq_rejecting():
+    """맥 러너가 리젝할 rejecting 건(STATUS=R + 통보메일 대상)."""
+    rows = query("SELECT id, opex_cd, vsl_cd, reject_reason, raw_row FROM fundreq_draft "
+                 "WHERE status='rejecting' ORDER BY id ASC")
+    return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows]})
+
+
+@app.route('/api/ext/fundreq/drafts/<int:did>/result', methods=['POST'])
+@api_key_required
+def api_ext_fundreq_result(did):
+    """상신 결과: ok=True → submitted, else failed."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    rc = execute_rc("UPDATE fundreq_draft SET status=?, done_at=datetime('now','localtime'), result=? "
+                    "WHERE id=? AND status='submitting'",
+                    ('submitted' if ok else 'failed', (d.get('result') or '')[:2000], did))
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
+@app.route('/api/ext/fundreq/drafts/<int:did>/reject-result', methods=['POST'])
+@api_key_required
+def api_ext_fundreq_reject_result(did):
+    """리젝 결과: ok=True → rejected, else reject_failed."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    rc = execute_rc("UPDATE fundreq_draft SET status=?, done_at=datetime('now','localtime'), result=? "
+                    "WHERE id=? AND status='rejecting'",
+                    ('rejected' if ok else 'reject_failed', (d.get('result') or '')[:2000], did))
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
 AUTOMATION_TASKS = {
     'soa_g1':   'SOA 실버 G1 (ATBG·ATGR·ATGV·ATMT)',
     'soa_g2':   'SOA 실버 G2 (ATNH·ATSH·ATSL·JATX)',

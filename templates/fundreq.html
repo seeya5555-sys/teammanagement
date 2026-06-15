@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}비용청구 승인 · TRMT3{% endblock %}
+{% block head %}
+<style>
+  .fr-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .fr-count{color:#64748b;font-size:13px}
+  .fr-list{display:flex;flex-direction:column;gap:12px;max-width:920px}
+  .fr-card{border:1px solid #e2e8f0;border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .fr-card.is-busy{opacity:.55;pointer-events:none}
+  .fr-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:#f8fafc;border-bottom:1px solid #eef2f7}
+  .fr-subj{font-weight:600;color:#0f172a;line-height:1.35}
+  .fr-meta{font-size:12px;color:#64748b;margin-top:3px}
+  .fr-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .fr-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .b-tp{background:#e0e7ff;color:#4338ca}
+  .b-pass{background:#dcfce7;color:#15803d}
+  .b-escalate{background:#fef3c7;color:#b45309}
+  .b-mismatch{background:#fee2e2;color:#b91c1c}
+  .b-flag{background:#fee2e2;color:#b91c1c}
+  .st-approved{background:#dbeafe;color:#1d4ed8}
+  .st-submitting{background:#fef9c3;color:#a16207}
+  .st-submitted{background:#dcfce7;color:#15803d}
+  .st-rejecting{background:#fef9c3;color:#a16207}
+  .st-rejected{background:#f1f5f9;color:#64748b}
+  .st-failed,.st-reject_failed{background:#fee2e2;color:#b91c1c}
+  .fr-body{padding:10px 14px;font-size:13px;color:#334155}
+  .fr-kv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:6px}
+  .fr-kv b{color:#0f172a}
+  .fr-why{color:#b91c1c;font-size:12px}
+  .fr-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #eef2f7;flex-wrap:wrap;align-items:center}
+  .fr-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .fr-b.ap{background:#16a34a;color:#fff}
+  .fr-b.rj{background:#dc2626;color:#fff}
+  .fr-b.rs{background:#e2e8f0;color:#334155}
+  .fr-b.del{background:#fff;color:#94a3b8;border:1px solid #e2e8f0}
+  .fr-rsn{flex:1;min-width:200px;border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:13px}
+  .fr-decided{font-size:12px;color:#64748b}
+  .fr-empty{color:#94a3b8;padding:30px;text-align:center}
+  .fr-note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="fr-head">
+  <h2 style="margin:0">💰 비용청구 승인</h2>
+  <span class="fr-count" id="fr-count"></span>
+  <div style="margin-left:auto;display:flex;gap:8px">
+    <button class="fr-b rs" id="fr-reload">🔄 새로고침</button>
+    <button class="fr-b del" id="fr-clear">🗑 처리완료 비우기</button>
+  </div>
+</div>
+<div class="fr-note">
+  자동화 허브에서 <b>[🔍검증]</b> 누르면 장금 Technical Submitted 건이 카드로 적재됨(~1~2분). 카드마다 <b>승인</b>/<b>리젝</b> 결정 →
+  허브 <b>[▶자동상신]</b> 누르면 승인=SVMS 상신, 리젝=STATUS=R+관리사 통보메일 실행. (검증결과 ✅pass는 승인 권장, ⚠️불일치/🚨차액은 리젝 권장)
+</div>
+<div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const TP={A:'AOR',P:'Pre-del',O:'OPEX'};
+  async function api(method,url,body){
+    const o={method,headers:{}};
+    if(body){o.headers['Content-type']='application/json';o.body=JSON.stringify(body);}
+    const r=await fetch(url,o);let j={};try{j=await r.json();}catch(e){}
+    return {ok:r.ok,j};
+  }
+  function card(d){
+    const dec=['approved','rejecting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
+    const isAor=(d.tp==='A'||d.tp==='P');
+    let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd)}</b></span><span>Cost <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></span>`;
+    if(isAor) kv+=`<span>AOR <b>${esc(d.ref_no||'-')}</b> (${esc(d.ref_amt)})</span><span>차액 <b>${esc(d.diff)}</b></span>`;
+    if(d.dn) kv+=`<span>첨부판독 <b>${esc(d.dn)}</b></span>`;
+    const vbadge=d.verdict?`<span class="fr-badge b-${esc(d.verdict)}">${({pass:'✅검토통과',escalate:'🚨AOR차액≥$1k',mismatch:'⚠️DN≠Cost',flag:'✋확인필요'})[d.verdict]||esc(d.verdict)}</span>`:'';
+    const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
+    let acts;
+    if(d.status==='pending'){
+      acts=`<button class="fr-b ap" data-act="approve">✅ 승인</button>
+            <input class="fr-rsn" placeholder="리젝 사유 입력 후 리젝 →" />
+            <button class="fr-b rj" data-act="reject">🚫 리젝</button>
+            <button class="fr-b del" data-act="delete">삭제</button>`;
+    } else if(d.status==='approved'||d.status==='rejecting'){
+      const lbl=d.status==='approved'?'✅ 승인 대기':'🚫 리젝 대기';
+      acts=`<span class="fr-decided">${lbl}${d.reject_reason?(' — 사유: '+esc(d.reject_reason)):''} (${esc(d.decided_by||'')})</span>
+            <button class="fr-b rs" data-act="reset">결정 취소</button>`;
+    } else {
+      acts=`<span class="fr-decided">${esc(d.status)}${d.result?(' — '+esc(d.result)):''}</span>`;
+    }
+    return `<div class="fr-card ${dec&&d.status!=='approved'&&d.status!=='rejecting'?'':''}" data-id="${d.id}">
+      <div class="fr-top">
+        <div><div class="fr-subj">${esc(d.subj||d.opex_cd)}</div>
+        <div class="fr-meta">${esc(d.opex_cd)}</div></div>
+        <div class="fr-badges"><span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
+      </div>
+      <div class="fr-body"><div class="fr-kv">${kv}</div>${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}</div>
+      <div class="fr-acts">${acts}</div>
+    </div>`;
+  }
+  async function load(){
+    const {ok,j}=await api('GET','/api/fundreq/drafts');
+    if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
+    const ds=j.drafts||[];
+    $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · ⚠️킬스위치 ON');
+    $('#fr-list').innerHTML=ds.length?ds.map(card).join(''):'<div class="fr-empty">카드 없음 — 허브에서 [검증] 실행</div>';
+    document.querySelectorAll('.fr-card').forEach(el=>{
+      el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
+    });
+  }
+  async function act(el,a){
+    const id=el.dataset.id;
+    let url=`/api/fundreq/drafts/${id}`,method='POST',body=null;
+    if(a==='approve'){url+='/approve';}
+    else if(a==='reject'){const rsn=el.querySelector('.fr-rsn').value.trim();
+      if(!rsn){alert('리젝 사유를 입력하세요.');return;} body={reason:rsn};url+='/reject';}
+    else if(a==='reset'){url+='/reset';}
+    else if(a==='delete'){if(!confirm('이 카드를 삭제할까요?'))return;method='DELETE';}
+    el.classList.add('is-busy');
+    const {ok,j}=await api(method,url,body);
+    if(!ok){alert('실패: '+(j.error||'')); el.classList.remove('is-busy');}
+    load();
+  }
+  $('#fr-reload').onclick=load;
+  $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(상신/리젝/실패) 카드를 비울까요?'))return;
+    await api('DELETE','/api/fundreq/drafts/decided');load();};
+  load(); setInterval(load,8000);
+})();
+</script>
+{% endblock %}
