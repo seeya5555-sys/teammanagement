@@ -6863,11 +6863,17 @@ def mail_page():
 def api_mail_list():
     status = (request.args.get('status') or 'active').strip()
     if status == 'all':
-        rows = query("SELECT * FROM mail_card ORDER BY card_status, id DESC")
-    else:
+        rows = query("SELECT * FROM mail_card ORDER BY card_status, pending DESC, id DESC")
+    elif status == 'pending':
+        rows = query("SELECT * FROM mail_card WHERE card_status='active' AND pending=1 ORDER BY id DESC")
+    elif status == 'active':
+        rows = query("SELECT * FROM mail_card WHERE card_status='active' AND pending=0 ORDER BY id DESC")
+    else:  # archived 등
         rows = query("SELECT * FROM mail_card WHERE card_status=? ORDER BY id DESC", (status,))
-    pend = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active'", one=True)
-    return jsonify({'count': len(rows), 'active': pend['c'], 'cards': [dict(r) for r in rows]})
+    act = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active' AND pending=0", one=True)
+    pnd = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active' AND pending=1", one=True)
+    return jsonify({'count': len(rows), 'active': act['c'], 'pending': pnd['c'],
+                    'cards': [dict(r) for r in rows]})
 
 
 def _mail_get(cid):
@@ -7061,6 +7067,36 @@ def api_mail_delete(cid):
         return jsonify({'error': 'not found'}), 404
     execute("DELETE FROM mail_card WHERE id=?", (cid,))
     return jsonify({'id': cid, 'deleted': True})
+
+
+@app.route('/api/mail/<int:cid>/pending', methods=['POST'])
+@admin_required
+def api_mail_pending(cid):
+    """보류 토글. body {off:true} 면 보류 해제(처리중 복귀), 없으면 보류 설정."""
+    if not _mail_get(cid):
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    val = 0 if d.get('off') else 1
+    execute("UPDATE mail_card SET pending=? WHERE id=?", (val, cid))
+    return jsonify({'id': cid, 'pending': val})
+
+
+@app.route('/api/mail/cards/delete-all', methods=['POST'])
+@admin_required
+def api_mail_delete_all():
+    """현재 보기(scope) 범위의 카드 일괄 영구삭제. 등록된 이슈(issue_id)는 보존 — 카드만 제거."""
+    d = request.get_json(silent=True) or {}
+    scope = (d.get('scope') or '').strip()
+    where = {
+        'all': "",
+        'pending': "WHERE card_status='active' AND pending=1",
+        'active': "WHERE card_status='active' AND pending=0",
+        'archived': "WHERE card_status='archived'",
+    }.get(scope)
+    if where is None:
+        return jsonify({'error': 'bad scope'}), 400
+    n = execute_rc(f"DELETE FROM mail_card {where}")
+    return jsonify({'deleted': n, 'scope': scope})
 
 
 # ---- ext (맥미니) ----
@@ -7545,6 +7581,15 @@ def _auto_migrate():
                 print('[auto_migrate] vt_findings.priority 추가됨')
         except Exception as e:
             print(f'[auto_migrate] vt_findings 컬럼 점검 건너뜀: {e}')
+
+        # mail_card.pending (보류 플래그)
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(mail_card)').fetchall()]
+            if cols and 'pending' not in cols:
+                conn.execute("ALTER TABLE mail_card ADD COLUMN pending INTEGER NOT NULL DEFAULT 0")
+                print('[auto_migrate] mail_card.pending 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] mail_card.pending 점검 건너뜀: {e}')
 
         # vettings.valid: 옛 CHECK(valid IN ('Valid','Invalid')) 제거 → 'Next Plan'/'Last Result' 허용
         try:

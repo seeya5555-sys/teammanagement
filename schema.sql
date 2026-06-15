@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS mail_card (
     -- 카드 종합
     card_status     TEXT    NOT NULL DEFAULT 'active'
                     CHECK (card_status IN ('active','archived')),
+    pending         INTEGER NOT NULL DEFAULT 0,      -- 보류(나중에 처리) 플래그: active 중 1=보류함으로 분리
     reject_reason   TEXT,
     decided_at      TEXT,
     decided_by      TEXT

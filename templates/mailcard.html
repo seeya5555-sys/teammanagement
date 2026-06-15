@@ -14,6 +14,7 @@
   .bdg{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
   .b-i{background:#dbeafe;color:#1d4ed8}.b-r{background:#dcfce7;color:#15803d}
   .b-info{background:#fef3c7;color:#b45309}.b-na{background:#f1f5f9;color:#94a3b8}.b-done{background:#f1f5f9;color:#475569}
+  .b-pend{background:#ffedd5;color:#c2410c}
   .mc-sum{background:#eff6ff;border-bottom:1px solid #e0ecff;padding:9px 15px;font-size:13px;color:#1e3a5f}
   .mc-sec{padding:13px 15px;border-bottom:1px solid #f1f5f9}.mc-sec:last-child{border-bottom:none}
   .mc-sh{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;margin-bottom:8px;color:#334155}
@@ -35,10 +36,13 @@
   <button class="btn btn-sm" id="mc-tall" type="button">🌐 전체 번역</button>
   <div style="display:flex;gap:6px;margin-left:8px">
     <button class="btn btn-p btn-sm" data-f="active" type="button">처리중</button>
+    <button class="btn btn-sm" data-f="pending" type="button">⏸ 보류</button>
+    <button class="btn btn-sm" data-f="archived" type="button">📦 보관</button>
     <button class="btn btn-sm" data-f="all" type="button">전체</button>
   </div>
   <span class="mc-count" id="mc-count"></span>
   <span class="flex-spacer"></span>
+  <button class="btn btn-sm" id="mc-delall" type="button" style="color:#c0392b">🗑 전체삭제</button>
   <button class="btn btn-sm" id="mc-refresh" type="button">새로고침</button>
 </div>
 <div class="mc-list" id="mc-list"></div>
@@ -56,8 +60,9 @@
     listEl.innerHTML='<div class="mc-empty">불러오는 중…</div>';
     const {ok,j}=await api('GET','/api/mail/cards?status='+filter);
     if(!ok){listEl.innerHTML='<div class="err" style="padding:20px">불러오기 실패</div>';return;}
-    countEl.textContent='처리중 '+(j.active||0)+'건'+(filter==='all'?' · 표시 '+j.count:'');
-    if(!j.cards.length){listEl.innerHTML='<div class="mc-empty">'+(filter==='active'?'처리할 메일 없음 👍':'없음')+'</div>';return;}
+    countEl.textContent='처리중 '+(j.active||0)+'건 · 보류 '+(j.pending||0)+'건'+(filter!=='active'?' · 표시 '+j.count:'');
+    const emptyMsg={active:'처리할 메일 없음 👍',pending:'보류한 메일 없음',archived:'보관된 메일 없음'}[filter]||'없음';
+    if(!j.cards.length){listEl.innerHTML='<div class="mc-empty">'+emptyMsg+'</div>';return;}
     listEl.innerHTML='';j.cards.forEach(c=>listEl.appendChild(card(c)));
   }
 
@@ -100,11 +105,15 @@
     }
     el.innerHTML=`<div class="mc-top"><div><div class="mc-subj">${esc(c.email_subject||'(제목없음)')}</div>
         <div class="mc-meta">${esc(c.email_from||'?')} · ${esc(c.email_date||'')} · #${c.id}</div></div>
-      <div class="mc-badges">${issueBadge(c.issue_status)}${replyBadge(c.reply_status)}</div></div>
+      <div class="mc-badges">${c.pending?'<span class="bdg b-pend">⏸ 보류</span>':''}${issueBadge(c.issue_status)}${replyBadge(c.reply_status)}</div></div>
       ${c.summary_ko?`<div class="mc-sum">📨 <b>받은메일(한글 번역)</b> : ${esc(c.summary_ko)}</div>`:''}
       <div class="mc-sec"><div class="mc-sh">📋 TRMT 이슈</div>${issueHtml}</div>
       <div class="mc-sec"><div class="mc-sh">✉️ 회신 작성</div>${replyHtml}</div>
-      <div class="mc-sec" style="padding:8px 15px;text-align:right"><button class="btn btn-sm act-arch">📦 archive</button> <button class="btn btn-sm act-del" style="color:#c0392b">🗑 삭제</button></div>`;
+      <div class="mc-sec" style="padding:8px 15px;display:flex;gap:6px;align-items:center">
+        ${c.pending?'<button class="btn btn-sm act-punp">▶ 처리중으로</button>':'<button class="btn btn-sm act-pend">⏸ 보류</button>'}
+        <span class="flex-spacer"></span>
+        <button class="btn btn-sm act-arch">📦 archive</button>
+        <button class="btn btn-sm act-del" style="color:#c0392b">🗑 삭제</button></div>`;
     wire(el,c);return el;
   }
 
@@ -119,12 +128,24 @@
     if(q('.act-rtrans'))q('.act-rtrans').onclick=async()=>{const er=q('.act-rerr');er.hidden=true;const style=(gv(el,'.r-style')||'')+((gv(el,'.r-memo'))?(' / '+gv(el,'.r-memo')):'');busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/translate`,{reply_ko:gv(el,'.r-ko'),reply_style:style});busy(el,0);if(!r.ok){er.textContent='번역 실패: '+(r.j.detail||r.j.error);er.hidden=false;}else load();};
     if(q('.act-rdraft'))q('.act-rdraft').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/draft-request`,{reply_en:gv(el,'.r-en')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else load();};
     if(q('.act-rdismiss'))q('.act-rdismiss').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/reply/dismiss`,{});load();};
+    if(q('.act-pend'))q('.act-pend').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/pending`,{});load();};
+    if(q('.act-punp'))q('.act-punp').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/pending`,{off:true});load();};
     if(q('.act-arch'))q('.act-arch').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/archive`,{});load();};
     if(q('.act-del'))q('.act-del').onclick=async()=>{if(!confirm('이 카드를 영구삭제할까요? (등록된 이슈는 유지, 카드만 삭제)'))return;busy(el,1);await api('POST',`/api/mail/${c.id}/delete`,{});load();};
   }
 
   document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filter=b.dataset.f;document.querySelectorAll('[data-f]').forEach(x=>{x.classList.toggle('btn-p',x===b);});load();});
   document.getElementById('mc-refresh').onclick=load;
+  document.getElementById('mc-delall').onclick=async()=>{
+    const shown=listEl.querySelectorAll('.mc-card').length;
+    if(!shown){alert('삭제할 카드 없음');return;}
+    const label={active:'처리중',pending:'보류',archived:'보관',all:'전체'}[filter]||filter;
+    if(!confirm('현재 보기('+label+') '+shown+'건 카드를 영구삭제합니다.\n등록된 이슈/업무는 그대로 유지됩니다. 계속?'))return;
+    if(!confirm('정말 삭제할까요? 되돌릴 수 없습니다.'))return;
+    const r=await api('POST','/api/mail/cards/delete-all',{scope:filter});
+    if(!r.ok){alert('삭제 실패: '+((r.j&&(r.j.error))||r.status));return;}
+    alert('삭제 '+(r.j.deleted||0)+'건 완료');load();
+  };
   document.getElementById('mc-tall').onclick=async()=>{const b=document.getElementById('mc-tall');b.disabled=true;b.textContent='번역 중…';const r=await api('POST','/api/mail/translate-all',{});b.textContent='🌐 전체 번역';b.disabled=false;alert('번역 '+(r.j.translated||0)+'건'+(r.j.errors&&r.j.errors.length?(' / 실패 '+r.j.errors.length):''));load();};
   document.getElementById('mc-pull').onclick=async(e)=>{const b=e.currentTarget,o=b.textContent;b.disabled=true;b.textContent='요청 중…';const r=await api('POST','/api/wf/pull-now',{});b.textContent=r.ok?'✅ 요청됨':'✕ 실패';setTimeout(()=>{b.textContent=o;b.disabled=false;},4000);};
   load();
