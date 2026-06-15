@@ -380,7 +380,8 @@ def init_db(drop=False):
             CREATE TABLE IF NOT EXISTS reqgen_draft (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 batch       TEXT,                              -- 업로드 묶음 id
-                sheet       TEXT NOT NULL,                     -- S1/ST1 등 (dedup: batch+sheet)
+                doc_type    TEXT NOT NULL DEFAULT 'PC',        -- PC=구매청구(S/ST) / MA=수리신청(R)
+                sheet       TEXT NOT NULL,                     -- S1/ST1/R17 등 (dedup: batch+sheet)
                 vsl_cd      TEXT,
                 vsl_nm      TEXT,
                 part_tp     TEXT,                              -- 0=Spare Part / 1=Consumable(Store)
@@ -405,6 +406,12 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_reqgen_draft_status ON reqgen_draft(status)")
+        try:                                            # 기존 DB 마이그레이션(doc_type 추가)
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(reqgen_draft)").fetchall()]
+            if 'doc_type' not in cols:
+                conn.execute("ALTER TABLE reqgen_draft ADD COLUMN doc_type TEXT NOT NULL DEFAULT 'PC'")
+        except Exception:
+            pass
 
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
@@ -6948,6 +6955,45 @@ def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm):
     return {'sheet': name, 'header': header, 'lines': lines}
 
 
+def _reqgen_parse_repair_sheet(ws, vsl_cd, vsl_nm):
+    """R 시트(SHORE REPAIR) → 수리신청 draft. 라인그리드 없이 텍스트(REQ_DTL)."""
+    name = ws.title
+    equipment = _reqgen_cell(ws, 'C5')
+    maker = _reqgen_cell(ws, 'C6')
+    type_nm = _reqgen_cell(ws, 'G6')
+    subject = _reqgen_cell(ws, 'C7')
+    # ITEM LIST: A=No, B=JOB SCOPE, E=UNIT, F=Q'ty, G=REMARK
+    scope = []
+    for r in range(11, ws.max_row + 1):
+        b = _reqgen_cell(ws, f'B{r}')
+        if not b:
+            continue
+        scope.append({'scope': b, 'unit': _reqgen_cell(ws, f'E{r}'),
+                      'qty': _reqgen_cell(ws, f'F{r}'), 'remark': _reqgen_cell(ws, f'G{r}')})
+    # box3(REQ_DTL) 본문 구성
+    lt = []
+    for i, s in enumerate(scope, 1):
+        t = s['scope'].lstrip('-').strip()
+        ex = []
+        q = (f"{s['qty']} {s['unit']}".strip() if (s['qty'] or s['unit']) else '')
+        if q:
+            ex.append(q)
+        if s['remark']:
+            ex.append(s['remark'])
+        lt.append(f"{i}. {t}" + (f" — {' / '.join(ex)}" if ex else ""))
+    req_dtl = ((f"{subject}. Please quote for the following job scope:\n\n" if subject else '')
+               + "\n".join(lt))
+    header = {
+        'doc_type': 'MA', 'sheet': name, 'VSL_CD': vsl_cd, 'VSL_NM': vsl_nm,
+        'CATE_NM': equipment, 'EQ_NM': equipment, 'MAKER_NM': maker, 'TYPE_NM': type_nm,
+        'SUBJ_BASE': subject, 'REQ_DTL': req_dtl,
+        'RSN_CD': 'P', 'DEPT_CD': 'E', 'DOCK_YN': 'Y', 'URG_YN': 'N', 'STATUS': 'N',
+        # 아래는 카드 공통입력(approve 시): APP_VOY/APP_PORT*/APP_DT, REQ_CAU, REQ_INS, REQ_STK
+    }
+    return {'sheet': name, 'doc_type': 'MA', 'header': header,
+            'lines': scope, 'equipment': equipment, 'subj': subject}
+
+
 def _reqgen_parse_workbook(stream, vsl_cd, vsl_nm=None):
     import re as _re
     from openpyxl import load_workbook
@@ -6956,11 +7002,14 @@ def _reqgen_parse_workbook(stream, vsl_cd, vsl_nm=None):
         vsl_nm = _reqgen_cell(wb['INDEX'], 'G2')
     out = []
     for nm in wb.sheetnames:
-        if not _re.match(r'^(ST|S)\d+$', nm):
-            continue
-        res = _reqgen_parse_sheet(wb[nm], vsl_cd, vsl_nm)
-        if res['lines']:
-            out.append(res)
+        if _re.match(r'^(ST|S)\d+$', nm):                 # 구매청구
+            res = _reqgen_parse_sheet(wb[nm], vsl_cd, vsl_nm)
+            if res['lines']:
+                out.append(res)
+        elif _re.match(r'^R\d+$', nm):                    # 수리신청
+            res = _reqgen_parse_repair_sheet(wb[nm], vsl_cd, vsl_nm)
+            if res['lines']:
+                out.append(res)
     return vsl_nm, out
 
 
@@ -6987,18 +7036,29 @@ def api_reqgen_upload():
     except Exception as e:
         return jsonify({'error': f'파싱 실패: {e}'}), 400
     if not sheets:
-        return jsonify({'error': 'SPARE(S*)/STORE(ST*) 시트에 항목이 없음'}), 400
+        return jsonify({'error': '청구 가능한 시트(S*/ST*/R*)에 항목이 없음'}), 400
     batch = uuid.uuid4().hex[:12]
     created = []
     for s in sheets:
         h, lines = s['header'], s['lines']
-        did = execute(
-            "INSERT INTO reqgen_draft (batch, sheet, vsl_cd, vsl_nm, part_tp, kind_nm, equipment, "
-            "subj, line_cnt, exp_cd, header_json, lines_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            (batch, s['sheet'], vsl_cd, vsl_nm, h['PART_TP'], h['PART_TP_NM'], h['CATE_NM'],
-             h['SUBJ'], len(lines), (lines[0]['EXP_CD'] if lines else None),
-             json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False)))
-        created.append({'id': did, 'sheet': s['sheet'], 'lines': len(lines)})
+        dt = s.get('doc_type', 'PC')
+        if dt == 'MA':                                   # 수리신청
+            did = execute(
+                "INSERT INTO reqgen_draft (batch, doc_type, sheet, vsl_cd, vsl_nm, part_tp, kind_nm, "
+                "equipment, subj, line_cnt, exp_cd, header_json, lines_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (batch, 'MA', s['sheet'], vsl_cd, vsl_nm, None, '수리', s['equipment'],
+                 s['subj'], len(lines), None,
+                 json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False)))
+        else:                                            # 구매청구
+            did = execute(
+                "INSERT INTO reqgen_draft (batch, doc_type, sheet, vsl_cd, vsl_nm, part_tp, kind_nm, "
+                "equipment, subj, line_cnt, exp_cd, header_json, lines_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (batch, 'PC', s['sheet'], vsl_cd, vsl_nm, h['PART_TP'], h['PART_TP_NM'], h['CATE_NM'],
+                 h['SUBJ'], len(lines), (lines[0]['EXP_CD'] if lines else None),
+                 json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False)))
+        created.append({'id': did, 'sheet': s['sheet'], 'doc_type': dt, 'lines': len(lines)})
     return jsonify({'batch': batch, 'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd,
                     'count': len(created), 'drafts': created}), 201
 
@@ -7085,6 +7145,12 @@ def api_reqgen_approve_all():
     voyage = (d.get('voyage') or '').strip()
     port = (d.get('port') or '').strip().upper()
     req_dt = (d.get('req_dt') or '').strip().replace('-', '')
+    # 수리신청 공통 박스
+    cause = (d.get('cause') or '').strip()
+    inspection = (d.get('inspection') or '').strip()
+    stock_sel = (d.get('stock') or 'service').strip()
+    stock_txt = ('Owner Supply' if stock_sel == 'owner'
+                 else 'N/A, Relevant Spare parts & kits to be supplied by service company.')
     missing = [k for k, v in (('Voyage', voyage), ('Port', port), ('Date', req_dt)) if not v]
     if missing:
         return jsonify({'error': f"필수입력: {', '.join(missing)}", 'field': missing[0].lower()}), 400
@@ -7093,16 +7159,25 @@ def api_reqgen_approve_all():
     rows = query("SELECT * FROM reqgen_draft WHERE status='pending'")
     if not rows:
         return jsonify({'error': '대기(pending) 카드 없음'}), 400
+    repair_rows = [r for r in rows if r['doc_type'] == 'MA']
+    if repair_rows and not (cause and inspection):
+        return jsonify({'error': '수리신청 카드가 있어 Cause/Inspection 입력 필요',
+                        'field': 'cause' if not cause else 'inspection'}), 400
     user = session.get('username') or 'web'
     n = 0
     for row in rows:
         if not row['header_json']:
             continue
         header = json.loads(row['header_json'])
-        header.update({'REQ_VOY': voyage, 'PHR_VOY': voyage,
-                       'REQ_PORT': port, 'PHR_PORT': port,
-                       'REQ_PORT_NM': None, 'PHR_PORT_NM': None,   # 러너가 코드→명 채움
-                       'REQ_DT': req_dt, 'PHR_DT': req_dt})
+        if row['doc_type'] == 'MA':                  # 수리신청 — APP_* + 박스(러너가 SUBJ·포트명 완성)
+            header.update({'APP_VOY': voyage, 'APP_PORT_CD': port, 'APP_PORT_NM': None,
+                           'APP_DT': req_dt, 'REQ_CAU': cause, 'REQ_INS': inspection,
+                           'REQ_STK': stock_txt})
+        else:                                        # 구매청구 — REQ_*/PHR_*
+            header.update({'REQ_VOY': voyage, 'PHR_VOY': voyage,
+                           'REQ_PORT': port, 'PHR_PORT': port,
+                           'REQ_PORT_NM': None, 'PHR_PORT_NM': None,
+                           'REQ_DT': req_dt, 'PHR_DT': req_dt})
         rc = execute_rc("UPDATE reqgen_draft SET status='approved', header_json=?, voyage=?, port=?, "
                         "req_dt=?, decided_at=datetime('now','localtime'), decided_by=? "
                         "WHERE id=? AND status='pending'",
@@ -7156,7 +7231,7 @@ def api_reqgen_clear_all():
 @api_key_required
 def api_ext_reqgen_approved():
     """맥 러너가 저장할 approved 건 → status='saving' 락(조건부)."""
-    cols = "id, sheet, vsl_cd, vsl_nm, part_tp, header_json, lines_json"
+    cols = "id, doc_type, sheet, vsl_cd, vsl_nm, part_tp, header_json, lines_json"
     if request.args.get('peek'):
         rows = query(f"SELECT {cols} FROM reqgen_draft WHERE status='approved' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
