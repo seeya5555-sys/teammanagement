@@ -260,12 +260,22 @@ function renderSubTabs() {
     }
   }
 
-  bar.append(subtabEl('all',    '전체',   openCnt + doneCnt, S.activeSubTab === 'all'));
+  // '전체'·'요약' 서브탭은 부모(전체) 탭에서만 노출. 각 감독 탭에서는 진행중/완료만(관리자 포함 숨김).
+  const showAllSummary = (S.activeTab === 'all');
+  // 감독 탭으로 들어왔는데 숨겨질 서브탭('전체'/'요약')에 있었으면 '진행중'으로 보정(빈 화면 방지).
+  if (!showAllSummary && (S.activeSubTab === 'all' || S.activeSubTab === 'summary')) {
+    S.activeSubTab = 'open';
+    try { localStorage.setItem('trmt_subtab', 'open'); } catch (_) {}
+  }
+  if (showAllSummary) {
+    bar.append(subtabEl('all',  '전체',   openCnt + doneCnt, S.activeSubTab === 'all'));
+  }
   bar.append(subtabEl('open',   '진행중', openCnt, S.activeSubTab === 'open'));
   bar.append(subtabEl('closed', '완료',   doneCnt, S.activeSubTab === 'closed'));
-  const scopeKey = (S.activeTab === 'all') ? 'all' : String(S.activeTab);
-  const sumCnt = S.summaryCounts[scopeKey];
-  bar.append(subtabEl('summary', '요약', (sumCnt === undefined ? null : sumCnt), S.activeSubTab === 'summary'));
+  if (showAllSummary) {
+    const sumCnt = S.summaryCounts['all'];
+    bar.append(subtabEl('summary', '요약', (sumCnt === undefined ? null : sumCnt), S.activeSubTab === 'summary'));
+  }
 }
 
 function subtabEl(id, label, count, active) {
