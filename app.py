@@ -7143,6 +7143,14 @@ def api_reqgen_clear_decided():
     return jsonify({'ok': True, 'deleted': n})
 
 
+@app.route('/api/reqgen/drafts/all', methods=['DELETE'])
+@admin_required
+def api_reqgen_clear_all():
+    """전체 카드 삭제 — TRMT 카드 목록만 비움(SVMS에 저장된 청구서는 영향 없음)."""
+    n = execute_rc("DELETE FROM reqgen_draft")
+    return jsonify({'ok': True, 'deleted': n})
+
+
 # ---- ext (맥 러너: SVMS DRAFT 저장 실행) ----
 @app.route('/api/ext/reqgen/approved')
 @api_key_required

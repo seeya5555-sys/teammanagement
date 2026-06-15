@@ -64,6 +64,7 @@
   <div style="margin-left:auto;display:flex;gap:8px">
     <button class="rg-b rs" id="rg-reload">🔄 새로고침</button>
     <button class="rg-b del" id="rg-clear">🗑 처리완료 비우기</button>
+    <button class="rg-b del" id="rg-clearall">🗑 전체 삭제</button>
   </div>
 </div>
 <div class="rg-note">
@@ -227,6 +228,10 @@
   $('#rg-clear').addEventListener('click',async()=>{
     if(!confirm('처리완료(saved/failed) 카드를 비울까요?')) return;
     try{ await api('DELETE','/api/reqgen/drafts/decided'); await load(); }catch(e){ alert(e.message); }
+  });
+  $('#rg-clearall').addEventListener('click',async()=>{
+    if(!confirm('전체 카드를 삭제할까요? (TRMT 목록만 비움 — SVMS에 저장된 청구서는 그대로)')) return;
+    try{ await api('DELETE','/api/reqgen/drafts/all'); await load(); }catch(e){ alert(e.message); }
   });
 
   load();
