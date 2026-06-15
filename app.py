@@ -6636,6 +6636,7 @@ AUTOMATION_TASKS = {
     'soa_g3':   'SOA 실버 G3 (PCBJ·PCBS·PCGV·PCMC)',
     'soa_skrt': 'SOA 장금 (CPPS·INPS·KWPS·SAPS) +출금상신',
     'jeonja':   '전자결재 자동상신',
+    'fundreq':  '비용청구(Fund Request) 자동상신 — 장금·Technical·Submitted',
     'soa_resend': '리젝 통보메일 재발송 (실패분)',
     'aor_prep':   'AOR(Technical) prep — Submitted AOR 카드화 (/aor 큐 적재)',
     'aor_submit': 'AOR 상신 — 승인된 건 SVMS 제출 (approve 시 자동큐)',

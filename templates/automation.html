@@ -62,6 +62,9 @@
   <div class="au-sec">전자결재</div>
   <div id="au-jeonja"></div>
 
+  <div class="au-sec">비용청구 (Fund Request · 장금 Technical)</div>
+  <div id="au-fundreq"></div>
+
   <div class="au-sec">AOR (Technical)</div>
   <div id="au-aor"></div>
 
@@ -138,6 +141,7 @@
     $('#au-master-sub').textContent=ENABLED?'— 전체 자동화 ON. 버튼이 작동합니다.':'— 킬스위치 ON. 모든 자동화 정지중.';
     $('#au-soa').innerHTML=SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
+    $('#au-fundreq').innerHTML=row('fundreq',{money:true});
     $('#au-aor').innerHTML=row('aor_prep',{prep:true});
     renderLog();
     document.querySelectorAll('.au-b').forEach(btn=>btn.onclick=onRun);
@@ -166,7 +170,7 @@
     const task=e.target.dataset.task, mode=e.target.dataset.mode;
     const nm=TASKS[task]||task;
     const confirmMsg={
-      live: `[${nm}]\n자동 ${task==='jeonja'?'상신':'승인'}을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`,
+      live: `[${nm}]\n자동 ${(task==='jeonja'||task==='fundreq')?'상신':'승인'}을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`,
       reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
     }[mode];
