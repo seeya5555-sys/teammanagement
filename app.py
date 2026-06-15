@@ -6916,13 +6916,14 @@ def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm):
     name = ws.title
     part_tp = '1' if name.upper().startswith('ST') else '0'
     part_tp_nm = 'Consumable' if part_tp == '1' else 'Spare Part'
+    vnm = _reqgen_cell(ws, 'C4') or vsl_nm        # 시트 VESSEL(C4) 우선, INDEX G2 fallback
     equipment = _reqgen_cell(ws, 'C5')
     maker = _reqgen_cell(ws, 'C6')
     type_nm = _reqgen_cell(ws, 'G6')
     subject = _reqgen_cell(ws, 'C7')
     header = {
         'PART_TP': part_tp, 'PART_TP_NM': part_tp_nm,
-        'VSL_CD': vsl_cd, 'VSL_NM': vsl_nm,
+        'VSL_CD': vsl_cd, 'VSL_NM': vnm,
         'CATE_NM': equipment, 'EQ_NM': equipment,
         'MAKER_NM': maker, 'TYPE_NM': type_nm,
         'SUBJ': (f"[DOCK] {subject}" if subject else '[DOCK]'),
@@ -6961,6 +6962,7 @@ def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm):
 def _reqgen_parse_repair_sheet(ws, vsl_cd, vsl_nm):
     """R 시트(SHORE REPAIR) → 수리신청 draft. 라인그리드 없이 텍스트(REQ_DTL)."""
     name = ws.title
+    vnm = _reqgen_cell(ws, 'C4') or vsl_nm        # 시트 VESSEL(C4) 우선
     equipment = _reqgen_cell(ws, 'C5')
     maker = _reqgen_cell(ws, 'C6')
     type_nm = _reqgen_cell(ws, 'G6')
@@ -6987,7 +6989,7 @@ def _reqgen_parse_repair_sheet(ws, vsl_cd, vsl_nm):
     req_dtl = ((f"{subject}. Please quote for the following job scope:\n\n" if subject else '')
                + "\n".join(lt))
     header = {
-        'doc_type': 'MA', 'sheet': name, 'VSL_CD': vsl_cd, 'VSL_NM': vsl_nm,
+        'doc_type': 'MA', 'sheet': name, 'VSL_CD': vsl_cd, 'VSL_NM': vnm,
         'CATE_NM': equipment, 'EQ_NM': equipment, 'MAKER_NM': maker, 'TYPE_NM': type_nm,
         'SUBJ_BASE': subject, 'REQ_DTL': req_dtl,
         'RSN_CD': 'P', 'DEPT_CD': 'E', 'DOCK_YN': 'Y', 'URG_YN': 'N', 'STATUS': 'N',
@@ -7050,7 +7052,7 @@ def api_reqgen_upload():
                 "INSERT INTO reqgen_draft (batch, doc_type, sheet, vsl_cd, vsl_nm, part_tp, kind_nm, "
                 "equipment, subj, line_cnt, exp_cd, header_json, lines_json) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (batch, 'MA', s['sheet'], vsl_cd, vsl_nm, None, '수리', s['equipment'],
+                (batch, 'MA', s['sheet'], vsl_cd, (h.get('VSL_NM') or vsl_nm), None, '수리', s['equipment'],
                  s['subj'], len(lines), None,
                  json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False)))
         else:                                            # 구매청구
@@ -7058,7 +7060,7 @@ def api_reqgen_upload():
                 "INSERT INTO reqgen_draft (batch, doc_type, sheet, vsl_cd, vsl_nm, part_tp, kind_nm, "
                 "equipment, subj, line_cnt, exp_cd, header_json, lines_json) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (batch, 'PC', s['sheet'], vsl_cd, vsl_nm, h['PART_TP'], h['PART_TP_NM'], h['CATE_NM'],
+                (batch, 'PC', s['sheet'], vsl_cd, (h.get('VSL_NM') or vsl_nm), h['PART_TP'], h['PART_TP_NM'], h['CATE_NM'],
                  h['SUBJ'], len(lines), (lines[0]['EXP_CD'] if lines else None),
                  json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False)))
         created.append({'id': did, 'sheet': s['sheet'], 'doc_type': dt, 'lines': len(lines)})
