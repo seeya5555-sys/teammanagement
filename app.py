@@ -7076,6 +7076,44 @@ def api_reqgen_approve(did):
                     'message': '승인됨 — 맥 러너가 곧 SVMS DRAFT 저장(최대 1~2분)'})
 
 
+@app.route('/api/reqgen/approve-all', methods=['POST'])
+@admin_required
+def api_reqgen_approve_all():
+    """일괄 승인 — 공통 Voyage/Port/Date 를 모든 pending 카드 헤더에 반영 후 approved + 저장큐 1회.
+    Port명(REQ_PORT_NM)은 비워둠 → 맥 러너가 포트코드로 SVMS 포트마스터에서 자동 채움."""
+    d = request.get_json(silent=True) or {}
+    voyage = (d.get('voyage') or '').strip()
+    port = (d.get('port') or '').strip().upper()
+    req_dt = (d.get('req_dt') or '').strip().replace('-', '')
+    missing = [k for k, v in (('Voyage', voyage), ('Port', port), ('Date', req_dt)) if not v]
+    if missing:
+        return jsonify({'error': f"필수입력: {', '.join(missing)}", 'field': missing[0].lower()}), 400
+    if not _automation_enabled():
+        return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
+    rows = query("SELECT * FROM reqgen_draft WHERE status='pending'")
+    if not rows:
+        return jsonify({'error': '대기(pending) 카드 없음'}), 400
+    user = session.get('username') or 'web'
+    n = 0
+    for row in rows:
+        if not row['header_json']:
+            continue
+        header = json.loads(row['header_json'])
+        header.update({'REQ_VOY': voyage, 'PHR_VOY': voyage,
+                       'REQ_PORT': port, 'PHR_PORT': port,
+                       'REQ_PORT_NM': None, 'PHR_PORT_NM': None,   # 러너가 코드→명 채움
+                       'REQ_DT': req_dt, 'PHR_DT': req_dt})
+        rc = execute_rc("UPDATE reqgen_draft SET status='approved', header_json=?, voyage=?, port=?, "
+                        "req_dt=?, decided_at=datetime('now','localtime'), decided_by=? "
+                        "WHERE id=? AND status='pending'",
+                        (json.dumps(header, ensure_ascii=False), voyage, port, req_dt, user, row['id']))
+        if rc:
+            n += 1
+    rid = _queue_aor('reqgen_save', user)
+    return jsonify({'approved': n, 'save_run': rid,
+                    'message': f'{n}건 승인 — 맥 러너가 곧 SVMS 일괄 저장(최대 1~2분)'})
+
+
 @app.route('/api/reqgen/drafts/<int:did>/reset', methods=['POST'])
 @admin_required
 def api_reqgen_reset(did):

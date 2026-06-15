@@ -5,8 +5,7 @@
   .rg-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   .rg-count{color:#64748b;font-size:13px}
   .rg-note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px;max-width:960px}
-  .rg-up{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin-bottom:16px;max-width:960px}
-  .rg-up input[type=text]{border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:13px;width:120px}
+  .rg-up{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin-bottom:12px;max-width:960px}
   .rg-drop{flex:1;min-width:240px;display:flex;align-items:center;justify-content:center;gap:8px;
     border:2px dashed #cbd5e1;border-radius:10px;padding:14px 16px;background:#fff;color:#64748b;
     font-size:13px;cursor:pointer;transition:.15s;text-align:center}
@@ -14,9 +13,19 @@
   .rg-drop.drag{border-color:#16a34a;background:#f0fdf4;color:#15803d}
   .rg-drop b{color:#0f172a}
   .rg-drop .ic{font-size:18px}
+  .rg-up input[type=text]{border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:13px;width:120px}
+  /* 공통 Approval 바 */
+  .rg-bar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;
+    border-radius:12px;padding:12px 14px;margin-bottom:16px;max-width:960px}
+  .rg-bar label{font-size:11px;color:#475569;display:flex;flex-direction:column;gap:3px;font-weight:600}
+  .rg-bar input{border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:13px}
+  .rg-bar .v{width:110px}.rg-bar .p{width:110px}.rg-bar .d{width:130px}
+  .rg-bar .hint{font-size:11px;color:#64748b;font-weight:400}
+  .rg-pushall{background:#16a34a;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:700;font-size:14px;cursor:pointer}
+  .rg-pushall:disabled{opacity:.5;cursor:not-allowed}
   .rg-list{display:flex;flex-direction:column;gap:12px;max-width:960px}
   .rg-card{border:1px solid #e2e8f0;border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
-  .rg-card.is-busy{opacity:.55;pointer-events:none}
+  .rg-card.is-busy{opacity:.6;pointer-events:none}
   .rg-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:#f8fafc;border-bottom:1px solid #eef2f7}
   .rg-subj{font-weight:600;color:#0f172a;line-height:1.35}
   .rg-meta{font-size:12px;color:#64748b;margin-top:3px}
@@ -32,18 +41,14 @@
   .rg-body{padding:10px 14px;font-size:13px;color:#334155}
   .rg-kv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:8px}
   .rg-kv b{color:#0f172a}
-  .rg-lines{border:1px solid #eef2f7;border-radius:8px;max-height:220px;overflow:auto;font-size:12px}
+  .rg-lines{border:1px solid #eef2f7;border-radius:8px;max-height:200px;overflow:auto;font-size:12px}
   .rg-lines table{width:100%;border-collapse:collapse}
   .rg-lines th,.rg-lines td{padding:4px 8px;text-align:left;border-bottom:1px solid #f1f5f9;white-space:nowrap}
   .rg-lines th{background:#f8fafc;color:#64748b;position:sticky;top:0}
   .rg-lines td.desc{white-space:normal;min-width:200px}
   .rg-compo{background:#fcfcfd;color:#7c3aed;font-weight:600}
-  .rg-inputs{display:flex;gap:8px;flex-wrap:wrap;padding:8px 14px;background:#fafcff;border-top:1px solid #eef2f7}
-  .rg-inputs label{font-size:11px;color:#64748b;display:flex;flex-direction:column;gap:3px}
-  .rg-inputs input{border:1px solid #cbd5e1;border-radius:7px;padding:6px 9px;font-size:13px}
   .rg-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #eef2f7;flex-wrap:wrap;align-items:center}
   .rg-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
-  .rg-b.ap{background:#16a34a;color:#fff}
   .rg-b.rs{background:#e2e8f0;color:#334155}
   .rg-b.del{background:#fff;color:#94a3b8;border:1px solid #e2e8f0}
   .rg-decided{font-size:12px;color:#64748b}
@@ -63,8 +68,7 @@
 </div>
 <div class="rg-note">
   입거 requisition 엑셀 업로드 → <b>SPARE(S*)·STORE(ST*)</b> 시트가 시트당 1건씩 카드로 적재됨.
-  카드마다 <b>Voyage·Port·Date</b> 입력 후 <b>승인</b> → 맥 러너가 SVMS 구매청구(PKG_PC_REQ)에 <b>DRAFT 저장</b>(상신은 SVMS에서 직접).
-  수리신청(SHORE REPAIR / R*)은 별도.
+  아래 <b>공통 Voyage·Port·Date</b> 한 번 입력 → <b>[전체 승인]</b> 누르면 모든 대기 카드를 SVMS에 <b>일괄 DRAFT 저장</b>(상신은 SVMS에서 직접). Port명은 코드로 자동 매칭. 수리신청(R*)은 별도.
 </div>
 <div class="rg-up">
   <div class="rg-drop" id="rg-drop">
@@ -73,8 +77,15 @@
   </div>
   <input type="file" id="rg-file" accept=".xlsx,.xlsm" style="display:none">
   <input type="text" id="rg-vsl" placeholder="VSL_CD (예 SAPS)">
-  <button class="rg-b ap" id="rg-upload">⬆ 업로드·파싱</button>
+  <button class="rg-b" style="background:#3b82f6;color:#fff" id="rg-upload">⬆ 업로드·파싱</button>
   <span class="rg-res" id="rg-upmsg"></span>
+</div>
+<div class="rg-bar">
+  <label>Voyage<input class="v" id="bar-voyage" placeholder="2606A"></label>
+  <label>Port (코드)<input class="p" id="bar-port" placeholder="SGSIN"></label>
+  <label>Date<input class="d" id="bar-date" placeholder="YYYYMMDD"></label>
+  <button class="rg-pushall" id="rg-pushall">✅ 전체 승인 (SVMS 일괄저장)</button>
+  <span class="hint" id="bar-hint">대기 카드 전체에 공통 적용</span>
 </div>
 <div class="rg-list" id="rg-list"><div class="rg-empty">불러오는 중…</div></div>
 {% endblock %}
@@ -96,8 +107,7 @@
   }
 
   function linesTable(lines){
-    let body='';
-    let lastCompo=null;
+    let body='', lastCompo=null;
     for(const l of lines){
       if(l.COMPO_NM && l.COMPO_NM!==lastCompo){
         lastCompo=l.COMPO_NM;
@@ -114,31 +124,18 @@
   function card(d){
     const lines=JSON.parse(d.lines_json||'[]');
     const isStore=d.part_tp==='1';
-    const pend=d.status==='pending';
     const busy=(d.status==='saving');
-    let acts='';
-    if(pend){
-      acts=`<button class="rg-b ap" data-act="approve">✅ 승인 (SVMS 저장)</button>`
-          +`<button class="rg-b del" data-act="delete">🗑 삭제</button>`
-          +`<span class="rg-err" data-err></span>`;
-    }else if(d.status==='approved'){
-      acts=`<span class="rg-decided">승인됨 — 맥 러너 대기/실행중</span>`
-          +`<button class="rg-b rs" data-act="reset">↩ 승인취소</button>`;
-    }else if(d.status==='saved'){
-      acts=`<span class="rg-decided">✅ SVMS 저장됨 ${d.req_no?('· REQ_NO '+esc(d.req_no)):''}</span>`
-          +`<button class="rg-b del" data-act="delete">🗑 삭제</button>`;
-    }else if(d.status==='failed'){
-      acts=`<span class="rg-err">🚨 저장 실패 — 재검토</span>`
-          +`<button class="rg-b rs" data-act="reset">↩ 재시도(pending)</button>`
-          +`<button class="rg-b del" data-act="delete">🗑 삭제</button>`;
-    }else{ acts=`<span class="rg-decided">${esc(d.status)}</span>`; }
+    let acts=`<button class="rg-b del" data-act="delete">🗑 삭제</button>`;
+    if(d.status==='approved') acts=`<span class="rg-decided">승인됨 — 맥 러너 대기/실행중</span>`
+        +`<button class="rg-b rs" data-act="reset">↩ 취소</button>`;
+    else if(d.status==='saving') acts=`<span class="rg-decided">⏳ SVMS 저장중…</span>`;
+    else if(d.status==='saved') acts=`<span class="rg-decided">✅ SVMS 저장됨 ${d.req_no?('· REQ_NO '+esc(d.req_no)):''}</span>`
+        +`<button class="rg-b del" data-act="delete">🗑 삭제</button>`;
+    else if(d.status==='failed') acts=`<span class="rg-err">🚨 저장 실패: ${esc(d.result||'')}</span>`
+        +`<button class="rg-b rs" data-act="reset">↩ 재시도</button><button class="rg-b del" data-act="delete">🗑 삭제</button>`;
 
-    const inputs = pend ? `<div class="rg-inputs">
-        <label>Voyage<input data-f="voyage" value="${esc(d.voyage)}" placeholder="2606A"></label>
-        <label>Port(코드)<input data-f="port" value="${esc(d.port)}" placeholder="SGSIN"></label>
-        <label>Port명<input data-f="port_nm" value="${esc(d.port_nm)}" placeholder="SINGAPORE"></label>
-        <label>Date<input data-f="req_dt" value="${esc(d.req_dt)}" placeholder="YYYYMMDD"></label>
-      </div>` : '';
+    const vpd = (d.voyage||d.port||d.req_dt)
+      ? `<span>Voy: <b>${esc(d.voyage)}</b></span><span>Port: <b>${esc(d.port)}</b></span><span>Date: <b>${esc(d.req_dt)}</b></span>` : '';
 
     return `<div class="rg-card ${busy?'is-busy':''}" data-id="${d.id}">
       <div class="rg-top">
@@ -152,12 +149,10 @@
         </div>
       </div>
       <div class="rg-body">
-        <div class="rg-kv"><span>장비(Cate/Eq): <b>${esc(d.equipment)}</b></span>
-          <span>Dept: <b>Engine</b></span><span>Exp: <b>${esc(d.exp_cd)}</b></span>
-          <span>Dock: <b>Y</b></span></div>
+        <div class="rg-kv"><span>장비: <b>${esc(d.equipment)}</b></span><span>Dept: <b>Engine</b></span>
+          <span>Exp: <b>${esc(d.exp_cd)}</b></span><span>Dock: <b>Y</b></span>${vpd}</div>
         ${linesTable(lines)}
       </div>
-      ${inputs}
       <div class="rg-acts">${acts}</div>
     </div>`;
   }
@@ -167,6 +162,7 @@
       const j=await api('GET','/api/reqgen/drafts');
       const ds=j.drafts||[];
       countEl.textContent=`대기 ${j.pending} · 전체 ${ds.length}` + (j.enabled?'':' · ⚠️자동화 OFF');
+      $('#rg-pushall').disabled = !(j.pending>0) || !j.enabled;
       list.innerHTML = ds.length ? ds.map(card).join('') : '<div class="rg-empty">카드 없음 — 엑셀을 업로드하세요.</div>';
     }catch(e){ list.innerHTML=`<div class="rg-err" style="padding:20px">${esc(e.message)}</div>`; }
   }
@@ -180,10 +176,8 @@
   }
   drop.addEventListener('click',()=>fileInput.click());
   fileInput.addEventListener('change',showName);
-  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{
-    e.preventDefault();e.stopPropagation();drop.classList.add('drag');}));
-  ['dragleave','dragend'].forEach(ev=>drop.addEventListener(ev,e=>{
-    e.preventDefault();e.stopPropagation();drop.classList.remove('drag');}));
+  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();drop.classList.add('drag');}));
+  ['dragleave','dragend'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();drop.classList.remove('drag');}));
   drop.addEventListener('drop',e=>{
     e.preventDefault();e.stopPropagation();drop.classList.remove('drag');
     const f=e.dataTransfer.files&&e.dataTransfer.files[0];
@@ -192,8 +186,7 @@
 
   // 업로드
   $('#rg-upload').addEventListener('click',async()=>{
-    const f=$('#rg-file').files[0];
-    const msg=$('#rg-upmsg');
+    const f=fileInput.files[0], msg=$('#rg-upmsg');
     if(!f){ msg.textContent='파일을 선택하세요'; return; }
     const fd=new FormData(); fd.append('file',f);
     const v=$('#rg-vsl').value.trim(); if(v) fd.append('vsl_cd',v);
@@ -201,41 +194,34 @@
     try{
       const j=await api('POST','/api/reqgen/upload',fd,true);
       msg.textContent=`✅ ${j.count}건 적재 (${esc(j.vsl_nm||'')} ${esc(j.vsl_cd||'')})`;
-      $('#rg-file').value=''; showName();
-      await load();
+      fileInput.value=''; showName(); await load();
     }catch(e){ msg.textContent='🚨 '+e.message; }
   });
 
-  // 카드 액션 (위임)
-  list.addEventListener('click',async(ev)=>{
-    const btn=ev.target.closest('button[data-act]'); if(!btn) return;
-    const cardEl=btn.closest('.rg-card'); const id=cardEl.dataset.id;
-    const act=btn.dataset.act;
-    const errEl=cardEl.querySelector('[data-err]'); if(errEl) errEl.textContent='';
+  // 전체 승인
+  $('#rg-pushall').addEventListener('click',async()=>{
+    const voyage=$('#bar-voyage').value.trim(), port=$('#bar-port').value.trim(), req_dt=$('#bar-date').value.trim();
+    const miss=[['Voyage',voyage],['Port',port],['Date',req_dt]].filter(x=>!x[1]).map(x=>x[0]);
+    if(miss.length){ $('#bar-hint').textContent='🚨 입력 필요: '+miss.join(', '); return; }
+    if(!confirm(`대기 카드 전체를 Voyage ${voyage} / Port ${port} / Date ${req_dt} 로 SVMS에 일괄 저장할까요?`)) return;
+    $('#rg-pushall').disabled=true; $('#bar-hint').textContent='승인 중…';
     try{
-      if(act==='approve'){
-        const get=f=>{const el=cardEl.querySelector(`input[data-f="${f}"]`);return el?el.value.trim():'';};
-        const body={voyage:get('voyage'),port:get('port'),port_nm:get('port_nm'),req_dt:get('req_dt')};
-        await api('PATCH',`/api/reqgen/drafts/${id}`,body);
-        await api('POST',`/api/reqgen/drafts/${id}/approve`,body);
-      }else if(act==='reset'){
-        await api('POST',`/api/reqgen/drafts/${id}/reset`);
-      }else if(act==='delete'){
-        if(!confirm('이 카드를 삭제할까요?')) return;
-        await api('DELETE',`/api/reqgen/drafts/${id}`);
-      }
+      const j=await api('POST','/api/reqgen/approve-all',{voyage,port,req_dt});
+      $('#bar-hint').textContent=`✅ ${j.approved}건 승인 — 맥 러너 저장중(1~2분)`;
       await load();
-    }catch(e){ if(errEl) errEl.textContent='🚨 '+e.message; else alert(e.message); }
+    }catch(e){ $('#bar-hint').textContent='🚨 '+e.message; $('#rg-pushall').disabled=false; }
   });
 
-  // 입력값 자동저장(blur) — pending 카드
-  list.addEventListener('blur',async(ev)=>{
-    const inp=ev.target.closest('input[data-f]'); if(!inp) return;
-    const cardEl=inp.closest('.rg-card'); const id=cardEl.dataset.id;
-    const get=f=>{const el=cardEl.querySelector(`input[data-f="${f}"]`);return el?el.value.trim():'';};
-    try{ await api('PATCH',`/api/reqgen/drafts/${id}`,
-      {voyage:get('voyage'),port:get('port'),port_nm:get('port_nm'),req_dt:get('req_dt')}); }catch(e){}
-  },true);
+  // 카드 액션 (삭제/취소만)
+  list.addEventListener('click',async(ev)=>{
+    const btn=ev.target.closest('button[data-act]'); if(!btn) return;
+    const id=btn.closest('.rg-card').dataset.id, act=btn.dataset.act;
+    try{
+      if(act==='delete'){ if(!confirm('이 카드를 삭제할까요?')) return; await api('DELETE',`/api/reqgen/drafts/${id}`); }
+      else if(act==='reset'){ await api('POST',`/api/reqgen/drafts/${id}/reset`); }
+      await load();
+    }catch(e){ alert(e.message); }
+  });
 
   $('#rg-reload').addEventListener('click',load);
   $('#rg-clear').addEventListener('click',async()=>{
@@ -244,7 +230,7 @@
   });
 
   load();
-  setInterval(()=>{ if(document.querySelector('.rg-card .st-saving,.rg-card .st-approved')) load(); }, 8000);
+  setInterval(()=>{ if(document.querySelector('.st-saving,.st-approved')) load(); }, 8000);
 })();
 </script>
 {% endblock %}
