@@ -396,6 +396,7 @@ def init_db(drop=False):
                 port        TEXT,                              -- 항구코드
                 port_nm     TEXT,
                 req_dt      TEXT,                              -- YYYYMMDD
+                stock       TEXT DEFAULT 'service',            -- 수리 Stock of Spare: service/owner (카드별)
                 status      TEXT NOT NULL DEFAULT 'pending',   -- pending/approved/saving/saved/failed
                 req_no      TEXT,                              -- SVMS 저장 후 채번된 REQ_NO
                 result      TEXT,
@@ -410,6 +411,8 @@ def init_db(drop=False):
             cols = [r[1] for r in conn.execute("PRAGMA table_info(reqgen_draft)").fetchall()]
             if 'doc_type' not in cols:
                 conn.execute("ALTER TABLE reqgen_draft ADD COLUMN doc_type TEXT NOT NULL DEFAULT 'PC'")
+            if 'stock' not in cols:
+                conn.execute("ALTER TABLE reqgen_draft ADD COLUMN stock TEXT DEFAULT 'service'")
         except Exception:
             pass
 
@@ -7080,20 +7083,18 @@ def api_reqgen_list():
 @app.route('/api/reqgen/drafts/<int:did>', methods=['PATCH'])
 @admin_required
 def api_reqgen_patch(did):
-    """카드 입력값(Voyage/Port/Date) 저장. pending 상태만."""
+    """카드 개별 설정 저장(수리 Stock of Spare 등). pending 상태만."""
     row = query('SELECT * FROM reqgen_draft WHERE id=?', (did,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
     if row['status'] != 'pending':
         return jsonify({'error': 'pending 상태만 수정 가능', 'status': row['status']}), 409
     d = request.get_json(silent=True) or {}
-    voyage = (d.get('voyage') or '').strip() or None
-    port = (d.get('port') or '').strip().upper() or None
-    port_nm = (d.get('port_nm') or '').strip() or None
-    req_dt = (d.get('req_dt') or '').strip().replace('-', '') or None
-    execute("UPDATE reqgen_draft SET voyage=?, port=?, port_nm=?, req_dt=? WHERE id=?",
-            (voyage, port, port_nm, req_dt, did))
-    return jsonify({'id': did, 'voyage': voyage, 'port': port, 'port_nm': port_nm, 'req_dt': req_dt})
+    if 'stock' in d:
+        stock = 'owner' if (d.get('stock') == 'owner') else 'service'
+        execute("UPDATE reqgen_draft SET stock=? WHERE id=?", (stock, did))
+        return jsonify({'id': did, 'stock': stock})
+    return jsonify({'id': did, 'noop': True})
 
 
 @app.route('/api/reqgen/drafts/<int:did>/approve', methods=['POST'])
@@ -7145,12 +7146,12 @@ def api_reqgen_approve_all():
     voyage = (d.get('voyage') or '').strip()
     port = (d.get('port') or '').strip().upper()
     req_dt = (d.get('req_dt') or '').strip().replace('-', '')
-    # 수리신청 공통 박스
+    # 수리신청 공통 박스(Cause/Inspection은 선박공통, Stock은 카드별)
     cause = (d.get('cause') or '').strip()
     inspection = (d.get('inspection') or '').strip()
-    stock_sel = (d.get('stock') or 'service').strip()
-    stock_txt = ('Owner Supply' if stock_sel == 'owner'
-                 else 'N/A, Relevant Spare parts & kits to be supplied by service company.')
+    def _stock_txt(sel):
+        return ('Owner Supply' if sel == 'owner'
+                else 'N/A, Relevant Spare parts & kits to be supplied by service company.')
     missing = [k for k, v in (('Voyage', voyage), ('Port', port), ('Date', req_dt)) if not v]
     if missing:
         return jsonify({'error': f"필수입력: {', '.join(missing)}", 'field': missing[0].lower()}), 400
@@ -7169,10 +7170,10 @@ def api_reqgen_approve_all():
         if not row['header_json']:
             continue
         header = json.loads(row['header_json'])
-        if row['doc_type'] == 'MA':                  # 수리신청 — APP_* + 박스(러너가 SUBJ·포트명 완성)
+        if row['doc_type'] == 'MA':                  # 수리신청 — APP_* + 박스(Stock은 카드별)
             header.update({'APP_VOY': voyage, 'APP_PORT_CD': port, 'APP_PORT_NM': None,
                            'APP_DT': req_dt, 'REQ_CAU': cause, 'REQ_INS': inspection,
-                           'REQ_STK': stock_txt})
+                           'REQ_STK': _stock_txt(row['stock'])})
         else:                                        # 구매청구 — REQ_*/PHR_*
             header.update({'REQ_VOY': voyage, 'PHR_VOY': voyage,
                            'REQ_PORT': port, 'PHR_PORT': port,

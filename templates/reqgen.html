@@ -99,13 +99,7 @@
       <label style="flex:1;min-width:280px">Ship's Inspection Result
         <textarea id="bar-inspection" rows="4" style="width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:12px">3rd Special Survey : Dry dock service scope</textarea></label>
     </div>
-    <div style="margin-top:8px">
-      <label style="font-size:12px;color:#475569;font-weight:600">Stock of Spare:
-        <select id="bar-stock" style="border:1px solid #cbd5e1;border-radius:8px;padding:6px 10px;font-size:12px;margin-left:6px">
-          <option value="service">서비스사 공급 (N/A, supplied by service company)</option>
-          <option value="owner">선주 공급 (Owner Supply)</option>
-        </select></label>
-    </div>
+    <div style="margin-top:6px;font-size:11px;color:#64748b">Stock of Spare는 수리 카드마다 개별 선택(아래 각 카드).</div>
   </details>
 </div>
 <div class="rg-list" id="rg-list"><div class="rg-empty">불러오는 중…</div></div>
@@ -183,6 +177,12 @@
       <div class="rg-body">
         <div class="rg-kv"><span>장비: <b>${esc(d.equipment)}</b></span><span>Dept: <b>Engine</b></span>
           ${isRepair?'<span>Reason: <b>PMS</b></span>':`<span>Exp: <b>${esc(d.exp_cd)}</b></span>`}<span>Dock: <b>Y</b></span>${vpd}</div>
+        ${isRepair?`<div style="margin-bottom:8px;font-size:12px"><b>Stock of Spare:</b>
+          ${d.status==='pending'
+            ? `<select data-stock style="border:1px solid #cbd5e1;border-radius:6px;padding:4px 8px;font-size:12px;margin-left:6px">
+                 <option value="service" ${d.stock!=='owner'?'selected':''}>서비스사 공급 (N/A, supplied by service company)</option>
+                 <option value="owner" ${d.stock==='owner'?'selected':''}>선주 공급 (Owner Supply)</option></select>`
+            : `<b>${d.stock==='owner'?'Owner Supply':'서비스사 공급'}</b>`}</div>`:''}
         ${isRepair?repairScope(lines):linesTable(lines)}
       </div>
       <div class="rg-acts">${acts}</div>
@@ -233,13 +233,13 @@
   // 전체 승인
   $('#rg-pushall').addEventListener('click',async()=>{
     const voyage=$('#bar-voyage').value.trim(), port=$('#bar-port').value.trim(), req_dt=$('#bar-date').value.trim();
-    const cause=$('#bar-cause').value.trim(), inspection=$('#bar-inspection').value.trim(), stock=$('#bar-stock').value;
+    const cause=$('#bar-cause').value.trim(), inspection=$('#bar-inspection').value.trim();
     const miss=[['Voyage',voyage],['Port',port],['Date',req_dt]].filter(x=>!x[1]).map(x=>x[0]);
     if(miss.length){ $('#bar-hint').textContent='🚨 입력 필요: '+miss.join(', '); return; }
     if(!confirm(`대기 카드 전체를 Voyage ${voyage} / Port ${port} / Date ${req_dt} 로 SVMS에 일괄 저장할까요?`)) return;
     $('#rg-pushall').disabled=true; $('#bar-hint').textContent='승인 중…';
     try{
-      const j=await api('POST','/api/reqgen/approve-all',{voyage,port,req_dt,cause,inspection,stock});
+      const j=await api('POST','/api/reqgen/approve-all',{voyage,port,req_dt,cause,inspection});
       $('#bar-hint').textContent=`✅ ${j.approved}건 승인 — 맥 러너 저장중(1~2분)`;
       await load();
     }catch(e){ $('#bar-hint').textContent='🚨 '+e.message; $('#rg-pushall').disabled=false; }
@@ -254,6 +254,13 @@
       else if(act==='reset'){ await api('POST',`/api/reqgen/drafts/${id}/reset`); }
       await load();
     }catch(e){ alert(e.message); }
+  });
+
+  // 수리 카드별 Stock of Spare 선택 저장
+  list.addEventListener('change',async(ev)=>{
+    const sel=ev.target.closest('select[data-stock]'); if(!sel) return;
+    const id=sel.closest('.rg-card').dataset.id;
+    try{ await api('PATCH',`/api/reqgen/drafts/${id}`,{stock:sel.value}); }catch(e){ alert(e.message); }
   });
 
   $('#rg-reload').addEventListener('click',load);
