@@ -373,6 +373,39 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_fundreq_draft_status ON fundreq_draft(status)")
 
+        # reqgen: 입거 requisition 엑셀 → SVMS 구매청구(PKG_PC_REQ.SP_SET_REQ_INFO) DRAFT 자동작성 큐
+        #   사람이 /reqgen 탭서 엑셀 업로드 → 시트별 카드 적재(파싱) → Voyage/Port/Date 입력+승인 →
+        #   맥 러너(reqgen_save)가 SVMS NEW→SP_SET_REQ_INFO 로 DRAFT 저장(상신은 사람이 SVMS서 직접)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS reqgen_draft (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch       TEXT,                              -- 업로드 묶음 id
+                sheet       TEXT NOT NULL,                     -- S1/ST1 등 (dedup: batch+sheet)
+                vsl_cd      TEXT,
+                vsl_nm      TEXT,
+                part_tp     TEXT,                              -- 0=Spare Part / 1=Consumable(Store)
+                kind_nm     TEXT,
+                equipment   TEXT,                              -- CATE_NM=EQ_NM (자유텍스트)
+                subj        TEXT,                              -- [DOCK] ...
+                line_cnt    INTEGER,
+                exp_cd      TEXT,                              -- 대표 Exp code(첫 라인)
+                header_json TEXT,                              -- SP_SET_REQ_INFO PARAM(헤더)
+                lines_json  TEXT,                              -- CURSOR.P_IC 라인 배열
+                voyage      TEXT,                              -- 카드 입력(승인 전 필수)
+                port        TEXT,                              -- 항구코드
+                port_nm     TEXT,
+                req_dt      TEXT,                              -- YYYYMMDD
+                status      TEXT NOT NULL DEFAULT 'pending',   -- pending/approved/saving/saved/failed
+                req_no      TEXT,                              -- SVMS 저장 후 채번된 REQ_NO
+                result      TEXT,
+                decided_at  TEXT,
+                decided_by  TEXT,
+                done_at     TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reqgen_draft_status ON reqgen_draft(status)")
+
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
                 conn.executescript(f.read())
@@ -6834,6 +6867,271 @@ def api_ext_fundreq_reject_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
+# ============================================================
+# reqgen — 입거 requisition 엑셀 → SVMS 구매청구 DRAFT 자동작성
+#   /reqgen(admin): 엑셀 업로드 → S/ST 시트 파싱 → 카드 적재 → Voyage/Port/Date 입력+승인 →
+#   automation_run(reqgen_save) 큐 → 맥 러너가 SVMS NEW→SP_SET_REQ_INFO DRAFT 저장.
+#   매핑 근거: memory/svms-api-reqgen-save.md (F12 실캡처). 상신은 사람이 SVMS서 직접.
+# ============================================================
+_REQGEN_UNIT_MAP = {'PCS': 'EA'}
+_REQGEN_EXP_RULES = [
+    ('090301', ('MAIN ENGINE', 'M/E')),
+    ('090302', ('G/E', 'GENERATOR', 'AUX ENGINE', 'A/E')),
+    ('090303', ('BOILER',)),
+    ('090304', ('CRANE', 'VALVE', 'WINCH', 'DECK')),
+]
+
+
+def _reqgen_infer_exp(part_tp, equipment, subject):
+    if part_tp == '1':
+        return '090403'                       # STORE → 정비용 선용품 고정
+    hay = f"{equipment or ''} {subject or ''}".upper()
+    for code, kws in _REQGEN_EXP_RULES:
+        if any(k in hay for k in kws):
+            return code
+    return '090305'                           # 기타(애매)
+
+
+def _reqgen_cell(ws, coord):
+    v = ws[coord].value
+    if v is None:
+        return None
+    if isinstance(v, str):
+        v = v.strip()
+        return v or None
+    return v
+
+
+def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm):
+    name = ws.title
+    part_tp = '1' if name.upper().startswith('ST') else '0'
+    part_tp_nm = 'Consumable' if part_tp == '1' else 'Spare Part'
+    equipment = _reqgen_cell(ws, 'C5')
+    maker = _reqgen_cell(ws, 'C6')
+    type_nm = _reqgen_cell(ws, 'G6')
+    subject = _reqgen_cell(ws, 'C7')
+    header = {
+        'PART_TP': part_tp, 'PART_TP_NM': part_tp_nm,
+        'VSL_CD': vsl_cd, 'VSL_NM': vsl_nm,
+        'CATE_NM': equipment, 'EQ_NM': equipment,
+        'MAKER_NM': maker, 'TYPE_NM': type_nm,
+        'SUBJ': (f"[DOCK] {subject}" if subject else '[DOCK]'),
+        'DOCK_YN': 'Y', 'DEPT_CD': 'E', 'DEPT_CD_NM': 'Engine',
+        'URG_YN': 'N', 'STATUS': 'N', 'DM_YN': 'N',
+        'REQ_DT': None, 'PHR_DT': None, 'REQ_VOY': None, 'PHR_VOY': None,
+        'REQ_PORT': None, 'REQ_PORT_NM': None, 'PHR_PORT': None, 'PHR_PORT_NM': None,
+    }
+    lines = []
+    current_compo = None
+    seq = 0
+    for r in range(11, ws.max_row + 1):
+        no = _reqgen_cell(ws, f'A{r}')
+        partno = _reqgen_cell(ws, f'B{r}')
+        desc = _reqgen_cell(ws, f'C{r}')
+        unit = _reqgen_cell(ws, f'F{r}')
+        qty = _reqgen_cell(ws, f'G{r}')
+        if desc is None and partno is None and qty is None:
+            continue
+        if desc is not None and qty is None and no is None and partno is None:
+            current_compo = desc                      # Component 그룹헤더
+            continue
+        if qty is None and no is None:
+            continue
+        seq += 1
+        unit_cd = _REQGEN_UNIT_MAP.get(str(unit).upper(), unit) if unit else None
+        lines.append({
+            'SORT_SEQ': seq, 'COMPO_NM': current_compo,
+            'MFG_PART_NO': partno, 'PART_NM': desc,
+            'PUNIT_CD': unit_cd, 'REQ_QTY': qty,
+            'EXP_CD': _reqgen_infer_exp(part_tp, equipment, subject), 'EQ_NM': equipment,
+        })
+    return {'sheet': name, 'header': header, 'lines': lines}
+
+
+def _reqgen_parse_workbook(stream, vsl_cd, vsl_nm=None):
+    import re as _re
+    from openpyxl import load_workbook
+    wb = load_workbook(stream, data_only=True, read_only=True)
+    if vsl_nm is None and 'INDEX' in wb.sheetnames:
+        vsl_nm = _reqgen_cell(wb['INDEX'], 'G2')
+    out = []
+    for nm in wb.sheetnames:
+        if not _re.match(r'^(ST|S)\d+$', nm):
+            continue
+        res = _reqgen_parse_sheet(wb[nm], vsl_cd, vsl_nm)
+        if res['lines']:
+            out.append(res)
+    return vsl_nm, out
+
+
+@app.route('/reqgen')
+@admin_required
+def reqgen_page():
+    return render_template('reqgen.html')
+
+
+@app.route('/api/reqgen/upload', methods=['POST'])
+@admin_required
+def api_reqgen_upload():
+    """엑셀 업로드 → S/ST 시트 파싱 → reqgen_draft 카드 적재(status=pending). SVMS 무영향."""
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify({'error': '엑셀 파일(file) 필요'}), 400
+    if not f.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return jsonify({'error': '.xlsx 파일만 가능'}), 400
+    vsl_cd = (request.form.get('vsl_cd') or '').strip().upper() or None
+    try:
+        vsl_nm, sheets = _reqgen_parse_workbook(f.stream, vsl_cd)
+    except Exception as e:
+        return jsonify({'error': f'파싱 실패: {e}'}), 400
+    if not sheets:
+        return jsonify({'error': 'SPARE(S*)/STORE(ST*) 시트에 항목이 없음'}), 400
+    batch = uuid.uuid4().hex[:12]
+    created = []
+    for s in sheets:
+        h, lines = s['header'], s['lines']
+        did = execute(
+            "INSERT INTO reqgen_draft (batch, sheet, vsl_cd, vsl_nm, part_tp, kind_nm, equipment, "
+            "subj, line_cnt, exp_cd, header_json, lines_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (batch, s['sheet'], vsl_cd, vsl_nm, h['PART_TP'], h['PART_TP_NM'], h['CATE_NM'],
+             h['SUBJ'], len(lines), (lines[0]['EXP_CD'] if lines else None),
+             json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False)))
+        created.append({'id': did, 'sheet': s['sheet'], 'lines': len(lines)})
+    return jsonify({'batch': batch, 'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd,
+                    'count': len(created), 'drafts': created}), 201
+
+
+@app.route('/api/reqgen/drafts')
+@admin_required
+def api_reqgen_list():
+    status = request.args.get('status')
+    if status:
+        rows = query('SELECT * FROM reqgen_draft WHERE status=? ORDER BY id DESC', (status,))
+    else:
+        rows = query("SELECT * FROM reqgen_draft ORDER BY CASE status WHEN 'pending' THEN 0 "
+                     "WHEN 'approved' THEN 1 WHEN 'saving' THEN 2 ELSE 3 END, id DESC")
+    pending = query("SELECT COUNT(*) c FROM reqgen_draft WHERE status='pending'", one=True)
+    return jsonify({'drafts': [dict(r) for r in rows], 'pending': pending['c'],
+                    'enabled': _automation_enabled()})
+
+
+@app.route('/api/reqgen/drafts/<int:did>', methods=['PATCH'])
+@admin_required
+def api_reqgen_patch(did):
+    """카드 입력값(Voyage/Port/Date) 저장. pending 상태만."""
+    row = query('SELECT * FROM reqgen_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] != 'pending':
+        return jsonify({'error': 'pending 상태만 수정 가능', 'status': row['status']}), 409
+    d = request.get_json(silent=True) or {}
+    voyage = (d.get('voyage') or '').strip() or None
+    port = (d.get('port') or '').strip().upper() or None
+    port_nm = (d.get('port_nm') or '').strip() or None
+    req_dt = (d.get('req_dt') or '').strip().replace('-', '') or None
+    execute("UPDATE reqgen_draft SET voyage=?, port=?, port_nm=?, req_dt=? WHERE id=?",
+            (voyage, port, port_nm, req_dt, did))
+    return jsonify({'id': did, 'voyage': voyage, 'port': port, 'port_nm': port_nm, 'req_dt': req_dt})
+
+
+@app.route('/api/reqgen/drafts/<int:did>/approve', methods=['POST'])
+@admin_required
+def api_reqgen_approve(did):
+    """승인 = SVMS 저장 지시. Voyage/Port/Date 를 헤더에 반영 후 status='approved' + 저장큐 적재."""
+    row = query('SELECT * FROM reqgen_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] != 'pending':
+        return jsonify({'error': 'already decided', 'status': row['status']}), 409
+    d = request.get_json(silent=True) or {}
+    voyage = (d.get('voyage') or row['voyage'] or '').strip()
+    port = (d.get('port') or row['port'] or '').strip().upper()
+    port_nm = (d.get('port_nm') or row['port_nm'] or '').strip()
+    req_dt = (d.get('req_dt') or row['req_dt'] or '').strip().replace('-', '')
+    missing = [k for k, v in (('Voyage', voyage), ('Port', port), ('Date', req_dt)) if not v]
+    if missing:
+        return jsonify({'error': f"승인 전 필수입력: {', '.join(missing)}", 'field': missing[0].lower()}), 400
+    if not _automation_enabled():
+        return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
+    if not row['header_json']:
+        return jsonify({'error': 'header_json 없음 — 카드 삭제 후 재업로드'}), 400
+    header = json.loads(row['header_json'])
+    header.update({'REQ_VOY': voyage, 'PHR_VOY': voyage,
+                   'REQ_PORT': port, 'REQ_PORT_NM': port_nm or None,
+                   'PHR_PORT': port, 'PHR_PORT_NM': port_nm or None,
+                   'REQ_DT': req_dt, 'PHR_DT': req_dt})
+    user = session.get('username') or 'web'
+    rc = execute_rc("UPDATE reqgen_draft SET status='approved', header_json=?, voyage=?, port=?, "
+                    "port_nm=?, req_dt=?, decided_at=datetime('now','localtime'), decided_by=? "
+                    "WHERE id=? AND status='pending'",
+                    (json.dumps(header, ensure_ascii=False), voyage, port, port_nm or None,
+                     req_dt, user, did))
+    if not rc:
+        cur = query('SELECT status FROM reqgen_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': 'already decided', 'status': cur['status'] if cur else '?'}), 409
+    rid = _queue_aor('reqgen_save', user)        # automation_run 큐(맥 러너가 claim)
+    return jsonify({'id': did, 'status': 'approved', 'save_run': rid,
+                    'message': '승인됨 — 맥 러너가 곧 SVMS DRAFT 저장(최대 1~2분)'})
+
+
+@app.route('/api/reqgen/drafts/<int:did>/reset', methods=['POST'])
+@admin_required
+def api_reqgen_reset(did):
+    """승인 취소 — 저장 전(approved)만 pending 으로 복귀."""
+    rc = execute_rc("UPDATE reqgen_draft SET status='pending', decided_at=NULL, decided_by=NULL "
+                    "WHERE id=? AND status='approved'", (did,))
+    if not rc:
+        cur = query('SELECT status FROM reqgen_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': '저장 전(approved)만 취소 가능', 'status': cur['status'] if cur else '?'}), 409
+    return jsonify({'id': did, 'status': 'pending'})
+
+
+@app.route('/api/reqgen/drafts/<int:did>', methods=['DELETE'])
+@admin_required
+def api_reqgen_delete(did):
+    if not query('SELECT id FROM reqgen_draft WHERE id=?', (did,), one=True):
+        return jsonify({'error': 'not found'}), 404
+    execute('DELETE FROM reqgen_draft WHERE id=?', (did,))
+    return jsonify({'id': did, 'deleted': True})
+
+
+@app.route('/api/reqgen/drafts/decided', methods=['DELETE'])
+@admin_required
+def api_reqgen_clear_decided():
+    """처리완료(saved/failed) 일괄 삭제 — pending/approved/saving 보존."""
+    n = execute_rc("DELETE FROM reqgen_draft WHERE status IN ('saved','failed')")
+    return jsonify({'ok': True, 'deleted': n})
+
+
+# ---- ext (맥 러너: SVMS DRAFT 저장 실행) ----
+@app.route('/api/ext/reqgen/approved')
+@api_key_required
+def api_ext_reqgen_approved():
+    """맥 러너가 저장할 approved 건 → status='saving' 락(조건부)."""
+    cols = "id, sheet, vsl_cd, vsl_nm, part_tp, header_json, lines_json"
+    if request.args.get('peek'):
+        rows = query(f"SELECT {cols} FROM reqgen_draft WHERE status='approved' ORDER BY id ASC")
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    out = [dict(r) for r in query(f"SELECT {cols} FROM reqgen_draft WHERE status='saving' ORDER BY id ASC")]
+    for r in query(f"SELECT {cols} FROM reqgen_draft WHERE status='approved' ORDER BY id ASC"):
+        if execute_rc("UPDATE reqgen_draft SET status='saving' WHERE id=? AND status='approved'", (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'drafts': out})
+
+
+@app.route('/api/ext/reqgen/drafts/<int:did>/result', methods=['POST'])
+@api_key_required
+def api_ext_reqgen_result(did):
+    """저장 결과: ok=True → saved(+req_no), else failed(사람 재검토)."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    rc = execute_rc("UPDATE reqgen_draft SET status=?, req_no=?, done_at=datetime('now','localtime'), "
+                    "result=? WHERE id=? AND status='saving'",
+                    ('saved' if ok else 'failed', (d.get('req_no') or None),
+                     (d.get('result') or '')[:2000], did))
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
 AUTOMATION_TASKS = {
     'soa_g1':   'SOA 실버 G1 (ATBG·ATGR·ATGV·ATMT)',
     'soa_g2':   'SOA 실버 G2 (ATNH·ATSH·ATSL·JATX)',
@@ -6845,6 +7143,7 @@ AUTOMATION_TASKS = {
     'aor_prep':   'AOR(Technical) prep — Submitted AOR 카드화 (/aor 큐 적재)',
     'aor_submit': 'AOR 상신 — 승인된 건 SVMS 제출 (approve 시 자동큐)',
     'aor_reject': 'AOR 리젝 — STATUS=R + 관리사 통보메일 (reject 시 자동큐)',
+    'reqgen_save': '구매청구 DRAFT 저장 — 승인된 입거 requisition 시트 SVMS 저장 (approve 시 자동큐)',
 }
 # verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일
 AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit')

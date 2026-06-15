@@ -23,7 +23,7 @@
 
       {% set survey_eps = ['class_status_page','condition_survey','vetting_status'] %}
       {% set report_eps = ['dry_dock_page','dry_dock_edit_page','boarding_page','boarding_edit_page'] %}
-      {% set auto_eps = ['automation_page','mail_page','aor_page','fundreq_page'] %}
+      {% set auto_eps = ['automation_page','mail_page','aor_page','fundreq_page','reqgen_page'] %}
       {% set expense_eps = ['expenses_page','expense_detail_page'] %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통 #}
       {% macro nlink(ep, label, eps=None) -%}
@@ -41,6 +41,7 @@
             {{ nlink('mail_page', '📬 메일 처리') }}
             {{ nlink('aor_page', 'AOR') }}
             {{ nlink('fundreq_page', '비용청구') }}
+            {{ nlink('reqgen_page', '구매청구 작성') }}
           </div>
         </div>
         {% endif %}
@@ -124,6 +125,7 @@
       {{ nlink('mail_page', '📬 메일 처리') }}
       {{ nlink('aor_page', 'AOR') }}
       {{ nlink('fundreq_page', '비용청구') }}
+      {{ nlink('reqgen_page', '구매청구 작성') }}
       {% endif %}
       <div class="mm-section">🔍 Survey</div>
       {{ nlink('class_status_page', 'Class Status') }}
