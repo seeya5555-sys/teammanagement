@@ -139,19 +139,33 @@
 
   function gv(el,s){const n=el.querySelector(s);return n?n.value.trim():undefined;}
   function busy(el,b){el.classList.toggle('busy',b);}
+  // 액션 후 새로고침: 클릭한 카드를 같은 화면 위치에 고정(앵커). 카드가 사라지면(archive/삭제) 스크롤 위치만 보존 → 맨 위로 안 튐.
+  async function reload(keepId){
+    const prev=keepId!=null?listEl.querySelector('.mc-card[data-id="'+keepId+'"]'):null;
+    const off=prev?prev.getBoundingClientRect().top:null;
+    const y=window.scrollY;
+    await load();
+    requestAnimationFrame(()=>{
+      if(keepId!=null&&off!=null){
+        const now=listEl.querySelector('.mc-card[data-id="'+keepId+'"]');
+        if(now){window.scrollTo(0,window.scrollY+now.getBoundingClientRect().top-off);return;}
+      }
+      window.scrollTo(0,y);
+    });
+  }
   function wire(el,c){
     const q=s=>el.querySelector(s);
-    if(q('.act-ireg'))q('.act-ireg').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'new',item:gv(el,'.i-item'),desc:gv(el,'.i-desc'),vessel:gv(el,'.i-ves'),supervisor:gv(el,'.i-sup'),priority:gv(el,'.i-prio')});if(!r.ok){alert('등록 실패: '+(r.j.hint||r.j.error));busy(el,0);}else load();};
-    if(q('.act-iappend'))q('.act-iappend').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'append',desc:gv(el,'.i-desc')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else load();};
-    if(q('.act-irej'))q('.act-irej').onclick=async()=>{const rs=prompt('리젝 사유(선택):','');if(rs===null)return;busy(el,1);await api('POST',`/api/mail/${c.id}/issue/reject`,{reason:rs});load();};
-    if(q('.act-ina'))q('.act-ina').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/issue/na`,{});load();};
-    if(q('.act-rtrans'))q('.act-rtrans').onclick=async()=>{const er=q('.act-rerr');er.hidden=true;const style=(gv(el,'.r-style')||'')+((gv(el,'.r-memo'))?(' / '+gv(el,'.r-memo')):'');busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/translate`,{reply_ko:gv(el,'.r-ko'),reply_style:style});busy(el,0);if(!r.ok){er.textContent='번역 실패: '+(r.j.detail||r.j.error);er.hidden=false;}else load();};
-    if(q('.act-rdraft'))q('.act-rdraft').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/draft-request`,{reply_en:gv(el,'.r-en')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else load();};
-    if(q('.act-rdismiss'))q('.act-rdismiss').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/reply/dismiss`,{});load();};
-    if(q('.act-pend'))q('.act-pend').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/pending`,{});load();};
-    if(q('.act-punp'))q('.act-punp').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/pending`,{off:true});load();};
-    if(q('.act-arch'))q('.act-arch').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/archive`,{});load();};
-    if(q('.act-del'))q('.act-del').onclick=async()=>{if(!confirm('이 카드를 영구삭제할까요? (등록된 이슈는 유지, 카드만 삭제)'))return;busy(el,1);await api('POST',`/api/mail/${c.id}/delete`,{});load();};
+    if(q('.act-ireg'))q('.act-ireg').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'new',item:gv(el,'.i-item'),desc:gv(el,'.i-desc'),vessel:gv(el,'.i-ves'),supervisor:gv(el,'.i-sup'),priority:gv(el,'.i-prio')});if(!r.ok){alert('등록 실패: '+(r.j.hint||r.j.error));busy(el,0);}else reload(c.id);};
+    if(q('.act-iappend'))q('.act-iappend').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'append',desc:gv(el,'.i-desc')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else reload(c.id);};
+    if(q('.act-irej'))q('.act-irej').onclick=async()=>{const rs=prompt('리젝 사유(선택):','');if(rs===null)return;busy(el,1);await api('POST',`/api/mail/${c.id}/issue/reject`,{reason:rs});reload(c.id);};
+    if(q('.act-ina'))q('.act-ina').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/issue/na`,{});reload(c.id);};
+    if(q('.act-rtrans'))q('.act-rtrans').onclick=async()=>{const er=q('.act-rerr');er.hidden=true;const style=(gv(el,'.r-style')||'')+((gv(el,'.r-memo'))?(' / '+gv(el,'.r-memo')):'');busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/translate`,{reply_ko:gv(el,'.r-ko'),reply_style:style});busy(el,0);if(!r.ok){er.textContent='번역 실패: '+(r.j.detail||r.j.error);er.hidden=false;}else reload(c.id);};
+    if(q('.act-rdraft'))q('.act-rdraft').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/draft-request`,{reply_en:gv(el,'.r-en')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else reload(c.id);};
+    if(q('.act-rdismiss'))q('.act-rdismiss').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/reply/dismiss`,{});reload(c.id);};
+    if(q('.act-pend'))q('.act-pend').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/pending`,{});reload(c.id);};
+    if(q('.act-punp'))q('.act-punp').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/pending`,{off:true});reload(c.id);};
+    if(q('.act-arch'))q('.act-arch').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/archive`,{});reload(c.id);};
+    if(q('.act-del'))q('.act-del').onclick=async()=>{if(!confirm('이 카드를 영구삭제할까요? (등록된 이슈는 유지, 카드만 삭제)'))return;busy(el,1);await api('POST',`/api/mail/${c.id}/delete`,{});reload(c.id);};
   }
 
   document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filter=b.dataset.f;document.querySelectorAll('[data-f]').forEach(x=>{x.classList.toggle('btn-p',x===b);});load();});
