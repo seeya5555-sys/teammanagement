@@ -7,6 +7,13 @@
   .rg-note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px;max-width:960px}
   .rg-up{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin-bottom:16px;max-width:960px}
   .rg-up input[type=text]{border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:13px;width:120px}
+  .rg-drop{flex:1;min-width:240px;display:flex;align-items:center;justify-content:center;gap:8px;
+    border:2px dashed #cbd5e1;border-radius:10px;padding:14px 16px;background:#fff;color:#64748b;
+    font-size:13px;cursor:pointer;transition:.15s;text-align:center}
+  .rg-drop:hover{border-color:#94a3b8;background:#f8fafc}
+  .rg-drop.drag{border-color:#16a34a;background:#f0fdf4;color:#15803d}
+  .rg-drop b{color:#0f172a}
+  .rg-drop .ic{font-size:18px}
   .rg-list{display:flex;flex-direction:column;gap:12px;max-width:960px}
   .rg-card{border:1px solid #e2e8f0;border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
   .rg-card.is-busy{opacity:.55;pointer-events:none}
@@ -60,7 +67,11 @@
   수리신청(SHORE REPAIR / R*)은 별도.
 </div>
 <div class="rg-up">
-  <input type="file" id="rg-file" accept=".xlsx,.xlsm">
+  <div class="rg-drop" id="rg-drop">
+    <span class="ic">📂</span>
+    <span id="rg-dropmsg">엑셀 파일을 <b>드래그</b>하거나 <b>클릭</b>해서 선택 (.xlsx)</span>
+  </div>
+  <input type="file" id="rg-file" accept=".xlsx,.xlsm" style="display:none">
   <input type="text" id="rg-vsl" placeholder="VSL_CD (예 SAPS)">
   <button class="rg-b ap" id="rg-upload">⬆ 업로드·파싱</button>
   <span class="rg-res" id="rg-upmsg"></span>
@@ -160,6 +171,25 @@
     }catch(e){ list.innerHTML=`<div class="rg-err" style="padding:20px">${esc(e.message)}</div>`; }
   }
 
+  // 드래그앤드롭 + 클릭선택
+  const drop=$('#rg-drop'), fileInput=$('#rg-file'), dropMsg=$('#rg-dropmsg');
+  function showName(){
+    const f=fileInput.files[0];
+    dropMsg.innerHTML = f ? `📄 <b>${esc(f.name)}</b> — 업로드 누르세요`
+                          : '엑셀 파일을 <b>드래그</b>하거나 <b>클릭</b>해서 선택 (.xlsx)';
+  }
+  drop.addEventListener('click',()=>fileInput.click());
+  fileInput.addEventListener('change',showName);
+  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{
+    e.preventDefault();e.stopPropagation();drop.classList.add('drag');}));
+  ['dragleave','dragend'].forEach(ev=>drop.addEventListener(ev,e=>{
+    e.preventDefault();e.stopPropagation();drop.classList.remove('drag');}));
+  drop.addEventListener('drop',e=>{
+    e.preventDefault();e.stopPropagation();drop.classList.remove('drag');
+    const f=e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(f){ const dt=new DataTransfer(); dt.items.add(f); fileInput.files=dt.files; showName(); }
+  });
+
   // 업로드
   $('#rg-upload').addEventListener('click',async()=>{
     const f=$('#rg-file').files[0];
@@ -171,7 +201,7 @@
     try{
       const j=await api('POST','/api/reqgen/upload',fd,true);
       msg.textContent=`✅ ${j.count}건 적재 (${esc(j.vsl_nm||'')} ${esc(j.vsl_cd||'')})`;
-      $('#rg-file').value='';
+      $('#rg-file').value=''; showName();
       await load();
     }catch(e){ msg.textContent='🚨 '+e.message; }
   });

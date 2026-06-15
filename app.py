@@ -6981,7 +6981,9 @@ def api_reqgen_upload():
         return jsonify({'error': '.xlsx 파일만 가능'}), 400
     vsl_cd = (request.form.get('vsl_cd') or '').strip().upper() or None
     try:
-        vsl_nm, sheets = _reqgen_parse_workbook(f.stream, vsl_cd)
+        import io as _io
+        stream = _io.BytesIO(f.read())            # SpooledTemporaryFile 은 seekable 아님 → BytesIO 로
+        vsl_nm, sheets = _reqgen_parse_workbook(stream, vsl_cd)
     except Exception as e:
         return jsonify({'error': f'파싱 실패: {e}'}), 400
     if not sheets:
