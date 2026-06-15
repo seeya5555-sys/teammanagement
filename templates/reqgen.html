@@ -189,7 +189,8 @@
     </div>`;
   }
 
-  async function load(){
+  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  async function _load(){
     try{
       const j=await api('GET','/api/reqgen/drafts');
       const ds=j.drafts||[];

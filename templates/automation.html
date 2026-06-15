@@ -127,7 +127,8 @@
       ${r.summary?`<div class="au-logsum">${(r.summary).replace(/</g,'&lt;')}</div>`:''}
     </div>`;
   }
-  function render(){
+  function render(){const _sy=window.scrollY;try{return _render();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  function _render(){
     const ks=$('#au-ks'), m=$('#au-master');
     ks.textContent=ENABLED?'● 작동중':'■ 정지됨';
     ks.className='au-ks '+(ENABLED?'on':'off');
@@ -176,7 +177,8 @@
     const {ok,j}=await api('POST','/api/automation/killswitch',{enabled:!ENABLED});
     if(ok){ENABLED=j.enabled;render();}
   }
-  async function load(){
+  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  async function _load(){
     const {ok,j}=await api('GET','/api/automation/runs');
     if(!ok)return;
     TASKS=j.tasks||{};ENABLED=j.enabled!==false;RUNS=j.runs||[];

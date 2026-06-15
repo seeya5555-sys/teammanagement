@@ -99,7 +99,8 @@
       <div class="fr-acts">${acts}</div>
     </div>`;
   }
-  async function load(){
+  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  async function _load(){
     const {ok,j}=await api('GET','/api/fundreq/drafts');
     if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
     const ds=j.drafts||[];

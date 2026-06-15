@@ -103,7 +103,8 @@
     return {recommend: o.recommend || '', lines: o.lines || []};
   }
 
-  async function load() {
+  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  async function _load() {
     listEl.innerHTML = '<div class="aor-empty">불러오는 중…</div>';
     let data;
     try {
