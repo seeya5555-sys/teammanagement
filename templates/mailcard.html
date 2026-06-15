@@ -16,6 +16,18 @@
   .b-info{background:#fef3c7;color:#b45309}.b-na{background:#f1f5f9;color:#94a3b8}.b-done{background:#f1f5f9;color:#475569}
   .b-pend{background:#ffedd5;color:#c2410c}
   .mc-sum{background:#eff6ff;border-bottom:1px solid #e0ecff;padding:9px 15px;font-size:13px;color:#1e3a5f}
+  /* 스레드 전체 1~2줄 요약 — 카드 맨 위, 항상 표시 */
+  .mc-thread{background:#fffbeb;border-bottom:1px solid #fde9b8;padding:8px 15px;font-size:12.5px;color:#92591a;line-height:1.45}
+  /* 받은메일 원문/번역 — 접기/펼치기 (기본 접힘) */
+  details.mc-mail{border-bottom:1px solid #f1f5f9}
+  details.mc-mail>summary{cursor:pointer;list-style:none;padding:9px 15px;font-size:12.5px;font-weight:600;color:#475569;background:#f8fafc;user-select:none}
+  details.mc-mail>summary::-webkit-details-marker{display:none}
+  details.mc-mail>summary::before{content:'▸ ';color:#94a3b8}
+  details.mc-mail[open]>summary::before{content:'▾ '}
+  .mc-mail-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;padding:11px 15px;background:#fcfdff}
+  .mm-lbl{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px;font-weight:700}
+  .mm-en{font-size:12px;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;color:#475569;line-height:1.5}
+  .mm-ko{font-size:13px;white-space:pre-wrap;color:#1e293b;line-height:1.55}
   .mc-sec{padding:13px 15px;border-bottom:1px solid #f1f5f9}.mc-sec:last-child{border-bottom:none}
   .mc-sh{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;margin-bottom:8px;color:#334155}
   .fld{margin:6px 0;font-size:13px}.fld .k{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.03em}
@@ -106,7 +118,12 @@
     el.innerHTML=`<div class="mc-top"><div><div class="mc-subj">${esc(c.email_subject||'(제목없음)')}</div>
         <div class="mc-meta">${esc(c.email_from||'?')} · ${esc(c.email_date||'')} · #${c.id}</div></div>
       <div class="mc-badges">${c.pending?'<span class="bdg b-pend">⏸ 보류</span>':''}${issueBadge(c.issue_status)}${replyBadge(c.reply_status)}</div></div>
-      ${c.summary_ko?`<div class="mc-sum">📨 <b>받은메일(한글 번역)</b> : ${esc(c.summary_ko)}</div>`:''}
+      ${c.thread_summary_ko?`<div class="mc-thread">🧵 <b>요약</b> · ${esc(c.thread_summary_ko)}</div>`:''}
+      ${(c.body_en||c.summary_ko)?`<details class="mc-mail"><summary>📨 받은메일 원문 / 한글 번역</summary>
+        <div class="mc-mail-body">
+          ${c.body_en?`<div><div class="mm-lbl">원문 (English)</div><div class="mm-en">${esc(c.body_en)}</div></div>`:''}
+          ${c.summary_ko?`<div><div class="mm-lbl">한국어 번역</div><div class="mm-ko">${esc(c.summary_ko)}</div></div>`:''}
+        </div></details>`:''}
       <div class="mc-sec"><div class="mc-sh">📋 TRMT 이슈</div>${issueHtml}</div>
       <div class="mc-sec"><div class="mc-sh">✉️ 회신 작성</div>${replyHtml}</div>
       <div class="mc-sec" style="padding:8px 15px;display:flex;gap:6px;align-items:center">

@@ -7747,12 +7747,13 @@ def api_ext_mail_create():
     if prio not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
         prio = 'Normal'
     cid = execute("""INSERT INTO mail_card
-        (email_subject, email_from, email_date, email_msg_id, summary_ko,
+        (email_subject, email_from, email_date, email_msg_id, summary_ko, thread_summary_ko, body_en,
          issue_item, issue_desc, issue_match_id, issue_priority, issue_vessel, issue_supervisor,
          issue_status, reply_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
         d.get('email_subject') or None, d.get('email_from') or None, d.get('email_date') or None,
-        msg_id, d.get('summary_ko') or None, d.get('issue_item') or None, d.get('issue_desc') or None,
+        msg_id, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
+        d.get('issue_item') or None, d.get('issue_desc') or None,
         d.get('issue_match_id'), prio, d.get('issue_vessel') or None, d.get('issue_supervisor') or None,
         issue_status))
     return jsonify({'id': cid}), 201
@@ -8217,6 +8218,12 @@ def _auto_migrate():
             if cols and 'pending' not in cols:
                 conn.execute("ALTER TABLE mail_card ADD COLUMN pending INTEGER NOT NULL DEFAULT 0")
                 print('[auto_migrate] mail_card.pending 추가됨')
+            if cols and 'thread_summary_ko' not in cols:
+                conn.execute("ALTER TABLE mail_card ADD COLUMN thread_summary_ko TEXT")
+                print('[auto_migrate] mail_card.thread_summary_ko 추가됨')
+            if cols and 'body_en' not in cols:
+                conn.execute("ALTER TABLE mail_card ADD COLUMN body_en TEXT")
+                print('[auto_migrate] mail_card.body_en 추가됨')
         except Exception as e:
             print(f'[auto_migrate] mail_card.pending 점검 건너뜀: {e}')
 
