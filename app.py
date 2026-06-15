@@ -7728,6 +7728,20 @@ def api_mail_delete_all():
     return jsonify({'deleted': n, 'scope': scope})
 
 
+@app.route('/api/mail/cards/delete-selected', methods=['POST'])
+@admin_required
+def api_mail_delete_selected():
+    """선택한 카드(ids 배열)만 일괄 영구삭제. 등록된 이슈(issue_id)는 보존 — 카드만 제거."""
+    d = request.get_json(silent=True) or {}
+    raw = d.get('ids') or []
+    ids = [int(i) for i in raw if str(i).strip().isdigit()] if isinstance(raw, list) else []
+    if not ids:
+        return jsonify({'error': 'no ids'}), 400
+    ph = ','.join('?' * len(ids))
+    n = execute_rc(f"DELETE FROM mail_card WHERE id IN ({ph})", tuple(ids))
+    return jsonify({'deleted': n})
+
+
 # ---- ext (맥미니) ----
 @app.route('/api/ext/mail/cards', methods=['POST'])
 @api_key_required
