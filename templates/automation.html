@@ -40,6 +40,22 @@
   .au-logmeta{color:var(--text-secondary);font-size:11.5px;margin-bottom:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .au-logsum{white-space:pre-wrap;color:var(--text-primary);font-family:ui-monospace,Menlo,monospace;font-size:11.5px;max-height:170px;overflow:auto}
   .au-note{font-size:12px;color:var(--text-secondary);margin:4px 0 16px;line-height:1.5}
+  /* 전자결재 검증 인라인 체크리스트 */
+  .jl{max-width:920px;margin:2px 0 4px}
+  .jl-rev{font-size:11.5px;color:var(--text-tertiary);margin:2px 0 8px;line-height:1.5}
+  .jl-grp{font-size:12px;font-weight:700;color:var(--text-secondary);margin:12px 0 5px}
+  .jl-item{display:flex;align-items:center;gap:9px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:9px;background:#fff;margin-bottom:6px;font-size:12.5px;flex-wrap:wrap}
+  .jl-item.excl{background:var(--amber-bg);border-color:var(--amber-border)}
+  .jl-item.human{background:var(--surface-2)}
+  .jl-ref{font-weight:700;color:var(--text-primary);white-space:nowrap}
+  .jl-sub{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:60px;flex:1}
+  .jl-amt{color:var(--text-tertiary);font-size:11.5px;white-space:nowrap}
+  .jl-why{color:var(--amber);font-size:11.5px}
+  .jl-bkt{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface-3);color:var(--text-secondary);white-space:nowrap}
+  .jl-hold{font-size:10.5px;font-weight:700;color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-border);padding:1px 7px;border-radius:999px;white-space:nowrap}
+  .jl-chk{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11.5px;color:var(--text-secondary);white-space:nowrap;cursor:pointer;user-select:none}
+  .jl-chk input{width:15px;height:15px;cursor:pointer;accent-color:var(--amber)}
+  .jl-empty{font-size:12px;color:var(--text-tertiary);padding:6px 2px}
 </style>
 {% endblock %}
 {% block content %}
@@ -61,6 +77,7 @@
 
   <div class="au-sec">전자결재</div>
   <div id="au-jeonja"></div>
+  <div id="au-jeonja-list" class="jl"></div>
 
   <div class="au-log">
     <div class="au-log-head" id="au-log-head">
@@ -79,6 +96,9 @@
 (function(){
   const SOA=['soa_g1','soa_g2','soa_g3','soa_skrt'];
   let TASKS={}, ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
+  let JLIST=[], JREV=null, JSIG='', JPENDING={};   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게)
+  const JBKT={pass:'✅ 통과',costslip:'📄 CostSlip',mismatch:'⚠️ DN≠Cost',escalate:'🚨 차액≥$1k',flag:'✋ 사람확인',already:'✔️ 이미결재'};
+  const escA=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
   const $=s=>document.querySelector(s);
   const esc=s=>String(s).replace(/</g,'&lt;');
   async function api(method,url,body){
@@ -136,8 +156,57 @@
     $('#au-master-sub').textContent=ENABLED?'— 전체 자동화 ON. 버튼이 작동합니다.':'— 킬스위치 ON. 모든 자동화 정지중.';
     $('#au-soa').innerHTML=SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
+    renderJeonja();
     renderLog();
     document.querySelectorAll('.au-b').forEach(btn=>btn.onclick=onRun);
+  }
+  function jAmt(it){
+    const dn=it.dn?esc(it.dn):'', cost=(it.cost!==null&&it.cost!==undefined)?esc(it.cost):'';
+    if(!dn&&!cost) return '';
+    return `<span class="jl-amt">${dn}${(dn&&cost)?' / Cost ':(cost?'Cost ':'')}${cost}</span>`;
+  }
+  function jrow(it){
+    if(it.bucket==='pass'){
+      const ex=it.excluded?1:0;
+      return `<div class="jl-item${ex?' excl':''}">
+        <span class="jl-ref">${esc(it.ref)}</span>
+        <span class="jl-sub">${esc(it.subj||'')}</span>${jAmt(it)}
+        ${ex?'<span class="jl-hold">보류</span>':''}
+        <label class="jl-chk"><input type="checkbox" ${ex?'checked':''} data-xref="${escA(it.ref)}"> 자동상신 제외</label>
+      </div>`;
+    }
+    return `<div class="jl-item human">
+      <span class="jl-bkt">${JBKT[it.bucket]||esc(it.bucket)}</span>
+      <span class="jl-ref">${esc(it.ref)}</span>
+      <span class="jl-sub">${esc(it.subj||'')}</span>${jAmt(it)}
+      ${it.why?`<span class="jl-why">${esc(it.why)}</span>`:''}
+    </div>`;
+  }
+  function renderJeonja(){
+    const el=$('#au-jeonja-list'); if(!el) return;
+    const sig=JSON.stringify(JLIST)+'|'+JREV;
+    if(sig===JSIG) return;   // 변화 없으면 재그리기 안 함(체크 중 깜빡임 방지)
+    JSIG=sig;
+    if(!JLIST.length){ el.innerHTML=`<div class="jl-empty">검증 결과 없음 — 🔍검증을 누르면 현재 상신대기 전자결재를 전수 검토해 여기 띄웁니다.</div>`; return; }
+    const passes=JLIST.filter(x=>x.bucket==='pass'), humans=JLIST.filter(x=>x.bucket!=='pass');
+    const nExcl=passes.filter(x=>x.excluded).length;
+    let h=`<div class="jl-rev">검토시각 ${JREV||'-'} · 통과 ${passes.length}건${nExcl?` · 보류 ${nExcl}건`:''} · ▶자동상신 시 <b>${passes.length-nExcl}건</b> 상신 예정</div>`;
+    h+=`<div class="jl-grp">✅ 자동상신 대상 — 체크하면 추가검증 보류(검증 통과여도 상신 제외)</div>`;
+    h+= passes.length?passes.map(jrow).join(''):`<div class="jl-empty">통과 건 없음</div>`;
+    if(humans.length){
+      h+=`<div class="jl-grp">✋ 사람확인 필요 — 원래 자동상신 대상 아님</div>`;
+      h+=humans.map(jrow).join('');
+    }
+    el.innerHTML=h;
+    el.querySelectorAll('input[data-xref]').forEach(c=>c.onchange=()=>toggleExcl(c.dataset.xref,c.checked));
+  }
+  async function toggleExcl(ref,checked){
+    JPENDING[ref]=checked?1:0;                // in-flight: 폴링 머지가 이 값을 덮어쓰지 않게
+    const it=JLIST.find(x=>x.ref===ref); if(it) it.excluded=checked?1:0;
+    JSIG=''; renderJeonja();                  // 낙관적 갱신
+    const {ok,j}=await api('POST','/api/automation/jeonja/exclude',{ref,excluded:checked});
+    delete JPENDING[ref];
+    if(!ok){ alert((j&&j.error)||'변경 실패'); if(it) it.excluded=checked?0:1; JSIG=''; renderJeonja(); }
   }
   function renderLog(){
     const head=$('#au-log-head'), runsEl=$('#au-runs'), metaEl=$('#au-log-meta');
@@ -167,7 +236,12 @@
       reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
     }[mode];
-    if(confirmMsg && !confirm(confirmMsg))return;
+    let cm=confirmMsg;
+    if(mode==='live' && task==='jeonja'){   // 보류 반영 건수 명시(돈 안전)
+      const p=JLIST.filter(x=>x.bucket==='pass'), ex=p.filter(x=>x.excluded).length;
+      cm=`[전자결재 자동상신]\n검증통과 ${p.length}건 중 보류 ${ex}건 제외 → ${p.length-ex}건 상신.\n(상신 직전 STATUS 재확인·보류 ref skip)\n진행할까요?`;
+    }
+    if(cm && !confirm(cm))return;
     e.target.disabled=true;
     const {ok,j}=await api('POST','/api/automation/run',{task,mode});
     if(!ok){alert(j.error||'실행 실패');}
@@ -183,6 +257,11 @@
     if(!ok)return;
     TASKS=j.tasks||{};ENABLED=j.enabled!==false;RUNS=j.runs||[];
     TOTAL=j.total||RUNS.length;CLEARED=j.cleared||null;
+    const ji=await api('GET','/api/automation/jeonja/items');
+    if(ji.ok){
+      JLIST=ji.j.items||[]; JREV=ji.j.reviewed_at||null;
+      for(const it of JLIST){ if(it.ref in JPENDING) it.excluded=JPENDING[it.ref]; }  // in-flight 토글 보존
+    }
     render();
   }
   async function clearLog(){

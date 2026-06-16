@@ -373,6 +373,27 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_fundreq_draft_status ON fundreq_draft(status)")
 
+        # 전자결재(jeonja) 검증 결과 + 자동상신 제외(보류) 큐
+        #   verify(jeonja_review --post) 가 현재 상신대기(P) 전수 검토결과를 ref 단위로 적재 →
+        #   사람이 /automation 허브서 항목별 '자동상신 제외' 체크 → live(jeonja_approve) 가 excluded=1 ref 를 skip.
+        #   검증 다시 돌려도 보류(excluded) 표시는 ref 기준으로 보존.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jeonja_review_item (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                ref         TEXT NOT NULL UNIQUE,                 -- 전자결재 REF_NO (dedup·exclude 키)
+                vsl_cd      TEXT,
+                subj        TEXT,
+                fund        TEXT,                                 -- Fund 구분(AOR/Pre-del/OPEX 등)
+                cost        REAL,                                 -- SVMS Cost
+                dn          TEXT,                                 -- 첨부 DN/인보이스 판독(금액+통화)
+                bucket      TEXT NOT NULL,                        -- pass/costslip/mismatch/escalate/flag/already
+                why         TEXT,                                 -- 비-pass 사유
+                excluded    INTEGER NOT NULL DEFAULT 0,           -- 1=사용자 보류(검증통과여도 자동상신 제외)
+                run_id      TEXT,                                 -- 적재한 verify run_id
+                reviewed_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+
         # reqgen: 입거 requisition 엑셀 → SVMS 구매청구(PKG_PC_REQ.SP_SET_REQ_INFO) DRAFT 자동작성 큐
         #   사람이 /reqgen 탭서 엑셀 업로드 → 시트별 카드 적재(파싱) → Voyage/Port/Date 입력+승인 →
         #   맥 러너(reqgen_save)가 SVMS NEW→SP_SET_REQ_INFO 로 DRAFT 저장(상신은 사람이 SVMS서 직접)
@@ -7423,6 +7444,74 @@ def api_ext_automation_done(run_id):
             "exit_code=?, summary=? WHERE run_id=?",
             (status, d.get('exit_code'), summary, run_id))
     return jsonify({'ok': True})
+
+
+# ---- 전자결재(jeonja) 검증 결과 적재 / 자동상신 제외 체크 ----
+@app.route('/api/ext/jeonja/review', methods=['POST'])
+@api_key_required
+def api_ext_jeonja_review():
+    """맥 verify(jeonja_review --post) 가 현재 상신대기 전수 검토결과를 ref 단위로 적재.
+    기존 보류(excluded=1) 표시는 ref 기준 보존 — 재검증해도 사람이 건 보류 안 풀림."""
+    _ensure_api_table()
+    d = request.get_json(silent=True) or {}
+    items = d.get('items') or []
+    run_id = (d.get('run_id') or '').strip()
+    # 단일 트랜잭션 — DELETE~INSERT 사이에 빈 결과가 노출되지 않게(보류 유실 윈도우 제거).
+    db = get_db()
+    prev_excluded = {r['ref'] for r in db.execute(
+        "SELECT ref FROM jeonja_review_item WHERE excluded=1").fetchall()}
+    n = 0
+    try:
+        db.execute("DELETE FROM jeonja_review_item")
+        for it in items:
+            ref = (it.get('ref') or '').strip()
+            if not ref:
+                continue
+            db.execute("INSERT OR REPLACE INTO jeonja_review_item "
+                       "(ref,vsl_cd,subj,fund,cost,dn,bucket,why,excluded,run_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       (ref, it.get('vsl_cd'), it.get('subj'), it.get('fund'), it.get('cost'),
+                        it.get('dn'), (it.get('bucket') or 'flag'), it.get('why'),
+                        1 if ref in prev_excluded else 0, run_id))
+            n += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    kept = len(prev_excluded & {(it.get('ref') or '').strip() for it in items})
+    return jsonify({'ok': True, 'count': n, 'kept_excluded': kept})
+
+
+@app.route('/api/automation/jeonja/items')
+@admin_required
+def api_automation_jeonja_items():
+    """허브 인라인 체크리스트용 — 검토결과 항목 + 보류상태. pass→costslip→mismatch→escalate→flag 순."""
+    rows = query("SELECT ref,vsl_cd,subj,fund,cost,dn,bucket,why,excluded,reviewed_at "
+                 "FROM jeonja_review_item ORDER BY CASE bucket "
+                 "WHEN 'pass' THEN 0 WHEN 'costslip' THEN 1 WHEN 'mismatch' THEN 2 "
+                 "WHEN 'escalate' THEN 3 WHEN 'flag' THEN 4 WHEN 'already' THEN 5 ELSE 6 END, ref")
+    return jsonify({'items': [dict(r) for r in rows],
+                    'reviewed_at': rows[0]['reviewed_at'] if rows else None})
+
+
+@app.route('/api/automation/jeonja/exclude', methods=['POST'])
+@admin_required
+def api_automation_jeonja_exclude():
+    """항목별 '자동상신 제외(보류)' 토글. 검증 통과건이어도 excluded=1 이면 live 가 skip."""
+    d = request.get_json(silent=True) or {}
+    ref = (d.get('ref') or '').strip()
+    excluded = 1 if d.get('excluded') else 0
+    if not ref:
+        return jsonify({'error': 'no ref'}), 400
+    rc = execute_rc("UPDATE jeonja_review_item SET excluded=? WHERE ref=?", (excluded, ref))
+    return jsonify({'ok': bool(rc), 'ref': ref, 'excluded': bool(excluded)})
+
+
+@app.route('/api/ext/jeonja/exclusions')
+@api_key_required
+def api_ext_jeonja_exclusions():
+    """맥 live(jeonja_approve) 가 자동상신 직전 호출 — 보류 ref 는 상신에서 제외."""
+    rows = query("SELECT ref FROM jeonja_review_item WHERE excluded=1")
+    return jsonify({'refs': [r['ref'] for r in rows]})
 
 
 # ═════════════════════════════════════════════════════════════════
