@@ -38,6 +38,16 @@
   .mm-ko{font-size:13px;white-space:pre-wrap;color:#1e293b;line-height:1.55}
   .mc-sec{padding:13px 15px;border-bottom:1px solid #f1f5f9}.mc-sec:last-child{border-bottom:none}
   .mc-sh{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;margin-bottom:8px;color:#334155}
+  /* 이슈/회신 섹션 — 접기/펼치기 (기본 접힘) */
+  details.mc-secd{border-bottom:1px solid #f1f5f9}
+  details.mc-secd:last-of-type{border-bottom:none}
+  details.mc-secd>summary{cursor:pointer;list-style:none;padding:11px 15px;font-weight:700;font-size:13px;color:#334155;user-select:none;display:flex;align-items:center;gap:8px}
+  details.mc-secd>summary::-webkit-details-marker{display:none}
+  details.mc-secd>summary::before{content:'▸';color:#94a3b8;font-size:12px;flex:none}
+  details.mc-secd[open]>summary::before{content:'▾'}
+  details.mc-secd[open]>summary{border-bottom:1px solid #eef2f7;background:#fafbfd}
+  .mc-secd-hint{font-weight:400;font-size:12px;color:#94a3b8;margin-left:auto;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mc-secd-body{padding:13px 15px}
   .fld{margin:6px 0;font-size:13px}.fld .k{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.03em}
   .box{border:1px solid #cbd5e1;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;width:100%}
   textarea.box{min-height:60px;resize:vertical;line-height:1.5}
@@ -134,6 +144,8 @@
     }else{
       replyHtml=`<div class="muted">${esc(c.reply_status)}${c.reply_status==='draft_created'?' · Outlook Drafts 확인 → 최종 Send':''}</div>`;
     }
+    const issHint=c.issue_status==='pending'?(c.issue_item||''):'';
+    const repHint=(c.reply_ko||'').trim().slice(0,40);
     el.innerHTML=`<div class="mc-top"><input type="checkbox" class="mc-pick" title="선택" style="margin-top:3px;width:16px;height:16px;flex:none;cursor:pointer">
       <div><div class="mc-subj">${esc(c.email_subject||'(제목없음)')}</div>
         <div class="mc-meta">${esc(c.email_from||'?')} · ${esc(c.email_date||'')} · #${c.id}</div></div>
@@ -144,8 +156,8 @@
           ${c.body_en?`<div><div class="mm-lbl">원문 (English)</div><div class="mm-en">${esc(c.body_en)}</div></div>`:''}
           ${c.summary_ko?`<div><div class="mm-lbl">한국어 번역</div><div class="mm-ko">${esc(c.summary_ko)}</div></div>`:''}
         </div></details>`:''}
-      <div class="mc-sec"><div class="mc-sh">📋 TRMT 이슈</div>${issueHtml}</div>
-      <div class="mc-sec"><div class="mc-sh">✉️ 회신 작성</div>${replyHtml}</div>
+      <details class="mc-secd"><summary>📋 TRMT 이슈${issHint?`<span class="mc-secd-hint">${esc(issHint)}</span>`:''}</summary><div class="mc-secd-body">${issueHtml}</div></details>
+      <details class="mc-secd"><summary>✉️ 회신 작성${repHint?`<span class="mc-secd-hint">${esc(repHint)}</span>`:''}</summary><div class="mc-secd-body">${replyHtml}</div></details>
       <div class="mc-sec" style="padding:8px 15px;display:flex;gap:6px;align-items:center">
         ${c.pending?'<button class="btn btn-sm act-punp">▶ 처리중으로</button>':'<button class="btn btn-sm act-pend">⏸ 보류</button>'}
         <span class="flex-spacer"></span>
