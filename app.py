@@ -7021,13 +7021,13 @@ def _reqgen_parse_workbook(stream, vsl_cd, vsl_nm=None):
 
 
 @app.route('/reqgen')
-@admin_required
+@login_required
 def reqgen_page():
     return render_template('reqgen.html')
 
 
 @app.route('/api/reqgen/upload', methods=['POST'])
-@admin_required
+@login_required
 def api_reqgen_upload():
     """엑셀 업로드 → S/ST 시트 파싱 → reqgen_draft 카드 적재(status=pending). SVMS 무영향."""
     f = request.files.get('file')
@@ -7071,7 +7071,7 @@ def api_reqgen_upload():
 
 
 @app.route('/api/reqgen/drafts')
-@admin_required
+@login_required
 def api_reqgen_list():
     status = request.args.get('status')
     if status:
@@ -7085,7 +7085,7 @@ def api_reqgen_list():
 
 
 @app.route('/api/reqgen/drafts/<int:did>', methods=['PATCH'])
-@admin_required
+@login_required
 def api_reqgen_patch(did):
     """카드 개별 설정 저장(수리 Stock of Spare 등). pending 상태만."""
     row = query('SELECT * FROM reqgen_draft WHERE id=?', (did,), one=True)
@@ -7102,7 +7102,7 @@ def api_reqgen_patch(did):
 
 
 @app.route('/api/reqgen/drafts/<int:did>/approve', methods=['POST'])
-@admin_required
+@login_required
 def api_reqgen_approve(did):
     """승인 = SVMS 저장 지시. Voyage/Port/Date 를 헤더에 반영 후 status='approved' + 저장큐 적재."""
     row = query('SELECT * FROM reqgen_draft WHERE id=?', (did,), one=True)
@@ -7142,7 +7142,7 @@ def api_reqgen_approve(did):
 
 
 @app.route('/api/reqgen/approve-all', methods=['POST'])
-@admin_required
+@login_required
 def api_reqgen_approve_all():
     """일괄 승인 — 공통 Voyage/Port/Date 를 모든 pending 카드 헤더에 반영 후 approved + 저장큐 1회.
     Port명(REQ_PORT_NM)은 비워둠 → 맥 러너가 포트코드로 SVMS 포트마스터에서 자동 채움."""
@@ -7195,7 +7195,7 @@ def api_reqgen_approve_all():
 
 
 @app.route('/api/reqgen/drafts/<int:did>/reset', methods=['POST'])
-@admin_required
+@login_required
 def api_reqgen_reset(did):
     """승인 취소 — 저장 전(approved)만 pending 으로 복귀."""
     rc = execute_rc("UPDATE reqgen_draft SET status='pending', decided_at=NULL, decided_by=NULL "
@@ -7207,7 +7207,7 @@ def api_reqgen_reset(did):
 
 
 @app.route('/api/reqgen/drafts/<int:did>', methods=['DELETE'])
-@admin_required
+@login_required
 def api_reqgen_delete(did):
     if not query('SELECT id FROM reqgen_draft WHERE id=?', (did,), one=True):
         return jsonify({'error': 'not found'}), 404
@@ -7216,7 +7216,7 @@ def api_reqgen_delete(did):
 
 
 @app.route('/api/reqgen/drafts/decided', methods=['DELETE'])
-@admin_required
+@login_required
 def api_reqgen_clear_decided():
     """처리완료(saved/failed) 일괄 삭제 — pending/approved/saving 보존."""
     n = execute_rc("DELETE FROM reqgen_draft WHERE status IN ('saved','failed')")
@@ -7224,7 +7224,7 @@ def api_reqgen_clear_decided():
 
 
 @app.route('/api/reqgen/drafts/all', methods=['DELETE'])
-@admin_required
+@login_required
 def api_reqgen_clear_all():
     """전체 카드 삭제 — TRMT 카드 목록만 비움(SVMS에 저장된 청구서는 영향 없음)."""
     n = execute_rc("DELETE FROM reqgen_draft")

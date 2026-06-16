@@ -33,18 +33,18 @@
         {{ nlink('dashboard', '📊 대시보드') }}
         {{ nlink('index', '📋 Daily 업무관리') }}
 
-        {% if session.role == 'admin' %}
         <div class="nav-group {% if request.endpoint in auto_eps %}active{% endif %}">
           <button type="button" class="nav-trigger">🤖 자동화 <span class="caret-sm">▾</span></button>
           <div class="nav-submenu">
+            {% if session.role == 'admin' %}
             {{ nlink('automation_page', '자동화 허브') }}
             {{ nlink('mail_page', '📬 메일 처리') }}
             {{ nlink('aor_page', 'AOR') }}
             {{ nlink('fundreq_page', '비용청구') }}
+            {% endif %}
             {{ nlink('reqgen_page', '도크 자재/수리') }}
           </div>
         </div>
-        {% endif %}
 
         <div class="nav-group {% if request.endpoint in survey_eps %}active{% endif %}">
           <button type="button" class="nav-trigger">🔍 Survey <span class="caret-sm">▾</span></button>
@@ -119,14 +119,14 @@
     <nav class="mm-panel">
       {{ nlink('dashboard', '📊 대시보드') }}
       {{ nlink('index', '📋 Daily 업무관리') }}
-      {% if session.role == 'admin' %}
       <div class="mm-section">🤖 자동화</div>
+      {% if session.role == 'admin' %}
       {{ nlink('automation_page', '자동화 허브') }}
       {{ nlink('mail_page', '📬 메일 처리') }}
       {{ nlink('aor_page', 'AOR') }}
       {{ nlink('fundreq_page', '비용청구') }}
-      {{ nlink('reqgen_page', '도크 자재/수리') }}
       {% endif %}
+      {{ nlink('reqgen_page', '도크 자재/수리') }}
       <div class="mm-section">🔍 Survey</div>
       {{ nlink('class_status_page', 'Class Status') }}
       {{ nlink('condition_survey', 'Condition Survey') }}
