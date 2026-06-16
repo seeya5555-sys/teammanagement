@@ -6914,7 +6914,43 @@ def _reqgen_cell(ws, coord):
     return v
 
 
-def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm):
+def _reqgen_vsl_prefix(vtype):
+    """선종 텍스트 → 선명 접두어. 컨테이너=M/V, 그 외(VLCC·탱커)=M/T(기본)."""
+    t = (vtype or '').upper()
+    if 'CONT' in t or 'BOX' in t:
+        return 'M/V'
+    return 'M/T'
+
+
+def _reqgen_index_vessel_type(wb):
+    """INDEX 시트에서 'TYPE OF VESSEL' 라벨 우측 값(예: VLCC) 추출. 못 찾으면 None → M/T 기본."""
+    if 'INDEX' not in wb.sheetnames:
+        return None
+    try:
+        for row in wb['INDEX'].iter_rows(min_row=1, max_row=15, max_col=10, values_only=True):
+            for i, v in enumerate(row):
+                if isinstance(v, str) and 'TYPE OF VESSEL' in v.upper():
+                    for w in row[i + 1:]:
+                        if isinstance(w, str) and w.strip():
+                            return w.strip()
+    except Exception:
+        return None
+    return None
+
+
+def _reqgen_build_subj(vsl_cd, sheet, vnm, prefix, subject):
+    """SVMS 제목 = [DOCK][<VSL_CD> <sheet>]<M/T> <선명> - <제목>. 수리(R)와 동일 규칙.
+    선명에 이미 M/T·MT 등 접두어가 박혀있으면 제거 후 재부착(중복 방지)."""
+    import re as _re
+    nm = _re.sub(r'^(M/?[TV])\s+', '', vnm.strip(), flags=_re.I) if vnm else None
+    tag = f"[{vsl_cd} {sheet}]" if vsl_cd else f"[{sheet}]"
+    core = tag + (f"{prefix} {nm}" if nm else prefix)
+    if subject:
+        core += f" - {subject}"
+    return f"[DOCK]{core}"
+
+
+def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm, vsl_prefix='M/T'):
     name = ws.title
     part_tp = '1' if name.upper().startswith('ST') else '0'
     part_tp_nm = 'Consumable' if part_tp == '1' else 'Spare Part'
@@ -6928,7 +6964,7 @@ def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm):
         'VSL_CD': vsl_cd, 'VSL_NM': vnm,
         'CATE_NM': equipment, 'EQ_NM': equipment,
         'MAKER_NM': maker, 'TYPE_NM': type_nm,
-        'SUBJ': (f"[DOCK] {subject}" if subject else '[DOCK]'),
+        'SUBJ': _reqgen_build_subj(vsl_cd, name, vnm, vsl_prefix, subject),
         'DOCK_YN': 'Y', 'DEPT_CD': 'E', 'DEPT_CD_NM': 'Engine',
         'URG_YN': 'N', 'STATUS': 'N', 'DM_YN': 'N',
         'REQ_DT': None, 'PHR_DT': None, 'REQ_VOY': None, 'PHR_VOY': None,
@@ -7007,10 +7043,11 @@ def _reqgen_parse_workbook(stream, vsl_cd, vsl_nm=None):
     wb = load_workbook(stream, data_only=True, read_only=True)
     if vsl_nm is None and 'INDEX' in wb.sheetnames:
         vsl_nm = _reqgen_cell(wb['INDEX'], 'G2')
+    vsl_prefix = _reqgen_vsl_prefix(_reqgen_index_vessel_type(wb))
     out = []
     for nm in wb.sheetnames:
         if _re.match(r'^(ST|S)\d+$', nm):                 # 구매청구
-            res = _reqgen_parse_sheet(wb[nm], vsl_cd, vsl_nm)
+            res = _reqgen_parse_sheet(wb[nm], vsl_cd, vsl_nm, vsl_prefix)
             if res['lines']:
                 out.append(res)
         elif _re.match(r'^R\d+$', nm):                    # 수리신청
