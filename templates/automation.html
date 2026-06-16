@@ -42,6 +42,12 @@
   .au-note{font-size:12px;color:var(--text-secondary);margin:4px 0 16px;line-height:1.5}
   /* 전자결재 검증 인라인 체크리스트 */
   .jl{max-width:920px;margin:2px 0 4px}
+  .jl-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);user-select:none;font-size:13px;font-weight:700;color:var(--text-secondary)}
+  .jl-head:hover{background:var(--surface-3)}
+  .jl-caret{font-size:12px;transition:transform .12s;display:inline-block;color:var(--text-tertiary)}
+  .jl-head.open .jl-caret{transform:rotate(90deg)}
+  .jl-headmeta{font-weight:400;font-size:11.5px;color:var(--text-tertiary);margin-left:auto;text-align:right}
+  .jl-body{margin-top:8px}
   .jl-rev{font-size:11.5px;color:var(--text-tertiary);margin:2px 0 8px;line-height:1.5}
   .jl-grp{font-size:12px;font-weight:700;color:var(--text-secondary);margin:12px 0 5px}
   .jl-item{display:flex;align-items:center;gap:9px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:9px;background:#fff;margin-bottom:6px;font-size:12.5px;flex-wrap:wrap}
@@ -100,7 +106,7 @@
 (function(){
   const SOA=['soa_g1','soa_g2','soa_g3','soa_skrt'];
   let TASKS={}, ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
-  let JLIST=[], JREV=null, JSIG='', JPENDING={};   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게)
+  let JLIST=[], JREV=null, JSIG='', JPENDING={}, JOPEN=false;   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게) / JOPEN: 리스트 펼침(기본 접힘)
   const JBKT={pass:'✅ 통과',costslip:'📄 CostSlip',mismatch:'⚠️ DN≠Cost',escalate:'🚨 차액≥$1k',flag:'✋ 사람확인',already:'✔️ 이미결재'};
   const escA=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
   const $=s=>document.querySelector(s);
@@ -193,21 +199,25 @@
   }
   function renderJeonja(){
     const el=$('#au-jeonja-list'); if(!el) return;
-    const sig=JSON.stringify(JLIST)+'|'+JREV;
+    const sig=JSON.stringify(JLIST)+'|'+JREV+'|'+JOPEN;
     if(sig===JSIG) return;   // 변화 없으면 재그리기 안 함(체크 중 깜빡임 방지)
     JSIG=sig;
     if(!JLIST.length){ el.innerHTML=`<div class="jl-empty">검증 결과 없음 — 🔍검증을 누르면 현재 상신대기 전자결재를 전수 검토해 여기 띄웁니다.</div>`; return; }
     const sub=JLIST.filter(x=>x.bucket!=='already'), already=JLIST.filter(x=>x.bucket==='already');
     const nHold=sub.filter(x=>x.excluded).length;
-    let h=`<div class="jl-rev">검토시각 ${JREV||'-'} · 상신대상 ${sub.length}건 중 보류 ${nHold}건 · ▶자동상신 시 <b>${sub.length-nHold}건</b> 상신 예정`+
+    let body=`<div class="jl-rev">검토시각 ${JREV||'-'} · 상신대상 ${sub.length}건 중 보류 ${nHold}건 · ▶자동상신 시 <b>${sub.length-nHold}건</b> 상신 예정`+
       `<br><span class="jl-note">미체크=상신 / 불일치(DN≠Cost)는 기본 보류(빨강) — 직접 풀어야 상신</span></div>`;
-    h+=`<div class="jl-grp">상신 대상 — 체크 = 보류(상신 제외)</div>`;
-    h+= sub.length?sub.map(jrow).join(''):`<div class="jl-empty">상신 대상 없음</div>`;
+    body+=`<div class="jl-grp">상신 대상 — 체크 = 보류(상신 제외)</div>`;
+    body+= sub.length?sub.map(jrow).join(''):`<div class="jl-empty">상신 대상 없음</div>`;
     if(already.length){
-      h+=`<div class="jl-grp">✔️ 이미결재 — 상신 불필요</div>`;
-      h+=already.map(jrow).join('');
+      body+=`<div class="jl-grp">✔️ 이미결재 — 상신 불필요</div>`;
+      body+=already.map(jrow).join('');
     }
-    el.innerHTML=h;
+    // 접기 헤더 — 기본 접힘. 헤더에 요약(상신대상/보류/시각) 표시해 펼치지 않아도 파악 가능.
+    const meta=`상신대상 ${sub.length} · 보류 ${nHold}${already.length?` · 이미결재 ${already.length}`:''} · ${JREV||'-'}`;
+    el.innerHTML=`<div class="jl-head${JOPEN?' open':''}" id="jl-head"><span class="jl-caret">▸</span>전자결재 검증결과<span class="jl-headmeta">${meta}</span></div>`+
+      `<div class="jl-body" ${JOPEN?'':'hidden'}>${body}</div>`;
+    $('#jl-head').onclick=()=>{ JOPEN=!JOPEN; JSIG=''; renderJeonja(); };
     el.querySelectorAll('input[data-xref]').forEach(c=>c.onchange=()=>toggleExcl(c.dataset.xref,c.checked));
   }
   async function toggleExcl(ref,checked){
