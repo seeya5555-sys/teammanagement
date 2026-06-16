@@ -7416,6 +7416,31 @@ def api_automation_killswitch():
 
 
 # ---- ext (맥미니 launchd 폴링) ----
+@app.route('/api/ext/automation/enqueue', methods=['POST'])
+@api_key_required
+def api_ext_automation_enqueue():
+    """무인 스케줄러(launchd)가 task 를 큐에 적재. ⚠️ 안전상 verify(읽기전용)만 허용 —
+    무인 자동으로는 절대 상신/승인(live)이 안 되게 잠근다. live 는 사람이 허브 버튼으로만."""
+    d = request.get_json(silent=True) or {}
+    task = (d.get('task') or '').strip()
+    mode = (d.get('mode') or 'verify').strip()
+    if task not in AUTOMATION_TASKS:
+        return jsonify({'error': 'bad task'}), 400
+    if mode != 'verify':
+        return jsonify({'error': 'ext enqueue 는 verify 만 허용(무인 상신 차단)'}), 403
+    if not _automation_enabled():
+        return jsonify({'error': 'killswitch ON'}), 409
+    busy = query("SELECT 1 FROM automation_run WHERE task=? AND status IN ('queued','running') LIMIT 1",
+                 (task,), one=True)
+    if busy:
+        return jsonify({'skipped': True, 'reason': '이미 대기/진행중'}), 200
+    import uuid
+    rid = uuid.uuid4().hex[:12]
+    execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by) "
+            "VALUES (?,?,?, 'queued', 'scheduler')", (rid, task, mode))
+    return jsonify({'ok': True, 'run_id': rid})
+
+
 @app.route('/api/ext/automation/claim', methods=['POST'])
 @api_key_required
 def api_ext_automation_claim():
@@ -7460,6 +7485,8 @@ def api_ext_jeonja_review():
     db = get_db()
     prev_excluded = {r['ref'] for r in db.execute(
         "SELECT ref FROM jeonja_review_item WHERE excluded=1").fetchall()}
+    # 불일치(DN≠Cost)는 기본 보류(excluded=1) — 사람이 직접 체크 풀어야 상신(B안, 손유석 2026-06-16).
+    DEFAULT_HOLD = {'mismatch'}
     n = 0
     try:
         db.execute("DELETE FROM jeonja_review_item")
@@ -7467,11 +7494,12 @@ def api_ext_jeonja_review():
             ref = (it.get('ref') or '').strip()
             if not ref:
                 continue
+            bucket = (it.get('bucket') or 'flag')
+            excl = 1 if (ref in prev_excluded or bucket in DEFAULT_HOLD) else 0
             db.execute("INSERT OR REPLACE INTO jeonja_review_item "
                        "(ref,vsl_cd,subj,fund,cost,dn,bucket,why,excluded,run_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
                        (ref, it.get('vsl_cd'), it.get('subj'), it.get('fund'), it.get('cost'),
-                        it.get('dn'), (it.get('bucket') or 'flag'), it.get('why'),
-                        1 if ref in prev_excluded else 0, run_id))
+                        it.get('dn'), bucket, it.get('why'), excl, run_id))
             n += 1
         db.commit()
     except Exception:

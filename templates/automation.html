@@ -46,7 +46,11 @@
   .jl-grp{font-size:12px;font-weight:700;color:var(--text-secondary);margin:12px 0 5px}
   .jl-item{display:flex;align-items:center;gap:9px;padding:8px 12px;border:1px solid var(--border-subtle);border-radius:9px;background:#fff;margin-bottom:6px;font-size:12.5px;flex-wrap:wrap}
   .jl-item.excl{background:var(--amber-bg);border-color:var(--amber-border)}
+  .jl-item.mis{background:var(--red-bg);border-color:var(--red-border)}
+  .jl-item.mis .jl-why{color:var(--red)}
   .jl-item.human{background:var(--surface-2)}
+  .jl-bkt.bkt-mis{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
+  .jl-note{font-size:11px;color:var(--text-tertiary)}
   .jl-ref{font-weight:700;color:var(--text-primary);white-space:nowrap}
   .jl-sub{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:60px;flex:1}
   .jl-amt{color:var(--text-tertiary);font-size:11.5px;white-space:nowrap}
@@ -166,20 +170,25 @@
     return `<span class="jl-amt">${dn}${(dn&&cost)?' / Cost ':(cost?'Cost ':'')}${cost}</span>`;
   }
   function jrow(it){
-    if(it.bucket==='pass'){
-      const ex=it.excluded?1:0;
-      return `<div class="jl-item${ex?' excl':''}">
+    if(it.bucket==='already'){   // 이미결재 — 상신 불필요, 읽기전용
+      return `<div class="jl-item human">
+        <span class="jl-bkt">${JBKT.already}</span>
         <span class="jl-ref">${esc(it.ref)}</span>
-        <span class="jl-sub">${esc(it.subj||'')}</span>${jAmt(it)}
-        ${ex?'<span class="jl-hold">보류</span>':''}
-        <label class="jl-chk"><input type="checkbox" ${ex?'checked':''} data-xref="${escA(it.ref)}"> 자동상신 제외</label>
+        <span class="jl-sub">${esc(it.subj||'')}</span>
+        <span class="jl-why">상신 불필요</span>
       </div>`;
     }
-    return `<div class="jl-item human">
-      <span class="jl-bkt">${JBKT[it.bucket]||esc(it.bucket)}</span>
+    const ex=it.excluded?1:0, isMis=it.bucket==='mismatch';
+    const cls='jl-item'+(isMis?' mis':(ex?' excl':''));
+    const badge = it.bucket==='pass' ? '' :
+      `<span class="jl-bkt${isMis?' bkt-mis':''}">${JBKT[it.bucket]||esc(it.bucket)}</span>`;
+    return `<div class="${cls}">
+      ${badge}
       <span class="jl-ref">${esc(it.ref)}</span>
       <span class="jl-sub">${esc(it.subj||'')}</span>${jAmt(it)}
       ${it.why?`<span class="jl-why">${esc(it.why)}</span>`:''}
+      ${ex?'<span class="jl-hold">보류</span>':''}
+      <label class="jl-chk"><input type="checkbox" ${ex?'checked':''} data-xref="${escA(it.ref)}"> 상신 제외</label>
     </div>`;
   }
   function renderJeonja(){
@@ -188,14 +197,15 @@
     if(sig===JSIG) return;   // 변화 없으면 재그리기 안 함(체크 중 깜빡임 방지)
     JSIG=sig;
     if(!JLIST.length){ el.innerHTML=`<div class="jl-empty">검증 결과 없음 — 🔍검증을 누르면 현재 상신대기 전자결재를 전수 검토해 여기 띄웁니다.</div>`; return; }
-    const passes=JLIST.filter(x=>x.bucket==='pass'), humans=JLIST.filter(x=>x.bucket!=='pass');
-    const nExcl=passes.filter(x=>x.excluded).length;
-    let h=`<div class="jl-rev">검토시각 ${JREV||'-'} · 통과 ${passes.length}건${nExcl?` · 보류 ${nExcl}건`:''} · ▶자동상신 시 <b>${passes.length-nExcl}건</b> 상신 예정</div>`;
-    h+=`<div class="jl-grp">✅ 자동상신 대상 — 체크하면 추가검증 보류(검증 통과여도 상신 제외)</div>`;
-    h+= passes.length?passes.map(jrow).join(''):`<div class="jl-empty">통과 건 없음</div>`;
-    if(humans.length){
-      h+=`<div class="jl-grp">✋ 사람확인 필요 — 원래 자동상신 대상 아님</div>`;
-      h+=humans.map(jrow).join('');
+    const sub=JLIST.filter(x=>x.bucket!=='already'), already=JLIST.filter(x=>x.bucket==='already');
+    const nHold=sub.filter(x=>x.excluded).length;
+    let h=`<div class="jl-rev">검토시각 ${JREV||'-'} · 상신대상 ${sub.length}건 중 보류 ${nHold}건 · ▶자동상신 시 <b>${sub.length-nHold}건</b> 상신 예정`+
+      `<br><span class="jl-note">미체크=상신 / 불일치(DN≠Cost)는 기본 보류(빨강) — 직접 풀어야 상신</span></div>`;
+    h+=`<div class="jl-grp">상신 대상 — 체크 = 보류(상신 제외)</div>`;
+    h+= sub.length?sub.map(jrow).join(''):`<div class="jl-empty">상신 대상 없음</div>`;
+    if(already.length){
+      h+=`<div class="jl-grp">✔️ 이미결재 — 상신 불필요</div>`;
+      h+=already.map(jrow).join('');
     }
     el.innerHTML=h;
     el.querySelectorAll('input[data-xref]').forEach(c=>c.onchange=()=>toggleExcl(c.dataset.xref,c.checked));
@@ -238,8 +248,8 @@
     }[mode];
     let cm=confirmMsg;
     if(mode==='live' && task==='jeonja'){   // 보류 반영 건수 명시(돈 안전)
-      const p=JLIST.filter(x=>x.bucket==='pass'), ex=p.filter(x=>x.excluded).length;
-      cm=`[전자결재 자동상신]\n검증통과 ${p.length}건 중 보류 ${ex}건 제외 → ${p.length-ex}건 상신.\n(상신 직전 STATUS 재확인·보류 ref skip)\n진행할까요?`;
+      const sub=JLIST.filter(x=>x.bucket!=='already'), ex=sub.filter(x=>x.excluded).length;
+      cm=`[전자결재 자동상신]\n상신대상 ${sub.length}건 중 보류 ${ex}건 제외 → ${sub.length-ex}건 상신.\n(불일치 기본보류·상신직전 STATUS 재확인)\n진행할까요?`;
     }
     if(cm && !confirm(cm))return;
     e.target.disabled=true;
