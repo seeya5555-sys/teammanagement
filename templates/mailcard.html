@@ -66,6 +66,8 @@
   const PRIO=['Normal','Urgent','COC & Flag','Next DD'];
   const listEl=document.getElementById('mc-list'),countEl=document.getElementById('mc-count');
   let filter='active';
+  let ISSUES=[];  // 열린 Daily 현안 캐시 (기존 현안에 액션추가 셀렉터용)
+  async function loadIssues(){const r=await api('GET','/api/issues?status=Open');ISSUES=(r.ok&&Array.isArray(r.j))?r.j:[];}
   const esc=s=>(s==null?'':String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
   async function api(m,u,b){const o={method:m,headers:{'Accept':'application/json'}};if(b){o.headers['Content-Type']='application/json';o.body=JSON.stringify(b);}const r=await fetch(u,o);let j={};try{j=await r.json();}catch(e){}return{ok:r.ok,status:r.status,j};}
 
@@ -76,6 +78,7 @@
     countEl.textContent='처리중 '+(j.active||0)+'건 · 보류 '+(j.pending||0)+'건'+(filter!=='active'?' · 표시 '+j.count:'');
     const emptyMsg={active:'처리할 메일 없음 👍',pending:'보류한 메일 없음',archived:'보관된 메일 없음'}[filter]||'없음';
     if(!j.cards.length){listEl.innerHTML='<div class="mc-empty">'+emptyMsg+'</div>';return;}
+    await loadIssues();
     listEl.innerHTML='';j.cards.forEach(c=>listEl.appendChild(card(c)));
     updateSel();
   }
@@ -95,6 +98,10 @@
         <div class="fld" style="max-width:140px"><span class="k">Priority</span><select class="box i-prio">${opts}</select></div></div>
         <div class="fld"><span class="k">Item</span><input class="box i-item" value="${esc(c.issue_item||'')}"></div>
         <div class="fld"><span class="k">Description</span><textarea class="box i-desc">${esc(c.issue_desc||'')}</textarea></div>
+        <div class="row" style="align-items:center;flex-wrap:wrap;gap:6px"><span class="k" style="flex:none">기존 현안에 추가</span>
+          <label class="tip" style="flex:none;cursor:pointer"><input type="checkbox" class="i-vfilter" checked style="vertical-align:middle"> 선명만</label>
+          <select class="box i-existing" style="flex:1;min-width:220px"></select>
+          <button class="btn btn-sm act-iappend2">＋ 선택 현안에 액션추가</button></div>
         <div class="row"><button class="btn btn-p btn-sm act-ireg">✅ Daily업무 등록</button>${appendBtn}
           <button class="btn btn-sm act-ina">해당없음</button><button class="btn btn-d btn-sm act-irej">리젝</button></div>`;
     }else{
@@ -137,6 +144,21 @@
     wire(el,c);return el;
   }
 
+  // 기존 현안 셀렉터 채우기: 선명 필터(체크 시 카드 선박만), 미체크 시 전체 열린 현안
+  function fillExisting(el){
+    const sel=el.querySelector('.i-existing');if(!sel)return;
+    const onlyV=el.querySelector('.i-vfilter')?.checked;
+    const ves=((el.querySelector('.i-ves')||{}).value||'').trim().toLowerCase();
+    let list=ISSUES.slice();
+    if(onlyV&&ves){
+      list=list.filter(it=>{const a=(it.vessel_name||'').toLowerCase(),b=(it.vessel_short||'').toLowerCase();
+        return (a&&(a.includes(ves)||ves.includes(a)))||(b&&(b.includes(ves)||ves.includes(b)));});
+    }
+    if(!list.length){sel.innerHTML='<option value="">'+(onlyV&&ves?'(해당 선박 열린 현안 없음 — 선명만 해제)':'(열린 현안 없음)')+'</option>';return;}
+    sel.innerHTML='<option value="">현안 선택…</option>'+list.map(it=>
+      `<option value="${it.id}">#${it.id} [${esc(it.vessel_short||it.vessel_name||'')}] ${esc(it.item_topic||'')} (${esc(it.issue_date||'')})</option>`).join('');
+  }
+
   function gv(el,s){const n=el.querySelector(s);return n?n.value.trim():undefined;}
   function busy(el,b){el.classList.toggle('busy',b);}
   // 액션 후 새로고침: 클릭한 카드를 같은 화면 위치에 고정(앵커). 카드가 사라지면(archive/삭제) 스크롤 위치만 보존 → 맨 위로 안 튐.
@@ -157,6 +179,16 @@
     const q=s=>el.querySelector(s);
     if(q('.act-ireg'))q('.act-ireg').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'new',item:gv(el,'.i-item'),desc:gv(el,'.i-desc'),vessel:gv(el,'.i-ves'),supervisor:gv(el,'.i-sup'),priority:gv(el,'.i-prio')});if(!r.ok){alert('등록 실패: '+(r.j.hint||r.j.error));busy(el,0);}else reload(c.id);};
     if(q('.act-iappend'))q('.act-iappend').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'append',desc:gv(el,'.i-desc')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else reload(c.id);};
+    if(q('.i-existing')){
+      fillExisting(el);
+      const vf=q('.i-vfilter');if(vf)vf.onchange=()=>fillExisting(el);
+      const vi=q('.i-ves');if(vi)vi.addEventListener('input',()=>{const f=q('.i-vfilter');if(f&&f.checked)fillExisting(el);});
+      q('.act-iappend2').onclick=async()=>{
+        const mid=q('.i-existing').value;if(!mid){alert('추가할 현안을 선택하세요');return;}
+        const desc=gv(el,'.i-desc');if(!desc){alert('Description(액션 내용)이 비어있습니다');return;}
+        busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'append',match_id:Number(mid),desc});
+        if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else reload(c.id);};
+    }
     if(q('.act-irej'))q('.act-irej').onclick=async()=>{const rs=prompt('리젝 사유(선택):','');if(rs===null)return;busy(el,1);await api('POST',`/api/mail/${c.id}/issue/reject`,{reason:rs});reload(c.id);};
     if(q('.act-ina'))q('.act-ina').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/issue/na`,{});reload(c.id);};
     if(q('.act-rtrans'))q('.act-rtrans').onclick=async()=>{const er=q('.act-rerr');er.hidden=true;const style=(gv(el,'.r-style')||'')+((gv(el,'.r-memo'))?(' / '+gv(el,'.r-memo')):'');busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/translate`,{reply_ko:gv(el,'.r-ko'),reply_style:style});busy(el,0);if(!r.ok){er.textContent='번역 실패: '+(r.j.detail||r.j.error);er.hidden=false;}else reload(c.id);};
