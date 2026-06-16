@@ -2802,16 +2802,17 @@ def api_cs_survey_export(sid):
     fr = query('''SELECT category, no, item, description, remark, status
                     FROM cs_findings WHERE survey_id=?
                    ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id''', (sid,))
+    # RECTIFICATION·PHOTO 2열은 공란으로 출력(현장기입용). REMARK는 export에서 제외.
     rows = [[r['category'], r['no'], r['item'] or '', r['description'] or '',
-             r['remark'] or '', r['status'] or ''] for r in fr]
+             '', '', r['status'] or ''] for r in fr]
     vessel = s['vessel_name']
     title = f"Condition Survey — {vessel}  {s['year']} Q{s['quarter']}"
     sub_bits = [f"수검일: {s['inspection_date'] or '-'}", f"Vendor: {s['vendor'] or '-'}",
                 f"총 {len(rows)}건 (Defect {sum(1 for r in fr if r['category']=='Defect')} / "
                 f"Observation {sum(1 for r in fr if r['category']=='Observation')})"]
-    headers = ['Category', 'No.', 'ITEM', 'DESCRIPTION', 'REMARK', 'STATUS']
+    headers = ['Category', 'No.', 'ITEM', 'DESCRIPTION', 'RECTIFICATION', 'PHOTO', 'STATUS']
     bio = _findings_workbook(title, '   │   '.join(sub_bits), headers, rows,
-                             wrap_cols={3, 4, 5}, widths=[12, 6, 28, 50, 40, 10])
+                             wrap_cols={3, 4, 5, 6}, widths=[12, 6, 28, 50, 40, 30, 10])
     fname = f"CS_{_safe_filename(vessel)}_{s['year']}Q{s['quarter']}.xlsx"
     return send_file(bio, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
