@@ -38,7 +38,7 @@
           <div class="nav-submenu">
             {% if session.role == 'admin' %}
             {{ nlink('automation_page', '자동화 허브') }}
-            {{ nlink('mail_page', '📬 메일 처리') }}
+            {{ nlink('mail_page', '메일 처리') }}
             {{ nlink('aor_page', 'AOR') }}
             {{ nlink('fundreq_page', '비용청구') }}
             {% endif %}
@@ -122,7 +122,7 @@
       <div class="mm-section">🤖 자동화</div>
       {% if session.role == 'admin' %}
       {{ nlink('automation_page', '자동화 허브') }}
-      {{ nlink('mail_page', '📬 메일 처리') }}
+      {{ nlink('mail_page', '메일 처리') }}
       {{ nlink('aor_page', 'AOR') }}
       {{ nlink('fundreq_page', '비용청구') }}
       {% endif %}
