@@ -66,6 +66,7 @@
   .jl-chk{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11.5px;color:var(--text-secondary);white-space:nowrap;cursor:pointer;user-select:none}
   .jl-chk input{width:15px;height:15px;cursor:pointer;accent-color:var(--amber)}
   .jl-empty{font-size:12px;color:var(--text-tertiary);padding:6px 2px}
+  .au-allrow{background:var(--surface-2);border-style:dashed}
 </style>
 {% endblock %}
 {% block content %}
@@ -82,8 +83,7 @@
     <button class="au-ks" id="au-ks">…</button>
   </div>
 
-  <div class="au-sec">SOA 정기검토 · 자동승인</div>
-  <div id="au-soa"></div>
+  <div id="au-soa" class="jl"></div>
 
   <div class="au-sec">전자결재</div>
   <div id="au-jeonja"></div>
@@ -107,6 +107,7 @@
   const SOA=['soa_g1','soa_g2','soa_g3','soa_skrt'];
   let TASKS={}, ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
   let JLIST=[], JREV=null, JSIG='', JPENDING={}, JOPEN=false;   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게) / JOPEN: 리스트 펼침(기본 접힘)
+  let SOPEN=false;   // SOA 섹션 펼침(기본 접힘)
   const JBKT={pass:'✅ 통과',costslip:'📄 CostSlip',mismatch:'⚠️ DN≠Cost',escalate:'🚨 차액≥$1k',flag:'✋ 사람확인',already:'✔️ 이미결재'};
   const escA=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
   const $=s=>document.querySelector(s);
@@ -164,7 +165,7 @@
     ks.className='au-ks '+(ENABLED?'on':'off');
     m.className='au-master'+(ENABLED?'':' off');
     $('#au-master-sub').textContent=ENABLED?'— 전체 자동화 ON. 버튼이 작동합니다.':'— 킬스위치 ON. 모든 자동화 정지중.';
-    $('#au-soa').innerHTML=SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
+    renderSoa();
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
     renderJeonja();
     renderLog();
@@ -220,6 +221,40 @@
     $('#jl-head').onclick=()=>{ JOPEN=!JOPEN; JSIG=''; renderJeonja(); };
     el.querySelectorAll('input[data-xref]').forEach(c=>c.onchange=()=>toggleExcl(c.dataset.xref,c.checked));
   }
+  function renderSoa(){
+    const el=$('#au-soa'); if(!el) return;
+    const anyBusy=SOA.some(busy);
+    const dEn=(!ENABLED)?'disabled':'';                 // 검증은 ENABLED만 보면 됨
+    const dAll=(!ENABLED||anyBusy)?'disabled':'';        // 실행계열은 진행중이면도 막음
+    const allRow=`<div class="au-row au-allrow"><div class="au-name">⚡ SOA 전체 한방에<span class="au-desc">4그룹·16척 일괄 적재 → 러너가 순차 실행</span></div>`+
+      `<div class="au-btns">`+
+      `<button class="au-b verify" data-all="verify" ${dEn}>🔍 검증 전체</button>`+
+      `<button class="au-b live" data-all="live" ${dAll}>▶ 자동승인 전체</button>`+
+      `<button class="au-b rjt" data-all="reject_mark" ${dAll}>🟥 리젝체크 전체</button>`+
+      `<button class="au-b rjt2" data-all="reject_submit" ${dAll}>📤 리젝제출+메일 전체</button>`+
+      `</div></div>`;
+    const body=allRow+SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
+    el.innerHTML=`<div class="jl-head${SOPEN?' open':''}" id="soa-head"><span class="jl-caret">▸</span>SOA 정기검토 · 자동승인<span class="jl-headmeta">4그룹·16척</span></div>`+
+      `<div class="jl-body" ${SOPEN?'':'hidden'}>${body}</div>`;
+    $('#soa-head').onclick=()=>{ SOPEN=!SOPEN; renderSoa(); };
+    el.querySelectorAll('.au-b').forEach(b=>b.onclick=onRun);   // toggle 단독 재호출 시도 동작하게
+  }
+  async function runAllSoa(mode){
+    const lab={verify:'검증',live:'자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
+    const msg={
+      live:`[SOA 전체 4그룹·16척]\n자동승인을 지금 실행할까요?\n(clean 건만 자동 처리, 예외 미처리·텔레그램 보고 / 그룹별 순차 실행)`,
+      reject_mark:`[SOA 전체 4그룹·16척]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
+      reject_submit:`[SOA 전체 4그룹·16척]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
+    }[mode];
+    if(msg && !confirm(msg)) return;
+    let ok=0,busy_=0,fail=0;
+    for(const t of SOA){
+      const {ok:o,j}=await api('POST','/api/automation/run',{task:t,mode});
+      if(o) ok++; else if(j&&/대기|진행|killswitch|정지/.test(j.error||'')) busy_++; else fail++;
+    }
+    await load();
+    alert(`SOA 전체 ${lab}: ${ok}그룹 적재${busy_?` · ${busy_}그룹 이미대기/스위치off`:''}${fail?` · ${fail}그룹 실패`:''}\n(러너가 순차 실행 → 텔레그램 보고)`);
+  }
   async function toggleExcl(ref,checked){
     JPENDING[ref]=checked?1:0;                // in-flight: 폴링 머지가 이 값을 덮어쓰지 않게
     const it=JLIST.find(x=>x.ref===ref); if(it) it.excluded=checked?1:0;
@@ -249,6 +284,7 @@
     cl.textContent=CLEARED?`마지막 비움: ${CLEARED.at} · ${CLEARED.by||'?'} · ${CLEARED.n}건 삭제`:'';
   }
   async function onRun(e){
+    if(e.target.dataset.all){ return runAllSoa(e.target.dataset.all); }  // SOA 전체 한방에
     const task=e.target.dataset.task, mode=e.target.dataset.mode;
     const nm=TASKS[task]||task;
     const confirmMsg={
