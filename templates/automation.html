@@ -3,43 +3,43 @@
 {% block head %}
 <style>
   .au-wrap{max-width:920px}
-  .au-master{display:flex;align-items:center;gap:12px;padding:12px 15px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;margin-bottom:16px}
-  .au-master.off{background:#fef2f2;border-color:#fecaca}
+  .au-master{display:flex;align-items:center;gap:12px;padding:12px 15px;border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:16px}
+  .au-master.off{background:var(--red-bg);border-color:var(--red-border)}
   .au-master b{font-size:14px}
-  .au-master .au-sub{color:#64748b;font-size:12.5px}
-  .au-ks{margin-left:auto;border:1px solid #cbd5e1;background:#f1f5f9;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:13px}
-  .au-ks.on{background:#dcfce7;border-color:#86efac;color:#15803d}
-  .au-ks.off{background:#fee2e2;border-color:#fca5a5;color:#b91c1c}
-  .au-sec{margin:18px 0 8px;font-size:13px;font-weight:700;color:#334155;letter-spacing:.3px}
-  .au-row{display:flex;align-items:center;gap:10px;padding:12px 15px;border:1px solid #e2e8f0;border-radius:11px;background:#fff;margin-bottom:9px;flex-wrap:wrap}
-  .au-name{font-weight:600;color:#0f172a;min-width:0}
-  .au-name .au-desc{display:block;font-size:12px;color:#64748b;font-weight:400;margin-top:2px}
+  .au-master .au-sub{color:var(--text-secondary);font-size:12.5px}
+  .au-ks{margin-left:auto;border:1px solid var(--border-strong);background:var(--surface-3);border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;font-size:13px}
+  .au-ks.on{background:var(--green-bg);border-color:var(--green-border);color:var(--green)}
+  .au-ks.off{background:var(--red-bg);border-color:var(--red-border);color:var(--red)}
+  .au-sec{margin:18px 0 8px;font-size:13px;font-weight:700;color:var(--text-secondary);letter-spacing:.3px}
+  .au-row{display:flex;align-items:center;gap:10px;padding:12px 15px;border:1px solid var(--border);border-radius:11px;background:#fff;margin-bottom:9px;flex-wrap:wrap}
+  .au-name{font-weight:600;color:var(--text-primary);min-width:0}
+  .au-name .au-desc{display:block;font-size:12px;color:var(--text-secondary);font-weight:400;margin-top:2px}
   .au-btns{margin-left:auto;display:flex;gap:7px;flex-wrap:wrap}
   .au-b{border-radius:8px;padding:7px 13px;font-weight:700;font-size:12.5px;cursor:pointer;border:1px solid transparent;white-space:nowrap}
-  .au-b.verify{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
-  .au-b.live{background:#1d4ed8;color:#fff}
-  .au-b.live.money{background:#b45309}
-  .au-b.rjt{background:#fff7ed;color:#c2410c;border-color:#fed7aa}
-  .au-b.rjt2{background:#b91c1c;color:#fff}
+  .au-b.verify{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
+  .au-b.live{background:var(--blue);color:#fff}
+  .au-b.live.money{background:var(--amber)}
+  .au-b.rjt{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-border)}
+  .au-b.rjt2{background:var(--red);color:#fff}
   .au-b:disabled{opacity:.45;cursor:not-allowed}
   .au-status{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px}
-  .st-queued{background:#fef9c3;color:#854d0e}.st-running{background:#dbeafe;color:#1d4ed8}
-  .st-done{background:#dcfce7;color:#15803d}.st-failed{background:#fee2e2;color:#b91c1c}
+  .st-queued{background:var(--amber-bg);color:var(--amber)}.st-running{background:var(--blue-bg);color:var(--blue)}
+  .st-done{background:var(--green-bg);color:var(--green)}.st-failed{background:var(--red-bg);color:var(--red)}
   .au-log{margin-top:22px}
   .au-log-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 4px;border-radius:8px;user-select:none}
-  .au-log-head:hover{background:#f8fafc}
-  .au-log-caret{font-size:12px;color:#64748b;transition:transform .12s;display:inline-block}
+  .au-log-head:hover{background:var(--surface-2)}
+  .au-log-caret{font-size:12px;color:var(--text-secondary);transition:transform .12s;display:inline-block}
   .au-log-head.open .au-log-caret{transform:rotate(90deg)}
-  .au-log h3{font-size:13px;font-weight:700;color:#334155;margin:0}
-  .au-log-meta{font-size:11.5px;color:#64748b;display:flex;gap:7px;align-items:center;flex-wrap:wrap}
-  .au-log-clear{margin-left:auto;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .au-log h3{font-size:13px;font-weight:700;color:var(--text-secondary);margin:0}
+  .au-log-meta{font-size:11.5px;color:var(--text-secondary);display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .au-log-clear{margin-left:auto;border:1px solid var(--red-border);background:var(--red-bg);color:var(--red);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
   .au-log-clear:disabled{opacity:.45;cursor:not-allowed}
   #au-runs{margin-top:8px}
-  .au-log-cleared{font-size:11px;color:#94a3b8;margin-top:6px;padding-left:4px}
-  .au-logrow{border:1px solid #eef2f7;border-radius:9px;padding:9px 12px;margin-bottom:7px;background:#fff;font-size:12.5px}
-  .au-logmeta{color:#64748b;font-size:11.5px;margin-bottom:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .au-logsum{white-space:pre-wrap;color:#0f172a;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;max-height:170px;overflow:auto}
-  .au-note{font-size:12px;color:#64748b;margin:4px 0 16px;line-height:1.5}
+  .au-log-cleared{font-size:11px;color:var(--text-tertiary);margin-top:6px;padding-left:4px}
+  .au-logrow{border:1px solid var(--border-subtle);border-radius:9px;padding:9px 12px;margin-bottom:7px;background:#fff;font-size:12.5px}
+  .au-logmeta{color:var(--text-secondary);font-size:11.5px;margin-bottom:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .au-logsum{white-space:pre-wrap;color:var(--text-primary);font-family:ui-monospace,Menlo,monospace;font-size:11.5px;max-height:170px;overflow:auto}
+  .au-note{font-size:12px;color:var(--text-secondary);margin:4px 0 16px;line-height:1.5}
 </style>
 {% endblock %}
 {% block content %}
@@ -147,8 +147,8 @@
     const active=RUNS.filter(r=>r.status==='queued'||r.status==='running').length;
     const lastFail=RUNS.find(r=>r.status==='failed');
     let meta=`총 ${TOTAL}건`;
-    if(active) meta+=` · <span style="color:#1d4ed8;font-weight:700">진행중 ${active}</span>`;
-    if(lastFail) meta+=` · <span style="color:#b91c1c;font-weight:700">최근 실패 있음</span>`;
+    if(active) meta+=` · <span style="color:#185FA5;font-weight:700">진행중 ${active}</span>`;
+    if(lastFail) meta+=` · <span style="color:#A32D2D;font-weight:700">최근 실패 있음</span>`;
     metaEl.innerHTML=meta;
     // 펼침일 때만 리스트 DOM 렌더(비용↓)
     runsEl.hidden=!LOG_OPEN;

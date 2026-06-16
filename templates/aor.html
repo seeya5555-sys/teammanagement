@@ -6,63 +6,63 @@
 <style>
   .aor-head { display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
   .aor-filter { display:flex; gap:6px; }
-  .aor-count { color:#64748b; font-size:13px; }
+  .aor-count { color:var(--text-secondary); font-size:13px; }
   .aor-list { display:flex; flex-direction:column; gap:14px; max-width:920px; }
-  .aor-card { border:1px solid #e2e8f0; border-radius:12px; background:#fff;
+  .aor-card { border:1px solid var(--border); border-radius:12px; background:#fff;
               box-shadow:0 1px 2px rgba(0,0,0,.04); overflow:hidden; }
   .aor-card.is-busy { opacity:.55; pointer-events:none; }
   .aor-card-top { display:flex; align-items:flex-start; gap:10px; padding:12px 14px;
-                  background:#f8fafc; border-bottom:1px solid #eef2f7; }
-  .aor-subj { font-weight:600; color:#0f172a; line-height:1.35; }
-  .aor-meta { font-size:12px; color:#64748b; margin-top:3px; }
+                  background:var(--surface-2); border-bottom:1px solid var(--border-subtle); }
+  .aor-subj { font-weight:600; color:var(--text-primary); line-height:1.35; }
+  .aor-meta { font-size:12px; color:var(--text-secondary); margin-top:3px; }
   .aor-badges { margin-left:auto; display:flex; gap:6px; flex-shrink:0; align-items:center; }
   .aor-badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
-  .aor-badge.conf-hi { background:#dcfce7; color:#15803d; }
-  .aor-badge.conf-mid { background:#fef3c7; color:#b45309; }
-  .aor-badge.conf-lo { background:#fee2e2; color:#b91c1c; }
-  .aor-badge.st-approved { background:#dbeafe; color:#1d4ed8; }
-  .aor-badge.st-submitting { background:#fef9c3; color:#a16207; }
-  .aor-badge.st-submitted { background:#dcfce7; color:#15803d; }
-  .aor-badge.st-failed { background:#fee2e2; color:#b91c1c; }
-  .aor-badge.st-rejecting { background:#fef9c3; color:#a16207; }
-  .aor-badge.st-reject_failed { background:#fee2e2; color:#b91c1c; }
-  .aor-badge.st-rejected { background:#f1f5f9; color:#64748b; }
-  .aor-badge.st-hold { background:#e0e7ff; color:#4338ca; }
+  .aor-badge.conf-hi { background:var(--green-bg); color:var(--green); }
+  .aor-badge.conf-mid { background:var(--amber-bg); color:var(--amber); }
+  .aor-badge.conf-lo { background:var(--red-bg); color:var(--red); }
+  .aor-badge.st-approved { background:var(--blue-bg); color:var(--blue); }
+  .aor-badge.st-submitting { background:var(--amber-bg); color:var(--amber); }
+  .aor-badge.st-submitted { background:var(--green-bg); color:var(--green); }
+  .aor-badge.st-failed { background:var(--red-bg); color:var(--red); }
+  .aor-badge.st-rejecting { background:var(--amber-bg); color:var(--amber); }
+  .aor-badge.st-reject_failed { background:var(--red-bg); color:var(--red); }
+  .aor-badge.st-rejected { background:var(--surface-3); color:var(--text-secondary); }
+  .aor-badge.st-hold { background:var(--purple-bg); color:var(--purple); }
   .aor-body { padding:14px; display:flex; flex-direction:column; gap:10px; }
   .aor-cost { display:flex; gap:18px; align-items:center; font-size:14px;
               border-radius:8px; padding:9px 12px; flex-wrap:wrap; }
-  .aor-cost.ok { background:#f0fdf4; border:1px solid #bbf7d0; }
-  .aor-cost.bad { background:#fef2f2; border:1px solid #fecaca; }
-  .aor-cost.unk { background:#f8fafc; border:1px solid #e2e8f0; }
-  .aor-cost .k { font-size:11px; color:#64748b; display:block; }
-  .aor-cost .v { font-weight:700; color:#0f172a; }
+  .aor-cost.ok { background:var(--green-bg); border:1px solid var(--green-border); }
+  .aor-cost.bad { background:var(--red-bg); border:1px solid var(--red-border); }
+  .aor-cost.unk { background:var(--surface-2); border:1px solid var(--border); }
+  .aor-cost .k { font-size:11px; color:var(--text-secondary); display:block; }
+  .aor-cost .v { font-weight:700; color:var(--text-primary); }
   .aor-cost .verdict { margin-left:auto; font-weight:700; }
-  .aor-cost.ok .verdict { color:#15803d; } .aor-cost.bad .verdict { color:#b91c1c; }
-  .aor-cost.unk .verdict { color:#94a3b8; }
+  .aor-cost.ok .verdict { color:var(--green); } .aor-cost.bad .verdict { color:var(--red); }
+  .aor-cost.unk .verdict { color:var(--text-tertiary); }
   .aor-field { display:flex; flex-direction:column; gap:3px; }
-  .aor-field label { font-size:11px; font-weight:600; color:#64748b; }
+  .aor-field label { font-size:11px; font-weight:600; color:var(--text-secondary); }
   .aor-field textarea, .aor-field select {
-      border:1px solid #cbd5e1; border-radius:7px; padding:7px 9px; font-size:14px; font-family:inherit; }
+      border:1px solid var(--border-strong); border-radius:7px; padding:7px 9px; font-size:14px; font-family:inherit; }
   .aor-field textarea { min-height:104px; resize:vertical; line-height:1.55; }
-  .aor-emailref { font-size:12px; color:#64748b; }
-  .aor-emailref b { color:#475569; }
-  .aor-rmk { font-size:12px; color:#475569; background:#fafafa; border:1px solid #eef2f7;
+  .aor-emailref { font-size:12px; color:var(--text-secondary); }
+  .aor-emailref b { color:var(--text-secondary); }
+  .aor-rmk { font-size:12px; color:var(--text-secondary); background:var(--surface-2); border:1px solid var(--border-subtle);
              border-radius:7px; padding:8px 10px; white-space:pre-wrap; max-height:130px; overflow:auto; }
   .aor-foot { display:flex; align-items:center; gap:8px; padding:10px 14px;
-              border-top:1px solid #eef2f7; background:#fcfcfd; }
-  .aor-err { color:#b91c1c; font-size:13px; }
-  .aor-decided { font-size:12px; color:#64748b; }
-  .aor-empty { color:#94a3b8; padding:40px 0; text-align:center; }
+              border-top:1px solid var(--border-subtle); background:var(--surface); }
+  .aor-err { color:var(--red); font-size:13px; }
+  .aor-decided { font-size:12px; color:var(--text-secondary); }
+  .aor-empty { color:var(--text-tertiary); padding:40px 0; text-align:center; }
   .flex-spacer { flex:1; }
-  .warn-note { font-size:12px; color:#b45309; }
+  .warn-note { font-size:12px; color:var(--amber); }
 </style>
 {% endblock %}
 
 {% block content %}
 <h1 class="page-title">AOR — 검토 → 상신 승인</h1>
-<p style="color:#64748b;font-size:13px;margin:-6px 0 14px">
+<p style="color:var(--text-secondary);font-size:13px;margin:-6px 0 14px">
   Submitted Technical AOR 검토 카드. cost·Comment·결재라인 확인/수정 후 <b>승인</b>하면 맥 러너가 SVMS에 상신함(최대 1~2분).
-  <b style="color:#b91c1c">완전자동 아님 — 사람 승인 필수.</b>
+  <b style="color:var(--red)">완전자동 아님 — 사람 승인 필수.</b>
 </p>
 
 <div class="aor-head">
@@ -76,7 +76,7 @@
   <button class="btn btn-primary btn-sm" id="aor-pull" type="button">🔄 SVMS에서 불러오기</button>
   <button class="btn btn-outline btn-sm" id="aor-refresh" type="button">새로고침</button>
   <button class="btn btn-outline btn-sm" id="aor-clear-decided" type="button"
-          style="border-color:#fecaca;background:#fef2f2;color:#b91c1c"
+          style="border-color:var(--red-border);background:var(--red-bg);color:var(--red)"
           title="승인·리젝된 건 일괄 삭제 (대기·보류·진행중은 보존)">🗑 승인/리젝 비우기</button>
 </div>
 
@@ -149,7 +149,7 @@
     const amtBox = `
       <div class="aor-cost unk">
         <div><span class="k">청구액 (SVMS AMT)</span><span class="v">${fmtAmt(d.amt, d.cur_cd)}</span></div>
-        <span class="verdict" style="color:#475569;font-weight:600">📎 견적서 ${files.length}개</span>
+        <span class="verdict" style="color:#5F5E5A;font-weight:600">📎 견적서 ${files.length}개</span>
       </div>`;
 
     // 결재라인 select
@@ -160,11 +160,11 @@
       lineCtrl = `<select class="f-app"${editable ? '' : ' disabled'}>${opts}</select>`;
     } else {
       lineCtrl = `<input class="f-app" value="${esc(curApp)}" placeholder="APP_NO (예: 0003)"${editable ? '' : ' disabled'}
-                   style="border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font-size:14px">`;
+                   style="border:1px solid #B4B2A9;border-radius:7px;padding:7px 9px;font-size:14px">`;
     }
 
     const fileBox = files.length
-      ? `<div class="aor-emailref">📎 첨부 견적서: <b>${files.map(esc).join(', ')}</b> <span style="color:#94a3b8">(SVMS서 열람)</span></div>`
+      ? `<div class="aor-emailref">📎 첨부 견적서: <b>${files.map(esc).join(', ')}</b> <span style="color:#888780">(SVMS서 열람)</span></div>`
       : `<div class="aor-emailref warn-note">📎 첨부 견적서 없음 — 비용 근거 직접 확인 필요</div>`;
 
     const rmk = d.raw_row ? (function () {
@@ -184,7 +184,7 @@
       <div class="aor-body">
         ${amtBox}
         ${fileBox}
-        ${rmk ? `<details><summary style="font-size:12px;color:#64748b;cursor:pointer">관리사 RMK 보기</summary><div class="aor-rmk">${esc(rmk)}</div></details>` : ''}
+        ${rmk ? `<details><summary style="font-size:12px;color:#5F5E5A;cursor:pointer">관리사 RMK 보기</summary><div class="aor-rmk">${esc(rmk)}</div></details>` : ''}
         <div class="aor-field">
           <label>Comment (RMK_APP — 결재 상신 코멘트, 비우면 공란)</label>
           <textarea class="f-cmt"${editable ? '' : ' readonly'}>${esc(d.proposed_comment || '')}</textarea>
