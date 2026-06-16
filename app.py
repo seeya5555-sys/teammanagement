@@ -3424,8 +3424,9 @@ def api_vt_export(vid):
         abort(404)
     fr = query('''SELECT no, item, description, remark, user_remark, status
                     FROM vt_findings WHERE vetting_id=? ORDER BY no, id''', (vid,))
+    # RECTIFICATION·PHOTO 2열은 공란으로 출력(현장기입용). 번역요약·Remark는 export에서 제외.
     rows = [[r['no'], r['item'] or '', r['description'] or '',
-             r['remark'] or '', r['user_remark'] or '', r['status'] or ''] for r in fr]
+             '', '', r['status'] or ''] for r in fr]
     vessel = v['vessel_name']
     rno = v['report_number'] or ''
     title = f"SIRE Observation List — {vessel}"
@@ -3433,9 +3434,9 @@ def api_vt_export(vid):
     if rno:
         sub_bits.append(f"Report: {rno}")
     sub_bits.append(f"총 {len(rows)}건")
-    headers = ['No.', 'ITEM', 'DESCRIPTION', '번역 요약', 'Remark', 'STATUS']
+    headers = ['No.', 'ITEM', 'DESCRIPTION', 'RECTIFICATION', 'PHOTO', 'STATUS']
     bio = _findings_workbook(title, '   │   '.join(sub_bits), headers, rows,
-                             wrap_cols={2, 3, 4, 5}, widths=[6, 26, 46, 38, 30, 10])
+                             wrap_cols={2, 3, 4, 5}, widths=[6, 26, 46, 40, 30, 10])
     date_tag = (v['inspection_date'] or '').replace('-', '')
     fname = f"SIRE_{_safe_filename(vessel)}_{date_tag or vid}.xlsx"
     return send_file(bio, as_attachment=True, download_name=fname,
