@@ -482,6 +482,17 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shipwiki_card_status ON shipwiki_card(card_status, tier)")
+        # 위키 스레드 stable id (additive) — 메일↔위키↔Daily 연동 포인터
+        sw_cols = [r[1] for r in conn.execute('PRAGMA table_info(shipwiki_card)').fetchall()]
+        if sw_cols and 'wiki_thread_id' not in sw_cols:
+            conn.execute('ALTER TABLE shipwiki_card ADD COLUMN wiki_thread_id TEXT')
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_shipwiki_card_wtid ON shipwiki_card(slug, wiki_thread_id)")
+            print('  - shipwiki_card.wiki_thread_id column added')
+        iss_cols2 = [r[1] for r in conn.execute('PRAGMA table_info(issues)').fetchall()]
+        if iss_cols2 and 'wiki_thread_id' not in iss_cols2:
+            conn.execute('ALTER TABLE issues ADD COLUMN wiki_thread_id TEXT')
+            print('  - issues.wiki_thread_id column added')
+        conn.commit()
 
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
@@ -8135,22 +8146,22 @@ def api_ext_shipwiki_push():
                     json.dumps(c.get('equipment') or [], ensure_ascii=False),
                     json.dumps(c.get('vendors') or [], ensure_ascii=False),
                     json.dumps(c.get('ref_numbers') or [], ensure_ascii=False),
-                    c.get('date_first'), c.get('date_last'))
+                    c.get('date_first'), c.get('date_last'), c.get('wiki_thread_id'))
             if ex:
                 # 내용만 갱신(결정/상태 보존)
                 db.execute(
                     "UPDATE shipwiki_card SET ship_nm=?, tier=?, title=?, category=?, confidence=?, "
                     "llm_conf=?, multi=?, msg_count=?, needs_human=?, judgment=?, evidence=?, raw_links=?, "
                     "source_msgids=?, equipment=?, vendors=?, ref_numbers=?, date_first=?, date_last=?, "
-                    "pushed_at=datetime('now','localtime') WHERE id=?",
+                    "wiki_thread_id=?, pushed_at=datetime('now','localtime') WHERE id=?",
                     vals[1:2] + vals[3:] + (ex['id'],))   # slug(0)·fname(2) 제외
                 n_upd += 1
             else:
                 db.execute(
                     "INSERT INTO shipwiki_card (slug, ship_nm, fname, tier, title, category, confidence, "
                     "llm_conf, multi, msg_count, needs_human, judgment, evidence, raw_links, source_msgids, "
-                    "equipment, vendors, ref_numbers, date_first, date_last) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals)
+                    "equipment, vendors, ref_numbers, date_first, date_last, wiki_thread_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals)
                 n_ins += 1
         purged = 0
         if purge and slug:
