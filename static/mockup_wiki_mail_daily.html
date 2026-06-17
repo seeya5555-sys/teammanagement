@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>제안 목업 — 위키 ↔ 메일처리 ↔ Daily 업무 연동</title>
+<style>
+  :root{
+    --page-bg:#F8F7F4; --surface:#fff; --surface-2:#F4F3EE; --surface-3:#EBEAE3;
+    --text-primary:#1F1F1D; --text-secondary:#5F5E5A; --text-tertiary:#888780;
+    --border-subtle:#E5E4DD; --border:#D3D1C7; --border-strong:#B4B2A9;
+    --blue:#185FA5; --blue-bg:#E6F1FB; --blue-text:#0C447C; --blue-border:#85B7EB;
+    --amber:#854F0B; --amber-bg:#FAEEDA; --amber-border:#FAC775;
+    --red:#A32D2D; --red-bg:#FCEBEB; --red-border:#F09595;
+    --green:#3B6D11; --green-bg:#EAF3DE; --green-border:#97C459;
+    --teal:#0F6E56; --teal-bg:#E1F5EE; --purple:#534AB7; --purple-bg:#EEEDFE;
+    --nav-bg:#1E293B;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page-bg);color:var(--text-primary);
+    font-family:-apple-system,'Malgun Gothic','맑은 고딕',sans-serif;line-height:1.5;font-size:14px}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 80px}
+  header.hero{border-bottom:2px solid var(--border-strong);padding-bottom:18px;margin-bottom:8px}
+  .hero h1{margin:0 0 6px;font-size:23px}
+  .hero p{margin:2px 0;color:var(--text-secondary);font-size:13.5px}
+  .tag{display:inline-block;background:var(--blue-bg);color:var(--blue-text);font-weight:700;
+    font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--blue-border)}
+  h2.sec{font-size:16px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--blue)}
+  .note{color:var(--text-secondary);font-size:13px;margin:6px 0 14px}
+  .new{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);
+    font-weight:800;font-size:10.5px;padding:1px 7px;border-radius:999px;margin-left:6px;vertical-align:middle}
+  /* 흐름 다이어그램 */
+  .flow{display:flex;gap:8px;flex-wrap:wrap;align-items:stretch;margin:10px 0}
+  .pill{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:12.5px;flex:1;min-width:150px}
+  .pill b{display:block;font-size:12px;color:var(--text-primary)}
+  .pill span{color:var(--text-tertiary);font-size:11.5px}
+  .arrow{align-self:center;color:var(--text-tertiary);font-weight:800}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:780px){.split{grid-template-columns:1fr}}
+  .col-h{font-weight:800;font-size:12px;letter-spacing:.3px;color:var(--text-secondary);margin-bottom:7px;text-transform:uppercase}
+  .col-h.bad{color:var(--red)} .col-h.good{color:var(--green)}
+  /* 메일카드 */
+  .mc{background:var(--surface);border:1px solid var(--border);border-radius:13px;overflow:hidden;position:relative}
+  .mc::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--amber)}
+  .mc-top{background:var(--nav-bg);color:#fff;padding:10px 14px 10px 18px}
+  .mc-subj{font-weight:700;font-size:13.5px}
+  .mc-meta{color:rgba(255,255,255,.62);font-size:11.5px;margin-top:2px}
+  .bdgs{margin-top:7px;display:flex;gap:5px;flex-wrap:wrap}
+  .bdg{font-size:10.5px;padding:2px 8px;border-radius:999px;font-weight:700}
+  .b-i{background:var(--blue-bg);color:var(--blue-text)} .b-info{background:var(--amber-bg);color:var(--amber)}
+  .b-w{background:var(--purple-bg);color:var(--purple)}
+  .mc-body{padding:12px 14px 14px 18px}
+  .band{border-radius:9px;padding:9px 11px;margin-bottom:10px;font-size:12.5px}
+  .band-thread{background:var(--amber-bg)}
+  .band-wiki{background:var(--purple-bg);border:1px solid #d7d3f5}
+  .band .lbl{font-weight:800;font-size:11px;letter-spacing:.2px}
+  .wiki-line{margin-top:5px;color:var(--text-secondary)}
+  .wiki-line b{color:var(--text-primary)}
+  .chips{margin-top:7px;display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:11px;padding:2px 8px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text-secondary)}
+  .chip.eq{background:var(--blue-bg);color:var(--blue-text);border-color:var(--blue-border)}
+  .sec{border:1px solid var(--border-subtle);border-radius:9px;margin-top:9px;background:var(--surface-2)}
+  .sec-h{padding:8px 11px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between;align-items:center;cursor:default}
+  .sec-b{padding:0 11px 11px}
+  .field{font-size:12px;margin:6px 0 2px;color:var(--text-secondary);font-weight:700}
+  .inp{width:100%;border:1px solid var(--border);border-radius:7px;padding:7px 9px;font-size:12.5px;background:#fff;font-family:inherit}
+  textarea.inp{resize:vertical}
+  .prefill{background:var(--green-bg);border-color:var(--green-border)}
+  .btn{border:1px solid transparent;border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px;cursor:pointer;margin:6px 5px 0 0}
+  .btn-pri{background:var(--blue);color:#fff} .btn-amber{background:var(--amber);color:#fff}
+  .btn-ghost{background:var(--blue-bg);color:var(--blue-text);border-color:var(--blue-border)}
+  .btn-rec{background:var(--green);color:#fff}
+  .stagebar{display:flex;gap:0;margin-top:7px;flex-wrap:wrap}
+  .stp{font-size:10.5px;padding:3px 9px;background:var(--surface-3);color:var(--text-tertiary);border-radius:5px;margin:2px}
+  .stp.done{background:var(--green-bg);color:var(--green);font-weight:700}
+  .stp.now{background:var(--amber);color:#fff;font-weight:800}
+  /* Daily 행 */
+  table.daily{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;font-size:12.5px}
+  table.daily th{background:var(--surface-3);text-align:left;padding:8px 10px;font-size:11px;color:var(--text-secondary)}
+  table.daily td{padding:9px 10px;border-top:1px solid var(--border-subtle);vertical-align:top}
+  .pri-u{background:var(--amber-bg);color:var(--amber);font-weight:700;padding:1px 7px;border-radius:5px;font-size:11px}
+  .st-o{background:var(--red-bg);color:var(--red);font-weight:700;padding:1px 7px;border-radius:5px;font-size:11px}
+  .act{font-size:11.5px;color:var(--text-secondary)}
+  .act .d{color:var(--red);font-family:ui-monospace,monospace;font-weight:700}
+  .wikichip{display:inline-block;font-size:10.5px;background:var(--purple-bg);color:var(--purple);border:1px solid #d7d3f5;border-radius:5px;padding:1px 6px;font-weight:700;margin-left:5px}
+  .box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin:10px 0}
+  ul.tight{margin:6px 0;padding-left:18px} ul.tight li{margin:3px 0}
+  .prio-tbl{font-size:12.5px;border-collapse:collapse;width:100%}
+  .prio-tbl td,.prio-tbl th{border:1px solid var(--border-subtle);padding:6px 9px;text-align:left}
+  .prio-tbl th{background:var(--surface-3);font-size:11px}
+  .k{font-weight:800;color:var(--blue-text)}
+  .am-box{background:#fffaf0;border:1px solid var(--amber-border);border-radius:10px;padding:13px 15px;margin-top:10px}
+  .footnote{color:var(--text-tertiary);font-size:11.5px;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <span class="tag">제안 목업 · admin</span>
+  <h1>📚 위키 ↔ 📬 메일처리 ↔ 📋 Daily 업무 연동</h1>
+  <p><b>한 줄</b>: 선박 위키(누적 스레드 기억)를 메일카드 옆에 붙여 — <b>한 번 클릭으로 Daily 현안 갱신</b>(진행내역 자동 초안). 메일 처리 시간·타이핑 大폭 절감.</p>
+  <p class="footnote">데쿠 설계 · 올마이트(Codex) 검토 반영 · 디자인 = main.css 웜페이퍼 토큰 / 우선순위색 규약(COC&Flag=red·Urgent=amber·NextDD=blue·Normal=gray)</p>
+</header>
+
+<h2 class="sec">① 지금 뭐가 불편한가</h2>
+<p class="note">두 파이프라인이 <b>서로 모른다</b>. 메일카드는 그때그때 일회성, 위키는 누적 기억 — 근데 메일 처리할 때 위키 기억을 못 쓰고, Daily 진행내역은 매번 수기 타이핑.</p>
+<div class="split">
+  <div>
+    <div class="col-h bad">현재 — 단절</div>
+    <div class="flow">
+      <div class="pill"><b>📬 메일카드</b><span>Outlook 스캔 → Haiku 요약 → 카드. 매칭은 열린 이슈 키워드만.</span></div>
+    </div>
+    <div class="flow">
+      <div class="pill"><b>📚 위키</b><span>같은 메일을 또 스캔·Haiku 요약 → 스레드 누적. 카드는 이걸 모름.</span></div>
+    </div>
+    <p class="footnote">→ 중복 스캔·요약(토큰 낭비), Daily 진행내역 수기, 과거 맥락 손으로 찾기.</p>
+  </div>
+  <div>
+    <div class="col-h good">제안 — 위키가 다리</div>
+    <div class="flow">
+      <div class="pill"><b>메일 1건</b><span>도착</span></div>
+      <div class="arrow">→</div>
+      <div class="pill"><b>📚 위키 스레드</b><span>issue-key로 자동 합류·갱신</span></div>
+      <div class="arrow">→</div>
+      <div class="pill"><b>📬 카드에 맥락 주입</b><span>이력·다음액션·Daily링크</span></div>
+      <div class="arrow">→</div>
+      <div class="pill"><b>📋 Daily 1클릭 갱신</b><span>진행내역 자동초안</span></div>
+    </div>
+  </div>
+</div>
+
+<h2 class="sec">② 개선된 메일카드 (AFTER)</h2>
+<p class="note">기존 카드에 <b>📚 위키 맥락 밴드</b> 1개 추가 + 이슈섹션이 위키 기반 <b>고신뢰 선제안</b>·<b>진행내역 자동 pre-fill</b>.</p>
+
+<div class="mc">
+  <div class="mc-top">
+    <div class="mc-subj">RE: M/T KUWAIT PROSPERITY — A/E No.3 T/C abnormal exhaust temp</div>
+    <div class="mc-meta">from: superintendent@owner-mgr.com · 2026-06-18 · #142</div>
+    <div class="bdgs">
+      <span class="bdg b-i">이슈감</span>
+      <span class="bdg b-info">회신 대기</span>
+      <span class="bdg b-w">📚 위키 매칭</span>
+    </div>
+  </div>
+  <div class="mc-body">
+    <div class="band band-thread">
+      <span class="lbl">🧵 요약 ·</span> A/E No.3 T/C 배기온도 다시 상승(505→520°C), 관리사가 overhaul 견적 첨부. AOR 진행 요청.
+    </div>
+
+    <div class="band band-wiki">
+      <span class="lbl">📚 위키 이력</span> <span class="new">NEW</span>
+      <span class="bdg" style="background:var(--green-bg);color:var(--green);margin-left:6px">매칭 신뢰 高</span>
+      <div class="wiki-line">스레드 <b>「A/E No.3 T/C 과열 (만성)」</b> · 누적 <b>7건</b> · 최초 2026-04-22 · 카테고리 <b>DEFECT</b></div>
+      <div class="wiki-line">마지막 처리: <b>major overhaul 합의, AOR 66926V00150</b> (윤활유 과소모 4030/5760/3980L 이력)</div>
+      <div class="chips">
+        <span class="chip eq">A/E</span><span class="chip eq">T/C</span>
+        <span class="chip">vendor: ABB Turbo</span><span class="chip">ref: AOR 66926V00150</span>
+        <span class="chip">🔗 Daily issue:#88</span>
+      </div>
+      <div class="footnote" style="margin-top:6px">신뢰판정 = 선박 + (ref·장비·msgid·날짜창 중 <b>2개↑</b> 일치)면 高·자동 선제안 / 1개면 "후보"로만 표시(오매칭 방지, 올마이트 권고).</div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-h">📋 TRMT 이슈 <span class="bdg b-i">위키→ issue:#88 매칭(고신뢰)</span></div>
+      <div class="sec-b">
+        <div class="field">진행내역(액션) — 위키 초안 <span class="bdg" style="background:var(--purple-bg);color:var(--purple)">wiki auto draft · 미저장</span></div>
+        <textarea class="inp prefill" rows="2">2026-06-18 / T/C 배기온도 재상승(505→520°C), 관리사 overhaul 견적 접수. AOR 66926 진행 협의 중.</textarea>
+        <button class="btn btn-rec">＋ issue:#88 에 이 액션 추가 (확정·저장)</button>
+        <button class="btn btn-ghost">신규 이슈로</button>
+        <button class="btn btn-ghost" style="opacity:.7">해당없음 / 리젝</button>
+        <div class="footnote">※ 초안은 <b>화면 표시만</b>(suggested) — [추가·저장] 누르기 전엔 Daily <code>actions</code>에 안 들어감(confirmed 분리, 올마이트 가드). 날짜=메일일자.</div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-h">🛠 AOR / 비용 단계 <span class="bdg" style="background:var(--surface-3);color:var(--text-tertiary)">수동 단계 · 자동판정 보류</span></div>
+      <div class="sec-b">
+        <div class="stagebar">
+          <span class="stp done">이슈</span><span class="stp done">메일보고</span><span class="stp done">협의</span>
+          <span class="stp now">AOR 상신컨펌 대기</span><span class="stp">관리사 상신</span><span class="stp">컨펌</span><span class="stp">비용</span><span class="stp">결재</span>
+        </div>
+        <div class="footnote" style="margin-top:7px">단계는 <b>손유석이 클릭으로 지정</b>(free-text 자동판정은 오판 위험 → 올마이트 권고로 보류). 비용 단계 = <b>fundreq 링크</b>. 맥락=위키 신뢰 / 결재 숫자=원장.</div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-h">✉️ 회신 작성 <span style="font-weight:400;color:var(--text-tertiary);font-size:11px">한글지시 → Gemini 영문 → Outlook draft (기존)</span></div>
+      <div class="sec-b">
+        <div class="field">한글 지시</div>
+        <input class="inp" value="overhaul scope·납기 확인 요청, AOR 상신 진행 OK 한다고 회신">
+        <button class="btn btn-pri">🌐 번역(Gemini)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2 class="sec">③ Daily 업무(현안) — 위키 링크 + 자동 갱신된 액션</h2>
+<p class="note">위 카드에서 [＋ 액션 추가] 누르면 → 해당 현안 행의 <b>ACTION PLAN에 자동 초안 엔트리</b>가 꽂힘. 행에 <b>📚 칩</b>으로 위키 누적이력 바로 열람.</p>
+<table class="daily">
+  <thead><tr><th>NO.</th><th>선박</th><th>ITEM</th><th>ACTION PLAN</th><th>PRI.</th><th>STAT.</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>88</td>
+      <td>Kuwait Prosperity</td>
+      <td>A/E No.3 T/C 과열 (만성) <span class="wikichip">📚 위키 7건</span></td>
+      <td class="act">
+        <div><span class="d">2026-06-18</span> T/C 배기온도 재상승(505→520°C), overhaul 견적 접수·AOR 66926 협의 <span class="new">자동추가</span></div>
+        <div style="opacity:.6"><span class="d">2026-05-30</span> major overhaul 합의, AOR 66926 발행</div>
+      </td>
+      <td><span class="pri-u">◆ Urgent</span></td>
+      <td><span class="st-o">Open</span></td>
+    </tr>
+  </tbody>
+</table>
+<p class="footnote">📚 칩 클릭 → 위키 노트(7건 전체 타임라인·[원문근거]·벤더·ref). Daily는 사람 운영 정식기록 / 위키는 맥락·이력. 자동초안 엔트리는 <b>손유석 확정 후</b>에만 박힘(미검증 auto가 Daily로 새지 않게 게이트).</p>
+
+<h2 class="sec">④ 우선순위 (효과 vs 구현)</h2>
+<table class="prio-tbl">
+  <tr><th>개선</th><th>효과</th><th>구현</th><th>판단</th></tr>
+  <tr><td class="k">C. 액션 자동 pre-fill</td><td>타이핑 大↓ (매 메일)</td><td>중 (위키요약→카드)</td><td><b>1순위</b></td></tr>
+  <tr><td class="k">A. 위키 맥락 밴드</td><td>과거이력 즉시·결정 빠름</td><td>중 (매칭+표시)</td><td><b>1순위</b></td></tr>
+  <tr><td class="k">B. Daily↔위키 링크</td><td>이력 추적·중복방지</td><td>소 (포인터 컬럼)</td><td>2순위</td></tr>
+  <tr><td class="k">D. AOR/비용 단계</td><td>워크플로우 가시화</td><td>소 (수동단계+링크)</td><td>3순위 · 자동판정 보류</td></tr>
+  <tr><td class="k">E. 스캔/요약 통합</td><td>토큰↓·일관성</td><td>大 (라이브 회귀위험)</td><td>full통합 ✗ → read-only bridge만</td></tr>
+</table>
+
+<div class="am-box">
+  <b>💪 올마이트(Codex gpt-5.5) 검토 — verdict: <span style="color:var(--amber)">changes-needed</span></b>
+  <ul class="tight" style="font-size:12.5px;color:var(--text-secondary);margin-top:8px">
+    <li><b>우선순위 C&gt;A&gt;B&gt;D&gt;E</b>. C/A 시간절약 큼. D 과추론 위험 → 보류. <b>E full 통합은 빼라</b>.</li>
+    <li><b>issue-key 단독 매칭 위험</b>(제목꼬리 충돌·반복고장·FW/재송신·subject drift) → 선박 + (ref·장비·msgid·날짜창 중 <b>2개↑</b>) 일치만 高신뢰, 1개면 후보표시.</li>
+    <li><b>C 가드레일</b>: <code>suggested_progress</code> ↔ <code>confirmed_progress</code> 분리. Daily <code>actions</code>엔 <b>저장 클릭 후에만</b>. UI에 "wiki auto draft" 표시.</li>
+    <li><b>B 링크</b>: <code>issue_id</code>가 canonical. wiki는 stable <code>wiki_thread_id</code> + display/cache. rename/merge/split용 redirect 필요. <b>DB=source of truth, md frontmatter=export/cache</b>.</li>
+    <li><b>D</b>: free-text 단계 자동판정 = 오판이 신뢰 깎음 → <b>수동 stage field + fundreq 링크</b>로 시작.</li>
+    <li>auto 승격 wiki를 Daily "근거"로 보이게 ✗ — 원문근거 링크는 OK, 판단 문구는 항상 draft 취급.</li>
+  </ul>
+  <div class="footnote" style="margin-top:6px">→ 위 목업은 이 지적 전부 반영함(매칭신뢰 칩·미저장 라벨·수동단계·DB canonical).</div>
+</div>
+
+<h2 class="sec">⑥ 단계별 빌드 (올마이트 권고 — 작게 시작)</h2>
+<div class="box">
+  <ul class="tight">
+    <li><b>1단계</b> — 위키에 stable <code>wiki_thread_id</code> 부여 + issues에 <code>wiki_thread_id</code> 포인터 컬럼(additive). 매칭 규칙(선박+2개↑) 구현.</li>
+    <li><b>2단계</b> — <code>/mail</code> 카드에 <b>read-only 위키 맥락 밴드</b> + 신뢰도 표시 (A). mailcard가 wiki 참조만(통합 아님).</li>
+    <li><b>3단계</b> — 액션추가 모달에 <b>"위키 기반 초안 불러오기"</b> 버튼 (C). suggested→사람 확정→<code>actions</code> append.</li>
+    <li><b>이후</b> — D(수동 단계칩+fundreq 링크), 토큰계측 후 필요시 E 경량연결. 양방향 sync는 안 함(DB 단일 출처).</li>
+  </ul>
+  <div class="footnote">각 단계 additive·라이브 회귀 0 지향. 빌드 착수는 손유석 승인 후.</div>
+</div>
+
+<h2 class="sec">⑤ 불변 가드레일</h2>
+<div class="box">
+  <ul class="tight">
+    <li>자동 이슈등록·자동 발송 <b>0</b> — 등록·회신·액션추가 전부 손유석 버튼 게이트.</li>
+    <li>위키 auto 노트 = "미검증" — Daily(정식기록)엔 <b>손유석 확정분만</b> 반영(자동초안은 제안까지).</li>
+    <li>AOR/비용 <b>맥락</b>은 위키 신뢰(스레드가 원천) / <b>결재 숫자</b>는 원장(fundreq DN대조 자동).</li>
+    <li>기존 issues/mail_card 테이블 0줄 파괴 — additive(포인터 컬럼·UI만).</li>
+  </ul>
+</div>
+
+</div>
+</body>
+</html>
