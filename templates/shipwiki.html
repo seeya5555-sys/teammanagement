@@ -1,0 +1,341 @@
+{% extends "base.html" %}
+{% block title %}선박 위키 · TRMT3{% endblock %}
+{% block head %}
+<style>
+  .sw-head{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  .sw-count{color:var(--text-secondary);font-size:13px}
+  .sw-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px;max-width:1000px;line-height:1.5}
+  .sw-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .sw-ships{display:flex;gap:6px;flex-wrap:wrap}
+  .sw-chip{font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px;border:1px solid var(--border);background:#fff;color:var(--text-secondary);cursor:pointer;white-space:nowrap}
+  .sw-chip.active{background:var(--text-primary);color:#fff;border-color:var(--text-primary)}
+  .sw-chip .pn{color:var(--red);font-weight:800;margin-left:4px}
+  .sw-chip.active .pn{color:#ffd9d2}
+  .sw-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
+  .sw-tab{font-size:12px;font-weight:600;padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--text-secondary);cursor:pointer}
+  .sw-tab.active{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
+  .sw-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .sw-b.rs{background:var(--border);color:var(--text-secondary)}
+  .sw-b.del{background:#fff;color:var(--text-tertiary);border:1px solid var(--border)}
+  .sw-list{display:flex;flex-direction:column;gap:12px;max-width:1000px}
+  .sw-card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .sw-card.is-busy{opacity:.6;pointer-events:none}
+  .sw-card.sel{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-border)}
+  .sw-top{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
+  .sw-title{font-weight:600;color:var(--text-primary);line-height:1.35}
+  .sw-meta{font-size:12px;color:var(--text-secondary);margin-top:3px;display:flex;flex-wrap:wrap;gap:4px 12px}
+  .sw-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .sw-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  /* category 색 — COC&Flag/Urgent류 규약 준용 */
+  .c-VETTING{background:var(--red-bg);color:var(--red)}
+  .c-AOR{background:var(--amber-bg);color:var(--amber)}
+  .c-DEFECT{background:var(--purple-bg);color:var(--purple)}
+  .c-DOCK{background:var(--blue-bg);color:var(--blue)}
+  .c-NOTICE,.c-INQUIRY,.c-OTHER{background:var(--surface-3);color:var(--text-secondary)}
+  .t-pending{background:var(--amber-bg);color:var(--amber)}
+  .t-auto{background:var(--surface-3);color:var(--text-tertiary)}
+  .t-confirmed{background:var(--green-bg);color:var(--green)}
+  .cf-low{color:var(--text-tertiary)} .cf-medium{color:var(--blue)} .cf-high{color:var(--green);font-weight:700}
+  .sw-flag{background:var(--red-bg);color:var(--red)}
+  .st-decided{background:var(--blue-bg);color:var(--blue)}
+  .st-applying{background:var(--amber-bg);color:var(--amber)}
+  .st-applied{background:var(--green-bg);color:var(--green)}
+  .st-failed{background:var(--red-bg);color:var(--red)}
+  .sw-body{padding:10px 14px;font-size:13px;color:var(--text-secondary)}
+  .sw-sec{margin-bottom:8px}
+  .sw-sec h4{margin:0 0 3px;font-size:11px;font-weight:700;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.04em}
+  .sw-jud{white-space:pre-wrap;background:var(--surface);border-left:3px solid var(--border-strong);padding:6px 10px;border-radius:0 6px 6px 0;color:var(--text-primary);line-height:1.5}
+  .sw-ev{white-space:pre-wrap;line-height:1.5}
+  .sw-raw a{color:var(--blue);font-size:12px}
+  .sw-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+  .sw-tag{font-size:11px;background:var(--surface-3);color:var(--text-secondary);padding:1px 7px;border-radius:6px}
+  .sw-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;align-items:center}
+  .sw-acts .b-promote{background:var(--green);color:#fff}
+  .sw-acts .b-upgrade{background:var(--blue-dot);color:#fff}
+  .sw-acts .b-merge{background:var(--purple);color:#fff}
+  .sw-acts .b-split{background:#fff;color:var(--red);border:1px solid var(--red-border)}
+  .sw-acts .b-reject{background:#fff;color:var(--text-tertiary);border:1px solid var(--border)}
+  .sw-decided{font-size:12px;color:var(--text-secondary)}
+  .sw-res{font-size:12px;color:var(--text-secondary)}
+  .sw-err{color:var(--red);font-size:12px}
+  .sw-empty{color:var(--text-tertiary);padding:30px;text-align:center}
+  /* 결정 모달 */
+  .sw-modal{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center}
+  .sw-modal[hidden]{display:none}
+  .sw-mbd{position:absolute;inset:0;background:rgba(40,36,28,.45)}
+  .sw-mbox{position:relative;background:#fff;border-radius:14px;max-width:600px;width:92%;max-height:88vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+  .sw-mhd{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border-subtle)}
+  .sw-mhd h3{margin:0;font-size:15px}
+  .sw-mhd .x{margin-left:auto;border:0;background:0;font-size:20px;cursor:pointer;color:var(--text-tertiary)}
+  .sw-mb{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+  .sw-f label{font-size:11px;font-weight:700;color:var(--text-secondary);display:block;margin-bottom:3px}
+  .sw-f input,.sw-f select,.sw-f textarea{width:100%;border:1px solid var(--border-strong);border-radius:8px;padding:8px 10px;font-size:13px;box-sizing:border-box;font-family:inherit}
+  .sw-f textarea{min-height:110px;resize:vertical;line-height:1.5}
+  .sw-mft{display:flex;gap:8px;justify-content:flex-end;padding:12px 18px;border-top:1px solid var(--border-subtle);position:sticky;bottom:0;background:#fff}
+  .sw-mergebox{background:var(--purple-bg);border:1px solid var(--purple);border-radius:10px;padding:10px 14px;margin-bottom:12px;max-width:1000px;font-size:13px;color:var(--text-primary);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+</style>
+{% endblock %}
+{% block content %}
+<div class="sw-head">
+  <h2 style="margin:0">📚 선박 위키</h2>
+  <span class="sw-count" id="sw-count"></span>
+  <div style="margin-left:auto;display:flex;gap:8px">
+    <button class="sw-b rs" id="sw-reload">🔄 새로고침</button>
+    <button class="sw-b del" id="sw-clear">🗑 적용완료 비우기</button>
+  </div>
+</div>
+<div class="sw-note">
+  메일→이슈 지식노트 파이프라인의 <b>검토·승격</b> 단계. <b>pending</b>(사람판단 대기)을 검토해서
+  <b>승격</b>(확정 위키) / <b>병합</b>(여러 건→1) / <b>리젝</b> / <b>쪼개기 표시</b>. <b>auto</b>(자동·미검증)는 답변근거 금지 라벨 —
+  실제로 확인하면 <b>신뢰도 승격</b>. 결정은 맥이 가져가 <code>wiki/</code> 파일로 반영(발송·자동확정 없음).
+</div>
+<div class="sw-mergebox" id="sw-mergebox" style="display:none">
+  <b>🔀 병합 모드</b> <span id="sw-mergecnt">0건 선택</span> — 같은 이슈인 카드들을 고르고
+  <button class="sw-b" style="background:var(--purple);color:#fff" id="sw-mergego">병합 승격</button>
+  <button class="sw-b rs" id="sw-mergecancel">취소</button>
+</div>
+<div class="sw-bar">
+  <div class="sw-ships" id="sw-ships"></div>
+  <div class="sw-tabs" id="sw-tabs">
+    <button class="sw-tab active" data-tier="open">미결</button>
+    <button class="sw-tab" data-tier="pending">pending</button>
+    <button class="sw-tab" data-tier="auto">auto</button>
+    <button class="sw-tab" data-tier="confirmed">confirmed</button>
+    <button class="sw-tab" data-tier="all">전체</button>
+  </div>
+</div>
+<div class="sw-list" id="sw-list"><div class="sw-empty">불러오는 중…</div></div>
+
+<div class="sw-modal" id="sw-modal" hidden>
+  <div class="sw-mbd" data-close></div>
+  <div class="sw-mbox">
+    <div class="sw-mhd"><h3 id="sw-mtitle">승격</h3><button class="x" data-close>×</button></div>
+    <div class="sw-mb sw-f">
+      <div><label>제목 (확정 이름 — 근본원인 중심으로)</label><input id="m-title"></div>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1"><label>카테고리</label>
+          <select id="m-cat"><option>DEFECT</option><option>AOR</option><option>VETTING</option>
+            <option>DOCK</option><option>NOTICE</option><option>INQUIRY</option><option>OTHER</option></select></div>
+        <div style="flex:1"><label>신뢰도</label>
+          <select id="m-conf"><option value="medium">medium (검토함)</option><option value="high">high (확실)</option></select></div>
+      </div>
+      <div><label>[감독판단] — 사람 확정 근본원인·판단·선례 (제안 다듬어 채움)</label>
+        <textarea id="m-jud" placeholder="예: A/E No.3 T/C 폭발 → major overhaul. 만성 윤활유 과소모(4030/5760/3980L)가 근본원인 의심…"></textarea></div>
+      <div class="sw-err" id="m-err"></div>
+    </div>
+    <div class="sw-mft">
+      <button class="sw-b rs" data-close>취소</button>
+      <button class="sw-b b-promote" id="m-go">확정 승격</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const list=$('#sw-list'), countEl=$('#sw-count');
+  let CARDS=[], SHIP='', TIER='open', MERGE=null;   // MERGE=null|Set(ids)
+  const jp=v=>{try{return JSON.parse(v||'[]')}catch(e){return []}};
+
+  async function api(method,url,body){
+    const opt={method,headers:{}};
+    if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
+    const r=await fetch(url,opt);
+    let j={}; try{j=await r.json();}catch(e){}
+    if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    return j;
+  }
+
+  function tagRow(arr,cls){ if(!arr||!arr.length)return ''; return `<div class="sw-tags">`+arr.map(x=>`<span class="sw-tag">${esc(x)}</span>`).join('')+`</div>`; }
+
+  function card(d){
+    const st=d.card_status, tier=d.tier;
+    const cat=d.new_category||d.category||'OTHER';
+    const title=d.new_title||d.title||d.fname;
+    const conf=d.new_conf||d.confidence||'';
+    const eq=jp(d.equipment), vn=jp(d.vendors), rf=jp(d.ref_numbers), mids=jp(d.source_msgids);
+    const isSel=MERGE&&MERGE.has(d.id);
+
+    let badges=`<span class="sw-badge c-${esc(cat)}">${esc(cat)}</span>`
+      +`<span class="sw-badge t-${tier}">${tier}</span>`;
+    if(conf) badges+=`<span class="sw-badge cf-${conf}">${esc(conf)}</span>`;
+    if(d.multi==1 && tier==='pending') badges+=`<span class="sw-badge sw-flag">🔀 multi</span>`;
+    if(st!=='open') badges+=`<span class="sw-badge st-${st}">${st}</span>`;
+
+    // raw 링크 라인 → 앵커
+    const rawHtml=(d.raw_links||'').split('\n').filter(Boolean).map(l=>{
+      const m=l.match(/\]\(([^)]+)\)/); const lbl=l.replace(/^- `?/,'').replace(/`?\s*→.*$/,'');
+      return `<div>· ${esc(lbl)}</div>`;
+    }).join('');
+
+    let acts='';
+    if(st==='open'){
+      if(MERGE){
+        acts=`<button class="sw-b ${isSel?'b-merge':'rs'}" data-act="toggle">${isSel?'✓ 선택됨':'＋ 병합에 추가'}</button>`;
+      } else if(tier==='pending'){
+        acts=`<button class="sw-b b-promote" data-act="promote">⬆ 승격</button>`
+            +`<button class="sw-b b-merge" data-act="mergestart">🔀 병합</button>`
+            +(d.multi==1?`<button class="sw-b b-split" data-act="split">✂ 쪼개기 표시</button>`:'')
+            +`<button class="sw-b b-reject" data-act="reject">✖ 리젝</button>`;
+      } else if(tier==='auto'){
+        acts=`<button class="sw-b b-upgrade" data-act="upgrade">✔ 신뢰도 승격</button>`
+            +`<button class="sw-b b-reject" data-act="reject">✖ 리젝</button>`;
+      } else { // confirmed
+        acts=`<button class="sw-b b-upgrade" data-act="upgrade">✏ 판단 보강</button>`;
+      }
+      if(d.decision==='split_flag') acts=`<span class="sw-decided">✂ 쪼개기 후보로 표시됨 (수기/데쿠 분리 대기)</span>`+acts;
+    } else if(st==='decided'){
+      acts=`<span class="sw-decided">결정: <b>${esc(d.decision)}</b>${d.merge_group?' (병합)':''} — 맥 적용 대기</span>`
+          +`<button class="sw-b rs" data-act="reset">↩ 취소</button>`;
+    } else if(st==='applying'){ acts=`<span class="sw-decided">⏳ 맥 적용중…</span>`; }
+    else if(st==='applied'){ acts=`<span class="sw-decided">✅ wiki 반영됨 ${d.result?'· '+esc((d.result||'').split('/').pop()):''}</span>`
+          +`<button class="sw-b del" data-act="delete">🗑</button>`; }
+    else if(st==='failed'){ acts=`<span class="sw-err">🚨 적용 실패: ${esc(d.result||'')}</span>`
+          +`<button class="sw-b rs" data-act="reset">↩ 재시도</button>`; }
+
+    return `<div class="sw-card ${st==='applying'?'is-busy':''} ${isSel?'sel':''}" data-id="${d.id}">
+      <div class="sw-top">
+        <div style="min-width:0">
+          <div class="sw-title">${esc(title)}</div>
+          <div class="sw-meta"><span>${esc(d.ship_nm||d.slug)}</span>
+            ${d.msg_count?`<span>메일 ${d.msg_count}건</span>`:''}
+            ${(d.date_first||d.date_last)?`<span>${esc(d.date_first||'')}~${esc(d.date_last||'')}</span>`:''}
+            ${d.llm_conf?`<span>AI신뢰 ${d.llm_conf}</span>`:''}</div>
+        </div>
+        <div class="sw-badges">${badges}</div>
+      </div>
+      <div class="sw-body">
+        ${d.judgment?`<div class="sw-sec"><h4>${tier==='confirmed'?'[감독판단]':'[감독판단 — 제안]'}</h4><div class="sw-jud">${esc(d.judgment)}</div></div>`:''}
+        ${d.evidence?`<div class="sw-sec"><h4>[원문근거]</h4><div class="sw-ev">${esc(d.evidence)}</div></div>`:''}
+        ${(eq.length||vn.length||rf.length)?`<div class="sw-sec">${tagRow(eq)}${tagRow(vn)}${tagRow(rf)}</div>`:''}
+        ${rawHtml?`<details class="sw-sec"><summary style="cursor:pointer;font-size:11px;color:var(--text-tertiary)">원문 메시지 (${mids.length})</summary><div class="sw-raw" style="margin-top:4px">${rawHtml}</div></details>`:''}
+      </div>
+      <div class="sw-acts">${acts}</div>
+    </div>`;
+  }
+
+  function filtered(){
+    let cs=CARDS;
+    if(SHIP) cs=cs.filter(c=>c.slug===SHIP);
+    if(TIER==='open') cs=cs.filter(c=>c.card_status==='open'&&c.tier==='pending');
+    else if(TIER==='all') {}
+    else cs=cs.filter(c=>c.tier===TIER);
+    return cs;
+  }
+
+  function render(){
+    const cs=filtered();
+    list.innerHTML = cs.length ? cs.map(card).join('') : '<div class="sw-empty">해당 카드 없음.</div>';
+    $('#sw-mergebox').style.display = MERGE?'flex':'none';
+    if(MERGE) $('#sw-mergecnt').textContent = `${MERGE.size}건 선택`;
+  }
+
+  function renderShips(ships){
+    const el=$('#sw-ships');
+    el.innerHTML = `<button class="sw-chip ${SHIP===''?'active':''}" data-ship="">전체 선박</button>`
+      + ships.map(s=>`<button class="sw-chip ${SHIP===s.slug?'active':''}" data-ship="${esc(s.slug)}">${esc(s.ship_nm)}${s.open_pending>0?`<span class="pn">${s.open_pending}</span>`:''}</button>`).join('');
+  }
+
+  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  async function _load(){
+    try{
+      const j=await api('GET','/api/shipwiki/cards'+(SHIP?('?ship='+encodeURIComponent(SHIP)):''));
+      CARDS=j.cards||[];
+      const s=j.stat||{};
+      countEl.textContent=`미결 pending ${s.pending_open||0} · auto ${s.auto_n||0} · confirmed ${s.confirmed_n||0}`
+        +(s.decided_n?` · 적용대기 ${s.decided_n}`:'')+(j.enabled?'':' · ⚠️자동화 OFF');
+      renderShips(j.ships||[]);
+      render();
+    }catch(e){ list.innerHTML=`<div class="sw-err" style="padding:20px">${esc(e.message)}</div>`; }
+  }
+
+  // ---- 결정 모달 ----
+  let MODAL={id:null,decision:null};
+  function openModal(d,decision){
+    MODAL={id:d.id,decision};
+    $('#sw-mtitle').textContent = decision==='upgrade'?'신뢰도 승격 / 판단 보강':'확정 승격';
+    $('#m-title').value=d.new_title||d.title||'';
+    $('#m-cat').value=(d.new_category||d.category||'OTHER');
+    $('#m-conf').value=(d.new_conf||(d.confidence==='high'?'high':'medium'));
+    $('#m-jud').value=d.decided_judgment||d.judgment||'';
+    $('#m-err').textContent='';
+    $('#m-go').textContent = decision==='upgrade'?'확정 저장':'확정 승격';
+    $('#sw-modal').hidden=false;
+  }
+  function openMergeModal(ids){
+    MODAL={id:null,decision:'promote',merge:ids};
+    const first=CARDS.find(c=>c.id===ids[0])||{};
+    $('#sw-mtitle').textContent=`병합 승격 (${ids.length}건 → 1 노트)`;
+    $('#m-title').value=''; $('#m-cat').value=first.category||'OTHER'; $('#m-conf').value='medium';
+    $('#m-jud').value=''; $('#m-err').textContent=''; $('#m-go').textContent='병합 확정 승격';
+    $('#sw-modal').hidden=false;
+  }
+  function closeModal(){ $('#sw-modal').hidden=true; }
+  $('#sw-modal').addEventListener('click',e=>{ if(e.target.hasAttribute('data-close')) closeModal(); });
+
+  $('#m-go').addEventListener('click',async()=>{
+    const title=$('#m-title').value.trim();
+    if(!title){ $('#m-err').textContent='제목을 입력하세요.'; return; }
+    const body={decision:MODAL.decision, new_title:title, new_category:$('#m-cat').value,
+                new_conf:$('#m-conf').value, decided_judgment:$('#m-jud').value};
+    try{
+      if(MODAL.merge){
+        const mg='mg-'+MODAL.merge.join('-');
+        for(let i=0;i<MODAL.merge.length;i++){
+          const isLead=(i===0);
+          await api('POST',`/api/shipwiki/cards/${MODAL.merge[i]}/decide`,
+            isLead?{...body,merge_group:mg}:{decision:'promote',merge_group:mg,new_conf:body.new_conf});
+        }
+        MERGE=null;
+      } else {
+        await api('POST',`/api/shipwiki/cards/${MODAL.id}/decide`,body);
+      }
+      closeModal(); await load();
+    }catch(e){ $('#m-err').textContent='🚨 '+e.message; }
+  });
+
+  // ---- 카드 액션 ----
+  list.addEventListener('click',async(ev)=>{
+    const btn=ev.target.closest('button[data-act]'); if(!btn) return;
+    const id=+btn.closest('.sw-card').dataset.id, act=btn.dataset.act;
+    const d=CARDS.find(c=>c.id===id)||{};
+    try{
+      if(act==='promote'||act==='upgrade'){ openModal(d,act); }
+      else if(act==='mergestart'){ MERGE=new Set([id]); render(); }
+      else if(act==='toggle'){ if(MERGE.has(id))MERGE.delete(id); else MERGE.add(id); render(); }
+      else if(act==='split'){ await api('POST',`/api/shipwiki/cards/${id}/decide`,{decision:'split_flag'}); await load(); }
+      else if(act==='reject'){ if(!confirm('이 제안을 리젝할까요? (답변근거에서 제외)')) return;
+        await api('POST',`/api/shipwiki/cards/${id}/decide`,{decision:'reject'}); await load(); }
+      else if(act==='reset'){ await api('POST',`/api/shipwiki/cards/${id}/reset`); await load(); }
+      else if(act==='delete'){ if(!confirm('이 카드를 목록에서 삭제할까요? (맥 파일엔 무영향)')) return;
+        await api('DELETE',`/api/shipwiki/cards/${id}`); await load(); }
+    }catch(e){ alert(e.message); }
+  });
+
+  // 병합 바
+  $('#sw-mergego').addEventListener('click',()=>{
+    if(!MERGE||MERGE.size<2){ alert('병합할 카드를 2건 이상 선택하세요.'); return; }
+    openMergeModal([...MERGE]);
+  });
+  $('#sw-mergecancel').addEventListener('click',()=>{ MERGE=null; render(); });
+
+  // 선박/탭 필터
+  $('#sw-ships').addEventListener('click',e=>{ const b=e.target.closest('[data-ship]'); if(!b)return;
+    SHIP=b.dataset.ship; MERGE=null; load(); });
+  $('#sw-tabs').addEventListener('click',e=>{ const b=e.target.closest('[data-tier]'); if(!b)return;
+    TIER=b.dataset.tier; MERGE=null;
+    document.querySelectorAll('.sw-tab').forEach(t=>t.classList.toggle('active',t===b)); render(); });
+
+  $('#sw-reload').addEventListener('click',load);
+  $('#sw-clear').addEventListener('click',async()=>{
+    if(!confirm('적용완료(applied) 카드를 비울까요?')) return;
+    try{ await api('DELETE','/api/shipwiki/cards/applied'); await load(); }catch(e){ alert(e.message); }
+  });
+
+  load();
+  setInterval(()=>{ if(document.querySelector('.st-applying,.st-decided')) load(); }, 8000);
+})();
+</script>
+{% endblock %}

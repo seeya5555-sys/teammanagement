@@ -437,6 +437,52 @@ def init_db(drop=False):
         except Exception:
             pass
 
+        # Ship-Issue Wiki — 선박별 이슈 스레드 지식노트 검토/승격 큐 (데쿠 ship-wiki 파이프라인 미러)
+        #   맥(push_cards.py)이 pending/<slug>/*.md(Tier2 사람판단 대기) + wiki/<slug>/*.md(auto/confirmed)
+        #   를 /api/ext/shipwiki/push 로 적재 → 사람이 /shipwiki 탭서 승격/병합/리젝/신뢰도승격 결정 →
+        #   맥(apply_decisions.py)이 decided 카드를 pull → promote.py 로 wiki/ 파일 materialize → result POST.
+        #   가드레일: 확정(재명명·병합·연결)은 100% 사람. 자동적재물(auto)은 답변근거 금지(라벨 격리).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS shipwiki_card (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug          TEXT NOT NULL,                     -- 선박 slug (indonesia-prosperity)
+                ship_nm       TEXT,                              -- 표시용 선명
+                fname         TEXT NOT NULL,                     -- 원본 basename(.md 제외) — dedup 키(slug+fname)
+                tier          TEXT NOT NULL,                     -- pending(사람판단대기) / auto(자동·미검증) / confirmed(확정)
+                title         TEXT,                              -- 현재 제목
+                category      TEXT,                              -- DEFECT/AOR/VETTING/NOTICE/INQUIRY/DOCK/OTHER
+                confidence    TEXT,                              -- low/medium/high
+                llm_conf      INTEGER,                           -- librarian Haiku 신뢰도
+                multi         INTEGER NOT NULL DEFAULT 0,        -- multiple_issues_suspected(쪼갤 후보)
+                msg_count     INTEGER,
+                needs_human   TEXT,                              -- json
+                judgment      TEXT,                              -- [감독판단] 제안/현재 본문
+                evidence      TEXT,                              -- [원문근거] 요약초안(읽기)
+                raw_links     TEXT,                              -- raw 링크 라인(개행구분)
+                source_msgids TEXT,                              -- json
+                equipment     TEXT,                              -- json
+                vendors       TEXT,                              -- json
+                ref_numbers   TEXT,                              -- json
+                date_first    TEXT,
+                date_last     TEXT,
+                -- 사람 결정 --
+                decision      TEXT,                              -- null/promote/reject/split_flag/upgrade
+                merge_group   TEXT,                              -- 병합 묶음 id(같은 group = 한 노트로 합침)
+                new_title     TEXT,                              -- 확정 제목(promote/병합)
+                new_category  TEXT,
+                new_conf      TEXT,                              -- 승격 confidence(medium/high)
+                decided_judgment TEXT,                           -- 사람이 확정한 [감독판단]
+                card_status   TEXT NOT NULL DEFAULT 'open',      -- open/decided/applying/applied/failed
+                result        TEXT,
+                decided_by    TEXT,
+                decided_at    TEXT,
+                done_at       TEXT,
+                pushed_at     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                UNIQUE(slug, fname)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shipwiki_card_status ON shipwiki_card(card_status, tier)")
+
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
                 conn.executescript(f.read())
@@ -7947,6 +7993,207 @@ def api_ext_mail_mark_draft(cid):
             "decided_at=datetime('now','localtime') WHERE id=?", (cid,))
     _mail_maybe_archive(cid)
     return jsonify({'id': cid, 'reply_status': 'draft_created'})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Ship-Issue Wiki — 선박별 이슈 지식노트 검토/승격 큐
+#   파이프라인: 맥 crawl→librarian→pending → [이 탭: 사람 승격/병합/리젝] → wiki(confirmed)
+#   브릿지: push(맥→TRMT 적재) / decided(맥 pull) / result(맥→TRMT 결과). 발송·자동확정 없음.
+# ═════════════════════════════════════════════════════════════════
+SHIPWIKI_TIERS = ('pending', 'auto', 'confirmed')
+SHIPWIKI_DECISIONS = ('promote', 'reject', 'split_flag', 'upgrade')
+
+
+@app.route('/shipwiki')
+@admin_required
+def shipwiki_page():
+    return render_template('shipwiki.html')
+
+
+@app.route('/api/shipwiki/cards')
+@admin_required
+def api_shipwiki_cards():
+    """탭 카드 목록 + 선박/tier/상태 통계. 기본 정렬: 미결(open) 우선, tier(pending>auto>confirmed), 신뢰도 낮은 순."""
+    ship = (request.args.get('ship') or '').strip()
+    where, params = [], []
+    if ship:
+        where.append('slug=?'); params.append(ship)
+    sql = "SELECT * FROM shipwiki_card"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += (" ORDER BY CASE card_status WHEN 'open' THEN 0 WHEN 'decided' THEN 1 "
+            "WHEN 'applying' THEN 2 WHEN 'failed' THEN 3 ELSE 4 END, "
+            "CASE tier WHEN 'pending' THEN 0 WHEN 'auto' THEN 1 ELSE 2 END, "
+            "multi DESC, COALESCE(llm_conf,0) ASC, id DESC")
+    rows = [dict(r) for r in query(sql, tuple(params))]
+    ships = [dict(r) for r in query(
+        "SELECT slug, COALESCE(ship_nm,slug) ship_nm, COUNT(*) n, "
+        "SUM(CASE WHEN tier='pending' AND card_status='open' THEN 1 ELSE 0 END) open_pending "
+        "FROM shipwiki_card GROUP BY slug ORDER BY ship_nm")]
+    stat = query("SELECT "
+                 "SUM(CASE WHEN tier='pending' AND card_status='open' THEN 1 ELSE 0 END) pending_open, "
+                 "SUM(CASE WHEN tier='auto' THEN 1 ELSE 0 END) auto_n, "
+                 "SUM(CASE WHEN tier='confirmed' THEN 1 ELSE 0 END) confirmed_n, "
+                 "SUM(CASE WHEN card_status='decided' THEN 1 ELSE 0 END) decided_n "
+                 "FROM shipwiki_card", one=True)
+    return jsonify({'cards': rows, 'ships': ships, 'stat': dict(stat) if stat else {},
+                    'enabled': _automation_enabled()})
+
+
+@app.route('/api/shipwiki/cards/<int:cid>/decide', methods=['POST'])
+@admin_required
+def api_shipwiki_decide(cid):
+    """사람 결정 기록 → card_status='decided'(맥 apply 대기). 자동적재물 확정 = 100% 여기서만."""
+    row = query("SELECT * FROM shipwiki_card WHERE id=?", (cid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['card_status'] in ('applying',):
+        return jsonify({'error': '맥 적용 진행중 — 잠시 후', 'status': row['card_status']}), 409
+    d = request.get_json(silent=True) or {}
+    decision = (d.get('decision') or '').strip()
+    if decision not in SHIPWIKI_DECISIONS:
+        return jsonify({'error': f'bad decision (one of {SHIPWIKI_DECISIONS})'}), 400
+    # split_flag = 결정 아님(쪼갤 후보 표시만, materialize 없음) → open 유지
+    new_status = 'open' if decision == 'split_flag' else 'decided'
+    nt = (d.get('new_title') or '').strip() or row['title']
+    nc = (d.get('new_category') or '').strip() or row['category']
+    ncf = (d.get('new_conf') or '').strip()
+    if decision == 'promote' and ncf not in ('medium', 'high'):
+        ncf = 'medium'                                  # 사람 승격은 최소 medium
+    if decision == 'upgrade' and ncf not in ('medium', 'high'):
+        ncf = 'medium'
+    jud = d.get('decided_judgment')
+    if jud is not None:
+        jud = jud.strip() or None
+    mg = (d.get('merge_group') or '').strip() or None
+    execute("UPDATE shipwiki_card SET decision=?, new_title=?, new_category=?, new_conf=?, "
+            "decided_judgment=?, merge_group=?, card_status=?, decided_by=?, "
+            "decided_at=datetime('now','localtime'), result=NULL WHERE id=?",
+            (decision, nt, nc, ncf, jud, mg, new_status, session.get('username', ''), cid))
+    return jsonify({'id': cid, 'decision': decision, 'card_status': new_status})
+
+
+@app.route('/api/shipwiki/cards/<int:cid>/reset', methods=['POST'])
+@admin_required
+def api_shipwiki_reset(cid):
+    """결정 취소 → open. 적용완료(applied)/진행중(applying)은 되돌리지 않음(파일 이미 생성)."""
+    row = query("SELECT card_status FROM shipwiki_card WHERE id=?", (cid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['card_status'] in ('applied', 'applying'):
+        return jsonify({'error': '이미 적용됨/진행중 — reset 불가', 'status': row['card_status']}), 409
+    execute("UPDATE shipwiki_card SET decision=NULL, new_title=NULL, new_category=NULL, new_conf=NULL, "
+            "decided_judgment=NULL, merge_group=NULL, card_status='open', decided_by=NULL, "
+            "decided_at=NULL, result=NULL WHERE id=?", (cid,))
+    return jsonify({'id': cid, 'card_status': 'open'})
+
+
+@app.route('/api/shipwiki/cards/<int:cid>', methods=['DELETE'])
+@admin_required
+def api_shipwiki_delete(cid):
+    """카드 1건 삭제(TRMT 목록만 — 맥 파일엔 무영향). 다음 push 때 다시 적재될 수 있음."""
+    execute("DELETE FROM shipwiki_card WHERE id=?", (cid,))
+    return jsonify({'id': cid, 'deleted': True})
+
+
+@app.route('/api/shipwiki/cards/applied', methods=['DELETE'])
+@admin_required
+def api_shipwiki_clear_applied():
+    n = execute_rc("DELETE FROM shipwiki_card WHERE card_status='applied'")
+    return jsonify({'deleted': n})
+
+
+# ---- ext (맥 push_cards.py / apply_decisions.py) ----
+@app.route('/api/ext/shipwiki/push', methods=['POST'])
+@api_key_required
+def api_ext_shipwiki_push():
+    """맥이 pending/wiki 노트를 적재(upsert by slug+fname). 사람 결정(decision/card_status)이
+    이미 걸린 카드는 내용만 갱신하고 결정은 보존 — 재push해도 사람 판단 안 풀림."""
+    d = request.get_json(silent=True) or {}
+    cards = d.get('cards') or []
+    slug = (d.get('slug') or '').strip()
+    purge = bool(d.get('purge'))                        # 해당 slug 의 open 미결정 카드 중 이번에 없는 건 정리
+    db = get_db()
+    n_ins = n_upd = 0
+    seen = set()
+    try:
+        for c in cards:
+            cslug = (c.get('slug') or slug or '').strip()
+            fname = (c.get('fname') or '').strip()
+            if not cslug or not fname:
+                continue
+            seen.add((cslug, fname))
+            ex = db.execute("SELECT id, card_status FROM shipwiki_card WHERE slug=? AND fname=?",
+                            (cslug, fname)).fetchone()
+            vals = (cslug, c.get('ship_nm'), fname, (c.get('tier') or 'pending'), c.get('title'),
+                    c.get('category'), c.get('confidence'), c.get('llm_conf'),
+                    1 if c.get('multi') else 0, c.get('msg_count'),
+                    json.dumps(c.get('needs_human') or [], ensure_ascii=False),
+                    c.get('judgment'), c.get('evidence'), c.get('raw_links'),
+                    json.dumps(c.get('source_msgids') or [], ensure_ascii=False),
+                    json.dumps(c.get('equipment') or [], ensure_ascii=False),
+                    json.dumps(c.get('vendors') or [], ensure_ascii=False),
+                    json.dumps(c.get('ref_numbers') or [], ensure_ascii=False),
+                    c.get('date_first'), c.get('date_last'))
+            if ex:
+                # 내용만 갱신(결정/상태 보존)
+                db.execute(
+                    "UPDATE shipwiki_card SET ship_nm=?, tier=?, title=?, category=?, confidence=?, "
+                    "llm_conf=?, multi=?, msg_count=?, needs_human=?, judgment=?, evidence=?, raw_links=?, "
+                    "source_msgids=?, equipment=?, vendors=?, ref_numbers=?, date_first=?, date_last=?, "
+                    "pushed_at=datetime('now','localtime') WHERE id=?",
+                    vals[1:2] + vals[3:] + (ex['id'],))   # slug(0)·fname(2) 제외
+                n_upd += 1
+            else:
+                db.execute(
+                    "INSERT INTO shipwiki_card (slug, ship_nm, fname, tier, title, category, confidence, "
+                    "llm_conf, multi, msg_count, needs_human, judgment, evidence, raw_links, source_msgids, "
+                    "equipment, vendors, ref_numbers, date_first, date_last) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals)
+                n_ins += 1
+        purged = 0
+        if purge and slug:
+            for r in db.execute("SELECT id, slug, fname FROM shipwiki_card "
+                                "WHERE slug=? AND card_status='open' AND decision IS NULL",
+                                (slug,)).fetchall():
+                if (r['slug'], r['fname']) not in seen:
+                    db.execute("DELETE FROM shipwiki_card WHERE id=?", (r['id'],))
+                    purged += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return jsonify({'ok': True, 'inserted': n_ins, 'updated': n_upd,
+                    'purged': (purged if purge and slug else 0)})
+
+
+@app.route('/api/ext/shipwiki/decided')
+@api_key_required
+def api_ext_shipwiki_decided():
+    """맥 apply_decisions.py 가 적용할 결정건 → card_status='applying' 락(조건부).
+    ?peek=1 이면 락 없이 미리보기."""
+    cols = ("id, slug, fname, tier, decision, merge_group, new_title, new_category, new_conf, "
+            "decided_judgment, source_msgids")
+    if request.args.get('peek'):
+        rows = query(f"SELECT {cols} FROM shipwiki_card WHERE card_status='decided' ORDER BY merge_group, id")
+        return jsonify({'count': len(rows), 'cards': [dict(r) for r in rows], 'peek': True})
+    out = [dict(r) for r in query(f"SELECT {cols} FROM shipwiki_card WHERE card_status='applying' ORDER BY merge_group, id")]
+    for r in query(f"SELECT {cols} FROM shipwiki_card WHERE card_status='decided' ORDER BY merge_group, id"):
+        if execute_rc("UPDATE shipwiki_card SET card_status='applying' WHERE id=? AND card_status='decided'", (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'cards': out})
+
+
+@app.route('/api/ext/shipwiki/<int:cid>/result', methods=['POST'])
+@api_key_required
+def api_ext_shipwiki_result(cid):
+    """적용 결과: ok=True → applied(+result 파일경로), else failed(사람 재검토)."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    rc = execute_rc("UPDATE shipwiki_card SET card_status=?, done_at=datetime('now','localtime'), "
+                    "result=? WHERE id=? AND card_status='applying'",
+                    ('applied' if ok else 'failed', (d.get('result') or '')[:2000], cid))
+    return jsonify({'id': cid, 'ok': ok, 'applied': bool(rc)})
 
 
 # ═════════════════════════════════════════════════════════════════
