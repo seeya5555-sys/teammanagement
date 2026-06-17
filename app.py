@@ -7702,6 +7702,109 @@ def mail_page():
     return render_template('mailcard.html')
 
 
+# ── 위키 맥락 밴드(2단계): 메일카드 ↔ 위키 스레드 결정적 매칭(0-LLM) ──
+#  ⚠️ mail_card.email_msg_id(Outlook 내부 id) ≠ wiki source_msgids(RFC822) → msgid 교차매칭 불가.
+#  → 콘텐츠 신호 = ref / equipment / issue-key. 선박 + 2개↑ = high, 1개 = candidate (올마이트 규칙).
+_WIKI_EQUIP = ['M/E', 'A/E', 'D/G', 'DG', 'T/C', 'BWTS', 'EGCS', 'IGS', 'IGG', 'FWG', 'OWS',
+               'COT', 'SW PUMP', 'LO PUMP', 'BOILER', 'CRANE', 'PURIFIER', 'COMPRESSOR',
+               'SCRUBBER', 'TURBOCHARGER', 'GOVERNOR', 'WINCH', 'SEA CHEST', 'RADAR', 'INERT GAS']
+
+
+def _wnorm(s):
+    return re.sub(r'\s+', '', str(s or '').strip().lower())
+
+
+def _wiki_issue_key(subject):
+    s = str(subject or '')
+    s = re.sub(r'(?i)^((re|fw|fwd)\s*:\s*)+', '', s).strip()
+    s = re.sub(r'(?i)request for owners?\s+approval', '', s)
+    s = re.sub(r'(?i)\bAORs?\b', '', s)
+    s = re.sub(r'[-–—:/]+', ' ', s)
+    s = re.sub(r'[^\w\s\.\+#]', ' ', s)
+    return re.sub(r'\s+', ' ', s).strip().lower()
+
+
+def _wiki_extract_refs(text):
+    t = (text or '').upper()
+    out = set()
+    out |= set(re.findall(r'\b\d{4,6}V\d{5,9}\b', t))          # AOR/V-number (66926V00150)
+    out |= set(re.findall(r'\bAC\s?\d{3,}\b', t))               # AC numbers
+    out |= set(re.findall(r'\b(?:PO|RFQ|INV|DN)[-\s#]?\d{3,}\b', t))
+    out |= set(re.findall(r'\bKRS\d{6,}\b', t))                 # 견적번호 등
+    return {_wnorm(x) for x in out}
+
+
+def _wiki_extract_equipment(text):
+    t = (text or '').upper()
+    return {_wnorm(e) for e in _WIKI_EQUIP if e in t}
+
+
+def _json_list(v):
+    try:
+        x = json.loads(v) if isinstance(v, str) else (v or [])
+        return x if isinstance(x, list) else []
+    except Exception:
+        return []
+
+
+def _wiki_match_for_card(card):
+    """mail_card dict → 매칭 위키 스레드 dict 또는 None (read-only, 표시용)."""
+    try:
+        vessel = card.get('issue_vessel') or ''
+        subj = card.get('email_subject') or ''
+        text = ' '.join(str(card.get(k) or '') for k in
+                        ('email_subject', 'issue_item', 'issue_desc', 'summary_ko', 'body_en'))
+        vnorm = _wnorm(vessel) or _wnorm(subj)
+        if not vnorm:
+            return None
+        m_refs = _wiki_extract_refs(text)
+        m_equip = _wiki_extract_equipment(text)
+        m_ikey = _wiki_issue_key(subj)
+        # 선박 slug 후보 (shipwiki_card 의 slug 와 메일 선박명 정규화 매칭)
+        slugs = [r['slug'] for r in query("SELECT DISTINCT slug FROM shipwiki_card")]
+        cand = [s for s in slugs if s and (_wnorm(s.replace('-', '')) in vnorm or vnorm in _wnorm(s.replace('-', '')))]
+        if not cand:
+            return None
+        rows = query(
+            "SELECT slug, fname, title, category, confidence, tier, msg_count, date_first, date_last, "
+            "equipment, ref_numbers, evidence, wiki_thread_id FROM shipwiki_card "
+            "WHERE slug IN (%s)" % ','.join('?' * len(cand)), tuple(cand))
+        best = None
+        for r in rows:
+            t_refs = {_wnorm(x) for x in _json_list(r['ref_numbers'])}
+            t_equip = {_wnorm(x) for x in _json_list(r['equipment'])}
+            t_ikey = _wiki_issue_key(r['title'])
+            basis = []
+            if m_refs & t_refs:
+                basis.append('ref')
+            if m_equip & t_equip:
+                basis.append('equipment')
+            if m_ikey and t_ikey and (m_ikey == t_ikey or m_ikey in t_ikey or t_ikey in m_ikey):
+                basis.append('issue-key')
+            if not basis:
+                continue
+            if best is None or len(basis) > len(best[0]):
+                best = (basis, r)
+        if not best:
+            return None
+        basis, r = best
+        high = len(basis) >= 2
+        # Daily 연동: 이 스레드에 링크된 issue
+        link = query("SELECT id, item_topic FROM issues WHERE wiki_thread_id=? LIMIT 1",
+                     (r['wiki_thread_id'],), one=True)
+        return {
+            'thread_id': r['wiki_thread_id'], 'slug': r['slug'], 'fname': r['fname'],
+            'title': r['title'], 'category': r['category'], 'tier': r['tier'],
+            'msg_count': r['msg_count'], 'date_last': r['date_last'],
+            'confidence': 'high' if high else 'candidate', 'basis': basis,
+            'evidence': (r['evidence'] or '')[:240],
+            'issue_id': (link['id'] if link else None),
+            'issue_topic': (link['item_topic'] if link else None),
+        }
+    except Exception:
+        return None
+
+
 @app.route('/api/mail/cards')
 @admin_required
 def api_mail_list():
@@ -7716,8 +7819,12 @@ def api_mail_list():
         rows = query("SELECT * FROM mail_card WHERE card_status=? ORDER BY id DESC", (status,))
     act = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active' AND pending=0", one=True)
     pnd = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active' AND pending=1", one=True)
-    return jsonify({'count': len(rows), 'active': act['c'], 'pending': pnd['c'],
-                    'cards': [dict(r) for r in rows]})
+    cards = []
+    for r in rows:
+        d = dict(r)
+        d['wiki'] = (_wiki_match_for_card(d) if d.get('card_status') != 'archived' else None)
+        cards.append(d)
+    return jsonify({'count': len(rows), 'active': act['c'], 'pending': pnd['c'], 'cards': cards})
 
 
 def _mail_get(cid):
