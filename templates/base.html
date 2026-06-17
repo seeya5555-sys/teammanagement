@@ -46,10 +46,6 @@
           </div>
         </div>
 
-        {% if session.role == 'admin' %}
-        {{ nlink('shipwiki_page', '📚 위키') }}
-        {% endif %}
-
         <div class="nav-group {% if request.endpoint in survey_eps %}active{% endif %}">
           <button type="button" class="nav-trigger">🔍 Survey <span class="caret-sm">▾</span></button>
           <div class="nav-submenu">
@@ -69,6 +65,10 @@
 
         {{ nlink('calendar_page', '📅 Calendar') }}
         {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
+
+        {% if session.role == 'admin' %}
+        {{ nlink('shipwiki_page', '📚 위키') }}
+        {% endif %}
       </nav>
 
       <button type="button" class="nav-burger" id="nav-burger" aria-label="메뉴 열기" aria-expanded="false">
@@ -131,10 +131,6 @@
       {{ nlink('fundreq_page', '비용청구') }}
       {% endif %}
       {{ nlink('reqgen_page', '도크 자재/수리') }}
-      {% if session.role == 'admin' %}
-      <div class="mm-section">📚 위키</div>
-      {{ nlink('shipwiki_page', '선박 위키') }}
-      {% endif %}
       <div class="mm-section">🔍 Survey</div>
       {{ nlink('class_status_page', 'Class Status') }}
       {{ nlink('condition_survey', 'Condition Survey') }}
@@ -145,6 +141,10 @@
       <div class="mm-section"></div>
       {{ nlink('calendar_page', '📅 Calendar') }}
       {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
+      {% if session.role == 'admin' %}
+      <div class="mm-section">📚 위키</div>
+      {{ nlink('shipwiki_page', '선박 위키') }}
+      {% endif %}
     </nav>
   </div>
   {% endblock %}
