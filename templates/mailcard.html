@@ -159,7 +159,14 @@
       const enBlock=(c.reply_status==='translated'||c.reply_status==='draft_requested')?
         `<div class="fld" style="margin-top:7px"><span class="k">영문 (편집 가능) — 확인 후 Outlook Draft</span><textarea class="box r-en" style="min-height:120px;font-family:ui-monospace,Menlo,monospace">${esc(c.reply_en||'')}</textarea></div>
          <div class="row"><button class="btn btn-g btn-sm act-rdraft">✉️ 이 영문으로 Outlook Draft 생성</button><span class="tip">+서명 자동첨부 · 원메일에 reply · 자동발송 없음</span></div>`:'';
-      replyHtml=`<div class="fld"><span class="k">회신 지시 (한글 — 무엇을 답할지)</span><textarea class="box r-ko" placeholder="예: Giorgos에게. ... 회신 요청.">${esc(c.reply_ko||'')}</textarea>
+      const aorLane=(c.aor&&c.aor.level&&c.aor.level!=='not_aor')?
+        `<div class="mc-wiki" style="background:#fff7ed;border-color:var(--amber-border);margin-bottom:8px">
+           <span class="wk-h" style="color:var(--amber)">🛠 AOR 승인요청 감지</span>
+           <span class="wk-conf ${c.aor.level==='aor_request'?'wk-high':'wk-cand'}">${c.aor.level==='aor_request'?'승인요청':'가능성'}</span>
+           <button class="btn btn-sm act-aor" style="margin-left:6px">⚡ 승인/추가검증 옵션 생성</button>
+           <span class="tip">딸깍 — 둘 다 draft·사람 Send·자동발송 0</span>
+           <div class="aor-box" style="margin-top:7px"></div></div>`:'';
+      replyHtml=aorLane+`<div class="fld"><span class="k">회신 지시 (한글 — 무엇을 답할지)</span><textarea class="box r-ko" placeholder="예: Giorgos에게. ... 회신 요청.">${esc(c.reply_ko||'')}</textarea>
           <div class="tip">한글 지시 = 내용 정답. Gemini가 네 스타일로 영문 번역만(추측X).</div></div>
         <div class="row"><span class="k">스타일</span><select class="box r-style" style="max-width:120px"><option>간결직설</option><option>정중</option><option>강경</option></select>
           <input class="box r-memo" placeholder="추가 메모(예: 기한 강조)" style="flex:1;min-width:120px">
@@ -245,6 +252,30 @@
     }
     if(q('.act-irej'))q('.act-irej').onclick=async()=>{const rs=prompt('리젝 사유(선택):','');if(rs===null)return;busy(el,1);await api('POST',`/api/mail/${c.id}/issue/reject`,{reason:rs});reload(c.id);};
     if(q('.act-ina'))q('.act-ina').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/issue/na`,{});reload(c.id);};
+    if(q('.act-aor'))q('.act-aor').onclick=async(e)=>{
+      const box=q('.aor-box');if(!box)return;const b=e.currentTarget;b.disabled=true;b.textContent='생성 중…';
+      const r=await api('POST',`/api/mail/${c.id}/reply/aor-options`,{});
+      b.disabled=false;b.textContent='⚡ 다시 생성';
+      if(!r.ok||!r.j.is_aor){box.innerHTML='<span class="tip">AOR 승인요청 아님</span>';return;}
+      const j=r.j;
+      const optBox=(title,color,en,vio,blocked,reason,tmpl)=>{
+        if(blocked)return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;opacity:.7">
+          <b style="color:var(--text-tertiary)">${title}</b> <span class="tip">🔒 ${esc(reason||'')}</span></div>`;
+        const warn=(vio&&vio.length)?`<div style="color:var(--red);font-size:11px;margin-top:3px">⚠️ fact 확인: ${esc(vio.join(', '))}</div>`:'';
+        const tag=tmpl?'<span class="tip">코드 템플릿</span>':'<span class="tip">Gemini</span>';
+        return `<div style="border:1px solid ${color};border-radius:8px;padding:8px;margin-top:6px">
+          <b style="color:${color}">${title}</b> ${tag}
+          <div style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:11.5px;margin:4px 0;color:var(--text-secondary)">${esc(en||'(생성 실패)')}</div>
+          ${warn}${en?`<button class="btn btn-g btn-sm act-aordraft" data-en="${esc(en)}">✉️ 이걸로 Outlook Draft</button>`:''}</div>`;
+      };
+      const ap=j.approve||{},cl=j.clarify||{};
+      box.innerHTML=optBox('✅ 승인 (상신 진행)','var(--green)',ap.en,ap.violations,ap.blocked,ap.reason,ap.template)
+        +optBox('↩︎ 추가검증 요청','var(--amber)',cl.en,cl.violations,false,'',false)
+        +`<div class="tip" style="margin-top:5px">기본 선택 없음 · 빠진필드 ${(j.missing||[]).length?esc((j.missing||[]).join(', ')):'없음'} · 위키ver ${esc(j.wiki_version||'-')}</div>`;
+      box.querySelectorAll('.act-aordraft').forEach(btn=>btn.onclick=async()=>{
+        busy(el,1);const rr=await api('POST',`/api/mail/${c.id}/reply/draft-request`,{reply_en:btn.dataset.en});
+        if(!rr.ok){alert('Draft 실패: '+(rr.j.error));busy(el,0);}else reload(c.id);});
+    };
     if(q('.act-rtrans'))q('.act-rtrans').onclick=async()=>{const er=q('.act-rerr');er.hidden=true;const style=(gv(el,'.r-style')||'')+((gv(el,'.r-memo'))?(' / '+gv(el,'.r-memo')):'');busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/translate`,{reply_ko:gv(el,'.r-ko'),reply_style:style});busy(el,0);if(!r.ok){er.textContent='번역 실패: '+(r.j.detail||r.j.error);er.hidden=false;}else reload(c.id);};
     if(q('.act-rdraft'))q('.act-rdraft').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/reply/draft-request`,{reply_en:gv(el,'.r-en')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else reload(c.id);};
     if(q('.act-rdismiss'))q('.act-rdismiss').onclick=async()=>{busy(el,1);await api('POST',`/api/mail/${c.id}/reply/dismiss`,{});reload(c.id);};

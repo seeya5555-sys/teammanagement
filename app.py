@@ -7682,6 +7682,12 @@ def _mail_translate_card(card):
     ctx = []
     if card.get('email_subject'): ctx.append(f"(Context only — original mail subject: {card['email_subject']})")
     if card.get('summary_ko'):    ctx.append(f"(Context only — mail summary: {card['summary_ko']})")
+    # 위키 근거(#1): high·confirmed 스레드의 [원문근거]만 참조용으로. 새 사실 도입 금지.
+    w = card.get('wiki') or {}
+    if w.get('confidence') == 'high' and w.get('evidence'):
+        ctx.append("(Context only — prior thread facts for this issue; you MAY reference exact "
+                   "numbers/refs/vendors below IF the instruction calls for them, but do NOT introduce "
+                   f"any fact the instruction does not ask for: {str(w['evidence'])[:400]})")
     prompt = (_MAIL_REPLY_HARNESS + "\n\nNOW DO THIS ONE.\n" +
               ("\n".join(ctx) + "\n" if ctx else "") +
               (f"Tone/style: {style}\n" if style else "") +
@@ -7694,6 +7700,135 @@ def _mail_translate_card(card):
     if _re.search(r'\d', ko) and not _re.search(r'\d', en or ''):
         return en, 'WARN_NO_DIGITS'
     return en, None
+
+
+# ── AOR 승인요청 2옵션 (#2) — 탐지/체크리스트=0-LLM, 승인=코드템플릿, 추가검증=Gemini(on-demand) ──
+#  3단계(올마이트 r3): aor_request(강한 승인요청) / possible_aor(약한신호, 승인 기본 blocked) / not_aor.
+_AOR_STRONG = re.compile(
+    r"(owner'?s?\s+approval|your\s+approval|request\s+for\s+approval|please\s+(approve|confirm)|"
+    r"approval\s+(is\s+)?(required|requested|sought)|raise\s+the\s+AOR|submit\s+the\s+AOR|"
+    r"승인\s*(요청|바랍|부탁)|상신\s*(요청|바랍))", re.I)
+_AOR_SOFT = re.compile(
+    r"(please\s+advise|kindly\s+advise|for\s+your\s+(review|approval|consideration)|"
+    r"quotation|proposal|estimate|견적|검토\s*요청|offer)", re.I)
+_AOR_CHECK = {
+    'scope':       r'(scope|작업\s*범위|extent of work|work\s*scope|description of work)',
+    'quotation':   r'(quotation|quote|견적|estimate|cost\s*proposal|proposal)',
+    'root_cause':  r'(root\s*cause|cause of|원인|finding|damage\s*report|inspection\s*report)',
+    'alternative': r'(alternative|other\s*maker|repair\s*vs|option\b|대안)',
+    'amount':      r'(USD|EUR|\$\s?\d|\d[\d,]{2,}\s*(usd|eur)|amount|금액|총액)',
+}
+
+
+def _aor_is_external(frm):
+    return 'sinokor.co.kr' not in (frm or '').lower()
+
+
+def _aor_detect(card):
+    """AOR 승인요청 3단계 + 빠진 체크리스트 (0-LLM). level: not_aor/possible_aor/aor_request."""
+    subj = card.get('email_subject') or ''
+    body = ' '.join(str(card.get(k) or '') for k in
+                    ('email_subject', 'issue_item', 'issue_desc', 'summary_ko', 'body_en', 'thread_summary_ko'))
+    wiki = card.get('wiki') or {}
+    blob = subj + ' ' + body
+    is_aor = (wiki.get('category') == 'AOR') or bool(re.search(r'\bAOR\b', blob, re.I))
+    if not (is_aor and _aor_is_external(card.get('email_from'))):
+        return {'level': 'not_aor'}
+    if _AOR_STRONG.search(blob):
+        level = 'aor_request'
+    elif _AOR_SOFT.search(blob):
+        level = 'possible_aor'           # 약한 신호 → 옵션버튼 보이되 승인 기본 blocked
+    else:
+        return {'level': 'not_aor'}
+    text = (body + ' ' + (wiki.get('evidence') or '') + ' ' + (wiki.get('title') or '')).lower()
+    missing = [k for k, p in _AOR_CHECK.items() if not re.search(p, text, re.I)]
+    return {'level': level, 'missing': missing}
+
+
+def _aor_approve_template(rcpt):
+    """승인 회신 = 코드 영문 템플릿(Gemini 0, fact 완전 결정적). 금액/ref 단정 안 함."""
+    return (f"Dear {rcpt},\nGood day.\n"
+            "Reviewed the scope and quotation. No objection — please proceed to raise the AOR in SVMS.\n"
+            "Kindly keep the running-hours and lube oil consumption records attached for cost confirmation.")
+
+
+def _aor_amounts(text):
+    return {_wnorm(x) for x in re.findall(r'(?:USD|EUR|\$)\s?[\d,]+(?:\.\d+)?|\b[\d,]{4,}(?:\.\d+)?\s*(?:USD|EUR)\b',
+                                          text or '', re.I)}
+
+
+def _aor_allowed_facts(card):
+    wiki = card.get('wiki') or {}
+    text = ' '.join(str(card.get(k) or '') for k in
+                    ('email_subject', 'issue_item', 'issue_desc', 'summary_ko', 'body_en')) \
+        + ' ' + str(wiki.get('evidence') or '') + ' ' + str(wiki.get('title') or '')
+    return {'refs': _wiki_extract_refs(text), 'amounts': _aor_amounts(text)}
+
+
+def _aor_validate(en, allowed):
+    """영문 출력의 ref/amount 중 allowed_facts 밖 = 위반(fact injection 의심). 사실값만 검사."""
+    bad = []
+    for r in _wiki_extract_refs(en or ''):
+        if r not in allowed['refs']:
+            bad.append('ref:' + r)
+    for a in _aor_amounts(en or ''):
+        if a not in allowed['amounts']:
+            bad.append('amount:' + a)
+    return bad
+
+
+def _aor_recipient(card):
+    """회신 수신자명 추정 — email_from 표시명 first name, 없으면 'Sir'."""
+    frm = card.get('email_from') or ''
+    m = re.match(r'\s*"?([^"<@]+?)"?\s*[<(]', frm) or re.match(r'\s*([A-Za-z][A-Za-z .\-]+)', frm)
+    if m:
+        nm = m.group(1).strip().split()[0]
+        if nm and nm.lower() not in ('the', 'mr', 'ms', 'capt', 'master'):
+            return nm
+    return 'Sir'
+
+
+@app.route('/api/mail/<int:cid>/reply/aor-options', methods=['POST'])
+@admin_required
+def api_mail_aor_options(cid):
+    r = _mail_get(cid)
+    if not r:
+        return jsonify({'error': 'not found'}), 404
+    card = dict(r)
+    card['wiki'] = _wiki_match_for_card(card)
+    det = _aor_detect(card)
+    if det['level'] == 'not_aor':
+        return jsonify({'is_aor': False})
+    allowed = _aor_allowed_facts(card)
+    rcpt = _aor_recipient(card)
+    missing = det['missing']
+    wiki = card['wiki'] or {}
+    out = {'is_aor': True, 'level': det['level'], 'missing': missing,
+           'wiki_version': (f"{wiki.get('date_last')}|{wiki.get('msg_count')}" if wiki else None)}
+    miss_ko = {'scope': '작업 범위(scope)', 'quotation': '견적 근거(quotation breakdown)',
+               'root_cause': '근본 원인/검사 결과(root cause/finding)', 'alternative': '대안(alternative)',
+               'amount': '금액 근거(cost basis)'}
+
+    # 추가검증(clarify) — Gemini. 빠진필드 번호 clarify(필드명은 validator allowlist 통과, 사실값만 검사).
+    items = [miss_ko.get(m, m) for m in missing] or ['상세 scope·견적 근거·원인']
+    ko_clarify = (f"{rcpt}에게. 승인 전 아래 추가 확인 요청: " +
+                  "; ".join(f"{i+1}) {it}" for i, it in enumerate(items)) +
+                  ". 확인되면 AOR 상신 진행하겠음. (강경)")
+    c = {'reply_ko': ko_clarify, 'reply_style': '간결직설',
+         'email_subject': card.get('email_subject'), 'summary_ko': card.get('summary_ko'), 'wiki': card['wiki']}
+    en_c, err_c = _mail_translate_card(c)
+    out['clarify'] = {'en': (None if (err_c in ('NO_API_KEY', 'NO_INSTRUCTION') or en_c is None) else en_c),
+                      'violations': (_aor_validate(en_c, allowed) if en_c else []), 'err': err_c}
+
+    # 승인(approve) = 코드 영문 템플릿(Gemini 0). aor_request + 체크리스트 충족일 때만 노출.
+    if det['level'] != 'aor_request':
+        out['approve'] = {'blocked': True, 'reason': '확정 승인요청 아님(possible) — 직접 검토 후'}
+    elif missing:
+        out['approve'] = {'blocked': True,
+                          'reason': '체크리스트 미충족: ' + ', '.join(miss_ko.get(m, m) for m in missing)}
+    else:
+        out['approve'] = {'blocked': False, 'en': _aor_approve_template(rcpt), 'template': True}
+    return jsonify(out)
 
 
 @app.route('/mail')
@@ -7823,6 +7958,7 @@ def api_mail_list():
     for r in rows:
         d = dict(r)
         d['wiki'] = (_wiki_match_for_card(d) if d.get('card_status') != 'archived' else None)
+        d['aor'] = (_aor_detect(d) if d.get('card_status') != 'archived' else {'is_aor': False})
         cards.append(d)
     return jsonify({'count': len(rows), 'active': act['c'], 'pending': pnd['c'], 'cards': cards})
 
@@ -7959,14 +8095,26 @@ def api_mail_reply_translate(cid):
         execute("UPDATE mail_card SET reply_status='needs_info' WHERE id=?", (cid,))
         return jsonify({'error': 'reply_ko empty', 'reply_status': 'needs_info'}), 400
     card = dict(r); card['reply_ko'] = ko; card['reply_style'] = style
+    card['wiki'] = _wiki_match_for_card(card)
     en, err = _mail_translate_card(card)
     if err in ('NO_API_KEY', 'NO_INSTRUCTION') or en is None:
         return jsonify({'error': 'translate failed', 'detail': err}), 502
     execute("UPDATE mail_card SET reply_ko=?, reply_style=?, reply_en=?, "
             "reply_en_at=datetime('now','localtime'), reply_status='translated' WHERE id=?",
             (ko, style or None, en, cid))
-    return jsonify({'id': cid, 'reply_en': en, 'reply_status': 'translated',
-                    'warn': err if err == 'WARN_NO_DIGITS' else None})
+    # fact injection 가드(올마이트 r3): 위키 근거 주입 시 출력 ref/금액이 지시+위키 밖이면 경고(차단X, draft라).
+    warn = err if err == 'WARN_NO_DIGITS' else None
+    try:
+        if (card.get('wiki') or {}).get('confidence') == 'high':
+            allowed = _aor_allowed_facts(card)
+            allowed['refs'] |= _wiki_extract_refs(ko)
+            allowed['amounts'] |= _aor_amounts(ko)
+            vio = _aor_validate(en, allowed)
+            if vio:
+                warn = 'FACT_CHECK: 지시·위키에 없는 값 ' + ', '.join(vio[:4]) + ' — 확인 요'
+    except Exception:
+        pass
+    return jsonify({'id': cid, 'reply_en': en, 'reply_status': 'translated', 'warn': warn})
 
 
 @app.route('/api/mail/translate-all', methods=['POST'])
