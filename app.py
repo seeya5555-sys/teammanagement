@@ -7,6 +7,7 @@ Flask 메인 (DD Manager 스타일 — 단일 파일, 순수 SQL, ORM 없음)
 DB 재초기화     :  python app.py --init-db
 """
 import os
+import re
 import sys
 import uuid
 import json
