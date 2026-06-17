@@ -7376,6 +7376,7 @@ AUTOMATION_TASKS = {
     'aor_submit': 'AOR 상신 — 승인된 건 SVMS 제출 (approve 시 자동큐)',
     'aor_reject': 'AOR 리젝 — STATUS=R + 관리사 통보메일 (reject 시 자동큐)',
     'reqgen_save': '구매청구 DRAFT 저장 — 승인된 입거 requisition 시트 SVMS 저장 (approve 시 자동큐)',
+    'shipwiki_ingest': '선박 위키 신규수집 — 범주 메일 최근 7일 크롤·분류·적재 (외부 발송·승인 0)',
 }
 # verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일
 AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit')
