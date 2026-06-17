@@ -7857,6 +7857,15 @@ def api_mail_issue_register(cid):
     d = request.get_json(silent=True) or {}
     mode = (d.get('mode') or 'new').strip()
     user = session.get('username') or 'web'
+    # 위키 링크: 클라가 보낸 thread_id 우선(손유석이 밴드 보고 행동) / 없으면 서버 high 매칭만 자동.
+    wtid = (d.get('wiki_thread_id') or '').strip() or None
+    if not wtid:
+        try:
+            wm = _wiki_match_for_card(dict(r))
+            if wm and wm.get('confidence') == 'high':
+                wtid = wm.get('thread_id')
+        except Exception:
+            wtid = None
     if mode == 'append':
         mid = d.get('match_id') or r['issue_match_id']
         if not mid or not query('SELECT id FROM issues WHERE id=?', (mid,), one=True):
@@ -7871,8 +7880,10 @@ def api_mail_issue_register(cid):
         except Exception:
             acts = []
         acts.append({'date': _date.today().isoformat(), 'progress': prog, 'important': False})
-        execute('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") WHERE id=?',
-                (json.dumps(acts, ensure_ascii=False), mid))
+        # 진행내역(actions)은 사람이 [추가] 눌렀을 때만 저장 = confirmed (suggested는 화면뿐). wiki 링크는 기존값 보존.
+        execute('UPDATE issues SET actions=?, wiki_thread_id=COALESCE(wiki_thread_id, ?), '
+                'updated_at=datetime("now","localtime") WHERE id=?',
+                (json.dumps(acts, ensure_ascii=False), wtid, mid))
         iid = mid
     else:
         item = (d.get('item') if 'item' in d else r['issue_item']) or ''
@@ -7894,9 +7905,9 @@ def api_mail_issue_register(cid):
             return jsonify({'error': 'supervisor unresolved', 'field': 'supervisor'}), 400
         iid = execute("""INSERT INTO issues
             (supervisor_id, vessel_id, issue_date, due_date, item_topic, description,
-             actions, priority, status, created_by)
-            VALUES (?, ?, ?, NULL, ?, ?, '[]', ?, 'Open', ?)""",
-            (sid, vid, _date.today().isoformat(), item, desc, prio, 'mail:' + user))
+             actions, priority, status, created_by, wiki_thread_id)
+            VALUES (?, ?, ?, NULL, ?, ?, '[]', ?, 'Open', ?, ?)""",
+            (sid, vid, _date.today().isoformat(), item, desc, prio, 'mail:' + user, wtid))
     execute("UPDATE mail_card SET issue_status='registered', issue_id=?, "
             "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?", (iid, user, cid))
     _mail_maybe_archive(cid)

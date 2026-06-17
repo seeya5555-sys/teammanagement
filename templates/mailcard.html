@@ -141,7 +141,8 @@
         <div class="fld" style="flex:1;min-width:140px"><span class="k">담당감독</span><input class="box i-sup" value="${esc(c.issue_supervisor||'')}" placeholder="비우면 본인"></div>
         <div class="fld" style="max-width:140px"><span class="k">Priority</span><select class="box i-prio">${opts}</select></div></div>
         <div class="fld"><span class="k">Item</span><input class="box i-item" value="${esc(c.issue_item||'')}"></div>
-        <div class="fld"><span class="k">Description</span><textarea class="box i-desc">${esc(c.issue_desc||'')}</textarea></div>
+        <div class="fld"><span class="k">Description</span><textarea class="box i-desc">${esc(c.issue_desc||'')}</textarea>
+          ${c.wiki?`<div style="margin-top:4px"><button class="btn btn-sm act-wikidraft" title="위키 최신 전개로 진행내역 초안(저장 전 화면뿐, 편집 가능)">📚 위키 초안 채우기</button> <span class="tip">${c.wiki.confidence==='high'?'매칭 高':'후보'} · 저장해야 Daily 반영</span></div>`:''}</div>
         <div class="row" style="align-items:center;flex-wrap:wrap;gap:6px"><span class="k" style="flex:none">기존 현안에 추가</span>
           <label class="tip" style="flex:none;cursor:pointer"><input type="checkbox" class="i-vfilter" checked style="vertical-align:middle"> 선명만</label>
           <select class="box i-existing" style="flex:1;min-width:220px"></select>
@@ -224,8 +225,14 @@
   }
   function wire(el,c){
     const q=s=>el.querySelector(s);
-    if(q('.act-ireg'))q('.act-ireg').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'new',item:gv(el,'.i-item'),desc:gv(el,'.i-desc'),vessel:gv(el,'.i-ves'),supervisor:gv(el,'.i-sup'),priority:gv(el,'.i-prio')});if(!r.ok){alert('등록 실패: '+(r.j.hint||r.j.error));busy(el,0);}else reload(c.id);};
-    if(q('.act-iappend'))q('.act-iappend').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'append',desc:gv(el,'.i-desc')});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else reload(c.id);};
+    const _wtid=(c.wiki&&c.wiki.thread_id)||undefined;
+    if(q('.act-wikidraft'))q('.act-wikidraft').onclick=()=>{
+      const w=c.wiki||{};
+      const line=(c.thread_summary_ko||w.evidence||c.issue_item||'').trim();
+      const di=q('.i-desc');if(di){di.value=line;di.focus();}
+    };
+    if(q('.act-ireg'))q('.act-ireg').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'new',item:gv(el,'.i-item'),desc:gv(el,'.i-desc'),vessel:gv(el,'.i-ves'),supervisor:gv(el,'.i-sup'),priority:gv(el,'.i-prio'),wiki_thread_id:_wtid});if(!r.ok){alert('등록 실패: '+(r.j.hint||r.j.error));busy(el,0);}else reload(c.id);};
+    if(q('.act-iappend'))q('.act-iappend').onclick=async()=>{busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'append',desc:gv(el,'.i-desc'),wiki_thread_id:_wtid});if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else reload(c.id);};
     if(q('.i-existing')){
       fillExisting(el);
       const vf=q('.i-vfilter');if(vf)vf.onchange=()=>fillExisting(el);
@@ -233,7 +240,7 @@
       q('.act-iappend2').onclick=async()=>{
         const mid=q('.i-existing').value;if(!mid){alert('추가할 현안을 선택하세요');return;}
         const desc=gv(el,'.i-desc');if(!desc){alert('Description(액션 내용)이 비어있습니다');return;}
-        busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'append',match_id:Number(mid),desc});
+        busy(el,1);const r=await api('POST',`/api/mail/${c.id}/issue/register`,{mode:'append',match_id:Number(mid),desc,wiki_thread_id:_wtid});
         if(!r.ok){alert('실패: '+(r.j.error));busy(el,0);}else reload(c.id);};
     }
     if(q('.act-irej'))q('.act-irej').onclick=async()=>{const rs=prompt('리젝 사유(선택):','');if(rs===null)return;busy(el,1);await api('POST',`/api/mail/${c.id}/issue/reject`,{reason:rs});reload(c.id);};
