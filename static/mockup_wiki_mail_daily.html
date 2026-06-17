@@ -185,11 +185,28 @@
     </div>
 
     <div class="sec">
-      <div class="sec-h">✉️ 회신 작성 <span style="font-weight:400;color:var(--text-tertiary);font-size:11px">한글지시 → Gemini 영문 → Outlook draft (기존)</span></div>
+      <div class="sec-h">✉️ 회신 — AOR 승인요청 감지 <span class="new">딸깍 2옵션</span></div>
       <div class="sec-b">
-        <div class="field">한글 지시</div>
-        <input class="inp" value="overhaul scope·납기 확인 요청, AOR 상신 진행 OK 한다고 회신">
-        <button class="btn btn-pri">🌐 번역(Gemini)</button>
+        <div class="footnote" style="margin-bottom:8px">이 메일 = <b>AOR 승인요청</b>(category=AOR + 요청패턴 결정적 탐지). 위키 스레드+raw 근거로 <b>완성형 회신 2개 미리 생성</b> → 1클릭 선택 → Outlook draft. 타이핑 0.</div>
+
+        <div class="split" style="gap:10px">
+          <div style="border:1px solid var(--green-border);border-radius:9px;background:var(--green-bg);padding:9px 11px">
+            <div style="font-weight:800;color:var(--green);font-size:12px">✅ 승인 (상신 진행) <span class="bdg" style="background:#fff;color:var(--green)">체크리스트 통과</span></div>
+            <div class="footnote" style="color:var(--text-secondary);margin-top:5px">"Good day. Reviewed the overhaul scope &amp; quotation for A/E No.3 T/C. Please proceed to raise the AOR in SVMS. Kindly keep the running-hours/lube records attached for cost confirmation. …"</div>
+            <div class="footnote" style="margin-top:4px;color:var(--green)">scope·견적근거·원인·대안·금액근거 ✔ — <b>하나라도 빠지면 이 옵션 숨김 + "검토필요" 워터마크</b>(올마이트 게이트)</div>
+            <button class="btn btn-rec" style="margin-top:6px">이걸로 Outlook Draft</button>
+          </div>
+          <div style="border:1px solid var(--amber-border);border-radius:9px;background:var(--amber-bg);padding:9px 11px">
+            <div style="font-weight:800;color:var(--amber);font-size:12px">↩︎ 추가검증 요청</div>
+            <div class="footnote" style="color:var(--text-secondary);margin-top:5px">"Good day. Before approval, please clarify: 1) root-cause finding vs prior overhaul (AOR 66926) 2) maker (ABB) recommendation 3) cost breakdown basis. …"</div>
+            <button class="btn btn-amber" style="margin-top:6px">이걸로 Outlook Draft</button>
+          </div>
+        </div>
+        <div class="footnote" style="margin-top:8px"><b>기본 선택 없음</b>(승인 nudge 방지) · 둘 다 동급 품질 · 빠진필드는 결정적 탐지 · 숫자/ref exact · 서명 코드 append · <b>전부 draft, Send는 손유석</b>.</div>
+
+        <div class="field" style="margin-top:11px">또는 직접 — 한글 지시 (위키/raw 근거로 완성)</div>
+        <input class="inp" value="overhaul scope·납기 확인 요청, AOR 상신 진행 OK">
+        <button class="btn btn-pri">🌐 생성(Gemini · 위키+raw 근거)</button>
       </div>
     </div>
   </div>
@@ -247,6 +264,50 @@
     <li><b>이후</b> — D(수동 단계칩+fundreq 링크), 토큰계측 후 필요시 E 경량연결. 양방향 sync는 안 함(DB 단일 출처).</li>
   </ul>
   <div class="footnote">각 단계 additive·라이브 회귀 0 지향. 빌드 착수는 손유석 승인 후.</div>
+</div>
+
+<h2 class="sec">⑦ 엔진 — 코드 max · 토큰 min · 위키 유기참조</h2>
+<div class="split">
+  <div class="box" style="margin:0">
+    <div class="col-h">결정적 코드 (0-LLM · 토큰 0)</div>
+    <ul class="tight">
+      <li>매칭(선박+2개↑)·스레드 묶기·컨텍스트 조립</li>
+      <li>AOR 분류·단계·빠진필드·승인 체크리스트</li>
+      <li><b>allowed_facts 구조화</b> + 출력 ref/금액/vendor/날짜 <b>validator</b>(set 밖이면 reject)</li>
+      <li>승인문 = <b>template 골격</b> 고정 + Gemini는 polish만(핵심문장 코드)</li>
+    </ul>
+  </div>
+  <div class="box" style="margin:0">
+    <div class="col-h">LLM (최소·품질용)</div>
+    <ul class="tight">
+      <li>회신문 polish = <b>Gemini 무료</b>(grounding=<b>confirmed 요약+target raw excerpt+관련 msg slice</b>, raw 통째 ✗)</li>
+      <li>위키 <b>매일 사전빌드</b> → 회신 시 Haiku 재요약 <b>0</b></li>
+      <li>2옵션·회신 = <b>on-demand</b>(카드 열 때) + <b>wiki version/hash 캐시</b></li>
+    </ul>
+  </div>
+</div>
+<div class="box">
+  <div class="col-h">위키 = 매일 자라는 단일 기반 (유기적 발전)</div>
+  <div class="flow">
+    <div class="pill"><b>매일 19:30 ingest</b><span>범주 메일·회신 → 위키 스레드 갱신</span></div>
+    <div class="arrow">→</div>
+    <div class="pill"><b>모든 다운스트림이 생성시점 참조</b><span>카드 맥락 · 회신 근거 · AOR 옵션 · Daily 초안</span></div>
+    <div class="arrow">→</div>
+    <div class="pill"><b>위키 자랄수록 보조 품질 ↑</b><span>같은 코드, 점점 똑똑해짐</span></div>
+  </div>
+  <div class="footnote">단, <b>발송 회신 grounding = confirmed 우선</b>. auto/미검증은 "unverified context"로 분리·표시만, draft 본문에 자동삽입 ✗. <b>draft에 wiki version·source_msgids·confidence 부착, Send 전 재검증</b>(wiki 바뀌면 재생성/경고) — 올마이트 가드.</div>
+</div>
+
+<div class="am-box" style="background:#f4f8ff;border-color:var(--blue-border)">
+  <b>💪 올마이트 round2 — verdict: <span style="color:var(--amber)">changes-needed</span> ("방향은 맞음")</b>
+  <ul class="tight" style="font-size:12.5px;color:var(--text-secondary);margin-top:8px">
+    <li><b>fact injection이 스타일보다 위험</b> → fact schema+validator가 최우선(스타일 하네스는 후순위).</li>
+    <li><b>승인 draft block</b>: scope·견적근거·원인·대안·금액근거·AOR단계 중 1개라도 missing → 승인옵션 숨김/"검토필요" 워터마크. DN 금액대조 실패 시도 block.</li>
+    <li><b>output validator</b>: allowed_facts set 밖 ref/date/amount/vendor/equipment = fail. raw 통째 ✗ → retrieval slice(confirmed+target+관련 3건).</li>
+    <li><b>stale draft</b>: context_version 부착, open/Send 전 재검증. AOR 오탐(견적문의·FYI) negative test.</li>
+    <li>AOR lane = 엔진 공통 / policy·checklist·UI만 AOR 전용(over-eng 아님). Daily도 confirmed-only 불변.</li>
+  </ul>
+  <div class="footnote" style="margin-top:6px">→ 위 ⑦ 엔진·AOR 섹션에 3대 필수(체크리스트 block·fact validator·version check) 반영함. (올마이트 round2 ~$0.035, 누적 $3.28/$5)</div>
 </div>
 
 <h2 class="sec">⑤ 불변 가드레일</h2>
