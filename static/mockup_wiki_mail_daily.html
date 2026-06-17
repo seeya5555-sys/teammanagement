@@ -131,7 +131,7 @@
 </div>
 
 <h2 class="sec">② 개선된 메일카드 (AFTER)</h2>
-<p class="note">기존 카드에 <b>📚 위키 맥락 밴드</b> 1개 추가 + 이슈섹션이 위키 기반 <b>고신뢰 선제안</b>·<b>진행내역 자동 pre-fill</b>.</p>
+<p class="note"><b>핵심만 딱딱</b> — 항상 보이는 건 🧵요약 + 📚위키밴드(이력 한 줄) + 결정버튼. <b>받은메일 원문/번역은 접힘</b>(필요할 때만). AOR 단계바는 제거(중복).</p>
 
 <div class="mc">
   <div class="mc-top">
@@ -161,6 +161,11 @@
       <div class="footnote" style="margin-top:6px">신뢰판정 = 선박 + (ref·장비·msgid·날짜창 중 <b>2개↑</b> 일치)면 高·자동 선제안 / 1개면 "후보"로만 표시(오매칭 방지, 올마이트 권고).</div>
     </div>
 
+    <details style="margin-bottom:2px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);padding:5px 2px">📨 받은메일 원문 / 한글 번역 <span style="color:var(--text-tertiary)">(기본 접힘 — 필요할 때만 펼침)</span></summary>
+      <div class="band" style="background:var(--surface-2);margin-top:6px"><span class="lbl">원문</span> <span style="font-family:ui-monospace,monospace;font-size:11.5px;color:var(--text-tertiary)">…we confirm the overhaul scope for A/E No.3 T/C and attach the quotation. Kindly advise on raising the AOR…</span></div>
+    </details>
+
     <div class="sec">
       <div class="sec-h">📋 TRMT 이슈 <span class="bdg b-i">위키→ issue:#88 매칭(고신뢰)</span></div>
       <div class="sec-b">
@@ -170,17 +175,6 @@
         <button class="btn btn-ghost">신규 이슈로</button>
         <button class="btn btn-ghost" style="opacity:.7">해당없음 / 리젝</button>
         <div class="footnote">※ 초안은 <b>화면 표시만</b>(suggested) — [추가·저장] 누르기 전엔 Daily <code>actions</code>에 안 들어감(confirmed 분리, 올마이트 가드). 날짜=메일일자.</div>
-      </div>
-    </div>
-
-    <div class="sec">
-      <div class="sec-h">🛠 AOR / 비용 단계 <span class="bdg" style="background:var(--surface-3);color:var(--text-tertiary)">수동 단계 · 자동판정 보류</span></div>
-      <div class="sec-b">
-        <div class="stagebar">
-          <span class="stp done">이슈</span><span class="stp done">메일보고</span><span class="stp done">협의</span>
-          <span class="stp now">AOR 상신컨펌 대기</span><span class="stp">관리사 상신</span><span class="stp">컨펌</span><span class="stp">비용</span><span class="stp">결재</span>
-        </div>
-        <div class="footnote" style="margin-top:7px">단계는 <b>손유석이 클릭으로 지정</b>(free-text 자동판정은 오판 위험 → 올마이트 권고로 보류). 비용 단계 = <b>fundreq 링크</b>. 맥락=위키 신뢰 / 결재 숫자=원장.</div>
       </div>
     </div>
 
@@ -238,7 +232,7 @@
   <tr><td class="k">C. 액션 자동 pre-fill</td><td>타이핑 大↓ (매 메일)</td><td>중 (위키요약→카드)</td><td><b>1순위</b></td></tr>
   <tr><td class="k">A. 위키 맥락 밴드</td><td>과거이력 즉시·결정 빠름</td><td>중 (매칭+표시)</td><td><b>1순위</b></td></tr>
   <tr><td class="k">B. Daily↔위키 링크</td><td>이력 추적·중복방지</td><td>소 (포인터 컬럼)</td><td>2순위</td></tr>
-  <tr><td class="k">D. AOR/비용 단계</td><td>워크플로우 가시화</td><td>소 (수동단계+링크)</td><td>3순위 · 자동판정 보류</td></tr>
+  <tr style="opacity:.55;text-decoration:line-through"><td class="k">D. AOR/비용 단계칩</td><td>요약/맥락으로 이미 판단됨</td><td>—</td><td><b>컷</b> (중복·군더더기, 손유석)</td></tr>
   <tr><td class="k">E. 스캔/요약 통합</td><td>토큰↓·일관성</td><td>大 (라이브 회귀위험)</td><td>full통합 ✗ → read-only bridge만</td></tr>
 </table>
 
@@ -261,7 +255,7 @@
     <li><b>1단계</b> — 위키에 stable <code>wiki_thread_id</code> 부여 + issues에 <code>wiki_thread_id</code> 포인터 컬럼(additive). 매칭 규칙(선박+2개↑) 구현.</li>
     <li><b>2단계</b> — <code>/mail</code> 카드에 <b>read-only 위키 맥락 밴드</b> + 신뢰도 표시 (A). mailcard가 wiki 참조만(통합 아님).</li>
     <li><b>3단계</b> — 액션추가 모달에 <b>"위키 기반 초안 불러오기"</b> 버튼 (C). suggested→사람 확정→<code>actions</code> append.</li>
-    <li><b>이후</b> — D(수동 단계칩+fundreq 링크), 토큰계측 후 필요시 E 경량연결. 양방향 sync는 안 함(DB 단일 출처).</li>
+    <li><b>이후</b> — AOR 2옵션 회신 lane(#2, 체크리스트 block+fact validator), 토큰계측 후 필요시 E 경량연결. D 단계칩=컷. 양방향 sync 안 함(DB 단일 출처).</li>
   </ul>
   <div class="footnote">각 단계 additive·라이브 회귀 0 지향. 빌드 착수는 손유석 승인 후.</div>
 </div>
