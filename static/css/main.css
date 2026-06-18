@@ -963,8 +963,8 @@ col.c-edit   { width: 156px; }
     font-size: 11.5px;
     padding-top: 1px;
   }
-  /* 현안업무(긴 본문): 라벨을 위에 두고 본문은 전체폭으로 */
-  #summary-table td.sum-issue { display: block; }
+  /* 현안업무(긴 본문): 라벨을 위에 두고 본문은 전체폭 + 원문 줄바꿈 보존(td 일괄 normal 덮어쓰기 해제) */
+  #summary-table td.sum-issue { display: block; white-space: pre-wrap !important; }
   #summary-table td.sum-issue::before { display: block; margin-bottom: 3px; }
   #summary-table td:empty { display: none; }
 
