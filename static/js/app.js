@@ -2694,6 +2694,16 @@ function wireEvents() {
   // 선박별 보기(rev.4)에선 날짜 그룹 접기 버튼 불필요 → 숨김
   { const bta = $('#btn-toggle-all'); if (bta) bta.style.display = 'none'; }
 
+  // 툴바 슬림화: 엑셀추출 / 영문엑셀추출 / 업무요약 만 상단 우측(page-actions)으로 옮기고
+  // 나머지(Today·검색·필터·업무요약추출·items)는 안 쓰므로 툴바째 숨김. (필터 요소는 DOM 유지 → JS 정상)
+  {
+    const pa = document.querySelector('.page-actions');
+    ['#btn-export-xlsx', '#btn-export-xlsx-en', '#btn-summary-gen'].forEach(s => {
+      const b = $(s); if (b && pa) pa.append(b);
+    });
+    const tb = document.querySelector('.toolbar'); if (tb) tb.style.display = 'none';
+  }
+
   // 엑셀 추출 — 현재 필터 상태 그대로 백엔드에 넘김
   function buildExportParams() {
     const p = new URLSearchParams();

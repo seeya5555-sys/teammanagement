@@ -4671,3 +4671,17 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
   .vmh-vsel { display: block; width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 14px; font-weight: 600; background: var(--surface); color: var(--text-primary); margin-bottom: 11px; }
   .vmh-kpi, .vmh-sort { margin-left: 0; }
 }
+
+/* ── rev.4 폴리시: 메인 패널을 카드로(목업 매칭) ── */
+.daily-main { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.daily-main .vmh-row { padding: 13px 16px; margin: 0; border-bottom: 1px solid var(--border-subtle); }
+.daily-main .vmh-tools { padding: 9px 16px; margin: 0; border-bottom: 1px solid var(--border-subtle); }
+.daily-main .grid-wrap { border: none; border-radius: 0 0 12px 12px; }
+.daily-main .ex-table thead th { background: var(--surface-2); }
+.daily-main #empty-state { padding: 30px 16px; }
+.page-actions { flex-wrap: wrap; }
+@media (max-width: 768px) {
+  .daily-main { border-radius: 12px; }
+  .daily-main .vmh-vsel { margin: 12px 14px 0; width: calc(100% - 28px); }
+  .daily-main .card-list { padding: 12px; }
+}
