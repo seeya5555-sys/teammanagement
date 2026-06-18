@@ -4723,3 +4723,15 @@ col.c-stat { width: 92px; }
 .issue-card.is-expanded { border-color: var(--blue-border); }
 .issue-card-det { margin-top: 11px; border-top: 1px solid var(--border-subtle); padding-top: 11px; }
 .issue-card-det .exp-desc { font-size: 12px; }
+
+/* rev.4: 진행사항 편집행은 타임라인 세로배치 예외 → 한 줄(날짜/조치내용/버튼) + 넓은 입력칸 */
+.exp-acts-wrap .act-entry.editing,
+.issue-card-det .act-entry.editing { flex-direction: row; align-items: center; gap: 6px; padding: 6px 8px; }
+.exp-acts-wrap .act-entry.editing::before,
+.issue-card-det .act-entry.editing::before { display: none; }
+.exp-acts-wrap .act-entry.editing input[type="text"],
+.issue-card-det .act-entry.editing input[type="text"] { flex: 1 1 auto; min-width: 220px; font-size: 12.5px; padding: 6px 10px; }
+.exp-acts-wrap .act-entry.editing input[type="date"],
+.issue-card-det .act-entry.editing input[type="date"] { flex: 0 0 auto; font-size: 12px; padding: 5px 7px; }
+.exp-acts-wrap .act-entry.editing .mini-btn,
+.issue-card-det .act-entry.editing .mini-btn { width: 30px; height: 30px; font-size: 13px; flex: 0 0 auto; }

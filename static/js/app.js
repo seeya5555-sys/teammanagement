@@ -897,7 +897,7 @@ function toggleRow(id) {
 
 // 펼침 행: 상세 내용 + 진행사항(조치 이력) + 액션 버튼
 function expandedRowEl(i) {
-  const tr = el('tr', { class: 'exp-row' });
+  const tr = el('tr', { class: 'exp-row', 'data-exp-id': i.id });
   const box = el('div', { class: 'exp-box' });
 
   // 상세 내용 (클릭 인라인 편집)
@@ -1257,9 +1257,11 @@ async function addActionInline(issue) {
   renderTable(); renderCards();
 
   setTimeout(() => {
-    const tr = document.querySelector(`tr[data-id="${issue.id}"]`);
-    if (!tr) return;
-    const entries = tr.querySelectorAll('.act-cell-wrap .act-entry');
+    // 액션 UI는 데스크탑=별도 펼침행(tr.exp-row[data-exp-id]), 모바일=카드(.issue-card[data-id])에 있음
+    const cont = document.querySelector(
+      `tr[data-exp-id="${issue.id}"] .act-cell-wrap, .issue-card[data-id="${issue.id}"] .act-cell-wrap`);
+    if (!cont) return;
+    const entries = cont.querySelectorAll('.act-entry');
     const last = entries[entries.length - 1];
     if (last) startEditActionEntry(last, issue, issue.actions.length - 1);
   }, 30);
