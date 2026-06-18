@@ -34,6 +34,7 @@ const S = {
   selectedVessel: null,                                  // 선택 선박 id (null=자동선택 전)
   mainSort:  localStorage.getItem('trmt_main_sort')  || 'old',   // 'old'=오래된→최근 / 'new'=최근·우선순위
   quickFilter: 'all',                                    // 'all'|'recent'|'stale'|'risk'
+  issueSearch: '',                                       // 선택 선박 내 키워드 검색(제목/상세/조치)
   expandedRows: new Set(),                               // 인라인 펼친(상세+진행사항) 이슈 id
 
   // 사용자가 직접 클릭해서 펼치거나 접은 날짜 — 자동 접기에서 제외
@@ -656,6 +657,8 @@ function displayIssues(all) {
   const asc = (a, b) => (a.issue_date < b.issue_date ? -1 : a.issue_date > b.issue_date ? 1 : 0) || (a.id - b.id);
   const desc = (a, b) => -asc(a, b);
   const PR = { 'COC & Flag': 0, 'Urgent': 1, 'Next DD': 2, 'Normal': 3 };
+  const kw = (S.issueSearch || '').trim().toLowerCase();
+  if (kw) arr = arr.filter(i => issueMatchesKw(i, kw));     // 선택 선박 내 키워드 검색
   const qf = S.quickFilter;
   if (qf === 'risk') arr = arr.filter(i => RISK_PRI.has(i.priority) && isActiveStatus(i.status));
   else if (qf === 'stale') arr = arr.filter(i => isActiveStatus(i.status));
@@ -672,7 +675,16 @@ function ensureSelectedVessel() {
   if (S.selectedVessel == null || !flat.some(v => String(v.id) === String(S.selectedVessel)))
     S.selectedVessel = flat[0].id;
 }
-function selectVessel(vid) { S.selectedVessel = vid; S.inlineAdd = null; render(); }
+function selectVessel(vid) { S.selectedVessel = vid; S.inlineAdd = null; S.issueSearch = ''; render(); }
+
+// 선박 내 키워드 매칭(제목/상세/조치 이력)
+function issueMatchesKw(i, kw) {
+  if (!kw) return true;
+  const hay = [i.item_topic, i.description,
+    ...(Array.isArray(i.actions) ? i.actions.map(a => a && a.progress) : [])]
+    .filter(Boolean).join(' ').toLowerCase();
+  return hay.includes(kw);
+}
 
 // 시간순 No. (1 = 가장 오래된 발생일). 표시 정렬이 바뀌어도 번호는 발생순 고정.
 function chronoNoMap(issues) {
@@ -719,12 +731,22 @@ function renderVesselSidebar() {
   sb.append(el('div', { class: 'vsb-head' },
     el('span', { class: 'vsb-t' }, '선박'),
     el('span', { class: 'vsb-n' }, `${totV}척 · ${subtabCountLabel()} ${totC}`)));
+  // 검색 input은 한 번만 생성(재생성 금지 → 타이핑 중 포커스 유지). 입력 시 리스트만 갱신.
   const search = el('input', { class: 'vsb-search', type: 'text', placeholder: '선박 검색…' });
   search.value = S._vsbq || '';
-  search.addEventListener('input', (e) => { S._vsbq = e.target.value; renderVesselSidebar(); });
+  search.addEventListener('input', (e) => { S._vsbq = e.target.value; fillVesselList(); });
   sb.append(el('div', { class: 'vsb-search-wrap' }, search));
+  sb.append(el('div', { class: 'vsb-list', id: 'vsb-list' }));
+  fillVesselList();
+}
+
+// 사이드바 선박 리스트만 갱신(검색 필터 적용). input 요소는 건드리지 않음.
+function fillVesselList() {
+  const list = $('#vsb-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const groups = sidebarGroups();
   const q = (S._vsbq || '').trim().toLowerCase();
-  const list = el('div', { class: 'vsb-list' });
   let shown = 0;
   for (const grp of groups) {
     const vis = grp.vessels.filter(v => !q || v.name.toLowerCase().includes(q));
@@ -742,7 +764,6 @@ function renderVesselSidebar() {
     }
   }
   if (!shown) list.append(el('div', { class: 'vsb-empty' }, q ? '검색 결과 없음' : '표시할 선박 없음'));
-  sb.append(list);
 }
 
 function renderVmainHead() {
@@ -767,9 +788,14 @@ function renderVmainHead() {
   const g = curVesselGroup();
   if (!g) return;
   const done = g.issues.filter(i => i.status === 'Closed').length;
+  // 선박 내 검색(제목/상세/조치). 입력 시 테이블/카드만 갱신 → 포커스 유지.
+  const isearch = el('input', { class: 'vmh-search', type: 'text', placeholder: '이 선박 내 검색 (제목·상세·조치)' });
+  isearch.value = S.issueSearch || '';
+  isearch.addEventListener('input', (e) => { S.issueSearch = e.target.value; renderTable(); renderCards(); });
   h.append(el('div', { class: 'vmh-row' },
     el('span', { class: 'vmh-name' }, g.name),
     g.type ? el('span', { class: 'vmh-type' }, g.type) : null,
+    isearch,
     el('span', { class: 'vmh-kpi' },
       el('b', { class: 'k-open' }, String(g.active)), ' 진행중+Open',
       el('span', { class: 'k-dim' }, ' · 완료 '), el('b', { class: 'k-dim' }, String(done)),

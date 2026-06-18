@@ -4735,3 +4735,8 @@ col.c-stat { width: 92px; }
 .issue-card-det .act-entry.editing input[type="date"] { flex: 0 0 auto; font-size: 12px; padding: 5px 7px; }
 .exp-acts-wrap .act-entry.editing .mini-btn,
 .issue-card-det .act-entry.editing .mini-btn { width: 30px; height: 30px; font-size: 13px; flex: 0 0 auto; }
+
+/* rev.4: 선박 내 검색 input (선명 옆) */
+.vmh-search { flex: 1 1 200px; max-width: 420px; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 11px; font-size: 12.5px; background: var(--surface-2); color: var(--text-secondary); }
+.vmh-search:focus { outline: none; border-color: var(--blue-border); background: var(--surface); color: var(--text-primary); }
+@media (max-width: 768px) { .vmh-search { flex-basis: 100%; max-width: none; order: 5; } .vmh-row { flex-wrap: wrap; } }
