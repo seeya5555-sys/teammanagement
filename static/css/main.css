@@ -930,6 +930,9 @@ col.c-edit   { width: 156px; }
   /* Table hidden, card list shown */
   .grid-wrap { display: none; }
   .card-list { display: block; }
+  /* 단, '요약' 뷰(#summary-wrap)는 모바일에도 표시 — 카드뷰 대체본이 없으므로 grid-wrap 일괄 숨김에서 예외.
+     비활성([hidden])일 땐 그대로 숨김 유지. 표가 넓으면 가로 스크롤. */
+  #summary-wrap:not([hidden]) { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
   /* 월/날짜 바: inline-flex라 2열로 들쭉날쭉 → 한 줄 전체폭으로 깔끔히 쌓기, 카운트 우측정렬 */
   .card-date-bar {
