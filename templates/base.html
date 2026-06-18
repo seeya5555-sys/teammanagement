@@ -46,15 +46,10 @@
           </div>
         </div>
 
-        <div class="nav-group {% if request.endpoint in survey_eps %}active{% endif %}{% if class_findings.total %} has-alert{% endif %}">
-          <button type="button" class="nav-trigger">🔍 Survey
-            {% if class_findings.total %}<span class="nav-badge" title="Class 미해소 지적사항(COC/기국) {{ class_findings.total }}건">{{ class_findings.total }}</span>{% endif %}
-            <span class="caret-sm">▾</span></button>
+        <div class="nav-group {% if request.endpoint in survey_eps %}active{% endif %}">
+          <button type="button" class="nav-trigger">🔍 Survey <span class="caret-sm">▾</span></button>
           <div class="nav-submenu">
-            <a href="{{ url_for('class_status_page') }}" class="nav-link {% if request.endpoint == 'class_status_page' %}active{% endif %}{% if class_findings.total %} has-alert{% endif %}">
-              Class Status
-              {% if class_findings.total %}<span class="nav-badge" title="COC {{ class_findings.coc }} / 기국 {{ class_findings.statutory }}">{{ class_findings.total }}</span>{% endif %}
-            </a>
+            {{ nlink('class_status_page', 'Class Status') }}
             {{ nlink('condition_survey', 'Condition Survey') }}
             {{ nlink('vetting_status', 'Vetting Status') }}
           </div>
@@ -137,10 +132,7 @@
       {% endif %}
       {{ nlink('reqgen_page', '도크 자재/수리') }}
       <div class="mm-section">🔍 Survey</div>
-      <a href="{{ url_for('class_status_page') }}" class="nav-link {% if request.endpoint == 'class_status_page' %}active{% endif %}{% if class_findings.total %} has-alert{% endif %}">
-        Class Status
-        {% if class_findings.total %}<span class="nav-badge" title="COC {{ class_findings.coc }} / 기국 {{ class_findings.statutory }}">{{ class_findings.total }}</span>{% endif %}
-      </a>
+      {{ nlink('class_status_page', 'Class Status') }}
       {{ nlink('condition_survey', 'Condition Survey') }}
       {{ nlink('vetting_status', 'Vetting Status') }}
       <div class="mm-section">📄 Report</div>

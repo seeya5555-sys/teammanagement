@@ -10,13 +10,14 @@ const HIDDEN_SUP = ['FLEET AGENDA'];
 const isHiddenSup = (s) => HIDDEN_SUP.includes((s.name || '').toUpperCase());
 
 function loadExpanded() {
+  // 펼친 cs_id 집합을 저장(기본=접힘). 사용자가 펼친 카드만 기록 → 저장/액션 후에도 유지.
   try {
-    const raw = localStorage.getItem('trmt_cls_collapsed');
+    const raw = localStorage.getItem('trmt_cls_expanded');
     return raw ? new Set(JSON.parse(raw)) : new Set();
   } catch (_) { return new Set(); }
 }
 function saveExpanded() {
-  try { localStorage.setItem('trmt_cls_collapsed', JSON.stringify([...S.collapsed])); } catch (_) {}
+  try { localStorage.setItem('trmt_cls_expanded', JSON.stringify([...S.expanded])); } catch (_) {}
 }
 
 const S = {
@@ -26,7 +27,7 @@ const S = {
   vesselsAll:  [],
   activeTab:   'all',
   search:      '',
-  collapsed:   loadExpanded(),   // 접힌 cs_id 집합 (기본 펼침)
+  expanded:    loadExpanded(),   // 펼친 cs_id 집합 (기본 접힘)
 };
 
 // ───────────── Helpers ─────────────
@@ -146,13 +147,14 @@ function badge(text, cls) {
 
 function vesselCard(g) {
   const v = g.vessel, snap = g.snapshot;
-  const collapsed = S.collapsed.has(snap.id);
+  const collapsed = !S.expanded.has(snap.id);   // 기본 접힘 — 펼친 카드만 expanded 집합에
   const coc = snap.coc || [], stat = snap.statutory || [];
+  const hasFindings = (coc.length + stat.length) > 0;
 
   const head = el('div', { class: 'cls-card-head' },
     el('button', {
       class: 'cls-toggle' + (collapsed ? '' : ' open'),
-      onclick: () => { collapsed ? S.collapsed.delete(snap.id) : S.collapsed.add(snap.id); saveExpanded(); render(); },
+      onclick: () => { collapsed ? S.expanded.add(snap.id) : S.expanded.delete(snap.id); saveExpanded(); render(); },
     }, collapsed ? '▸' : '▾'),
     el('div', { class: 'cls-vessel' },
       el('span', { class: 'cls-vessel-name' }, v.name),
@@ -174,7 +176,7 @@ function vesselCard(g) {
     body.append(catSection('선급지적 (Condition of Class)', 'coc', coc));
     body.append(catSection('기국 (Statutory)', 'stat', stat));
   }
-  return el('div', { class: 'cls-card' }, head, body);
+  return el('div', { class: 'cls-card' + (hasFindings ? ' has-findings' : '') }, head, body);
 }
 
 // ───────────── 선박 단위 CLASS 요약 (자동 집계, 읽기전용) ─────────────
@@ -344,11 +346,11 @@ async function assignSnap(csId, vesselId) {
 
 // ───────────── 전체 접기/펼치기 ─────────────
 function collapseAll() {
-  (S.data.vessels || []).forEach(g => S.collapsed.add(g.snapshot.id));
+  S.expanded.clear();
   saveExpanded(); render();
 }
 function expandAll() {
-  S.collapsed.clear();
+  (S.data.vessels || []).forEach(g => S.expanded.add(g.snapshot.id));
   saveExpanded(); render();
 }
 
