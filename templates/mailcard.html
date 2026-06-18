@@ -92,7 +92,12 @@
   const listEl=document.getElementById('mc-list'),countEl=document.getElementById('mc-count');
   let filter='active';
   let ISSUES=[];  // 열린 Daily 현안 캐시 (기존 현안에 액션추가 셀렉터용)
-  async function loadIssues(){const r=await api('GET','/api/issues?status=Open');ISSUES=(r.ok&&Array.isArray(r.j))?r.j:[];}
+  async function loadIssues(){
+    // Open + InProgress 둘 다(진행중 현안도 액션추가 대상). 기존엔 Open만 떠서 진행중 누락됨.
+    const [o,p]=await Promise.all([api('GET','/api/issues?status=Open'),api('GET','/api/issues?status=InProgress')]);
+    const a=(o.ok&&Array.isArray(o.j))?o.j:[],b=(p.ok&&Array.isArray(p.j))?p.j:[];
+    ISSUES=a.concat(b);
+  }
   const esc=s=>(s==null?'':String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
   async function api(m,u,b){const o={method:m,headers:{'Accept':'application/json'}};if(b){o.headers['Content-Type']='application/json';o.body=JSON.stringify(b);}const r=await fetch(u,o);let j={};try{j=await r.json();}catch(e){}return{ok:r.ok,status:r.status,j};}
 

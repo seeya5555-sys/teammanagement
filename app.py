@@ -7945,14 +7945,15 @@ def _wiki_match_for_card(card):
 @admin_required
 def api_mail_list():
     status = (request.args.get('status') or 'active').strip()
+    # 최신 메일이 맨 위(email_date DESC). 동률·구형식이면 id DESC 보조.
     if status == 'all':
-        rows = query("SELECT * FROM mail_card ORDER BY card_status, pending DESC, id DESC")
+        rows = query("SELECT * FROM mail_card ORDER BY card_status, email_date DESC, id DESC")
     elif status == 'pending':
-        rows = query("SELECT * FROM mail_card WHERE card_status='active' AND pending=1 ORDER BY id DESC")
+        rows = query("SELECT * FROM mail_card WHERE card_status='active' AND pending=1 ORDER BY email_date DESC, id DESC")
     elif status == 'active':
-        rows = query("SELECT * FROM mail_card WHERE card_status='active' AND pending=0 ORDER BY id DESC")
+        rows = query("SELECT * FROM mail_card WHERE card_status='active' AND pending=0 ORDER BY email_date DESC, id DESC")
     else:  # archived 등
-        rows = query("SELECT * FROM mail_card WHERE card_status=? ORDER BY id DESC", (status,))
+        rows = query("SELECT * FROM mail_card WHERE card_status=? ORDER BY email_date DESC, id DESC", (status,))
     act = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active' AND pending=0", one=True)
     pnd = query("SELECT COUNT(*) c FROM mail_card WHERE card_status='active' AND pending=1", one=True)
     cards = []
