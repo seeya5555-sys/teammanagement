@@ -1241,6 +1241,8 @@ function toggleAll() {
     getAllMonths().forEach(m => S.collapsedMonths.add(m));
     getAllDates().forEach(d => S.collapsedDates.add(d));
   }
+  // 사용자가 직접 전체 토글했음 → 저장/액션(reloadAll) 후 autoCollapse가 다시 접지 않게 표시(펼침 유지)
+  getAllDates().forEach(d => S.userToggledDates.add(d));
   renderTable(); renderCards(); updateToggleAllButton();
 }
 
