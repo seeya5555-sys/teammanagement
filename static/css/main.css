@@ -146,6 +146,21 @@ a { color: inherit; text-decoration: none; }
 .nav-group.open > .nav-submenu { display: flex; }
 .nav-submenu .nav-link { padding: 8px 12px; border-radius: 6px; }
 
+/* ── Class 지적사항(COC/기국) 강조 배지 — 미해소 항목 있을 때 ── */
+.nav-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 5px; margin-left: 4px;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  color: #fff; background: var(--red-strong);
+  border-radius: 9px; vertical-align: middle;
+}
+.nav-group.has-alert > .nav-trigger,
+.nav-link.has-alert { color: var(--red); }
+.nav-group.has-alert > .nav-trigger:hover,
+.nav-link.has-alert:hover { background: var(--red-bg); color: var(--red); }
+/* active(현재 탭)일 땐 파랑 규약 유지하되 배지로 지적 표시 */
+.nav-link.has-alert.active { color: var(--blue); }
+
 /* ── 모바일 햄버거 + 시트 메뉴 (≤768px 에서만 노출) ── */
 .nav-burger {
   display: none; margin-left: auto; flex: 0 0 auto;

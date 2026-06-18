@@ -107,6 +107,26 @@ def execute(sql, params=()):
     return last_id
 
 
+@app.context_processor
+def inject_nav_badges():
+    """모든 페이지 nav에서 쓰는 배지 카운트. Class Status 미해소 지적사항(COC/기국) 합."""
+    coc = stat = 0
+    try:
+        rows = query(
+            "SELECT i.category cat, COUNT(*) c FROM class_status_items i "
+            "JOIN class_status cs ON cs.id = i.cs_id "
+            "JOIN vessels v ON v.id = cs.vessel_id AND v.active = 1 "
+            "GROUP BY i.category")
+        for r in rows:
+            if r['cat'] == 'COC':
+                coc = r['c']
+            elif r['cat'] == 'STATUTORY':
+                stat = r['c']
+    except Exception:
+        coc = stat = 0
+    return {'class_findings': {'coc': coc, 'statutory': stat, 'total': coc + stat}}
+
+
 def execute_rc(sql, params=()):
     """UPDATE/DELETE 영향 행수 반환 — 조건부(낙관적 락) 갱신 race 판정용."""
     db = get_db()
