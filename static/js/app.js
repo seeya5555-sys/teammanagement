@@ -690,10 +690,12 @@ function renderTable() {
   if (!g) { if (S.inlineAdd) tbody.append(inlineAddRow()); return; }
   const noMap = chronoNoMap(g.issues);
   const rows = displayIssues(g.issues);
-  for (const i of rows) tbody.append(rowEl(i, noMap.get(i.id)));
-  if (S.inlineAdd) tbody.append(inlineAddRow());        // 안전망(인라인 추가 사용 시)
-  if (!rows.length && !S.inlineAdd) {
-    tbody.append(el('tr', {}, el('td', { colspan: '8', style: 'padding:22px;text-align:center;color:var(--text-tertiary)' },
+  for (const i of rows) {
+    tbody.append(rowEl(i, noMap.get(i.id)));
+    if (S.expandedRows.has(i.id)) tbody.append(expandedRowEl(i));   // 펼침 카드 행
+  }
+  if (!rows.length) {
+    tbody.append(el('tr', {}, el('td', { colspan: '5', style: 'padding:22px;text-align:center;color:var(--text-tertiary)' },
       S.quickFilter === 'all' ? '이 선박의 이슈가 없습니다.' : '이 필터에 해당하는 이슈가 없습니다.')));
   }
 }
@@ -841,99 +843,91 @@ function toggleDate(d) {
 }
 
 // ───────────── Row 렌더 (셀별 인라인 편집) ─────────────
+// 컴팩트 행: No | 발생일 | 현안업무(클릭=펼침) | Priority(인라인) | Status(인라인)
 function rowEl(i, no) {
-  const tr = el('tr', { class: 'data-row', 'data-id': i.id });
+  const expanded = S.expandedRows.has(i.id);
+  const tr = el('tr', { class: 'data-row' + (expanded ? ' is-expanded' : ''), 'data-id': i.id });
 
-  // NO
   tr.append(el('td', { class: 'no-cell' }, String(no)));
+  tr.append(el('td', { class: 'date-cell' }, i.issue_date || '-'));
 
-  // 선박 — 클릭 시 select, 풀네임 + 공백 줄바꿈
-  const vTd = el('td', { class: 'vessel-cell cell-edit', title: '클릭하여 선박 변경' },
-    i.vessel_name);
-  vTd.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    startEditVessel(vTd, i);
-  });
-  tr.append(vTd);
-
-  // ITEM (topic)
-  const topicTd = el('td', { class: 'topic-cell cell-edit', title: '클릭하여 제목 편집' });
+  // 현안업무 — 클릭 시 행 펼치기(상세/진행사항)
+  const topicTd = el('td', { class: 'topic-cell topic-expand', title: '클릭하여 상세·진행사항 펼치기' });
+  const line = el('div', { class: 'topic-line' },
+    el('span', { class: 'row-caret' }, expanded ? '▾' : '▸'),
+    el('span', { class: 'topic-text' }, i.item_topic));
+  topicTd.append(line);
   if (S.activeTab === 'all') {
-    topicTd.append(
-      el('div', { class: `sup-chip c-${i.supervisor_color}` },
-        el('span', { class: `tab-dot dot-${i.supervisor_color}` }),
-        i.supervisor_name),
-      el('div', { class: 'topic-text' }, i.item_topic));
-  } else {
-    topicTd.append(el('div', { class: 'topic-text' }, i.item_topic));
+    topicTd.append(el('div', { class: `sup-chip c-${i.supervisor_color}` },
+      el('span', { class: `tab-dot dot-${i.supervisor_color}` }), i.supervisor_name));
   }
-  topicTd.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    const target = topicTd.querySelector('.topic-text');
-    startEditInline(target, i, 'item_topic', 'text');
-  });
+  if (i.att_count > 0) topicTd.append(el('span', { class: 'topic-att' }, `📎 ${i.att_count}`));
+  topicTd.addEventListener('click', () => toggleRow(i.id));
   tr.append(topicTd);
 
-  // Description — textarea
-  const descTd = el('td', { class: 'desc-cell cell-edit', title: '클릭하여 상세 편집' },
-    i.description || '—');
-  descTd.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    startEditInline(descTd, i, 'description', 'textarea');
-  });
-  tr.append(descTd);
-
-  // Action Plan — 각 entry 별 편집
-  tr.append(el('td', { class: 'action-cell' }, renderActionCell(i)));
-
-  // Priority + D-day (priority 클릭 → select, due 클릭 → date input)
+  // Priority (+D-day) — 인라인 변경
   const priTd = el('td', { class: 'cell-edit', title: '클릭하여 우선순위 / 마감일 편집' });
   const priStack = el('div', { class: 'pri-stack' }, priBadge(i.priority));
   const ddBd = dDayBadge(i.due_date);
-  if (ddBd) priStack.append(ddBd); else {
-    priStack.append(el('span', {
-      class: 'dday dday-later',
-      style: 'opacity:0.5; cursor:pointer',
-      title: '마감일 설정',
-    }, '+ 마감'));
-  }
+  if (ddBd) priStack.append(ddBd);
+  else priStack.append(el('span', { class: 'dday dday-later', style: 'opacity:0.5; cursor:pointer', title: '마감일 설정' }, '+ 마감'));
   priTd.append(priStack);
   priTd.addEventListener('click', (ev) => {
     ev.stopPropagation();
-    // D-day 뱃지 클릭 → 마감일 편집
-    if (ev.target.closest('.dday')) {
-      startEditInline(priTd, i, 'due_date', 'date');
-    } else {
-      // 나머지 클릭 → 우선순위 select
-      startEditSelect(priTd, i, 'priority', [
-        ['Normal', 'Normal'], ['Urgent', 'Urgent'], ['Next DD', 'Next DD'], ['COC & Flag', 'COC & Flag'],
-      ]);
-    }
+    if (ev.target.closest('.dday')) startEditInline(priTd, i, 'due_date', 'date');
+    else startEditSelect(priTd, i, 'priority', [['Normal', 'Normal'], ['Urgent', 'Urgent'], ['Next DD', 'Next DD'], ['COC & Flag', 'COC & Flag']]);
   });
   tr.append(priTd);
 
-  // Status
+  // Status — 인라인 변경
   const statTd = el('td', { class: 'cell-edit', title: '클릭하여 상태 변경' }, statBadge(i.status));
   statTd.addEventListener('click', (ev) => {
     ev.stopPropagation();
-    startEditSelect(statTd, i, 'status', [
-      ['Open', 'Open'], ['InProgress', '진행중'], ['Closed', 'Closed'],
-    ]);
+    startEditSelect(statTd, i, 'status', [['Open', 'Open'], ['InProgress', '진행중'], ['Closed', 'Closed']]);
   });
   tr.append(statTd);
-
-  // Actions (edit / attach / delete)
-  const editBtn = mkIconBtn('edit', '전체 편집', () => openEdit(i.id));
-  const attBtn  = mkIconBtn('attach', '첨부 관리', () => openAttach(i.id));
-  if (i.att_count > 0) {
-    attBtn.classList.add('has-attach');
-    attBtn.append(el('span', { class: 'att-count-badge' }, String(i.att_count)));
-  }
-  const delBtn  = mkIconBtn('delete', '삭제', () => confirmDelete(i.id));
-  const calBtn  = mkIconBtn('calendar', '일정에 등록', () => addIssueToCalendar(i));
-
-  tr.append(el('td', {}, el('div', { class: 'row-actions' }, editBtn, attBtn, calBtn, delBtn)));
   return tr;
+}
+
+function toggleRow(id) {
+  if (S.expandedRows.has(id)) { S.expandedRows.delete(id); S.expandedActions.delete(id); }
+  else { S.expandedRows.add(id); S.expandedActions.add(id); }   // 펼치면 조치 이력 전체 표시
+  renderTable(); renderCards();
+}
+
+// 펼침 행: 상세 내용 + 진행사항(조치 이력) + 액션 버튼
+function expandedRowEl(i) {
+  const tr = el('tr', { class: 'exp-row' });
+  const box = el('div', { class: 'exp-box' });
+
+  // 상세 내용 (클릭 인라인 편집)
+  box.append(el('div', { class: 'exp-label' }, '상세 내용'));
+  const desc = el('div', { class: 'exp-desc cell-edit', title: '클릭하여 상세 편집' }, i.description || '—');
+  desc.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(desc, i, 'description', 'textarea'); });
+  box.append(desc);
+
+  // 진행사항 (조치 이력) — 기존 액션 편집 UI 재사용(CSS로 타임라인화)
+  box.append(el('div', { class: 'exp-label' }, '진행사항 (조치 이력)'));
+  box.append(el('div', { class: 'exp-acts-wrap' }, renderActionCell(i)));
+
+  // 버튼
+  const acts = el('div', { class: 'exp-btns' });
+  acts.append(mkTextBtn('상세 / 편집 열기', 'pri', () => openEdit(i.id)));
+  acts.append(mkTextBtn(i.att_count > 0 ? `첨부 (${i.att_count})` : '첨부', '', () => openAttach(i.id)));
+  acts.append(mkTextBtn('일정 등록', '', () => addIssueToCalendar(i)));
+  acts.append(mkTextBtn('삭제', 'danger', () => confirmDelete(i.id)));
+  box.append(acts);
+
+  tr.append(el('td', { colspan: '5' }, box));
+  return tr;
+}
+
+function mkTextBtn(label, kind, onclick) {
+  return el('button', {
+    type: 'button',
+    class: 'exp-btn' + (kind === 'pri' ? ' pri' : kind === 'danger' ? ' danger' : ''),
+    onclick: (ev) => { ev.stopPropagation(); onclick(); },
+  }, label);
 }
 
 function mkIconBtn(kind, title, onclick) {
@@ -1294,47 +1288,47 @@ function inlineAddCardHint() {
 }
 
 function cardEl(i, no) {
-  const card = el('div', { class: 'issue-card', 'data-id': i.id });
-  // 카드 click → edit 모달 (모바일은 인라인 편집 어려우므로 모달로)
+  const expanded = S.expandedRows.has(i.id);
+  const card = el('div', { class: 'issue-card' + (expanded ? ' is-expanded' : ''), 'data-id': i.id });
+  // 카드 탭 → 펼침(상세+진행사항). 내부 버튼/액션은 제외.
   card.addEventListener('click', (ev) => {
-    if (ev.target.closest('.icon-btn') || ev.target.closest('.act-arrow')) return;
-    openEdit(i.id);
+    if (ev.target.closest('.icon-btn') || ev.target.closest('.act-arrow') ||
+        ev.target.closest('.exp-btn') || ev.target.closest('.act-add-inline') ||
+        ev.target.closest('.act-entry')) return;
+    toggleRow(i.id);
   });
 
   const head = el('div', { class: 'issue-card-head' });
   if (no != null) head.append(el('span', { class: 'issue-card-no' }, 'No.' + no));
+  head.append(el('span', { class: 'card-caret' }, expanded ? '▾' : '▸'));
+  if (i.issue_date) head.append(el('span', { class: 'card-date' }, i.issue_date));
   if (S.activeTab === 'all') {
     head.append(el('span', { class: `sup-chip c-${i.supervisor_color}` },
-      el('span', { class: `tab-dot dot-${i.supervisor_color}` }),
-      i.supervisor_name));
+      el('span', { class: `tab-dot dot-${i.supervisor_color}` }), i.supervisor_name));
   }
-  head.append(el('span', { class: 'vessel-cell' }, i.vessel_name));
   head.append(priBadge(i.priority));
   const dd = dDayBadge(i.due_date);
   if (dd) head.append(dd);
   head.append(statBadge(i.status));
   card.append(head);
 
-  const body = el('div', { class: 'issue-card-body' },
-    el('div', { class: 'issue-card-title' }, i.item_topic));
-  if (i.description) body.append(el('div', { class: 'issue-card-desc' }, i.description));
-  const actions = Array.isArray(i.actions) ? i.actions : [];
-  if (actions.length) {
-    body.append(el('div', { class: 'issue-card-action' }, renderActionCell(i)));
-  }
-  card.append(body);
+  card.append(el('div', { class: 'issue-card-body' },
+    el('div', { class: 'issue-card-title' }, i.item_topic)));
 
-  const foot = el('div', { class: 'issue-card-foot' });
-  const editBtn = mkIconBtn('edit', '편집', () => openEdit(i.id));
-  const attBtn  = mkIconBtn('attach', '첨부', () => openAttach(i.id));
-  if (i.att_count > 0) {
-    attBtn.classList.add('has-attach');
-    attBtn.append(el('span', { class: 'att-count-badge' }, String(i.att_count)));
+  if (expanded) {
+    const det = el('div', { class: 'issue-card-det' });
+    det.append(el('div', { class: 'exp-label' }, '상세 내용'));
+    det.append(el('div', { class: 'exp-desc' }, i.description || '—'));
+    det.append(el('div', { class: 'exp-label' }, '진행사항 (조치 이력)'));
+    det.append(el('div', { class: 'exp-acts-wrap' }, renderActionCell(i)));
+    const acts = el('div', { class: 'exp-btns' });
+    acts.append(mkTextBtn('상세 / 편집', 'pri', () => openEdit(i.id)));
+    acts.append(mkTextBtn(i.att_count > 0 ? `첨부 (${i.att_count})` : '첨부', '', () => openAttach(i.id)));
+    acts.append(mkTextBtn('일정', '', () => addIssueToCalendar(i)));
+    acts.append(mkTextBtn('삭제', 'danger', () => confirmDelete(i.id)));
+    det.append(acts);
+    card.append(det);
   }
-  const delBtn  = mkIconBtn('delete', '삭제', () => confirmDelete(i.id));
-  const calBtn  = mkIconBtn('calendar', '일정에 등록', () => addIssueToCalendar(i));
-  foot.append(editBtn, attBtn, calBtn, delBtn);
-  card.append(foot);
   return card;
 }
 

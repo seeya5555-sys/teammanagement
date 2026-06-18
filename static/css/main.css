@@ -4685,3 +4685,41 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
   .daily-main .vmh-vsel { margin: 12px 14px 0; width: calc(100% - 28px); }
   .daily-main .card-list { padding: 12px; }
 }
+
+/* ═══ rev.4 컴팩트 행 + 펼침 카드(상세+진행사항 타임라인) ═══ */
+col.c-no { width: 44px; }
+col.c-date { width: 96px; }
+col.c-topic { width: auto; }
+col.c-pri { width: 110px; }
+col.c-stat { width: 92px; }
+.date-cell { color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 12px; }
+.topic-cell.topic-expand { cursor: pointer; }
+.topic-line { display: flex; align-items: flex-start; gap: 7px; }
+.row-caret { color: var(--text-tertiary); font-size: 10px; padding-top: 2px; flex: 0 0 auto; }
+.topic-cell .topic-text { font-weight: 600; line-height: 1.45; }
+.topic-att { font-size: 10.5px; color: var(--text-tertiary); margin-left: 22px; margin-top: 2px; display: inline-block; }
+.data-row.is-expanded td { border-bottom: none; background: var(--surface-2); }
+.exp-row > td { background: var(--surface-2); padding: 0 14px 14px 56px; border-bottom: 1px solid var(--border-subtle); }
+.exp-box { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 9px; padding: 13px 15px; }
+.exp-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-tertiary); margin-bottom: 5px; }
+.exp-desc { font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; color: var(--text-primary); margin-bottom: 14px; }
+.exp-acts-wrap { margin-bottom: 13px; }
+.exp-acts-wrap .act-arrow { display: none; }
+.exp-acts-wrap .act-entries { border-left: 2px solid var(--border); margin-left: 4px; padding-left: 14px; gap: 9px; }
+.exp-acts-wrap .act-entry { flex-direction: column; gap: 1px; position: relative; }
+.exp-acts-wrap .act-entry::before { content: ""; position: absolute; left: -18px; top: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--blue-dot); }
+.exp-acts-wrap .act-entry .act-date { color: var(--text-tertiary); font-size: 10.5px; font-weight: 700; }
+.exp-acts-wrap .act-add-inline { margin-top: 9px; }
+.exp-btns { display: flex; gap: 7px; flex-wrap: wrap; }
+.exp-btn { font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; color: var(--text-secondary); background: var(--surface); cursor: pointer; }
+.exp-btn:hover { background: var(--surface-2); }
+.exp-btn.pri { background: var(--blue); border-color: var(--blue); color: #fff; }
+.exp-btn.pri:hover { background: var(--blue-hover); }
+.exp-btn.danger { color: var(--red); border-color: var(--red-border); }
+.exp-btn.danger:hover { background: var(--red-bg); }
+/* 모바일 카드 펼침 */
+.issue-card-head .card-caret { color: var(--text-tertiary); font-size: 10px; }
+.issue-card-head .card-date { font-size: 10.5px; color: var(--text-tertiary); font-weight: 600; }
+.issue-card.is-expanded { border-color: var(--blue-border); }
+.issue-card-det { margin-top: 11px; border-top: 1px solid var(--border-subtle); padding-top: 11px; }
+.issue-card-det .exp-desc { font-size: 12px; }
