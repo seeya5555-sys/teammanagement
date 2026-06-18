@@ -123,42 +123,54 @@
   </div>
 </div>
 
-<!-- 데스크톱: 테이블 -->
-<div class="grid-wrap" id="table-wrap">
-  <table class="ex-table" id="issue-table">
-    <colgroup>
-      <col class="c-no">
-      <col class="c-vessel">
-      <col class="c-topic">
-      <col class="c-desc">
-      <col class="c-action">
-      <col class="c-pri">
-      <col class="c-stat">
-      <col class="c-edit">
-    </colgroup>
-    <thead>
-      <tr>
-        <th>NO.</th>
-        <th>선박</th>
-        <th>ITEM</th>
-        <th>DESCRIPTION</th>
-        <th>ACTION PLAN</th>
-        <th>PRI.</th>
-        <th>STAT.</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody id="issue-tbody"></tbody>
-  </table>
-</div>
+<!-- 선박별 2단 레이아웃 (사이드바 + 메인) -->
+<div class="daily-body" id="daily-body">
+  <!-- 좌측: 선박 사이드바 (JS 렌더) -->
+  <aside class="vessel-sidebar" id="vessel-sidebar"></aside>
 
-<!-- 모바일: 카드 리스트 -->
-<div class="card-list" id="card-list"></div>
+  <!-- 우측: 선택 선박 메인 -->
+  <div class="daily-main">
+    <!-- 선택 선박 헤더 + 빠른필터 + 정렬토글 (JS 렌더) -->
+    <div class="vmain-head" id="vmain-head"></div>
 
-<!-- 빈 상태 -->
-<div class="empty-state" id="empty-state" hidden>
-  <p>조건에 맞는 이슈가 없습니다.</p>
-  <p class="empty-sub">+ 신규 이슈 버튼으로 첫 이슈를 등록하세요.</p>
+    <!-- 데스크톱: 테이블 -->
+    <div class="grid-wrap" id="table-wrap">
+      <table class="ex-table" id="issue-table">
+        <colgroup>
+          <col class="c-no">
+          <col class="c-vessel">
+          <col class="c-topic">
+          <col class="c-desc">
+          <col class="c-action">
+          <col class="c-pri">
+          <col class="c-stat">
+          <col class="c-edit">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>NO.</th>
+            <th>선박</th>
+            <th>ITEM</th>
+            <th>DESCRIPTION</th>
+            <th>ACTION PLAN</th>
+            <th>PRI.</th>
+            <th>STAT.</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="issue-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- 모바일: 카드 리스트 -->
+    <div class="card-list" id="card-list"></div>
+
+    <!-- 빈 상태 -->
+    <div class="empty-state" id="empty-state" hidden>
+      <p>조건에 맞는 이슈가 없습니다.</p>
+      <p class="empty-sub">+ 신규 이슈 버튼으로 첫 이슈를 등록하세요.</p>
+    </div>
+  </div>
 </div>
 
 <!-- 하단 요약 -->

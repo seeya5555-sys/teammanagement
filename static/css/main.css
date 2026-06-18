@@ -4627,3 +4627,47 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
     width: auto !important;
   }
 }
+
+/* ═══════════ Daily 선박별 보기 (rev.4) ═══════════ */
+.daily-body { display: grid; grid-template-columns: 248px 1fr; gap: 16px; align-items: start; }
+.vessel-sidebar { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; position: sticky; top: 14px; }
+.vsb-head { padding: 10px 13px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between; }
+.vsb-t { font-weight: 700; font-size: 12.5px; } .vsb-n { color: var(--text-tertiary); font-size: 11px; }
+.vsb-search-wrap { padding: 8px 11px; border-bottom: 1px solid var(--border-subtle); }
+.vsb-search { width: 100%; border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px; font-size: 12px; background: var(--surface-2); color: var(--text-secondary); }
+.vsb-list { max-height: calc(100vh - 230px); overflow: auto; }
+.vsb-group { display: flex; align-items: center; gap: 7px; padding: 7px 13px 5px; background: var(--surface-2); border-bottom: 1px solid var(--border-subtle); font-size: 10px; font-weight: 800; letter-spacing: .05em; color: var(--text-secondary); text-transform: uppercase; position: sticky; top: 0; }
+.vsb-gc { margin-left: auto; color: var(--text-tertiary); font-weight: 700; }
+.vsb-item { display: flex; align-items: center; gap: 8px; padding: 9px 13px; border-bottom: 1px solid var(--border-subtle); border-left: 3px solid transparent; cursor: pointer; }
+.vsb-item:hover { background: var(--surface-2); }
+.vsb-item.active { background: var(--blue-bg); border-left-color: var(--blue); }
+.vsb-nm { flex: 1; font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
+.vsb-item.active .vsb-nm { color: var(--blue-text); }
+.vsb-badge { min-width: 22px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--surface-3); color: var(--text-secondary); font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 3px; justify-content: center; }
+.vsb-badge.risk { background: var(--red-bg); color: var(--red); }
+.vsb-badge.zero { background: transparent; color: var(--text-tertiary); }
+.vsb-flag { color: var(--red-strong); font-size: 10px; }
+.vsb-empty { padding: 18px; text-align: center; color: var(--text-tertiary); font-size: 12px; }
+.daily-main { min-width: 0; }
+.vmh-vsel { display: none; }
+.vmh-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.vmh-name { font-size: 17px; font-weight: 700; }
+.vmh-type { font-size: 10.5px; color: var(--text-tertiary); font-weight: 600; border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }
+.vmh-kpi { margin-left: auto; font-size: 12px; color: var(--text-secondary); }
+.vmh-kpi .k-open { color: var(--blue); font-size: 15px; }
+.vmh-kpi .k-dim { color: var(--text-tertiary); }
+.vmh-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.vmh-qf { display: flex; gap: 5px; flex-wrap: wrap; }
+.qchip { padding: 4px 11px; border-radius: 14px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); color: var(--text-secondary); background: var(--surface); cursor: pointer; }
+.qchip:hover { background: var(--surface-2); }
+.qchip.on { background: var(--blue); border-color: var(--blue); color: #fff; }
+.qchip.risk { border-color: var(--red-border); color: var(--red); }
+.qchip.risk.on { background: var(--red); border-color: var(--red); color: #fff; }
+.vmh-sort { margin-left: auto; font-size: 11.5px; color: var(--text-secondary); border: 1px solid var(--border); background: var(--surface); border-radius: 7px; padding: 5px 10px; font-weight: 600; cursor: pointer; }
+.issue-card-no { font-weight: 800; color: var(--text-tertiary); font-size: 11px; margin-right: 2px; }
+@media (max-width: 768px) {
+  .daily-body { display: block; }
+  .vessel-sidebar { display: none; }
+  .vmh-vsel { display: block; width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 14px; font-weight: 600; background: var(--surface); color: var(--text-primary); margin-bottom: 11px; }
+  .vmh-kpi, .vmh-sort { margin-left: 0; }
+}

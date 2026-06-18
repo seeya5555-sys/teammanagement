@@ -30,6 +30,12 @@ const S = {
   collapsedDates:  new Set(),
   expandedActions: new Set(),
 
+  // ── 선박별 보기 (rev.4) ──
+  selectedVessel: null,                                  // 선택 선박 id (null=자동선택 전)
+  mainSort:  localStorage.getItem('trmt_main_sort')  || 'old',   // 'old'=오래된→최근 / 'new'=최근·우선순위
+  quickFilter: 'all',                                    // 'all'|'recent'|'stale'|'risk'
+  expandedRows: new Set(),                               // 인라인 펼친(상세+진행사항) 이슈 id
+
   // 사용자가 직접 클릭해서 펼치거나 접은 날짜 — 자동 접기에서 제외
   userToggledDates: new Set(),
 
@@ -298,6 +304,7 @@ async function switchSubTab(id) {
   S.activeSubTab = id;
   try { localStorage.setItem('trmt_subtab', id); } catch (_) {}
   S.inlineAdd = null;
+  S.quickFilter = 'all';                 // 서브탭 전환 시 빠른필터 초기화(빈 화면 혼선 방지)
   renderSubTabs();
   renderTabContext();
   await loadIssues();
@@ -447,28 +454,25 @@ function renderSummary() {
 // ───────────── Render — main ─────────────
 function render() {
   const isSummary = S.activeSubTab === 'summary';
-  // 뷰 전환
-  const tw = $('#table-wrap'), cl = $('#card-list'), sw = $('#summary-wrap'),
-        es = $('#empty-state'), sr = $('#summary-row');
+  // 뷰 전환: 요약이면 daily-body(선박 2단) 숨기고 summary-wrap 표시
+  const db = $('#daily-body'), sw = $('#summary-wrap'), sr = $('#summary-row');
   if (sw) sw.hidden = !isSummary;
+  if (db) db.hidden = isSummary;
   if (isSummary) {
-    if (tw) tw.hidden = true;
-    if (cl) cl.style.display = 'none';
-    if (es) es.hidden = true;
     if (sr) sr.innerHTML = '';
     renderSummaryView();
-    updateToggleAllButton();
     return;
   }
-  if (tw) tw.hidden = false;
-  if (cl) cl.style.display = '';
-
-  const hasIssues = S.issues.length > 0;
-  $('#empty-state').hidden = hasIssues || !!S.inlineAdd;
+  // 선박별 보기
+  ensureSelectedVessel();
+  renderVesselSidebar();
+  renderVmainHead();
+  const g = curVesselGroup();
+  const has = !!g && g.issues.length > 0;
+  $('#empty-state').hidden = has || !!S.inlineAdd;
   renderTable();
   renderCards();
   renderSummary();
-  updateToggleAllButton();
   refreshVesselFilterCounts();
 }
 
@@ -587,47 +591,201 @@ async function gotoIssueFromSummary(r) {
   render();
 }
 
+// ═══════════════ 선박별 보기 (rev.4) ═══════════════
+const VTYPE_ORDER = ['VLCC', 'LR', 'AFRAMAX', 'MR', 'CNTR'];
+const RISK_PRI = new Set(['COC & Flag', 'Urgent']);
+const isActiveStatus = (s) => s === 'Open' || s === 'InProgress';
+function vtypeRank(t) { const i = VTYPE_ORDER.indexOf((t || '').toUpperCase()); return i < 0 ? VTYPE_ORDER.length : i; }
+
+// 선박 단위 집계. 베이스=S.vessels(담당 전 선박 → 0건 선박도 표시), 거기에 S.issues 병합.
+// vessel_id null(미배정) 이슈는 별도 '(미배정)' 그룹으로(소실 방지). active=진행중+Open, risk=활성 COC&Flag/Urgent.
+function vesselGroups() {
+  const byId = new Map();
+  for (const v of S.vessels) {
+    byId.set(String(v.id), { id: v.id, name: v.name, type: v.vessel_type || '',
+                             issues: [], active: 0, risk: false, latest: '' });
+  }
+  let unassigned = null;
+  for (const i of S.issues) {
+    let g;
+    if (i.vessel_id == null) {
+      if (!unassigned) unassigned = { id: '__none__', name: '(미배정)', type: '기타',
+                                      issues: [], active: 0, risk: false, latest: '', unassigned: true };
+      g = unassigned;
+    } else {
+      g = byId.get(String(i.vessel_id));
+      if (!g) {                                 // S.vessels에 없는(비활성 등) 선박이 이슈 보유
+        g = { id: i.vessel_id, name: i.vessel_name || '(선박)', type: '',
+              issues: [], active: 0, risk: false, latest: '' };
+        byId.set(String(i.vessel_id), g);
+      }
+    }
+    g.issues.push(i);
+    if (isActiveStatus(i.status)) { g.active++; if (RISK_PRI.has(i.priority)) g.risk = true; }
+    if ((i.issue_date || '') > g.latest) g.latest = i.issue_date || '';
+  }
+  const arr = [...byId.values()];
+  if (unassigned) arr.push(unassigned);
+  return arr;
+}
+
+// 선종별 묶음 → 선종순서(VLCC→LR→AFRAMAX→MR→CNTR), 그룹 내 고위험 우선 → 활성수 → 최근발생
+function sidebarGroups() {
+  const byType = new Map();
+  for (const g of vesselGroups()) {
+    const key = (g.type || '').toUpperCase() || '기타';
+    if (!byType.has(key)) byType.set(key, []);
+    byType.get(key).push(g);
+  }
+  const types = [...byType.keys()].sort((a, b) => (vtypeRank(a) - vtypeRank(b)) || a.localeCompare(b));
+  for (const t of types) {
+    byType.get(t).sort((a, b) =>
+      (b.risk - a.risk) || (b.active - a.active) ||
+      (b.latest < a.latest ? -1 : b.latest > a.latest ? 1 : 0) || a.name.localeCompare(b.name));
+  }
+  return types.map(t => ({ type: t, vessels: byType.get(t) }));
+}
+
+function curVesselGroup() {
+  return vesselGroups().find(x => String(x.id) === String(S.selectedVessel)) || null;
+}
+
+// 메인 표시용 이슈: 빠른필터 + 정렬
+function displayIssues(all) {
+  let arr = all.slice();
+  const asc = (a, b) => (a.issue_date < b.issue_date ? -1 : a.issue_date > b.issue_date ? 1 : 0) || (a.id - b.id);
+  const desc = (a, b) => -asc(a, b);
+  const PR = { 'COC & Flag': 0, 'Urgent': 1, 'Next DD': 2, 'Normal': 3 };
+  const qf = S.quickFilter;
+  if (qf === 'risk') arr = arr.filter(i => RISK_PRI.has(i.priority) && isActiveStatus(i.status));
+  else if (qf === 'stale') arr = arr.filter(i => isActiveStatus(i.status));
+  if (qf === 'recent') arr.sort(desc);
+  else if (qf === 'stale') arr.sort(asc);                 // 장기 미종결 = 오래된 활성 먼저
+  else if (S.mainSort === 'new') arr.sort((a, b) => ((PR[a.priority] ?? 9) - (PR[b.priority] ?? 9)) || desc(a, b));
+  else arr.sort(asc);
+  return arr;
+}
+
+function ensureSelectedVessel() {
+  const flat = sidebarGroups().flatMap(g => g.vessels);
+  if (!flat.length) { S.selectedVessel = null; return; }
+  if (S.selectedVessel == null || !flat.some(v => String(v.id) === String(S.selectedVessel)))
+    S.selectedVessel = flat[0].id;
+}
+function selectVessel(vid) { S.selectedVessel = vid; S.inlineAdd = null; render(); }
+
+// 시간순 No. (1 = 가장 오래된 발생일). 표시 정렬이 바뀌어도 번호는 발생순 고정.
+function chronoNoMap(issues) {
+  const m = new Map();
+  issues.slice()
+    .sort((a, b) => (a.issue_date < b.issue_date ? -1 : a.issue_date > b.issue_date ? 1 : 0) || (a.id - b.id))
+    .forEach((i, idx) => m.set(i.id, idx + 1));
+  return m;
+}
+
 function renderTable() {
   const tbody = $('#issue-tbody');
   tbody.innerHTML = '';
-
-  // 이슈가 없는데 인라인 추가만 있는 경우
-  if (!S.issues.length) {
-    if (S.inlineAdd) tbody.append(inlineAddRow());
-    return;
+  const g = curVesselGroup();
+  if (!g) { if (S.inlineAdd) tbody.append(inlineAddRow()); return; }
+  const noMap = chronoNoMap(g.issues);
+  const rows = displayIssues(g.issues);
+  for (const i of rows) tbody.append(rowEl(i, noMap.get(i.id)));
+  if (S.inlineAdd) tbody.append(inlineAddRow());        // 안전망(인라인 추가 사용 시)
+  if (!rows.length && !S.inlineAdd) {
+    tbody.append(el('tr', {}, el('td', { colspan: '8', style: 'padding:22px;text-align:center;color:var(--text-tertiary)' },
+      S.quickFilter === 'all' ? '이 선박의 이슈가 없습니다.' : '이 필터에 해당하는 이슈가 없습니다.')));
   }
+}
 
-  const addDate = S.inlineAdd?.date;
-  let addedInline = false;
-  let no = 0;
-
-  const groups = groupByMonthAndDate(S.issues);
-  for (const mg of groups) {
-    const mCollapsed = S.collapsedMonths.has(mg.month);
-    const mTotalCnt = mg.items.reduce((a,d) => a + d.issues.length, 0);
-    tbody.append(monthBarRow(mg.month, mCollapsed, mTotalCnt));
-    if (mCollapsed) continue;
-
-    for (const dg of mg.items) {
-      const dCollapsed = S.collapsedDates.has(dg.date);
-      tbody.append(dateBarRow(dg.date, dCollapsed, dg.issues.length));
-      if (dCollapsed) continue;
-      for (const i of dg.issues) {
-        no++;
-        tbody.append(rowEl(i, no));
-      }
-      // 인라인 추가 행 — 해당 날짜 그룹 "맨 아래"에
-      if (S.inlineAdd && dg.date === addDate) {
-        tbody.append(inlineAddRow());
-        addedInline = true;
-      }
+// 사이드바 배지 숫자 = subtab 의미(open=활성/closed=완료/all=전체)
+function vBadgeCount(v) {
+  if (S.activeSubTab === 'closed') return v.issues.filter(i => i.status === 'Closed').length;
+  if (S.activeSubTab === 'all') return v.issues.length;
+  return v.active;                                  // 'open'(기본) = 진행중+Open
+}
+function subtabCountLabel() {
+  return S.activeSubTab === 'closed' ? '완료' : S.activeSubTab === 'all' ? '전체' : '활성';
+}
+function renderVesselSidebar() {
+  const sb = $('#vessel-sidebar');
+  if (!sb) return;
+  sb.innerHTML = '';
+  const groups = sidebarGroups();
+  const totV = groups.reduce((a, g) => a + g.vessels.length, 0);
+  const totC = groups.reduce((a, g) => a + g.vessels.reduce((x, v) => x + vBadgeCount(v), 0), 0);
+  sb.append(el('div', { class: 'vsb-head' },
+    el('span', { class: 'vsb-t' }, '선박'),
+    el('span', { class: 'vsb-n' }, `${totV}척 · ${subtabCountLabel()} ${totC}`)));
+  const search = el('input', { class: 'vsb-search', type: 'text', placeholder: '선박 검색…' });
+  search.value = S._vsbq || '';
+  search.addEventListener('input', (e) => { S._vsbq = e.target.value; renderVesselSidebar(); });
+  sb.append(el('div', { class: 'vsb-search-wrap' }, search));
+  const q = (S._vsbq || '').trim().toLowerCase();
+  const list = el('div', { class: 'vsb-list' });
+  let shown = 0;
+  for (const grp of groups) {
+    const vis = grp.vessels.filter(v => !q || v.name.toLowerCase().includes(q));
+    if (!vis.length) continue;
+    list.append(el('div', { class: 'vsb-group' }, el('span', {}, grp.type), el('span', { class: 'vsb-gc' }, `${vis.length}척`)));
+    for (const v of vis) {
+      shown++;
+      const cnt = vBadgeCount(v);
+      const badge = el('span', { class: 'vsb-badge' + (v.risk ? ' risk' : '') + (cnt === 0 ? ' zero' : '') },
+        v.risk ? el('span', { class: 'vsb-flag' }, '⚑') : null, String(cnt));
+      const item = el('div', { class: 'vsb-item' + (String(S.selectedVessel) === String(v.id) ? ' active' : '') },
+        el('span', { class: 'vsb-nm' }, v.name), badge);
+      item.addEventListener('click', () => selectVessel(v.id));
+      list.append(item);
     }
   }
+  if (!shown) list.append(el('div', { class: 'vsb-empty' }, q ? '검색 결과 없음' : '표시할 선박 없음'));
+  sb.append(list);
+}
 
-  // 날짜 그룹에 없으면 (신규 날짜) — 최상단에 폴백
-  if (S.inlineAdd && !addedInline) {
-    tbody.insertBefore(inlineAddRow(), tbody.firstChild);
+function renderVmainHead() {
+  const h = $('#vmain-head');
+  if (!h) return;
+  h.innerHTML = '';
+  const groups = sidebarGroups();
+  if (groups.length) {                                    // 모바일 선박 선택(사이드바 대체)
+    const msel = el('select', { class: 'vmh-vsel' });
+    for (const grp of groups) {
+      const og = el('optgroup', { label: grp.type });
+      for (const v of grp.vessels) {
+        const o = el('option', { value: String(v.id) }, `${v.name}  (${v.risk ? '⚑' : ''}${vBadgeCount(v)})`);
+        if (String(v.id) === String(S.selectedVessel)) o.selected = true;
+        og.append(o);
+      }
+      msel.append(og);
+    }
+    msel.addEventListener('change', (e) => selectVessel(e.target.value));   // 문자열 그대로(__none__ 대응)
+    h.append(msel);
   }
+  const g = curVesselGroup();
+  if (!g) return;
+  const done = g.issues.filter(i => i.status === 'Closed').length;
+  h.append(el('div', { class: 'vmh-row' },
+    el('span', { class: 'vmh-name' }, g.name),
+    g.type ? el('span', { class: 'vmh-type' }, g.type) : null,
+    el('span', { class: 'vmh-kpi' },
+      el('b', { class: 'k-open' }, String(g.active)), ' 진행중+Open',
+      el('span', { class: 'k-dim' }, ' · 완료 '), el('b', { class: 'k-dim' }, String(done)),
+      el('span', { class: 'k-dim' }, ' · 전체 '), el('b', { class: 'k-dim' }, String(g.issues.length)))));
+  const QF = [['all', '전체'], ['recent', '최근 발생'], ['stale', '장기 미종결'], ['risk', '⚑ COC·Urgent']];
+  const qf = el('div', { class: 'vmh-qf' });
+  for (const [k, label] of QF) {
+    const c = el('span', { class: 'qchip' + (S.quickFilter === k ? ' on' : '') + (k === 'risk' ? ' risk' : '') }, label);
+    c.addEventListener('click', () => { S.quickFilter = k; render(); });
+    qf.append(c);
+  }
+  const sortBtn = el('button', { class: 'vmh-sort' }, '정렬: ', el('b', {}, S.mainSort === 'old' ? '오래된→최근' : '최근·우선순위'), ' ⇅');
+  sortBtn.addEventListener('click', () => {
+    S.mainSort = S.mainSort === 'old' ? 'new' : 'old';
+    try { localStorage.setItem('trmt_main_sort', S.mainSort); } catch (_) {}
+    render();
+  });
+  h.append(el('div', { class: 'vmh-tools' }, qf, sortBtn));
 }
 
 function monthBarRow(month, collapsed, count) {
@@ -1117,54 +1275,16 @@ async function addActionInline(issue) {
 function renderCards() {
   const list = $('#card-list');
   list.innerHTML = '';
-
-  if (!S.issues.length) {
-    if (S.inlineAdd) list.append(inlineAddCardHint());
+  const g = curVesselGroup();
+  if (!g) return;
+  const noMap = chronoNoMap(g.issues);
+  const rows = displayIssues(g.issues);
+  if (!rows.length) {
+    list.append(el('div', { style: 'padding:20px;text-align:center;color:var(--text-tertiary);font-size:12.5px' },
+      S.quickFilter === 'all' ? '이 선박의 이슈가 없습니다.' : '이 필터에 해당하는 이슈가 없습니다.'));
     return;
   }
-
-  const addDate = S.inlineAdd?.date;
-  let addedInline = false;
-
-  const groups = groupByMonthAndDate(S.issues);
-  for (const mg of groups) {
-    const mCollapsed = S.collapsedMonths.has(mg.month);
-    const totalCnt = mg.items.reduce((a,d) => a + d.issues.length, 0);
-    const mBar = el('div', {
-      class: 'card-date-bar',
-      style: 'background:#0F172A; font-size:13px; font-weight:700',
-    },
-      el('span', {}, mCollapsed ? '▶' : '▼'),
-      el('span', {}, mg.month),
-      el('span', { style: 'opacity:0.7' }, `${totalCnt} items`));
-    mBar.addEventListener('click', () => toggleMonth(mg.month));
-    list.append(mBar);
-    if (mCollapsed) continue;
-
-    for (const dg of mg.items) {
-      const dCollapsed = S.collapsedDates.has(dg.date);
-      const dBar = el('div', {
-        class: 'card-date-bar',
-        style: 'background:#1E293B; margin-left:12px',
-      },
-        el('span', {}, dCollapsed ? '▶' : '▼'),
-        el('span', {}, dg.date),
-        el('span', { style: 'opacity:0.7' }, `${dg.issues.length} item${dg.issues.length>1?'s':''}`));
-      dBar.addEventListener('click', () => toggleDate(dg.date));
-      list.append(dBar);
-      if (dCollapsed) continue;
-      for (const i of dg.issues) list.append(cardEl(i));
-
-      if (S.inlineAdd && dg.date === addDate) {
-        list.append(inlineAddCardHint());
-        addedInline = true;
-      }
-    }
-  }
-
-  if (S.inlineAdd && !addedInline) {
-    list.insertBefore(inlineAddCardHint(), list.firstChild);
-  }
+  for (const i of rows) list.append(cardEl(i, noMap.get(i.id)));
 }
 
 function inlineAddCardHint() {
@@ -1173,7 +1293,7 @@ function inlineAddCardHint() {
   }, '📝 데스크톱에서 상단 인라인 입력 폼을 이용해 새 이슈를 추가하세요.');
 }
 
-function cardEl(i) {
+function cardEl(i, no) {
   const card = el('div', { class: 'issue-card', 'data-id': i.id });
   // 카드 click → edit 모달 (모바일은 인라인 편집 어려우므로 모달로)
   card.addEventListener('click', (ev) => {
@@ -1182,6 +1302,7 @@ function cardEl(i) {
   });
 
   const head = el('div', { class: 'issue-card-head' });
+  if (no != null) head.append(el('span', { class: 'issue-card-no' }, 'No.' + no));
   if (S.activeTab === 'all') {
     head.append(el('span', { class: `sup-chip c-${i.supervisor_color}` },
       el('span', { class: `tab-dot dot-${i.supervisor_color}` }),
@@ -2570,7 +2691,8 @@ function wireEvents() {
     loadIssues().then(render);
   });
 
-  $('#btn-toggle-all').addEventListener('click', toggleAll);
+  // 선박별 보기(rev.4)에선 날짜 그룹 접기 버튼 불필요 → 숨김
+  { const bta = $('#btn-toggle-all'); if (bta) bta.style.display = 'none'; }
 
   // 엑셀 추출 — 현재 필터 상태 그대로 백엔드에 넘김
   function buildExportParams() {
