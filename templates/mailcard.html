@@ -92,6 +92,7 @@
   const listEl=document.getElementById('mc-list'),countEl=document.getElementById('mc-count');
   let filter='active';
   let ISSUES=[];  // 열린 Daily 현안 캐시 (기존 현안에 액션추가 셀렉터용)
+  const OPEN=new Set();  // 사용자가 수동으로 펼친 섹션 키(`${cardId}:${sec}`) — 버튼 액션 후 재렌더 시 열림상태 복원용
   async function loadIssues(){
     // Open + InProgress 둘 다(진행중 현안도 액션추가 대상). 기존엔 Open만 떠서 진행중 누락됨.
     const [o,p]=await Promise.all([api('GET','/api/issues?status=Open'),api('GET','/api/issues?status=InProgress')]);
@@ -183,19 +184,20 @@
     }
     const issHint=c.issue_status==='pending'?(c.issue_item||''):'';
     const repHint=(c.reply_ko||'').trim().slice(0,40);
+    const op=s=>OPEN.has(c.id+':'+s)?' open':'';  // 직전에 펼쳐둔 섹션만 open 복원
     el.innerHTML=`<div class="mc-top"><input type="checkbox" class="mc-pick" title="선택" style="margin-top:3px;width:16px;height:16px;flex:none;cursor:pointer">
       <div><div class="mc-subj">${esc(c.email_subject||'(제목없음)')}</div>
         <div class="mc-meta">${esc(c.email_from||'?')} · ${esc(c.email_date||'')} · #${c.id}</div></div>
       <div class="mc-badges">${c.pending?'<span class="bdg b-pend">⏸ 보류</span>':''}${issueBadge(c.issue_status)}${replyBadge(c.reply_status)}</div></div>
       ${c.thread_summary_ko?`<div class="mc-thread">🧵 <b>요약</b> · ${esc(c.thread_summary_ko)}</div>`:''}
       ${wikiBand(c.wiki)}
-      ${(c.body_en||c.summary_ko)?`<details class="mc-mail"><summary>📨 받은메일 원문 / 한글 번역</summary>
+      ${(c.body_en||c.summary_ko)?`<details class="mc-mail" data-sec="mail"${op('mail')}><summary>📨 받은메일 원문 / 한글 번역</summary>
         <div class="mc-mail-body">
           ${c.body_en?`<div><div class="mm-lbl">원문 (English)</div><div class="mm-en">${esc(c.body_en)}</div></div>`:''}
           ${c.summary_ko?`<div><div class="mm-lbl">한국어 번역</div><div class="mm-ko">${esc(c.summary_ko)}</div></div>`:''}
         </div></details>`:''}
-      <details class="mc-secd"><summary>📋 TRMT 이슈${issHint?`<span class="mc-secd-hint">${esc(issHint)}</span>`:''}</summary><div class="mc-secd-body">${issueHtml}</div></details>
-      <details class="mc-secd"><summary>✉️ 회신 작성${repHint?`<span class="mc-secd-hint">${esc(repHint)}</span>`:''}</summary><div class="mc-secd-body">${replyHtml}</div></details>
+      <details class="mc-secd" data-sec="issue"${op('issue')}><summary>📋 TRMT 이슈${issHint?`<span class="mc-secd-hint">${esc(issHint)}</span>`:''}</summary><div class="mc-secd-body">${issueHtml}</div></details>
+      <details class="mc-secd" data-sec="reply"${op('reply')}><summary>✉️ 회신 작성${repHint?`<span class="mc-secd-hint">${esc(repHint)}</span>`:''}</summary><div class="mc-secd-body">${replyHtml}</div></details>
       <div class="mc-sec" style="padding:8px 15px;display:flex;gap:6px;align-items:center">
         ${c.pending?'<button class="btn btn-sm act-punp">▶ 처리중으로</button>':'<button class="btn btn-sm act-pend">⏸ 보류</button>'}
         <span class="flex-spacer"></span>
@@ -237,6 +239,10 @@
   }
   function wire(el,c){
     const q=s=>el.querySelector(s);
+    // 섹션 펼침/접힘을 OPEN에 기록 → 다음 재렌더 때 op()가 복원. 직접 토글한 것만 추적.
+    el.querySelectorAll('details[data-sec]').forEach(d=>{
+      d.addEventListener('toggle',()=>{const k=c.id+':'+d.dataset.sec;d.open?OPEN.add(k):OPEN.delete(k);});
+    });
     const _wtid=(c.wiki&&c.wiki.thread_id)||undefined;
     if(q('.act-wikidraft'))q('.act-wikidraft').onclick=()=>{
       const w=c.wiki||{};
