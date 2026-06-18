@@ -930,9 +930,43 @@ col.c-edit   { width: 156px; }
   /* Table hidden, card list shown */
   .grid-wrap { display: none; }
   .card-list { display: block; }
-  /* 단, '요약' 뷰(#summary-wrap)는 모바일에도 표시 — 카드뷰 대체본이 없으므로 grid-wrap 일괄 숨김에서 예외.
-     비활성([hidden])일 땐 그대로 숨김 유지. 표가 넓으면 가로 스크롤. */
-  #summary-wrap:not([hidden]) { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* 단, '요약' 뷰(#summary-wrap)는 모바일에도 표시 — 카드뷰 대체본이 없으므로 grid-wrap 일괄 숨김에서 예외. */
+  #summary-wrap:not([hidden]) { display: block; }
+  /* 모바일: 좁은 6열 표가 글자 세로깨짐 → 행을 카드로 스택(라벨:값). 가독성 확보. */
+  #summary-table colgroup,
+  #summary-table thead { display: none; }
+  #summary-table,
+  #summary-table tbody,
+  #summary-table tr,
+  #summary-table td { display: block; width: auto; }
+  #summary-table tr {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    background: var(--surface);
+  }
+  #summary-table td {
+    border: none !important;
+    padding: 3px 0 !important;
+    text-align: left !important;
+    white-space: normal !important;
+    display: flex;
+    gap: 8px;
+    font-size: 13px;
+  }
+  #summary-table td::before {
+    content: attr(data-label);
+    flex: 0 0 64px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    padding-top: 1px;
+  }
+  /* 현안업무(긴 본문): 라벨을 위에 두고 본문은 전체폭으로 */
+  #summary-table td.sum-issue { display: block; }
+  #summary-table td.sum-issue::before { display: block; margin-bottom: 3px; }
+  #summary-table td:empty { display: none; }
 
   /* 월/날짜 바: inline-flex라 2열로 들쭉날쭉 → 한 줄 전체폭으로 깔끔히 쌓기, 카운트 우측정렬 */
   .card-date-bar {

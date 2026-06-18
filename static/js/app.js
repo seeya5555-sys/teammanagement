@@ -540,12 +540,12 @@ function renderSummaryView() {
       <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
       <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>`;
     tbody.append(el('tr', {},
-      el('td', { style: 'text-align:center;vertical-align:top;' }, String(n)),
-      el('td', { style: 'vertical-align:top;' }, r.vessel_name || ''),
-      el('td', { style: 'white-space:pre-wrap;vertical-align:top;line-height:1.5;' }, r.issue || ''),
-      el('td', { style: 'text-align:center;vertical-align:top;' }, r.priority || ''),
-      el('td', { style: 'text-align:center;vertical-align:top;' }, (r.status || '')),
-      el('td', { style: 'text-align:center;vertical-align:top;' }, linkBtn),
+      el('td', { 'data-label': 'No.', style: 'text-align:center;vertical-align:top;' }, String(n)),
+      el('td', { 'data-label': '선박', style: 'vertical-align:top;' }, r.vessel_name || ''),
+      el('td', { 'data-label': '현안업무', class: 'sum-issue', style: 'white-space:pre-wrap;vertical-align:top;line-height:1.5;' }, r.issue || ''),
+      el('td', { 'data-label': 'Priority', style: 'text-align:center;vertical-align:top;' }, r.priority || ''),
+      el('td', { 'data-label': 'Status', style: 'text-align:center;vertical-align:top;' }, (r.status || '')),
+      el('td', { 'data-label': '링크', style: 'text-align:center;vertical-align:top;' }, linkBtn),
     ));
   }
 }
