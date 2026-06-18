@@ -442,6 +442,11 @@ async function init() {
   try {
     S.supervisors = await api('/api/supervisors');
   } catch (_) { S.supervisors = []; }
+  // 최초 진입 시 본인 감독 탭 자동 선택(담당 미설정/숨김 감독이면 '전체')
+  if (S.user.supervisor_id) {
+    const sup = S.supervisors.find(s => s.id === S.user.supervisor_id);
+    if (sup && !isHiddenSup(sup)) S.activeTab = S.user.supervisor_id;
+  }
   try {
     S.vesselsAll = await api('/api/vessels');
   } catch (_) { S.vesselsAll = []; }
