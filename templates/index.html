@@ -343,4 +343,29 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+/* Fleet Map 카드(현재 이슈 / Urgent) 클릭 → ?vessel=&priority= 자동필터 */
+(function(){
+  var p=new URLSearchParams(location.search), v=p.get('vessel'), pr=p.get('priority');
+  if(!v && !pr) return;
+  var nv=(v||'').trim().toLowerCase(), applied=false, c=0;
+  var t=setInterval(function(){
+    var ok=true;
+    if(v){
+      var sel=document.getElementById('filter-vessel');
+      var opt=sel && [].find.call(sel.options,function(o){return o.textContent.trim().toLowerCase()===nv;});
+      if(!opt) opt=sel && [].find.call(sel.options,function(o){return o.textContent.trim().toLowerCase().indexOf(nv)>=0 && o.value;});
+      if(opt){ if(sel.value!==opt.value){sel.value=opt.value; sel.dispatchEvent(new Event('change',{bubbles:true}));} }
+      else ok=false;
+    }
+    if(pr){
+      var ps=document.getElementById('filter-priority');
+      if(ps){ if(ps.value!==pr){ps.value=pr; ps.dispatchEvent(new Event('change',{bubbles:true}));} }
+      else ok=false;
+    }
+    if(ok) applied=true;
+    if(applied || ++c>=15) clearInterval(t);
+  },400);
+})();
+</script>
 {% endblock %}

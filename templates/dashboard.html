@@ -30,7 +30,9 @@
   .fm-x{margin-left:auto;border:0;background:transparent;font-size:20px;color:var(--text-tertiary);cursor:pointer}
   .fm-pb{padding:14px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:13px}
   .fm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  .fm-card{background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:11px;padding:11px}
+  .fm-card{background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:11px;padding:11px;display:block;text-decoration:none;color:inherit;transition:box-shadow .1s,transform .1s}
+  a.fm-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.10);transform:translateY(-1px);border-color:var(--border)}
+  a.fm-card .v::after{content:" ›";color:var(--text-tertiary);font-size:14px;font-weight:600}
   .fm-card .k{font-size:11.5px;color:var(--text-secondary);font-weight:600}.fm-card .v{font-size:25px;font-weight:700;line-height:1.1;margin-top:4px}
   .fm-card .v small{font-size:12px;color:var(--text-tertiary);font-weight:600}
   .fm-card.red .v{color:var(--red,#c0392b)}.fm-card.amber .v{color:#b7791f}.fm-card.blue .v{color:var(--blue)}.fm-card.green .v{color:#3f7a4f}
@@ -113,15 +115,22 @@
     document.getElementById('fmBadges').innerHTML='<span class="pill '+bl+'">'+blTxt+'</span>'+
       '<span class="pill '+(v.color==='green'?'green':v.color)+'">'+(v.color==='green'?'✓ 이슈없음':(v.coc?'COC/Flag':(v.urgent?'Urgent':'이슈')))+'</span>'+
       (v.status?'<span class="pill gray">'+esc(v.status)+'</span>':'');
-    const csTxt=(v.cs_pct!=null)?v.cs_pct:'—';
     const vet=(v.vetting_open!=null)?'<span class="pill '+(v.vetting_open>2?'red':(v.vetting_open?'amber':'green'))+'">Open '+v.vetting_open+'</span>':'<span class="fm-note">미연동</span>';
     const cargo=v.cargo_op_applicable?('<div class="fm-sec">Cargo Operation (VLCC/LR · SVMS noon)</div><div class="fm-line"><span class="lk">상태</span><span class="lv">'+(v.cargo_op?esc(v.cargo_op):'<span class="fm-note">—</span>')+'</span></div>'):'';
+    const ev=encodeURIComponent(v.name);
+    // 4번째 카드: VLCC/LR=SIRE(Vetting), 그외=Condition Survey 총 open
+    const isSire=v.cargo_op_applicable;
+    const f4=isSire
+      ? {href:'/vetting-status?vessel='+ev, k:'🛡 SIRE', val:(v.sire_open!=null?v.sire_open:'—'), unit:(v.sire_open!=null?' open':''), cls:(v.sire_open?'amber':'green')}
+      : {href:'/condition-survey?vessel='+ev, k:'🔧 Cond.Survey', val:(v.cs_open!=null?v.cs_open:'—'), unit:' open', cls:(v.cs_open?'blue':'green')};
+    const card=(href,cls,k,val,unit)=>'<a class="fm-card '+cls+'" href="'+href+'"><div class="k">'+k+'</div><div class="v">'+val+'<small>'+unit+'</small></div></a>';
     document.getElementById('fmBody').innerHTML=
       '<div class="fm-grid">'+
-      '<div class="fm-card '+(v.issues_open?'red':'green')+'"><div class="k">📋 현재 이슈</div><div class="v">'+v.issues_open+'<small> 건</small></div></div>'+
-      '<div class="fm-card '+(v.coc?'red':'green')+'"><div class="k">⚓ COC/Flag</div><div class="v">'+v.coc+'<small> 건</small></div></div>'+
-      '<div class="fm-card '+(v.urgent?'amber':'green')+'"><div class="k">🚨 Urgent</div><div class="v">'+v.urgent+'<small> 건</small></div></div>'+
-      '<div class="fm-card '+((v.cs_pct!=null&&v.cs_pct<100)?'blue':'green')+'"><div class="k">🔧 Cond.Survey</div><div class="v">'+csTxt+'<small>'+(v.cs_pct!=null?'%':'')+'</small></div></div></div>'+
+      card('/?vessel='+ev, v.issues_open?'red':'green', '📋 현재 이슈', v.issues_open, ' 건')+
+      card('/class-status?vessel='+ev, v.coc?'red':'green', '⚓ COC/Flag', v.coc, ' 건')+
+      card('/?vessel='+ev+'&priority='+encodeURIComponent('Urgent'), v.urgent?'amber':'green', '🚨 Urgent', v.urgent, ' 건')+
+      card(f4.href, f4.cls, f4.k, f4.val, f4.unit)+
+      '</div>'+
       '<div class="fm-sec">운항 상태 (SVMS noon)</div>'+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+

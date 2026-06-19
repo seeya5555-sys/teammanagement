@@ -139,4 +139,11 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/cs.js') }}"></script>
+<script>
+/* Fleet Map 카드(Cond.Survey) 클릭 → ?vessel= 선박 검색 자동적용 */
+(function(){var v=new URLSearchParams(location.search).get('vessel');if(!v)return;
+  var c=0,t=setInterval(function(){var el=document.getElementById('cs-search');
+    if(el){el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));}
+    if(++c>=12)clearInterval(t);},500);})();
+</script>
 {% endblock %}
