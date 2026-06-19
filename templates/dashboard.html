@@ -21,6 +21,11 @@
   #fmmap{position:absolute;inset:0}.leaflet-container{background:#cfe0e6;font:inherit}
   .ship{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
   .ship.red{background:var(--red,#c0392b)}.ship.amber{background:#b7791f}.ship.green{background:#3f7a4f}.ship.gray{background:#8a8175}
+  /* Class/Flag 만기 임박(soon)·초과(overdue) 펄스 링 */
+  .ship.due-overdue{border-color:#c0392b;animation:fmPulseR 1.1s infinite}
+  .ship.due-soon{border-color:#e08a1e;animation:fmPulseA 1.6s infinite}
+  @keyframes fmPulseR{0%{box-shadow:0 0 0 0 rgba(192,57,43,.75)}70%{box-shadow:0 0 0 11px rgba(192,57,43,0)}100%{box-shadow:0 0 0 0 rgba(192,57,43,0)}}
+  @keyframes fmPulseA{0%{box-shadow:0 0 0 0 rgba(224,138,30,.7)}70%{box-shadow:0 0 0 10px rgba(224,138,30,0)}100%{box-shadow:0 0 0 0 rgba(224,138,30,0)}}
   .ship-label{font-size:10px;font-weight:700;color:var(--text-primary);background:rgba(251,248,242,.85);padding:1px 5px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,.12)}
   .port{width:9px;height:9px;border-radius:50%;background:var(--surface);border:2px solid var(--text-secondary)}
   .port-label{font-size:10px;color:var(--text-secondary);background:rgba(251,248,242,.8);padding:0 4px;border-radius:4px;white-space:nowrap}
@@ -32,6 +37,9 @@
   .fm-x{margin-left:auto;border:0;background:transparent;font-size:20px;color:var(--text-tertiary);cursor:pointer}
   .fm-pb{padding:14px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:13px}
   .fm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .fm-duewarn{display:block;text-decoration:none;padding:8px 11px;border-radius:9px;font-size:12.5px;font-weight:700}
+  .fm-duewarn.overdue{background:var(--red-bg,#fbe4e1);color:var(--red,#c0392b);border:1px solid #f0b9b2}
+  .fm-duewarn.soon{background:#fff3e0;color:#b7791f;border:1px solid #f0d2a0}
   .fm-card{background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:11px;padding:11px;display:block;text-decoration:none;color:inherit;transition:box-shadow .1s,transform .1s}
   a.fm-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.10);transform:translateY(-1px);border-color:var(--border)}
   a.fm-card .v::after{content:" ›";color:var(--text-tertiary);font-size:14px;font-weight:600}
@@ -60,6 +68,7 @@
     <div class="fm-legend">
       <span><i style="background:#c0392b"></i>COC/Flag</span><span><i style="background:#b7791f"></i>Urgent</span>
       <span><i style="background:#3f7a4f"></i>이슈없음</span><span><i style="background:#8a8175"></i>일반이슈</span>
+      <span title="Class/Flag 만기 임박·초과 선박은 마커가 펄스로 깜빡임">💢 펄스=Class/Flag 만기</span>
     </div>
     <div class="fm-spacer"></div>
     <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">구 대시보드 →</a>
@@ -91,7 +100,10 @@
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     {attribution:'© CARTO © OSM',subdomains:'abcd',maxZoom:19}).addTo(map);
   let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[],curSup='__all',fmQ='';
-  function icon(v){return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+'">🚢</div>'});}
+  function icon(v){
+    const due=v.cls_due_state==='overdue'?' due-overdue':(v.cls_due_state==='soon'?' due-soon':'');
+    return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'">🚢</div>'});
+  }
 
   fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
     FLEET=d.fleet||[];
@@ -150,6 +162,11 @@
       ? {href:'/vetting-status?vessel='+ev, k:'🛡 SIRE', val:(v.sire_open!=null?v.sire_open:'—'), unit:(v.sire_open!=null?' open':''), cls:(v.sire_open?'amber':'green')}
       : {href:'/condition-survey?vessel='+ev, k:'🔧 Cond.Survey', val:(v.cs_open!=null?v.cs_open:'—'), unit:' open', cls:(v.cs_open?'blue':'green')};
     const card=(href,cls,k,val,unit)=>'<a class="fm-card '+cls+'" href="'+href+'"><div class="k">'+k+'</div><div class="v">'+val+'<small>'+unit+'</small></div></a>';
+    // Class/Flag 만기 경고 배너(overdue/임박)
+    const dueLine = v.cls_due_state ? (
+      '<a class="fm-duewarn '+v.cls_due_state+'" href="/class-status?vessel='+ev+'">⚠ Class/Flag 만기 '+
+      (v.cls_due_state==='overdue' ? ('<b>'+Math.abs(v.cls_due_days)+'일 초과</b>') : ('<b>D-'+v.cls_due_days+'</b>'))+
+      ' · '+esc(v.cls_due_date||'')+' ›</a>') : '';
     document.getElementById('fmBody').innerHTML=
       '<div class="fm-grid">'+
       card('/?vessel='+ev, v.issues_open?'red':'green', '📋 현재 이슈', v.issues_open, ' 건')+
@@ -157,6 +174,7 @@
       card('/?vessel='+ev+'&priority='+encodeURIComponent('Urgent'), v.urgent?'amber':'green', '🚨 Urgent', v.urgent, ' 건')+
       card(f4.href, f4.cls, f4.k, f4.val, f4.unit)+
       '</div>'+
+      dueLine+
       '<div class="fm-sec">운항 상태 (SVMS noon)</div>'+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
