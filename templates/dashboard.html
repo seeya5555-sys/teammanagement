@@ -12,6 +12,8 @@
   .fm-spacer{flex:1}.fm-updated{font-size:11px;color:var(--text-tertiary)}
   .fm-sup{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
   .fm-sup .lbl{font-size:11.5px;font-weight:700;color:var(--text-secondary)}
+  .fm-search{border:1px solid var(--border);background:var(--surface);color:var(--text-primary);font-size:12.5px;padding:6px 12px;border-radius:999px;width:200px;outline:none}
+  .fm-search:focus{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-bg)}
   .fm-sup button{border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px;cursor:pointer}
   .fm-sup button.on{background:var(--blue);border-color:var(--blue);color:#fff}
   .fm-sup button .n{opacity:.7;font-weight:700;margin-left:3px}
@@ -63,7 +65,10 @@
     <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">구 대시보드 →</a>
     <span class="fm-updated" id="fmUpdated">로딩…</span>
   </div>
-  <div class="fm-sup" id="fmSup"><span class="lbl">감독 필터</span></div>
+  <div class="fm-sup" id="fmSup">
+    <input id="fmSearch" class="fm-search" type="text" placeholder="🔍 선박명 검색…" autocomplete="off"/>
+    <span class="lbl">감독 필터</span>
+  </div>
   <div class="fm-stage">
     <div id="fmmap"></div>
     <div class="fm-panel" id="fmPanel">
@@ -85,7 +90,7 @@
     maxBounds:[[-78,-205],[88,205]],maxBoundsViscosity:0.7}).setView([25,75],3);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     {attribution:'© CARTO © OSM',subdomains:'abcd',maxZoom:19}).addTo(map);
-  let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[];
+  let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[],curSup='__all',fmQ='';
   function icon(v){return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+'">🚢</div>'});}
 
   fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
@@ -102,12 +107,31 @@
     const mk=(label,key,cnt,on)=>{const b=document.createElement('button');b.innerHTML=esc(label)+'<span class="n">'+cnt+'</span>';if(on)b.classList.add('on');b.onclick=()=>filt(key,b);bar.appendChild(b);return b;};
     mk('전체','__all',FLEET.length,true);
     (d.supervisors||[]).forEach(s=>mk(s,s,FLEET.filter(v=>v.supervisor===s).length,false));
+    // 선명 검색: 입력하면 일치 선박만 표시, 단일 일치면 그쪽으로 이동(줌 유지)
+    const si=document.getElementById('fmSearch');
+    if(si){
+      si.addEventListener('input',()=>{ fmQ=si.value.trim().toLowerCase(); const vis=applyFilters();
+        if(fmQ && vis.length===1){ map.panTo([vis[0].v.lat,vis[0].v.lng]); } });
+      si.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ const vis=applyFilters();
+        if(vis.length){ map.panTo([vis[0].v.lat,vis[0].v.lng]); openV(vis[0].v); } } });
+    }
   }).catch(()=>{document.getElementById('fmUpdated').textContent='데이터 로드 실패';});
 
+  // 감독필터 + 선명검색 동시 적용. 보이는 마커 배열 반환.
+  function applyFilters(){
+    const vis=[];
+    markers.forEach(o=>{
+      const supOK = curSup==='__all' || o.v.supervisor===curSup;
+      const qOK = !fmQ || (o.v.name||'').toLowerCase().includes(fmQ);
+      const show = supOK && qOK;
+      if(show){o.m.addTo(map);o.tt.addTo(map);vis.push(o);}else{map.removeLayer(o.m);map.removeLayer(o.tt);}
+    });
+    return vis;
+  }
   function filt(key,btn){
+    curSup=key;
     document.querySelectorAll('#fmSup button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
-    markers.forEach(({v,m,tt})=>{const show=key==='__all'||v.supervisor===key;
-      if(show){m.addTo(map);tt.addTo(map);}else{map.removeLayer(m);map.removeLayer(tt);}});fmClose();
+    applyFilters();fmClose();
   }
   function openV(v){
     document.getElementById('fmName').textContent=v.name;
