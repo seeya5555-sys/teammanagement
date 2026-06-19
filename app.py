@@ -8380,6 +8380,15 @@ def api_fleet_map_data():
         return jsonify({'fleet': [], 'supervisors': [], 'generated_at': None,
                         'empty': True})
     fleet = data.get('fleet') or []
+    # 감독 = TRMT supervisor_vessels(권위)로 채움 — 이슈 없는 선박도 올바른 감독/필터 표시.
+    vsup = {_vkey(r['vname']): r['sname'] for r in
+            query("SELECT v.name AS vname, s.name AS sname FROM supervisor_vessels sv "
+                  "JOIN vessels v ON v.id=sv.vessel_id JOIN supervisors s ON s.id=sv.supervisor_id")}
+    for v in fleet:
+        s = vsup.get(_vkey(v.get('name')))
+        if s:
+            v['supervisor'] = s
+    data['supervisors'] = sorted({v['supervisor'] for v in fleet if v.get('supervisor')})
     is_admin = (session.get('role') == 'admin')
     sup_id = session.get('supervisor_id')
     if sup_id and not is_admin:
