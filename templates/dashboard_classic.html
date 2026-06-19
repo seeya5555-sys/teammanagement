@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}대시보드 · TRMT3{% endblock %}
+
+{% block head %}
+<style>
+  .dash-wrap { max-width: 1180px; margin: 0 auto; }
+  .dash-grid {
+    display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    margin-top: 6px;
+  }
+  .dash-card {
+    display: flex; flex-direction: column; gap: 10px;
+    background: var(--surface); border: 1px solid var(--border-subtle);
+    border-radius: 14px; padding: 18px 20px;
+    text-decoration: none; color: inherit;
+    transition: box-shadow .12s, transform .12s, border-color .12s;
+  }
+  .dash-card:hover {
+    box-shadow: 0 8px 24px rgba(0,0,0,.10); transform: translateY(-2px);
+    border-color: var(--border);
+  }
+  .dash-card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  }
+  .dash-card-head .arrow { color: var(--text-tertiary); font-size: 14px; }
+  .dash-main { display: flex; align-items: baseline; gap: 8px; }
+  .dash-num { font-size: 34px; font-weight: 700; line-height: 1; color: var(--text-primary); }
+  .dash-unit { font-size: 13px; color: var(--text-tertiary); }
+  .dash-sub { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+  .dash-pill {
+    font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    background: var(--surface-2); color: var(--text-secondary);
+  }
+  .dash-pill.red   { background: var(--red-bg, #fde8e8);   color: var(--red, #c0392b); }
+  .dash-pill.amber { background: #fff3e0; color: #b7791f; }
+  .dash-pill.blue  { background: var(--blue-bg);  color: var(--blue); }
+  .dash-empty { font-size: 13px; color: var(--text-tertiary); }
+  .dash-ev { display: flex; flex-direction: column; gap: 7px; margin-top: 2px; }
+  .dash-ev-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .dash-ev-date { color: var(--text-tertiary); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  .dash-ev-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--blue); flex: 0 0 auto; }
+  .dash-ev-title { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dash-zero .dash-num { color: var(--text-tertiary); }
+  .dash-section-title { font-size: 13px; color: var(--text-tertiary); margin: 22px 0 2px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dash-wrap">
+  <h1 class="page-title">📊 대시보드</h1>
+  <p style="margin:-6px 0 14px;font-size:13px;color:var(--text-secondary)">
+    {% if scoped %}<b>{{ sup_name }}</b> 감독 담당 선박 기준 집계{% else %}전체 선박 기준 집계{% endif %}
+  </p>
+
+  <div class="dash-grid">
+
+    {# 1) 현안 요약 #}
+    <a class="dash-card {% if not stats.issues_open %}dash-zero{% endif %}" href="{{ url_for('index') }}">
+      <div class="dash-card-head"><span>📋 현안 (Open Issues)</span><span class="arrow">→</span></div>
+      <div class="dash-main"><span class="dash-num">{{ stats.issues_open }}</span><span class="dash-unit">건 진행 중</span></div>
+      <div class="dash-sub">
+        {% if stats.issues_urgent %}<span class="dash-pill red">🚨 Urgent {{ stats.issues_urgent }}</span>{% endif %}
+        {% if stats.issues_coc %}<span class="dash-pill amber">COC &amp; Flag {{ stats.issues_coc }}</span>{% endif %}
+        {% if stats.issues_dd %}<span class="dash-pill blue">Next DD {{ stats.issues_dd }}</span>{% endif %}
+        {% if not (stats.issues_urgent or stats.issues_coc or stats.issues_dd) %}<span class="dash-empty">우선순위 플래그 없음</span>{% endif %}
+      </div>
+    </a>
+
+    {# 4) Class 만기 임박 #}
+    <a class="dash-card {% if not stats.class_due %}dash-zero{% endif %}" href="{{ url_for('class_status_page') }}">
+      <div class="dash-card-head"><span>🔍 Class 만기 임박</span><span class="arrow">→</span></div>
+      <div class="dash-main"><span class="dash-num">{{ stats.class_due }}</span><span class="dash-unit">건 (D-30 이내)</span></div>
+      <div class="dash-sub"><span class="dash-empty">선급/기국 지적 due_date 기준</span></div>
+    </a>
+
+    {# 3) Vetting 미해결 #}
+    <a class="dash-card {% if not stats.vetting_open %}dash-zero{% endif %}" href="{{ url_for('vetting_status') }}">
+      <div class="dash-card-head"><span>🛡 Vetting 미해결</span><span class="arrow">→</span></div>
+      <div class="dash-main"><span class="dash-num">{{ stats.vetting_open }}</span><span class="dash-unit">건 Open observation</span></div>
+      <div class="dash-sub">
+        {% if stats.vetting_pri %}<span class="dash-pill red">⭐ 중요 {{ stats.vetting_pri }}</span>
+        {% else %}<span class="dash-empty">미해결 SIRE 지적 기준</span>{% endif %}
+      </div>
+    </a>
+
+    {% if is_admin %}
+    {# 2) AOR 대기 #}
+    <a class="dash-card {% if not stats.aor_pending %}dash-zero{% endif %}" href="{{ url_for('aor_page') }}">
+      <div class="dash-card-head"><span>🤖 AOR 대기</span><span class="arrow">→</span></div>
+      <div class="dash-main"><span class="dash-num">{{ stats.aor_pending }}</span><span class="dash-unit">건 pending</span></div>
+      <div class="dash-sub">
+        {% if stats.aor_crew_submitted %}<span class="dash-pill blue">Crew dept submitted {{ stats.aor_crew_submitted }}</span>
+        {% else %}<span class="dash-empty">상신 대기 없음</span>{% endif %}
+      </div>
+    </a>
+
+    {# 3) 메일 처리 대기 #}
+    <a class="dash-card {% if not stats.mail_active %}dash-zero{% endif %}" href="{{ url_for('mail_page') }}">
+      <div class="dash-card-head"><span>📬 메일 처리 대기</span><span class="arrow">→</span></div>
+      <div class="dash-main"><span class="dash-num">{{ stats.mail_active }}</span><span class="dash-unit">건 active</span></div>
+      <div class="dash-sub"><span class="dash-empty">이슈 등록 / 회신 대기</span></div>
+    </a>
+    {% endif %}
+
+    {# 5) 다가오는 일정 #}
+    <a class="dash-card" href="{{ url_for('calendar_page') }}" style="grid-column: span 1;">
+      <div class="dash-card-head"><span>📅 다가오는 일정 (7일)</span><span class="arrow">→</span></div>
+      {% if events %}
+      <div class="dash-ev">
+        {% for e in events %}
+        <div class="dash-ev-row">
+          <span class="dash-ev-date">{{ e['start_date'][5:] }}</span>
+          <span class="dash-ev-dot"></span>
+          <span class="dash-ev-title">{{ e['title'] }}{% if e['category'] %} · {{ e['category'] }}{% endif %}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="dash-main"><span class="dash-num">0</span><span class="dash-unit">건</span></div>
+      <div class="dash-empty">7일 이내 예정 일정 없음</div>
+      {% endif %}
+    </a>
+
+  </div>
+</div>
+{% endblock %}

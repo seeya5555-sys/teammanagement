@@ -14,7 +14,7 @@ import json
 import sqlite3
 import secrets
 from functools import wraps
-from datetime import timedelta, date
+from datetime import timedelta, date, datetime
 
 from flask import (
     Flask, g, request, jsonify, session, render_template,
@@ -701,9 +701,13 @@ def logout():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    """주요 현황 한눈에 — 카드 클릭 시 해당 탭 이동.
-    로그인 사용자가 감독에 연결돼 있으면(supervisor_id) 그 감독 담당선박 기준으로 집계,
-    아니면(미연결 admin 등) 전체 기준."""
+    """Fleet Map — 지도 기반 대시보드(SVMS noon 선위 + TRMT 현황 조인).
+    데이터는 /api/fleet-map/data (감독 스코프). 구 카드형은 /dashboard/classic."""
+    return render_template('dashboard.html')
+
+
+def _dashboard_classic_render():
+    """구 대시보드(카드형) 집계 렌더 — /dashboard/classic 에서 사용."""
     today   = date.today().isoformat()
     horizon = (date.today() + timedelta(days=30)).isoformat()
     cal_end = (date.today() + timedelta(days=7)).isoformat()
@@ -795,7 +799,7 @@ def dashboard():
         except sqlite3.Error:
             pass
 
-    return render_template('dashboard.html', stats=stats, events=events, is_admin=is_admin,
+    return render_template('dashboard_classic.html', stats=stats, events=events, is_admin=is_admin,
                            scoped=scoped, sup_name=sup_name)
 
 
@@ -8332,6 +8336,74 @@ def api_ext_shipwiki_push():
         raise
     return jsonify({'ok': True, 'inserted': n_ins, 'updated': n_upd,
                     'purged': (purged if purge and slug else 0)})
+
+
+# ───────────────────────── Fleet Map (대시보드) ─────────────────────────
+FLEET_MAP_FILE = os.path.join(INSTANCE_DIR, 'fleet_map.json')
+
+
+@app.route('/api/ext/fleet-map/push', methods=['POST'])
+@api_key_required
+def api_ext_fleet_map_push():
+    """맥 스케줄러(run.sh)가 SVMS noon+TRMT 조인한 fleet_enriched.json 적재.
+    파일 저장만(스키마 무관). 대시보드가 /api/fleet-map/data 로 읽음."""
+    if request.content_length and request.content_length > 8 * 1024 * 1024:
+        return jsonify({'ok': False, 'error': 'payload too large'}), 413
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict) or not isinstance(d.get('fleet'), list):
+        return jsonify({'ok': False, 'error': 'invalid payload (fleet[] required)'}), 400
+    if len(d['fleet']) > 500:
+        return jsonify({'ok': False, 'error': 'too many vessels'}), 400
+    # 각 선박 최소 필드/타입 검증(오염 데이터 저장 차단)
+    for v in d['fleet']:
+        if (not isinstance(v, dict) or not v.get('name')
+                or not isinstance(v.get('lat'), (int, float))
+                or not isinstance(v.get('lng'), (int, float))):
+            return jsonify({'ok': False, 'error': 'invalid fleet item (name/lat/lng required)'}), 400
+    d['_received_at'] = datetime.now().isoformat(timespec='seconds')
+    tmp = FLEET_MAP_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False)
+    os.replace(tmp, FLEET_MAP_FILE)
+    return jsonify({'ok': True, 'count': len(d.get('fleet') or []),
+                    'generated_at': d.get('generated_at')})
+
+
+@app.route('/api/fleet-map/data')
+@login_required
+def api_fleet_map_data():
+    """대시보드 맵 데이터. 감독 연결 사용자는 본인 담당선박만(admin/미연결=전체)."""
+    try:
+        with open(FLEET_MAP_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+    except (FileNotFoundError, ValueError):
+        return jsonify({'fleet': [], 'supervisors': [], 'generated_at': None,
+                        'empty': True})
+    fleet = data.get('fleet') or []
+    is_admin = (session.get('role') == 'admin')
+    sup_id = session.get('supervisor_id')
+    if sup_id and not is_admin:
+        srow = query("SELECT name FROM supervisors WHERE id=?", (sup_id,), one=True)
+        sup_name = srow['name'] if srow else None
+        allowed = {(_vkey(r['name'])) for r in
+                   query("SELECT v.name FROM supervisor_vessels sv "
+                         "JOIN vessels v ON v.id=sv.vessel_id WHERE sv.supervisor_id=?", (sup_id,))}
+        # 담당선박(supervisor_vessels, TRMT DB 권위) 매칭. 매핑이 비었을 때만 supervisor명 폴백.
+        if allowed:
+            fleet = [v for v in fleet if _vkey(v.get('name')) in allowed]
+        elif sup_name:
+            fleet = [v for v in fleet if v.get('supervisor') == sup_name]
+        else:
+            fleet = []
+        data = {**data, 'fleet': fleet, 'scoped_to': sup_name}
+    return jsonify(data)
+
+
+@app.route('/dashboard/classic')
+@login_required
+def dashboard_classic():
+    """구 대시보드(카드형) — Fleet Map 도입 후 백업 경로."""
+    return _dashboard_classic_render()
 
 
 @app.route('/api/ext/shipwiki/decided')

@@ -1,129 +1,153 @@
 {% extends "base.html" %}
-
 {% block title %}대시보드 · TRMT3{% endblock %}
 
 {% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  .dash-wrap { max-width: 1180px; margin: 0 auto; }
-  .dash-grid {
-    display: grid; gap: 16px;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    margin-top: 6px;
-  }
-  .dash-card {
-    display: flex; flex-direction: column; gap: 10px;
-    background: var(--surface); border: 1px solid var(--border-subtle);
-    border-radius: 14px; padding: 18px 20px;
-    text-decoration: none; color: inherit;
-    transition: box-shadow .12s, transform .12s, border-color .12s;
-  }
-  .dash-card:hover {
-    box-shadow: 0 8px 24px rgba(0,0,0,.10); transform: translateY(-2px);
-    border-color: var(--border);
-  }
-  .dash-card-head {
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 13px; font-weight: 600; color: var(--text-secondary);
-  }
-  .dash-card-head .arrow { color: var(--text-tertiary); font-size: 14px; }
-  .dash-main { display: flex; align-items: baseline; gap: 8px; }
-  .dash-num { font-size: 34px; font-weight: 700; line-height: 1; color: var(--text-primary); }
-  .dash-unit { font-size: 13px; color: var(--text-tertiary); }
-  .dash-sub { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
-  .dash-pill {
-    font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
-    background: var(--surface-2); color: var(--text-secondary);
-  }
-  .dash-pill.red   { background: var(--red-bg, #fde8e8);   color: var(--red, #c0392b); }
-  .dash-pill.amber { background: #fff3e0; color: #b7791f; }
-  .dash-pill.blue  { background: var(--blue-bg);  color: var(--blue); }
-  .dash-empty { font-size: 13px; color: var(--text-tertiary); }
-  .dash-ev { display: flex; flex-direction: column; gap: 7px; margin-top: 2px; }
-  .dash-ev-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .dash-ev-date { color: var(--text-tertiary); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
-  .dash-ev-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--blue); flex: 0 0 auto; }
-  .dash-ev-title { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dash-zero .dash-num { color: var(--text-tertiary); }
-  .dash-section-title { font-size: 13px; color: var(--text-tertiary); margin: 22px 0 2px; }
+  .fm-wrap{margin:-8px -4px 0}
+  .fm-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+  .fm-bar h1{font-size:17px;margin:0;font-weight:700}
+  .fm-legend{display:flex;gap:12px;font-size:11.5px;color:var(--text-secondary)}
+  .fm-legend i{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:4px;vertical-align:middle}
+  .fm-spacer{flex:1}.fm-updated{font-size:11px;color:var(--text-tertiary)}
+  .fm-sup{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
+  .fm-sup .lbl{font-size:11.5px;font-weight:700;color:var(--text-secondary)}
+  .fm-sup button{border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px;cursor:pointer}
+  .fm-sup button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+  .fm-sup button .n{opacity:.7;font-weight:700;margin-left:3px}
+  .fm-stage{position:relative;height:calc(100vh - 200px);min-height:480px;border:1px solid var(--border-subtle);border-radius:14px;overflow:hidden}
+  #fmmap{position:absolute;inset:0}.leaflet-container{background:#cfe0e6;font:inherit}
+  .ship{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  .ship.red{background:var(--red,#c0392b)}.ship.amber{background:#b7791f}.ship.green{background:#3f7a4f}.ship.gray{background:#8a8175}
+  .ship-label{font-size:10px;font-weight:700;color:var(--text-primary);background:rgba(251,248,242,.85);padding:1px 5px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  .port{width:9px;height:9px;border-radius:50%;background:var(--surface);border:2px solid var(--text-secondary)}
+  .port-label{font-size:10px;color:var(--text-secondary);background:rgba(251,248,242,.8);padding:0 4px;border-radius:4px;white-space:nowrap}
+  .fm-panel{position:absolute;top:0;right:0;width:360px;max-width:92%;height:100%;background:var(--surface);border-left:1px solid var(--border);box-shadow:-6px 0 24px rgba(0,0,0,.08);transform:translateX(100%);transition:transform .22s;z-index:1000;display:flex;flex-direction:column}
+  .fm-panel.open{transform:translateX(0)}
+  .fm-ph{padding:15px 18px;border-bottom:1px solid var(--border-subtle)}
+  .fm-ph .row{display:flex;align-items:center;gap:8px}.fm-ph h2{margin:0;font-size:18px;font-weight:700}
+  .fm-ph .sub{font-size:12px;color:var(--text-secondary);margin-top:3px}.fm-ph .badges{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .fm-x{margin-left:auto;border:0;background:transparent;font-size:20px;color:var(--text-tertiary);cursor:pointer}
+  .fm-pb{padding:14px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:13px}
+  .fm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .fm-card{background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:11px;padding:11px}
+  .fm-card .k{font-size:11.5px;color:var(--text-secondary);font-weight:600}.fm-card .v{font-size:25px;font-weight:700;line-height:1.1;margin-top:4px}
+  .fm-card .v small{font-size:12px;color:var(--text-tertiary);font-weight:600}
+  .fm-card.red .v{color:var(--red,#c0392b)}.fm-card.amber .v{color:#b7791f}.fm-card.blue .v{color:var(--blue)}.fm-card.green .v{color:#3f7a4f}
+  .fm-sec{font-size:11.5px;font-weight:700;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.03em;margin-bottom:-4px}
+  .fm-line{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px dashed var(--border-subtle)}.fm-line:last-child{border-bottom:0}
+  .fm-line .lk{color:var(--text-secondary);flex:0 0 104px}.fm-line .lv{color:var(--text-primary);font-weight:600}
+  .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .pill.red{background:var(--red-bg,#fbe4e1);color:var(--red,#c0392b)}.pill.amber{background:#fff3e0;color:#b7791f}
+  .pill.blue{background:var(--blue-bg);color:var(--blue)}.pill.green{background:#e4f0e6;color:#3f7a4f}
+  .pill.gray{background:var(--surface-2);color:var(--text-secondary);border:1px solid var(--border-subtle)}
+  .pill.lade{background:#3a3027;color:#f4efe6}.pill.ball{background:var(--blue-bg);color:var(--blue)}
+  .fm-note{font-size:10.5px;color:var(--text-tertiary);font-style:italic}
+  .fm-eta{font-size:11px;font-weight:600;color:var(--blue);background:var(--blue-bg);padding:2px 7px;border-radius:999px}
+  .fm-btn{display:block;text-align:center;padding:10px;border-radius:9px;background:var(--blue);color:#fff;font-weight:700;font-size:13px;text-decoration:none;margin-top:2px}
+  .fm-empty{padding:40px;text-align:center;color:var(--text-tertiary)}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="dash-wrap">
-  <h1 class="page-title">📊 대시보드</h1>
-  <p style="margin:-6px 0 14px;font-size:13px;color:var(--text-secondary)">
-    {% if scoped %}<b>{{ sup_name }}</b> 감독 담당 선박 기준 집계{% else %}전체 선박 기준 집계{% endif %}
-  </p>
-
-  <div class="dash-grid">
-
-    {# 1) 현안 요약 #}
-    <a class="dash-card {% if not stats.issues_open %}dash-zero{% endif %}" href="{{ url_for('index') }}">
-      <div class="dash-card-head"><span>📋 현안 (Open Issues)</span><span class="arrow">→</span></div>
-      <div class="dash-main"><span class="dash-num">{{ stats.issues_open }}</span><span class="dash-unit">건 진행 중</span></div>
-      <div class="dash-sub">
-        {% if stats.issues_urgent %}<span class="dash-pill red">🚨 Urgent {{ stats.issues_urgent }}</span>{% endif %}
-        {% if stats.issues_coc %}<span class="dash-pill amber">COC &amp; Flag {{ stats.issues_coc }}</span>{% endif %}
-        {% if stats.issues_dd %}<span class="dash-pill blue">Next DD {{ stats.issues_dd }}</span>{% endif %}
-        {% if not (stats.issues_urgent or stats.issues_coc or stats.issues_dd) %}<span class="dash-empty">우선순위 플래그 없음</span>{% endif %}
-      </div>
-    </a>
-
-    {# 4) Class 만기 임박 #}
-    <a class="dash-card {% if not stats.class_due %}dash-zero{% endif %}" href="{{ url_for('class_status_page') }}">
-      <div class="dash-card-head"><span>🔍 Class 만기 임박</span><span class="arrow">→</span></div>
-      <div class="dash-main"><span class="dash-num">{{ stats.class_due }}</span><span class="dash-unit">건 (D-30 이내)</span></div>
-      <div class="dash-sub"><span class="dash-empty">선급/기국 지적 due_date 기준</span></div>
-    </a>
-
-    {# 3) Vetting 미해결 #}
-    <a class="dash-card {% if not stats.vetting_open %}dash-zero{% endif %}" href="{{ url_for('vetting_status') }}">
-      <div class="dash-card-head"><span>🛡 Vetting 미해결</span><span class="arrow">→</span></div>
-      <div class="dash-main"><span class="dash-num">{{ stats.vetting_open }}</span><span class="dash-unit">건 Open observation</span></div>
-      <div class="dash-sub">
-        {% if stats.vetting_pri %}<span class="dash-pill red">⭐ 중요 {{ stats.vetting_pri }}</span>
-        {% else %}<span class="dash-empty">미해결 SIRE 지적 기준</span>{% endif %}
-      </div>
-    </a>
-
-    {% if is_admin %}
-    {# 2) AOR 대기 #}
-    <a class="dash-card {% if not stats.aor_pending %}dash-zero{% endif %}" href="{{ url_for('aor_page') }}">
-      <div class="dash-card-head"><span>🤖 AOR 대기</span><span class="arrow">→</span></div>
-      <div class="dash-main"><span class="dash-num">{{ stats.aor_pending }}</span><span class="dash-unit">건 pending</span></div>
-      <div class="dash-sub">
-        {% if stats.aor_crew_submitted %}<span class="dash-pill blue">Crew dept submitted {{ stats.aor_crew_submitted }}</span>
-        {% else %}<span class="dash-empty">상신 대기 없음</span>{% endif %}
-      </div>
-    </a>
-
-    {# 3) 메일 처리 대기 #}
-    <a class="dash-card {% if not stats.mail_active %}dash-zero{% endif %}" href="{{ url_for('mail_page') }}">
-      <div class="dash-card-head"><span>📬 메일 처리 대기</span><span class="arrow">→</span></div>
-      <div class="dash-main"><span class="dash-num">{{ stats.mail_active }}</span><span class="dash-unit">건 active</span></div>
-      <div class="dash-sub"><span class="dash-empty">이슈 등록 / 회신 대기</span></div>
-    </a>
-    {% endif %}
-
-    {# 5) 다가오는 일정 #}
-    <a class="dash-card" href="{{ url_for('calendar_page') }}" style="grid-column: span 1;">
-      <div class="dash-card-head"><span>📅 다가오는 일정 (7일)</span><span class="arrow">→</span></div>
-      {% if events %}
-      <div class="dash-ev">
-        {% for e in events %}
-        <div class="dash-ev-row">
-          <span class="dash-ev-date">{{ e['start_date'][5:] }}</span>
-          <span class="dash-ev-dot"></span>
-          <span class="dash-ev-title">{{ e['title'] }}{% if e['category'] %} · {{ e['category'] }}{% endif %}</span>
-        </div>
-        {% endfor %}
-      </div>
-      {% else %}
-      <div class="dash-main"><span class="dash-num">0</span><span class="dash-unit">건</span></div>
-      <div class="dash-empty">7일 이내 예정 일정 없음</div>
-      {% endif %}
-    </a>
-
+<div class="fm-wrap">
+  <div class="fm-bar">
+    <h1>🗺 Fleet Map</h1>
+    <div class="fm-legend">
+      <span><i style="background:#c0392b"></i>COC/Flag</span><span><i style="background:#b7791f"></i>Urgent</span>
+      <span><i style="background:#3f7a4f"></i>이슈없음</span><span><i style="background:#8a8175"></i>일반이슈</span>
+    </div>
+    <div class="fm-spacer"></div>
+    <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">구 대시보드 →</a>
+    <span class="fm-updated" id="fmUpdated">로딩…</span>
+  </div>
+  <div class="fm-sup" id="fmSup"><span class="lbl">감독 필터</span></div>
+  <div class="fm-stage">
+    <div id="fmmap"></div>
+    <div class="fm-panel" id="fmPanel">
+      <div class="fm-ph"><div class="row"><div><h2 id="fmName">—</h2><div class="sub" id="fmSubt">—</div></div>
+        <button class="fm-x" onclick="fmClose()">×</button></div><div class="badges" id="fmBadges"></div></div>
+      <div class="fm-pb" id="fmBody"></div>
+    </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+  const esc=s=>(s==null?'':String(s)).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true}).setView([25,75],3);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    {attribution:'© CARTO © OSM',subdomains:'abcd',maxZoom:19}).addTo(map);
+  let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[];
+  function icon(v){return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+'">🚢</div>'});}
+
+  fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
+    FLEET=d.fleet||[];
+    document.getElementById('fmUpdated').textContent= d.empty ? '데이터 없음 — 맥 스케줄러 첫 동기화 대기'
+      : ('⟳ 온디맨드+맥 스케줄러 · 선위 '+(d.generated_at||'')+' · TRMT '+String(d.trmt_generated_at||'').slice(0,16));
+    if(!FLEET.length){document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
+    FLEET.forEach(v=>{
+      const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
+      const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(v.name).setLatLng([v.lat,v.lng]);tt.addTo(map);
+      m.on('click',()=>openV(v));markers.push({v,m,tt});
+    });
+    const bar=document.getElementById('fmSup');
+    const mk=(label,key,cnt,on)=>{const b=document.createElement('button');b.innerHTML=esc(label)+'<span class="n">'+cnt+'</span>';if(on)b.classList.add('on');b.onclick=()=>filt(key,b);bar.appendChild(b);return b;};
+    mk('전체','__all',FLEET.length,true);
+    (d.supervisors||[]).forEach(s=>mk(s,s,FLEET.filter(v=>v.supervisor===s).length,false));
+  }).catch(()=>{document.getElementById('fmUpdated').textContent='데이터 로드 실패';});
+
+  function filt(key,btn){
+    document.querySelectorAll('#fmSup button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+    markers.forEach(({v,m,tt})=>{const show=key==='__all'||v.supervisor===key;
+      if(show){m.addTo(map);tt.addTo(map);}else{map.removeLayer(m);map.removeLayer(tt);}});fmClose();
+  }
+  function openV(v){
+    document.getElementById('fmName').textContent=v.name;
+    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · 감독 '+esc(v.supervisor||'-')+' · '+v.lat.toFixed(1)+'°, '+v.lng.toFixed(1)+'°';
+    const bl=v.bl==='L'?'lade':(v.bl==='B'?'ball':'gray');
+    const blTxt=v.bl==='L'?'🛢 Laden':(v.bl==='B'?'💧 Ballast':'B/L —');
+    document.getElementById('fmBadges').innerHTML='<span class="pill '+bl+'">'+blTxt+'</span>'+
+      '<span class="pill '+(v.color==='green'?'green':v.color)+'">'+(v.color==='green'?'✓ 이슈없음':(v.coc?'COC/Flag':(v.urgent?'Urgent':'이슈')))+'</span>'+
+      (v.status?'<span class="pill gray">'+esc(v.status)+'</span>':'');
+    const csTxt=(v.cs_pct!=null)?v.cs_pct:'—';
+    const vet=(v.vetting_open!=null)?'<span class="pill '+(v.vetting_open>2?'red':(v.vetting_open?'amber':'green'))+'">Open '+v.vetting_open+'</span>':'<span class="fm-note">미연동</span>';
+    const cargo=v.cargo_op_applicable?('<div class="fm-sec">Cargo Operation (VLCC/LR · SVMS noon)</div><div class="fm-line"><span class="lk">상태</span><span class="lv">'+(v.cargo_op?esc(v.cargo_op):'<span class="fm-note">—</span>')+'</span></div>'):'';
+    document.getElementById('fmBody').innerHTML=
+      '<div class="fm-grid">'+
+      '<div class="fm-card '+(v.issues_open?'red':'green')+'"><div class="k">📋 현재 이슈</div><div class="v">'+v.issues_open+'<small> 건</small></div></div>'+
+      '<div class="fm-card '+(v.coc?'red':'green')+'"><div class="k">⚓ COC/Flag</div><div class="v">'+v.coc+'<small> 건</small></div></div>'+
+      '<div class="fm-card '+(v.urgent?'amber':'green')+'"><div class="k">🚨 Urgent</div><div class="v">'+v.urgent+'<small> 건</small></div></div>'+
+      '<div class="fm-card '+((v.cs_pct!=null&&v.cs_pct<100)?'blue':'green')+'"><div class="k">🔧 Cond.Survey</div><div class="v">'+csTxt+'<small>'+(v.cs_pct!=null?'%':'')+'</small></div></div></div>'+
+      '<div class="fm-sec">운항 상태 (SVMS noon)</div>'+
+      '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
+      '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
+      cargo+
+      '<div class="fm-sec">Vetting</div><div class="fm-line"><span class="lk">현황</span><span class="lv">'+vet+'</span></div>'+
+      '<div class="fm-line"><span class="lk">최근/Plan</span><span class="lv">'+esc(v.vetting_plan||'—')+'</span></div>'+
+      '<div class="fm-sec">항로 (운항보고서 Schedule)</div>'+
+      '<div class="fm-line"><span class="lk">In Port</span><span class="lv">'+esc((v.prev_port&&v.prev_port.name)||'—')+'</span></div>'+
+      '<div class="fm-line"><span class="lk">Next Port</span><span class="lv">'+esc((v.next_port&&v.next_port.name)||'—')+(v.eta?' <span class="fm-eta">ETA '+esc(v.eta)+'</span>':'')+'</span></div>';
+    document.getElementById('fmPanel').classList.add('open');drawRoute(v);
+  }
+  window.fmClose=function(){document.getElementById('fmPanel').classList.remove('open');clearRoute();};
+  function portDot(xy,label){const pm=L.marker(xy,{icon:L.divIcon({className:'',html:'<div class="port"></div>',iconSize:[9,9],iconAnchor:[5,5]})}).addTo(map);
+    const ptt=L.tooltip({permanent:true,direction:'bottom',offset:[0,4],className:'port-label'}).setContent(esc(label)).setLatLng(xy);ptt.addTo(map);portMarkers.push(pm,ptt);}
+  function clearRoute(){[routeLayer,trackLayer].forEach(l=>l&&map.removeLayer(l));routeLayer=trackLayer=null;portMarkers.forEach(p=>map.removeLayer(p));portMarkers=[];if(window._fmA)clearInterval(window._fmA);}
+  function drawRoute(v){
+    clearRoute();const all=[[v.lat,v.lng]];
+    if(v.track&&v.track.length>1){trackLayer=L.polyline(v.track,{color:'#6b6256',weight:2.5,opacity:.8}).addTo(map);all.push(...v.track);}
+    if(v.prev_port&&v.prev_port.xy){portDot(v.prev_port.xy,(v.prev_port.name||'In Port')+' · 출항');all.push(v.prev_port.xy);}
+    if(v.next_port&&v.next_port.xy){portDot(v.next_port.xy,(v.next_port.name||'Next Port')+' · 도착예정');all.push(v.next_port.xy);}
+    const legs=(v.route_legs&&v.route_legs.length)?v.route_legs:[];
+    if(legs.length){routeLayer=L.polyline(legs,{color:'#2f6f9f',weight:3,opacity:.9,dashArray:'2 9'}).addTo(map);
+      let off=0;window._fmA=setInterval(()=>{off=(off-2)%22;routeLayer.setStyle({dashOffset:String(off)});},60);legs.forEach(l=>all.push(...l));}
+    if(all.length>1)map.fitBounds(L.latLngBounds(all).pad(0.3),{paddingTopRight:[380,30]});
+  }
+  setTimeout(()=>map.invalidateSize(),200);
+})();
+</script>
 {% endblock %}
