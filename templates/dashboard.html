@@ -80,7 +80,9 @@
 <script>
 (function(){
   const esc=s=>(s==null?'':String(s)).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true}).setView([25,75],3);
+  // minZoom=3: 현재 세계뷰가 최대 축소(더 못 줄임). maxZoom=10: 과도한 확대 방지. 스크롤로만 줌.
+  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:3,maxZoom:10,
+    maxBounds:[[-78,-205],[88,205]],maxBoundsViscosity:0.7}).setView([25,75],3);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     {attribution:'© CARTO © OSM',subdomains:'abcd',maxZoom:19}).addTo(map);
   let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[];
@@ -153,8 +155,8 @@
     if(v.next_port&&v.next_port.xy){portDot(v.next_port.xy,(v.next_port.name||'Next Port')+' · 도착예정');all.push(v.next_port.xy);}
     const legs=(v.route_legs&&v.route_legs.length)?v.route_legs:[];
     if(legs.length){routeLayer=L.polyline(legs,{color:'#2f6f9f',weight:3,opacity:.9,dashArray:'2 9'}).addTo(map);
-      let off=0;window._fmA=setInterval(()=>{off=(off-2)%22;routeLayer.setStyle({dashOffset:String(off)});},60);legs.forEach(l=>all.push(...l));}
-    if(all.length>1)map.fitBounds(L.latLngBounds(all).pad(0.3),{paddingTopRight:[380,30]});
+      let off=0;window._fmA=setInterval(()=>{off=(off-2)%22;routeLayer.setStyle({dashOffset:String(off)});},60);}
+    // 클릭 시 자동 줌/이동 없음 — 줌은 스크롤로만 (손유석 요청)
   }
   setTimeout(()=>map.invalidateSize(),200);
 })();
