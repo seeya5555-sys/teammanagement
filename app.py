@@ -8422,6 +8422,27 @@ def api_fleet_map_data():
         if s:
             v['supervisor'] = s
     data['supervisors'] = sorted({v['supervisor'] for v in fleet if v.get('supervisor')})
+    # SIRE 검사일 +3주(21일) 초과인데 Observation All-close 안 됨(open>0) → 아이콘 노란 펄스
+    overdue_vkeys = {
+        _vkey(r['vname']) for r in query("""
+            SELECT v2.name AS vname
+              FROM vettings vt
+              JOIN vessels v2 ON v2.id = vt.vessel_id
+              LEFT JOIN (
+                  SELECT vetting_id,
+                         SUM(CASE WHEN status='Closed' THEN 1 ELSE 0 END) AS closed_n,
+                         COUNT(*) AS total_n
+                    FROM vt_findings GROUP BY vetting_id
+              ) fc ON fc.vetting_id = vt.id
+             WHERE vt.inspection_date IS NOT NULL AND vt.inspection_date != ''
+               AND date(vt.inspection_date, '+21 days') < date('now','localtime')
+               AND COALESCE(vt.manual_open_count,
+                            MAX(0, COALESCE(vt.manual_observation_count, COALESCE(fc.total_n,0))
+                                   - COALESCE(vt.manual_close_count, COALESCE(fc.closed_n,0)))) > 0
+        """)
+    }
+    for v in fleet:
+        v['sire_obs_overdue'] = _vkey(v.get('name')) in overdue_vkeys
     is_admin = (session.get('role') == 'admin')
     sup_id = session.get('supervisor_id')
     if sup_id and not is_admin:

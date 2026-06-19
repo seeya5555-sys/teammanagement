@@ -19,7 +19,9 @@
   .fm-sup button .n{opacity:.7;font-weight:700;margin-left:3px}
   .fm-stage{position:relative;height:calc(100vh - 200px);min-height:480px;border:1px solid var(--border-subtle);border-radius:14px;overflow:hidden}
   #fmmap{position:absolute;inset:0}.leaflet-container{background:#cfe0e6;font:inherit}
-  .ship{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  .ship{position:relative;display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  .sire-flag{position:absolute;top:-4px;right:-4px;width:11px;height:11px;border-radius:50%;background:#eab308;border:1.5px solid #fff;animation:fmPulseY 1.3s infinite}
+  @keyframes fmPulseY{0%{box-shadow:0 0 0 0 rgba(234,179,8,.85)}70%{box-shadow:0 0 0 9px rgba(234,179,8,0)}100%{box-shadow:0 0 0 0 rgba(234,179,8,0)}}
   .ship.red{background:var(--red,#c0392b)}.ship.amber{background:#b7791f}.ship.green{background:#3f7a4f}.ship.gray{background:#8a8175}
   /* Class/Flag 만기 임박(soon)·초과(overdue) 펄스 링 */
   .ship.due-overdue{border-color:#c0392b;animation:fmPulseR 1.1s infinite}
@@ -102,7 +104,8 @@
   let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[],curSup='__all',fmQ='';
   function icon(v){
     const due=v.cls_due_state==='overdue'?' due-overdue':(v.cls_due_state==='soon'?' due-soon':'');
-    return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'">🚢</div>'});
+    const sire=v.sire_obs_overdue?'<span class="sire-flag" title="SIRE 검사일 +3주 초과 · Observation 미완료"></span>':'';
+    return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'">🚢'+sire+'</div>'});
   }
 
   fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
@@ -159,7 +162,7 @@
     // 4번째 카드: VLCC/LR=SIRE(Vetting), 그외=Condition Survey 총 open
     const isSire=v.cargo_op_applicable;
     const f4=isSire
-      ? {href:'/vetting-status?vessel='+ev, k:'🛡 SIRE', val:(v.sire_open!=null?v.sire_open:'—'), unit:(v.sire_open!=null?' open':''), cls:(v.sire_open?'amber':'green')}
+      ? {href:'/vetting-status?vessel='+ev, k:'🛡 SIRE', val:(v.sire_open!=null?v.sire_open:'—'), unit:(v.sire_obs_overdue?' open · 3주↑':(v.sire_open!=null?' open':'')), cls:(v.sire_obs_overdue?'red':(v.sire_open?'amber':'green'))}
       : {href:'/condition-survey?vessel='+ev, k:'🔧 Cond.Survey', val:(v.cs_open!=null?v.cs_open:'—'), unit:' open', cls:(v.cs_open?'blue':'green')};
     const card=(href,cls,k,val,unit)=>'<a class="fm-card '+cls+'" href="'+href+'"><div class="k">'+k+'</div><div class="v">'+val+'<small>'+unit+'</small></div></a>';
     // Class/Flag 만기 경고 배너(overdue/임박)
