@@ -8885,6 +8885,47 @@ def api_class_status_export(cs_id):
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+@app.route('/api/class-status/export-all')
+@login_required
+def api_class_status_export_all():
+    """전체 선박 Class Status 엑셀 (선박별 COC/기국 지적 전부, 1시트). 감독 필터 지원."""
+    from flask import send_file
+    sup_id = request.args.get('supervisor_id', type=int)
+    snaps = query('SELECT * FROM class_status WHERE vessel_id IS NOT NULL')
+    name_by_v = {r['id']: r['name'] for r in query('SELECT id, name FROM vessels')}
+    allowed = None
+    if sup_id:
+        allowed = {r['vessel_id'] for r in
+                   query('SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?', (sup_id,))}
+    # 선박명 정렬
+    snaps = sorted(snaps, key=lambda s: (name_by_v.get(s['vessel_id']) or s['vessel_name_raw'] or '').lower())
+    cat_ko = {'COC': '선급지적(COC)', 'STATUTORY': '기국(Statutory)'}
+    rows = []
+    for s in snaps:
+        if allowed is not None and s['vessel_id'] not in allowed:
+            continue
+        vname = name_by_v.get(s['vessel_id']) or s['vessel_name_raw'] or ''
+        items = query('SELECT * FROM class_status_items WHERE cs_id=? ORDER BY category, no', (s['id'],))
+        if not items:
+            rows.append([vname, s['class_society'] or '', '', '', '지적 없음', '', '', ''])
+            continue
+        for it in items:
+            rows.append([
+                vname, s['class_society'] or '',
+                cat_ko.get(it['category'], it['category']),
+                it['issued_date'] or '', it['description'] or '',
+                it['due_date'] or '', it['remark'] or '', it['importance'] or '',
+            ])
+    headers = ['Vessel', 'Class', 'Category', 'Issued', 'Description', 'Due', '한글 요약', 'Urgent']
+    today = query("SELECT date('now','localtime') d", one=True)['d']
+    bio = _findings_workbook(
+        '전체 선박 Class Status', f'생성 {today}', headers, rows,
+        wrap_cols={5, 7}, widths=[20, 7, 16, 13, 58, 13, 38, 8])
+    return send_file(bio, as_attachment=True,
+                     download_name=f'ClassStatus_All_{today}.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 # ═════════════════════════════════════════════════════════════════
 #  CLI entry
 # ═════════════════════════════════════════════════════════════════

@@ -118,6 +118,9 @@ function render() {
 
   const vessels = (S.data.vessels || []).filter(
     g => matchSearch(g.snapshot, g.vessel.name, q));
+  // 지적(COC/기국) 있는 선박을 위로 — 건수 많은 순, 그다음 선명순
+  const _cnt = g => (g.snapshot.coc || []).length + (g.snapshot.statutory || []).length;
+  vessels.sort((a, b) => (_cnt(b) - _cnt(a)) || (a.vessel.name || '').localeCompare(b.vessel.name || ''));
 
   let totCoc = 0, totStat = 0;
   vessels.forEach(g => { totCoc += (g.snapshot.coc || []).length; totStat += (g.snapshot.statutory || []).length; });
