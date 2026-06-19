@@ -85,9 +85,9 @@
 <script>
 (function(){
   const esc=s=>(s==null?'':String(s)).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-  // minZoom=3: 현재 세계뷰가 최대 축소(더 못 줄임). maxZoom=10: 과도한 확대 방지. 스크롤로만 줌.
-  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:3,maxZoom:10,
-    maxBounds:[[-78,-205],[88,205]],maxBoundsViscosity:0.7}).setView([25,75],3);
+  // minZoom=2: 전세계(미국·남미 포함)가 최대 축소뷰. maxZoom=10. 줌은 스크롤로만.
+  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:2,maxZoom:10,
+    maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],2);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     {attribution:'© CARTO © OSM',subdomains:'abcd',maxZoom:19}).addTo(map);
   let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[],curSup='__all',fmQ='';
