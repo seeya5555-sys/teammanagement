@@ -171,6 +171,16 @@ async function loadVessels(supId) {
   const url = supId && supId !== 'all' ? `/api/vessels?supervisor_id=${supId}` : '/api/vessels';
   S.vessels = await api(url);
 }
+// Daily 사이드바 커스텀 선박순서(유저별, 서버저장). [] = 기본정렬(디펙트순).
+async function loadVesselOrder() {
+  try { const r = await api('/api/vessel-order'); S.vesselOrder = (r && r.order) || []; }
+  catch (_) { S.vesselOrder = []; }
+}
+async function saveVesselOrder(order) {
+  S.vesselOrder = order;
+  try { await api('/api/vessel-order', { method: 'POST', body: JSON.stringify({ order }) }); }
+  catch (e) { console.warn('vessel-order save fail', e); }
+}
 async function loadIssues() {
   const p = new URLSearchParams();
   if (S.activeTab !== 'all') p.set('supervisor_id', S.activeTab);
@@ -639,8 +649,12 @@ function sidebarGroups() {
     byType.get(key).push(g);
   }
   const types = [...byType.keys()].sort((a, b) => (vtypeRank(a) - vtypeRank(b)) || a.localeCompare(b));
+  // 커스텀 순서(유저 드래그) 우선 — order에 있는 선박은 그 순서대로, 없으면 기본정렬(디펙트순) 뒤에.
+  const ord = S.vesselOrder || [];
+  const oidx = id => { const i = ord.indexOf(Number(id)); return i < 0 ? 1e9 : i; };
   for (const t of types) {
     byType.get(t).sort((a, b) =>
+      (oidx(a.id) - oidx(b.id)) ||
       (b.risk - a.risk) || (b.active - a.active) ||
       (b.latest < a.latest ? -1 : b.latest > a.latest ? 1 : 0) || a.name.localeCompare(b.name));
   }
@@ -728,9 +742,15 @@ function renderVesselSidebar() {
   const groups = sidebarGroups();
   const totV = groups.reduce((a, g) => a + g.vessels.length, 0);
   const totC = groups.reduce((a, g) => a + g.vessels.reduce((x, v) => x + vBadgeCount(v), 0), 0);
-  sb.append(el('div', { class: 'vsb-head' },
+  const head = el('div', { class: 'vsb-head' },
     el('span', { class: 'vsb-t' }, '선박'),
-    el('span', { class: 'vsb-n' }, `${totV}척 · ${subtabCountLabel()} ${totC}`)));
+    el('span', { class: 'vsb-n' }, `${totV}척 · ${subtabCountLabel()} ${totC}`));
+  if ((S.vesselOrder || []).length) {
+    const reset = el('button', { class: 'vsb-reset', title: '커스텀 순서 해제 → 기본(디펙트순)' }, '기본순');
+    reset.addEventListener('click', () => { saveVesselOrder([]).then(() => fillVesselList()); });
+    head.append(reset);
+  }
+  sb.append(head);
   // 검색 input은 한 번만 생성(재생성 금지 → 타이핑 중 포커스 유지). 입력 시 리스트만 갱신.
   const search = el('input', { class: 'vsb-search', type: 'text', placeholder: '선박 검색…' });
   search.value = S._vsbq || '';
@@ -748,22 +768,43 @@ function fillVesselList() {
   const groups = sidebarGroups();
   const q = (S._vsbq || '').trim().toLowerCase();
   let shown = 0;
+  const dragOff = !!q;   // 검색 중엔 드래그 비활성(부분목록 순서 저장 방지)
+  const groupBoxes = [];
   for (const grp of groups) {
     const vis = grp.vessels.filter(v => !q || v.name.toLowerCase().includes(q));
     if (!vis.length) continue;
     list.append(el('div', { class: 'vsb-group' }, el('span', {}, grp.type), el('span', { class: 'vsb-gc' }, `${vis.length}척`)));
+    const box = el('div', { class: 'vsb-group-items' });
     for (const v of vis) {
       shown++;
       const cnt = vBadgeCount(v);
       const badge = el('span', { class: 'vsb-badge' + (v.risk ? ' risk' : '') + (cnt === 0 ? ' zero' : '') },
         v.risk ? el('span', { class: 'vsb-flag' }, '⚑') : null, String(cnt));
-      const item = el('div', { class: 'vsb-item' + (String(S.selectedVessel) === String(v.id) ? ' active' : '') },
-        el('span', { class: 'vsb-nm' }, v.name), badge);
-      item.addEventListener('click', () => selectVessel(v.id));
-      list.append(item);
+      const handle = el('span', { class: 'vsb-drag', title: '드래그로 순서 변경' }, '≡');
+      const item = el('div', {
+        class: 'vsb-item' + (String(S.selectedVessel) === String(v.id) ? ' active' : ''),
+        'data-vid': String(v.id),
+      }, handle, el('span', { class: 'vsb-nm' }, v.name), badge);
+      item.addEventListener('click', (e) => { if (!e.target.closest('.vsb-drag')) selectVessel(v.id); });
+      box.append(item);
+    }
+    list.append(box);
+    if (!dragOff) groupBoxes.push(box);
+  }
+  if (!shown) { list.append(el('div', { class: 'vsb-empty' }, q ? '검색 결과 없음' : '표시할 선박 없음')); return; }
+  // SortableJS 드래그앤드롭(그룹 내에서만). 끝나면 전체 표시순을 서버에 저장.
+  if (window.Sortable && !dragOff) {
+    for (const box of groupBoxes) {
+      Sortable.create(box, {
+        handle: '.vsb-drag', animation: 150, delay: 120, delayOnTouchOnly: true,
+        onEnd: () => {
+          const order = [...document.querySelectorAll('#vsb-list .vsb-item[data-vid]')]
+            .map(e => Number(e.getAttribute('data-vid')));
+          saveVesselOrder(order).then(() => fillVesselList());
+        },
+      });
     }
   }
-  if (!shown) list.append(el('div', { class: 'vsb-empty' }, q ? '검색 결과 없음' : '표시할 선박 없음'));
 }
 
 function renderVmainHead() {
@@ -3005,6 +3046,7 @@ if (document.getElementById('btn-new-issue')) (async function init() {
       try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
     }
     await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
+    await loadVesselOrder();
     renderTabs();
     renderVesselFilter();
     renderTabContext();

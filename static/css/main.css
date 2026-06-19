@@ -4646,6 +4646,14 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 .vsb-badge { min-width: 22px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--surface-3); color: var(--text-secondary); font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 3px; justify-content: center; }
 .vsb-badge.risk { background: var(--red-bg); color: var(--red); }
 .vsb-badge.zero { background: transparent; color: var(--text-tertiary); }
+/* 드래그앤드롭 순서 편집 */
+.vsb-drag { flex: 0 0 auto; color: var(--text-tertiary); font-size: 13px; line-height: 1; cursor: grab; padding: 0 2px; user-select: none; opacity: .55; }
+.vsb-drag:hover { opacity: 1; color: var(--text-secondary); }
+.vsb-item:hover .vsb-drag { opacity: .9; }
+.vsb-item.sortable-chosen { background: var(--blue-bg); }
+.vsb-item.sortable-ghost { opacity: .4; }
+.vsb-reset { border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 7px; cursor: pointer; }
+.vsb-reset:hover { background: var(--surface-2); color: var(--text-primary); }
 .vsb-flag { color: var(--red-strong); font-size: 10px; }
 .vsb-empty { padding: 18px; text-align: center; color: var(--text-tertiary); font-size: 12px; }
 .daily-main { min-width: 0; }

@@ -314,6 +314,15 @@ def init_db(drop=False):
             )
         """)
 
+        # Daily 사이드바 선박 커스텀 순서 (유저별, 드래그앤드롭 저장)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_vessel_order (
+                user_id     INTEGER PRIMARY KEY,
+                order_json  TEXT NOT NULL DEFAULT '[]',
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+
         # AOR(Technical) 검토→상신 draft 큐 (prep 엔진이 ingest, 사람이 /aor 탭서 승인→맥이 SVMS 상신)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS aor_draft (
@@ -939,6 +948,30 @@ def api_vessels():
     else:
         rows = query('SELECT * FROM vessels WHERE active=1 ORDER BY name')
     return jsonify([dict(r) for r in rows])
+
+
+# Daily 사이드바 선박 커스텀 순서 (유저별, 드래그앤드롭). 빈 배열 = 기본정렬(디펙트순).
+@app.route('/api/vessel-order', methods=['GET', 'POST'])
+@login_required
+def api_vessel_order():
+    uid = session.get('user_id')
+    if request.method == 'POST':
+        d = request.get_json(silent=True) or {}
+        order = d.get('order')
+        if not isinstance(order, list) or len(order) > 500:
+            return jsonify({'ok': False, 'error': 'invalid order'}), 400
+        # 정수 vessel id만 허용
+        clean = [int(x) for x in order if str(x).lstrip('-').isdigit()]
+        execute("INSERT OR REPLACE INTO user_vessel_order (user_id, order_json, updated_at) "
+                "VALUES (?, ?, datetime('now','localtime'))",
+                (uid, json.dumps(clean)))
+        return jsonify({'ok': True, 'count': len(clean)})
+    row = query("SELECT order_json FROM user_vessel_order WHERE user_id=?", (uid,), one=True)
+    try:
+        order = json.loads(row['order_json']) if row else []
+    except (ValueError, TypeError):
+        order = []
+    return jsonify({'order': order})
 
 
 # 선박별 활성(Open + InProgress) 이슈 수 — Daily 필터 드롭다운용
