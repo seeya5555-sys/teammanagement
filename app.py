@@ -8926,7 +8926,8 @@ def api_class_status_export(cs_id):
 @app.route('/api/class-status/<int:cs_id>/file')
 @login_required
 def api_class_status_file(cs_id):
-    """선박별 보관된 최신 Class Status 원본 파일 다운로드."""
+    """선박별 보관된 최신 Class Status 원본 파일. 기본 inline(브라우저 미리보기), ?dl=1 이면 다운로드."""
+    import mimetypes
     from flask import send_file
     snap = query('SELECT source_path, source_filename FROM class_status WHERE id=?', (cs_id,), one=True)
     if not snap or not snap['source_path']:
@@ -8934,8 +8935,10 @@ def api_class_status_file(cs_id):
     full = os.path.join(BASE_DIR, snap['source_path'])
     if not os.path.isfile(full):
         abort(404)
-    return send_file(full, as_attachment=True,
-                     download_name=snap['source_filename'] or os.path.basename(full))
+    dl = request.args.get('dl') == '1'
+    name = snap['source_filename'] or os.path.basename(full)
+    mime = mimetypes.guess_type(name)[0] or mimetypes.guess_type(full)[0] or 'application/octet-stream'
+    return send_file(full, mimetype=mime, as_attachment=dl, download_name=name)
 
 
 @app.route('/api/class-status/export-all')

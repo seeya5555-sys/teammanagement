@@ -167,7 +167,8 @@ function vesselCard(g) {
       el('span', {}, '발행 ' + (snap.report_date || '-')),
       snap.has_file
         ? el('a', { class: 'cls-src cls-src-dl', href: `/api/class-status/${snap.id}/file`,
-                    title: '원본 파일 다운로드: ' + (snap.source_filename || '') }, '📎 ' + (snap.source_filename || '원본'))
+                    target: '_blank', rel: 'noopener',
+                    title: '원본 미리보기: ' + (snap.source_filename || '') }, '👁 ' + (snap.source_filename || '원본 보기'))
         : (snap.source_filename ? el('span', { class: 'cls-src', title: snap.source_filename }, snap.source_filename) : ''),
       el('span', { class: 'cls-counts' }, `선급지적 ${coc.length} · 기국 ${stat.length}`)),
     el('div', { class: 'cls-actions' },
