@@ -353,7 +353,13 @@ function vesselSummary(item) {
     `Last: ${dateLabel} · ${compLabel}`));
   const totalOpen = vts.reduce((sum, v) => sum + (v.open_count || 0), 0);
   if (totalOpen > 0) {
-    wrap.append(el('span', { class: 'vt-summary-open' }, `Open ${totalOpen}건`));
+    const anyOverdue = vts.some(vtObsOverdue);
+    const badge = el('span', {
+      class: 'vt-summary-open' + (anyOverdue ? ' vt-summary-overdue' : ''),
+      title: anyOverdue ? 'SIRE 검사일 후 3주 경과한 미완료 Observation 있음' : '',
+    }, `Open ${totalOpen}건`);
+    if (anyOverdue) badge.prepend(el('span', { class: 'vt-obs-dot' }));
+    wrap.append(badge);
   } else {
     wrap.append(el('span', { class: 'vt-summary-allclosed' }, '모두 완료 ✓'));
   }
@@ -371,6 +377,20 @@ function toggleVetting(vtid) {
   else S.expandedVettings.add(vtid);
   saveVtExpanded();
   render();
+}
+
+// SIRE 검사일 후 3주(21일)가 지났는데도 해당 검사의 Observation을
+// All-close 하지 못한(open_count > 0) 경우 true → 노란 펄스 표시 대상
+function vtObsOverdue(vt) {
+  if (!vt || !vt.inspection_date) return false;
+  if ((vt.open_count || 0) <= 0) return false;
+  const insp = new Date(vt.inspection_date + 'T00:00:00');
+  if (isNaN(insp.getTime())) return false;
+  const due = new Date(insp);
+  due.setDate(due.getDate() + 21);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today > due;
 }
 
 // ───────────── Vetting Row ─────────────
@@ -404,7 +424,18 @@ function vettingRow(item, vt) {
   tr.append(vtEditCellSelect(vt, 'valid', ['Next Plan', 'Last Result']));
 
   tr.append(countCell(vt, 'manual_observation_count', vt.observation_count, vt.observation_manual));
-  tr.append(countCell(vt, 'manual_open_count',        vt.open_count,        vt.open_manual,  'cs-cnt-open'));
+  const openTd = countCell(vt, 'manual_open_count', vt.open_count, vt.open_manual, 'cs-cnt-open');
+  if (vtObsOverdue(vt)) {
+    tr.classList.add('vt-obs-overdue');
+    tr.title = 'SIRE 검사일 후 3주 경과 · Observation 미완료 (All-close 안 됨)';
+    openTd.classList.add('vt-obs-overdue-cell');
+    const disp = openTd.querySelector('.cs-cell-display');
+    if (disp) disp.prepend(el('span', {
+      class: 'vt-obs-dot',
+      title: 'SIRE 검사일 +3주 초과 · Observation 미완료',
+    }));
+  }
+  tr.append(openTd);
   tr.append(countCell(vt, 'manual_close_count',       vt.close_count,       vt.close_manual, 'cs-cnt-close'));
 
   const actions = el('td', { class: 'cs-actions' });

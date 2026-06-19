@@ -2360,6 +2360,33 @@ col.c-edit   { width: 156px; }
   font-size: 11px;
 }
 
+/* SIRE 검사일 후 3주 경과 · Observation All-close 안 됨 → 노란 펄스 */
+@keyframes vt-obs-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.70); opacity: 1; }
+  70%  { box-shadow: 0 0 0 6px rgba(234, 179, 8, 0); opacity: 0.85; }
+  100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); opacity: 1; }
+}
+.vt-obs-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #eab308;
+  vertical-align: middle;
+  animation: vt-obs-pulse 1.3s ease-in-out infinite;
+}
+.vt-obs-overdue-cell {
+  background: rgba(250, 204, 21, 0.16);
+  border-radius: 6px;
+  font-weight: 800;
+}
+.vt-obs-overdue-cell .cs-cell-display { color: #a16207; }
+.vt-summary-overdue {
+  background: rgba(250, 204, 21, 0.20) !important;
+  color: #a16207 !important;
+}
+
 /* 새로 추가된 Vetting 행 플래시 효과 */
 .vt-vetting-row.vt-row-flash td {
   animation: vt-flash 1.5s ease-out;
