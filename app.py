@@ -8538,7 +8538,11 @@ def _class_status_prompt():
         "■ 각 항목 필드:\n"
         "- issued_date: 발행/기재일 (가능하면 YYYY-MM-DD, 없으면 빈 문자열)\n"
         "- description: 지적/기국 본문을 원문 그대로 복사(영문이면 영문 그대로). 요약·변형 금지.\n"
-        "- due_date: 마감/처리기한 (Due/Limit date, 가능하면 YYYY-MM-DD, 없으면 빈 문자열)\n"
+        "- due_date: 마감/처리기한 (Due/Limit date, 가능하면 YYYY-MM-DD, 없으면 빈 문자열). "
+        "⚠️ **연장(postpone/extend)된 경우 반드시 최종(연장된) 날짜를 due_date로 한다.** "
+        "보고서에 원래 기한과 연장 기한이 함께 있거나(예: 'Original due 2025-04-26, postponed to 2026-04-26', "
+        "'Limit date revised/extended to …', 'New limit date …', 'Postponed until …'), "
+        "여러 날짜가 보이면 **가장 나중(최신) 유효 기한**을 due_date로 쓴다. 원래(이른) 날짜를 쓰지 마라.\n"
         "- remark: description의 핵심을 한국어 1~2문장으로 간결히 요약(전체 직역 금지). "
         "문장은 '~함/~됨/~음' 음슴체(개조식). 기술 명칭·장비명·약어·인증명(예: COC, SEEMP, IHM, "
         "BNWAS, Load Line, Plimsoll Mark, EGCS, BWTS)은 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
@@ -8654,31 +8658,48 @@ def _cls_snapshot_dict(cs_row, items_by_cs):
         'class_society':   cs_row['class_society'],
         'report_date':     cs_row['report_date'],
         'source_filename': cs_row['source_filename'],
+        'has_file':        bool(cs_row['source_path']) if 'source_path' in cs_row.keys() else False,
         'updated_at':      cs_row['updated_at'],
         'coc':             coc,
         'statutory':       stat,
     }
 
 
-def _cls_save_snapshot(vessel_id, vessel_name_raw, data, filename):
-    """선박 스냅샷 교체(최신만 유지). vessel_id None 이면 미매칭으로 저장
-    (같은 정규화 선명의 기존 미매칭은 제거 후 삽입)."""
+def _cls_delete_file(path):
+    """보관 파일 삭제(교체 시 이전 파일 자동삭제). 경로가 업로드 폴더 내일 때만."""
+    if not path:
+        return
+    try:
+        full = os.path.join(BASE_DIR, path) if not os.path.isabs(path) else path
+        if os.path.commonpath([os.path.realpath(full), os.path.realpath(UPLOAD_DIR)]) == os.path.realpath(UPLOAD_DIR) \
+                and os.path.isfile(full):
+            os.remove(full)
+    except Exception as e:
+        print(f'[cls] old file remove skip: {e}')
+
+
+def _cls_save_snapshot(vessel_id, vessel_name_raw, data, filename, source_path=None):
+    """선박 스냅샷 교체(최신만 유지). 이전 스냅샷의 보관파일도 자동삭제.
+    vessel_id None 이면 미매칭으로 저장(같은 정규화 선명의 기존 미매칭 제거 후 삽입)."""
     conn = get_db()
     user = session.get('username')
     if vessel_id is not None:
+        for r in conn.execute('SELECT source_path FROM class_status WHERE vessel_id=?', (vessel_id,)).fetchall():
+            _cls_delete_file(r['source_path'])
         conn.execute('DELETE FROM class_status WHERE vessel_id=?', (vessel_id,))
     else:
         # 같은 (정규화) 선명의 기존 미매칭 스냅샷 제거
         tgt = _norm_vessel_name(vessel_name_raw)
-        for r in conn.execute('SELECT id, vessel_name_raw FROM class_status WHERE vessel_id IS NULL').fetchall():
+        for r in conn.execute('SELECT id, vessel_name_raw, source_path FROM class_status WHERE vessel_id IS NULL').fetchall():
             if _norm_vessel_name(r['vessel_name_raw']) == tgt:
+                _cls_delete_file(r['source_path'])
                 conn.execute('DELETE FROM class_status WHERE id=?', (r['id'],))
     cur = conn.execute(
         '''INSERT INTO class_status
-             (vessel_id, vessel_name_raw, class_society, report_date, source_filename, uploaded_by)
-           VALUES (?,?,?,?,?,?)''',
+             (vessel_id, vessel_name_raw, class_society, report_date, source_filename, source_path, uploaded_by)
+           VALUES (?,?,?,?,?,?,?)''',
         (vessel_id, vessel_name_raw, data.get('class_society'),
-         data.get('report_date'), filename, user))
+         data.get('report_date'), filename, source_path, user))
     cs_id = cur.lastrowid
     for cat, key in (('COC', 'coc'), ('STATUTORY', 'statutory')):
         for n, it in enumerate(data.get(key) or [], start=1):
@@ -8751,10 +8772,18 @@ def api_class_status_list():
 
 
 def _cls_handle_files(files):
-    """업로드 파일들 → AI추출 → 선박매칭 → 저장. (UI 버튼·BV Pushing 공용)"""
+    """업로드 파일들 → AI추출 → 선박매칭 → 저장. 원본파일도 선박별 최신만 보관. (UI·BV Pushing 공용)"""
+    cls_dir = os.path.join(UPLOAD_DIR, 'class_status')
+    os.makedirs(cls_dir, exist_ok=True)
     results = []
     for f in [x for x in files if x and x.filename]:
         fname = f.filename
+        # 원본 바이트 보관(추출이 스트림을 소비하므로 추출 전에 읽고 seek 리셋)
+        raw = None
+        try:
+            f.stream.seek(0); raw = f.read(); f.stream.seek(0)
+        except Exception:
+            raw = None
         data, err = _extract_class_status_from_upload(f)
         if err:
             results.append({'filename': fname, 'ok': False, **err})
@@ -8762,7 +8791,16 @@ def _cls_handle_files(files):
         vname = data.get('vessel_name') or ''
         v = _match_vessel_by_name(vname)
         vessel_id = v['id'] if v else None
-        _cls_save_snapshot(vessel_id, vname, data, fname)
+        src_rel = None
+        if raw:
+            uniq = datetime.now().strftime('%Y%m%d%H%M%S%f') + '_' + (secure_filename(fname) or 'report')
+            try:
+                with open(os.path.join(cls_dir, uniq), 'wb') as out:
+                    out.write(raw)
+                src_rel = os.path.join('static', 'uploads', 'class_status', uniq)
+            except Exception as e:
+                print(f'[cls] file save skip: {e}')
+        _cls_save_snapshot(vessel_id, vname, data, fname, src_rel)
         results.append({
             'filename': fname, 'ok': True,
             'vessel_name': vname,
@@ -8885,6 +8923,21 @@ def api_class_status_export(cs_id):
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+@app.route('/api/class-status/<int:cs_id>/file')
+@login_required
+def api_class_status_file(cs_id):
+    """선박별 보관된 최신 Class Status 원본 파일 다운로드."""
+    from flask import send_file
+    snap = query('SELECT source_path, source_filename FROM class_status WHERE id=?', (cs_id,), one=True)
+    if not snap or not snap['source_path']:
+        abort(404)
+    full = os.path.join(BASE_DIR, snap['source_path'])
+    if not os.path.isfile(full):
+        abort(404)
+    return send_file(full, as_attachment=True,
+                     download_name=snap['source_filename'] or os.path.basename(full))
+
+
 @app.route('/api/class-status/export-all')
 @login_required
 def api_class_status_export_all():
@@ -8954,6 +9007,15 @@ def _auto_migrate():
                 print('[auto_migrate] vt_findings.priority 추가됨')
         except Exception as e:
             print(f'[auto_migrate] vt_findings 컬럼 점검 건너뜀: {e}')
+
+        # class_status.source_path (업로드 원본 파일 보관 경로, 선박별 최신만)
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(class_status)').fetchall()]
+            if cols and 'source_path' not in cols:
+                conn.execute("ALTER TABLE class_status ADD COLUMN source_path TEXT")
+                print('[auto_migrate] class_status.source_path 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] class_status.source_path 점검 건너뜀: {e}')
 
         # mail_card.pending (보류 플래그)
         try:

@@ -505,6 +505,7 @@ CREATE TABLE IF NOT EXISTS class_status (
     class_society    TEXT,                          -- DNV / BV / KR / ABS / LR / NK ...
     report_date      TEXT,                          -- 보고서 발행일 (YYYY-MM-DD)
     source_filename  TEXT,                          -- 업로드 원본 파일명
+    source_path      TEXT,                           -- 보관된 원본 파일 경로(선박별 최신만)
     uploaded_by      TEXT,
     created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),

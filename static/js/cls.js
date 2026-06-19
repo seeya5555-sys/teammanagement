@@ -165,7 +165,10 @@ function vesselCard(g) {
       v.vessel_type ? el('span', { class: 'cls-vessel-type' }, v.vessel_type) : ''),
     el('div', { class: 'cls-meta' },
       el('span', {}, '발행 ' + (snap.report_date || '-')),
-      snap.source_filename ? el('span', { class: 'cls-src', title: snap.source_filename }, snap.source_filename) : '',
+      snap.has_file
+        ? el('a', { class: 'cls-src cls-src-dl', href: `/api/class-status/${snap.id}/file`,
+                    title: '원본 파일 다운로드: ' + (snap.source_filename || '') }, '📎 ' + (snap.source_filename || '원본'))
+        : (snap.source_filename ? el('span', { class: 'cls-src', title: snap.source_filename }, snap.source_filename) : ''),
       el('span', { class: 'cls-counts' }, `선급지적 ${coc.length} · 기국 ${stat.length}`)),
     el('div', { class: 'cls-actions' },
       el('button', { class: 'btn btn-outline btn-sm', onclick: () => location.href = `/api/class-status/${snap.id}/export` }, '엑셀'),
