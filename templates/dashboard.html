@@ -148,7 +148,7 @@
   function clearRoute(){[routeLayer,trackLayer].forEach(l=>l&&map.removeLayer(l));routeLayer=trackLayer=null;portMarkers.forEach(p=>map.removeLayer(p));portMarkers=[];if(window._fmA)clearInterval(window._fmA);}
   function drawRoute(v){
     clearRoute();const all=[[v.lat,v.lng]];
-    if(v.track&&v.track.length>1){trackLayer=L.polyline(v.track,{color:'#6b6256',weight:2.5,opacity:.8}).addTo(map);all.push(...v.track);}
+    // 회색 noon 항적(breadcrumb)은 표시 안 함 — noon 위치 튐으로 지저분. In→Next searoute만.
     if(v.prev_port&&v.prev_port.xy){portDot(v.prev_port.xy,(v.prev_port.name||'In Port')+' · 출항');all.push(v.prev_port.xy);}
     if(v.next_port&&v.next_port.xy){portDot(v.next_port.xy,(v.next_port.name||'Next Port')+' · 도착예정');all.push(v.next_port.xy);}
     const legs=(v.route_legs&&v.route_legs.length)?v.route_legs:[];
