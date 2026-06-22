@@ -8402,6 +8402,43 @@ def api_ext_fleet_map_push():
                     'generated_at': d.get('generated_at')})
 
 
+FLEET_OVERRIDE_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_overrides.json')
+
+
+@app.route('/api/ext/fleet-map/override', methods=['POST'])
+@api_key_required
+def api_ext_fleet_map_override():
+    """특정 선박 선위를 외부 소스(예: Master 이메일 보고)로 임시 override.
+    payload: {vessel, lat, lng, course?, speed?, source?, reported_at?, clear?}
+    clear=true 면 해당 선박 override 제거(=SVMS noon 위치로 복귀)."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict) or not d.get('vessel'):
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    try:
+        with open(FLEET_OVERRIDE_FILE, encoding='utf-8') as f:
+            ov = json.load(f)
+    except (FileNotFoundError, ValueError):
+        ov = {}
+    key = _vkey(d['vessel'])
+    if d.get('clear'):
+        ov.pop(key, None)
+    else:
+        if not isinstance(d.get('lat'), (int, float)) or not isinstance(d.get('lng'), (int, float)):
+            return jsonify({'ok': False, 'error': 'lat/lng (number) required'}), 400
+        ov[key] = {
+            'vessel': d['vessel'], 'lat': d['lat'], 'lng': d['lng'],
+            'course': d.get('course'), 'speed': d.get('speed'),
+            'source': d.get('source') or 'email',
+            'reported_at': d.get('reported_at'),
+            'stored_at': datetime.now().isoformat(timespec='seconds'),
+        }
+    tmp = FLEET_OVERRIDE_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(ov, f, ensure_ascii=False)
+    os.replace(tmp, FLEET_OVERRIDE_FILE)
+    return jsonify({'ok': True, 'count': len(ov), 'key': key})
+
+
 @app.route('/api/fleet-map/data')
 @login_required
 def api_fleet_map_data():
@@ -8413,6 +8450,26 @@ def api_fleet_map_data():
         return jsonify({'fleet': [], 'supervisors': [], 'generated_at': None,
                         'empty': True})
     fleet = data.get('fleet') or []
+    # 선위 override(이메일 등 외부 소스) 병합 — 특정 선박만 임시로 다른 소스 위치 사용.
+    try:
+        with open(FLEET_OVERRIDE_FILE, encoding='utf-8') as f:
+            overrides = json.load(f)
+    except (FileNotFoundError, ValueError):
+        overrides = {}
+    if overrides:
+        for v in fleet:
+            o = overrides.get(_vkey(v.get('name')))
+            if not o:
+                continue
+            v['lat'] = o['lat']; v['lng'] = o['lng']
+            if o.get('course') is not None: v['course'] = o['course']
+            if o.get('speed') is not None: v['speed'] = o['speed']
+            v['pos_source'] = o.get('source') or 'email'
+            v['pos_reported_at'] = o.get('reported_at') or o.get('stored_at')
+            # 신선도 ALERT 오탐 방지: override 보고일을 rpt_dt로
+            rep = str(o.get('reported_at') or '')[:10].replace('-', '')
+            if len(rep) == 8 and rep.isdigit():
+                v['rpt_dt'] = rep
     # 감독 = TRMT supervisor_vessels(권위)로 채움 — 이슈 없는 선박도 올바른 감독/필터 표시.
     vsup = {_vkey(r['vname']): r['sname'] for r in
             query("SELECT v.name AS vname, s.name AS sname FROM supervisor_vessels sv "

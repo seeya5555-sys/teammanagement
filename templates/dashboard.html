@@ -206,7 +206,7 @@
       card(f4.href, f4.cls, f4.k, f4.val, f4.unit)+
       '</div>'+
       dueLine+
-      '<div class="fm-sec">운항 상태 (SVMS noon)</div>'+
+      '<div class="fm-sec">운항 상태 '+(v.pos_source==='email'?'<span style="color:#b7791f">📡 위치=Master 이메일'+(v.pos_reported_at?' ('+esc(String(v.pos_reported_at).slice(0,16).replace("T"," "))+')':'')+'</span>':'(SVMS noon)')+'</div>'+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
       cargo+
