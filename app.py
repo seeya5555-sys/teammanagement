@@ -1115,6 +1115,15 @@ def api_issue_export():
             conds.append(f'i.status IN ({placeholders})')
             params += vals
 
+    # vessel_ids (복수 선박, 담당자별 추출용)
+    vessel_ids = request.args.get('vessel_ids')
+    if vessel_ids:
+        ids = [v.strip() for v in vessel_ids.split(',') if v.strip().isdigit()]
+        if ids:
+            ph = ','.join('?' for _ in ids)
+            conds.append(f'i.vessel_id IN ({ph})')
+            params += ids
+
     q = request.args.get('q')
     if q:
         like = f'%{q}%'

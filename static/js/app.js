@@ -2879,9 +2879,9 @@ function wireEvents() {
     pacificbeijing: 'Methew', atlanticexpress: 'Methew', atlanticgeneva: 'Methew',
     atlanticsouth: 'Dmitry', atlanticgreen: 'Dmitry', atlanticnorth: 'Leonid',
   };
+  const enNorm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const enMailDraft = (vn) => {
-    const key = (vn || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const who = EN_CONTACT[key] || 'Sir/Madam';
+    const who = EN_CONTACT[enNorm(vn)] || 'Sir/Madam';
     return `Subject: [Important!] ${vn} – Open Technical Issues / Update Request\n\n`
       + `Dear ${who},\n\n`
       + `Good day.\n\n`
@@ -2892,34 +2892,80 @@ function wireEvents() {
       + `Thank you for your cooperation.\n\n`
       + `Best regards,`;
   };
+  const enMailDraftMulti = (person, vnames) => {
+    const list = vnames.map(n => `- M/T ${n}`).join('\n');
+    return `Subject: [Important!] Open Technical Issues / Update Request\n\n`
+      + `Dear ${person},\n\n`
+      + `Good day.\n\n`
+      + `Please find attached the list of open technical issues for the following vessels under your responsibility that have been raised to the Owners:\n${list}\n\n`
+      + `Kindly review the attached file and update the current progress status and repair plan for each item in the TSI comment column, and revert to us at your earliest convenience.\n\n`
+      + `Also, if any issue has been closed, please change the status to closed for our reference.\n\n`
+      + `Your prompt feedback would be highly appreciated.\n\n`
+      + `Thank you for your cooperation.\n\n`
+      + `Best regards,`;
+  };
 
-  // 영문 엑셀 추출 — 사이드바 선택 선박만 + 복붙용 영문 메일 드래프트 다이얼로그
+  // 영문 엑셀 추출 — 2모드: ① 선택 선박만 ② 담당자별(여러 선박 묶음). + 복붙용 영문 메일 드래프트.
   $('#btn-export-xlsx-en').addEventListener('click', () => {
+    // 담당자→담당선박(현재 탭 스코프=S.vessels). EN_CONTACT 매핑된 선박만.
+    const personVessels = {};
+    for (const v of (S.vessels || [])) {
+      const who = EN_CONTACT[enNorm(v.name)];
+      if (who) (personVessels[who] = personVessels[who] || []).push({ id: v.id, name: v.name });
+    }
+    const persons = Object.keys(personVessels).sort();
     const g = curVesselGroup();
-    if (!g || g.id === '__none__') { alert('좌측 사이드바에서 선박을 먼저 선택하세요.'); return; }
-    const vname = g.name;
-    const p = buildExportParams();
-    p.set('vessel_id', g.id);
-    p.set('lang', 'en');
-    const dlUrl = '/api/issues/export?' + p.toString();
+    const hasVessel = g && g.id !== '__none__';
+    if (!hasVessel && !persons.length) { alert('좌측에서 선박을 선택하거나, 담당자 매핑된 선박이 있어야 합니다.'); return; }
 
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
     const box = document.createElement('div');
     box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
-    box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 영문 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${escHtml(vname)}</span></div>`
-      + '<div style="font-size:12px;color:#888;margin-bottom:12px">선택 선박의 현안업무(현재 필터 기준)를 영문 엑셀로 추출 + 담당자 메일 드래프트 복붙.</div>';
+    box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:10px">📄 영문 엑셀 추출 + 메일 드래프트</div>';
+
+    // 모드 토글
+    let mode = hasVessel ? 'vessel' : 'person';
+    const modeRow = document.createElement('div');
+    modeRow.style.cssText = 'display:flex;gap:14px;margin-bottom:10px;font-size:13px';
+    modeRow.innerHTML =
+      `<label style="cursor:pointer"><input type="radio" name="enmode" value="vessel" ${mode === 'vessel' ? 'checked' : ''} ${hasVessel ? '' : 'disabled'}> 선택 선박${hasVessel ? ' (' + escHtml(g.name) + ')' : ''}</label>`
+      + `<label style="cursor:pointer"><input type="radio" name="enmode" value="person" ${mode === 'person' ? 'checked' : ''} ${persons.length ? '' : 'disabled'}> 담당자별</label>`;
+    box.appendChild(modeRow);
+
+    // 담당자 select (person 모드)
+    const psel = document.createElement('select');
+    psel.style.cssText = 'width:100%;height:36px;padding:0 10px;border:1px solid #d3d1c7;border-radius:8px;font-size:14px;margin-bottom:10px';
+    for (const p of persons) psel.append(new Option(`${p}  (${personVessels[p].length}척)`, p));
+    box.appendChild(psel);
+
     const lbl = document.createElement('div');
     lbl.style.cssText = 'font-size:12px;font-weight:600;color:#555;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center';
     const copyBtn = document.createElement('button');
     copyBtn.className = 'btn btn-outline btn-sm'; copyBtn.textContent = '📋 메일 복사';
-    lbl.innerHTML = '<span>✉ 메일 드래프트 (복붙용 · 영문)</span>';
-    lbl.appendChild(copyBtn);
+    lbl.innerHTML = '<span>✉ 메일 드래프트 (복붙용 · 영문)</span>'; lbl.appendChild(copyBtn);
     box.appendChild(lbl);
     const ta = document.createElement('textarea');
     ta.style.cssText = 'width:100%;height:280px;padding:10px;border:1px solid #d3d1c7;border-radius:8px;font-size:12.5px;line-height:1.5;font-family:inherit;resize:vertical;margin-bottom:14px';
-    ta.value = enMailDraft(vname);
     box.appendChild(ta);
+
+    function dlUrl() {
+      const p = buildExportParams();
+      p.set('lang', 'en');
+      if (mode === 'vessel') { p.set('vessel_id', g.id); }
+      else { p.delete('vessel_id'); p.set('vessel_ids', personVessels[psel.value].map(v => v.id).join(',')); }
+      return '/api/issues/export?' + p.toString();
+    }
+    function refresh() {
+      psel.style.display = (mode === 'person') ? '' : 'none';
+      if (mode === 'vessel') ta.value = enMailDraft(g.name);
+      else ta.value = enMailDraftMulti(psel.value, personVessels[psel.value].map(v => v.name));
+    }
+    modeRow.querySelectorAll('input[name="enmode"]').forEach(r =>
+      r.addEventListener('change', (e) => { mode = e.target.value; refresh(); }));
+    psel.addEventListener('change', refresh);
+    refresh();
+
     copyBtn.onclick = async () => {
       try { await navigator.clipboard.writeText(ta.value); } catch (_) { ta.select(); document.execCommand('copy'); }
       copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 메일 복사', 1500);
@@ -2931,7 +2977,7 @@ function wireEvents() {
     cancel.onclick = () => ov.remove();
     const dl = document.createElement('button');
     dl.className = 'btn btn-primary btn-sm'; dl.textContent = '⬇ 영문 엑셀 다운로드';
-    dl.onclick = () => { window.location = dlUrl; };
+    dl.onclick = () => { window.location = dlUrl(); };
     row.appendChild(cancel); row.appendChild(dl);
     box.appendChild(row);
     ov.appendChild(box);
