@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS vessels (
     imo           TEXT,
     flag          TEXT,
     class_society TEXT,                            -- BV / KR / LR / ABS / DNV / NK
+    manager       TEXT,                            -- 관리사(선박관리사) 텍스트 지정
     active        INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime'))

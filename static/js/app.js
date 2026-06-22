@@ -2642,6 +2642,7 @@ async function openVesselEdit(vid, context) {
   $('#vedit-type').value  = v.vessel_type || 'VLCC';
   $('#vedit-imo').value   = v.imo || '';
   $('#vedit-class').value = v.class_society || '';
+  if ($('#vedit-manager')) $('#vedit-manager').value = v.manager || '';
 
   VEDIT.selectedSupIds = new Set(v.supervisor_ids || []);
   renderVeditSups();
@@ -2698,6 +2699,7 @@ async function saveVesselEdit() {
       vessel_type:   $('#vedit-type').value,
       imo:           $('#vedit-imo').value.trim(),
       class_society: $('#vedit-class').value.trim(),
+      manager:       ($('#vedit-manager') ? $('#vedit-manager').value.trim() : ''),
     };
     if (isAdmin) {
       payload.supervisor_ids = [...VEDIT.selectedSupIds];

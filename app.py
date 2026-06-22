@@ -1805,13 +1805,14 @@ def api_vessel_create():
             return jsonify({'error': '본인 담당 감독으로만 선박을 추가할 수 있습니다.'}), 403
 
     vid = execute('''
-        INSERT INTO vessels (name, short_name, vessel_type, imo, class_society, active)
-        VALUES (?, ?, ?, ?, ?, 1)
+        INSERT INTO vessels (name, short_name, vessel_type, imo, class_society, manager, active)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
     ''', (name,
           (d.get('short_name') or name[:12]).strip(),
           d.get('vessel_type') or '',
           d.get('imo') or '',
-          d.get('class_society') or ''))
+          d.get('class_society') or '',
+          d.get('manager') or ''))
     for sid in sids:
         execute('INSERT OR IGNORE INTO supervisor_vessels (vessel_id, supervisor_id) VALUES (?, ?)',
                 (vid, sid))
@@ -1843,7 +1844,7 @@ def api_vessel_update(vid):
         d.pop('active', None)
 
     sets, params = [], []
-    for f in ('name', 'short_name', 'vessel_type', 'imo', 'class_society', 'active'):
+    for f in ('name', 'short_name', 'vessel_type', 'imo', 'class_society', 'manager', 'active'):
         if f in d:
             sets.append(f'{f} = ?')
             params.append(d[f])
@@ -9110,6 +9111,73 @@ def api_class_status_export_all():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+@app.route('/api/class-status/managers')
+@login_required
+def api_class_status_managers():
+    """Class Status가 있는 선박들의 관리사 목록(중복 제거) + 선박수. 관리사별 추출 셀렉터용."""
+    rows = query("""
+        SELECT COALESCE(NULLIF(TRIM(v.manager), ''), '(미지정)') AS manager,
+               COUNT(DISTINCT v.id) AS vessels
+          FROM vessels v
+          JOIN class_status cs ON cs.vessel_id = v.id
+         WHERE v.active = 1
+         GROUP BY manager
+         ORDER BY (manager = '(미지정)'), manager COLLATE NOCASE
+    """)
+    return jsonify({'managers': [dict(r) for r in rows]})
+
+
+@app.route('/api/class-status/export-by-manager')
+@login_required
+def api_class_status_export_by_manager():
+    """관리사 선택 → 그 관리사 선박들의 Class Status 지적을 엑셀 일괄 추출.
+    컬럼: Vessel / Class / 구분 / Issued / Description(원문) / Due / Management Action Plan & Progress(공란)."""
+    from flask import send_file
+    mgr = (request.args.get('manager') or '').strip()
+    if not mgr:
+        return jsonify({'error': 'manager 파라미터 필요'}), 400
+    if mgr == '(미지정)':
+        cond = "(v.manager IS NULL OR TRIM(v.manager) = '')"
+        cparams = ()
+    else:
+        cond = "TRIM(v.manager) = ?"
+        cparams = (mgr,)
+    vessels = query(f"""
+        SELECT v.id, v.name, v.class_society
+          FROM vessels v
+         WHERE v.active = 1 AND {cond}
+         ORDER BY v.name COLLATE NOCASE
+    """, cparams)
+    cat_ko = {'COC': '선급지적(COC)', 'STATUTORY': '기국(Statutory)'}
+    rows = []
+    for v in vessels:
+        snap = query('SELECT * FROM class_status WHERE vessel_id=? ORDER BY updated_at DESC LIMIT 1',
+                     (v['id'],), one=True)
+        if not snap:
+            continue
+        items = query('SELECT * FROM class_status_items WHERE cs_id=? ORDER BY category, no', (snap['id'],))
+        if not items:
+            rows.append([v['name'], snap['class_society'] or '', '', '', '지적 없음', '', ''])
+            continue
+        for it in items:
+            rows.append([
+                v['name'], snap['class_society'] or '',
+                cat_ko.get(it['category'], it['category']),
+                it['issued_date'] or '', it['description'] or '',
+                it['due_date'] or '', '',   # Management Action Plan & Progress = 공란
+            ])
+    headers = ['Vessel', 'Class', '구분', 'Issued', 'Description (원문)', 'Due',
+               'Management Action Plan & Progress']
+    today = query("SELECT date('now','localtime') d", one=True)['d']
+    safe_mgr = re.sub(r'[^\w\-]+', '_', mgr) or 'manager'
+    bio = _findings_workbook(
+        f'Class Status — {mgr}', f'관리사별 추출 · 생성 {today}', headers, rows,
+        wrap_cols={5, 7}, widths=[20, 7, 16, 13, 58, 13, 40])
+    return send_file(bio, as_attachment=True,
+                     download_name=f'ClassStatus_{safe_mgr}_{today}.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 # ═════════════════════════════════════════════════════════════════
 #  CLI entry
 # ═════════════════════════════════════════════════════════════════
@@ -9147,6 +9215,15 @@ def _auto_migrate():
                 print('[auto_migrate] class_status.source_path 추가됨')
         except Exception as e:
             print(f'[auto_migrate] class_status.source_path 점검 건너뜀: {e}')
+
+        # vessels.manager (관리사 — 선급처럼 텍스트 지정, Class Status 관리사별 추출용)
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(vessels)').fetchall()]
+            if cols and 'manager' not in cols:
+                conn.execute("ALTER TABLE vessels ADD COLUMN manager TEXT")
+                print('[auto_migrate] vessels.manager 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] vessels.manager 점검 건너뜀: {e}')
 
         # mail_card.pending (보류 플래그)
         try:

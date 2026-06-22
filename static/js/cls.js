@@ -427,6 +427,49 @@ function wireUpload() {
   ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
   ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
   dz.addEventListener('drop', (e) => { if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
+  const mgrBtn = $('#cls-export-mgr-btn');
+  if (mgrBtn) mgrBtn.addEventListener('click', openMgrExport);
+}
+
+// 관리사별 추출: 버튼 → 관리사 목록 → 선택 → 엑셀 다운로드
+async function openMgrExport() {
+  let managers;
+  try {
+    const r = await fetch('/api/class-status/managers');
+    managers = (await r.json()).managers || [];
+  } catch (e) { alert('관리사 목록 로드 실패: ' + e.message); return; }
+  if (!managers.length) { alert('Class Status가 등록된 선박의 관리사 정보가 없습니다.\n선박 설정에서 관리사를 먼저 지정하세요.'); return; }
+
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:340px;max-width:92%;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+  box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:4px">📑 관리사별 Class Status 추출</div>'
+    + '<div style="font-size:12px;color:#888;margin-bottom:12px">관리사를 선택하면 그 관리사 선박들의 지적이 엑셀 한 파일로 추출됩니다.</div>';
+  const sel = document.createElement('select');
+  sel.style.cssText = 'width:100%;height:38px;padding:0 10px;border:1px solid #d3d1c7;border-radius:8px;font-size:14px;margin-bottom:14px';
+  for (const m of managers) {
+    const o = document.createElement('option');
+    o.value = m.manager; o.textContent = `${m.manager}  (${m.vessels}척)`;
+    sel.appendChild(o);
+  }
+  box.appendChild(sel);
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+  const cancel = document.createElement('button');
+  cancel.className = 'btn btn-outline btn-sm'; cancel.textContent = '취소';
+  cancel.onclick = () => ov.remove();
+  const dl = document.createElement('button');
+  dl.className = 'btn btn-primary btn-sm'; dl.textContent = '⬇ 다운로드';
+  dl.onclick = () => {
+    location.href = '/api/class-status/export-by-manager?manager=' + encodeURIComponent(sel.value);
+    ov.remove();
+  };
+  row.appendChild(cancel); row.appendChild(dl);
+  box.appendChild(row);
+  ov.appendChild(box);
+  ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
 }
 
 function wireSearch() {
