@@ -8430,6 +8430,7 @@ def api_ext_fleet_map_override():
             'course': d.get('course'), 'speed': d.get('speed'),
             'source': d.get('source') or 'email',
             'reported_at': d.get('reported_at'),
+            'until': d.get('until'),   # 이 시각(KST ISO) 이후엔 hard override→fallback 전환
             'stored_at': datetime.now().isoformat(timespec='seconds'),
         }
     tmp = FLEET_OVERRIDE_FILE + '.tmp'
@@ -8457,19 +8458,34 @@ def api_fleet_map_data():
     except (FileNotFoundError, ValueError):
         overrides = {}
     if overrides:
+        now_k = datetime.utcnow() + timedelta(hours=9)
         for v in fleet:
             o = overrides.get(_vkey(v.get('name')))
             if not o:
                 continue
+            ov_date = str(o.get('reported_at') or '')[:10].replace('-', '')
+            # until 지나면 hard override → fallback: SVMS가 override 보고일 이후 데이터 있으면 SVMS 사용,
+            # SVMS 미갱신이면 마지막 override(이메일) 위치 유지.
+            until = o.get('until')
+            if until:
+                try:
+                    udt = datetime.strptime(str(until)[:16], '%Y-%m-%dT%H:%M')
+                    if now_k >= udt:
+                        svms_rpt = str(v.get('rpt_dt') or '')
+                        if (len(svms_rpt) == 8 and svms_rpt.isdigit()
+                                and len(ov_date) == 8 and svms_rpt >= ov_date):
+                            continue   # SVMS 최신 → override 끔(SVMS 위치 사용)
+                        # else: SVMS 미갱신 → 아래로 진행(override를 fallback으로 유지)
+                except ValueError:
+                    pass
             v['lat'] = o['lat']; v['lng'] = o['lng']
             if o.get('course') is not None: v['course'] = o['course']
             if o.get('speed') is not None: v['speed'] = o['speed']
             v['pos_source'] = o.get('source') or 'email'
             v['pos_reported_at'] = o.get('reported_at') or o.get('stored_at')
             # 신선도 ALERT 오탐 방지: override 보고일을 rpt_dt로
-            rep = str(o.get('reported_at') or '')[:10].replace('-', '')
-            if len(rep) == 8 and rep.isdigit():
-                v['rpt_dt'] = rep
+            if len(ov_date) == 8 and ov_date.isdigit():
+                v['rpt_dt'] = ov_date
     # 감독 = TRMT supervisor_vessels(권위)로 채움 — 이슈 없는 선박도 올바른 감독/필터 표시.
     vsup = {_vkey(r['vname']): r['sname'] for r in
             query("SELECT v.name AS vname, s.name AS sname FROM supervisor_vessels sv "
