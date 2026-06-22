@@ -2516,6 +2516,7 @@ async function renderMyVesList() {
           v.short_name && `${v.short_name}`,
           v.imo && `IMO ${v.imo}`,
           v.class_society,
+          v.manager,
         ].filter(Boolean).join(' · ') || '-')));
     item.append(el('div', {}));
 
