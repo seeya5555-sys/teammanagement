@@ -2324,6 +2324,7 @@ async function addVessel() {
         vessel_type:   $('#ves-add-type').value,
         imo:           $('#ves-add-imo').value.trim(),
         class_society: $('#ves-add-class').value.trim(),
+        manager:       ($('#ves-add-manager') ? $('#ves-add-manager').value.trim() : ''),
         supervisor_ids: [...ADMIN.selectedSupIds],
       }),
     });
@@ -2331,6 +2332,7 @@ async function addVessel() {
     $('#ves-add-short').value = '';
     $('#ves-add-imo').value = '';
     $('#ves-add-class').value = '';
+    if ($('#ves-add-manager')) $('#ves-add-manager').value = '';
     ADMIN.selectedSupIds.clear();
     await loadAdminVessels();
   } catch (err) { alert('추가 실패: ' + err.message); }
@@ -2476,6 +2478,7 @@ async function openMyVessels() {
       $('#myves-add-short').value = '';
       $('#myves-add-imo').value = '';
       $('#myves-add-class').value = '';
+      if ($('#myves-add-manager')) $('#myves-add-manager').value = '';
       $('#myves-add-type').value = 'VLCC';
     }
   }
@@ -2608,6 +2611,7 @@ async function addVesselFromMyVes() {
         vessel_type:   $('#myves-add-type').value,
         imo:           $('#myves-add-imo').value.trim(),
         class_society: $('#myves-add-class').value.trim(),
+        manager:       ($('#myves-add-manager') ? $('#myves-add-manager').value.trim() : ''),
         supervisor_ids: [S.myVesSupId],
       }),
     });
@@ -2615,6 +2619,7 @@ async function addVesselFromMyVes() {
     $('#myves-add-short').value = '';
     $('#myves-add-imo').value = '';
     $('#myves-add-class').value = '';
+    if ($('#myves-add-manager')) $('#myves-add-manager').value = '';
     await renderMyVesList();
   } catch (err) { alert('추가 실패: ' + err.message); }
 }
