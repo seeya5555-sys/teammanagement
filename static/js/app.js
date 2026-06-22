@@ -876,6 +876,9 @@ function renderVmainHead() {
   const isearch = el('input', { class: 'vmh-search', type: 'text', placeholder: '이 선박 내 검색 (제목·상세·조치)' });
   isearch.value = S.issueSearch || '';
   isearch.addEventListener('input', (e) => { S.issueSearch = e.target.value; renderTable(); renderCards(); });
+  // 이 선박으로 신규 이슈 추가(openNew가 현재 선택 선박 자동 세팅) — 상단 버튼을 이 박스로 이동
+  const newBtn = el('button', { class: 'btn btn-primary btn-sm vmh-add', title: '이 선박으로 신규 이슈 추가' }, '+ 신규 이슈');
+  newBtn.addEventListener('click', openNew);
   h.append(el('div', { class: 'vmh-row' },
     el('span', { class: 'vmh-name' }, g.name),
     g.type ? el('span', { class: 'vmh-type' }, g.type) : null,
@@ -883,7 +886,8 @@ function renderVmainHead() {
     el('span', { class: 'vmh-kpi' },
       el('b', { class: 'k-open' }, String(g.active)), ' 진행중+Open',
       el('span', { class: 'k-dim' }, ' · 완료 '), el('b', { class: 'k-dim' }, String(done)),
-      el('span', { class: 'k-dim' }, ' · 전체 '), el('b', { class: 'k-dim' }, String(g.issues.length)))));
+      el('span', { class: 'k-dim' }, ' · 전체 '), el('b', { class: 'k-dim' }, String(g.issues.length))),
+    newBtn));
   const QF = [['all', '전체'], ['recent', '최근 발생'], ['stale', '장기 미종결'], ['risk', '⚑ COC·Urgent']];
   const qf = el('div', { class: 'vmh-qf' });
   for (const [k, label] of QF) {

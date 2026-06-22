@@ -4724,6 +4724,12 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 
 /* ── rev.4 폴리시: 메인 패널을 카드로(목업 매칭) ── */
 .daily-main { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+/* 신규 이슈 버튼: 상단 page-actions에서 선박 헤더 박스로 이동 */
+#btn-new-issue { display: none; }
+.vmh-add { margin-left: 10px; white-space: nowrap; flex-shrink: 0; }
+/* 선박 헤더 박스(이름·검색·KPI·필터·정렬)를 스크롤해도 상단 고정 (topnav 54px 아래) */
+.daily-main .vmain-head { position: sticky; top: 54px; z-index: 20; background: var(--surface);
+  border-radius: 12px 12px 0 0; box-shadow: 0 3px 10px rgba(0,0,0,.05); }
 .daily-main .vmh-row { padding: 13px 16px; margin: 0; border-bottom: 1px solid var(--border-subtle); }
 .daily-main .vmh-tools { padding: 9px 16px; margin: 0; border-bottom: 1px solid var(--border-subtle); }
 .daily-main .grid-wrap { border: none; border-radius: 0 0 12px 12px; }
