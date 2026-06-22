@@ -9111,68 +9111,82 @@ def api_class_status_export_all():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@app.route('/api/class-status/managers')
-@login_required
-def api_class_status_managers():
-    """Class Status가 있는 선박들의 관리사 목록(중복 제거) + 선박수. 관리사별 추출 셀렉터용."""
-    rows = query("""
-        SELECT COALESCE(NULLIF(TRIM(v.manager), ''), '(미지정)') AS manager,
-               COUNT(DISTINCT v.id) AS vessels
-          FROM vessels v
-          JOIN class_status cs ON cs.vessel_id = v.id
-         WHERE v.active = 1
-         GROUP BY manager
-         ORDER BY (manager = '(미지정)'), manager COLLATE NOCASE
-    """)
-    return jsonify({'managers': [dict(r) for r in rows]})
+UNASSIGNED_MGR = '(Unassigned)'
 
 
-@app.route('/api/class-status/export-by-manager')
-@login_required
-def api_class_status_export_by_manager():
-    """관리사 선택 → 그 관리사 선박들의 Class Status 지적을 엑셀 일괄 추출.
-    컬럼: Vessel / Class / 구분 / Issued / Description(원문) / Due / Management Action Plan & Progress(공란)."""
-    from flask import send_file
-    mgr = (request.args.get('manager') or '').strip()
-    if not mgr:
-        return jsonify({'error': 'manager 파라미터 필요'}), 400
-    if mgr == '(미지정)':
-        cond = "(v.manager IS NULL OR TRIM(v.manager) = '')"
-        cparams = ()
+def _class_export_vessels(sup_id=None):
+    """관리사별 추출 대상: active 선박 중 **최신 class_status에 지적(item)이 1개 이상**인 선박만
+    (지적 없는 선박 자동 제외). sup_id 주면 그 담당 감독 선박으로 한정.
+    반환 [{id, name, class_society, manager, items[]}]."""
+    if sup_id:
+        vrows = query("""SELECT v.id, v.name, v.class_society, v.manager
+                           FROM vessels v
+                           JOIN supervisor_vessels sv ON sv.vessel_id = v.id
+                          WHERE v.active = 1 AND sv.supervisor_id = ?
+                          ORDER BY v.name COLLATE NOCASE""", (sup_id,))
     else:
-        cond = "TRIM(v.manager) = ?"
-        cparams = (mgr,)
-    vessels = query(f"""
-        SELECT v.id, v.name, v.class_society
-          FROM vessels v
-         WHERE v.active = 1 AND {cond}
-         ORDER BY v.name COLLATE NOCASE
-    """, cparams)
-    cat_ko = {'COC': '선급지적(COC)', 'STATUTORY': '기국(Statutory)'}
-    rows = []
-    for v in vessels:
-        snap = query('SELECT * FROM class_status WHERE vessel_id=? ORDER BY updated_at DESC LIMIT 1',
+        vrows = query("""SELECT id, name, class_society, manager FROM vessels
+                          WHERE active = 1 ORDER BY name COLLATE NOCASE""")
+    out = []
+    for v in vrows:
+        snap = query('SELECT id FROM class_status WHERE vessel_id=? ORDER BY updated_at DESC LIMIT 1',
                      (v['id'],), one=True)
         if not snap:
             continue
         items = query('SELECT * FROM class_status_items WHERE cs_id=? ORDER BY category, no', (snap['id'],))
         if not items:
-            rows.append([v['name'], snap['class_society'] or '', '', '', '지적 없음', '', ''])
+            continue   # 지적 없는 선박 제외
+        out.append({'id': v['id'], 'name': v['name'],
+                    'class_society': v['class_society'] or '',
+                    'manager': (v['manager'] or '').strip(),
+                    'items': items})
+    return out
+
+
+@app.route('/api/class-status/managers')
+@login_required
+def api_class_status_managers():
+    """관리사 목록 + 선박수(지적 있는 선박만). supervisor_id 주면 그 감독 담당선박만 집계."""
+    sup_id = request.args.get('supervisor_id', type=int)
+    counts = {}
+    for v in _class_export_vessels(sup_id):
+        key = v['manager'] or UNASSIGNED_MGR
+        counts[key] = counts.get(key, 0) + 1
+    managers = [{'manager': k, 'vessels': n} for k, n in counts.items()]
+    managers.sort(key=lambda m: (m['manager'] == UNASSIGNED_MGR, m['manager'].lower()))
+    return jsonify({'managers': managers})
+
+
+@app.route('/api/class-status/export-by-manager')
+@login_required
+def api_class_status_export_by_manager():
+    """관리사 선택 → 그 관리사 선박 Class Status 지적 엑셀 일괄 추출 (영문, 지적없는선박 제외).
+    supervisor_id 주면 그 담당 감독 선박만. 컬럼: Vessel/Class/Category/Issued/Description/Due/
+    Management Action Plan & Progress(blank)."""
+    from flask import send_file
+    mgr = (request.args.get('manager') or '').strip()
+    sup_id = request.args.get('supervisor_id', type=int)
+    if not mgr:
+        return jsonify({'error': 'manager required'}), 400
+    cat_en = {'COC': 'Condition of Class (COC)', 'STATUTORY': 'Statutory (Flag)'}
+    rows = []
+    for v in _class_export_vessels(sup_id):
+        if (v['manager'] or UNASSIGNED_MGR) != mgr:
             continue
-        for it in items:
+        for it in v['items']:
             rows.append([
-                v['name'], snap['class_society'] or '',
-                cat_ko.get(it['category'], it['category']),
+                v['name'], v['class_society'],
+                cat_en.get(it['category'], it['category']),
                 it['issued_date'] or '', it['description'] or '',
-                it['due_date'] or '', '',   # Management Action Plan & Progress = 공란
+                it['due_date'] or '', '',   # Management Action Plan & Progress = blank
             ])
-    headers = ['Vessel', 'Class', '구분', 'Issued', 'Description (원문)', 'Due',
+    headers = ['Vessel', 'Class', 'Category', 'Issued', 'Description', 'Due',
                'Management Action Plan & Progress']
     today = query("SELECT date('now','localtime') d", one=True)['d']
     safe_mgr = re.sub(r'[^\w\-]+', '_', mgr) or 'manager'
     bio = _findings_workbook(
-        f'Class Status — {mgr}', f'관리사별 추출 · 생성 {today}', headers, rows,
-        wrap_cols={5, 7}, widths=[20, 7, 16, 13, 58, 13, 40])
+        f'Class Status - {mgr}', f'Generated {today}', headers, rows,
+        wrap_cols={5, 7}, widths=[20, 7, 20, 13, 58, 13, 40])
     return send_file(bio, as_attachment=True,
                      download_name=f'ClassStatus_{safe_mgr}_{today}.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
