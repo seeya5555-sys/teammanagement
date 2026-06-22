@@ -1477,12 +1477,21 @@ function toggleAll() {
 //  Inline Add (새 이슈 인라인 입력 행)
 // ═══════════════════════════════════════════════════════════
 function openInlineAdd(date = null) {
+  // 현재 선택 선박 기본 세팅(감독은 그 선박 이슈에서 역추적)
+  const selV = S.selectedVessel;
+  let supId = S.activeTab === 'all'
+      ? (S.user.supervisor_id || (S.supervisors[0] && S.supervisors[0].id))
+      : S.activeTab;
+  let vesId = null;
+  if (selV != null && selV !== '__none__') {
+    vesId = Number(selV) || null;
+    const anyIssue = S.issues.find(i => String(i.vessel_id) === String(selV));
+    if (anyIssue && anyIssue.supervisor_id != null) supId = anyIssue.supervisor_id;
+  }
   S.inlineAdd = {
     date: date || todayISO(),
-    supervisor_id: S.activeTab === 'all'
-      ? (S.user.supervisor_id || (S.supervisors[0] && S.supervisors[0].id))
-      : S.activeTab,
-    vessel_id: null,
+    supervisor_id: supId,
+    vessel_id: vesId,
     item_topic: '',
     priority: 'Normal',
     status: 'Open',
@@ -1702,7 +1711,7 @@ function addActionEntry() {
   last?.querySelector('input[type="text"]')?.focus();
 }
 
-function openNew() {
+async function openNew() {
   S.editingId = null;
   S.editingActions = [];
   $('#modal-title').textContent = '신규 이슈';
@@ -1716,12 +1725,26 @@ function openNew() {
   $('#f-issue-date').value = todayISO();
   $('#f-due-date').value   = '';
 
-  // 감독: 현재 탭 기준 (전체 탭이면 본인 감독 or 첫 감독)
-  let supId = S.activeTab !== 'all' ? S.activeTab
-            : (S.user.supervisor_id || (S.supervisors[0] && S.supervisors[0].id));
-  if (supId) {
+  // 현재 선박별 보기에서 선택된 선박 → 모달에 자동 세팅(감독은 그 선박 이슈에서 역추적).
+  const selV = S.selectedVessel;
+  let preVes = null, supId = null;
+  if (selV != null && selV !== '__none__') {
+    preVes = selV;
+    const anyIssue = S.issues.find(i => String(i.vessel_id) === String(selV));
+    if (anyIssue && anyIssue.supervisor_id != null) supId = anyIssue.supervisor_id;
+  }
+  // 감독 폴백: 현재 탭 기준 (전체 탭이면 본인 감독 or 첫 감독)
+  if (supId == null) {
+    supId = S.activeTab !== 'all' ? S.activeTab
+          : (S.user.supervisor_id || (S.supervisors[0] && S.supervisors[0].id));
+  }
+  if (supId != null) {
     $('#f-supervisor').value = supId;
-    refillVesselSelect(supId);
+    await refillVesselSelect(supId);
+    // 선택 선박이 이 감독의 선박목록에 있으면 자동 선택(없으면 select 첫 항목 유지)
+    if (preVes != null && $('#f-vessel').querySelector(`option[value="${preVes}"]`)) {
+      $('#f-vessel').value = String(preVes);
+    }
   }
 
   renderActionEditor();
