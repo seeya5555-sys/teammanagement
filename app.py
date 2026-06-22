@@ -8459,6 +8459,40 @@ def api_fleet_map_data():
         else:
             fleet = []
         data = {**data, 'fleet': fleet, 'scoped_to': sup_name}
+    # ── 데이터 신선도 ALERT (사이트 내 표시) ─────────────────────────────
+    # KST = UTC+9 (서버 TZ 무관하게 utcnow 기준). 6h 스케줄 → 파이프라인/선박별 누락 산출.
+    now_k = datetime.utcnow() + timedelta(hours=9)
+    stale = {'pipeline': None, 'vessels': []}
+    # 1) 파이프라인(push) 미갱신: 6h 주기 2회분(13h) 넘게 없으면 경보 + 며칠/몇시부터
+    ga = data.get('generated_at')
+    if ga:
+        try:
+            gdt = datetime.strptime(str(ga)[:16], '%Y-%m-%d %H:%M')
+            age_h = (now_k - gdt).total_seconds() / 3600
+            if age_h >= 13:
+                stale['pipeline'] = {'last': str(ga)[:16], 'at': gdt.strftime('%-m/%-d %H:%M'),
+                                     'days': int(age_h // 24), 'hours': int(age_h)}
+        except ValueError:
+            pass
+    # 2) 선박별 noon 보고 누락: 마지막 rpt_dt 가 2일+ 지나면(어제 보고는 정상). 며칠부터 끊겼는지.
+    today = now_k.date()
+    for v in (data.get('fleet') or []):
+        rd = str(v.get('rpt_dt') or '')
+        if len(rd) == 8 and rd.isdigit():
+            try:
+                d0 = datetime.strptime(rd, '%Y%m%d').date()
+            except ValueError:
+                continue
+            miss = (today - d0).days
+            if miss >= 2:
+                nxt = d0 + timedelta(days=1)
+                stale['vessels'].append({'name': v.get('name'), 'last_rpt': d0.strftime('%-m/%-d'),
+                                         'since': nxt.strftime('%-m/%-d'), 'days': miss})
+        else:
+            stale['vessels'].append({'name': v.get('name'), 'last_rpt': None,
+                                     'since': None, 'days': None})
+    stale['vessels'].sort(key=lambda x: (x['days'] or 9999), reverse=True)
+    data['staleness'] = stale
     return jsonify(data)
 
 

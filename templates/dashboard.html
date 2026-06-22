@@ -42,6 +42,15 @@
   .fm-duewarn{display:block;text-decoration:none;padding:8px 11px;border-radius:9px;font-size:12.5px;font-weight:700}
   .fm-duewarn.overdue{background:var(--red-bg,#fbe4e1);color:var(--red,#c0392b);border:1px solid #f0b9b2}
   .fm-duewarn.soon{background:#fff3e0;color:#b7791f;border:1px solid #f0d2a0}
+  .fm-alert{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1200;max-width:88%;
+    background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 5px 20px rgba(0,0,0,.13);
+    padding:9px 36px 9px 13px;font-size:12.5px;line-height:1.55}
+  .fm-al-row{white-space:normal}
+  .fm-al-row+.fm-al-row{margin-top:4px;padding-top:4px;border-top:1px dashed var(--border-subtle)}
+  .fm-al-row.crit{color:var(--red,#c0392b);font-weight:700}
+  .fm-al-row.warn{color:#b7791f;font-weight:600}
+  .fm-al-row small{color:var(--text-tertiary);font-weight:400}
+  .fm-al-x{position:absolute;top:5px;right:8px;border:0;background:none;font-size:18px;line-height:1;cursor:pointer;color:var(--text-tertiary)}
   .fm-card{background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:11px;padding:11px;display:block;text-decoration:none;color:inherit;transition:box-shadow .1s,transform .1s}
   a.fm-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.10);transform:translateY(-1px);border-color:var(--border)}
   a.fm-card .v::after{content:" ›";color:var(--text-tertiary);font-size:14px;font-weight:600}
@@ -82,6 +91,7 @@
   </div>
   <div class="fm-stage">
     <div id="fmmap"></div>
+    <div class="fm-alert" id="fmAlert" hidden></div>
     <div class="fm-panel" id="fmPanel">
       <div class="fm-ph"><div class="row"><div><h2 id="fmName">—</h2><div class="sub" id="fmSubt">—</div></div>
         <button class="fm-x" onclick="fmClose()">×</button></div><div class="badges" id="fmBadges"></div></div>
@@ -96,6 +106,23 @@
 <script>
 (function(){
   const esc=s=>(s==null?'':String(s)).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  // 데이터 신선도 ALERT — 파이프라인 미갱신/선박별 noon 누락을 사이트 상단 배너로
+  function renderAlert(s){
+    const box=document.getElementById('fmAlert'); if(!box||!s) return;
+    let html='';
+    if(s.pipeline){
+      const p=s.pipeline, age=p.days>=1?(p.days+'일'):(p.hours+'시간');
+      html+='<div class="fm-al-row crit">⚠ <b>선위 데이터 미갱신</b> — '+esc(p.at)+' 이후 멈춤 (<b>'+age+'째</b>) · 맥 스케줄러 점검 필요</div>';
+    }
+    if(s.vessels&&s.vessels.length){
+      const items=s.vessels.map(v=> v.since
+        ? (esc(v.name)+' <small>'+esc(v.since)+'부터 '+v.days+'일</small>')
+        : (esc(v.name)+' <small>보고 없음</small>')).join(' · ');
+      html+='<div class="fm-al-row warn">📡 <b>noon 보고 누락 '+s.vessels.length+'척</b> — '+items+'</div>';
+    }
+    if(html){ box.innerHTML=html+'<button class="fm-al-x" title="닫기" onclick="this.parentNode.hidden=true">×</button>'; box.hidden=false; }
+    else { box.hidden=true; }
+  }
   // minZoom=2: 전세계(미국·남미 포함)가 최대 축소뷰. maxZoom=10. 줌은 스크롤로만.
   const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:2,maxZoom:10,
     maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],2);
@@ -112,6 +139,7 @@
     FLEET=d.fleet||[];
     document.getElementById('fmUpdated').textContent= d.empty ? '데이터 없음 — 맥 스케줄러 첫 동기화 대기'
       : ('⟳ 온디맨드+맥 스케줄러 · 선위 '+(d.generated_at||'')+' · TRMT '+String(d.trmt_generated_at||'').slice(0,16));
+    renderAlert(d.staleness);
     if(!FLEET.length){document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
     FLEET.forEach(v=>{
       const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
