@@ -445,11 +445,14 @@ async function openMgrExport() {
   if (!managers.length) { alert((supName ? `${supName} 담당 선박 중 ` : '') + '지적이 있는 선박의 관리사 정보가 없습니다.\n선박 설정에서 관리사를 먼저 지정하세요.'); return; }
 
   // 복붙용 메일 드래프트(영문, firm-but-professional). 관리사명 넣어 생성.
+  // 관리사별 담당자 인사말(있으면 'Dear 이름,', 없으면 'Dear [관리사] Team,')
+  const GREET = { 'CSM CY (CNTR)': 'Alex', 'CSM GR': 'Evangelos' };
   const mailDraft = (m) => {
     const co = (m && m !== '(Unassigned)') ? m : 'Management Company';
+    const greeting = GREET[m] ? `Dear ${GREET[m]},` : `Dear ${co} Team,`;
     return `Subject: Class Status – Open COC & Statutory Items: Action Plan & Progress Required\n\n`
-      + `Dear ${co} Team,\n\n`
-      + `Please find attached the current Class Status overview for the vessels under your management, listing the Open Condition of Class (COC) and Statutory (Flag) items.\n\n`
+      + `${greeting}\n\n`
+      + `Please find attached the current Class Status overview for the vessels under your management, listing the Open Condition of Class and Statutory items.\n\n`
       + `For each item listed, we kindly request that you complete the "Management Action Plan & Progress" column with the following:\n`
       + `1) The corrective action to be taken;\n`
       + `2) The target date for completion (by when); and\n`
