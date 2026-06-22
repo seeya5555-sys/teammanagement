@@ -444,33 +444,65 @@ async function openMgrExport() {
   } catch (e) { alert('관리사 목록 로드 실패: ' + e.message); return; }
   if (!managers.length) { alert((supName ? `${supName} 담당 선박 중 ` : '') + '지적이 있는 선박의 관리사 정보가 없습니다.\n선박 설정에서 관리사를 먼저 지정하세요.'); return; }
 
+  // 복붙용 메일 드래프트(영문, firm-but-professional). 관리사명 넣어 생성.
+  const mailDraft = (m) => {
+    const co = (m && m !== '(Unassigned)') ? m : 'Management Company';
+    return `Subject: Class Status – Open COC & Statutory Items: Action Plan & Progress Required\n\n`
+      + `Dear ${co} Team,\n\n`
+      + `Please find attached the current Class Status overview for the vessels under your management, listing the Open Condition of Class (COC) and Statutory (Flag) items.\n\n`
+      + `For each item listed, we kindly request that you complete the "Management Action Plan & Progress" column with the following:\n`
+      + `1) The corrective action to be taken;\n`
+      + `2) The target date for completion (by when); and\n`
+      + `3) The current status / progress to date.\n\n`
+      + `Kindly return the completed file to us at your earliest convenience. Should any clarification or supporting documents be required, please do not hesitate to contact us.\n\n`
+      + `Best regards,`;
+  };
+
   const ov = document.createElement('div');
   ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:340px;max-width:92%;box-shadow:0 10px 40px rgba(0,0,0,.25)';
-  box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:4px">📑 관리사별 Class Status 추출'
+  box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+  box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:4px">📑 관리사별 Class Status 추출 + 메일 드래프트'
     + (supName ? ` <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${supName} 담당</span>` : '') + '</div>'
-    + '<div style="font-size:12px;color:#888;margin-bottom:12px">관리사를 선택하면 그 관리사 선박들의 지적이 엑셀(영문)로 추출됩니다. 지적 없는 선박은 자동 제외.</div>';
+    + '<div style="font-size:12px;color:#888;margin-bottom:12px">관리사 선택 → 엑셀(영문) 다운로드 + 오른쪽 메일 드래프트 복사해서 발송. 지적 없는 선박 자동 제외.</div>';
   const sel = document.createElement('select');
-  sel.style.cssText = 'width:100%;height:38px;padding:0 10px;border:1px solid #d3d1c7;border-radius:8px;font-size:14px;margin-bottom:14px';
+  sel.style.cssText = 'width:100%;height:38px;padding:0 10px;border:1px solid #d3d1c7;border-radius:8px;font-size:14px;margin-bottom:12px';
   for (const m of managers) {
     const o = document.createElement('option');
     o.value = m.manager; o.textContent = `${m.manager}  (${m.vessels}척)`;
     sel.appendChild(o);
   }
   box.appendChild(sel);
+
+  // 메일 드래프트 영역
+  const lbl = document.createElement('div');
+  lbl.style.cssText = 'font-size:12px;font-weight:600;color:#555;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center';
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'btn btn-outline btn-sm'; copyBtn.textContent = '📋 메일 복사';
+  lbl.innerHTML = '<span>✉ 메일 드래프트 (복붙용 · 영문)</span>';
+  lbl.appendChild(copyBtn);
+  box.appendChild(lbl);
+  const ta = document.createElement('textarea');
+  ta.style.cssText = 'width:100%;height:230px;padding:10px;border:1px solid #d3d1c7;border-radius:8px;font-size:12.5px;line-height:1.5;font-family:inherit;resize:vertical;margin-bottom:14px';
+  ta.value = mailDraft(sel.value);
+  box.appendChild(ta);
+  sel.addEventListener('change', () => { ta.value = mailDraft(sel.value); });
+  copyBtn.onclick = async () => {
+    try { await navigator.clipboard.writeText(ta.value); copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 메일 복사', 1500); }
+    catch (_) { ta.select(); document.execCommand('copy'); copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 메일 복사', 1500); }
+  };
+
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
   const cancel = document.createElement('button');
-  cancel.className = 'btn btn-outline btn-sm'; cancel.textContent = '취소';
+  cancel.className = 'btn btn-outline btn-sm'; cancel.textContent = '닫기';
   cancel.onclick = () => ov.remove();
   const dl = document.createElement('button');
-  dl.className = 'btn btn-primary btn-sm'; dl.textContent = '⬇ 다운로드';
+  dl.className = 'btn btn-primary btn-sm'; dl.textContent = '⬇ 엑셀 다운로드';
   dl.onclick = () => {
     let url = '/api/class-status/export-by-manager?manager=' + encodeURIComponent(sel.value);
     if (S.activeTab && S.activeTab !== 'all') url += '&supervisor_id=' + S.activeTab;
     location.href = url;
-    ov.remove();
   };
   row.appendChild(cancel); row.appendChild(dl);
   box.appendChild(row);
