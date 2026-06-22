@@ -22,6 +22,7 @@ const S = {
   summary:      { rows: [], generated_at: null },
   summaryCounts: {},   // { scopeKey: n }
   filters: { q:'', vessel_id:'', vessel_type:'', status:'', priority:'', item_topic:'' },
+  linkFilter: null,                                        // 요약→이슈 링크 필터 활성 라벨(해제 칩용)
 
   editingId:      null,
   editingActions: [],
@@ -593,6 +594,15 @@ async function gotoIssueFromSummary(r) {
   ['#filter-vessel', '#filter-vessel-type', '#filter-status', '#filter-priority']
     .forEach(sel => { const e = $(sel); if (e) e.value = ''; });
   await loadIssues();
+  // 매칭 이슈 → 해당 선박 선택 + 펼침 + 링크필터 활성(해제 칩 표시용)
+  const tlc = title.toLowerCase();
+  const target = S.issues.find(i => (i.item_topic || '').trim().toLowerCase() === tlc)
+              || S.issues.find(i => ((i.item_topic || '') + (i.description || '')).toLowerCase().includes(tlc));
+  if (target) {
+    S.selectedVessel = (target.vessel_id != null) ? target.vessel_id : '__none__';
+    S.expandedRows.add(target.id); S.expandedActions.add(target.id);
+  }
+  S.linkFilter = title;
   // 펼친 상태로 표시
   S.collapsedMonths.clear();
   S.collapsedDates.clear();
@@ -600,6 +610,29 @@ async function gotoIssueFromSummary(r) {
     if (i.issue_date) S.userToggledDates.add(i.issue_date);
   }
   render();
+  if (target) flashIssue(target.id);   // 해당 항목으로 스크롤 + 하이라이트
+}
+
+// 링크 필터(요약→이슈) 해제: 검색바가 숨겨진 상태에서도 전체 보기로 복귀
+async function clearLinkFilter() {
+  S.linkFilter = null;
+  S.filters.q = ''; S.filters.item_topic = '';
+  const sb = $('#filter-search'); if (sb) sb.value = '';
+  await loadIssues();
+  render();
+}
+
+// 특정 이슈 카드/행으로 스크롤 + 잠깐 하이라이트
+function flashIssue(id) {
+  if (id == null) return;
+  setTimeout(() => {
+    const node = document.querySelector(
+      `.issue-card[data-id="${id}"], tr.data-row[data-id="${id}"]`);
+    if (!node) return;
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    node.classList.add('flash-hl');
+    setTimeout(() => node.classList.remove('flash-hl'), 2600);
+  }, 140);
 }
 
 // ═══════════════ 선박별 보기 (rev.4) ═══════════════
@@ -811,6 +844,16 @@ function renderVmainHead() {
   const h = $('#vmain-head');
   if (!h) return;
   h.innerHTML = '';
+  // 링크 필터(요약→이슈)가 걸려 있으면 해제 칩 노출 — 검색바 숨김 상태에서 푸는 유일 경로
+  const lf = S.linkFilter || S.filters.q || S.filters.item_topic;
+  if (lf) {
+    const chip = el('div', { class: 'vmh-linkfilter' },
+      el('span', { class: 'vmh-lf-lbl' }, '🔍 링크 필터'),
+      el('b', { class: 'vmh-lf-q' }, lf),
+      el('button', { class: 'vmh-lf-x', title: '필터 해제 — 전체 보기로' }, '✕ 해제'));
+    chip.querySelector('.vmh-lf-x').addEventListener('click', clearLinkFilter);
+    h.append(chip);
+  }
   const groups = sidebarGroups();
   if (groups.length) {                                    // 모바일 선박 선택(사이드바 대체)
     const msel = el('select', { class: 'vmh-vsel' });

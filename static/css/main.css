@@ -4685,6 +4685,21 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 .vsb-empty { padding: 18px; text-align: center; color: var(--text-tertiary); font-size: 12px; }
 .daily-main { min-width: 0; }
 .vmh-vsel { display: none; }
+/* 링크 필터 해제 칩 (요약→이슈 이동 시 노출) */
+.vmh-linkfilter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: #fff3e0; border: 1px solid #f0d2a0; border-radius: 10px;
+  padding: 7px 10px; margin-bottom: 10px; font-size: 12.5px; }
+.vmh-lf-lbl { color: #b7791f; font-weight: 700; }
+.vmh-lf-q { color: var(--text-primary); font-weight: 600; max-width: 60%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.vmh-lf-x { margin-left: auto; border: 1px solid #e0a96b; background: var(--surface);
+  color: #b7791f; font-weight: 700; border-radius: 8px; padding: 3px 9px; font-size: 12px; cursor: pointer; }
+.vmh-lf-x:hover { background: #b7791f; color: #fff; border-color: #b7791f; }
+/* 요약 링크로 이동한 이슈 잠깐 강조 */
+@keyframes flashHl { 0%,100% { background: transparent; } 25%,60% { background: #fff3c4; } }
+.flash-hl { animation: flashHl 2.4s ease-in-out; }
+.flash-hl.issue-card { box-shadow: 0 0 0 2px #e0b94b; border-radius: 10px; }
+
 .vmh-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .vmh-name { font-size: 17px; font-weight: 700; }
 .vmh-type { font-size: 10.5px; color: var(--text-tertiary); font-weight: 600; border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }
