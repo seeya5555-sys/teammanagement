@@ -219,15 +219,11 @@
         location.reload();
       }).catch(()=>alert('토글 요청 실패'));
   };
-  // slowspace 섹션: ETA·Next Port(SVMS보다 정확) + 최신 동정. 데이터 있을 때만.
+  // slowspace 섹션: 최신 동정만(Notification 있을 때만). ETA/Next Port는 표시 안 함(손유석 지시).
   function slowSec(v){
-    if(!v.slow_eta && !v.slow_next_port && !v.slow_last_notif) return '';
-    let h='<div class="fm-sec">Slow · 항해정보</div>';
-    if(v.slow_next_port||v.slow_eta)
-      h+='<div class="fm-line"><span class="lk">Next Port</span><span class="lv">'+esc(v.slow_next_port||'—')+(v.slow_eta?' <span class="fm-eta">ETA '+esc(v.slow_eta)+'</span>':'')+'</span></div>';
-    if(v.slow_last_notif)
-      h+='<div class="fm-line"><span class="lk">최신 동정</span><span class="lv">'+esc(v.slow_last_notif.text||'')+(v.slow_last_notif.ts?' <small>('+esc(String(v.slow_last_notif.ts).slice(0,16))+')</small>':'')+'</span></div>';
-    return h;
+    if(!v.slow_last_notif) return '';
+    return '<div class="fm-sec">Slow · 최신 동정</div>'+
+      '<div class="fm-line"><span class="lk">동정</span><span class="lv">'+esc(v.slow_last_notif.text||'')+(v.slow_last_notif.ts?' <small>('+esc(String(v.slow_last_notif.ts).slice(0,16))+')</small>':'')+'</span></div>';
   }
   function openV(v){
     document.getElementById('fmName').textContent=v.name;
