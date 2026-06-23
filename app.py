@@ -8625,6 +8625,10 @@ def api_fleet_map_data():
     # 2) 선박별 noon 보고 누락: 마지막 rpt_dt 가 2일+ 지나면(어제 보고는 정상). 며칠부터 끊겼는지.
     today = now_k.date()
     for v in (data.get('fleet') or []):
+        # SVMS noon 보고 대상이 아닌 선박(stub, 타 관리사 등)은 '누락' 집계 제외 — AIS로 추적 중.
+        if v.get('no_noon'):
+            continue
+        sup = v.get('supervisor')
         rd = str(v.get('rpt_dt') or '')
         if len(rd) == 8 and rd.isdigit():
             try:
@@ -8635,12 +8639,19 @@ def api_fleet_map_data():
             if miss >= 2:
                 nxt = d0 + timedelta(days=1)
                 stale['vessels'].append({'name': v.get('name'), 'last_rpt': d0.strftime('%-m/%-d'),
-                                         'since': nxt.strftime('%-m/%-d'), 'days': miss})
+                                         'since': nxt.strftime('%-m/%-d'), 'days': miss, 'sup': sup})
         else:
             stale['vessels'].append({'name': v.get('name'), 'last_rpt': None,
-                                     'since': None, 'days': None})
+                                     'since': None, 'days': None, 'sup': sup})
     stale['vessels'].sort(key=lambda x: (x['days'] or 9999), reverse=True)
     data['staleness'] = stale
+    # 로그인 사용자의 감독명(admin 포함) — 대시보드 기본필터를 본인 감독으로.
+    my_sup = None
+    _sid = session.get('supervisor_id')
+    if _sid:
+        _r = query("SELECT name FROM supervisors WHERE id=?", (_sid,), one=True)
+        my_sup = _r['name'] if _r else None
+    data['my_supervisor'] = my_sup
     return jsonify(data)
 
 
