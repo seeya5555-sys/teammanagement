@@ -8622,8 +8622,10 @@ def api_fleet_map_data():
                                      'days': int(age_h // 24), 'hours': int(age_h)}
         except ValueError:
             pass
-    # 2) 선박별 noon 보고 누락: 마지막 rpt_dt 가 2일+ 지나면(어제 보고는 정상). 며칠부터 끊겼는지.
+    # 2) 선박별 noon 보고 누락. noon 보고는 ~1200(선박시각) → 14시(KST) 이후엔 '오늘 미보고'(miss>=1)도 누락,
+    #    그 전 시간대엔 오탐 방지로 2일+만. (며칠부터 끊겼는지 함께 표기)
     today = now_k.date()
+    miss_threshold = 1 if now_k.hour >= 14 else 2
     for v in (data.get('fleet') or []):
         # SVMS noon 보고 대상이 아닌 선박(stub, 타 관리사 등)은 '누락' 집계 제외 — AIS로 추적 중.
         if v.get('no_noon'):
@@ -8636,7 +8638,7 @@ def api_fleet_map_data():
             except ValueError:
                 continue
             miss = (today - d0).days
-            if miss >= 2:
+            if miss >= miss_threshold:
                 nxt = d0 + timedelta(days=1)
                 stale['vessels'].append({'name': v.get('name'), 'last_rpt': d0.strftime('%-m/%-d'),
                                          'since': nxt.strftime('%-m/%-d'), 'days': miss, 'sup': sup})
