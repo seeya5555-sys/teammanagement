@@ -134,7 +134,11 @@
   function icon(v){
     const due=v.cls_due_state==='overdue'?' due-overdue':(v.cls_due_state==='soon'?' due-soon':'');
     const sire=v.sire_obs_overdue?'<span class="sire-flag" title="SIRE 검사일 +3주 초과 · Observation 미완료"></span>':'';
-    return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'">🚢'+sire+'</div>'});
+    // 선위소스 표시: 이메일모드=📡, AIS 끊김(이메일후보)=노란 경고점
+    const pos=v.email_watch
+      ? '<span title="이메일 선위 모드(AIS off 대응)" style="position:absolute;top:-7px;left:-7px;font-size:12px;line-height:1">📡</span>'
+      : (v.ais_stale?'<span title="AIS 신호 끊김 — 이메일 선위 후보" style="position:absolute;top:-5px;left:-5px;width:10px;height:10px;border-radius:50%;background:#e0a800;border:1.5px solid #fff;box-shadow:0 0 0 1px #b7791f"></span>':'');
+    return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">🚢'+sire+pos+'</div>'});
   }
 
   fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
@@ -178,6 +182,35 @@
     document.querySelectorAll('#fmSup button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
     applyFilters();fmClose();
   }
+  // 선위 소스 라벨: 이메일 override > AIS(vesseltracker) > SVMS noon. 끊김 경고 포함.
+  function posSrcLabel(v){
+    if(v.pos_source==='email')
+      return '<span style="color:#b7791f">📡 위치=Master 이메일'+(v.pos_reported_at?' ('+esc(String(v.pos_reported_at).slice(0,16).replace("T"," "))+')':'')+'</span>';
+    if(String(v.position_source||'').indexOf('AIS')>=0){
+      const ts=v.position_ts?' ('+esc(String(v.position_ts).slice(0,16).replace("T"," "))+')':'';
+      return '<span style="color:#2f6f9f">🛰 위치=AIS</span>'+ts+(v.ais_stale?' <span style="color:#b7791f">⚠ 신호 끊김</span>':'');
+    }
+    return '(SVMS noon)';
+  }
+  // AIS off 대응 토글: 켜면 그 배가 이메일 선위 watch 등록 → 워처가 Outlook 메일에서 선위 갱신
+  function emailToggle(v){
+    const on=!!v.email_watch;
+    const warn=v.ais_stale?' <span style="color:#b7791f;font-size:11px">AIS 끊김 — 이메일 선위 권장</span>':'';
+    return '<div class="fm-line"><span class="lk">🛰️ AIS off → 이메일선위</span><span class="lv">'+
+      '<button onclick="fmToggleEmail(\''+esc(v.name).replace(/'/g,"\\'")+'\','+(on?'false':'true')+')" '+
+      'style="cursor:pointer;border:1px solid '+(on?'#b7791f':'var(--border)')+';background:'+(on?'#fef3c7':'var(--surface)')+
+      ';color:'+(on?'#92400e':'var(--text)')+';border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600">'+
+      (on?'ON · 해제':'OFF · 켜기')+'</button>'+warn+'</span></div>';
+  }
+  window.fmToggleEmail=function(vessel,enable){
+    fetch('{{ url_for("api_fleet_map_email_watch_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({vessel:vessel,enabled:enable})})
+      .then(r=>r.json()).then(res=>{
+        if(!res.ok){alert('토글 실패: '+(res.error||''));return;}
+        // 데이터 새로고침해서 마커/패널 반영
+        location.reload();
+      }).catch(()=>alert('토글 요청 실패'));
+  };
   function openV(v){
     document.getElementById('fmName').textContent=v.name;
     document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · 감독 '+esc(v.supervisor||'-')+' · '+v.lat.toFixed(1)+'°, '+v.lng.toFixed(1)+'°';
@@ -208,7 +241,8 @@
       card(f4.href, f4.cls, f4.k, f4.val, f4.unit)+
       '</div>'+
       dueLine+
-      '<div class="fm-sec">운항 상태 '+(v.pos_source==='email'?'<span style="color:#b7791f">📡 위치=Master 이메일'+(v.pos_reported_at?' ('+esc(String(v.pos_reported_at).slice(0,16).replace("T"," "))+')':'')+'</span>':'(SVMS noon)')+'</div>'+
+      '<div class="fm-sec">운항 상태 '+posSrcLabel(v)+'</div>'+
+      emailToggle(v)+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
       cargo+

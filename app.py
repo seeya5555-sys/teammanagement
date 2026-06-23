@@ -8450,6 +8450,60 @@ def api_ext_fleet_map_override():
     return jsonify({'ok': True, 'count': len(ov), 'key': key})
 
 
+FLEET_EMAIL_WATCH_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_email_watch.json')
+AIS_STALE_HOURS = 6   # AIS lastSeen이 이보다 오래면 '끊김' 자동표시(이메일 선위 후보)
+
+
+def _load_email_watch():
+    try:
+        with open(FLEET_EMAIL_WATCH_FILE, encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+@app.route('/api/fleet-map/email-watch', methods=['POST'])
+@login_required
+def api_fleet_map_email_watch_set():
+    """대시보드 토글 — 선박을 '이메일 선위' watch에 등록/해제(AIS off 대응).
+    payload: {vessel, enabled}. 워처(맥)가 GET /api/ext/fleet-map/email-watch 로 읽음."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict) or not d.get('vessel'):
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    w = _load_email_watch()
+    key = _vkey(d['vessel'])
+    if d.get('enabled'):
+        w[key] = {'vessel': d['vessel'],
+                  'since': datetime.now().isoformat(timespec='seconds'),
+                  'by': session.get('username') or session.get('supervisor_id')}
+    else:
+        w.pop(key, None)
+        # watch 해제 시 이메일 override도 제거 → 즉시 AIS/SVMS 위치로 복귀
+        try:
+            with open(FLEET_OVERRIDE_FILE, encoding='utf-8') as f:
+                ov = json.load(f)
+            if ov.pop(key, None) is not None:
+                t2 = FLEET_OVERRIDE_FILE + '.tmp'
+                with open(t2, 'w', encoding='utf-8') as f:
+                    json.dump(ov, f, ensure_ascii=False)
+                os.replace(t2, FLEET_OVERRIDE_FILE)
+        except (FileNotFoundError, ValueError):
+            pass
+    tmp = FLEET_EMAIL_WATCH_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(w, f, ensure_ascii=False)
+    os.replace(tmp, FLEET_EMAIL_WATCH_FILE)
+    return jsonify({'ok': True, 'enabled': bool(d.get('enabled')), 'count': len(w)})
+
+
+@app.route('/api/ext/fleet-map/email-watch')
+@api_key_required
+def api_ext_fleet_map_email_watch_get():
+    """워처(맥)용 — 현재 이메일 선위 watch 켜진 선박 목록."""
+    w = _load_email_watch()
+    return jsonify({'ok': True, 'vessels': list(w.values()), 'keys': list(w.keys())})
+
+
 @app.route('/api/fleet-map/data')
 @login_required
 def api_fleet_map_data():
@@ -8526,6 +8580,17 @@ def api_fleet_map_data():
     }
     for v in fleet:
         v['sire_obs_overdue'] = _vkey(v.get('name')) in overdue_vkeys
+    # 이메일 선위 watch 상태 + AIS 끊김 자동표시(이메일모드 후보)
+    _watch = _load_email_watch()
+    _now_epoch = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
+    for v in fleet:
+        v['email_watch'] = _vkey(v.get('name')) in _watch
+        ep = v.get('position_ts_epoch')
+        src = str(v.get('position_source') or '')
+        # AIS 소스인데 마지막 측위가 AIS_STALE_HOURS 초과 → 끊김(이메일모드 켜져있으면 표시 안 함)
+        v['ais_stale'] = bool(
+            ep and 'AIS' in src and not v['email_watch']
+            and (_now_epoch - float(ep)) > AIS_STALE_HOURS * 3600)
     is_admin = (session.get('role') == 'admin')
     sup_id = session.get('supervisor_id')
     if sup_id and not is_admin:
