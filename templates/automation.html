@@ -89,9 +89,6 @@
   <div id="au-jeonja"></div>
   <div id="au-jeonja-list" class="jl"></div>
 
-  <div class="au-sec">선박 위키</div>
-  <div id="au-shipwiki"></div>
-
   <div class="au-log">
     <div class="au-log-head" id="au-log-head">
       <span class="au-log-caret" id="au-log-caret">▸</span>
@@ -142,8 +139,6 @@
             <button class="au-b live money" data-task="${task}" data-mode="live" ${dis}>▶ 자동상신</button>`;
     } else if(opts.prep){    // AOR prep — Submitted AOR 카드화(/aor 큐 적재). 상신 아님(읽기+적재)
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>▶ AOR prep 실행 (/aor 큐 적재)</button>`;
-    } else if(opts.ingest){  // 선박 위키 신규수집 — 범주 메일 최근 7일 크롤·분류·적재. 외부 발송·승인 0.
-      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>▶ 신규 수집 실행 (최근 7일 · 범주 메일만)</button>`;
     } else {                 // SOA 그룹: 승인 + 리젝 워크플로우
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>🔍 검증</button>
             <button class="au-b live" data-task="${task}" data-mode="live" ${dis}>▶ 자동승인</button>
@@ -173,7 +168,6 @@
     renderSoa();
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
     renderJeonja();
-    $('#au-shipwiki').innerHTML=row('shipwiki_ingest',{ingest:true});
     renderLog();
     document.querySelectorAll('.au-b').forEach(btn=>btn.onclick=onRun);
   }
