@@ -65,10 +65,6 @@
 
         {{ nlink('calendar_page', '📅 Calendar') }}
         {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
-
-        {% if session.role == 'admin' %}
-        {{ nlink('shipwiki_page', '📚 위키') }}
-        {% endif %}
       </nav>
 
       <button type="button" class="nav-burger" id="nav-burger" aria-label="메뉴 열기" aria-expanded="false">
@@ -141,10 +137,6 @@
       <div class="mm-section"></div>
       {{ nlink('calendar_page', '📅 Calendar') }}
       {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
-      {% if session.role == 'admin' %}
-      <div class="mm-section">📚 위키</div>
-      {{ nlink('shipwiki_page', '선박 위키') }}
-      {% endif %}
     </nav>
   </div>
   {% endblock %}
