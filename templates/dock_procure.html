@@ -71,6 +71,8 @@
   .dp-stg.on .dp-cbx{background:var(--green);border-color:var(--green);color:#fff}
   .dp-stg .sl{font-size:9.5px;color:var(--text-tertiary);font-weight:650;text-align:center;line-height:1.15}
   .dp-stg.on .sl{color:var(--green)}
+  .dp-stg.subhi{background:var(--red-bg);border-radius:7px;box-shadow:0 0 0 1.5px var(--red-border);padding:2px 0}
+  .dp-sub{font-size:9px;font-weight:800;color:var(--red);margin-top:1px;line-height:1}
   .dp-status{font-size:11px;font-weight:700;padding:3px 10px;border-radius:14px;white-space:nowrap}
   .st-wait{background:var(--surface-3);color:var(--text-secondary)} .st-quote{background:var(--blue-bg);color:var(--blue-text)}
   .st-sent{background:var(--amber-bg);color:var(--amber)} .st-done{background:var(--green-bg);color:var(--green)}
@@ -278,8 +280,14 @@
   function stg(l,key,label){
     const on = l[key]?'on':'';
     const st = key==='stg_quote'?'quote':key==='stg_vendor'?'vendor':'order';
-    return `<div class="dp-stg ${on}" data-id="${l.id}" data-stage="${st}" data-val="${l[key]?0:1}">
-      <div class="dp-cbx">✓</div><div class="sl">${label}</div></div>`;
+    let extra='', cls='';
+    if(key==='stg_vendor' && l.svms_submit){            // 견적 제출수/의뢰수 표시 + 1건↑이면 하이라이트
+      const n = parseInt((String(l.svms_submit).split('/')[0]||'0'),10)||0;
+      extra = `<div class="dp-sub">${esc(l.svms_submit)}</div>`;
+      if(n>=1 && statusOf(l)[0]==='sent') cls=' subhi';
+    }
+    return `<div class="dp-stg ${on}${cls}" data-id="${l.id}" data-stage="${st}" data-val="${l[key]?0:1}">
+      <div class="dp-cbx">✓</div><div class="sl">${label}</div>${extra}</div>`;
   }
   function rowHtml(l){
     const [sc,sl]=statusOf(l);

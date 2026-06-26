@@ -485,6 +485,7 @@ def init_db(drop=False):
                 svms_pushed  INTEGER NOT NULL DEFAULT 0,      -- Phase 2: SVMS 청구서 생성됨
                 svms_req_no  TEXT,                            -- Phase 2: SVMS Inq No/REQ_NO(역추적 핸들)
                 svms_status  TEXT,                            -- Phase 2: 마지막 관측 SVMS Status
+                svms_submit  TEXT,                            -- Phase 2: 견적제출수/의뢰수 "n/m"
                 svms_synced_at TEXT,                          -- Phase 2: 마지막 동기화 시각
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
@@ -498,6 +499,8 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_status TEXT")
             if 'svms_synced_at' not in _dpc:
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_synced_at TEXT")
+            if 'svms_submit' not in _dpc:
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_submit TEXT")
         except Exception:
             pass
 
@@ -7850,26 +7853,28 @@ def api_ext_dockproc_sync():
             continue
         cur = plan.get(row['id'])
         if not cur or rank > cur[0]:                     # 같은 행 여러건이면 최고 rank만(취소 제외 후)
-            plan[row['id']] = (rank, status, (it.get('vendor') or '').strip() or None, inq, row)
+            plan[row['id']] = (rank, status, (it.get('vendor') or '').strip() or None,
+                               inq, row, (it.get('submit') or '').strip() or None)
     changes = []
-    for rid, (rank, status, vendor, inq, row) in plan.items():
+    for rid, (rank, status, vendor, inq, row, submit) in plan.items():
         q, v, o = (1 if rank >= 1 else 0), (1 if rank >= 2 else 0), (1 if rank >= 3 else 0)
         new_remark = row['remark']
         # 옵션 b: 발주완료 시 Vendor명을 Remark에 기입. 단 신규완료/빈Remark일 때만(매폴 수동메모 덮어쓰기 방지)
         if o and vendor and (not row['stg_order'] or not (row['remark'] or '').strip()):
             new_remark = vendor
-        before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'], row['svms_req_no'])
-        after = (q, v, o, new_remark, row['svms_req_no'] or inq)   # COALESCE(기존,신규)와 동일 → 멱등
+        before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'],
+                  row['svms_req_no'], row['svms_submit'])
+        after = (q, v, o, new_remark, row['svms_req_no'] or inq, submit)   # COALESCE(기존,신규)=멱등
         if before != after:
             changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
                             'status': status, 'stages': [q, v, o],
-                            'remark': new_remark, 'inq_no': inq})
+                            'remark': new_remark, 'inq_no': inq, 'submit': submit})
             if not dry:
                 execute(
                     "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, remark=?, "
-                    "svms_req_no=COALESCE(svms_req_no,?), svms_status=?, "
+                    "svms_req_no=COALESCE(svms_req_no,?), svms_status=?, svms_submit=?, "
                     "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?",
-                    (q, v, o, new_remark, inq, status, rid))
+                    (q, v, o, new_remark, inq, status, submit, rid))
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses})
