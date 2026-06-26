@@ -227,7 +227,8 @@
     try{
       const j=await api('POST','/api/reqgen/upload',fd,true);
       msg.textContent=`✅ ${j.count}건 적재 (${esc(j.vsl_nm||'')} ${esc(j.vsl_cd||'')})`
-        + (j.skipped_manager?` · MANAGER ${j.skipped_manager}건 제외(AOR 처리)`:'');
+        + (j.skipped_manager?` · MANAGER ${j.skipped_manager}건 제외(AOR 처리)`:'')
+        + (j.skipped_quote?` · 견적작성 선행 ${j.skipped_quote}건 제외(중복방지)`:'');
       fileInput.value=''; showName(); await load();
     }catch(e){ msg.textContent='🚨 '+e.message; }
   });

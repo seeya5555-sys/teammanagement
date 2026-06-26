@@ -7164,10 +7164,26 @@ def api_reqgen_upload():
         vsl_nm, sheets, skipped_mgr = _reqgen_parse_workbook(stream, vsl_cd)
     except Exception as e:
         return jsonify({'error': f'파싱 실패: {e}'}), 400
+    # 크로스탭 중복방지: Dock 발주현황에서 이미 '견적작성' 체크된 REQ는 수동 선행입력 → SVMS 자동작성 제외
+    skipped_quote = 0
+    if vsl_nm or vsl_cd:
+        qrows = query(
+            "SELECT req_no FROM dock_procure WHERE stg_quote=1 "
+            "AND (vsl_nm=? OR (vsl_cd IS NOT NULL AND vsl_cd=?))", (vsl_nm, vsl_cd))
+        done_quote = {r['req_no'].strip().upper() for r in qrows if r['req_no']}
+        if done_quote:
+            kept = [s for s in sheets if s['sheet'].strip().upper() not in done_quote]
+            skipped_quote = len(sheets) - len(kept)
+            sheets = kept
     if not sheets:
-        msg = '청구 가능한 시트(S*/ST*/R*)에 항목이 없음'
+        bits = []
         if skipped_mgr:
-            msg += f' (MANAGER 라인 {skipped_mgr}건은 AOR 처리 대상이라 제외됨)'
+            bits.append(f'MANAGER {skipped_mgr}건은 AOR 처리 대상')
+        if skipped_quote:
+            bits.append(f'견적작성 체크된 {skipped_quote}건은 수동 선행입력')
+        msg = '청구 가능한 시트(S*/ST*/R*)에 항목이 없음'
+        if bits:
+            msg += ' (' + ', '.join(bits) + '이라 제외됨)'
         return jsonify({'error': msg}), 400
     batch = uuid.uuid4().hex[:12]
     created = []
@@ -7193,7 +7209,7 @@ def api_reqgen_upload():
         created.append({'id': did, 'sheet': s['sheet'], 'doc_type': dt, 'lines': len(lines)})
     return jsonify({'batch': batch, 'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd,
                     'count': len(created), 'drafts': created,
-                    'skipped_manager': skipped_mgr}), 201
+                    'skipped_manager': skipped_mgr, 'skipped_quote': skipped_quote}), 201
 
 
 @app.route('/api/reqgen/drafts')
