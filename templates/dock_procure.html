@@ -22,7 +22,9 @@
   .dp-bar>i{display:block;height:100%;border-radius:3px;background:var(--green)}
   .dp-card.total{background:linear-gradient(135deg,#1E293B,#2c3e54);color:#fff;border:none}
   .dp-card.total .ct,.dp-card.total .cb{color:rgba(255,255,255,.7)}
-  .dp-up{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--blue-bg);border:1px dashed var(--blue-border);border-radius:10px;padding:11px 14px;margin-bottom:12px}
+  .dp-up{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--blue-bg);border:1px dashed var(--blue-border);border-radius:10px;padding:11px 14px;margin-bottom:12px;transition:.15s}
+  .dp-up.drag{background:var(--green-bg);border-color:var(--green);border-style:solid;box-shadow:0 0 0 2px var(--green-border) inset}
+  .dp-up.drag .hint{color:var(--green)}
   .dp-up .hint{font-size:12.5px;color:var(--blue-text);flex:1;min-width:220px}
   .dp-up .new{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700}
   .dp-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
@@ -86,9 +88,9 @@
 
   <div class="dp-cards" id="dp-cards"></div>
 
-  <div class="dp-up">
+  <div class="dp-up" id="dp-drop">
     <input type="file" id="dp-file" accept=".xlsx,.xlsm" hidden>
-    <div class="hint">📤 <b>INDEX 엑셀</b>을 업로드하면 R/S/ST 라인이 큐에 자동 적재됩니다. 수정본 재업로드 시 <span class="new">REQ.NO 기준 중복제외</span> — 추가된 라인만 증분 반영. <span style="color:var(--text-tertiary)">(페인트 P·조선소 SY는 메일견적이라 아래 ＋ 버튼으로 직접 추가)</span></div>
+    <div class="hint">📤 <b>INDEX 엑셀</b>을 여기로 <b>드래그&드롭</b>하거나 버튼으로 업로드하면 R/S/ST 라인이 큐에 자동 적재됩니다. 수정본 재업로드 시 <span class="new">REQ.NO 기준 중복제외</span> — 추가된 라인만 증분 반영. <span style="color:var(--text-tertiary)">(페인트 P·조선소 SY는 메일견적이라 아래 ＋ 버튼으로 직접 추가)</span></div>
     <button class="dp-btn primary" id="dp-upbtn">📤 INDEX 엑셀 업로드</button>
     <button class="dp-btn" id="dp-addbtn">＋ 라인 추가 (P/SY)</button>
   </div>
@@ -256,21 +258,34 @@
     });
   }
 
-  // upload
-  $('#dp-upbtn').onclick=()=>$('#dp-file').click();
-  $('#dp-file').onchange=async e=>{
-    const f=e.target.files[0]; if(!f)return;
+  // upload (버튼 / 파일선택 / 드래그&드롭 공용)
+  async function doUpload(f){
+    if(!f) return;
+    if(!/\.(xlsx|xlsm)$/i.test(f.name)){ toast('xlsx 파일만 가능'); return; }
     const fd=new FormData(); fd.append('file',f);
     toast('업로드 중…');
     const r=await fetch('/api/dock_procure/upload',{method:'POST',body:fd});
-    const j=await r.json(); e.target.value='';
+    const j=await r.json();
     if(!r.ok){ toast('실패: '+(j.error||'오류')); return; }
     let msg=`${j.vsl_nm}: +신규 ${j.added}건`;
     if(j.updated) msg+=` · 수정 ${j.updated}`;
     if(j.skipped) msg+=` · 중복제외 ${j.skipped}`;
     toast(msg);
     await load(j.vsl_nm);
-  };
+  }
+  $('#dp-upbtn').onclick=()=>$('#dp-file').click();
+  $('#dp-file').onchange=async e=>{ const f=e.target.files[0]; e.target.value=''; await doUpload(f); };
+
+  // drag & drop
+  const drop=$('#dp-drop');
+  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();drop.classList.add('drag');}));
+  ['dragleave','dragend'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();if(ev==='dragleave'&&drop.contains(e.relatedTarget))return;drop.classList.remove('drag');}));
+  drop.addEventListener('drop',async e=>{
+    e.preventDefault();e.stopPropagation();drop.classList.remove('drag');
+    const f=e.dataTransfer.files&&e.dataTransfer.files[0]; await doUpload(f);
+  });
+  // 페이지 전체에 떨궜을 때 브라우저가 파일 여는 것 방지
+  ['dragover','drop'].forEach(ev=>window.addEventListener(ev,e=>{ if(!drop.contains(e.target)){e.preventDefault();} }));
 
   // add line (P/SY)
   $('#dp-addbtn').onclick=async()=>{

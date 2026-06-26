@@ -23,7 +23,8 @@
 
       {% set survey_eps = ['class_status_page','condition_survey','vetting_status'] %}
       {% set report_eps = ['dry_dock_page','dry_dock_edit_page','boarding_page','boarding_edit_page'] %}
-      {% set auto_eps = ['automation_page','mail_page','aor_page','fundreq_page','reqgen_page','dock_procure_page'] %}
+      {% set auto_eps = ['automation_page','mail_page','aor_page','fundreq_page'] %}
+      {% set dockprep_eps = ['reqgen_page','dock_procure_page'] %}
       {% set expense_eps = ['expenses_page','expense_detail_page'] %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통 #}
       {% macro nlink(ep, label, eps=None) -%}
@@ -42,8 +43,6 @@
             {{ nlink('aor_page', 'AOR') }}
             {{ nlink('fundreq_page', '비용청구') }}
             {% endif %}
-            {{ nlink('reqgen_page', '도크 자재/수리') }}
-            {{ nlink('dock_procure_page', 'Dock 발주현황') }}
           </div>
         </div>
 
@@ -61,6 +60,14 @@
           <div class="nav-submenu">
             {{ nlink('dry_dock_page', 'Dry Dock Report', report_eps) }}
             {{ nlink('boarding_page', 'Boarding Report', report_eps) }}
+          </div>
+        </div>
+
+        <div class="nav-group {% if request.endpoint in dockprep_eps %}active{% endif %}">
+          <button type="button" class="nav-trigger">🛠 입거 준비 <span class="caret-sm">▾</span></button>
+          <div class="nav-submenu">
+            {{ nlink('reqgen_page', '도크 자재/수리') }}
+            {{ nlink('dock_procure_page', 'Dock 발주현황') }}
           </div>
         </div>
 
@@ -127,8 +134,6 @@
       {{ nlink('aor_page', 'AOR') }}
       {{ nlink('fundreq_page', '비용청구') }}
       {% endif %}
-      {{ nlink('reqgen_page', '도크 자재/수리') }}
-      {{ nlink('dock_procure_page', 'Dock 발주현황') }}
       <div class="mm-section">🔍 Survey</div>
       {{ nlink('class_status_page', 'Class Status') }}
       {{ nlink('condition_survey', 'Condition Survey') }}
@@ -136,6 +141,9 @@
       <div class="mm-section">📄 Report</div>
       {{ nlink('dry_dock_page', 'Dry Dock Report', report_eps) }}
       {{ nlink('boarding_page', 'Boarding Report', report_eps) }}
+      <div class="mm-section">🛠 입거 준비</div>
+      {{ nlink('reqgen_page', '도크 자재/수리') }}
+      {{ nlink('dock_procure_page', 'Dock 발주현황') }}
       <div class="mm-section"></div>
       {{ nlink('calendar_page', '📅 Calendar') }}
       {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
