@@ -7788,6 +7788,19 @@ def api_ext_dockproc_vessels():
     return jsonify({'vessels': [dict(r) for r in rows]})
 
 
+@app.route('/api/ext/dock_procure/links')
+@api_key_required
+def api_ext_dockproc_links():
+    """진단/폴러용 — 수동연결(svms_req_no 설정된) dock 행 목록."""
+    vc = (request.args.get('vsl_cd') or '').strip().upper()
+    rows = query(
+        "SELECT d.req_no, d.svms_req_no, d.cat_code, d.stg_quote, d.stg_vendor, d.stg_order, d.vsl_nm "
+        "FROM dock_procure d WHERE d.svms_req_no IS NOT NULL AND d.svms_req_no<>'' "
+        + ("AND (UPPER(d.vsl_cd)=? OR d.vsl_nm IN (SELECT vsl_nm FROM dock_procure_vessel WHERE UPPER(vsl_cd)=?))" if vc else ""),
+        ((vc, vc) if vc else ()))
+    return jsonify({'links': [dict(r) for r in rows]})
+
+
 @app.route('/api/ext/dock_procure/sync', methods=['POST'])
 @api_key_required
 def api_ext_dockproc_sync():
