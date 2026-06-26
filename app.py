@@ -7094,6 +7094,27 @@ def _reqgen_parse_repair_sheet(ws, vsl_cd, vsl_nm):
             'lines': scope, 'equipment': equipment, 'subj': subject}
 
 
+def _reqgen_index_prepared_by(wb):
+    """INDEX → {sheet_id(LINK col G, 없으면 REQ.NUMBER col B): PREPARED BY}. MANAGER 라인 제외 판정용."""
+    out = {}
+    if 'INDEX' not in wb.sheetnames:
+        return out
+    import re as _re
+    ws = wb['INDEX']
+    for row in ws.iter_rows(min_row=2, max_col=8, values_only=True):
+        reqb = row[1] if len(row) > 1 else None      # B REQ.NUMBER
+        prep = row[5] if len(row) > 5 else None       # F PREPARED BY
+        link = row[6] if len(row) > 6 else None       # G LINK(시트ID, 유니크)
+        sid = None
+        for cand in (link, reqb):
+            if cand and _re.match(r'^(SY|ST|R|S|P)\d+$', str(cand).strip().upper()):
+                sid = str(cand).strip().upper()
+                break
+        if sid and isinstance(prep, str) and prep.strip():
+            out[sid] = prep.strip().upper()
+    return out
+
+
 def _reqgen_parse_workbook(stream, vsl_cd, vsl_nm=None):
     import re as _re
     from openpyxl import load_workbook
@@ -7101,17 +7122,24 @@ def _reqgen_parse_workbook(stream, vsl_cd, vsl_nm=None):
     if vsl_nm is None and 'INDEX' in wb.sheetnames:
         vsl_nm = _reqgen_cell(wb['INDEX'], 'G2')
     vsl_prefix = _reqgen_vsl_prefix(_reqgen_index_vessel_type(wb))
+    prep_map = _reqgen_index_prepared_by(wb)          # MANAGER 라인 = SVMS 자동작성 제외(AOR로 처리)
     out = []
+    skipped_mgr = 0
     for nm in wb.sheetnames:
-        if _re.match(r'^(ST|S)\d+$', nm):                 # 구매청구
+        is_pc = bool(_re.match(r'^(ST|S)\d+$', nm))
+        is_ma = bool(_re.match(r'^R\d+$', nm))
+        if not (is_pc or is_ma):
+            continue
+        if prep_map.get(nm.upper()) == 'MANAGER':     # 관리사 청구 → SVMS 미작성(스킵)
+            skipped_mgr += 1
+            continue
+        if is_pc:
             res = _reqgen_parse_sheet(wb[nm], vsl_cd, vsl_nm, vsl_prefix)
-            if res['lines']:
-                out.append(res)
-        elif _re.match(r'^R\d+$', nm):                    # 수리신청
+        else:
             res = _reqgen_parse_repair_sheet(wb[nm], vsl_cd, vsl_nm)
-            if res['lines']:
-                out.append(res)
-    return vsl_nm, out
+        if res['lines']:
+            out.append(res)
+    return vsl_nm, out, skipped_mgr
 
 
 @app.route('/reqgen')
@@ -7133,11 +7161,14 @@ def api_reqgen_upload():
     try:
         import io as _io
         stream = _io.BytesIO(f.read())            # SpooledTemporaryFile 은 seekable 아님 → BytesIO 로
-        vsl_nm, sheets = _reqgen_parse_workbook(stream, vsl_cd)
+        vsl_nm, sheets, skipped_mgr = _reqgen_parse_workbook(stream, vsl_cd)
     except Exception as e:
         return jsonify({'error': f'파싱 실패: {e}'}), 400
     if not sheets:
-        return jsonify({'error': '청구 가능한 시트(S*/ST*/R*)에 항목이 없음'}), 400
+        msg = '청구 가능한 시트(S*/ST*/R*)에 항목이 없음'
+        if skipped_mgr:
+            msg += f' (MANAGER 라인 {skipped_mgr}건은 AOR 처리 대상이라 제외됨)'
+        return jsonify({'error': msg}), 400
     batch = uuid.uuid4().hex[:12]
     created = []
     for s in sheets:
@@ -7161,7 +7192,8 @@ def api_reqgen_upload():
                  json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False)))
         created.append({'id': did, 'sheet': s['sheet'], 'doc_type': dt, 'lines': len(lines)})
     return jsonify({'batch': batch, 'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd,
-                    'count': len(created), 'drafts': created}), 201
+                    'count': len(created), 'drafts': created,
+                    'skipped_manager': skipped_mgr}), 201
 
 
 @app.route('/api/reqgen/drafts')
@@ -7388,6 +7420,15 @@ def _dockproc_cat_code(req_no):
     return m.group(1) if m else None
 
 
+def _dockproc_source(code, prepared_by):
+    """견적출처 결정: 페인트P·조선소SY=MAIL(메일견적) / MANAGER=AOR / OWNER(R·S·ST)=SVMS."""
+    if code in ('P', 'SY'):
+        return 'MAIL'
+    if (prepared_by or '').strip().upper() == 'MANAGER':
+        return 'AOR'
+    return 'SVMS'
+
+
 def _dockproc_hash(equipment, subject):
     import hashlib as _hl
     s = f"{(equipment or '').strip().upper()}|{(subject or '').strip().upper()}"
@@ -7464,12 +7505,13 @@ def _dockproc_parse_index(stream):
         if not equip and not subj:                       # grey 빈 슬롯 제외
             continue
         code = _dockproc_cat_code(req)
+        prep_v = (str(prep).strip().upper() if prep else None)
         lines.append({
             'req_no': req, 'cat_code': code,
             'category': _DOCKPROC_CAT_NM.get(code, (cat or None)),
             'equipment': equip, 'subject': subj,
-            'prepared_by': (str(prep).strip().upper() if prep else None),
-            'source': ('MAIL' if code in ('P', 'SY') else 'SVMS'),
+            'prepared_by': prep_v,
+            'source': _dockproc_source(code, prep_v),
             'remark': rmk,
             'sort_no': (int(no) if isinstance(no, (int, float)) else None),
             'content_hash': _dockproc_hash(equip, subj),
@@ -7609,14 +7651,32 @@ def api_dockproc_add():
         return jsonify({'error': f'{req_no} 이미 존재'}), 409
     equip = (d.get('equipment') or '').strip() or None
     subj = (d.get('subject') or '').strip() or None
+    prep = (d.get('prepared_by') or 'MANAGER').strip().upper()
     lid = execute(
         "INSERT INTO dock_procure (vsl_nm, vsl_cd, req_no, cat_code, category, equipment, subject, "
         "prepared_by, source, content_hash, remark) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (vsl_nm, (d.get('vsl_cd') or None), req_no, code, _DOCKPROC_CAT_NM.get(code),
-         equip, subj, (d.get('prepared_by') or 'MANAGER'),
-         ('MAIL' if code in ('P', 'SY') else 'SVMS'), _dockproc_hash(equip, subj),
+         equip, subj, prep,
+         _dockproc_source(code, prep), _dockproc_hash(equip, subj),
          (d.get('remark') or None)))
     return jsonify({'id': lid, 'req_no': req_no}), 201
+
+
+@app.route('/api/dock_procure/<int:lid>/prep', methods=['POST'])
+@login_required
+def api_dockproc_prep(lid):
+    """담당(OWNER↔MANAGER) 토글 — 견적출처 자동 동기화(MANAGER→AOR / OWNER→SVMS, P·SY=MAIL 고정)."""
+    row = query("SELECT * FROM dock_procure WHERE id=?", (lid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    nv = (d.get('prepared_by') or '').strip().upper()
+    if nv not in ('OWNER', 'MANAGER'):                 # 값 없으면 토글
+        nv = 'MANAGER' if (row['prepared_by'] or '').upper() == 'OWNER' else 'OWNER'
+    src = _dockproc_source(row['cat_code'], nv)
+    execute("UPDATE dock_procure SET prepared_by=?, source=?, updated_at=datetime('now','localtime') WHERE id=?",
+            (nv, src, lid))
+    return jsonify({'id': lid, 'prepared_by': nv, 'source': src})
 
 
 @app.route('/api/dock_procure/<int:lid>', methods=['PATCH'])

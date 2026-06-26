@@ -48,7 +48,9 @@
   .dp-src{font-size:10px;font-weight:700;padding:1px 6px;border-radius:5px;border:1px solid var(--border);color:var(--text-tertiary);background:var(--surface-2)}
   .dp-src.MAIL{color:var(--amber);border-color:var(--amber-border);background:var(--amber-bg)}
   .dp-src.SVMS{color:var(--teal);border-color:#bfe6d6;background:var(--teal-bg)}
-  .dp-prep{font-size:11px;font-weight:650;padding:2px 8px;border-radius:6px}
+  .dp-src.AOR{color:var(--purple-text);border-color:#c3bef0;background:var(--purple-bg)}
+  .dp-prep{font-size:11px;font-weight:650;padding:2px 8px;border-radius:6px;cursor:pointer;border:1px solid transparent;transition:.12s}
+  .dp-prep:hover{filter:brightness(.96);box-shadow:0 0 0 1px var(--border) inset}
   .dp-prep.OWNER{background:var(--green-bg);color:var(--green)} .dp-prep.MANAGER{background:var(--amber-bg);color:var(--amber)}
   .dp-stages{display:flex;gap:12px;justify-content:center}
   .dp-stg{display:flex;flex-direction:column;align-items:center;gap:3px;width:52px;cursor:pointer}
@@ -229,7 +231,7 @@
       <td class="dp-req">${esc(l.req_no)}</td>
       <td><span class="dp-pill cat-${l.cat_code}">${esc(CATS.find(c=>c.code===l.cat_code)?.nm||l.category||'')}</span></td>
       <td><div class="dp-subj">${esc(l.subject||'—')}</div><div class="dp-equip">${esc(l.equipment||'')}</div></td>
-      <td class="c">${l.prepared_by?`<span class="dp-prep ${l.prepared_by}">${esc(l.prepared_by)}</span>`:'—'}</td>
+      <td class="c"><span class="dp-prep ${l.prepared_by||'OWNER'}" data-id="${l.id}" title="클릭하여 OWNER↔MANAGER 전환">${esc(l.prepared_by||'OWNER')}</span></td>
       <td class="c"><span class="dp-src ${l.source}">${esc(l.source||'')}</span></td>
       <td><div class="dp-stages">${stg(l,'stg_quote','견적<br>작성')}${stg(l,'stg_vendor','벤더<br>제출')}${stg(l,'stg_order','발주<br>완료')}</div></td>
       <td class="c"><span class="dp-status st-${sc}">${sl}</span></td>
@@ -239,6 +241,13 @@
   }
 
   function bindRows(){
+    document.querySelectorAll('.dp-prep').forEach(p=>p.onclick=async()=>{
+      const id=p.dataset.id;
+      const r=await fetch(`/api/dock_procure/${id}/prep`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+      const j=await r.json();
+      const l=DATA.lines.find(x=>x.id==id); if(l){l.prepared_by=j.prepared_by;l.source=j.source;}
+      render();
+    });
     document.querySelectorAll('.dp-stg').forEach(s=>s.onclick=async()=>{
       const id=s.dataset.id, stage=s.dataset.stage, value=+s.dataset.val;
       const r=await fetch(`/api/dock_procure/${id}/stage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage,value})});
