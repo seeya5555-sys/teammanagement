@@ -7811,10 +7811,13 @@ def api_ext_dockproc_sync():
         if rank == 0:                                    # 매핑 없는 상태(초안 등) skip
             continue
         inq = (it.get('inq_no') or '').strip() or None
+        inq_alt = (it.get('inq_alt') or '').strip() or None   # 구매 INQ_NO(REQ_NO와 별개) — 둘 다 매칭키
         subj = it.get('subject') or ''
         row = None
-        if inq:
-            row = query("SELECT * FROM dock_procure WHERE svms_req_no=?", (inq,), one=True)
+        cand = [c for c in (inq, inq_alt) if c]
+        if cand:                                              # 저장된 svms_req_no가 REQ_NO/INQ_NO 어느 쪽이든 매칭
+            qm = ",".join("?" * len(cand))
+            row = query(f"SELECT * FROM dock_procure WHERE svms_req_no IN ({qm})", tuple(cand), one=True)
         if not row:
             m = TAG.search(subj)
             if m:
@@ -7847,7 +7850,7 @@ def api_ext_dockproc_sync():
             if not dry:
                 execute(
                     "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, remark=?, "
-                    "svms_req_no=COALESCE(?,svms_req_no), svms_status=?, "
+                    "svms_req_no=COALESCE(svms_req_no,?), svms_status=?, "
                     "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?",
                     (q, v, o, new_remark, inq, status, rid))
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
