@@ -7457,10 +7457,14 @@ def _dockproc_source(code, prepared_by):
 
 # Phase 2 역동기화: SVMS Status → 진행단계 rank(누적). HQ Canceled=무시(맵 없음→0).
 _DOCKPROC_STATUS_RANK = {
-    'HQ CONFIRMED': 1,        # 견적작성
-    'QUOTATION INQUIRY': 2,   # 벤더제출(견적의뢰)
-    'SUBMIT': 3,              # 발주완료(Submit 단계부터)
-    'HQ ORDERED': 3,         # 발주완료
+    # 1=견적작성 / 2=벤더제출 / 3=발주완료 (누적). HQ Canceled·미등재=무시(rank0).
+    'HQ CONFIRMED': 1,          # 견적작성 (수리·구매 공통)
+    'QUOTATION INQUIRY': 2,     # 벤더제출(견적의뢰)
+    'SUBMIT': 3,                # 발주완료 (수리)
+    'HQ ORDERED': 3,            # 발주완료 (수리)
+    'ORDERED': 3,               # 발주완료 (구매 발주)
+    'VENDOR CONFIRMED': 3,      # 발주완료 (구매 — 업체확정)
+    'APPROVAL(PROCSSING)': 3,   # 발주완료 (구매 — 발주승인 진행)
 }
 
 
