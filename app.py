@@ -7565,7 +7565,33 @@ def api_dockproc_lines():
     if vsl:
         rows = [dict(r) for r in query(
             "SELECT * FROM dock_procure WHERE vsl_nm=? " + _DOCKPROC_ORDER, (vsl,))]
+        ves = next((v for v in vessels if v['vsl_nm'] == vsl), None)
+        prefix = _reqgen_vsl_prefix((ves or {}).get('vtype'))
+        vcode = (ves or {}).get('vsl_cd')
+        # 각 R/S/ST 행에 SVMS 정규 제목(수동작성 시 복사용 = reqgen 자동건과 동일 포맷) 생성
+        for r in rows:
+            vc = r.get('vsl_cd') or vcode
+            if r.get('cat_code') in ('R', 'S', 'ST') and vc:
+                r['svms_subj'] = _reqgen_build_subj(vc, r['req_no'], r['vsl_nm'], prefix, r.get('subject'))
+            else:
+                r['svms_subj'] = None
     return jsonify({'vessels': vessels, 'current': vsl, 'lines': rows})
+
+
+@app.route('/api/dock_procure/vessel_code', methods=['POST'])
+@login_required
+def api_dockproc_vessel_code():
+    """선박 SVMS 코드(예: SAPS) 설정 — 정규 제목 생성·Phase2 역추적 매칭용. 선박헤더+모든 행에 반영."""
+    d = request.get_json(silent=True) or {}
+    vsl_nm = (d.get('vsl_nm') or '').strip()
+    vsl_cd = (d.get('vsl_cd') or '').strip().upper() or None
+    if not vsl_nm:
+        return jsonify({'error': 'vsl_nm 필수'}), 400
+    execute("UPDATE dock_procure_vessel SET vsl_cd=?, updated_at=datetime('now','localtime') WHERE vsl_nm=?",
+            (vsl_cd, vsl_nm))
+    execute("UPDATE dock_procure SET vsl_cd=?, updated_at=datetime('now','localtime') WHERE vsl_nm=?",
+            (vsl_cd, vsl_nm))
+    return jsonify({'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd})
 
 
 @app.route('/api/dock_procure/upload', methods=['POST'])
