@@ -7779,6 +7779,15 @@ def api_dockproc_link(lid):
     return jsonify({'id': lid, 'svms_req_no': inq})
 
 
+@app.route('/api/ext/dock_procure/vessels')
+@api_key_required
+def api_ext_dockproc_vessels():
+    """맥 폴러용 — SVMS코드(vsl_cd) 설정된 입거선박 목록(역동기화 대상)."""
+    rows = query("SELECT vsl_nm, vsl_cd FROM dock_procure_vessel WHERE vsl_cd IS NOT NULL AND vsl_cd<>'' "
+                 "ORDER BY updated_at DESC")
+    return jsonify({'vessels': [dict(r) for r in rows]})
+
+
 @app.route('/api/ext/dock_procure/sync', methods=['POST'])
 @api_key_required
 def api_ext_dockproc_sync():
