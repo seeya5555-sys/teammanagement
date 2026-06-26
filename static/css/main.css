@@ -4545,15 +4545,17 @@ body.dde-readonly .bre-defect-photo-thumb {
   background: var(--surface-2); font-weight: 600; color: var(--text-secondary);
   font-size: 11.5px; white-space: nowrap;
 }
-.cls-table .c-no   { width: 36px; text-align: center; color: var(--text-tertiary); }
-.cls-table .c-date { width: 96px; white-space: nowrap; }
-.cls-table .c-desc { min-width: 280px; }
-.cls-table .c-rmk  { width: 30%; }
-.cls-table .c-imp  { width: 78px; text-align: center; }
+.cls-table .c-no   { width: 34px; text-align: center; color: var(--text-tertiary); }
+.cls-table .c-date { width: 92px; white-space: nowrap; }
+.cls-table .c-desc { min-width: 240px; width: 30%; }
+.cls-table .c-rmk  { width: 23%; }
+.cls-table .c-act  { width: 23%; }
+.cls-table .c-imp  { width: 64px; text-align: center; }
 
 .cls-edit { cursor: text; outline: none; white-space: pre-wrap; word-break: break-word; }
 .cls-edit:focus { box-shadow: inset 0 0 0 2px var(--blue); background: #fff; }
 .cls-edit.c-rmk { background: #fcfcf7; }
+.cls-edit.c-act { background: #f4f8fc; }   /* 조치사항(수동입력) 셀 — 살짝 청색 톤으로 구분 */
 
 .cls-urgent-cell { text-align: center; }
 .cls-urgent-chk { width: 16px; height: 16px; cursor: pointer; accent-color: #dc2626; }

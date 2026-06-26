@@ -133,7 +133,7 @@ function render() {
   if (!vessels.length) {
     list.append(el('div', { class: 'cs-empty' },
       q ? '검색 결과가 없습니다.'
-        : 'Class Status가 없습니다. 우측 상단 "Class Status 올리기"로 보고서를 업로드하세요.'));
+        : 'Class Status가 없습니다. 우측 상단 "API에서 Pushing"으로 선급 API에서 가져오세요.'));
   } else {
     vessels.forEach(g => list.append(vesselCard(g)));
   }
@@ -200,6 +200,8 @@ function clsDigest(snap) {
     if (dup) s += ' (선급지적 / 기국사항 중복)';
     const due = (it.due_date || '').trim();
     if (due) s += ' // DUE DATE : ' + due;
+    const act = (it.action_taken || '').trim();
+    if (act) s += '\n조치사항 : ' + act;
     return s;
   };
 
@@ -253,6 +255,7 @@ function catSection(title, cls, items) {
     el('th', { class: 'c-desc' }, 'Description (원문)'),
     el('th', { class: 'c-date' }, 'Due'),
     el('th', { class: 'c-rmk' }, '한글 요약'),
+    el('th', { class: 'c-act' }, '조치사항'),
     el('th', { class: 'c-imp' }, 'Urgent'))));
   const tb = el('tbody');
   items.forEach(it => tb.append(itemRow(it)));
@@ -292,6 +295,7 @@ function itemRow(it) {
     editCell(it.description, 'description', it.id, 'c-desc'),
     editCell(it.due_date, 'due_date', it.id, 'c-date'),
     editCell(it.remark, 'remark', it.id, 'c-rmk'),
+    editCell(it.action_taken, 'action_taken', it.id, 'c-act'),
     el('td', { class: 'c-imp cls-urgent-cell' }, chk));
 }
 
@@ -411,25 +415,19 @@ function uploadResultRow(res) {
 
 // ───────────── Init ─────────────
 function wireUpload() {
-  $('#cls-upload-btn').addEventListener('click', openUpload);
+  // API Pushing(온디맨드) — 선급검사 API에서 손유석 담당선박 Class Status를 받아 업데이트.
+  // 기존 push 엔드포인트(플래그)를 맥 러너가 폴링 → 선급 API pull 실행.
   const pushBtn = $('#cls-push-btn');
   if (pushBtn) pushBtn.addEventListener('click', async () => {
-    if (!confirm('BV VeriSTAR에서 담당선박 Class Status를 받아 업데이트합니다.\n(맥 러너가 1~2분 내 처리, 텔레그램으로 결과 보고)\n진행할까요?')) return;
+    if (!confirm('선급검사 API에서 담당선박 Class Status를 받아 업데이트합니다.\n(맥 러너가 1~2분 내 처리, 텔레그램으로 결과 보고)\n진행할까요?')) return;
     pushBtn.disabled = true;
     try {
       const r = await fetch('/api/class-status/push', { method: 'POST' });
-      if (r.ok) alert('요청됨 📥 — BV에서 가져오는 중입니다. 1~2분 후 목록을 새로고침하세요. (결과는 텔레그램 보고)');
+      if (r.ok) alert('요청됨 📥 — 선급 API에서 가져오는 중입니다. 1~2분 후 목록을 새로고침하세요. (결과는 텔레그램 보고)');
       else alert('요청 실패 (' + r.status + ')');
     } catch (e) { alert('요청 실패: ' + e.message); }
     finally { pushBtn.disabled = false; }
   });
-  document.querySelectorAll('[data-cls-close]').forEach(b => b.addEventListener('click', closeUpload));
-  const dz = $('#cls-dropzone'), input = $('#cls-file-input');
-  dz.addEventListener('click', () => input.click());
-  input.addEventListener('change', () => { if (input.files.length) { uploadFiles(input.files); input.value = ''; } });
-  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
-  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
-  dz.addEventListener('drop', (e) => { if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
   const mgrBtn = $('#cls-export-mgr-btn');
   if (mgrBtn) mgrBtn.addEventListener('click', openMgrExport);
 }
@@ -533,7 +531,6 @@ async function init() {
   wireSearch();
   $('#cls-collapse-all').addEventListener('click', collapseAll);
   $('#cls-expand-all').addEventListener('click', expandAll);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeUpload(); });
   try {
     S.supervisors = await api('/api/supervisors');
   } catch (_) { S.supervisors = []; }

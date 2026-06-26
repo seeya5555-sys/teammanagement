@@ -11,19 +11,11 @@
 
 <!-- 툴바: 업로드 + 검색 + 컨텍스트 -->
 <div class="cs-toolbar">
-  <button class="btn btn-primary" id="cls-upload-btn" type="button">
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;vertical-align:-2px">
-      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-      <polyline points="17 8 12 3 7 8"/>
-      <line x1="12" y1="3" x2="12" y2="15"/>
-    </svg>
-    Class Status 올리기
-  </button>
   {% if session.role == 'admin' %}
-  <button class="btn btn-outline" id="cls-push-btn" type="button"
-          title="BV VeriSTAR에서 담당선박 Class Status를 자동으로 받아 업데이트"
+  <button class="btn btn-primary" id="cls-push-btn" type="button"
+          title="선급검사 API에서 담당선박 Class Status를 받아 업데이트(온디맨드)"
           style="border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8">
-    📥 BV에서 Pushing
+    📥 API에서 Pushing
   </button>
   {% endif %}
   <button class="btn btn-outline" type="button" onclick="location.href='/api/class-status/export-all'"
@@ -51,38 +43,6 @@
 
 <!-- 미매칭 버킷 -->
 <div id="cls-unmatched"></div>
-
-<!-- ========= 업로드 모달 ========= -->
-<div class="modal" id="cls-upload-modal" hidden>
-  <div class="modal-backdrop" data-cls-close="1"></div>
-  <div class="modal-box" style="width: min(760px, 96vw);" role="dialog" aria-modal="true">
-    <div class="modal-head">
-      <h2>Class Status 업로드
-        <span class="attach-modal-subtitle">PDF · 이미지 · 엑셀 · 여러 개 동시 가능</span>
-      </h2>
-      <button class="modal-close" data-cls-close="1" aria-label="닫기">&times;</button>
-    </div>
-    <div class="modal-body">
-      <div class="attach-dropzone" id="cls-dropzone">
-        <input type="file" id="cls-file-input" multiple hidden
-               accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif,.xlsx,.xls">
-        <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6">
-          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-          <polyline points="17 8 12 3 7 8"/>
-          <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
-        <p class="attach-dropzone-title">파일을 끌어다 놓거나 클릭하여 선택</p>
-        <p class="attach-dropzone-sub">선명 자동 인식 → 담당선박 매칭 → Open COC·기국만 추출 (각 파일 최대 15MB)</p>
-      </div>
-      <div id="cls-upload-results" class="cls-up-results"></div>
-    </div>
-    <div class="modal-foot">
-      <span class="form-hint" id="cls-upload-hint"></span>
-      <span class="flex-spacer"></span>
-      <button class="btn btn-outline" type="button" data-cls-close="1">닫기</button>
-    </div>
-  </div>
-</div>
 
 {% endblock %}
 

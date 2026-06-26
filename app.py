@@ -9458,7 +9458,17 @@ def _cls_save_snapshot(vessel_id, vessel_name_raw, data, filename, source_path=N
     vessel_id None 이면 미매칭으로 저장(같은 정규화 선명의 기존 미매칭 제거 후 삽입)."""
     conn = get_db()
     user = session.get('username')
+    _ndesc = lambda s: ' '.join((s or '').strip().lower().split())
+    preserved = {}   # (category, 정규화 description) -> action_taken — 스냅샷 교체에도 손유석 조치사항 유지
     if vessel_id is not None:
+        try:
+            for r in conn.execute(
+                "SELECT i.category, i.description, i.action_taken "
+                "FROM class_status_items i JOIN class_status c ON c.id = i.cs_id "
+                "WHERE c.vessel_id = ? AND IFNULL(i.action_taken,'') <> ''", (vessel_id,)).fetchall():
+                preserved[(r['category'], _ndesc(r['description']))] = r['action_taken']
+        except Exception:
+            preserved = {}
         for r in conn.execute('SELECT source_path FROM class_status WHERE vessel_id=?', (vessel_id,)).fetchall():
             _cls_delete_file(r['source_path'])
         conn.execute('DELETE FROM class_status WHERE vessel_id=?', (vessel_id,))
@@ -9478,12 +9488,13 @@ def _cls_save_snapshot(vessel_id, vessel_name_raw, data, filename, source_path=N
     cs_id = cur.lastrowid
     for cat, key in (('COC', 'coc'), ('STATUTORY', 'statutory')):
         for n, it in enumerate(data.get(key) or [], start=1):
+            act = preserved.get((cat, _ndesc(it.get('description'))), '')
             conn.execute(
                 '''INSERT INTO class_status_items
-                     (cs_id, category, no, issued_date, description, due_date, remark)
-                   VALUES (?,?,?,?,?,?,?)''',
+                     (cs_id, category, no, issued_date, description, due_date, remark, action_taken)
+                   VALUES (?,?,?,?,?,?,?,?)''',
                 (cs_id, cat, n, it.get('issued_date'), it.get('description'),
-                 it.get('due_date'), it.get('remark')))
+                 it.get('due_date'), it.get('remark'), act))
     conn.commit()
     return cs_id
 
@@ -9619,7 +9630,7 @@ def api_class_status_item_update(iid):
         abort(404)
     d = request.get_json(silent=True) or {}
     fields, params = [], []
-    for col in ('importance', 'remark', 'description', 'issued_date', 'due_date'):
+    for col in ('importance', 'remark', 'description', 'issued_date', 'due_date', 'action_taken'):
         if col in d:
             val = d[col]
             if col == 'importance' and val not in ('', 'Urgent'):
@@ -9685,13 +9696,14 @@ def api_class_status_export(cs_id):
             it['description'] or '',
             it['due_date'] or '',
             it['remark'] or '',
+            it['action_taken'] or '',
             it['importance'] or '',
         ])
-    headers = ['Category', 'No', 'Issued', 'Description', 'Due', '한글 요약', 'Urgent']
+    headers = ['Category', 'No', 'Issued', 'Description', 'Due', '한글 요약', '조치사항', 'Urgent']
     subtitle = f"{snap['class_society'] or ''}  ·  발행 {snap['report_date'] or '-'}"
     bio = _findings_workbook(
         f'{vname} Class Status', subtitle, headers, rows,
-        wrap_cols={4, 6}, widths=[16, 5, 13, 60, 13, 40, 8])
+        wrap_cols={4, 6, 7}, widths=[16, 5, 13, 60, 13, 40, 40, 8])
     safe = _re_cls.sub(r'[^A-Za-z0-9가-힣 _-]', '', vname).strip() or 'class_status'
     return send_file(bio, as_attachment=True,
                      download_name=f'{safe}_ClassStatus.xlsx',
@@ -9738,20 +9750,20 @@ def api_class_status_export_all():
         vname = name_by_v.get(s['vessel_id']) or s['vessel_name_raw'] or ''
         items = query('SELECT * FROM class_status_items WHERE cs_id=? ORDER BY category, no', (s['id'],))
         if not items:
-            rows.append([vname, s['class_society'] or '', '', '', '지적 없음', '', '', ''])
+            rows.append([vname, s['class_society'] or '', '', '', '지적 없음', '', '', '', ''])
             continue
         for it in items:
             rows.append([
                 vname, s['class_society'] or '',
                 cat_ko.get(it['category'], it['category']),
                 it['issued_date'] or '', it['description'] or '',
-                it['due_date'] or '', it['remark'] or '', it['importance'] or '',
+                it['due_date'] or '', it['remark'] or '', it['action_taken'] or '', it['importance'] or '',
             ])
-    headers = ['Vessel', 'Class', 'Category', 'Issued', 'Description', 'Due', '한글 요약', 'Urgent']
+    headers = ['Vessel', 'Class', 'Category', 'Issued', 'Description', 'Due', '한글 요약', '조치사항', 'Urgent']
     today = query("SELECT date('now','localtime') d", one=True)['d']
     bio = _findings_workbook(
         '전체 선박 Class Status', f'생성 {today}', headers, rows,
-        wrap_cols={5, 7}, widths=[20, 7, 16, 13, 58, 13, 38, 8])
+        wrap_cols={5, 7, 8}, widths=[20, 7, 16, 13, 58, 13, 38, 38, 8])
     return send_file(bio, as_attachment=True,
                      download_name=f'ClassStatus_All_{today}.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -9875,6 +9887,15 @@ def _auto_migrate():
                 print('[auto_migrate] class_status.source_path 추가됨')
         except Exception as e:
             print(f'[auto_migrate] class_status.source_path 점검 건너뜀: {e}')
+
+        # class_status_items.action_taken (손유석 수동입력 조치사항 — 스냅샷 교체에도 description 매칭으로 유지)
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(class_status_items)').fetchall()]
+            if cols and 'action_taken' not in cols:
+                conn.execute("ALTER TABLE class_status_items ADD COLUMN action_taken TEXT NOT NULL DEFAULT ''")
+                print('[auto_migrate] class_status_items.action_taken 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] class_status_items.action_taken 점검 건너뜀: {e}')
 
         # vessels.manager (관리사 — 선급처럼 텍스트 지정, Class Status 관리사별 추출용)
         try:

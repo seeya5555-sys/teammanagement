@@ -525,6 +525,7 @@ CREATE TABLE IF NOT EXISTS class_status_items (
     description  TEXT,                              -- 원문 그대로
     due_date     TEXT,                              -- Due / 마감일
     remark       TEXT,                              -- 한글 음슴체 요약
+    action_taken TEXT NOT NULL DEFAULT '',          -- 조치사항(손유석 수동입력, 스냅샷 교체에도 description 매칭으로 유지)
     importance   TEXT NOT NULL DEFAULT '',          -- 중요도(수동): '' / High / Mid / Low
     created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
