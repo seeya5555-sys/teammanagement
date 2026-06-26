@@ -77,8 +77,8 @@
   .dp-sec td{padding:8px 12px !important;background:var(--surface-3) !important;font-weight:700;font-size:11px;letter-spacing:.4px;color:var(--text-secondary);text-transform:uppercase}
   .dp-del{color:var(--text-tertiary);cursor:pointer;font-size:14px;border:none;background:none}
   .dp-del:hover{color:var(--red)}
-  .dp-cpy{cursor:pointer;font-size:13px;border:none;background:none;margin-right:2px;opacity:.7}
-  .dp-cpy:hover{opacity:1}
+  .dp-cpy,.dp-lnk{cursor:pointer;font-size:13px;border:none;background:none;margin-right:2px;opacity:.7}
+  .dp-cpy:hover,.dp-lnk:hover{opacity:1}
   .dp-code{font-family:ui-monospace,Menlo,monospace;font-weight:700;cursor:pointer;border-bottom:1px dashed var(--border-strong)}
   .dp-code.unset{color:var(--blue);font-family:inherit;font-weight:650;border-bottom:none}
   .dp-code:hover{color:var(--blue)}
@@ -129,7 +129,7 @@
         <th style="width:200px" class="c">진행 단계</th>
         <th style="width:88px" class="c">상태</th>
         <th style="width:150px">Remark</th>
-        <th style="width:58px" class="c"></th>
+        <th style="width:80px" class="c"></th>
       </tr>
     </thead>
     <tbody id="dp-body"></tbody>
@@ -267,9 +267,9 @@
       <td class="c"><span class="dp-prep ${l.prepared_by||'OWNER'}" data-id="${l.id}" title="클릭하여 OWNER↔MANAGER 전환">${esc(l.prepared_by||'OWNER')}</span></td>
       <td class="c"><span class="dp-src ${l.source}">${esc(l.source||'')}</span></td>
       <td><div class="dp-stages">${stg(l,'stg_quote','견적<br>작성')}${stg(l,'stg_vendor','벤더<br>제출')}${stg(l,'stg_order','발주<br>완료')}</div></td>
-      <td class="c"><span class="dp-status st-${sc}">${sl}</span></td>
+      <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No">🔗${esc(l.svms_req_no)}</div>`:''}</td>
       <td><input class="dp-rmk" data-id="${l.id}" value="${esc(l.remark||'')}" placeholder="—"></td>
-      <td style="white-space:nowrap">${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)">📋</button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제">✕</button></td>
+      <td style="white-space:nowrap">${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)">📋</button><button class="dp-lnk" data-id="${l.id}" title="SVMS Inq No 수동연결 (Tier3)">🔗</button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제">✕</button></td>
     </tr>`;
   }
 
@@ -299,6 +299,13 @@
       if(!l.svms_subj){ toast('먼저 상단 SVMS 코드를 설정하세요'); return; }
       try{ await navigator.clipboard.writeText(l.svms_subj); toast('제목 복사됨: '+l.svms_subj); }
       catch(e){ window.prompt('복사 (Ctrl+C):', l.svms_subj); }
+    });
+    document.querySelectorAll('.dp-lnk').forEach(b=>b.onclick=async()=>{
+      const l=DATA.lines.find(x=>x.id==b.dataset.id);
+      const v=prompt('SVMS Inq No 입력 (예: SAPSME26062501) — 제목규칙 안 지킨 수동건 연결용. 비우면 해제',(l&&l.svms_req_no)||'');
+      if(v===null)return;
+      const r=await fetch(`/api/dock_procure/${b.dataset.id}/link`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({svms_req_no:v.trim()})});
+      if(!r.ok){toast('실패');return;} toast(v.trim()?('연결: '+v.trim()):'연결 해제'); await load(DATA.current);
     });
     document.querySelectorAll('.dp-del').forEach(b=>b.onclick=async()=>{
       if(!confirm('이 라인을 삭제할까요?'))return;

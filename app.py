@@ -483,13 +483,23 @@ def init_db(drop=False):
                 sort_no      INTEGER,                         -- INDEX No.(정렬용)
                 rev_batch    TEXT,                            -- 추가된 업로드 배치 id
                 svms_pushed  INTEGER NOT NULL DEFAULT 0,      -- Phase 2: SVMS 청구서 생성됨
-                svms_req_no  TEXT,                            -- Phase 2: SVMS 채번 REQ_NO
+                svms_req_no  TEXT,                            -- Phase 2: SVMS Inq No/REQ_NO(역추적 핸들)
+                svms_status  TEXT,                            -- Phase 2: 마지막 관측 SVMS Status
+                svms_synced_at TEXT,                          -- Phase 2: 마지막 동기화 시각
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 UNIQUE(vsl_nm, req_no)
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_procure_vsl ON dock_procure(vsl_nm)")
+        try:                                            # 기존 배포 DB 마이그레이션(Phase 2 컬럼)
+            _dpc = [r[1] for r in conn.execute("PRAGMA table_info(dock_procure)").fetchall()]
+            if 'svms_status' not in _dpc:
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_status TEXT")
+            if 'svms_synced_at' not in _dpc:
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_synced_at TEXT")
+        except Exception:
+            pass
 
         # Ship-Issue Wiki — 선박별 이슈 스레드 지식노트 검토/승격 큐 (데쿠 ship-wiki 파이프라인 미러)
         #   맥(push_cards.py)이 pending/<slug>/*.md(Tier2 사람판단 대기) + wiki/<slug>/*.md(auto/confirmed)
@@ -7445,6 +7455,19 @@ def _dockproc_source(code, prepared_by):
     return 'SVMS'
 
 
+# Phase 2 역동기화: SVMS Status → 진행단계 rank(누적). HQ Canceled=무시(맵 없음→0).
+_DOCKPROC_STATUS_RANK = {
+    'HQ CONFIRMED': 1,        # 견적작성
+    'QUOTATION INQUIRY': 2,   # 벤더제출(견적의뢰)
+    'SUBMIT': 3,              # 발주완료(Submit 단계부터)
+    'HQ ORDERED': 3,         # 발주완료
+}
+
+
+def _dockproc_status_rank(status):
+    return _DOCKPROC_STATUS_RANK.get((status or '').strip().upper(), 0)
+
+
 def _dockproc_hash(equipment, subject):
     import hashlib as _hl
     s = f"{(equipment or '').strip().upper()}|{(subject or '').strip().upper()}"
@@ -7743,6 +7766,84 @@ def api_dockproc_patch(lid):
 def api_dockproc_delete(lid):
     execute("DELETE FROM dock_procure WHERE id=?", (lid,))
     return jsonify({'ok': True})
+
+
+@app.route('/api/dock_procure/<int:lid>/link', methods=['POST'])
+@login_required
+def api_dockproc_link(lid):
+    """Tier 3 — 제목규칙 안 지킨 수동 SVMS건을 Inq No 직접입력으로 연결(이후 폴러가 자동추적)."""
+    d = request.get_json(silent=True) or {}
+    inq = (d.get('svms_req_no') or '').strip() or None
+    execute("UPDATE dock_procure SET svms_req_no=?, updated_at=datetime('now','localtime') WHERE id=?",
+            (inq, lid))
+    return jsonify({'id': lid, 'svms_req_no': inq})
+
+
+@app.route('/api/ext/dock_procure/sync', methods=['POST'])
+@api_key_required
+def api_ext_dockproc_sync():
+    """Phase 2 역동기화 — 맥 폴러가 SVMS 수리/구매 목록을 보내면 Status→체크박스 자동전진 + 발주완료시 Vendor→Remark.
+    매칭: ① 저장된 svms_req_no(=Inq No) ② Subject 태그 [VSL_CD REQ_NO]. HQ Canceled 무시. dry=true면 미리보기."""
+    import re as _re
+    d = request.get_json(silent=True) or {}
+    items = d.get('items') or []
+    dry = bool(d.get('dry'))
+    TAG = _re.compile(r'\[([A-Z]{2,6})\s+((?:SY|ST|R|S|P)\d+)\]')
+    canceled = 0
+    unmatched = 0
+    misses = []
+    plan = {}                                            # row_id -> (rank, status, vendor, inq, row)
+    for it in items:
+        status = (it.get('status') or '').strip()
+        if 'CANCEL' in status.upper():                   # HQ Canceled = 완전 무시
+            canceled += 1
+            continue
+        rank = _dockproc_status_rank(status)
+        if rank == 0:                                    # 매핑 없는 상태(초안 등) skip
+            continue
+        inq = (it.get('inq_no') or '').strip() or None
+        subj = it.get('subject') or ''
+        row = None
+        if inq:
+            row = query("SELECT * FROM dock_procure WHERE svms_req_no=?", (inq,), one=True)
+        if not row:
+            m = TAG.search(subj)
+            if m:
+                vc, rq = m.group(1).upper(), m.group(2).upper()
+                row = query(
+                    "SELECT * FROM dock_procure WHERE UPPER(req_no)=? AND (UPPER(vsl_cd)=? "
+                    "OR vsl_nm IN (SELECT vsl_nm FROM dock_procure_vessel WHERE UPPER(vsl_cd)=?))",
+                    (rq, vc, vc), one=True)
+        if not row:
+            unmatched += 1
+            if len(misses) < 20:
+                misses.append({'inq': inq, 'subject': subj[:70]})
+            continue
+        cur = plan.get(row['id'])
+        if not cur or rank > cur[0]:                     # 같은 행 여러건이면 최고 rank만(취소 제외 후)
+            plan[row['id']] = (rank, status, (it.get('vendor') or '').strip() or None, inq, row)
+    changes = []
+    for rid, (rank, status, vendor, inq, row) in plan.items():
+        q, v, o = (1 if rank >= 1 else 0), (1 if rank >= 2 else 0), (1 if rank >= 3 else 0)
+        new_remark = row['remark']
+        # 옵션 b: 발주완료 시 Vendor명을 Remark에 기입. 단 신규완료/빈Remark일 때만(매폴 수동메모 덮어쓰기 방지)
+        if o and vendor and (not row['stg_order'] or not (row['remark'] or '').strip()):
+            new_remark = vendor
+        before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'], row['svms_req_no'])
+        after = (q, v, o, new_remark, inq or row['svms_req_no'])
+        if before != after:
+            changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
+                            'status': status, 'stages': [q, v, o],
+                            'remark': new_remark, 'inq_no': inq})
+            if not dry:
+                execute(
+                    "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, remark=?, "
+                    "svms_req_no=COALESCE(?,svms_req_no), svms_status=?, "
+                    "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?",
+                    (q, v, o, new_remark, inq, status, rid))
+    return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
+                    'unmatched': unmatched, 'canceled_skipped': canceled,
+                    'changes': changes, 'misses': misses})
 
 
 @app.route('/automation')
