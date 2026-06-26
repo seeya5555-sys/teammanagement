@@ -43,6 +43,8 @@
   .dp-chip{padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:600;color:var(--text-secondary);display:flex;align-items:center;gap:6px;cursor:pointer}
   .dp-chip.active{background:var(--nav-bg);color:#fff;border-color:var(--nav-bg)}
   .dp-chip .n{font-size:11px;opacity:.7}
+  .dp-flabel{font-size:11px;font-weight:700;color:var(--text-tertiary);min-width:30px;text-transform:uppercase;letter-spacing:.4px}
+  .dp-sdot{width:8px;height:8px;border-radius:50%;display:inline-block}
   .dp-btn{padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:650;color:var(--text-primary);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
   .dp-btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
   table.dp{width:100%;border-collapse:separate;border-spacing:0;background:var(--surface);border:1px solid var(--border-subtle);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
@@ -114,8 +116,15 @@
     <button class="dp-btn" id="dp-addbtn">＋ 라인 추가 (P/SY)</button>
   </div>
 
-  <div class="dp-toolbar">
-    <div class="dp-filters" id="dp-filters"></div>
+  <div class="dp-toolbar" style="flex-direction:column;align-items:stretch;gap:7px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="dp-flabel">분류</span>
+      <div class="dp-filters" id="dp-filters"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="dp-flabel">상태</span>
+      <div class="dp-filters" id="dp-sfilters"></div>
+    </div>
   </div>
 
   <table class="dp">
@@ -155,8 +164,15 @@
     {code:'SY', nm:'조선소',  color:'var(--red)'},
   ];
   const CATNM = {R:'SHORE REPAIR',S:'SPARE',ST:'STORE',P:'PAINT',SY:'SHIPYARD'};
+  const STATUSES = [
+    {code:'wait',  nm:'대기',     color:'var(--gray-dot)'},
+    {code:'quote', nm:'견적작성', color:'var(--blue-dot)'},
+    {code:'sent',  nm:'벤더제출', color:'var(--amber-dot)'},
+    {code:'done',  nm:'발주완료', color:'var(--teal-dot)'},
+  ];
   let DATA = {vessels:[], current:null, lines:[]};
-  let FILTER = 'ALL';
+  let FILTER = '';    // 분류(빈값=전체) — 토글
+  let SFILTER = '';   // 상태(빈값=전체) — 토글
 
   const $ = s => document.querySelector(s);
   const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -229,26 +245,33 @@
       <div class="cb">발주완료 ${totDone} / ${tot}</div><div class="dp-bar"><i style="width:${tpct}%;background:#97C459"></i></div></div>`;
     $('#dp-cards').innerHTML = cards;
 
-    // filters
-    let chips = `<span class="dp-chip ${FILTER==='ALL'?'active':''}" data-f="ALL">전체 <span class="n">${tot}</span></span>`;
-    CATS.forEach(c=>{ const n=DATA.lines.filter(l=>l.cat_code===c.code).length;
+    // filters (분류/상태 — 토글, '전체' 칩 없음. 칩 다시 누르면 해제=전체)
+    const matchS = l => !SFILTER || statusOf(l)[0]===SFILTER;
+    const matchC = l => !FILTER  || l.cat_code===FILTER;
+    let chips = '';
+    CATS.forEach(c=>{ const n=DATA.lines.filter(l=>l.cat_code===c.code && matchS(l)).length;
       chips += `<span class="dp-chip ${FILTER===c.code?'active':''}" data-f="${c.code}"><span class="dp-dot" style="background:${c.color}"></span>${c.nm} <span class="n">${n}</span></span>`;});
     $('#dp-filters').innerHTML = chips;
-    $('#dp-filters').querySelectorAll('.dp-chip').forEach(ch=>ch.onclick=()=>{FILTER=ch.dataset.f;render();});
+    $('#dp-filters').querySelectorAll('.dp-chip').forEach(ch=>ch.onclick=()=>{FILTER = (FILTER===ch.dataset.f?'':ch.dataset.f); render();});
+    let schips = '';
+    STATUSES.forEach(s=>{ const n=DATA.lines.filter(l=>statusOf(l)[0]===s.code && matchC(l)).length;
+      schips += `<span class="dp-chip ${SFILTER===s.code?'active':''}" data-s="${s.code}"><span class="dp-sdot" style="background:${s.color}"></span>${s.nm} <span class="n">${n}</span></span>`;});
+    $('#dp-sfilters').innerHTML = schips;
+    $('#dp-sfilters').querySelectorAll('.dp-chip').forEach(ch=>ch.onclick=()=>{SFILTER = (SFILTER===ch.dataset.s?'':ch.dataset.s); render();});
 
     // table
     const body=$('#dp-body'); body.innerHTML='';
-    const shown = CATS.filter(c=>FILTER==='ALL'||FILTER===c.code);
+    const shown = CATS.filter(c=>!FILTER||FILTER===c.code);
     let any=false;
     shown.forEach(c=>{
-      const ls = DATA.lines.filter(l=>l.cat_code===c.code);
+      const ls = DATA.lines.filter(l=>l.cat_code===c.code && matchS(l));
       if(!ls.length) return;
       any=true;
       const src = (c.code==='P'||c.code==='SY')?' · 견적 메일수신':'';
-      body.insertAdjacentHTML('beforeend',`<tr class="dp-sec"><td colspan="9">■ ${c.nm} — ${CATNM[c.code]} (${c.code})${src}</td></tr>`);
+      body.insertAdjacentHTML('beforeend',`<tr class="dp-sec"><td colspan="9">■ ${c.nm} — ${CATNM[c.code]} (${c.code})${src} <span style="font-weight:400;color:var(--text-tertiary)">· ${ls.length}건</span></td></tr>`);
       ls.forEach(l=>body.insertAdjacentHTML('beforeend', rowHtml(l)));
     });
-    if(!any) body.innerHTML='<tr><td colspan="9" class="dp-empty">해당 분류 항목이 없습니다.</td></tr>';
+    if(!any) body.innerHTML='<tr><td colspan="9" class="dp-empty">조건에 맞는 항목이 없습니다.</td></tr>';
     bindRows();
   }
 
