@@ -447,6 +447,50 @@ def init_db(drop=False):
         except Exception:
             pass
 
+        # ── Dock Procurement(입거 발주현황 트래커) ──
+        #   입거선박 INDEX 엑셀 업로드 → 라인 큐 자동생성(증분/중복제외).
+        #   3단계 체크박스(견적작성→벤더제출→발주완료)로 진행추적. dedup 키=(vsl_nm, req_no).
+        #   R/S/ST=SVMS 연동대상(Phase 2 svms_pushed), P=페인트/SY=조선소=메일견적(SVMS 무관).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dock_procure_vessel (
+                vsl_nm     TEXT PRIMARY KEY,                  -- INDEX VESSEL NAME(그룹 키)
+                vsl_cd     TEXT,                              -- SVMS 코드(best-effort lookup, Phase 2)
+                owner_co   TEXT,
+                vtype      TEXT,                              -- TYPE OF VESSEL
+                survey     TEXT,                              -- KIND OF SURVEY
+                shipyard   TEXT,
+                due_date   TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dock_procure (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                vsl_nm       TEXT NOT NULL,                   -- 그룹 키(INDEX VESSEL NAME)
+                vsl_cd       TEXT,
+                req_no       TEXT NOT NULL,                   -- R1/S1/ST1/P1/SY1 (dedup 키)
+                cat_code     TEXT,                            -- R/S/ST/P/SY
+                category     TEXT,                            -- SHORE REPAIR/SPARE/STORE/PAINT/SHIPYARD
+                equipment    TEXT,
+                subject      TEXT,
+                prepared_by  TEXT,                            -- OWNER/MANAGER
+                source       TEXT,                            -- SVMS / MAIL
+                content_hash TEXT,                            -- equipment+subject 해시(내용변경 감지)
+                stg_quote    INTEGER NOT NULL DEFAULT 0,      -- 1단계: 견적서 작성
+                stg_vendor   INTEGER NOT NULL DEFAULT 0,      -- 2단계: 벤더 제출
+                stg_order    INTEGER NOT NULL DEFAULT 0,      -- 3단계: 발주 완료
+                remark       TEXT,
+                sort_no      INTEGER,                         -- INDEX No.(정렬용)
+                rev_batch    TEXT,                            -- 추가된 업로드 배치 id
+                svms_pushed  INTEGER NOT NULL DEFAULT 0,      -- Phase 2: SVMS 청구서 생성됨
+                svms_req_no  TEXT,                            -- Phase 2: SVMS 채번 REQ_NO
+                created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                UNIQUE(vsl_nm, req_no)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_procure_vsl ON dock_procure(vsl_nm)")
+
         # Ship-Issue Wiki — 선박별 이슈 스레드 지식노트 검토/승격 큐 (데쿠 ship-wiki 파이프라인 미러)
         #   맥(push_cards.py)이 pending/<slug>/*.md(Tier2 사람판단 대기) + wiki/<slug>/*.md(auto/confirmed)
         #   를 /api/ext/shipwiki/push 로 적재 → 사람이 /shipwiki 탭서 승격/병합/리젝/신뢰도승격 결정 →
@@ -7331,6 +7375,265 @@ AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submi
 def _automation_enabled():
     row = query("SELECT v FROM api_settings WHERE k='automation_enabled'", one=True)
     return (row['v'] if row else '1') != '0'
+
+
+# ===================== Dock Procurement (입거 발주현황 트래커) =====================
+_DOCKPROC_CAT_NM = {'R': 'SHORE REPAIR', 'S': 'SPARE', 'ST': 'STORE',
+                    'P': 'PAINT', 'SY': 'SHIPYARD'}
+
+
+def _dockproc_cat_code(req_no):
+    import re as _re
+    m = _re.match(r'^(SY|ST|R|S|P)\d+$', (req_no or '').strip().upper())
+    return m.group(1) if m else None
+
+
+def _dockproc_hash(equipment, subject):
+    import hashlib as _hl
+    s = f"{(equipment or '').strip().upper()}|{(subject or '').strip().upper()}"
+    return _hl.md5(s.encode('utf-8')).hexdigest()[:16]
+
+
+def _dockproc_cell(ws, coord):
+    v = ws[coord].value
+    if v is None:
+        return None
+    if isinstance(v, str):
+        v = v.strip()
+        return v or None
+    return v
+
+
+def _dockproc_parse_index(stream):
+    """INDEX 시트 → (vessel_meta, [line...]). 빈 슬롯(equipment·subject 모두 없음) 제외.
+    R/S/ST 만 자동수집(P/SY=메일견적은 사이트서 수동추가)."""
+    import re as _re
+    from openpyxl import load_workbook
+    wb = load_workbook(stream, data_only=True, read_only=True)
+    if 'INDEX' not in wb.sheetnames:
+        raise ValueError('INDEX 시트가 없음')
+    ws = wb['INDEX']
+    meta = {'vsl_nm': None, 'owner_co': None, 'vtype': None,
+            'survey': None, 'shipyard': None, 'due_date': None}
+    label_map = [('VESSEL NAME', 'vsl_nm'), ('OWNER', 'owner_co'),
+                 ('TYPE OF VESSEL', 'vtype'), ('KIND OF SURVEY', 'survey'),
+                 ('SHIPYARD', 'shipyard'), ('DUE DATE', 'due_date')]
+    for row in ws.iter_rows(min_row=1, max_row=8, max_col=8, values_only=True):
+        for i, v in enumerate(row):
+            if not isinstance(v, str):
+                continue
+            u = v.strip().upper()
+            for lbl, key in label_map:
+                if u == lbl and meta[key] is None:
+                    for w in row[i + 1:]:
+                        if w is not None and (not isinstance(w, str) or w.strip()):
+                            meta[key] = w.strip() if isinstance(w, str) else w
+                            break
+    if meta['due_date'] is not None and not isinstance(meta['due_date'], str):
+        try:
+            meta['due_date'] = meta['due_date'].strftime('%Y-%m-%d')
+        except Exception:
+            meta['due_date'] = str(meta['due_date'])
+    # 헤더행 탐색(REQ. NUMBER / CATEGORY 포함)
+    hdr_row = None
+    for r in range(1, 12):
+        vals = [str(_dockproc_cell(ws, f'{c}{r}') or '').upper() for c in 'ABCDEFGH']
+        if any(('REQ' in x and 'NUMBER' in x) for x in vals) or 'CATEGORY' in vals:
+            hdr_row = r
+            break
+    if hdr_row is None:
+        hdr_row = 5
+    lines = []
+    for r in range(hdr_row + 1, ws.max_row + 1):
+        no = _dockproc_cell(ws, f'A{r}')
+        reqb = _dockproc_cell(ws, f'B{r}')         # REQ.NUMBER (수기 오타 가능)
+        cat = _dockproc_cell(ws, f'C{r}')
+        equip = _dockproc_cell(ws, f'D{r}')
+        subj = _dockproc_cell(ws, f'E{r}')
+        prep = _dockproc_cell(ws, f'F{r}')
+        link = _dockproc_cell(ws, f'G{r}')         # LINK = 실제 시트 ID(유니크) → dedup 키 우선
+        rmk = _dockproc_cell(ws, f'H{r}')
+        # 정규 req_no: LINK(G) 우선(시트탭과 1:1, 유니크), 없으면 REQ.NUMBER(B) fallback
+        req = None
+        for cand in (link, reqb):
+            if cand and _re.match(r'^(SY|ST|R|S|P)\d+$', str(cand).strip().upper()):
+                req = str(cand).strip().upper()
+                break
+        if not req:
+            continue
+        if not equip and not subj:                       # grey 빈 슬롯 제외
+            continue
+        code = _dockproc_cat_code(req)
+        lines.append({
+            'req_no': req, 'cat_code': code,
+            'category': _DOCKPROC_CAT_NM.get(code, (cat or None)),
+            'equipment': equip, 'subject': subj,
+            'prepared_by': (str(prep).strip().upper() if prep else None),
+            'source': ('MAIL' if code in ('P', 'SY') else 'SVMS'),
+            'remark': rmk,
+            'sort_no': (int(no) if isinstance(no, (int, float)) else None),
+            'content_hash': _dockproc_hash(equip, subj),
+        })
+    return meta, lines
+
+
+_DOCKPROC_ORDER = ("ORDER BY CASE cat_code WHEN 'R' THEN 0 WHEN 'S' THEN 1 "
+                   "WHEN 'ST' THEN 2 WHEN 'P' THEN 3 WHEN 'SY' THEN 4 ELSE 5 END, "
+                   "COALESCE(sort_no, 999999), id")
+
+
+@app.route('/dock_procure')
+@login_required
+def dock_procure_page():
+    return render_template('dock_procure.html')
+
+
+@app.route('/api/dock_procure/lines')
+@login_required
+def api_dockproc_lines():
+    vsl = request.args.get('vsl_nm')
+    vessels = [dict(r) for r in query(
+        "SELECT * FROM dock_procure_vessel ORDER BY updated_at DESC")]
+    if not vsl and vessels:
+        vsl = vessels[0]['vsl_nm']
+    rows = []
+    if vsl:
+        rows = [dict(r) for r in query(
+            "SELECT * FROM dock_procure WHERE vsl_nm=? " + _DOCKPROC_ORDER, (vsl,))]
+    return jsonify({'vessels': vessels, 'current': vsl, 'lines': rows})
+
+
+@app.route('/api/dock_procure/upload', methods=['POST'])
+@login_required
+def api_dockproc_upload():
+    """INDEX 엑셀 업로드 → 라인 큐 증분생성. dedup=(vsl_nm, req_no). 기존건은 skip(진행 보존)."""
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify({'error': '엑셀 파일(file) 필요'}), 400
+    if not f.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return jsonify({'error': '.xlsx 파일만 가능'}), 400
+    try:
+        import io as _io
+        meta, lines = _dockproc_parse_index(_io.BytesIO(f.read()))
+    except Exception as e:
+        return jsonify({'error': f'파싱 실패: {e}'}), 400
+    vsl_nm = meta.get('vsl_nm')
+    if not vsl_nm:
+        return jsonify({'error': 'INDEX 에서 VESSEL NAME 을 못 찾음'}), 400
+    if not lines:
+        return jsonify({'error': 'INDEX 에 유효한 항목(R/S/ST)이 없음'}), 400
+    vsl_cd = (request.form.get('vsl_cd') or '').strip().upper() or None
+    execute(
+        "INSERT INTO dock_procure_vessel (vsl_nm, vsl_cd, owner_co, vtype, survey, shipyard, due_date, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,datetime('now','localtime')) "
+        "ON CONFLICT(vsl_nm) DO UPDATE SET "
+        "  vsl_cd=COALESCE(excluded.vsl_cd, dock_procure_vessel.vsl_cd), "
+        "  owner_co=excluded.owner_co, vtype=excluded.vtype, survey=excluded.survey, "
+        "  shipyard=excluded.shipyard, due_date=excluded.due_date, updated_at=excluded.updated_at",
+        (vsl_nm, vsl_cd, meta.get('owner_co'), meta.get('vtype'), meta.get('survey'),
+         meta.get('shipyard'), meta.get('due_date')))
+    batch = uuid.uuid4().hex[:12]
+    added, skipped, updated = 0, 0, 0
+    added_reqs = []
+    for ln in lines:
+        ex = query("SELECT id, content_hash FROM dock_procure WHERE vsl_nm=? AND req_no=?",
+                   (vsl_nm, ln['req_no']), one=True)
+        if ex:
+            if ex['content_hash'] != ln['content_hash']:
+                # 내용 변경 — 진행 체크박스는 보존, 서술필드만 갱신
+                execute("UPDATE dock_procure SET equipment=?, subject=?, category=?, prepared_by=?, "
+                        "remark=?, content_hash=?, sort_no=?, updated_at=datetime('now','localtime') WHERE id=?",
+                        (ln['equipment'], ln['subject'], ln['category'], ln['prepared_by'],
+                         ln['remark'], ln['content_hash'], ln['sort_no'], ex['id']))
+                updated += 1
+            else:
+                skipped += 1
+            continue
+        execute(
+            "INSERT INTO dock_procure (vsl_nm, vsl_cd, req_no, cat_code, category, equipment, subject, "
+            "prepared_by, source, content_hash, remark, sort_no, rev_batch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (vsl_nm, vsl_cd, ln['req_no'], ln['cat_code'], ln['category'], ln['equipment'], ln['subject'],
+             ln['prepared_by'], ln['source'], ln['content_hash'], ln['remark'], ln['sort_no'], batch))
+        added += 1
+        added_reqs.append(ln['req_no'])
+    return jsonify({'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd, 'batch': batch,
+                    'added': added, 'skipped': skipped, 'updated': updated,
+                    'added_reqs': added_reqs, 'total': len(lines)}), 201
+
+
+@app.route('/api/dock_procure/<int:lid>/stage', methods=['POST'])
+@login_required
+def api_dockproc_stage(lid):
+    """3단계 체크 토글 + 종속 cascade(상위체크→하위완료, 하위해제→상위해제)."""
+    d = request.get_json(silent=True) or {}
+    stage = d.get('stage')
+    val = 1 if d.get('value') else 0
+    if stage not in ('quote', 'vendor', 'order'):
+        return jsonify({'error': 'stage must be quote/vendor/order'}), 400
+    row = query("SELECT * FROM dock_procure WHERE id=?", (lid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    q, v, o = row['stg_quote'], row['stg_vendor'], row['stg_order']
+    if stage == 'quote':
+        q = val
+        if not val:
+            v = o = 0
+    elif stage == 'vendor':
+        v = val
+        if val:
+            q = 1
+        else:
+            o = 0
+    else:  # order
+        o = val
+        if val:
+            q = v = 1
+    execute("UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, "
+            "updated_at=datetime('now','localtime') WHERE id=?", (q, v, o, lid))
+    return jsonify({'id': lid, 'stg_quote': q, 'stg_vendor': v, 'stg_order': o})
+
+
+@app.route('/api/dock_procure/add', methods=['POST'])
+@login_required
+def api_dockproc_add():
+    """라인 수동추가(주로 페인트 P/조선소 SY 메일견적)."""
+    d = request.get_json(silent=True) or {}
+    vsl_nm = (d.get('vsl_nm') or '').strip()
+    req_no = (d.get('req_no') or '').strip().upper()
+    if not vsl_nm or not req_no:
+        return jsonify({'error': 'vsl_nm, req_no 필수'}), 400
+    code = _dockproc_cat_code(req_no)
+    if not code:
+        return jsonify({'error': 'req_no 는 R/S/ST/P/SY + 숫자 형식'}), 400
+    if query("SELECT id FROM dock_procure WHERE vsl_nm=? AND req_no=?", (vsl_nm, req_no), one=True):
+        return jsonify({'error': f'{req_no} 이미 존재'}), 409
+    equip = (d.get('equipment') or '').strip() or None
+    subj = (d.get('subject') or '').strip() or None
+    lid = execute(
+        "INSERT INTO dock_procure (vsl_nm, vsl_cd, req_no, cat_code, category, equipment, subject, "
+        "prepared_by, source, content_hash, remark) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (vsl_nm, (d.get('vsl_cd') or None), req_no, code, _DOCKPROC_CAT_NM.get(code),
+         equip, subj, (d.get('prepared_by') or 'MANAGER'),
+         ('MAIL' if code in ('P', 'SY') else 'SVMS'), _dockproc_hash(equip, subj),
+         (d.get('remark') or None)))
+    return jsonify({'id': lid, 'req_no': req_no}), 201
+
+
+@app.route('/api/dock_procure/<int:lid>', methods=['PATCH'])
+@login_required
+def api_dockproc_patch(lid):
+    d = request.get_json(silent=True) or {}
+    if 'remark' in d:
+        execute("UPDATE dock_procure SET remark=?, updated_at=datetime('now','localtime') WHERE id=?",
+                (d.get('remark'), lid))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/dock_procure/<int:lid>', methods=['DELETE'])
+@login_required
+def api_dockproc_delete(lid):
+    execute("DELETE FROM dock_procure WHERE id=?", (lid,))
+    return jsonify({'ok': True})
 
 
 @app.route('/automation')
