@@ -7855,7 +7855,7 @@ def api_ext_dockproc_sync():
         if o and vendor and (not row['stg_order'] or not (row['remark'] or '').strip()):
             new_remark = vendor
         before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'], row['svms_req_no'])
-        after = (q, v, o, new_remark, inq or row['svms_req_no'])
+        after = (q, v, o, new_remark, row['svms_req_no'] or inq)   # COALESCE(기존,신규)와 동일 → 멱등
         if before != after:
             changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
                             'status': status, 'stages': [q, v, o],
