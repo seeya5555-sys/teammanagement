@@ -7536,6 +7536,13 @@ def api_dockproc_lines():
     vsl = request.args.get('vsl_nm')
     vessels = [dict(r) for r in query(
         "SELECT * FROM dock_procure_vessel ORDER BY updated_at DESC")]
+    # 선박별 집계(카드 선택기용): 총건수 + 발주완료 건수
+    agg = {r['vsl_nm']: r for r in query(
+        "SELECT vsl_nm, COUNT(*) tot, COALESCE(SUM(stg_order),0) done FROM dock_procure GROUP BY vsl_nm")}
+    for v in vessels:
+        a = agg.get(v['vsl_nm'])
+        v['total'] = (a['tot'] if a else 0)
+        v['done'] = (a['done'] if a else 0)
     if not vsl and vessels:
         vsl = vessels[0]['vsl_nm']
     rows = []

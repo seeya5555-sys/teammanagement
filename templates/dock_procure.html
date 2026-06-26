@@ -3,6 +3,17 @@
 {% block head %}
 <style>
   .dp-wrap{max-width:1320px}
+  .dp-vcards{display:flex;gap:10px;overflow-x:auto;padding:2px 1px 8px;margin-bottom:12px}
+  .dp-vcard{flex:0 0 auto;min-width:190px;max-width:230px;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:11px 13px;cursor:pointer;transition:.13s;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .dp-vcard:hover{border-color:var(--border-strong);transform:translateY(-1px)}
+  .dp-vcard.active{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-border) inset,0 2px 6px rgba(24,95,165,.12);background:#fff}
+  .dp-vcard .vn{font-size:13.5px;font-weight:750;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dp-vcard .vt{font-size:10.5px;color:var(--text-tertiary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dp-vcard .vrow{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11px}
+  .dp-vcard .vpct{font-weight:750;color:var(--green)}
+  .dp-vcard .vdue{color:var(--red);font-weight:650}
+  .dp-vcard .vbar{height:5px;border-radius:3px;background:var(--surface-3);margin-top:6px;overflow:hidden}
+  .dp-vcard .vbar>i{display:block;height:100%;border-radius:3px;background:var(--green)}
   .dp-vhead{background:var(--surface);border:1px solid var(--border-subtle);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:22px;flex-wrap:wrap;box-shadow:0 1px 2px rgba(0,0,0,.03);margin-bottom:14px}
   .dp-vname{font-size:18px;font-weight:750;letter-spacing:.2px}
   .dp-vsub{font-size:12px;color:var(--text-secondary);margin-top:2px}
@@ -79,12 +90,13 @@
     <span style="font-size:12px;color:var(--text-tertiary)">입거선박 자재·서비스·스토어·페인트·조선소 수배 트래킹</span>
   </div>
 
+  <div class="dp-vcards" id="dp-vcards"></div>
+
   <div class="dp-vhead" id="dp-vhead">
     <div>
       <div class="dp-vname" id="dp-vname">—</div>
       <div class="dp-vsub" id="dp-vsub"></div>
     </div>
-    <select class="dp-vsel" id="dp-vsel"></select>
     <div class="dp-vmeta" id="dp-vmeta"></div>
   </div>
 
@@ -160,10 +172,10 @@
   }
 
   function render(){
-    // vessel selector
-    const sel = $('#dp-vsel');
+    // vessel card selector
+    const vc = $('#dp-vcards');
     if(!DATA.vessels.length){
-      sel.innerHTML = '<option>업로드된 선박 없음</option>';
+      vc.innerHTML='';
       $('#dp-vname').textContent='입거선박 없음';
       $('#dp-vsub').textContent='INDEX 엑셀을 업로드하세요';
       $('#dp-vmeta').innerHTML=''; $('#dp-cards').innerHTML='';
@@ -171,7 +183,15 @@
       $('#dp-body').innerHTML='<tr><td colspan="9" class="dp-empty">아직 항목이 없습니다. INDEX 엑셀을 업로드하면 큐가 자동 생성됩니다.</td></tr>';
       return;
     }
-    sel.innerHTML = DATA.vessels.map(v=>`<option value="${esc(v.vsl_nm)}" ${v.vsl_nm===DATA.current?'selected':''}>${esc(v.vsl_nm)}</option>`).join('');
+    vc.innerHTML = DATA.vessels.map(v=>{
+      const tot=v.total||0, done=v.done||0, pct=tot?Math.round(done/tot*100):0;
+      return `<div class="dp-vcard ${v.vsl_nm===DATA.current?'active':''}" data-vsl="${esc(v.vsl_nm)}">
+        <div class="vn">${esc(v.vsl_nm)}</div>
+        <div class="vt">${esc([v.vtype,v.survey].filter(Boolean).join(' · ')||'—')}</div>
+        <div class="vrow"><span class="vpct">${pct}%</span><span>발주 ${done}/${tot}</span>${v.due_date?`<span class="vdue">~${esc(v.due_date)}</span>`:''}</div>
+        <div class="vbar"><i style="width:${pct}%"></i></div></div>`;
+    }).join('');
+    vc.querySelectorAll('.dp-vcard').forEach(card=>card.onclick=()=>{ if(card.dataset.vsl!==DATA.current) load(card.dataset.vsl); });
     const ves = DATA.vessels.find(v=>v.vsl_nm===DATA.current) || DATA.vessels[0];
     $('#dp-vname').textContent = ves.vsl_nm;
     $('#dp-vsub').textContent = [ves.owner_co, ves.vtype, ves.survey].filter(Boolean).join(' · ');
@@ -309,7 +329,6 @@
     toast(j.req_no+' 추가됨'); await load(DATA.current);
   };
 
-  $('#dp-vsel').onchange=e=>load(e.target.value);
   load();
 })();
 </script>
