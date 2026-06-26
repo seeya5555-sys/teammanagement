@@ -70,7 +70,7 @@ const esc = (s) => String(s == null ? '' : s);
 function renderTabs() {
   const bar = $('#cls-tab-bar');
   bar.innerHTML = '';
-  bar.append(tabEl('all', '전체', 'gray', S.activeTab === 'all'));
+  // Class Status 탭은 손유석 담당선박만 — '전체' 탭 및 타 감독 탭 제거
   for (const s of S.supervisors) {
     if (isHiddenSup(s)) continue;
     if ((s.name || '').trim() !== ONLY_SUP) continue;
@@ -537,11 +537,9 @@ async function init() {
   try {
     S.supervisors = await api('/api/supervisors');
   } catch (_) { S.supervisors = []; }
-  // 최초 진입 시 본인 감독 탭 자동 선택(담당 미설정/숨김 감독이면 '전체')
-  if (S.user.supervisor_id) {
-    const sup = S.supervisors.find(s => s.id === S.user.supervisor_id);
-    if (sup && !isHiddenSup(sup)) S.activeTab = S.user.supervisor_id;
-  }
+  // Class Status 탭은 손유석 담당선박만 운영 → 항상 손유석 탭으로 고정
+  const onlySup = S.supervisors.find(s => (s.name || '').trim() === ONLY_SUP);
+  if (onlySup) S.activeTab = onlySup.id;
   try {
     S.vesselsAll = await api('/api/vessels');
   } catch (_) { S.vesselsAll = []; }
