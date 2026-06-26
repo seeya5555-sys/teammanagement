@@ -6052,9 +6052,16 @@ def _ext_calendar():
     return out
 
 
-def _ext_vessels():
+def _ext_vessels(sup_id=None):
+    if sup_id:
+        rows = query("""SELECT v.* FROM vessels v
+                          JOIN supervisor_vessels sv ON sv.vessel_id = v.id
+                         WHERE sv.supervisor_id = ?
+                         ORDER BY v.name""", (sup_id,))
+    else:
+        rows = query("SELECT * FROM vessels ORDER BY name")
     return [dict(r) | {'vessel_key': _vkey(r['name']), 'ref': _ref('vessel', r['id'])}
-            for r in query("SELECT * FROM vessels ORDER BY name")]
+            for r in rows]
 
 
 def _class_digest(coc_list, stat_list, society):
@@ -6231,7 +6238,9 @@ def api_ext_calendar():
 @app.route('/api/ext/vessels')
 @api_key_required
 def api_ext_vessels():
-    return jsonify(_ext_vessels())
+    # ?supervisor=<name> / ?supervisor_id=<id> 주면 해당 감독 담당선박만 (BV Push 등 외부 동기화용)
+    sup_id = _resolve_supervisor_id(request.args)
+    return jsonify(_ext_vessels(sup_id))
 
 
 @app.route('/api/ext/summaries')

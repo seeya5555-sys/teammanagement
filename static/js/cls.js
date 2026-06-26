@@ -8,6 +8,8 @@ const $ = (sel) => document.querySelector(sel);
 
 const HIDDEN_SUP = ['FLEET AGENDA'];
 const isHiddenSup = (s) => HIDDEN_SUP.includes((s.name || '').toUpperCase());
+// Class Status 탭은 손유석 담당선박만 운영 — 타 감독(김흥민·이창주) 탭은 숨김
+const ONLY_SUP = '손유석';
 
 function loadExpanded() {
   // 펼친 cs_id 집합을 저장(기본=접힘). 사용자가 펼친 카드만 기록 → 저장/액션 후에도 유지.
@@ -71,6 +73,7 @@ function renderTabs() {
   bar.append(tabEl('all', '전체', 'gray', S.activeTab === 'all'));
   for (const s of S.supervisors) {
     if (isHiddenSup(s)) continue;
+    if ((s.name || '').trim() !== ONLY_SUP) continue;
     bar.append(tabEl(s.id, s.name, s.color, String(S.activeTab) === String(s.id)));
   }
 }
