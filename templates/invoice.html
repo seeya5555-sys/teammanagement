@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}인보이스 자동컨펌 · TRMT3{% endblock %}
+{% block head %}
+<style>
+  .fr-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .fr-count{color:var(--text-secondary);font-size:13px}
+  .fr-list{display:flex;flex-direction:column;gap:12px;max-width:920px}
+  .fr-card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .fr-card.is-busy{opacity:.55;pointer-events:none}
+  .fr-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
+  .fr-subj{font-weight:600;color:var(--text-primary);line-height:1.35}
+  .fr-meta{font-size:12px;color:var(--text-secondary);margin-top:3px}
+  .fr-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .fr-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .b-tp{background:var(--purple-bg);color:var(--purple)}
+  .b-pass{background:var(--green-bg);color:var(--green)}
+  .b-hold{background:var(--amber-bg);color:var(--amber)}
+  .b-flag{background:var(--red-bg);color:var(--red)}
+  .st-approved{background:var(--blue-bg);color:var(--blue)}
+  .st-submitting{background:var(--amber-bg);color:var(--amber)}
+  .st-submitted{background:var(--green-bg);color:var(--green)}
+  .st-rejecting{background:var(--amber-bg);color:var(--amber)}
+  .st-rejected{background:var(--surface-3);color:var(--text-secondary)}
+  .st-failed,.st-reject_failed{background:var(--red-bg);color:var(--red)}
+  .fr-body{padding:10px 14px;font-size:13px;color:var(--text-secondary)}
+  .fr-kv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:6px}
+  .fr-kv b{color:var(--text-primary)}
+  .fr-sect{margin-top:6px;padding-top:6px;border-top:1px dashed var(--border-subtle)}
+  .fr-sect-t{font-size:11px;font-weight:700;color:var(--text-tertiary);margin-bottom:3px;letter-spacing:.02em}
+  .mok{color:var(--green);font-weight:700}
+  .mng{color:var(--red);font-weight:700}
+  .mun{color:var(--text-tertiary)}
+  .fr-corr{color:var(--text-primary)}
+  .fr-corr i{color:var(--text-tertiary);font-style:normal}
+  .fr-flag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--red-bg);color:var(--red);margin:2px 4px 0 0}
+  .fr-why{color:var(--red);font-size:12px}
+  .fr-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;align-items:center}
+  .fr-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .fr-b.ap{background:var(--green);color:#fff}
+  .fr-b.rj{background:var(--red);color:#fff}
+  .fr-b.rs{background:var(--border);color:var(--text-secondary)}
+  .fr-b.del{background:#fff;color:var(--text-tertiary);border:1px solid var(--border)}
+  .fr-rsn{flex:1;min-width:200px;border:1px solid var(--border-strong);border-radius:8px;padding:7px 10px;font-size:13px}
+  .fr-optout{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);margin-right:4px}
+  .fr-optout input{width:16px;height:16px;cursor:pointer}
+  .fr-decided{font-size:12px;color:var(--text-secondary)}
+  .fr-empty{color:var(--text-tertiary);padding:30px;text-align:center}
+  .fr-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="fr-head">
+  <h2 style="margin:0">🧾 인보이스 자동컨펌</h2>
+  <span class="fr-count" id="fr-count"></span>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify">🔍 카드적재(prep)</button>
+    <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit">▶ 자동컨펌 실행</button>
+    <button class="fr-b rs" id="fr-reload">🔄 새로고침</button>
+    <button class="fr-b del" id="fr-clear">🗑 처리완료 비우기</button>
+  </div>
+</div>
+<div class="fr-note">
+  <b>[🔍카드적재]</b> 누르면 SVMS 컨펌대기 인보이스가 PDF 대조·교정안과 함께 카드로 적재됨(~1~2분).
+  <b>opt-out</b>: <span class="b-pass" style="padding:1px 6px;border-radius:999px">PASS</span> 카드는 디폴트 <b>승인</b>(체크), <span class="b-hold" style="padding:1px 6px;border-radius:999px">HOLD</span> 카드는 디폴트 해제 →
+  <b>[▶자동컨펌 실행]</b> 누르면 승인=PIC/SUP/Remit 교정+SVMS 컨펌, 리젝=보류. 카드별로 체크 해제·리젝 가능.
+</div>
+<div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  async function api(method,url,body){
+    const o={method,headers:{}};
+    if(body){o.headers['Content-type']='application/json';o.body=JSON.stringify(body);}
+    const r=await fetch(url,o);let j={};try{j=await r.json();}catch(e){}
+    return {ok:r.ok,j};
+  }
+  function mark(v,label){
+    if(v===1||v===true) return `<span class="mok">${label} ✓</span>`;
+    if(v===0||v===false) return `<span class="mng">${label} ✗</span>`;
+    return `<span class="mun">${label} —</span>`;
+  }
+  function jparse(s){if(s==null)return null;if(typeof s!=='string')return s;try{return JSON.parse(s);}catch(e){return null;}}
+  function card(d){
+    const dec=['approved','rejecting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
+    const gate=(d.gate||'').toUpperCase();
+    const gateBadge=gate?`<span class="fr-badge ${gate==='PASS'?'b-pass':'b-hold'}">${gate==='PASS'?'✅PASS':'⏸HOLD'}</span>`:'';
+    const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
+    // 헤더 메타
+    let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b></span>`
+          +`<span>벤더 <b>${esc(d.vndr_nm||d.vndr_cd||'-')}</b></span>`
+          +`<span>금액 <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b>${d.vat!=null?` (VAT ${esc(d.vat)})`:''}</span>`
+          +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b></span>`
+          +`<span>INV_DT <b>${esc(d.inv_dt||'-')}</b></span>`;
+    // 대조결과
+    const matchLine=`<div class="fr-sect"><div class="fr-sect-t">PDF 대조</div>`
+      +`${mark(d.inv_no_match,'INV_NO')} &nbsp; ${mark(d.amt_match,'금액')} &nbsp; ${mark(d.date_match,'날짜')}`
+      +`${d.match_src?` <span class="mun">· ${esc(d.match_src)}</span>`:''}</div>`;
+    // 교정내역
+    const corr=`<div class="fr-sect"><div class="fr-sect-t">교정내역</div><div class="fr-corr">`
+      +`PIC <i>${esc(d.cur_pic||'-')}</i> → <b>${esc(d.set_pic||'박은미')}</b> &nbsp;`
+      +`SUP <i>${esc(d.cur_sup||'-')}</i> → <b>${esc(d.set_sup||'손유석')}</b> &nbsp;`
+      +`Remit <i>${esc(d.cur_pay_dt||'-')}</i> → <b>${esc(d.set_pay_dt||'동월말')}</b></div></div>`;
+    // 라인
+    const line=(d.exp_cd||d.subject||d.exp_nm)?`<div class="fr-sect"><div class="fr-sect-t">라인(Expense)</div>`
+      +`<span>EXP <b>${esc(d.exp_cd||'-')}</b>${d.exp_nm?` ${esc(d.exp_nm)}`:''}${d.exp_conf!=null?` <span class="mun">(conf ${esc(d.exp_conf)})</span>`:''}</span>`
+      +`${d.subject?`<div style="margin-top:2px">적요: ${esc(d.subject)}</div>`:''}`
+      +`${d.exp_reason?`<div class="mun" style="margin-top:2px">${esc(d.exp_reason)}</div>`:''}</div>`:'';
+    // 플래그
+    const flags=jparse(d.flags);
+    const flagLine=(Array.isArray(flags)&&flags.length)?`<div class="fr-sect">${flags.map(f=>`<span class="fr-flag">${esc(f)}</span>`).join('')}</div>`:'';
+    let acts;
+    if(d.status==='pending'){
+      const checked=gate==='PASS'?'checked':'';
+      acts=`<label class="fr-optout"><input type="checkbox" data-optout ${checked}> 승인(컨펌)</label>
+            <button class="fr-b ap" data-act="approve">✅ 승인</button>
+            <input class="fr-rsn" placeholder="리젝(보류) 사유 입력 후 리젝 →" />
+            <button class="fr-b rj" data-act="reject">🚫 리젝</button>
+            <button class="fr-b del" data-act="delete">삭제</button>`;
+    } else if(d.status==='approved'||d.status==='rejecting'){
+      const lbl=d.status==='approved'?'✅ 승인 대기':'🚫 리젝(보류) 대기';
+      acts=`<span class="fr-decided">${lbl}${d.reject_reason?(' — 사유: '+esc(d.reject_reason)):''} (${esc(d.decided_by||'')})</span>
+            <button class="fr-b rs" data-act="reset">결정 취소</button>`;
+    } else {
+      acts=`<span class="fr-decided">${esc(d.status)}${d.result?(' — '+esc(d.result)):''}</span>`;
+    }
+    return `<div class="fr-card" data-id="${d.id}">
+      <div class="fr-top">
+        <div><div class="fr-subj">${esc(d.vndr_nm||d.vndr_cd||d.inv_cd)}</div>
+        <div class="fr-meta">${esc(d.inv_cd)}</div></div>
+        <div class="fr-badges">${gateBadge}${stbadge}</div>
+      </div>
+      <div class="fr-body"><div class="fr-kv">${kv}</div>${matchLine}${corr}${line}${flagLine}</div>
+      <div class="fr-acts">${acts}</div>
+    </div>`;
+  }
+  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  async function _load(){
+    const {ok,j}=await api('GET','/api/invoice/drafts');
+    if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
+    const ds=j.drafts||[];
+    $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · ⚠️킬스위치 ON');
+    $('#fr-list').innerHTML=ds.length?ds.map(card).join(''):'<div class="fr-empty">카드 없음 — [카드적재(prep)] 실행</div>';
+    document.querySelectorAll('.fr-card').forEach(el=>{
+      el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
+    });
+  }
+  async function act(el,a){
+    const id=el.dataset.id;
+    let url=`/api/invoice/drafts/${id}`,method='POST',body=null;
+    if(a==='approve'){
+      const cb=el.querySelector('[data-optout]');
+      if(cb&&!cb.checked){alert('승인(컨펌) 체크박스가 해제돼 있습니다. 체크 후 승인하거나, 리젝/삭제하세요.');return;}
+      url+='/approve';
+    }
+    else if(a==='reject'){const rsn=el.querySelector('.fr-rsn').value.trim();
+      if(!rsn){alert('리젝 사유를 입력하세요.');return;} body={reason:rsn};url+='/reject';}
+    else if(a==='reset'){url+='/reset';}
+    else if(a==='delete'){if(!confirm('이 카드를 삭제할까요?'))return;method='DELETE';}
+    el.classList.add('is-busy');
+    const {ok,j}=await api(method,url,body);
+    if(!ok){alert('실패: '+(j.error||'')); el.classList.remove('is-busy');}
+    load();
+  }
+  $('#fr-verify').onclick=async()=>{
+    if(!confirm('SVMS 컨펌대기 인보이스 prep → 카드 적재할까요? (~1~2분)'))return;
+    const {ok,j}=await api('POST','/api/automation/run',{task:'invoice_confirm',mode:'verify'});
+    alert(ok?'✅ 적재 실행 — 1~2분 후 카드 적재됨. 새로고침하세요.':('🚨 '+(j.error||'실패')));
+  };
+  $('#fr-submit').onclick=async()=>{
+    if(!confirm('승인=PIC/SUP/Remit 교정+SVMS 컨펌 / 리젝=보류를 지금 실행할까요?\n(승인 건만 처리, 예외 미처리·텔레그램 보고)'))return;
+    const {ok,j}=await api('POST','/api/automation/run',{task:'invoice_confirm',mode:'live'});
+    alert(ok?'✅ 실행 — 1~2분 후 반영됨. 새로고침하세요.':('🚨 '+(j.error||'실패')));
+  };
+  $('#fr-reload').onclick=load;
+  $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌/보류/실패) 카드를 비울까요?'))return;
+    await api('DELETE','/api/invoice/drafts/decided');load();};
+  load(); setInterval(load,8000);
+})();
+</script>
+{% endblock %}

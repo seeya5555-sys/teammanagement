@@ -383,6 +383,51 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_fundreq_draft_status ON fundreq_draft(status)")
 
+        # 인보이스 자동컨펌(SVMS Invoice Confirm) 2단게이트 draft 큐 (prep 엔진 ingest → 사람이 /invoice 탭서 opt-out 승인/리젝 결정 → 맥 invoice_confirm 러너가 SVMS 교정·컨펌)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS invoice_draft (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                inv_cd        TEXT NOT NULL,                       -- SVMS 인보이스코드(dedup 키)
+                vsl_cd        TEXT,
+                vsl_nm        TEXT,
+                vndr_cd       TEXT,
+                vndr_nm       TEXT,
+                amt           REAL,                                -- 송장 금액
+                cur_cd        TEXT,
+                vat           REAL,
+                inv_no        TEXT,                                -- SVMS 입력 송장번호
+                inv_dt        TEXT,                                -- SVMS 입력 송장일자
+                cur_sup       TEXT,                                -- 현재 SVMS SUP(교정 전)
+                cur_pic       TEXT,                                -- 현재 SVMS PIC(교정 전)
+                cur_pay_dt    TEXT,                                -- 현재 SVMS Remit/지급일(교정 전)
+                set_pic       TEXT,                                -- 자동화가 넣을 PIC(박은미)
+                set_sup       TEXT,                                -- 자동화가 넣을 SUP(손유석)
+                set_pay_dt    TEXT,                                -- 자동화가 넣을 Remit(동월말)
+                exp_cd        TEXT,                                -- 라인 expense code
+                exp_nm        TEXT,                                -- 라인 expense 명
+                exp_conf      REAL,                                -- expense 분류 신뢰도
+                exp_reason    TEXT,                                -- expense 분류 근거
+                subject       TEXT,                                -- 라인 적요
+                inv_no_match  INTEGER,                             -- PDF 대조: 송장번호 일치 0/1/NULL
+                amt_match     INTEGER,                             -- PDF 대조: 금액 일치 0/1/NULL
+                date_match    INTEGER,                             -- PDF 대조: 날짜 일치 0/1/NULL
+                match_src     TEXT,                                -- 3자 동시검출된 PDF 파일명
+                had_lines     INTEGER,                             -- 기존 라인 존재 여부
+                attachments   TEXT,                                -- 첨부 파일명 JSON
+                flags         TEXT,                                -- 플래그 JSON 배열
+                gate          TEXT,                                -- PASS/HOLD (PASS=디폴트 자동상신 대상)
+                raw_card      TEXT,                                -- 카드 전체 JSON(컨펌때 재조회 키만 사용)
+                status        TEXT NOT NULL DEFAULT 'pending',     -- pending/approved/submitting/submitted/rejecting/rejected/failed/reject_failed
+                reject_reason TEXT,
+                decided_at    TEXT,
+                decided_by    TEXT,
+                done_at       TEXT,
+                result        TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_draft_status ON invoice_draft(status)")
+
         # 전자결재(jeonja) 검증 결과 + 자동상신 제외(보류) 큐
         #   verify(jeonja_review --post) 가 현재 상신대기(P) 전수 검토결과를 ref 단위로 적재 →
         #   사람이 /automation 허브서 항목별 '자동상신 제외' 체크 → live(jeonja_approve) 가 excluded=1 ref 를 skip.
@@ -6958,6 +7003,194 @@ def api_ext_fundreq_reject_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
+# ===== 인보이스 자동컨펌(SVMS Invoice Confirm) 2단게이트 =====
+#   · prep 엔진(맥)이 SVMS 인보이스 카드(선박/벤더/금액·PDF대조·교정내역·라인)를 POST /api/ext/invoice/drafts (카드 적재)
+#   · 사람이 /invoice 탭서 카드마다 opt-out 승인(approved) / 리젝(rejecting, 사유) 결정 (gate=PASS 디폴트 승인)
+#   · [자동상신] 버튼 → 맥 invoice_confirm 러너가 approved=PIC/SUP/Remit 교정+컨펌 / rejecting=보류
+@app.route('/invoice')
+@admin_required
+def invoice_page():
+    return render_template('invoice.html')
+
+
+@app.route('/api/invoice/drafts')
+@admin_required
+def api_invoice_list():
+    status = request.args.get('status')
+    if status:
+        rows = query('SELECT * FROM invoice_draft WHERE status=? ORDER BY id DESC', (status,))
+    else:
+        rows = query("SELECT * FROM invoice_draft ORDER BY CASE status WHEN 'pending' THEN 0 "
+                     "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
+    pending = query("SELECT COUNT(*) c FROM invoice_draft WHERE status='pending'", one=True)
+    return jsonify({'drafts': [dict(r) for r in rows], 'pending': pending['c'],
+                    'enabled': _automation_enabled()})
+
+
+@app.route('/api/ext/invoice/drafts', methods=['POST'])
+@api_key_required
+def api_ext_invoice_create():
+    """prep 엔진 ingest: 인보이스 카드 적재. 같은 inv_cd 가 pending이면 갱신(중복 방지)."""
+    d = request.get_json(silent=True) or {}
+    inv_cd = (d.get('inv_cd') or '').strip()
+    if not inv_cd:
+        return jsonify({'error': 'inv_cd required'}), 400
+    ex = query("SELECT id, status FROM invoice_draft WHERE inv_cd=? "
+               "AND status IN ('pending','approved','submitting','submitted','rejecting','rejected') "
+               "ORDER BY id DESC LIMIT 1", (inv_cd,), one=True)
+    cols = dict(
+        vsl_cd=d.get('vsl_cd'), vsl_nm=d.get('vsl_nm'),
+        vndr_cd=d.get('vndr_cd'), vndr_nm=d.get('vndr_nm'),
+        amt=d.get('amt'), cur_cd=d.get('cur_cd'), vat=d.get('vat'),
+        inv_no=d.get('inv_no'), inv_dt=d.get('inv_dt'),
+        cur_sup=d.get('cur_sup'), cur_pic=d.get('cur_pic'), cur_pay_dt=d.get('cur_pay_dt'),
+        set_pic=d.get('set_pic'), set_sup=d.get('set_sup'), set_pay_dt=d.get('set_pay_dt'),
+        exp_cd=d.get('exp_cd'), exp_nm=d.get('exp_nm'), exp_conf=d.get('exp_conf'),
+        exp_reason=d.get('exp_reason'), subject=d.get('subject'),
+        inv_no_match=d.get('inv_no_match'), amt_match=d.get('amt_match'),
+        date_match=d.get('date_match'), match_src=d.get('match_src'),
+        had_lines=d.get('had_lines'),
+        attachments=(json.dumps(d.get('attachments'), ensure_ascii=False) if d.get('attachments') is not None else None),
+        flags=(json.dumps(d.get('flags'), ensure_ascii=False) if d.get('flags') is not None else None),
+        gate=d.get('gate'),
+        raw_card=(json.dumps(d.get('raw_card'), ensure_ascii=False) if d.get('raw_card') is not None else None),
+    )
+    if ex and ex['status'] == 'pending':
+        sets = ', '.join(f"{k}=?" for k in cols)
+        execute(f"UPDATE invoice_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
+        return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
+    if ex:   # 이미 결정/진행중 — 손대지 않음
+        return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
+    did = execute(
+        "INSERT INTO invoice_draft (inv_cd, vsl_cd, vsl_nm, vndr_cd, vndr_nm, amt, cur_cd, vat, "
+        "inv_no, inv_dt, cur_sup, cur_pic, cur_pay_dt, set_pic, set_sup, set_pay_dt, "
+        "exp_cd, exp_nm, exp_conf, exp_reason, subject, inv_no_match, amt_match, date_match, "
+        "match_src, had_lines, attachments, flags, gate, raw_card) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (inv_cd, *cols.values()))
+    return jsonify({'id': did, 'status': 'pending'}), 201
+
+
+@app.route('/api/invoice/drafts/<int:did>/approve', methods=['POST'])
+@admin_required
+def api_invoice_approve(did):
+    """승인 마킹 — status='approved'. 실제 컨펌은 [자동상신] 버튼이 맥 러너로 실행."""
+    row = query('SELECT * FROM invoice_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if not row['raw_card']:
+        return jsonify({'error': 'raw_card 없음 — 재검토 필요'}), 400
+    rc = execute_rc("UPDATE invoice_draft SET status='approved', "
+                    "decided_at=datetime('now','localtime'), decided_by=? "
+                    "WHERE id=? AND status IN ('pending','rejecting')",
+                    (session.get('username') or 'web', did))
+    if not rc:
+        cur = query('SELECT status FROM invoice_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': 'already decided', 'status': cur['status'] if cur else '?'}), 409
+    return jsonify({'id': did, 'status': 'approved'})
+
+
+@app.route('/api/invoice/drafts/<int:did>/reject', methods=['POST'])
+@admin_required
+def api_invoice_reject(did):
+    """리젝 마킹(사유 필수) — status='rejecting'. 실제 보류는 [자동상신] 버튼이 맥 러너로 실행."""
+    row = query('SELECT * FROM invoice_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if not row['raw_card']:
+        return jsonify({'error': 'raw_card 없음 — 재검토 필요'}), 400
+    d = request.get_json(silent=True) or {}
+    reason = (d.get('reason') or '').strip()
+    if not reason:
+        return jsonify({'error': '리젝 사유(reason) 필수', 'field': 'reason'}), 400
+    rc = execute_rc("UPDATE invoice_draft SET status='rejecting', reject_reason=?, "
+                    "decided_at=datetime('now','localtime'), decided_by=? "
+                    "WHERE id=? AND status IN ('pending','approved')",
+                    (reason, session.get('username') or 'web', did))
+    if not rc:
+        cur = query('SELECT status FROM invoice_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': 'already decided', 'status': cur['status'] if cur else '?'}), 409
+    return jsonify({'id': did, 'status': 'rejecting'})
+
+
+@app.route('/api/invoice/drafts/<int:did>/reset', methods=['POST'])
+@admin_required
+def api_invoice_reset(did):
+    """결정 취소 — 실행 전(approved/rejecting)만 pending 으로 되돌림."""
+    rc = execute_rc("UPDATE invoice_draft SET status='pending', reject_reason=NULL, "
+                    "decided_at=NULL, decided_by=NULL WHERE id=? AND status IN ('approved','rejecting')", (did,))
+    if not rc:
+        cur = query('SELECT status FROM invoice_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': '실행 전(approved/rejecting)만 취소 가능', 'status': cur['status'] if cur else '?'}), 409
+    return jsonify({'id': did, 'status': 'pending'})
+
+
+@app.route('/api/invoice/drafts/<int:did>', methods=['DELETE'])
+@admin_required
+def api_invoice_delete(did):
+    if not query('SELECT id FROM invoice_draft WHERE id=?', (did,), one=True):
+        return jsonify({'error': 'not found'}), 404
+    execute('DELETE FROM invoice_draft WHERE id=?', (did,))
+    return jsonify({'id': did, 'deleted': True})
+
+
+@app.route('/api/invoice/drafts/decided', methods=['DELETE'])
+@admin_required
+def api_invoice_clear_decided():
+    """처리완료 일괄 삭제 — 대기(pending)·결정대기(approved/rejecting)·진행중(submitting)은 보존."""
+    n = execute_rc("DELETE FROM invoice_draft WHERE status IN ('submitted','rejected','failed','reject_failed')")
+    return jsonify({'ok': True, 'deleted': n})
+
+
+# ---- ext (맥 러너) ----
+@app.route('/api/ext/invoice/approved')
+@api_key_required
+def api_ext_invoice_approved():
+    """맥 러너가 컨펌할 approved 건 → status='submitting' 락(조건부)."""
+    cols = "id, inv_cd, vsl_cd, raw_card"
+    if request.args.get('peek'):
+        rows = query(f"SELECT {cols} FROM invoice_draft WHERE status='approved' ORDER BY id ASC")
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    out = [dict(r) for r in query(f"SELECT {cols} FROM invoice_draft WHERE status='submitting' ORDER BY id ASC")]
+    for r in query(f"SELECT {cols} FROM invoice_draft WHERE status='approved' ORDER BY id ASC"):
+        if execute_rc("UPDATE invoice_draft SET status='submitting' WHERE id=? AND status='approved'", (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'drafts': out})
+
+
+@app.route('/api/ext/invoice/rejecting')
+@api_key_required
+def api_ext_invoice_rejecting():
+    """맥 러너가 보류할 rejecting 건."""
+    rows = query("SELECT id, inv_cd, vsl_cd, reject_reason, raw_card FROM invoice_draft "
+                 "WHERE status='rejecting' ORDER BY id ASC")
+    return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows]})
+
+
+@app.route('/api/ext/invoice/drafts/<int:did>/result', methods=['POST'])
+@api_key_required
+def api_ext_invoice_result(did):
+    """컨펌 결과: ok=True → submitted, else failed."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    rc = execute_rc("UPDATE invoice_draft SET status=?, done_at=datetime('now','localtime'), result=? "
+                    "WHERE id=? AND status='submitting'",
+                    ('submitted' if ok else 'failed', (d.get('result') or '')[:2000], did))
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
+@app.route('/api/ext/invoice/drafts/<int:did>/reject-result', methods=['POST'])
+@api_key_required
+def api_ext_invoice_reject_result(did):
+    """리젝(보류) 결과: ok=True → rejected, else reject_failed."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    rc = execute_rc("UPDATE invoice_draft SET status=?, done_at=datetime('now','localtime'), result=? "
+                    "WHERE id=? AND status='rejecting'",
+                    ('rejected' if ok else 'reject_failed', (d.get('result') or '')[:2000], did))
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
 # ============================================================
 # reqgen — 입거 requisition 엑셀 → SVMS 구매청구 DRAFT 자동작성
 #   /reqgen(admin): 엑셀 업로드 → S/ST 시트 파싱 → 카드 적재 → Voyage/Port/Date 입력+승인 →
@@ -7431,6 +7664,7 @@ AUTOMATION_TASKS = {
     'soa_skrt': 'SOA 장금 (CPPS·INPS·KWPS·SAPS) +출금상신',
     'jeonja':   '전자결재 자동상신',
     'fundreq':  '비용청구(Fund Request) 자동상신 — 장금·Technical·Submitted',
+    'invoice_confirm': '인보이스 자동컨펌 — PIC/SUP/Remit 교정 + SVMS 컨펌 (승인 건만 처리)',
     'soa_resend': '리젝 통보메일 재발송 (실패분)',
     'aor_prep':   'AOR(Technical) prep — Submitted AOR 카드화 (/aor 큐 적재)',
     'aor_submit': 'AOR 상신 — 승인된 건 SVMS 제출 (approve 시 자동큐)',
