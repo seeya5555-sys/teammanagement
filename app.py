@@ -7090,6 +7090,25 @@ def api_invoice_approve(did):
     return jsonify({'id': did, 'status': 'approved'})
 
 
+@app.route('/api/invoice/drafts/approve-bulk', methods=['POST'])
+@admin_required
+def api_invoice_approve_bulk():
+    """체크된 카드(ids 배열) 일괄 승인 — opt-out 한 방에. raw_card 없거나 이미 결정된 건은 skip."""
+    d = request.get_json(silent=True) or {}
+    ids = d.get('ids') or []
+    who = session.get('username') or 'web'
+    approved, skipped = [], []
+    for did in ids:
+        row = query('SELECT id, raw_card FROM invoice_draft WHERE id=?', (did,), one=True)
+        if not row or not row['raw_card']:
+            skipped.append(did); continue
+        rc = execute_rc("UPDATE invoice_draft SET status='approved', "
+                        "decided_at=datetime('now','localtime'), decided_by=? "
+                        "WHERE id=? AND status IN ('pending','rejecting')", (who, did))
+        (approved if rc else skipped).append(did)
+    return jsonify({'approved': len(approved), 'skipped': len(skipped), 'approved_ids': approved})
+
+
 @app.route('/api/invoice/drafts/<int:did>/reject', methods=['POST'])
 @admin_required
 def api_invoice_reject(did):

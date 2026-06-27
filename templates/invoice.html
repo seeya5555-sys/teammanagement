@@ -54,7 +54,7 @@
   <span class="fr-count" id="fr-count"></span>
   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
     <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify">🔍 카드적재(prep)</button>
-    <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit">▶ 자동컨펌 실행</button>
+    <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit">▶ 체크한 것 일괄승인+컨펌</button>
     <button class="fr-b rs" id="fr-reload">🔄 새로고침</button>
     <button class="fr-b del" id="fr-clear">🗑 처리완료 비우기</button>
   </div>
@@ -62,7 +62,7 @@
 <div class="fr-note">
   <b>[🔍카드적재]</b> 누르면 SVMS 컨펌대기 인보이스가 PDF 대조·교정안과 함께 카드로 적재됨(~1~2분).
   <b>opt-out</b>: <span class="b-pass" style="padding:1px 6px;border-radius:999px">PASS</span> 카드는 디폴트 <b>승인</b>(체크), <span class="b-hold" style="padding:1px 6px;border-radius:999px">HOLD</span> 카드는 디폴트 해제 →
-  <b>[▶자동컨펌 실행]</b> 누르면 승인=PIC/SUP/Remit 교정+SVMS 컨펌, 리젝=보류. 카드별로 체크 해제·리젝 가능.
+  <b>[▶체크한 것 일괄승인+컨펌]</b> 누르면 <b>체크된 카드 전부 한 번에 승인</b>+PIC/SUP/Remit 교정+SVMS 컨펌. 미체크·HOLD·리젝은 제외. 카드별로 체크 해제·개별 리젝도 가능.
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
 {% endblock %}
@@ -126,7 +126,7 @@
     } else {
       acts=`<span class="fr-decided">${esc(d.status)}${d.result?(' — '+esc(d.result)):''}</span>`;
     }
-    return `<div class="fr-card" data-id="${d.id}">
+    return `<div class="fr-card" data-id="${d.id}" data-status="${esc(d.status)}" data-gate="${esc(gate)}">
       <div class="fr-top">
         <div><div class="fr-subj">${esc(d.vndr_nm||d.vndr_cd||d.inv_cd)}</div>
         <div class="fr-meta">${esc(d.inv_cd)}</div></div>
@@ -170,9 +170,21 @@
     alert(ok?'✅ 적재 실행 — 1~2분 후 카드 적재됨. 새로고침하세요.':('🚨 '+(j.error||'실패')));
   };
   $('#fr-submit').onclick=async()=>{
-    if(!confirm('승인=PIC/SUP/Remit 교정+SVMS 컨펌 / 리젝=보류를 지금 실행할까요?\n(승인 건만 처리, 예외 미처리·텔레그램 보고)'))return;
+    // 체크된 pending 카드 = 이번에 일괄 승인할 것(opt-out). 이미 approved 건도 함께 컨펌됨.
+    const checkedIds=[...document.querySelectorAll('.fr-card')].filter(el=>{
+      const cb=el.querySelector('[data-optout]');
+      return cb && cb.checked && el.dataset.status==='pending';
+    }).map(el=>el.dataset.id);
+    const alreadyApproved=[...document.querySelectorAll('.fr-card')].filter(el=>el.dataset.status==='approved').length;
+    if(!checkedIds.length && !alreadyApproved){alert('승인(체크)된 카드가 없습니다. PASS 카드는 기본 체크돼 있어요.');return;}
+    if(!confirm(`체크한 ${checkedIds.length}건 일괄 승인 + (기존 승인 ${alreadyApproved}건 포함) SVMS 컨펌 실행할까요?\n· 미체크/HOLD·리젝은 제외\n· PIC/SUP/Remit 교정 후 STATUS=A 컨펌`))return;
+    if(checkedIds.length){
+      const r=await api('POST','/api/invoice/drafts/approve-bulk',{ids:checkedIds});
+      if(!r.ok){alert('일괄승인 실패: '+(r.j.error||''));return;}
+    }
     const {ok,j}=await api('POST','/api/automation/run',{task:'invoice_confirm',mode:'live'});
-    alert(ok?'✅ 실행 — 1~2분 후 반영됨. 새로고침하세요.':('🚨 '+(j.error||'실패')));
+    alert(ok?`✅ ${checkedIds.length}건 승인+컨펌 실행 — 1~2분 후 반영. 새로고침.`:('🚨 '+(j.error||'실패')));
+    load();
   };
   $('#fr-reload').onclick=load;
   $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌/보류/실패) 카드를 비울까요?'))return;
