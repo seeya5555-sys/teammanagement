@@ -101,6 +101,10 @@
     const gate=(d.gate||'').toUpperCase();
     const gateBadge=gate?`<span class="fr-badge ${gate==='PASS'?'b-pass':'b-hold'}">${gate==='PASS'?'✅PASS':'⏸HOLD'}</span>`:'';
     const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
+    // 라인합≠총액(E15) 사전경고 배지 — 접힌 상태에서도 보이게
+    const _fl=jparse(d.flags)||[];
+    const e15=Array.isArray(_fl)&&_fl.some(f=>/E15|라인합/.test(String(f)));
+    const e15Badge=e15?`<span class="fr-badge b-flag">⚠️라인합≠총액</span>`:'';
     // 헤더 메타
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b></span>`
           +`<span>벤더 <b>${esc(d.vndr_nm||d.vndr_cd||'-')}</b></span>`
@@ -157,7 +161,7 @@
         <span class="fr-caret">▾</span>
         <div style="flex:1"><div class="fr-subj">${esc(d.vndr_nm||d.vndr_cd||d.inv_cd)}</div>
         <div class="fr-meta">${esc(d.inv_cd)} · ${esc(d.vsl_nm||d.vsl_cd||'')} · <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></div></div>
-        <div class="fr-badges">${gateBadge}${stbadge}</div>
+        <div class="fr-badges">${e15Badge}${gateBadge}${stbadge}</div>
       </div>
       <div class="fr-body"><div class="fr-kv">${kv}</div>${matchLine}${corr}${line}${flagLine}</div>
       <div class="fr-acts">${acts}</div>
