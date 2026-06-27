@@ -46,6 +46,13 @@
   .fr-decided{font-size:12px;color:var(--text-secondary)}
   .fr-empty{color:var(--text-tertiary);padding:30px;text-align:center}
   .fr-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+  .fr-edit{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:4px}
+  .fr-edit label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-tertiary)}
+  .fr-edit input{border:1px solid var(--border-strong);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text-primary)}
+  .fr-subj-in{min-width:240px;flex:1}
+  .fr-exp-in{min-width:150px}
+  .fr-exp-nm{font-size:12px}
+  .fr-b.ed{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)}
 </style>
 {% endblock %}
 {% block content %}
@@ -65,6 +72,7 @@
   <b>[▶체크한 것 일괄승인+컨펌]</b> 누르면 <b>체크된 카드 전부 한 번에 승인</b>+PIC/SUP/Remit 교정+SVMS 컨펌. 미체크·HOLD·리젝은 제외. 카드별로 체크 해제·개별 리젝도 가능.
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
+<datalist id="expcodes"></datalist>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -103,11 +111,23 @@
       +`PIC <i>${esc(d.cur_pic||'-')}</i> → <b>${esc(d.set_pic||'박은미')}</b> &nbsp;`
       +`SUP <i>${esc(d.cur_sup||'-')}</i> → <b>${esc(d.set_sup||'손유석')}</b> &nbsp;`
       +`Remit <i>${esc(d.cur_pay_dt||'-')}</i> → <b>${esc(d.set_pay_dt||'동월말')}</b></div></div>`;
-    // 라인
-    const line=(d.exp_cd||d.subject||d.exp_nm)?`<div class="fr-sect"><div class="fr-sect-t">라인(Expense)</div>`
-      +`<span>EXP <b>${esc(d.exp_cd||'-')}</b>${d.exp_nm?` ${esc(d.exp_nm)}`:''}${d.exp_conf!=null?` <span class="mun">(conf ${esc(d.exp_conf)})</span>`:''}</span>`
-      +`${d.subject?`<div style="margin-top:2px">적요: ${esc(d.subject)}</div>`:''}`
-      +`${d.exp_reason?`<div class="mun" style="margin-top:2px">${esc(d.exp_reason)}</div>`:''}</div>`:'';
+    // 라인 — pending이면 적요·EXP 편집가능(prep 오선택 방지), 그 외엔 읽기전용
+    let line='';
+    if(d.status==='pending'){
+      line=`<div class="fr-sect"><div class="fr-sect-t">라인(Expense) · 수정가능</div>`
+        +`<div class="fr-edit">`
+        +`<label>적요 <input class="fr-subj-in" value="${esc(d.subject||'')}" placeholder="적요(라인 내용)"></label>`
+        +`<label>EXP <input class="fr-exp-in" list="expcodes" value="${esc(d.exp_cd||'')}" placeholder="코드/명칭 검색"></label>`
+        +`<button class="fr-b ed" data-act="edit">💾 수정저장</button>`
+        +`<span class="fr-exp-nm mun">${d.exp_nm?esc(d.exp_nm):''}${d.exp_conf!=null?` (conf ${esc(d.exp_conf)})`:''}</span>`
+        +`</div>`
+        +`${d.exp_reason?`<div class="mun" style="margin-top:3px">${esc(d.exp_reason)}</div>`:''}</div>`;
+    } else if(d.exp_cd||d.subject||d.exp_nm){
+      line=`<div class="fr-sect"><div class="fr-sect-t">라인(Expense)</div>`
+        +`<span>EXP <b>${esc(d.exp_cd||'-')}</b>${d.exp_nm?` ${esc(d.exp_nm)}`:''}${d.exp_conf!=null?` <span class="mun">(conf ${esc(d.exp_conf)})</span>`:''}</span>`
+        +`${d.subject?`<div style="margin-top:2px">적요: ${esc(d.subject)}</div>`:''}`
+        +`${d.exp_reason?`<div class="mun" style="margin-top:2px">${esc(d.exp_reason)}</div>`:''}</div>`;
+    }
     // 플래그
     const flags=jparse(d.flags);
     const flagLine=(Array.isArray(flags)&&flags.length)?`<div class="fr-sect">${flags.map(f=>`<span class="fr-flag">${esc(f)}</span>`).join('')}</div>`:'';
@@ -138,17 +158,44 @@
   }
   async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
   async function _load(){
+    // 자동 새로고침(8s) 때 사용자 입력 날아가는 버그 방지 — 체크/편집 상태 스냅샷 후 복원
+    const snap={};
+    document.querySelectorAll('.fr-card').forEach(el=>{
+      const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in');
+      snap[el.dataset.id]={chk:cb?cb.checked:null, sj:sj?sj.value:null, ex:ex?ex.value:null};
+    });
     const {ok,j}=await api('GET','/api/invoice/drafts');
     if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
     const ds=j.drafts||[];
     $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · ⚠️킬스위치 ON');
     $('#fr-list').innerHTML=ds.length?ds.map(card).join(''):'<div class="fr-empty">카드 없음 — [카드적재(prep)] 실행</div>';
     document.querySelectorAll('.fr-card').forEach(el=>{
+      const s=snap[el.dataset.id];
+      if(s){
+        const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in');
+        if(cb&&s.chk!=null)cb.checked=s.chk;
+        if(sj&&s.sj!=null)sj.value=s.sj;
+        if(ex&&s.ex!=null)ex.value=s.ex;
+      }
       el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
     });
   }
+  async function loadExp(){
+    const {ok,j}=await api('GET','/api/invoice/expense-codes');
+    if(ok&&j.codes){$('#expcodes').innerHTML=j.codes.map(c=>`<option value="${esc(c.code)} ${esc(c.name||c.name_en||'')}">`).join('');}
+  }
   async function act(el,a){
     const id=el.dataset.id;
+    if(a==='edit'){   // 적요·EXP 교정 저장 (입력값=`코드 명칭` → 코드만 파싱)
+      const sj=el.querySelector('.fr-subj-in').value.trim();
+      const exRaw=el.querySelector('.fr-exp-in').value.trim();
+      const exp_cd=exRaw.split(/\s+/)[0].replace(/[^0-9A-Za-z]/g,'');
+      el.classList.add('is-busy');
+      const {ok,j}=await api('POST',`/api/invoice/drafts/${id}/edit`,{subject:sj,exp_cd:exp_cd});
+      el.classList.remove('is-busy');
+      if(!ok){alert('수정 실패: '+(j.error||''));return;}
+      load();return;
+    }
     let url=`/api/invoice/drafts/${id}`,method='POST',body=null;
     if(a==='approve'){
       const cb=el.querySelector('[data-optout]');
@@ -189,7 +236,7 @@
   $('#fr-reload').onclick=load;
   $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌/보류/실패) 카드를 비울까요?'))return;
     await api('DELETE','/api/invoice/drafts/decided');load();};
-  load(); setInterval(load,8000);
+  loadExp(); load(); setInterval(load,8000);
 })();
 </script>
 {% endblock %}

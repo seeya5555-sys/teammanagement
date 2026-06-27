@@ -428,6 +428,17 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_draft_status ON invoice_draft(status)")
 
+        # SVMS expense code 마스터(PKG_CO.SP_GET_EXP 357개) — 인보이스 라인 EXP_CD 편집 검색용. 맥이 ext로 적재.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS expense_code (
+                code     TEXT PRIMARY KEY,    -- EXP_CD
+                name     TEXT,                -- 국문 명칭
+                name_en  TEXT,                -- 영문(EXP_NM1)
+                grp      TEXT,                -- GRP_CD
+                updated_at TEXT
+            )
+        """)
+
         # 전자결재(jeonja) 검증 결과 + 자동상신 제외(보류) 큐
         #   verify(jeonja_review --post) 가 현재 상신대기(P) 전수 검토결과를 ref 단위로 적재 →
         #   사람이 /automation 허브서 항목별 '자동상신 제외' 체크 → live(jeonja_approve) 가 excluded=1 ref 를 skip.
@@ -7107,6 +7118,71 @@ def api_invoice_approve_bulk():
                         "WHERE id=? AND status IN ('pending','rejecting')", (who, did))
         (approved if rc else skipped).append(did)
     return jsonify({'approved': len(approved), 'skipped': len(skipped), 'approved_ids': approved})
+
+
+@app.route('/api/invoice/expense-codes')
+@admin_required
+def api_invoice_expense_codes():
+    """EXP_CD 마스터(편집 picker용). q 있으면 코드/국문/영문 부분검색."""
+    q = (request.args.get('q') or '').strip()
+    if q:
+        like = f'%{q}%'
+        rows = query("SELECT code,name,name_en,grp FROM expense_code "
+                     "WHERE code LIKE ? OR name LIKE ? OR name_en LIKE ? ORDER BY code LIMIT 500",
+                     (like, like, like))
+    else:
+        rows = query("SELECT code,name,name_en,grp FROM expense_code ORDER BY code")
+    return jsonify({'codes': [dict(r) for r in rows], 'count': len(rows)})
+
+
+@app.route('/api/ext/invoice/expense-codes', methods=['POST'])
+@api_key_required
+def api_ext_invoice_expense_codes():
+    """맥이 SVMS SP_GET_EXP 적재(upsert). payload={codes:[{code,name,name_en,grp}]}."""
+    d = request.get_json(silent=True) or {}
+    codes = d.get('codes') or []
+    if not codes:
+        return jsonify({'error': 'codes empty'}), 400
+    n = 0
+    for c in codes:
+        code = (c.get('code') or '').strip()
+        if not code:
+            continue
+        execute("INSERT INTO expense_code (code,name,name_en,grp,updated_at) "
+                "VALUES (?,?,?,?,datetime('now','localtime')) "
+                "ON CONFLICT(code) DO UPDATE SET name=excluded.name, name_en=excluded.name_en, "
+                "grp=excluded.grp, updated_at=excluded.updated_at",
+                (code, c.get('name'), c.get('name_en'), c.get('grp')))
+        n += 1
+    return jsonify({'upserted': n})
+
+
+@app.route('/api/invoice/drafts/<int:did>/edit', methods=['POST'])
+@admin_required
+def api_invoice_edit(did):
+    """적요(subject)·expense(exp_cd/exp_nm) 사람 교정 — prep 오선택 방지. raw_card도 동기화(confirm.py가 사용)."""
+    d = request.get_json(silent=True) or {}
+    row = query('SELECT raw_card, status FROM invoice_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] != 'pending':
+        return jsonify({'error': '대기(pending) 카드만 편집 가능 — 현재 %s' % row['status']}), 409
+    subject = d.get('subject')
+    exp_cd = (d.get('exp_cd') or '').strip() or None
+    exp_nm = d.get('exp_nm')
+    if exp_cd and not exp_nm:                      # 코드만 주면 마스터서 명칭 해결
+        m = query('SELECT name FROM expense_code WHERE code=?', (exp_cd,), one=True)
+        exp_nm = m['name'] if m else None
+    try:
+        rc = json.loads(row['raw_card'] or '{}')
+    except Exception:
+        rc = {}
+    if subject is not None:
+        rc['subject'] = subject
+    rc['exp_cd'], rc['exp_nm'], rc['exp_edited'] = exp_cd, exp_nm, True
+    execute("UPDATE invoice_draft SET subject=?, exp_cd=?, exp_nm=?, raw_card=? WHERE id=?",
+            (subject, exp_cd, exp_nm, json.dumps(rc, ensure_ascii=False), did))
+    return jsonify({'id': did, 'subject': subject, 'exp_cd': exp_cd, 'exp_nm': exp_nm})
 
 
 @app.route('/api/invoice/drafts/<int:did>/reject', methods=['POST'])
