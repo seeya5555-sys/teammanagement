@@ -53,6 +53,10 @@
   .fr-exp-in{min-width:150px}
   .fr-exp-nm{font-size:12px}
   .fr-b.ed{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)}
+  .fr-top{cursor:pointer}
+  .fr-caret{color:var(--text-tertiary);font-size:11px;margin-right:6px;display:inline-block;transition:transform .15s;flex-shrink:0}
+  .fr-card.collapsed .fr-caret{transform:rotate(-90deg)}
+  .fr-card.collapsed .fr-body{display:none}
 </style>
 {% endblock %}
 {% block content %}
@@ -62,6 +66,7 @@
   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
     <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify">🔍 카드적재(prep)</button>
     <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit">▶ 체크한 것 일괄승인+컨펌</button>
+    <button class="fr-b rs" id="fr-collapse">🔽 전체접기</button>
     <button class="fr-b rs" id="fr-reload">🔄 새로고침</button>
     <button class="fr-b del" id="fr-clear">🗑 처리완료 비우기</button>
   </div>
@@ -146,10 +151,12 @@
     } else {
       acts=`<span class="fr-decided">${esc(d.status)}${d.result?(' — '+esc(d.result)):''}</span>`;
     }
-    return `<div class="fr-card" data-id="${d.id}" data-status="${esc(d.status)}" data-gate="${esc(gate)}">
+    const dcoll=(d.status!=='pending');   // 결정완료 카드는 기본 접힘(스캔 편하게)
+    return `<div class="fr-card${dcoll?' collapsed':''}" data-id="${d.id}" data-status="${esc(d.status)}" data-gate="${esc(gate)}">
       <div class="fr-top">
-        <div><div class="fr-subj">${esc(d.vndr_nm||d.vndr_cd||d.inv_cd)}</div>
-        <div class="fr-meta">${esc(d.inv_cd)}</div></div>
+        <span class="fr-caret">▾</span>
+        <div style="flex:1"><div class="fr-subj">${esc(d.vndr_nm||d.vndr_cd||d.inv_cd)}</div>
+        <div class="fr-meta">${esc(d.inv_cd)} · ${esc(d.vsl_nm||d.vsl_cd||'')} · <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></div></div>
         <div class="fr-badges">${gateBadge}${stbadge}</div>
       </div>
       <div class="fr-body"><div class="fr-kv">${kv}</div>${matchLine}${corr}${line}${flagLine}</div>
@@ -162,7 +169,7 @@
     const snap={};
     document.querySelectorAll('.fr-card').forEach(el=>{
       const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in');
-      snap[el.dataset.id]={chk:cb?cb.checked:null, sj:sj?sj.value:null, ex:ex?ex.value:null};
+      snap[el.dataset.id]={chk:cb?cb.checked:null, sj:sj?sj.value:null, ex:ex?ex.value:null, coll:el.classList.contains('collapsed')};
     });
     const {ok,j}=await api('GET','/api/invoice/drafts');
     if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
@@ -176,8 +183,11 @@
         if(cb&&s.chk!=null)cb.checked=s.chk;
         if(sj&&s.sj!=null)sj.value=s.sj;
         if(ex&&s.ex!=null)ex.value=s.ex;
+        el.classList.toggle('collapsed', !!s.coll);   // 접힘 상태 유지(8s 새로고침 대비)
       }
       el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
+      const top=el.querySelector('.fr-top');
+      if(top)top.onclick=()=>el.classList.toggle('collapsed');   // 헤더 클릭 = 접기/펼치기
     });
   }
   async function loadExp(){
@@ -232,6 +242,12 @@
     const {ok,j}=await api('POST','/api/automation/run',{task:'invoice_confirm',mode:'live'});
     alert(ok?`✅ ${checkedIds.length}건 승인+컨펌 실행 — 1~2분 후 반영. 새로고침.`:('🚨 '+(j.error||'실패')));
     load();
+  };
+  $('#fr-collapse').onclick=()=>{
+    const cards=[...document.querySelectorAll('.fr-card')];
+    const anyOpen=cards.some(el=>!el.classList.contains('collapsed'));
+    cards.forEach(el=>el.classList.toggle('collapsed', anyOpen));   // 하나라도 열려있으면 전부 접기, 아니면 전부 펼치기
+    $('#fr-collapse').textContent=anyOpen?'🔼 전체펼치기':'🔽 전체접기';
   };
   $('#fr-reload').onclick=load;
   $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌/보류/실패) 카드를 비울까요?'))return;
