@@ -30,6 +30,7 @@
   .fm-kpi .fl.amber{background:#fff3e0;color:#b7791f}
   .fm-kpi .fl.blue{background:var(--blue-bg);color:var(--blue)}
   .fm-kpi .scope{align-self:center;font-size:11px;color:var(--text-tertiary);margin-left:auto}
+  .fm-kpi .today-sched{align-self:center;max-width:200px;font-size:11px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:1px solid var(--border-subtle);padding-left:9px}
   .fm-sup{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
   .fm-sup .lbl{font-size:11.5px;font-weight:700;color:var(--text-secondary)}
   .fm-search{border:1px solid var(--border);background:var(--surface);color:var(--text-primary);font-size:12.5px;padding:6px 12px;border-radius:999px;width:200px;outline:none}
@@ -140,9 +141,11 @@
       <span class="meta"><span class="lbl">메일 처리 대기</span><span class="num">{{ stats.mail_active }}<small>건</small></span></span>
     </a>
     {% endif %}
-    <a class="{% if not events %}zero{% endif %}" href="{{ url_for('calendar_page') }}">
+    <a class="{% if not today_count %}zero{% endif %}" href="{{ url_for('calendar_page') }}"
+       title="{% for e in today_events %}{{ e['start_time'] or '' }} {{ e['title'] }}{% if e['category'] %} · {{ e['category'] }}{% endif %}{% if not loop.last %}&#10;{% endif %}{% endfor %}">
       <span class="ico">📅</span>
-      <span class="meta"><span class="lbl">다가오는 일정 (7일)</span><span class="num">{{ events_count }}<small>건</small></span></span>
+      <span class="meta"><span class="lbl">오늘 일정</span><span class="num">{{ today_count }}<small>건</small></span></span>
+      {% if today_events %}<span class="today-sched">{% for e in today_events[:2] %}{{ e['title'] }}{% if not loop.last %} · {% endif %}{% endfor %}{% if today_count > 2 %} +{{ today_count - 2 }}{% endif %}</span>{% endif %}
     </a>
     <span class="scope">{% if scoped %}<b>{{ sup_name }}</b> 담당 기준{% else %}전체 선박 기준{% endif %}</span>
   </div>

@@ -911,6 +911,19 @@ def _dashboard_ctx():
             "SELECT COUNT(*) c FROM calendar_events WHERE start_date >= ? AND start_date <= ?",
             (today, cal_end), one=True)['c']
 
+    # 오늘 일정(KPI 스트립 = 당일 요약, 손유석 지시 2026-06-29). start_date=오늘만.
+    if scoped:
+        evf3, evp3 = vin("vessel_id")
+        today_events = query(
+            "SELECT title, category, start_time FROM calendar_events WHERE start_date = ? "
+            f"AND (supervisor_id=? OR supervisor_id IS NULL OR {evf3}) "
+            "ORDER BY COALESCE(start_time,'') ASC", (today, sup_id, *evp3))
+    else:
+        today_events = query(
+            "SELECT title, category, start_time FROM calendar_events WHERE start_date = ? "
+            "ORDER BY COALESCE(start_time,'') ASC", (today,))
+    today_count = len(today_events)
+
     stats = {
         'issues_open':   (iss['open_cnt']   or 0) if iss else 0,
         'issues_urgent': (iss['urgent_cnt'] or 0) if iss else 0,
@@ -935,7 +948,8 @@ def _dashboard_ctx():
         except sqlite3.Error:
             pass
 
-    return dict(stats=stats, events=events, events_count=events_count, is_admin=is_admin,
+    return dict(stats=stats, events=events, events_count=events_count,
+                today_events=today_events, today_count=today_count, is_admin=is_admin,
                 scoped=scoped, sup_name=sup_name)
 
 
