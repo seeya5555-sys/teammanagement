@@ -9480,6 +9480,10 @@ def api_fleet_map_data():
         s = vsup.get(_vkey(v.get('name')))
         if s:
             v['supervisor'] = s
+    # 대시보드 = supervisor_vessels 배정된 선박만 표시(미배정·타팀 제외). 손유석 정리 후 손유석 담당선만 남음(손유석 지시 2026-06-29).
+    # ⚠️ admin/비admin 공통 정책 — 배정 없는 감독(예 김흥민/이창주 멤버계정)은 빈 대시보드(의도). 빈 fleet은 프론트가 "표시할 선박 없음"으로 처리.
+    fleet = [v for v in fleet if v.get('supervisor')]
+    data['fleet'] = fleet
     data['supervisors'] = sorted({v['supervisor'] for v in fleet if v.get('supervisor')})
     # SIRE 검사일 +3주(21일) 초과인데 Observation All-close 안 됨(open>0) → 아이콘 노란 펄스
     overdue_vkeys = {
