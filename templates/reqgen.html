@@ -151,6 +151,8 @@
     const isRepair=d.doc_type==='MA';
     const isStore=d.part_tp==='1';
     const busy=(d.status==='saving');
+    // 수리신청 장비(C5=Category/Equipment) 비면 SVMS 빈 값 저장 → 승인 차단됨(서버), 카드에 경고 표시
+    const eqEmpty=isRepair && !(d.equipment && String(d.equipment).trim());
     let acts=`<button class="rg-b del" data-act="delete">🗑 삭제</button>`;
     if(d.status==='approved') acts=`<span class="rg-decided">승인됨 — 맥 러너 대기/실행중</span>`
         +`<button class="rg-b rs" data-act="reset">↩ 취소</button>`;
@@ -171,11 +173,14 @@
         </div>
         <div class="rg-badges">
           <span class="rg-badge ${isRepair?'b-store':(isStore?'b-store':'b-spare')}" style="${isRepair?'background:#FCEBEB;color:#A32D2D':''}">${isRepair?'수리신청':esc(d.kind_nm)}</span>
+          ${eqEmpty?'<span class="rg-badge" style="background:#FCEBEB;color:#A32D2D">⚠ 장비/Category 비어있음 — 입력 후 승인</span>':''}
           <span class="rg-badge st-${d.status}">${esc(d.status)}</span>
         </div>
       </div>
       <div class="rg-body">
-        <div class="rg-kv"><span>장비: <b>${esc(d.equipment)}</b></span><span>Dept: <b>Engine</b></span>
+        <div class="rg-kv"><span>장비: ${(isRepair && d.status==='pending')
+            ? `<input data-equip value="${esc(d.equipment||'').replace(/"/g,'&quot;')}" placeholder="장비/Category 입력" style="border:1px solid ${eqEmpty?'#A32D2D':'#B4B2A9'};border-radius:6px;padding:3px 8px;font-size:12px;width:210px">`
+            : `<b>${eqEmpty?'<span style="color:#A32D2D">⚠ 비어있음</span>':esc(d.equipment)}</b>`}</span><span>Dept: <b>Engine</b></span>
           ${isRepair?'<span>Reason: <b>PMS</b></span>':`<span>Exp: <b>${esc(d.exp_cd)}</b></span>`}<span>Dock: <b>Y</b></span>${vpd}</div>
         ${isRepair?`<div style="margin-bottom:8px;font-size:12px"><b>Stock of Spare:</b>
           ${d.status==='pending'
@@ -243,7 +248,11 @@
     $('#rg-pushall').disabled=true; $('#bar-hint').textContent='승인 중…';
     try{
       const j=await api('POST','/api/reqgen/approve-all',{voyage,port,req_dt,cause,inspection});
-      $('#bar-hint').textContent=`✅ ${j.approved}건 승인 — 맥 러너 저장중(1~2분)`;
+      const nb=(j.blocked&&j.blocked.length)?j.blocked.length:0;
+      let m;
+      if(!j.approved && nb) m=`⚠ 승인 0건 — ${nb}건 장비/Category 비어 전부 제외(${j.blocked.join(', ')}) · 카드에서 장비 입력 후 다시 승인`;
+      else { m=`✅ ${j.approved}건 승인 — 맥 러너 저장중(1~2분)`; if(nb) m+=` · ⚠ ${nb}건 비어 제외(${j.blocked.join(', ')})`; }
+      $('#bar-hint').textContent=m;  // textContent라 자동 escape — esc() 불필요(이중이스케이프 방지)
       await load();
     }catch(e){ $('#bar-hint').textContent='🚨 '+e.message; $('#rg-pushall').disabled=false; }
   });
@@ -259,11 +268,17 @@
     }catch(e){ alert(e.message); }
   });
 
-  // 수리 카드별 Stock of Spare 선택 저장
+  // 수리 카드별 Stock of Spare 선택 / 장비(Category·Equipment) 인라인 저장
   list.addEventListener('change',async(ev)=>{
-    const sel=ev.target.closest('select[data-stock]'); if(!sel) return;
-    const id=sel.closest('.rg-card').dataset.id;
-    try{ await api('PATCH',`/api/reqgen/drafts/${id}`,{stock:sel.value}); }catch(e){ alert(e.message); }
+    const sel=ev.target.closest('select[data-stock]');
+    if(sel){ const id=sel.closest('.rg-card').dataset.id;
+      try{ await api('PATCH',`/api/reqgen/drafts/${id}`,{stock:sel.value}); }catch(e){ alert(e.message); }
+      return; }
+    const eqi=ev.target.closest('input[data-equip]');
+    if(eqi){ const id=eqi.closest('.rg-card').dataset.id;
+      try{ await api('PATCH',`/api/reqgen/drafts/${id}`,{equipment:eqi.value.trim()}); await load(); }
+      catch(e){ alert(e.message); }
+      return; }
   });
 
   $('#rg-reload').addEventListener('click',load);

@@ -824,12 +824,14 @@ def logout():
 @login_required
 def dashboard():
     """Fleet Map — 지도 기반 대시보드(SVMS noon 선위 + TRMT 현황 조인).
-    데이터는 /api/fleet-map/data (감독 스코프). 구 카드형은 /dashboard/classic."""
-    return render_template('dashboard.html')
+    데이터는 /api/fleet-map/data (감독 스코프). 상단 KPI 스트립은 구 대시보드 집계
+    (_dashboard_ctx)를 재사용. 카드형 전체는 /dashboard/classic 백업 경로."""
+    return render_template('dashboard.html', **_dashboard_ctx())
 
 
-def _dashboard_classic_render():
-    """구 대시보드(카드형) 집계 렌더 — /dashboard/classic 에서 사용."""
+def _dashboard_ctx():
+    """대시보드 집계 컨텍스트(stats/events/scope) — Fleet Map 상단 KPI 스트립과
+    구 카드형(/dashboard/classic) 양쪽에서 공유."""
     today   = date.today().isoformat()
     horizon = (date.today() + timedelta(days=30)).isoformat()
     cal_end = (date.today() + timedelta(days=7)).isoformat()
@@ -897,6 +899,18 @@ def _dashboard_classic_render():
             "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
             (today, cal_end))
 
+    # 7일 일정 총건수(KPI 스트립용) — events 는 LIMIT 8 미리보기라 카운트와 분리.
+    if scoped:
+        evf2, evp2 = vin("vessel_id")
+        events_count = query(
+            "SELECT COUNT(*) c FROM calendar_events WHERE start_date >= ? AND start_date <= ? "
+            f"AND (supervisor_id=? OR supervisor_id IS NULL OR {evf2})",
+            (today, cal_end, sup_id, *evp2), one=True)['c']
+    else:
+        events_count = query(
+            "SELECT COUNT(*) c FROM calendar_events WHERE start_date >= ? AND start_date <= ?",
+            (today, cal_end), one=True)['c']
+
     stats = {
         'issues_open':   (iss['open_cnt']   or 0) if iss else 0,
         'issues_urgent': (iss['urgent_cnt'] or 0) if iss else 0,
@@ -921,8 +935,8 @@ def _dashboard_classic_render():
         except sqlite3.Error:
             pass
 
-    return render_template('dashboard_classic.html', stats=stats, events=events, is_admin=is_admin,
-                           scoped=scoped, sup_name=sup_name)
+    return dict(stats=stats, events=events, events_count=events_count, is_admin=is_admin,
+                scoped=scoped, sup_name=sup_name)
 
 
 @app.route('/')
@@ -7590,6 +7604,17 @@ def api_reqgen_patch(did):
         stock = 'owner' if (d.get('stock') == 'owner') else 'service'
         execute("UPDATE reqgen_draft SET stock=? WHERE id=?", (stock, did))
         return jsonify({'id': did, 'stock': stock})
+    # 장비(Category/Equipment) 인라인 수정 — 빈 엑셀 C5를 재업로드 없이 채움(수리신청 MA만)
+    if 'equipment' in d:
+        if row['doc_type'] != 'MA':
+            return jsonify({'error': '장비 인라인 수정은 수리신청(MA)만 가능'}), 400
+        eq = (d.get('equipment') or '').strip()
+        header = json.loads(row['header_json']) if row['header_json'] else {}
+        header['CATE_NM'] = eq        # CATE_NM·EQ_NM 모두 C5(장비) 한 셀에서 옴 → 함께 갱신
+        header['EQ_NM'] = eq
+        execute("UPDATE reqgen_draft SET equipment=?, header_json=? WHERE id=?",
+                (eq or None, json.dumps(header, ensure_ascii=False), did))
+        return jsonify({'id': did, 'equipment': eq})
     return jsonify({'id': did, 'noop': True})
 
 
@@ -7615,6 +7640,11 @@ def api_reqgen_approve(did):
     if not row['header_json']:
         return jsonify({'error': 'header_json 없음 — 카드 삭제 후 재업로드'}), 400
     header = json.loads(row['header_json'])
+    # 수리신청(MA) — Category/Equipment(장비, 엑셀 C5) 비면 SVMS에 빈 값으로 저장되므로 차단(손유석 지시)
+    if row['doc_type'] == 'MA' and not (
+            (header.get('CATE_NM') or '').strip() and (header.get('EQ_NM') or '').strip()):
+        return jsonify({'error': 'Category/Equipment(장비)가 비어 있어 저장 불가 — 카드에서 장비 입력 후 다시 승인(또는 엑셀 C5 수정)',
+                        'field': 'equipment'}), 400
     header.update({'REQ_VOY': voyage, 'PHR_VOY': voyage,
                    'REQ_PORT': port, 'REQ_PORT_NM': port_nm or None,
                    'PHR_PORT': port, 'PHR_PORT_NM': port_nm or None,
@@ -7662,11 +7692,16 @@ def api_reqgen_approve_all():
                         'field': 'cause' if not cause else 'inspection'}), 400
     user = session.get('username') or 'web'
     n = 0
+    blocked = []
     for row in rows:
         if not row['header_json']:
             continue
         header = json.loads(row['header_json'])
         if row['doc_type'] == 'MA':                  # 수리신청 — APP_* + 박스(Stock은 카드별)
+            # Category/Equipment(장비, C5) 비면 SVMS 빈 값 방지 — 승인 제외하고 pending 유지(손유석 지시)
+            if not ((header.get('CATE_NM') or '').strip() and (header.get('EQ_NM') or '').strip()):
+                blocked.append(row['sheet'] or row['vsl_cd'] or str(row['id']))
+                continue
             header.update({'APP_VOY': voyage, 'APP_PORT_CD': port, 'APP_PORT_NM': None,
                            'APP_DT': req_dt, 'REQ_CAU': cause, 'REQ_INS': inspection,
                            'REQ_STK': _stock_txt(row['stock'])})
@@ -7681,9 +7716,11 @@ def api_reqgen_approve_all():
                         (json.dumps(header, ensure_ascii=False), voyage, port, req_dt, user, row['id']))
         if rc:
             n += 1
-    rid = _queue_aor('reqgen_save', user)
-    return jsonify({'approved': n, 'save_run': rid,
-                    'message': f'{n}건 승인 — 맥 러너가 곧 SVMS 일괄 저장(최대 1~2분)'})
+    rid = _queue_aor('reqgen_save', user) if n else None
+    msg = f'{n}건 승인 — 맥 러너가 곧 SVMS 일괄 저장(최대 1~2분)'
+    if blocked:
+        msg += f' · ⚠ {len(blocked)}건 Category/Equipment 비어 제외(카드에서 장비 입력 후 다시 승인): {", ".join(blocked)}'
+    return jsonify({'approved': n, 'blocked': blocked, 'save_run': rid, 'message': msg})
 
 
 @app.route('/api/reqgen/drafts/<int:did>/reset', methods=['POST'])
@@ -9546,7 +9583,7 @@ def api_fleet_map_data():
 @login_required
 def dashboard_classic():
     """구 대시보드(카드형) — Fleet Map 도입 후 백업 경로."""
-    return _dashboard_classic_render()
+    return render_template('dashboard_classic.html', **_dashboard_ctx())
 
 
 @app.route('/api/ext/shipwiki/decided')

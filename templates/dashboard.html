@@ -10,6 +10,26 @@
   .fm-legend{display:flex;gap:12px;font-size:11.5px;color:var(--text-secondary)}
   .fm-legend i{display:inline-block;width:9px;height:9px;border-radius:999px;margin-right:4px;vertical-align:middle}
   .fm-spacer{flex:1}.fm-updated{font-size:11px;color:var(--text-tertiary)}
+  /* KPI 스트립 — 구 대시보드 카드를 컴팩트 칩으로 압축, 맵 위 한 줄. 클릭=해당 탭 이동. */
+  /* nowrap + 가로스크롤 → 항상 한 줄(좁은 화면은 스크롤), fm-stage 높이 보정이 흐트러지지 않음. */
+  .fm-kpi{display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;align-items:stretch;margin-bottom:8px;padding-bottom:2px}
+  .fm-kpi a{flex:0 0 auto}
+  .fm-kpi a{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border-subtle);border-radius:11px;padding:7px 14px;text-decoration:none;color:inherit;transition:box-shadow .1s,transform .1s}
+  .fm-kpi a:hover{box-shadow:0 4px 12px rgba(0,0,0,.09);transform:translateY(-1px);border-color:var(--border)}
+  .fm-kpi .ico{font-size:15px;line-height:1}
+  .fm-kpi .meta{display:flex;flex-direction:column;gap:1px}
+  .fm-kpi .lbl{font-size:11px;color:var(--text-secondary);font-weight:600;white-space:nowrap}
+  .fm-kpi .num{font-size:19px;font-weight:700;line-height:1;color:var(--text-primary)}
+  .fm-kpi .num small{font-size:10.5px;color:var(--text-tertiary);font-weight:600;margin-left:2px}
+  .fm-kpi a.hot .num{color:var(--red,#c0392b)}
+  .fm-kpi a.warn .num{color:#b7791f}
+  .fm-kpi a.zero .num{color:var(--text-tertiary)}
+  .fm-kpi .flags{display:flex;gap:4px;margin-left:2px}
+  .fm-kpi .fl{font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px}
+  .fm-kpi .fl.red{background:var(--red-bg,#fbe4e1);color:var(--red,#c0392b)}
+  .fm-kpi .fl.amber{background:#fff3e0;color:#b7791f}
+  .fm-kpi .fl.blue{background:var(--blue-bg);color:var(--blue)}
+  .fm-kpi .scope{align-self:center;font-size:11px;color:var(--text-tertiary);margin-left:auto}
   .fm-sup{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
   .fm-sup .lbl{font-size:11.5px;font-weight:700;color:var(--text-secondary)}
   .fm-search{border:1px solid var(--border);background:var(--surface);color:var(--text-primary);font-size:12.5px;padding:6px 12px;border-radius:999px;width:200px;outline:none}
@@ -19,7 +39,7 @@
   .fm-sup button .n{opacity:.7;font-weight:700;margin-left:3px}
   /* z-index:0 → Leaflet 내부 z-index(패널 200~700·컨트롤 1000)를 stage 안에 가둠.
      안 그러면 root로 새어나와 topnav 드롭다운(자동화 등) 위로 그려져 메뉴가 잘림. */
-  .fm-stage{position:relative;z-index:0;height:calc(100vh - 200px);min-height:480px;border:1px solid var(--border-subtle);border-radius:14px;overflow:hidden}
+  .fm-stage{position:relative;z-index:0;height:calc(100vh - 252px);min-height:460px;border:1px solid var(--border-subtle);border-radius:14px;overflow:hidden}
   #fmmap{position:absolute;inset:0}.leaflet-container{background:#cfe0e6;font:inherit}
   .ship{position:relative;display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
   .sire-flag{position:absolute;top:-4px;right:-4px;width:11px;height:11px;border-radius:50%;background:#eab308;border:1.5px solid #fff;animation:fmPulseY 1.3s infinite}
@@ -84,9 +104,49 @@
       <span title="Class/Flag 만기 임박·초과 선박은 마커가 펄스로 깜빡임">💢 펄스=Class/Flag 만기</span>
     </div>
     <div class="fm-spacer"></div>
-    <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">구 대시보드 →</a>
+    <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">카드형 전체 →</a>
     <span class="fm-updated" id="fmUpdated">로딩…</span>
   </div>
+
+  {# KPI 스트립 — 구 대시보드 집계(_dashboard_ctx)를 맵 위 한 줄 칩으로. 클릭=해당 탭. #}
+  <div class="fm-kpi">
+    <a class="{% if stats.issues_open %}{% if stats.issues_urgent or stats.issues_coc %}hot{% endif %}{% else %}zero{% endif %}" href="{{ url_for('index') }}">
+      <span class="ico">📋</span>
+      <span class="meta"><span class="lbl">현안 (Open)</span><span class="num">{{ stats.issues_open }}<small>건</small></span></span>
+      {% if stats.issues_urgent or stats.issues_coc or stats.issues_dd %}
+      <span class="flags">
+        {% if stats.issues_urgent %}<span class="fl red">🚨{{ stats.issues_urgent }}</span>{% endif %}
+        {% if stats.issues_coc %}<span class="fl amber">COC {{ stats.issues_coc }}</span>{% endif %}
+        {% if stats.issues_dd %}<span class="fl blue">DD {{ stats.issues_dd }}</span>{% endif %}
+      </span>{% endif %}
+    </a>
+    <a class="{% if stats.class_due %}warn{% else %}zero{% endif %}" href="{{ url_for('class_status_page') }}">
+      <span class="ico">🔍</span>
+      <span class="meta"><span class="lbl">Class 만기 (D-30)</span><span class="num">{{ stats.class_due }}<small>건</small></span></span>
+    </a>
+    <a class="{% if stats.vetting_open %}{% if stats.vetting_pri %}hot{% else %}warn{% endif %}{% else %}zero{% endif %}" href="{{ url_for('vetting_status') }}">
+      <span class="ico">🛡</span>
+      <span class="meta"><span class="lbl">Vetting Open</span><span class="num">{{ stats.vetting_open }}<small>건</small></span></span>
+      {% if stats.vetting_pri %}<span class="flags"><span class="fl red">⭐{{ stats.vetting_pri }}</span></span>{% endif %}
+    </a>
+    {% if is_admin %}
+    <a class="{% if not stats.aor_pending %}zero{% endif %}" href="{{ url_for('aor_page') }}">
+      <span class="ico">🤖</span>
+      <span class="meta"><span class="lbl">AOR 대기</span><span class="num">{{ stats.aor_pending }}<small>건</small></span></span>
+      {% if stats.aor_crew_submitted %}<span class="flags"><span class="fl blue">Crew {{ stats.aor_crew_submitted }}</span></span>{% endif %}
+    </a>
+    <a class="{% if not stats.mail_active %}zero{% endif %}" href="{{ url_for('mail_page') }}">
+      <span class="ico">📬</span>
+      <span class="meta"><span class="lbl">메일 처리 대기</span><span class="num">{{ stats.mail_active }}<small>건</small></span></span>
+    </a>
+    {% endif %}
+    <a class="{% if not events %}zero{% endif %}" href="{{ url_for('calendar_page') }}">
+      <span class="ico">📅</span>
+      <span class="meta"><span class="lbl">다가오는 일정 (7일)</span><span class="num">{{ events_count }}<small>건</small></span></span>
+    </a>
+    <span class="scope">{% if scoped %}<b>{{ sup_name }}</b> 담당 기준{% else %}전체 선박 기준{% endif %}</span>
+  </div>
+
   <div class="fm-sup" id="fmSup">
     <input id="fmSearch" class="fm-search" type="text" placeholder="🔍 선박명 검색…" autocomplete="off"/>
     <span class="lbl">감독 필터</span>
@@ -128,7 +188,7 @@
     if(html){ box.innerHTML=html+'<button class="fm-al-x" title="닫기" onclick="this.parentNode.hidden=true">×</button>'; box.hidden=false; }
     else { box.hidden=true; }
   }
-  // minZoom=2: 전세계(미국·남미 포함)가 최대 축소뷰. maxZoom=10. 줌은 스크롤로만.
+  // minZoom=2: 전세계 한눈뷰가 최대 축소뷰(손유석 지정 줌2). maxZoom=10. 줌은 스크롤로만.
   const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:2,maxZoom:10,
     maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],2);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
