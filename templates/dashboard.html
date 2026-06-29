@@ -212,10 +212,10 @@
       displayOptions:{velocityType:'해상 바람',position:'bottomleft',emptyString:'바람 데이터 없음',
         angleConvention:'meteoCW',displayPosition:'위치',displayEmptyString:'—',
         speedUnit:'m/s',directionString:'풍향',speedString:'풍속',angleString:''},
-      data:data, minVelocity:0, maxVelocity:25, velocityScale:0.009,
+      data:data, minVelocity:0, maxVelocity:25, velocityScale:0.008,
       // 진한 고대비 컬러스케일(연한 바다색 위에서도 잘 보이게, 손유석 요청): 남색→청록→녹→황→주황→적
       colorScale:['#1a237e','#1565c0','#0097a7','#2e7d32','#f9a825','#ef6c00','#c62828'],
-      opacity:0.97, particleAge:90, particleMultiplier:0.006, lineWidth:2.2});
+      opacity:0.94, particleAge:60, lineWidth:1.1});
     windLayer.addTo(map); windOn=true; btn.classList.add('on');
   }
   function toggleWind(btn){
@@ -234,6 +234,7 @@
     const c=L.DomUtil.create('div','leaflet-bar fm-windbtn');
     const a=L.DomUtil.create('a','',c); a.href='#'; a.title='해상 바람(GFS) 표시 토글 — 태풍/열대저기압'; a.innerHTML='🌬';
     L.DomEvent.on(a,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);toggleWind(a);});
+    setTimeout(()=>toggleWind(a),300);   // 기본 ON(바람 보이게) — 버튼 누르면 끔(손유석)
     return c;}});
   map.addControl(new WindCtl());
   let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[],curSup='__all',fmQ='',STALE=null,MYSUP=null;
