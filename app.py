@@ -9476,10 +9476,10 @@ def api_fleet_map_data():
     vsup = {_vkey(r['vname']): r['sname'] for r in
             query("SELECT v.name AS vname, s.name AS sname FROM supervisor_vessels sv "
                   "JOIN vessels v ON v.id=sv.vessel_id JOIN supervisors s ON s.id=sv.supervisor_id")}
+    # supervisor = supervisor_vessels(TRMT DB) 권위값으로 '완전 대체'. build.py가 이슈기반으로 붙인 라벨은 무시
+    # (안 그러면 매핑 삭제해도 이슈기반 라벨이 남아 필터에 뜸 — 손유석 정리 후 김흥민/이창주 잔존 버그).
     for v in fleet:
-        s = vsup.get(_vkey(v.get('name')))
-        if s:
-            v['supervisor'] = s
+        v['supervisor'] = vsup.get(_vkey(v.get('name')))
     # 대시보드 = supervisor_vessels 배정된 선박만 표시(미배정·타팀 제외). 손유석 정리 후 손유석 담당선만 남음(손유석 지시 2026-06-29).
     # ⚠️ admin/비admin 공통 정책 — 배정 없는 감독(예 김흥민/이창주 멤버계정)은 빈 대시보드(의도). 빈 fleet은 프론트가 "표시할 선박 없음"으로 처리.
     fleet = [v for v in fleet if v.get('supervisor')]
