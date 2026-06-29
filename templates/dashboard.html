@@ -3,6 +3,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.css"/>
 <style>
   .fm-wrap{margin:-8px -4px 0}
   .fm-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
@@ -42,6 +43,9 @@
      안 그러면 root로 새어나와 topnav 드롭다운(자동화 등) 위로 그려져 메뉴가 잘림. */
   .fm-stage{position:relative;z-index:0;height:calc(100vh - 252px);min-height:460px;border:1px solid var(--border-subtle);border-radius:14px;overflow:hidden}
   #fmmap{position:absolute;inset:0}.leaflet-container{background:#cfe0e6;font:inherit}
+  .fm-windbtn a{font-size:15px;line-height:30px;width:30px;height:30px;text-align:center;text-decoration:none}
+  .fm-windbtn a.on{background:var(--blue);filter:none}
+  .leaflet-velocity-control{background:rgba(251,248,242,.88);color:var(--text-secondary);font-size:11px;border-radius:6px}
   .ship{position:relative;display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
   .sire-flag{position:absolute;top:-4px;right:-4px;width:11px;height:11px;border-radius:50%;background:#eab308;border:1.5px solid #fff;animation:fmPulseY 1.3s infinite}
   @keyframes fmPulseY{0%{box-shadow:0 0 0 0 rgba(234,179,8,.85)}70%{box-shadow:0 0 0 9px rgba(234,179,8,0)}100%{box-shadow:0 0 0 0 rgba(234,179,8,0)}}
@@ -168,6 +172,7 @@
 
 {% block scripts %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.js"></script>
 <script>
 (function(){
   const esc=s=>(s==null?'':String(s)).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
@@ -196,6 +201,38 @@
     maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],2);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     {attribution:'© CARTO © OSM',subdomains:'abcd',maxZoom:19}).addTo(map);
+
+  // 🌬 해상 바람 토글 — NOAA GFS 10m 바람(leaflet-velocity 움직이는 입자). 태풍/열대저기압=소용돌이.
+  // 데이터는 첫 켤 때 lazy fetch(/api/fleet-map/wind). 선박마커는 overlay 위(markerPane)라 그대로 보임.
+  let windLayer=null, windOn=false, windData=null, windLoading=false;
+  function addWind(data,btn){
+    if(windLayer){ map.removeLayer(windLayer); windLayer=null; }  // 중복 방지
+    windLayer=L.velocityLayer({
+      displayValues:true,
+      displayOptions:{velocityType:'해상 바람',position:'bottomleft',emptyString:'바람 데이터 없음',
+        angleConvention:'meteoCW',displayPosition:'위치',displayEmptyString:'—',
+        speedUnit:'m/s',directionString:'풍향',speedString:'풍속',angleString:''},
+      data:data, maxVelocity:30, velocityScale:0.008, opacity:0.92, particleAge:60, lineWidth:1.1});
+    windLayer.addTo(map); windOn=true; btn.classList.add('on');
+  }
+  function toggleWind(btn){
+    if(!L.velocityLayer){ alert('바람 레이어 로드 실패(CDN). 새로고침 후 재시도'); return; }
+    if(windLoading) return;                                  // 중복 클릭 락
+    if(windOn){ if(windLayer) map.removeLayer(windLayer); windLayer=null; windOn=false; btn.classList.remove('on'); return; }
+    if(windData){ addWind(windData,btn); return; }
+    windLoading=true; btn.textContent='⏳';
+    fetch('{{ url_for("api_fleet_map_wind") }}').then(r=>r.json()).then(d=>{
+      if(!d.grid){ alert('바람 데이터 아직 없음 — 맥 스케줄러 첫 동기화 대기'); return; }
+      windData=d.grid; addWind(windData,btn);
+    }).catch(()=>{ alert('바람 데이터 로드 실패'); })
+      .finally(()=>{ windLoading=false; btn.textContent='🌬'; });
+  }
+  const WindCtl=L.Control.extend({options:{position:'topleft'},onAdd:function(){
+    const c=L.DomUtil.create('div','leaflet-bar fm-windbtn');
+    const a=L.DomUtil.create('a','',c); a.href='#'; a.title='해상 바람(GFS) 표시 토글 — 태풍/열대저기압'; a.innerHTML='🌬';
+    L.DomEvent.on(a,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);toggleWind(a);});
+    return c;}});
+  map.addControl(new WindCtl());
   let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[],curSup='__all',fmQ='',STALE=null,MYSUP=null;
   function icon(v){
     const due=v.cls_due_state==='overdue'?' due-overdue':(v.cls_due_state==='soon'?' due-soon':'');

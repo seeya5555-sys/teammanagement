@@ -9386,6 +9386,51 @@ def api_ext_fleet_map_override():
     return jsonify({'ok': True, 'count': len(ov), 'key': key})
 
 
+FLEET_WIND_FILE = os.path.join(INSTANCE_DIR, 'fleet_wind.json')
+
+
+@app.route('/api/ext/fleet-map/wind', methods=['POST'])
+@api_key_required
+def api_ext_fleet_map_wind_push():
+    """맥 wind_gfs.py 가 NOAA GFS 10m 바람을 leaflet-velocity 포맷으로 적재.
+    payload: {grid:[{header,data},{header,data}], generated_at}. 대시보드 '바람' 토글이 GET으로 읽음."""
+    if request.content_length and request.content_length > 4 * 1024 * 1024:
+        return jsonify({'ok': False, 'error': 'payload too large'}), 413
+    d = request.get_json(silent=True)
+    grid = d.get('grid') if isinstance(d, dict) else None
+    if (not isinstance(grid, list) or len(grid) != 2
+            or not all(isinstance(g, dict) and isinstance(g.get('data'), list)
+                       and isinstance(g.get('header'), dict) for g in grid)):
+        return jsonify({'ok': False, 'error': 'invalid wind grid (2 entries with header/data[])'}), 400
+    # 스키마 고정 — nx*ny=data길이, U/V 동일 길이, parameterNumber 2(U)/3(V) 확인(오염 차단)
+    h0 = grid[0]['header']
+    nx, ny = h0.get('nx'), h0.get('ny')
+    if (not isinstance(nx, int) or not isinstance(ny, int)
+            or len(grid[0]['data']) != nx * ny
+            or len(grid[1]['data']) != len(grid[0]['data'])
+            or {grid[0]['header'].get('parameterNumber'), grid[1]['header'].get('parameterNumber')} != {2, 3}):
+        return jsonify({'ok': False, 'error': 'wind grid schema mismatch (nx*ny/len/paramNumber)'}), 400
+    out = {'grid': grid, 'generated_at': d.get('generated_at'),
+           '_received_at': datetime.now().isoformat(timespec='seconds')}
+    tmp = FLEET_WIND_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(out, f, ensure_ascii=False, separators=(',', ':'))
+    os.replace(tmp, FLEET_WIND_FILE)
+    return jsonify({'ok': True, 'points': len(grid[0]['data']), 'generated_at': out['generated_at']})
+
+
+@app.route('/api/fleet-map/wind')
+@login_required
+def api_fleet_map_wind():
+    """대시보드 '바람' 토글용 — leaflet-velocity 그리드(GFS 10m)."""
+    try:
+        with open(FLEET_WIND_FILE, encoding='utf-8') as f:
+            d = json.load(f)
+    except (FileNotFoundError, ValueError):
+        return jsonify({'grid': None, 'empty': True})
+    return jsonify({'grid': d.get('grid'), 'generated_at': d.get('generated_at')})
+
+
 FLEET_EMAIL_WATCH_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_email_watch.json')
 AIS_STALE_HOURS = 6   # AIS lastSeen이 이보다 오래면 '끊김' 자동표시(이메일 선위 후보)
 
