@@ -4658,6 +4658,7 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 }
 
 /* ═══════════ Daily 선박별 보기 (rev.4) ═══════════ */
+.daily-body[hidden] { display: none !important; }  /* hidden 속성이 .daily-body display 규칙에 안 먹히는 함정 가드 (요약 탭서 선박상세 잔류 방지) */
 .daily-body { display: grid; grid-template-columns: 248px 1fr; gap: 16px; align-items: start; }
 .vessel-sidebar { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; position: sticky; top: 14px; }
 .vsb-head { padding: 10px 13px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between; }
