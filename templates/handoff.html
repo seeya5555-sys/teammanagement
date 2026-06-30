@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}일일 핸드오프 · TRMT3{% endblock %}
+{% block head %}
+<style>
+  .ho-wrap{max-width:1080px}
+  .ho-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+  .ho-top h1{font-size:21px;font-weight:760;letter-spacing:.2px;margin:0}
+  .ho-sub{font-size:12px;color:var(--text-secondary)}
+  .ho-range{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12.5px}
+  .ho-range input{font-size:12.5px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)}
+  .ho-range button{font-size:12.5px;font-weight:600;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer}
+  .ho-range button:hover{border-color:var(--border-strong)}
+  .ho-day{background:var(--surface);border:1px solid var(--border-subtle);border-radius:13px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .ho-dhead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border-subtle)}
+  .ho-date{font-size:16px;font-weight:750}
+  .ho-dow{font-size:12px;color:var(--text-tertiary);font-weight:600}
+  .ho-meta{font-size:11px;color:var(--text-tertiary);margin-left:auto;display:flex;gap:10px;align-items:center}
+  .ho-warn{color:var(--amber,#b8860b);font-weight:600}
+  .ho-cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+  @media(max-width:820px){.ho-cols{grid-template-columns:1fr}}
+  .ho-sec h3{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px;display:flex;align-items:center;gap:6px}
+  .ho-sec.today h3{color:var(--text-secondary)}
+  .ho-sec.tomorrow h3{color:var(--blue)}
+  .ho-sec.pending h3{color:var(--text-tertiary)}
+  .ho-sec h3 .cnt{font-size:10.5px;font-weight:600;background:var(--surface-3);color:var(--text-tertiary);border-radius:9px;padding:1px 7px}
+  .ho-tomorrow-dot{width:7px;height:7px;border-radius:50%;background:var(--blue);display:inline-block}
+  ul.ho-items{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+  .ho-item{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:1.45;padding:5px 7px;border-radius:7px;border:1px solid transparent}
+  .ho-item:hover{background:var(--surface-2);border-color:var(--border-subtle)}
+  .ho-item input[type=checkbox]{margin-top:2px;flex:0 0 auto;cursor:pointer}
+  .ho-item .tx{flex:1;cursor:default}
+  .ho-item.done .tx{text-decoration:line-through;color:var(--text-tertiary)}
+  .ho-chip{font-size:9.5px;font-weight:650;text-transform:uppercase;letter-spacing:.3px;padding:1px 5px;border-radius:6px;background:var(--surface-3);color:var(--text-tertiary);flex:0 0 auto;margin-top:1px}
+  .ho-chip.user{background:var(--blue-border,#dbeafe);color:var(--blue)}
+  .ho-acts{display:flex;gap:4px;flex:0 0 auto;opacity:0;transition:.12s}
+  .ho-item:hover .ho-acts{opacity:1}
+  .ho-acts button{font-size:10px;border:none;background:none;cursor:pointer;color:var(--text-tertiary);padding:1px 3px;border-radius:4px}
+  .ho-acts button:hover{background:var(--surface-3);color:var(--text-secondary)}
+  .ho-memo{font-size:11px;color:var(--text-secondary);font-style:italic;margin-left:24px}
+  .ho-add{margin-top:8px}
+  .ho-add input{width:100%;font-size:11.5px;padding:5px 8px;border:1px dashed var(--border);border-radius:7px;background:transparent}
+  .ho-add input:focus{border-style:solid;border-color:var(--blue);outline:none}
+  .ho-empty{font-size:12px;color:var(--text-tertiary);text-align:center;padding:40px 0}
+  .ho-note{font-size:11px;color:var(--text-tertiary);margin-bottom:14px;padding:8px 12px;background:var(--surface-2);border-radius:8px;border-left:3px solid var(--border-strong)}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ho-wrap">
+  <div class="ho-top">
+    <div>
+      <h1>📋 일일 핸드오프</h1>
+      <div class="ho-sub">덴키가 그날 메일을 정리한 노트 · 오늘 처리 / 내일 할 일 / 대기 중</div>
+    </div>
+    <div class="ho-range">
+      <input type="date" id="ho-from"> ~ <input type="date" id="ho-to">
+      <button id="ho-load">조회</button>
+    </div>
+  </div>
+  <div class="ho-note">참고 요약 전용 — 결재·금전 판정 아님. 항목 체크박스로 처리표시, 직접 추가/메모/내일로 넘기기 가능.</div>
+  <div id="ho-list"><div class="ho-empty">불러오는 중…</div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DOW = ['일','월','화','수','목','금','토'];
+const SECS = [['today','오늘 처리'],['tomorrow','내일 할 일'],['pending','대기 중']];
+const esc = s => (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function ymd(d){ return d.toISOString().slice(0,10); }
+function initRange(){
+  const to = new Date();
+  const from = new Date(); from.setDate(from.getDate()-20);   // 최근 21일(6/15~ 커버)
+  document.getElementById('ho-from').value = ymd(from);
+  document.getElementById('ho-to').value = ymd(to);
+}
+
+async function load(){
+  const f = document.getElementById('ho-from').value, t = document.getElementById('ho-to').value;
+  const q = new URLSearchParams(); if(f) q.set('from',f); if(t) q.set('to',t);
+  const wrap = document.getElementById('ho-list');
+  wrap.innerHTML = '<div class="ho-empty">불러오는 중…</div>';
+  let data;
+  try { data = await (await fetch('/api/handoff/notes?'+q)).json(); }
+  catch(e){ wrap.innerHTML = '<div class="ho-empty">불러오기 실패</div>'; return; }
+  const notes = data.notes || [];
+  if(!notes.length){ wrap.innerHTML = '<div class="ho-empty">해당 기간 핸드오프 노트가 없음</div>'; return; }
+  wrap.innerHTML = notes.map(renderDay).join('');
+}
+
+function renderDay(n){
+  const d = new Date(n.date+'T00:00:00');
+  const warn = (n.warns&&n.warns.length) ? `<span class="ho-warn">⚠ ${n.warns.length} 경고</span>` : '';
+  const cols = SECS.map(([key,label])=>renderSec(n.date, key, label, (n.sections[key]||[]))).join('');
+  return `<div class="ho-day" data-date="${n.date}">
+    <div class="ho-dhead">
+      <span class="ho-date">${n.date}</span>
+      <span class="ho-dow">(${DOW[d.getDay()]})</span>
+      <span class="ho-meta">${warn}<span>메일 ${n.mail_count||0}통</span><span>${n.source==='denki'?'🟢 덴키':'·'}</span></span>
+    </div>
+    <div class="ho-cols">${cols}</div>
+  </div>`;
+}
+
+function renderSec(date, key, label, items){
+  const dot = key==='tomorrow' ? '<span class="ho-tomorrow-dot"></span>' : '';
+  const lis = items.map(it=>renderItem(it)).join('') || '<li class="ho-memo" style="margin-left:0">— 없음</li>';
+  return `<div class="ho-sec ${key}">
+    <h3>${dot}${label} <span class="cnt">${items.length}</span></h3>
+    <ul class="ho-items">${lis}</ul>
+    <div class="ho-add"><input type="text" placeholder="+ 항목 추가" data-date="${date}" data-sec="${key}" onkeydown="addItem(event,this)"></div>
+  </div>`;
+}
+
+function renderItem(it){
+  const chip = it.src==='user' ? '<span class="ho-chip user">직접</span>'
+             : `<span class="ho-chip">${it.src||'mail'}</span>`;
+  const memo = it.memo ? `<div class="ho-memo">↳ ${esc(it.memo)}</div>` : '';
+  const carry = it.section!=='tomorrow'
+    ? `<button title="내일 할 일로" onclick="carry(${it.id})">→내일</button>` : '';
+  const del = it.src==='user' ? `<button title="삭제" onclick="delItem(${it.id})">✕</button>` : '';
+  return `<li>
+    <div class="ho-item ${it.done?'done':''}">
+      <input type="checkbox" ${it.done?'checked':''} onchange="toggle(${it.id},this.checked)">
+      <span class="tx">${esc(it.text)}</span>
+      ${chip}
+      <span class="ho-acts">
+        <button title="메모" onclick="memo(${it.id})">✎</button>${carry}${del}
+      </span>
+    </div>${memo}
+  </li>`;
+}
+
+async function patch(id, body){
+  await fetch('/api/handoff/item/'+id, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+}
+async function toggle(id, done){ await patch(id,{done}); load(); }
+async function carry(id){ await patch(id,{section:'tomorrow'}); load(); }
+async function memo(id){
+  const v = prompt('메모 입력(빈칸=삭제):'); if(v===null) return;
+  await patch(id,{memo:v}); load();
+}
+async function delItem(id){
+  if(!confirm('이 항목 삭제?')) return;
+  await fetch('/api/handoff/item/'+id, {method:'DELETE'}); load();
+}
+async function addItem(ev, el){
+  if(ev.key!=='Enter') return;
+  const text = el.value.trim(); if(!text) return;
+  await fetch('/api/handoff/item', {method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({date:el.dataset.date, section:el.dataset.sec, text})});
+  el.value=''; load();
+}
+
+document.getElementById('ho-load').addEventListener('click', load);
+initRange(); load();
+</script>
+{% endblock %}
