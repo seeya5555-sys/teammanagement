@@ -32,6 +32,19 @@
   .fm-kpi .fl.blue{background:var(--blue-bg);color:var(--blue)}
   .fm-kpi .scope{align-self:center;font-size:11px;color:var(--text-tertiary);margin-left:auto}
   .fm-kpi .today-sched{align-self:center;max-width:200px;font-size:11px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:1px solid var(--border-subtle);padding-left:9px}
+  .fm-kpi a#todaySchedChip .caret{font-size:9px;color:var(--text-tertiary);margin-left:1px}
+  /* 오늘 일정 팝오버 — KPI 스트립이 overflow-x:auto라 칩 안에 두면 잘림 → position:fixed로 띄워 클리핑 회피. 당일 일정 전체를 잘림 없이 표시 */
+  #todaySchedPop{position:fixed;z-index:1200;display:none;min-width:248px;max-width:360px;max-height:60vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.16);padding:6px 0}
+  #todaySchedPop.open{display:block}
+  #todaySchedPop .tsp-hd{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 14px 9px;margin-bottom:4px;font-size:12px;font-weight:700;color:var(--text-secondary);border-bottom:1px solid var(--border-subtle)}
+  #todaySchedPop .tsp-hd a{font-size:11px;font-weight:600;color:var(--blue);text-decoration:none;white-space:nowrap}
+  #todaySchedPop .tsp-hd a:hover{text-decoration:underline}
+  #todaySchedPop .tsp-row{display:flex;gap:10px;padding:6px 14px;align-items:baseline;font-size:12.5px}
+  #todaySchedPop .tsp-row:hover{background:var(--blue-bg)}
+  #todaySchedPop .tsp-t{min-width:44px;font-weight:700;color:var(--blue);font-variant-numeric:tabular-nums}
+  #todaySchedPop .tsp-t.allday{color:var(--text-tertiary);font-weight:600}
+  #todaySchedPop .tsp-title{flex:1;color:var(--text-primary);line-height:1.4}
+  #todaySchedPop .tsp-cat{font-size:10.5px;color:var(--text-tertiary)}
   .fm-sup{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
   .fm-sup .lbl{font-size:11.5px;font-weight:700;color:var(--text-secondary)}
   .fm-search{border:1px solid var(--border);background:var(--surface);color:var(--text-primary);font-size:12.5px;padding:6px 12px;border-radius:999px;width:200px;outline:none}
@@ -145,14 +158,27 @@
       <span class="meta"><span class="lbl">메일 처리 대기</span><span class="num">{{ stats.mail_active }}<small>건</small></span></span>
     </a>
     {% endif %}
-    <a class="{% if not today_count %}zero{% endif %}" href="{{ url_for('calendar_page') }}"
-       title="{% for e in today_events %}{{ e['start_time'] or '' }} {{ e['title'] }}{% if e['category'] %} · {{ e['category'] }}{% endif %}{% if not loop.last %}&#10;{% endif %}{% endfor %}">
+    <a id="todaySchedChip" class="{% if not today_count %}zero{% endif %}" href="{{ url_for('calendar_page') }}"
+       onclick="return toggleTodaySched(event)"
+       {% if today_events %}aria-haspopup="true" aria-expanded="false"{% endif %}>
       <span class="ico">📅</span>
       <span class="meta"><span class="lbl">오늘 일정</span><span class="num">{{ today_count }}<small>건</small></span></span>
-      {% if today_events %}<span class="today-sched">{% for e in today_events[:2] %}{{ e['title'] }}{% if not loop.last %} · {% endif %}{% endfor %}{% if today_count > 2 %} +{{ today_count - 2 }}{% endif %}</span>{% endif %}
+      {% if today_events %}<span class="today-sched">{% for e in today_events[:2] %}{{ e['title'] }}{% if not loop.last %} · {% endif %}{% endfor %}{% if today_count > 2 %} +{{ today_count - 2 }}{% endif %}</span><span class="caret">▾</span>{% endif %}
     </a>
     <span class="scope">{% if scoped %}<b>{{ sup_name }}</b> 담당 기준{% else %}전체 선박 기준{% endif %}</span>
   </div>
+
+  {% if today_events %}
+  <div id="todaySchedPop" aria-label="오늘 일정 상세">
+    <div class="tsp-hd"><span>📅 오늘 일정 · {{ today_count }}건</span><a href="{{ url_for('calendar_page') }}">캘린더 →</a></div>
+    {% for e in today_events %}
+    <div class="tsp-row">
+      <span class="tsp-t{% if not e['start_time'] %} allday{% endif %}">{{ e['start_time'] or '종일' }}</span>
+      <span class="tsp-title">{{ e['title'] }}{% if e['category'] %}<span class="tsp-cat"> · {{ e['category'] }}</span>{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <div class="fm-sup" id="fmSup">
     <input id="fmSearch" class="fm-search" type="text" placeholder="🔍 선박명 검색…" autocomplete="off"/>
@@ -388,5 +414,44 @@
   }
   setTimeout(()=>map.invalidateSize(),200);
 })();
+
+// 오늘 일정 팝오버 — 칩 클릭 시 당일 일정 전체 표시(잘림 없음). 일정 0건이면 그냥 캘린더로 이동.
+function closeTodaySched(){
+  var pop=document.getElementById('todaySchedPop');
+  if(!pop||!pop.classList.contains('open'))return;
+  pop.classList.remove('open');
+  var chip=document.getElementById('todaySchedChip');if(chip)chip.setAttribute('aria-expanded','false');
+}
+function toggleTodaySched(ev){
+  var pop=document.getElementById('todaySchedPop');
+  if(!pop) return true;                 // 일정 없음 → 링크대로 캘린더 이동
+  ev.preventDefault();
+  var chip=document.getElementById('todaySchedChip');
+  if(pop.classList.contains('open')){closeTodaySched();return false;}
+  var r=chip.getBoundingClientRect();
+  pop.style.left='-9999px';pop.style.top='0px';   // 임시 배치 후 실측
+  pop.classList.add('open');
+  var pr=pop.getBoundingClientRect();
+  // 좌우: 우측 화면넘침 보정
+  var left=Math.min(r.left, window.innerWidth-12-pr.width);
+  pop.style.left=Math.round(Math.max(12,left))+'px';
+  // 상하: 기본 칩 아래. 아래 공간 부족 & 위 공간 충분하면 위로 flip(올마이트 지적)
+  var top=r.bottom+6;
+  if(top+pr.height>window.innerHeight-12 && r.top-6-pr.height>12){ top=r.top-6-pr.height; }
+  top=Math.min(top, window.innerHeight-12-pr.height);   // 둘 다 부족한 극단 viewport 하단 clamp
+  pop.style.top=Math.round(Math.max(12,top))+'px';
+  chip.setAttribute('aria-expanded','true');
+  return false;
+}
+document.addEventListener('click',function(e){
+  var pop=document.getElementById('todaySchedPop');
+  if(!pop||!pop.classList.contains('open'))return;
+  if(e.target.closest('#todaySchedPop')||e.target.closest('#todaySchedChip'))return;
+  closeTodaySched();
+});
+document.addEventListener('keydown',function(e){ if(e.key==='Escape')closeTodaySched(); });
+// scroll/resize 시 칩과 팝오버 위치 어긋남 → 닫기(올마이트 지적). 내부 스크롤은 window로 안 올라와 안전.
+window.addEventListener('resize',closeTodaySched);
+window.addEventListener('scroll',closeTodaySched,{passive:true});
 </script>
 {% endblock %}
