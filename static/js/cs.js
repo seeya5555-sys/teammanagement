@@ -21,6 +21,7 @@ function saveExpandedSet() {
 
 // CS에서 숨길 감독 이름 (대소문자 무시) — Daily 업무관리는 영향 없음
 const HIDDEN_SUPERVISOR_NAMES_CS = ['FLEET AGENDA'];
+const ONLY_SUP_CS = '손유석';  // 손유석 단독 운영 — '전체'/타 감독 탭 제거
 function isHiddenSupervisor(sup) {
   return HIDDEN_SUPERVISOR_NAMES_CS.includes((sup.name || '').toUpperCase());
 }
@@ -81,9 +82,9 @@ async function api(url, opts={}) {
 function renderTabs() {
   const bar = $('#cs-tab-bar');
   bar.innerHTML = '';
-  bar.append(tabEl('all', '전체', 'gray', null, S.activeTab === 'all'));
+  // 손유석 단독 운영 — '전체' 탭 및 타 감독 탭 제거
   for (const s of S.supervisors) {
-    if (isHiddenSupervisor(s)) continue;   // CS 숨김
+    if ((s.name || '').trim() !== ONLY_SUP_CS) continue;
     bar.append(tabEl(s.id, s.name, s.color, null, S.activeTab == s.id));
   }
 }
@@ -1384,16 +1385,9 @@ async function loadSupervisors() {
 (async function init() {
   try {
     await loadSupervisors();
-    // 본인 감독 탭 자동 선택 (단, 숨김 감독이면 전체로)
-    if (S.user.supervisor_id) {
-      const sup = S.supervisors.find(s => s.id === S.user.supervisor_id);
-      if (sup && !isHiddenSupervisor(sup)) {
-        S.activeTab = S.user.supervisor_id;
-      }
-    }
-    // 활성 탭이 우연히 숨김 감독이면 전체로 복귀
-    const activeSup = S.supervisors.find(s => s.id == S.activeTab);
-    if (activeSup && isHiddenSupervisor(activeSup)) S.activeTab = 'all';
+    // 손유석 단독 운영 — 항상 손유석 탭으로 고정
+    const onlySup = S.supervisors.find(s => (s.name || '').trim() === ONLY_SUP_CS);
+    if (onlySup) S.activeTab = onlySup.id;  // 미존재 시 'all' 유지(타 감독 scope 방지)
     renderTabs();
     $('#cs-year-label').textContent = S.year;
     await reloadData();

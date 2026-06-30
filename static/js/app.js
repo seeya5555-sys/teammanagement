@@ -168,6 +168,12 @@ async function api(url, opts = {}) {
 }
 
 async function loadSupervisors() { S.supervisors = await api('/api/supervisors'); }
+// 손유석 단독 운영 — '전체' 탭/타 감독 탭 제거, 항상 손유석 탭 (cls.js ONLY_SUP 패턴과 동일)
+const ONLY_SUP_NAME = '손유석';
+function onlySupId() {
+  const s = S.supervisors.find(x => (x.name || '').trim() === ONLY_SUP_NAME);
+  return s ? s.id : 'all';  // 손유석 미존재(이론상無) 시 타 감독 scope로 새지 않게 'all' 유지 (cls.js 패턴)
+}
 async function loadVessels(supId) {
   const url = supId && supId !== 'all' ? `/api/vessels?supervisor_id=${supId}` : '/api/vessels';
   S.vessels = await api(url);
@@ -246,12 +252,9 @@ function autoCollapseNewDates() {
 function renderTabs() {
   const bar = $('#tab-bar');
   bar.innerHTML = '';
-  // 탭 카운트는 "진행중"(Open + InProgress)만 표시 — 완료(Closed)는 제외
-  const totalActive = S.supervisors.reduce(
-    (a, s) => a + (s.open_count || 0) + (s.progress_count || 0), 0,
-  );
-  bar.append(tabEl('all', '전체', 'gray', totalActive, S.activeTab === 'all'));
+  // 손유석 단독 운영 — '전체' 탭 및 타 감독 탭 제거 (탭 카운트는 진행중만)
   for (const s of S.supervisors) {
+    if ((s.name || '').trim() !== ONLY_SUP_NAME) continue;
     const active = (s.open_count || 0) + (s.progress_count || 0);
     bar.append(tabEl(s.id, s.name, s.color, active, S.activeTab == s.id));
   }
@@ -278,20 +281,15 @@ function renderSubTabs() {
     }
   }
 
-  // '전체'·'요약' 서브탭은 부모(전체) 탭에서만 노출. 각 감독 탭에서는 진행중/완료만(관리자 포함 숨김).
-  const showAllSummary = (S.activeTab === 'all');
-  // 감독 탭으로 들어왔는데 숨겨질 서브탭('전체'/'요약')에 있었으면 '진행중'으로 보정(빈 화면 방지).
-  if (!showAllSummary && (S.activeSubTab === 'all' || S.activeSubTab === 'summary')) {
-    S.activeSubTab = 'open';
-    try { localStorage.setItem('trmt_subtab', 'open'); } catch (_) {}
-  }
+  // 손유석 단독 운영 — '전체'·'요약' 서브탭을 손유석 탭에 그대로 노출(옛 '전체' 부모탭에서 이동).
+  const showAllSummary = true;
   if (showAllSummary) {
     bar.append(subtabEl('all',  '전체',   openCnt + doneCnt, S.activeSubTab === 'all'));
   }
   bar.append(subtabEl('open',   '진행중', openCnt, S.activeSubTab === 'open'));
   bar.append(subtabEl('closed', '완료',   doneCnt, S.activeSubTab === 'closed'));
   if (showAllSummary) {
-    const sumCnt = S.summaryCounts['all'];
+    const sumCnt = S.summaryCounts[String(S.activeTab)];  // 손유석 scope 카운트만(없으면 배지 없음)
     bar.append(subtabEl('summary', '요약', (sumCnt === undefined ? null : sumCnt), S.activeSubTab === 'summary'));
   }
 }
@@ -576,7 +574,7 @@ function summaryTitle(r) {
 
 async function gotoIssueFromSummary(r) {
   const title = summaryTitle(r);
-  S.activeTab = 'all';
+  S.activeTab = onlySupId();
   S.activeSubTab = 'all';
   try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
   // 제목으로 검색(q) — 직접 검색한 것과 동일하게 필터링
@@ -2811,6 +2809,7 @@ async function saveUserEdit() {
 async function reloadAll() {
   if (!document.getElementById('btn-new-issue')) return;  // Daily 페이지 아니면 no-op
   await loadSupervisors();
+  if (S.activeTab === 'all') S.activeTab = onlySupId();  // 손유석 단독 — 'all' 잔상 방지
   renderTabs();
   await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
   renderVesselFilter();
@@ -3221,15 +3220,8 @@ if (document.getElementById('btn-new-issue')) (async function init() {
   try {
     await loadSupervisors();
     try { S.summaryCounts = await api('/api/issues/summary-counts') || {}; } catch (_) {}
-    if (S.user.supervisor_id) {
-      // 연결 감독이 있으면 해당 감독 탭 (소분류는 저장된 값 유지)
-      S.activeTab = S.user.supervisor_id;
-    } else {
-      // 연결 감독 없음 → 전체 대분류 + 전체 소분류로 시작
-      S.activeTab = 'all';
-      S.activeSubTab = 'all';
-      try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
-    }
+    // 손유석 단독 운영 — 항상 손유석 탭으로 고정 (소분류는 저장된 값 유지)
+    S.activeTab = onlySupId();
     await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
     await loadVesselOrder();
     renderTabs();

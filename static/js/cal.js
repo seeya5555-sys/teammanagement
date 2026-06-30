@@ -9,6 +9,7 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 // ───────────── State ─────────────
 const HIDDEN_SUPERVISOR_NAMES_CAL = ['FLEET AGENDA'];
+const ONLY_SUP_CAL = '손유석';  // 손유석 단독 운영 — '전체'/타 감독 탭 제거
 function isHiddenSupervisor(sup) {
   return HIDDEN_SUPERVISOR_NAMES_CAL.includes((sup.name || '').toUpperCase());
 }
@@ -155,9 +156,9 @@ function eventCoversDate(ev, ymdStr) {
 function renderTabs() {
   const bar = $('#cal-tab-bar');
   bar.innerHTML = '';
-  bar.append(tabEl('all', '전체', 'gray', S.activeTab === 'all'));
+  // 손유석 단독 운영 — '전체' 탭 및 타 감독 탭 제거
   for (const s of S.supervisors) {
-    if (isHiddenSupervisor(s)) continue;
+    if ((s.name || '').trim() !== ONLY_SUP_CAL) continue;
     bar.append(tabEl(s.id, s.name, s.color, S.activeTab == s.id));
   }
 }
@@ -534,11 +535,9 @@ async function init() {
     await Promise.all([loadSupervisors(), loadVessels()]);
     fillSupervisorVesselSelects();
 
-    // 본인 감독 탭 자동 선택 (단, 숨김 감독이면 전체로)
-    if (S.user.supervisor_id) {
-      const sup = S.supervisors.find(s => s.id === S.user.supervisor_id);
-      if (sup && !isHiddenSupervisor(sup)) S.activeTab = S.user.supervisor_id;
-    }
+    // 손유석 단독 운영 — 항상 손유석 탭으로 고정
+    const onlySup = S.supervisors.find(s => (s.name || '').trim() === ONLY_SUP_CAL);
+    if (onlySup) S.activeTab = onlySup.id;  // 미존재 시 'all' 유지(타 감독 scope 방지)
     renderTabs();
 
     // 오늘이 표시 월에 있으면 자동 선택

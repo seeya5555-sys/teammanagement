@@ -9,6 +9,7 @@ const $ = (sel) => document.querySelector(sel);
 
 // ───────────── State ─────────────
 const HIDDEN_SUPERVISOR_NAMES_VT = ['FLEET AGENDA'];
+const ONLY_SUP_VT = '손유석';  // 손유석 단독 운영 — '전체'/타 감독 탭 제거
 function isHiddenSupervisor(sup) {
   return HIDDEN_SUPERVISOR_NAMES_VT.includes((sup.name || '').toUpperCase());
 }
@@ -104,9 +105,9 @@ function parseTSV(text) {
 function renderTabs() {
   const bar = $('#vt-tab-bar');
   bar.innerHTML = '';
-  bar.append(tabEl('all', '전체', 'gray', S.activeTab === 'all'));
+  // 손유석 단독 운영 — '전체' 탭 및 타 감독 탭 제거
   for (const s of S.supervisors) {
-    if (isHiddenSupervisor(s)) continue;
+    if ((s.name || '').trim() !== ONLY_SUP_VT) continue;
     bar.append(tabEl(s.id, s.name, s.color, S.activeTab == s.id));
   }
 }
@@ -1435,12 +1436,9 @@ async function deleteVtAttach(aid) {
 async function init() {
   try {
     await loadSupervisors();
-    if (S.user.supervisor_id) {
-      const sup = S.supervisors.find(s => s.id === S.user.supervisor_id);
-      if (sup && !isHiddenSupervisor(sup)) S.activeTab = S.user.supervisor_id;
-    }
-    const activeSup = S.supervisors.find(s => s.id == S.activeTab);
-    if (activeSup && isHiddenSupervisor(activeSup)) S.activeTab = 'all';
+    // 손유석 단독 운영 — 항상 손유석 탭으로 고정
+    const onlySup = S.supervisors.find(s => (s.name || '').trim() === ONLY_SUP_VT);
+    if (onlySup) S.activeTab = onlySup.id;  // 미존재 시 'all' 유지(타 감독 scope 방지)
 
     renderTabs();
     $('#vt-year-label').textContent = S.year;
