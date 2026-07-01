@@ -307,7 +307,7 @@ function vesselBlock(item) {
     tbody.append(quarterRow(v.id, q, survey, v.name));
     // 펼친 상태면 세부 행 추가
     if (survey && S.expandedSurveys.has(survey.id)) {
-      tbody.append(detailRow(survey));
+      tbody.append(detailRow(survey, v.name));
     }
   }
   table.append(tbody);
@@ -345,16 +345,21 @@ function openCsExportMail(survey, vesselName) {
     + `Your prompt attention and full cooperation are appreciated.\n\n`
     + `Best regards,`;
 
+  const exportUrl = `/api/cs/surveys/${survey.id}/export`;   // 기존(깔끔한) 엑셀 템플릿 재사용
+  // 버튼 누르면 엑셀 자동 다운로드(내비게이션 없이) + 아래 메일 드래프트 모달
+  const ifr = document.createElement('iframe');
+  ifr.style.display = 'none'; ifr.src = exportUrl; document.body.appendChild(ifr);
+
   const ov = document.createElement('div');
   ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:600px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
-  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 ${q}Q Defect List 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${vn}</span></div>`
-    + `<div style="font-size:12px;color:#888;margin-bottom:12px">엑셀(영문) 다운로드 + 메일 드래프트 복사 → Outlook에 붙여넣고 엑셀 첨부해 발송. defect/observation·분기·수신인 자동.</div>`;
+  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 ${q}Q 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${vn}</span></div>`
+    + `<div style="font-size:12px;color:#888;margin-bottom:12px">엑셀은 자동 다운로드됨. 아래 메일 드래프트 복사 → Outlook에 붙여넣고 엑셀 첨부해 발송. defect/observation·분기·수신인 자동.</div>`;
   const dl = document.createElement('button');
-  dl.textContent = '⬇ 엑셀 다운로드 (Defect List)';
+  dl.textContent = '⬇ 엑셀 다시 다운로드';
   dl.style.cssText = 'width:100%;height:38px;border:1px solid #1f4e78;background:#1f4e78;color:#fff;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:12px';
-  dl.addEventListener('click', () => { window.location = '/api/condition-survey/export?survey_id=' + survey.id; });
+  dl.addEventListener('click', () => { ifr.src = exportUrl; });
   box.appendChild(dl);
   const lbl = document.createElement('div');
   lbl.style.cssText = 'font-size:12px;font-weight:600;color:#555;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center';
@@ -481,17 +486,6 @@ function quarterRow(vesselId, quarter, survey, vesselName) {
       <line x1="8" y1="2" x2="8" y2="6"/>
       <line x1="3" y1="10" x2="21" y2="10"/></svg>`;
     actions.append(calBtn);
-
-    // 📄 엑셀 추출 + 메일 드래프트
-    const xlBtn = el('button', {
-      class: 'icon-btn',
-      title: '분기 Defect List 엑셀 추출 + 메일 드래프트',
-      onclick: (e) => { e.stopPropagation(); openCsExportMail(survey, vesselName); },
-    });
-    xlBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
-      <line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>`;
-    actions.append(xlBtn);
 
     // 🗑 삭제
     const rm = el('button', {
@@ -686,17 +680,17 @@ function toggleExpand(surveyId) {
   render();
 }
 
-function detailRow(survey) {
+function detailRow(survey, vesselName) {
   const tr = el('tr', { class: 'cs-detail-row' });
   const td = el('td', { colspan: 10, class: 'cs-detail-cell' });
 
-  // 보고서 → 항목 자동 생성 (Gemini) + 엑셀 추출
+  // 보고서 → 항목 자동 생성 (Gemini) + 엑셀 추출(+메일 드래프트 모달)
   td.append(el('div', { class: 'csx-bar' },
     el('button', { class: 'btn btn-outline btn-sm', onclick: () => openCsExtract(survey) },
       '📄 보고서에서 자동 생성'),
     el('button', {
       class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
-      onclick: () => { window.location = `/api/cs/surveys/${survey.id}/export`; },
+      onclick: () => openCsExportMail(survey, vesselName),
     }, '⬇ 엑셀 추출')));
 
   const defects      = (survey.findings || []).filter(f => f.category === 'Defect');
