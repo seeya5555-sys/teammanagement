@@ -304,7 +304,7 @@ function vesselBlock(item) {
   const tbody = el('tbody');
   for (const q of QUARTERS) {
     const survey = item.surveys[q];   // undefined = 빈 분기
-    tbody.append(quarterRow(v.id, q, survey));
+    tbody.append(quarterRow(v.id, q, survey, v.name));
     // 펼친 상태면 세부 행 추가
     if (survey && S.expandedSurveys.has(survey.id)) {
       tbody.append(detailRow(survey));
@@ -316,7 +316,71 @@ function vesselBlock(item) {
   return block;
 }
 
-function quarterRow(vesselId, quarter, survey) {
+// 선박→수신 담당자(영문 인사말). Daily 영문엑셀추출과 동일 매핑(EN_CONTACT).
+const CS_EN_CONTACT = {
+  indonesiaprosperity: 'Giorgos', southafricaprosperity: 'Giorgos',
+  kuwaitprosperity: 'Sergiy', cyprusprosperity: 'Nitin',
+  atlanticmerchant: 'Gerasimos', pacificmonaco: 'Gerasimos', atlanticbridge: 'Gerasimos',
+  pacificbeijing: 'Methew', atlanticexpress: 'Methew', atlanticgeneva: 'Methew',
+  atlanticsouth: 'Dmitry', atlanticgreen: 'Dmitry', atlanticnorth: 'Leonid',
+};
+const csEnNorm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// 분기 Defect List 엑셀 다운로드 + 복붙용 메일 드래프트 모달 (cls.js/app.js 패턴, cron 무관)
+function openCsExportMail(survey, vesselName) {
+  const vn = vesselName || '';
+  const vendor = survey.vendor || 'Condition';
+  const q = survey.quarter;
+  const dCnt = survey.defect_count, oCnt = survey.observation_count;
+  const who = CS_EN_CONTACT[csEnNorm(vn)] || 'Sir/Madam';
+  const draft =
+    `Subject: [Important!] M/V ${vn} - ${vendor} Survey Result & Defect List\n\n`
+    + `Dear ${who},\n\n`
+    + `Good day.\n\n`
+    + `Please find attached the result and defect list of the ${vendor} Survey carried out for ${q}Q.\n\n`
+    + `1. A total of *${dCnt} defects and ${oCnt} observations* were identified during the survey.\n`
+    + `2. Kindly arrange rectification of all identified items within 1 month.\n`
+    + `3. Rectification progress is to be reported in the attached Excel file, including corrective actions taken, relevant photos, and OPEN/CLOSE status for each item.\n`
+    + `4. *The updated Excel is to be submitted together with the Weekly Report every Monday until all items are closed.*\n\n`
+    + `Your prompt attention and full cooperation are appreciated.\n\n`
+    + `Best regards,`;
+
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:600px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 ${q}Q Defect List 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${vn}</span></div>`
+    + `<div style="font-size:12px;color:#888;margin-bottom:12px">엑셀(영문) 다운로드 + 메일 드래프트 복사 → Outlook에 붙여넣고 엑셀 첨부해 발송. defect/observation·분기·수신인 자동.</div>`;
+  const dl = document.createElement('button');
+  dl.textContent = '⬇ 엑셀 다운로드 (Defect List)';
+  dl.style.cssText = 'width:100%;height:38px;border:1px solid #1f4e78;background:#1f4e78;color:#fff;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:12px';
+  dl.addEventListener('click', () => { window.location = '/api/condition-survey/export?survey_id=' + survey.id; });
+  box.appendChild(dl);
+  const lbl = document.createElement('div');
+  lbl.style.cssText = 'font-size:12px;font-weight:600;color:#555;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center';
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = '📋 복사';
+  copyBtn.style.cssText = 'border:1px solid #d3d1c7;background:#faf9f5;border-radius:6px;padding:2px 10px;font-size:12px;cursor:pointer';
+  lbl.append(Object.assign(document.createElement('span'), { textContent: '메일 드래프트' }), copyBtn);
+  box.appendChild(lbl);
+  const ta = document.createElement('textarea');
+  ta.value = draft; ta.readOnly = true;
+  ta.style.cssText = 'width:100%;height:300px;border:1px solid #d3d1c7;border-radius:8px;padding:10px;font-size:12px;font-family:ui-monospace,monospace;line-height:1.5;resize:vertical';
+  box.appendChild(ta);
+  copyBtn.addEventListener('click', () => {
+    ta.select(); navigator.clipboard.writeText(ta.value).then(() => { copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 복사', 1500); });
+  });
+  const close = document.createElement('button');
+  close.textContent = '닫기';
+  close.style.cssText = 'margin-top:12px;width:100%;height:34px;border:1px solid #d3d1c7;background:#fff;border-radius:8px;font-size:13px;cursor:pointer';
+  close.addEventListener('click', () => ov.remove());
+  box.appendChild(close);
+  ov.appendChild(box);
+  ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+
+function quarterRow(vesselId, quarter, survey, vesselName) {
   const tr = el('tr', { class: 'cs-quarter-row' + (survey ? ' has-data' : ' empty') });
 
   // Quarter 셀 — 클릭 시 펼치기/모달
@@ -417,6 +481,17 @@ function quarterRow(vesselId, quarter, survey) {
       <line x1="8" y1="2" x2="8" y2="6"/>
       <line x1="3" y1="10" x2="21" y2="10"/></svg>`;
     actions.append(calBtn);
+
+    // 📄 엑셀 추출 + 메일 드래프트
+    const xlBtn = el('button', {
+      class: 'icon-btn',
+      title: '분기 Defect List 엑셀 추출 + 메일 드래프트',
+      onclick: (e) => { e.stopPropagation(); openCsExportMail(survey, vesselName); },
+    });
+    xlBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+      <line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>`;
+    actions.append(xlBtn);
 
     // 🗑 삭제
     const rm = el('button', {
