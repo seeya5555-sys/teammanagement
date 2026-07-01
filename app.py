@@ -8878,16 +8878,13 @@ def api_mail_issue_register(cid):
         mid = d.get('match_id') or r['issue_match_id']
         if not mid or not query('SELECT id FROM issues WHERE id=?', (mid,), one=True):
             return jsonify({'error': 'match issue not found'}), 400
-        # 액션추가는 긴 desc 전체가 아니라 '이 메일 요약 1~2문장'만(손유석). action_summary 우선,
-        # 없으면(구카드) summary_ko 앞 2문장 폴백. 사람이 직접 짧게 적어 보내면(짧은 desc) 그건 존중.
-        manual = (d.get('desc') or '').strip()
+        # 액션추가는 '이 메일 요약 1~2문장'만(손유석). action_summary 우선, 없으면(구카드) summary_ko 앞 2문장 폴백.
+        # ⚠️ 프론트가 DESCRIPTION 전체(.i-desc)를 desc로 자동 전송 → 액션엔 절대 쓰면 안 됨(전체 적재됨). desc 무시.
         prog = (r['action_summary'] or '').strip()
         if not prog:
             _s = (r['summary_ko'] or r['issue_item'] or '').strip()
             _parts = re.split(r'(?<=[.。!?])\s+|\n+', _s)
             prog = ' '.join(p for p in _parts[:2] if p).strip()[:300]
-        if manual and len(manual) <= 200:   # 사람이 짧게 손수 입력한 경우만 그대로(긴 desc 자동값은 무시)
-            prog = manual
         if not prog:
             return jsonify({'error': 'action text empty'}), 400
         arow = query('SELECT actions FROM issues WHERE id=?', (mid,), one=True)
