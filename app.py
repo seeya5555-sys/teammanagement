@@ -9098,27 +9098,53 @@ def api_mail_delete_selected():
 @app.route('/api/ext/mail/cards', methods=['POST'])
 @api_key_required
 def api_ext_mail_create():
-    """맥미니 ingest: 스캔한 메일 + 요약 + 이슈제안 적재."""
+    """맥미니 ingest: 스캔한 메일 + 요약 + 이슈제안 적재.
+    스레드 단위(thread_key) upsert: 같은 스레드 active 카드 있으면 최신 내용으로 갱신(사람 손댄 상태 보존),
+    없으면(신규 또는 삭제된 스레드) 새 카드. thread_key 없으면(구버전) msg_id dedup + insert 폴백."""
     d = request.get_json(silent=True) or {}
     msg_id = (d.get('email_msg_id') or '').strip() or None
-    if msg_id:
-        dup = query("SELECT id FROM mail_card WHERE email_msg_id=? AND card_status='active'",
-                    (msg_id,), one=True)
-        if dup:
-            return jsonify({'id': dup['id'], 'dedup': True}), 200
+    tkey = (d.get('thread_key') or '').strip() or None
     issue_status = (d.get('issue_status') or 'pending').strip()
     if issue_status not in ('pending', 'not_applicable'):
         issue_status = 'pending'
     prio = d.get('issue_priority') or 'Normal'
     if prio not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
         prio = 'Normal'
+    # 1) 동일 msg_id active = 같은 메일 재적재 → dedup(무변경)
+    if msg_id:
+        dup = query("SELECT id FROM mail_card WHERE email_msg_id=? AND card_status='active'",
+                    (msg_id,), one=True)
+        if dup:
+            return jsonify({'id': dup['id'], 'dedup': True}), 200
+    # 2) 같은 스레드 active 카드 존재 → 최신 스레드 내용으로 갱신.
+    #    콘텐츠(제목/발신/일자/msg_id/요약/맥락/원문)는 항상 갱신. 이슈제안(item/desc/prio/vessel/match)은
+    #    아직 미처리(issue_status='pending')일 때만 갱신(등록·리젝된 카드의 결정 보존). 회신·상태·결정은 절대 안 건드림.
+    if tkey:
+        ex = query("SELECT id FROM mail_card WHERE thread_key=? AND card_status='active' ORDER BY id DESC",
+                   (tkey,), one=True)
+        if ex:
+            execute("""UPDATE mail_card SET
+                email_subject=?, email_from=?, email_date=?, email_msg_id=?,
+                summary_ko=?, thread_summary_ko=?, body_en=?,
+                issue_item    =CASE WHEN issue_status='pending' THEN ? ELSE issue_item     END,
+                issue_desc    =CASE WHEN issue_status='pending' THEN ? ELSE issue_desc     END,
+                issue_priority=CASE WHEN issue_status='pending' THEN ? ELSE issue_priority END,
+                issue_vessel  =CASE WHEN issue_status='pending' THEN ? ELSE issue_vessel   END,
+                issue_match_id=CASE WHEN issue_status='pending' THEN ? ELSE issue_match_id END
+                WHERE id=?""", (
+                d.get('email_subject') or None, d.get('email_from') or None, d.get('email_date') or None,
+                msg_id, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
+                d.get('issue_item') or None, d.get('issue_desc') or None, prio,
+                d.get('issue_vessel') or None, d.get('issue_match_id'), ex['id']))
+            return jsonify({'id': ex['id'], 'updated': True}), 200
+    # 3) 신규(또는 삭제된 스레드) → INSERT
     cid = execute("""INSERT INTO mail_card
-        (email_subject, email_from, email_date, email_msg_id, summary_ko, thread_summary_ko, body_en,
+        (email_subject, email_from, email_date, email_msg_id, thread_key, summary_ko, thread_summary_ko, body_en,
          issue_item, issue_desc, issue_match_id, issue_priority, issue_vessel, issue_supervisor,
          issue_status, reply_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
         d.get('email_subject') or None, d.get('email_from') or None, d.get('email_date') or None,
-        msg_id, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
+        msg_id, tkey, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
         d.get('issue_item') or None, d.get('issue_desc') or None,
         d.get('issue_match_id'), prio, d.get('issue_vessel') or None, d.get('issue_supervisor') or None,
         issue_status))
@@ -10347,6 +10373,10 @@ def _auto_migrate():
             if cols and 'body_en' not in cols:
                 conn.execute("ALTER TABLE mail_card ADD COLUMN body_en TEXT")
                 print('[auto_migrate] mail_card.body_en 추가됨')
+            if cols and 'thread_key' not in cols:      # 스레드 단위 upsert 키(폴더|정규화제목)
+                conn.execute("ALTER TABLE mail_card ADD COLUMN thread_key TEXT")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_card_thread ON mail_card(thread_key, card_status)")
+                print('[auto_migrate] mail_card.thread_key 추가됨')
         except Exception as e:
             print(f'[auto_migrate] mail_card.pending 점검 건너뜀: {e}')
 
