@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS mail_card (
     email_msg_id    TEXT,                            -- Outlook 메시지 id (dedup/회신 타겟)
     thread_key      TEXT,                            -- 스레드 upsert 키(폴더|정규화제목). 같은 스레드=1카드 갱신
     summary_ko      TEXT,                            -- 최근 메일 전문 한국어 번역(맥락)
+    action_summary  TEXT,                            -- 현안 액션추가용 1~2문장 요약(이 메일 진행핵심)
     thread_summary_ko TEXT,                          -- 스레드 전체 1~2줄 요약(맨 위 표시)
     body_en         TEXT,                            -- 최근 메일 원문(영문, 번역 병기용)
     -- ① 이슈측 (WF1)

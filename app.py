@@ -8878,7 +8878,16 @@ def api_mail_issue_register(cid):
         mid = d.get('match_id') or r['issue_match_id']
         if not mid or not query('SELECT id FROM issues WHERE id=?', (mid,), one=True):
             return jsonify({'error': 'match issue not found'}), 400
-        prog = (d.get('desc') or r['issue_desc'] or r['issue_item'] or '').strip()
+        # 액션추가는 긴 desc 전체가 아니라 '이 메일 요약 1~2문장'만(손유석). action_summary 우선,
+        # 없으면(구카드) summary_ko 앞 2문장 폴백. 사람이 직접 짧게 적어 보내면(짧은 desc) 그건 존중.
+        manual = (d.get('desc') or '').strip()
+        prog = (r['action_summary'] or '').strip()
+        if not prog:
+            _s = (r['summary_ko'] or r['issue_item'] or '').strip()
+            _parts = re.split(r'(?<=[.。!?])\s+|\n+', _s)
+            prog = ' '.join(p for p in _parts[:2] if p).strip()[:300]
+        if manual and len(manual) <= 200:   # 사람이 짧게 손수 입력한 경우만 그대로(긴 desc 자동값은 무시)
+            prog = manual
         if not prog:
             return jsonify({'error': 'action text empty'}), 400
         arow = query('SELECT actions FROM issues WHERE id=?', (mid,), one=True)
@@ -9125,7 +9134,7 @@ def api_ext_mail_create():
         if ex:
             execute("""UPDATE mail_card SET
                 email_subject=?, email_from=?, email_date=?, email_msg_id=?,
-                summary_ko=?, thread_summary_ko=?, body_en=?,
+                summary_ko=?, thread_summary_ko=?, body_en=?, action_summary=?,
                 issue_item    =CASE WHEN issue_status='pending' THEN ? ELSE issue_item     END,
                 issue_desc    =CASE WHEN issue_status='pending' THEN ? ELSE issue_desc     END,
                 issue_priority=CASE WHEN issue_status='pending' THEN ? ELSE issue_priority END,
@@ -9134,17 +9143,19 @@ def api_ext_mail_create():
                 WHERE id=?""", (
                 d.get('email_subject') or None, d.get('email_from') or None, d.get('email_date') or None,
                 msg_id, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
+                d.get('action_summary') or None,
                 d.get('issue_item') or None, d.get('issue_desc') or None, prio,
                 d.get('issue_vessel') or None, d.get('issue_match_id'), ex['id']))
             return jsonify({'id': ex['id'], 'updated': True}), 200
     # 3) 신규(또는 삭제된 스레드) → INSERT
     cid = execute("""INSERT INTO mail_card
         (email_subject, email_from, email_date, email_msg_id, thread_key, summary_ko, thread_summary_ko, body_en,
-         issue_item, issue_desc, issue_match_id, issue_priority, issue_vessel, issue_supervisor,
+         action_summary, issue_item, issue_desc, issue_match_id, issue_priority, issue_vessel, issue_supervisor,
          issue_status, reply_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
         d.get('email_subject') or None, d.get('email_from') or None, d.get('email_date') or None,
         msg_id, tkey, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
+        d.get('action_summary') or None,
         d.get('issue_item') or None, d.get('issue_desc') or None,
         d.get('issue_match_id'), prio, d.get('issue_vessel') or None, d.get('issue_supervisor') or None,
         issue_status))
@@ -10377,6 +10388,9 @@ def _auto_migrate():
                 conn.execute("ALTER TABLE mail_card ADD COLUMN thread_key TEXT")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_card_thread ON mail_card(thread_key, card_status)")
                 print('[auto_migrate] mail_card.thread_key 추가됨')
+            if cols and 'action_summary' not in cols:   # 현안 액션추가용 1~2문장 요약
+                conn.execute("ALTER TABLE mail_card ADD COLUMN action_summary TEXT")
+                print('[auto_migrate] mail_card.action_summary 추가됨')
         except Exception as e:
             print(f'[auto_migrate] mail_card.pending 점검 건너뜀: {e}')
 
