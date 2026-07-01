@@ -338,10 +338,10 @@ function openCsExportMail(survey, vesselName) {
     + `Dear ${who},\n\n`
     + `Good day.\n\n`
     + `Please find attached the result and defect list of the ${vendor} Survey carried out for ${q}Q.\n\n`
-    + `1. A total of *${dCnt} defects and ${oCnt} observations* were identified during the survey.\n`
+    + `1. A total of ${dCnt} defects and ${oCnt} observations were identified during the survey.\n`
     + `2. Kindly arrange rectification of all identified items within 1 month.\n`
     + `3. Rectification progress is to be reported in the attached Excel file, including corrective actions taken, relevant photos, and OPEN/CLOSE status for each item.\n`
-    + `4. *The updated Excel is to be submitted together with the Weekly Report every Monday until all items are closed.*\n\n`
+    + `4. The updated Excel is to be submitted together with the Weekly Report every Monday until all items are closed.\n\n`
     + `Your prompt attention and full cooperation are appreciated.\n\n`
     + `Best regards,`;
 
