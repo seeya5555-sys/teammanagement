@@ -173,7 +173,7 @@
     {code:'done',  nm:'발주완료', color:'var(--teal-dot)'},
   ];
   let DATA = {vessels:[], current:null, lines:[]};
-  let FILTER = '';    // 분류(빈값=전체) — 토글
+  let FILTER = 'R';   // 분류 기본=서비스(R) — 칩 다시 누르면 전체 해제 (빈값=전체)
   let SFILTER = '';   // 상태(빈값=전체) — 토글
 
   const $ = s => document.querySelector(s);
