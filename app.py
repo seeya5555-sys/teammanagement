@@ -6300,7 +6300,7 @@ def health_page():
 
 # ─── KR-Con 룰 검색 (KR선급 KR-CON: 클래스룰·IMO·SOLAS·코드) ───────────
 @app.route('/krcon')
-@login_required
+@admin_required
 def krcon_page():
     return render_template('krcon.html')
 
@@ -6369,7 +6369,7 @@ def _krcon_smart_search(q, limit=50):
 
 
 @app.route('/krcon/search')
-@login_required
+@admin_required
 def krcon_search():
     q = (request.args.get('q') or '').strip()
     if not q:
@@ -6386,7 +6386,7 @@ def krcon_search():
 
 
 @app.route('/krcon/view/<doc_id>')
-@login_required
+@admin_required
 def krcon_view(doc_id):
     if not doc_id.isdigit():
         return jsonify({'error': 'BAD_ID'}), 400
@@ -6404,7 +6404,7 @@ def _krcon_clean_body(txt):
 
 
 @app.route('/krcon/ai', methods=['POST'])
-@login_required
+@admin_required
 def krcon_ai():
     data = request.get_json(silent=True) or {}
     q = (data.get('q') or '').strip()
