@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}룰 검색 · TRMT3{% endblock %}
+{% block head %}
+<style>
+  .kc-wrap{max-width:920px;margin:0 auto}
+  .kc-hero{text-align:center;padding:22px 0 10px}
+  .kc-hero h1{font-size:26px;font-weight:800;color:var(--text-primary);margin:0 0 4px;letter-spacing:-.5px}
+  .kc-hero .sub{color:var(--text-secondary);font-size:13px}
+  .kc-hero .sub b{color:var(--blue)}
+  .kc-searchbar{display:flex;gap:8px;margin:16px 0 6px}
+  .kc-input{flex:1;border:1px solid var(--border-strong);border-radius:999px;padding:13px 20px;font-size:15px;background:#fff;outline:none;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .kc-input:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-border)}
+  .kc-btn{border:0;border-radius:999px;padding:0 20px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
+  .kc-btn.go{background:var(--blue);color:#fff}
+  .kc-btn.go:hover{background:var(--blue-hover)}
+  .kc-btn.ai{background:var(--purple-bg);color:var(--purple);border:1px solid var(--purple-border,#c7c2f0)}
+  .kc-btn.ai:hover{background:#e4e1fb}
+  .kc-btn:disabled{opacity:.5;cursor:default}
+  .kc-tip{color:var(--text-tertiary);font-size:12px;margin:2px 2px 0}
+  .kc-cats{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0}
+  .kc-chip{font-size:12px;font-weight:600;padding:4px 11px;border-radius:999px;border:1px solid var(--border);background:#fff;color:var(--text-secondary)}
+  .kc-chip .n{color:var(--blue);font-weight:800;margin-left:4px}
+  .kc-total{color:var(--text-secondary);font-size:13px;margin:8px 2px}
+  .kc-ai{border:1px solid var(--purple-border,#c7c2f0);background:var(--purple-bg);border-radius:12px;padding:14px 16px;margin:12px 0}
+  .kc-ai h3{margin:0 0 8px;font-size:13px;font-weight:800;color:var(--purple-text)}
+  .kc-ai .ans{white-space:pre-wrap;line-height:1.6;color:var(--text-primary);font-size:14px}
+  .kc-ai .src{margin-top:10px;font-size:12px;color:var(--text-secondary)}
+  .kc-ai .src a{color:var(--blue);text-decoration:none}
+  .kc-list{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+  .kc-card{border:1px solid var(--border);border-radius:10px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);padding:12px 14px}
+  .kc-title{font-weight:700;color:var(--blue-text);line-height:1.4;font-size:14px;cursor:pointer}
+  .kc-title:hover{text-decoration:underline}
+  .kc-snip{color:var(--text-secondary);font-size:12.5px;margin-top:5px;line-height:1.5}
+  .kc-row{display:flex;gap:8px;margin-top:8px;align-items:center}
+  .kc-mini{border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:7px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer}
+  .kc-mini:hover{background:var(--surface-2)}
+  .kc-body{white-space:pre-wrap;line-height:1.55;font-size:13px;color:var(--text-primary);background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:8px;padding:12px;margin-top:9px;max-height:420px;overflow:auto}
+  .kc-meta{font-size:12px;color:var(--text-tertiary);margin-top:6px}
+  .kc-empty{text-align:center;color:var(--text-tertiary);padding:40px 0;font-size:14px}
+  .kc-err{background:var(--red-bg);border:1px solid var(--red-border);color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px;margin:10px 0}
+  .kc-spin{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:kcspin .7s linear infinite;vertical-align:-2px}
+  @keyframes kcspin{to{transform:rotate(360deg)}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="kc-wrap">
+  <div class="kc-hero">
+    <h1>📖 KR-Con 룰 검색</h1>
+    <div class="sub">KR선급 <b>KR-CON</b> — 클래스룰 · SOLAS · IMO · 코드(LSA/FSS/IBC…) · Resolution · Circular · IACS</div>
+  </div>
+
+  <div class="kc-searchbar">
+    <input id="kc-q" class="kc-input" type="text" placeholder="룰 용어로 검색  예) lifeboat release, enclosed space entry, emergency towing" autocomplete="off">
+    <button id="kc-go" class="kc-btn go">검색</button>
+    <button id="kc-ai" class="kc-btn ai" title="검색 상위 문서를 Gemini가 읽고 답변 합성">🤖 AI 요약</button>
+  </div>
+  <div class="kc-tip">💡 단어/구(AND) 매칭임 — 룰 용어로 검색하세요. 협약이름 단독("SOLAS")보다 실제 용어("cargo ventilation")가 잘 나옵니다.</div>
+
+  <div id="kc-out"></div>
+</div>
+
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+  const qEl = $('#kc-q'), out = $('#kc-out');
+  const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let lastQuery = '';
+
+  function setBusy(b){ $('#kc-go').disabled=b; $('#kc-ai').disabled=b; }
+
+  async function doSearch(){
+    const q = qEl.value.trim();
+    if(!q) return;
+    lastQuery = q;
+    out.innerHTML = '<div class="kc-empty"><span class="kc-spin"></span> 검색 중…</div>';
+    setBusy(true);
+    try{
+      const r = await fetch('/krcon/search?limit=50&q='+encodeURIComponent(q));
+      const d = await r.json();
+      renderSearch(d);
+    }catch(e){ out.innerHTML = '<div class="kc-err">검색 실패: '+esc(String(e))+'</div>'; }
+    setBusy(false);
+  }
+
+  function renderSearch(d){
+    if(d.error){
+      const msg = d.error==='LOGIN_FAILED' ? 'KR-Con 로그인 실패 (계정 설정 확인 필요)' : d.error;
+      out.innerHTML = '<div class="kc-err">'+esc(msg)+'</div>'; return;
+    }
+    let h = '';
+    if(d.categories && d.categories.length){
+      h += '<div class="kc-cats">'+d.categories.map(c =>
+        '<span class="kc-chip">'+esc(c.name)+'<span class="n">'+c.count+'</span></span>').join('')+'</div>';
+    }
+    h += '<div class="kc-total">총 <b>'+(d.total??d.returned)+'</b>건'+
+         (d.total && d.returned<d.total ? ' (상위 '+d.returned+'건 표시)' : '')+'</div>';
+    if(!d.results || !d.results.length){
+      h += '<div class="kc-empty">검색 결과 없음 — 다른 용어로 시도해보세요.</div>';
+      out.innerHTML = h; return;
+    }
+    h += '<div class="kc-list">'+d.results.map(r =>
+      '<div class="kc-card" data-id="'+r.id+'">'+
+        '<div class="kc-title" data-act="view" data-id="'+r.id+'">'+esc(r.title||('문서 '+r.id))+'</div>'+
+        (r.snippet ? '<div class="kc-snip">'+esc(r.snippet)+'…</div>' : '')+
+        '<div class="kc-row"><button class="kc-mini" data-act="view" data-id="'+r.id+'">📄 본문 보기</button></div>'+
+        '<div class="kc-slot"></div>'+
+      '</div>').join('')+'</div>';
+    out.innerHTML = h;
+  }
+
+  async function viewDoc(id, card){
+    const slot = card.querySelector('.kc-slot');
+    if(slot.dataset.open==='1'){ slot.innerHTML=''; slot.dataset.open=''; return; }
+    slot.innerHTML = '<div class="kc-meta"><span class="kc-spin"></span> 불러오는 중…</div>';
+    slot.dataset.open='1';
+    try{
+      const r = await fetch('/krcon/view/'+id+'?q='+encodeURIComponent(lastQuery));
+      const d = await r.json();
+      if(d.error){ slot.innerHTML='<div class="kc-err">본문 로드 실패: '+esc(d.error)+'</div>'; return; }
+      let meta = [];
+      if(d.effective_date) meta.push('발효일 '+esc(d.effective_date));
+      if(d.pdf) meta.push('<a href="'+esc(d.pdf)+'" target="_blank" rel="noopener">📎 원문 PDF</a>');
+      slot.innerHTML = (meta.length?'<div class="kc-meta">'+meta.join(' · ')+'</div>':'')+
+                       '<div class="kc-body">'+esc(d.text||'(본문 없음)')+'</div>';
+    }catch(e){ slot.innerHTML='<div class="kc-err">'+esc(String(e))+'</div>'; }
+  }
+
+  async function doAI(){
+    const q = qEl.value.trim();
+    if(!q) return;
+    lastQuery = q;
+    out.innerHTML = '<div class="kc-ai"><h3>🤖 AI 요약</h3><div class="ans"><span class="kc-spin"></span> Gemini가 룰 본문을 읽고 정리 중… (몇 초 걸립니다)</div></div>';
+    setBusy(true);
+    try{
+      const r = await fetch('/krcon/ai', {method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({q})});
+      const d = await r.json();
+      if(d.error){
+        const msg = d.error==='NO_API_KEY' ? 'Gemini API 키 미설정' :
+                    d.error==='NO_DOCS' ? '요약할 문서를 찾지 못함' :
+                    d.error==='AI_FAILED' ? ('AI 호출 실패: '+esc(d.detail||'')) : d.error;
+        out.innerHTML = '<div class="kc-err">'+esc(msg)+'</div>'; setBusy(false); return;
+      }
+      let src = (d.sources||[]).map(s =>
+        '<a href="'+(s.pdf?esc(s.pdf):'#')+'" '+(s.pdf?'target="_blank" rel="noopener"':'')+'>['+s.id+'] '+
+        esc(s.title||('문서 '+s.id))+'</a>'+(s.eff?' ('+esc(s.eff)+')':'')).join('<br>');
+      out.innerHTML = '<div class="kc-ai"><h3>🤖 AI 요약 <span style="font-weight:600;color:var(--text-tertiary)">· KR-CON 발췌 기반</span></h3>'+
+        '<div class="ans">'+esc(d.answer||'(응답 없음)')+'</div>'+
+        (src?'<div class="src"><b>근거 문서</b><br>'+src+'</div>':'')+
+        '<div class="src" style="margin-top:8px;color:var(--text-tertiary)">※ 원문 확인 후 사용하세요. 아래 "검색" 버튼으로 전체 결과를 볼 수 있습니다.</div></div>';
+    }catch(e){ out.innerHTML = '<div class="kc-err">'+esc(String(e))+'</div>'; }
+    setBusy(false);
+  }
+
+  $('#kc-go').addEventListener('click', doSearch);
+  $('#kc-ai').addEventListener('click', doAI);
+  qEl.addEventListener('keydown', e => { if(e.key==='Enter') doSearch(); });
+  out.addEventListener('click', e => {
+    const t = e.target.closest('[data-act="view"]');
+    if(t){ const card = t.closest('.kc-card'); viewDoc(t.dataset.id, card); }
+  });
+  qEl.focus();
+})();
+</script>
+{% endblock %}
