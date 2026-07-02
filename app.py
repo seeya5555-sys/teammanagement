@@ -73,7 +73,7 @@ def _add_static_version(endpoint, values):
             fp = os.path.join(app.static_folder, values['filename'])
             values['v'] = int(os.path.getmtime(fp))
         except OSError:
-            pass
+            app.logger.debug('add-static-version: static mtime miss', exc_info=True)
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -501,7 +501,7 @@ def init_db(drop=False):
             if 'stock' not in cols:
                 conn.execute("ALTER TABLE reqgen_draft ADD COLUMN stock TEXT DEFAULT 'service'")
         except Exception:
-            pass
+            app.logger.debug('init-db migration skip', exc_info=True)
 
         # ── Dock Procurement(입거 발주현황 트래커) ──
         #   입거선박 INDEX 엑셀 업로드 → 라인 큐 자동생성(증분/중복제외).
@@ -558,7 +558,7 @@ def init_db(drop=False):
             if 'svms_submit' not in _dpc:
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_submit TEXT")
         except Exception:
-            pass
+            app.logger.debug('init-db migration skip', exc_info=True)
 
         # Ship-Issue Wiki — 선박별 이슈 스레드 지식노트 검토/승격 큐 (데쿠 ship-wiki 파이프라인 미러)
         #   맥(push_cards.py)이 pending/<slug>/*.md(Tier2 사람판단 대기) + wiki/<slug>/*.md(auto/confirmed)
@@ -1211,7 +1211,8 @@ def _issue_to_dict(row):
     d = dict(row)
     try:
         d['actions'] = json.loads(d['actions']) if d.get('actions') else []
-    except Exception:
+    except Exception as e:
+        app.logger.warning('issue-to-dict: %s', e)
         d['actions'] = []
     return d
 
@@ -1578,7 +1579,8 @@ def api_issue_summary_get():
         return jsonify({'rows': [], 'generated_at': None, 'count': 0})
     try:
         rows = json.loads(row['data'])
-    except Exception:
+    except Exception as e:
+        app.logger.warning('issue-summary-get: %s', e)
         rows = []
     return jsonify({'rows': rows, 'generated_at': row['generated_at'], 'count': len(rows)})
 
@@ -1630,7 +1632,8 @@ def api_issue_summary_counts():
     for r in query('SELECT scope, data FROM issue_summaries'):
         try:
             out[r['scope']] = len(json.loads(r['data']))
-        except Exception:
+        except Exception as e:
+            app.logger.warning('issue-summary-counts: %s', e)
             out[r['scope']] = 0
     return jsonify(out)
 
@@ -1657,7 +1660,8 @@ def api_issue_summary_export():
     if srow:
         try:
             rows = json.loads(srow['data'])
-        except Exception:
+        except Exception as e:
+            app.logger.warning('issue-summary-export: %s', e)
             rows = []
 
     def build_cell(idx, r):
@@ -2511,9 +2515,11 @@ def _gemini_call_json(parts, model=None):
         try:
             detail = he.read().decode('utf-8')[:300]
         except Exception:
+            app.logger.exception('gemini-call-json')
             detail = str(he)
         return {'error': 'API_CALL_FAILED', 'detail': detail}
     except Exception as e:
+        app.logger.exception('gemini-call-json')
         return {'error': 'API_CALL_FAILED', 'detail': str(e)}
     text = ''
     try:
@@ -2524,6 +2530,7 @@ def _gemini_call_json(parts, model=None):
             if isinstance(part.get('text'), str):
                 text += part['text']
     except Exception as e:
+        app.logger.exception('gemini-call-json')
         return {'error': 'PARSE_FAILED', 'raw': str(e)}
     text = text.strip()
     if text.startswith('```'):
@@ -2534,6 +2541,7 @@ def _gemini_call_json(parts, model=None):
     try:
         return json.loads(text)
     except Exception:
+        app.logger.exception('gemini-call-json')
         return {'error': 'PARSE_FAILED', 'raw': text[:300]}
 
 
@@ -2646,7 +2654,8 @@ def _latest_action_progress(acts):
         return ''
     try:
         best = sorted(acts, key=lambda a: (a.get('date') or ''))[-1]
-    except Exception:
+    except Exception as e:
+        app.logger.warning('latest-action-progress: %s', e)
         best = acts[-1]
     return (best.get('progress') or '').strip()
 
@@ -2657,7 +2666,8 @@ def _latest_action(acts):
         return '', ''
     try:
         best = sorted(acts, key=lambda a: (a.get('date') or ''))[-1]
-    except Exception:
+    except Exception as e:
+        app.logger.warning('latest-action: %s', e)
         best = acts[-1]
     return (best.get('date') or '').strip(), (best.get('progress') or '').strip()
 
@@ -2666,7 +2676,8 @@ def _md_label(d):
     try:
         y, m, dd = d.split('-')
         return f'[{int(m)}/{int(dd)}]'
-    except Exception:
+    except Exception as e:
+        app.logger.warning('md-label: %s', e)
         return f'[{d}]' if d else ''
 
 
@@ -2898,6 +2909,7 @@ def _extract_findings_from_upload(f, kind):
         try:
             mode, data = _xlsx_extract(raw, kind)
         except Exception as e:
+            app.logger.exception('extract-findings-from-upload')
             return None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
         if mode == 'items':
             return _summarize_remarks(data, kind), None
@@ -3032,7 +3044,8 @@ def api_cs_attachment_delete(aid):
     p = os.path.join(UPLOAD_DIR, a['stored_name'])
     if os.path.exists(p):
         try: os.remove(p)
-        except OSError: pass
+        except OSError:
+            app.logger.exception('cs-attachment-delete')
     execute('DELETE FROM cs_attachments WHERE id=?', (aid,))
     return jsonify({'ok': True})
 
@@ -3241,7 +3254,8 @@ def api_vetting_delete(vid):
         p = os.path.join(UPLOAD_DIR, a['stored_name'])
         if os.path.exists(p):
             try: os.remove(p)
-            except OSError: pass
+            except OSError as e:
+                app.logger.warning('vetting-delete: %s', e)
     execute('DELETE FROM vettings WHERE id=?', (vid,))
     return jsonify({'ok': True})
 
@@ -3423,6 +3437,7 @@ def _extract_vetting_from_upload(f):
         try:
             txt = _xlsx_to_text(raw)
         except Exception as e:
+            app.logger.exception('extract-vetting-from-upload')
             return None, None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
         parsed = _gemini_call_json([{'text': prompt + '\n\n[보고서 표 내용]\n' + txt}],
                                    model=_model_for('findings'))
@@ -3471,6 +3486,7 @@ def _md_from_date(d):
         y, m, dd = (d or '').split('-')
         return f'{int(m)}/{int(dd)}'
     except Exception:
+        app.logger.exception('md-from-date')
         return (d or '').strip()
 
 
@@ -3655,7 +3671,8 @@ def api_vt_attachment_delete(aid):
     p = os.path.join(UPLOAD_DIR, a['stored_name'])
     if os.path.exists(p):
         try: os.remove(p)
-        except OSError: pass
+        except OSError:
+            app.logger.exception('vt-attachment-delete')
     execute('DELETE FROM vt_attachments WHERE id=?', (aid,))
     return jsonify({'ok': True})
 
@@ -4018,7 +4035,8 @@ def api_dock_get(rid):
         bd = dict(b)
         try:
             bd['content'] = json.loads(bd.pop('content_json'))
-        except Exception:
+        except Exception as e:
+            app.logger.warning('dock-get: %s', e)
             bd['content'] = {}
         blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
 
@@ -4443,7 +4461,7 @@ def _process_uploaded_image(file_storage, dest_path,
         try:
             im = ImageOps.exif_transpose(im)
         except Exception:
-            pass
+            app.logger.exception('process-uploaded-image')
 
         w, h = im.size
         long_side = max(w, h)
@@ -4480,6 +4498,7 @@ def _process_uploaded_image(file_storage, dest_path,
 
     except Exception as e:
         # 처리 실패 → 원본 그대로 저장
+        app.logger.exception('process-uploaded-image')
         with open(dest_path, 'wb') as f:
             f.write(raw_bytes)
         return dest_path, original_size, len(raw_bytes)
@@ -4569,7 +4588,8 @@ def _get_full_report_data(rid):
             bd = dict(b)
             try:
                 bd['content'] = json.loads(bd.pop('content_json'))
-            except Exception:
+            except Exception as e:
+                app.logger.warning('get-full-report-data: %s', e)
                 bd['content'] = {}
             blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
     for s in sec_list:
@@ -4601,6 +4621,7 @@ def api_dock_export_docx(rid):
     try:
         docx_bytes = build_docx(data)
     except Exception as e:
+        app.logger.exception('dock-export-docx')
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'문서 생성 실패: {e}'}), 500
@@ -4632,6 +4653,7 @@ def api_dock_export_pdf(rid):
     try:
         docx_bytes = build_docx(data)
     except Exception as e:
+        app.logger.exception('dock-export-pdf')
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'문서 생성 실패: {e}'}), 500
@@ -4670,6 +4692,7 @@ def api_dock_export_pdf(rid):
     except subprocess.TimeoutExpired:
         return jsonify({'error': 'PDF 변환 시간 초과 (2분).'}), 500
     except Exception as e:
+        app.logger.exception('dock-export-pdf')
         return jsonify({'error': f'PDF 변환 오류: {e}'}), 500
 
     from io import BytesIO
@@ -4913,7 +4936,8 @@ def api_brep_get(rid):
         bd = dict(b)
         try:
             bd['content'] = json.loads(bd.pop('content_json'))
-        except Exception:
+        except Exception as e:
+            app.logger.warning('brep-get: %s', e)
             bd['content'] = {}
         blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
 
@@ -5337,7 +5361,8 @@ def _get_full_brep_data(rid):
             bd = dict(b)
             try:
                 bd['content'] = json.loads(bd.pop('content_json'))
-            except Exception:
+            except Exception as e:
+                app.logger.warning('get-full-brep-data: %s', e)
                 bd['content'] = {}
             blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
     for s in sec_list:
@@ -5360,6 +5385,7 @@ def api_brep_export_docx(rid):
     try:
         docx_bytes = build_docx(data)
     except Exception as e:
+        app.logger.exception('brep-export-docx')
         import traceback; traceback.print_exc()
         return jsonify({'error': f'문서 생성 실패: {e}'}), 500
 
@@ -5388,6 +5414,7 @@ def api_brep_export_pdf(rid):
     try:
         docx_bytes = build_docx(data)
     except Exception as e:
+        app.logger.exception('brep-export-pdf')
         import traceback; traceback.print_exc()
         return jsonify({'error': f'문서 생성 실패: {e}'}), 500
 
@@ -5420,6 +5447,7 @@ def api_brep_export_pdf(rid):
     except subprocess.TimeoutExpired:
         return jsonify({'error': 'PDF 변환 시간 초과 (2분).'}), 500
     except Exception as e:
+        app.logger.exception('brep-export-pdf')
         return jsonify({'error': f'PDF 변환 오류: {e}'}), 500
 
     from io import BytesIO
@@ -5550,6 +5578,7 @@ def _trip_to_dict(r):
     try:
         d['corp_cards'] = json.loads(r['corp_cards']) if r['corp_cards'] else []
     except Exception:
+        app.logger.exception('trip-to-dict')
         d['corp_cards'] = []
     return d
 
@@ -5562,7 +5591,7 @@ def _delete_receipt_image(fname):
         if os.path.exists(p):
             os.remove(p)
     except Exception:
-        pass
+        app.logger.exception('delete-receipt-image')
 
 
 def _parse_amount(v):
@@ -5790,9 +5819,11 @@ def _gemini_vision_extract(image_path):
         try:
             detail = he.read().decode('utf-8')[:300]
         except Exception:
+            app.logger.exception('gemini-vision-extract')
             detail = str(he)
         return {'error': 'API_CALL_FAILED', 'detail': detail}
     except Exception as e:
+        app.logger.exception('gemini-vision-extract')
         return {'error': 'API_CALL_FAILED', 'detail': str(e)}
 
     # candidates[0].content.parts[*].text 취합
@@ -5805,6 +5836,7 @@ def _gemini_vision_extract(image_path):
             if isinstance(part.get('text'), str):
                 text += part['text']
     except Exception as e:
+        app.logger.exception('gemini-vision-extract')
         return {'error': 'PARSE_FAILED', 'raw': str(e)}
 
     text = text.strip()
@@ -5816,6 +5848,7 @@ def _gemini_vision_extract(image_path):
     try:
         return json.loads(text)
     except Exception:
+        app.logger.exception('gemini-vision-extract')
         return {'error': 'PARSE_FAILED', 'raw': text}
 
 
@@ -6021,7 +6054,8 @@ def _ext_issues():
         d = dict(r)
         try:
             d['actions'] = json.loads(d['actions']) if d.get('actions') else []
-        except Exception:
+        except Exception as e:
+            app.logger.warning('ext-issues: %s', e)
             d['actions'] = []
         d['vessel_key'] = _vkey(d.get('vessel_name'))
         d['ref'] = _ref('issue', d.get('id'))
@@ -6082,7 +6116,8 @@ def _report_tree(report_id, sec_table, blk_table):
             bd['ref'] = _ref(blk_kind, b['id'])
             try:
                 bd['content'] = json.loads(bd['content_json']) if bd.get('content_json') else None
-            except Exception:
+            except Exception as e:
+                app.logger.warning('report-tree: %s', e)
                 bd['content'] = None
             bd.pop('content_json', None)
             blocks.append(bd)
@@ -6219,7 +6254,8 @@ def _ext_summaries():
     for r in query("SELECT scope, data, generated_at FROM issue_summaries"):
         try:
             rows = json.loads(r['data'])
-        except Exception:
+        except Exception as e:
+            app.logger.warning('ext-summaries: %s', e)
             rows = []
         sup = None
         if r['scope'] != 'all':
@@ -6532,7 +6568,8 @@ def api_ext_issue_match():
             continue
         try:
             acts = json.loads(d['actions']) if d.get('actions') else []
-        except Exception:
+        except Exception as e:
+            app.logger.warning('ext-issue-match: %s', e)
             acts = []
         matches.append({
             'id': d.get('id'), 'ref': _ref('issue', d.get('id')),
@@ -6561,6 +6598,7 @@ def api_ext_issue_add_action(iid):
         if not isinstance(actions, list):
             actions = []
     except Exception:
+        app.logger.exception('ext-issue-add-action')
         actions = []
     actions.append({
         'date': (d.get('date') or '').strip() or _date.today().isoformat(),
@@ -7204,6 +7242,7 @@ def api_invoice_edit(did):
     try:
         rc = json.loads(row['raw_card'] or '{}')
     except Exception:
+        app.logger.exception('invoice-edit')
         rc = {}
     if subject is not None:
         rc['subject'] = subject
@@ -7369,6 +7408,7 @@ def _reqgen_index_vessel_type(wb):
                         if isinstance(w, str) and w.strip():
                             return w.strip()
     except Exception:
+        app.logger.exception('reqgen-index-vessel-type')
         return None
     return None
 
@@ -7541,6 +7581,7 @@ def api_reqgen_upload():
         stream = _io.BytesIO(f.read())            # SpooledTemporaryFile 은 seekable 아님 → BytesIO 로
         vsl_nm, sheets, skipped_mgr = _reqgen_parse_workbook(stream, vsl_cd)
     except Exception as e:
+        app.logger.exception('reqgen-upload')
         return jsonify({'error': f'파싱 실패: {e}'}), 400
     # 크로스탭 중복방지: Dock 발주현황에서 이미 '견적작성' 체크된 REQ는 수동 선행입력 → SVMS 자동작성 제외
     skipped_quote = 0
@@ -7615,13 +7656,19 @@ def api_reqgen_patch(did):
         return jsonify({'error': 'pending 상태만 수정 가능', 'status': row['status']}), 409
     d = request.get_json(silent=True) or {}
     if 'stock' in d:
-        stock = 'owner' if (d.get('stock') == 'owner') else 'service'
+        stock = d.get('stock')
+        if stock in (None, ''):
+            stock = 'service'     # 기존 coerce 동작 유지(빈값=기본)
+        if stock not in ('service', 'owner'):
+            return jsonify({'error': "stock 값은 'service' 또는 'owner'만 가능"}), 400
         execute("UPDATE reqgen_draft SET stock=? WHERE id=?", (stock, did))
         return jsonify({'id': did, 'stock': stock})
     # 장비(Category/Equipment) 인라인 수정 — 빈 엑셀 C5를 재업로드 없이 채움(수리신청 MA만)
     if 'equipment' in d:
         if row['doc_type'] != 'MA':
             return jsonify({'error': '장비 인라인 수정은 수리신청(MA)만 가능'}), 400
+        if d.get('equipment') is not None and not isinstance(d.get('equipment'), str):
+            return jsonify({'error': 'equipment 값은 문자열이어야 함'}), 400
         eq = (d.get('equipment') or '').strip()
         header = json.loads(row['header_json']) if row['header_json'] else {}
         header['CATE_NM'] = eq        # CATE_NM·EQ_NM 모두 C5(장비) 한 셀에서 옴 → 함께 갱신
@@ -7909,6 +7956,7 @@ def _dockproc_parse_index(stream):
         try:
             meta['due_date'] = meta['due_date'].strftime('%Y-%m-%d')
         except Exception:
+            app.logger.exception('dockproc-parse-index')
             meta['due_date'] = str(meta['due_date'])
     # 헤더행 탐색(REQ. NUMBER / CATEGORY 포함)
     hdr_row = None
@@ -8026,6 +8074,7 @@ def api_dockproc_upload():
         import io as _io
         meta, lines = _dockproc_parse_index(_io.BytesIO(f.read()))
     except Exception as e:
+        app.logger.exception('dockproc-upload')
         return jsonify({'error': f'파싱 실패: {e}'}), 400
     vsl_nm = meta.get('vsl_nm')
     if not vsl_nm:
@@ -8493,6 +8542,7 @@ def _gemini_text(prompt, model=None):
         with urllib.request.urlopen(req, timeout=60) as r:
             data = json.loads(r.read().decode('utf-8'))
     except Exception as e:
+        app.logger.exception('gemini-text')
         return None, str(e)[:200]
     try:
         t = ''
@@ -8502,6 +8552,7 @@ def _gemini_text(prompt, model=None):
         t = t.strip()
         return (t if t else None), (None if t else 'EMPTY')
     except Exception as e:
+        app.logger.exception('gemini-text')
         return None, 'parse:' + str(e)[:120]
 
 _MAIL_REPLY_HARNESS = (
@@ -8750,6 +8801,7 @@ def _json_list(v):
         x = json.loads(v) if isinstance(v, str) else (v or [])
         return x if isinstance(x, list) else []
     except Exception:
+        app.logger.exception('json-list')
         return []
 
 
@@ -8808,6 +8860,7 @@ def _wiki_match_for_card(card):
             'issue_topic': (link['item_topic'] if link else None),
         }
     except Exception:
+        app.logger.exception('wiki-match-for-card')
         return None
 
 
@@ -8873,6 +8926,7 @@ def api_mail_issue_register(cid):
             if wm and wm.get('confidence') == 'high':
                 wtid = wm.get('thread_id')
         except Exception:
+            app.logger.exception('mail-issue-register')
             wtid = None
     if mode == 'append':
         mid = d.get('match_id') or r['issue_match_id']
@@ -8892,6 +8946,7 @@ def api_mail_issue_register(cid):
             acts = json.loads(arow['actions']) if arow['actions'] else []
             if not isinstance(acts, list): acts = []
         except Exception:
+            app.logger.exception('mail-issue-register')
             acts = []
         acts.append({'date': _date.today().isoformat(), 'progress': prog, 'important': False})
         # 진행내역(actions)은 사람이 [추가] 눌렀을 때만 저장 = confirmed (suggested는 화면뿐). wiki 링크는 기존값 보존.
@@ -8991,7 +9046,7 @@ def api_mail_reply_translate(cid):
             if vio:
                 warn = 'FACT_CHECK: 지시·위키에 없는 값 ' + ', '.join(vio[:4]) + ' — 확인 요'
     except Exception:
-        pass
+        app.logger.exception('mail-reply-translate')
     return jsonify({'id': cid, 'reply_en': en, 'reply_status': 'translated', 'warn': warn})
 
 
@@ -9868,6 +9923,7 @@ def _extract_class_status_from_upload(f):
         try:
             txt = _xlsx_to_text(raw)
         except Exception as e:
+            app.logger.exception('extract-class-status-from-upload')
             return None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
         parsed = _gemini_call_json([{'text': prompt + '\n\n[보고서 표 내용]\n' + txt}],
                                    model=_model_for('findings'))
@@ -9931,6 +9987,7 @@ def _cls_save_snapshot(vessel_id, vessel_name_raw, data, filename, source_path=N
                 "WHERE c.vessel_id = ? AND IFNULL(i.action_taken,'') <> ''", (vessel_id,)).fetchall():
                 preserved[(r['category'], _ndesc(r['description']))] = r['action_taken']
         except Exception:
+            app.logger.exception('cls-save-snapshot')
             preserved = {}
         for r in conn.execute('SELECT source_path FROM class_status WHERE vessel_id=?', (vessel_id,)).fetchall():
             _cls_delete_file(r['source_path'])
@@ -10031,7 +10088,8 @@ def _cls_handle_files(files):
         raw = None
         try:
             f.stream.seek(0); raw = f.read(); f.stream.seek(0)
-        except Exception:
+        except Exception as _e:
+            app.logger.warning('cls-handle-files: %s', _e)
             raw = None
         data, err = _extract_class_status_from_upload(f)
         if err:
@@ -10042,7 +10100,7 @@ def _cls_handle_files(files):
         vessel_id = v['id'] if v else None
         src_rel = None
         if raw:
-            uniq = datetime.now().strftime('%Y%m%d%H%M%S%f') + '_' + (secure_filename(fname) or 'report')
+            uniq = uuid.uuid4().hex[:8] + '_' + datetime.now().strftime('%Y%m%d%H%M%S%f') + '_' + (secure_filename(fname) or 'report')
             try:
                 with open(os.path.join(cls_dir, uniq), 'wb') as out:
                     out.write(raw)
