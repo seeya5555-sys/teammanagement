@@ -50,11 +50,11 @@
   </div>
 
   <div class="kc-searchbar">
-    <input id="kc-q" class="kc-input" type="text" placeholder="룰 용어로 검색  예) lifeboat release, enclosed space entry, emergency towing" autocomplete="off">
+    <input id="kc-q" class="kc-input" type="text" placeholder="자연어로 검색  예) Ballast water 배출 규정, 구명정 검사 주기, enclosed space entry" autocomplete="off">
     <button id="kc-go" class="kc-btn go">검색</button>
     <button id="kc-ai" class="kc-btn ai" title="검색 상위 문서를 Gemini가 읽고 답변 합성">🤖 AI 요약</button>
   </div>
-  <div class="kc-tip">💡 단어/구(AND) 매칭임 — 룰 용어로 검색하세요. 협약이름 단독("SOLAS")보다 실제 용어("cargo ventilation")가 잘 나옵니다.</div>
+  <div class="kc-tip">💡 영문 용어면 그대로(무료), 자연어/한글 질문이면 AI가 알아서 키워드로 바꿔 검색합니다. 답을 정리해서 보려면 <b>🤖 AI 요약</b>.</div>
 
   <div id="kc-out"></div>
 </div>
@@ -88,6 +88,10 @@
       out.innerHTML = '<div class="kc-err">'+esc(msg)+'</div>'; return;
     }
     let h = '';
+    if(d.rephrased && d.rephrased.length){
+      h += '<div class="kc-tip" style="margin-bottom:10px">🔎 자연어로 이해해서 <b>'+
+           d.rephrased.map(esc).join('</b>, <b>')+'</b> (으)로 검색함</div>';
+    }
     if(d.categories && d.categories.length){
       h += '<div class="kc-cats">'+d.categories.map(c =>
         '<span class="kc-chip">'+esc(c.name)+'<span class="n">'+c.count+'</span></span>').join('')+'</div>';

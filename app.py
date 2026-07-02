@@ -6305,6 +6305,50 @@ def krcon_page():
     return render_template('krcon.html')
 
 
+def _krcon_keywords(q):
+    """자연어 질문 → KR-CON 단어검색용 짧은 영문 키워드 리스트(Gemini)."""
+    if not GEMINI_API_KEY:
+        return []
+    kw = _gemini_call_json([{'text': (
+        "다음 질문을 KR-CON(영문 선급/IMO 규정 검색 DB) 단어검색용 영문 "
+        "키워드로 변환하라. 이 검색엔진은 입력한 모든 단어를 AND로 매칭해 "
+        "단어가 많으면 0건이 난다. 그러니 각 키워드는 반드시 핵심어 "
+        "2단어(최대 3단어)로 짧게, 서로 다른 각도로 4~6개 제시하라. "
+        "협약명 단독(SOLAS 등)은 피하고 실제 규정 용어를 써라. 소문자, "
+        "구두점 없이. JSON: {\"queries\": [\"ballast water\", \"ballast discharge\", ...]}\n\n"
+        f"질문: {q}")}], model=_model_for('krcon'))
+    out = (kw.get('queries') if isinstance(kw, dict) else None) or []
+    return [str(x) for x in out][:6]
+
+
+def _krcon_smart_search(q, limit=50):
+    """literal 검색 먼저(토큰0). 0건이면 Gemini 키워드추출→여러 검색 병합.
+    반환 dict에 rephrased(사용된 키워드 리스트) 포함(자연어 폴백 표시용)."""
+    import krcon_client
+    sr = krcon_client.search(q, limit=limit)
+    if not isinstance(sr, dict):
+        return {'error': 'KRCON_UNAVAILABLE', 'query': q}
+    if sr.get('error') or sr.get('results'):
+        return sr
+    # 0건 + 에러없음 → 자연어로 보고 키워드 재검색
+    kws = _krcon_keywords(q)
+    if not kws:
+        return sr  # 키워드 못 뽑으면 원래 0건 결과 그대로
+    merged, seen, cats = [], set(), []
+    for kq in kws:
+        if len(merged) >= limit:
+            break
+        s2 = krcon_client.search(kq, limit=min(limit, 8))
+        if not isinstance(s2, dict):
+            continue
+        for r in s2.get('results', []):
+            if r['id'] not in seen:
+                seen.add(r['id'])
+                merged.append(r)
+    return {'query': q, 'rephrased': kws, 'categories': cats,
+            'total': len(merged), 'returned': len(merged), 'results': merged}
+
+
 @app.route('/krcon/search')
 @login_required
 def krcon_search():
@@ -6315,8 +6359,11 @@ def krcon_search():
         limit = min(int(request.args.get('limit', 50)), 100)
     except ValueError:
         limit = 50
-    import krcon_client
-    return jsonify(krcon_client.search(q, limit=limit))
+    # smart=0 이면 순수 literal 검색(토큰0 보장). 기본은 스마트(자연어 폴백).
+    if request.args.get('smart') == '0':
+        import krcon_client
+        return jsonify(krcon_client.search(q, limit=limit))
+    return jsonify(_krcon_smart_search(q, limit=limit))
 
 
 @app.route('/krcon/view/<doc_id>')
@@ -6361,19 +6408,11 @@ def krcon_ai():
                             'detail': sr.get('detail', '')}), 502
         results = sr.get('results', [])
         if not results:
-            kw = _gemini_call_json([{'text': (
-                "다음 질문을 KR-CON(영문 선급/IMO 규정 검색 DB) 단어검색용 영문 "
-                "키워드로 변환하라. 이 검색엔진은 입력한 모든 단어를 AND로 매칭해 "
-                "단어가 많으면 0건이 나온다. 그러니 각 키워드는 반드시 핵심어 "
-                "2단어(최대 3단어)로 짧게, 서로 다른 각도로 4~6개 제시하라. "
-                "협약명 단독(SOLAS 등)은 피하고 실제 규정 용어를 써라. 소문자, "
-                "구두점 없이. JSON: {\"queries\": [\"release gear\", \"on-load release\", ...]}\n\n"
-                f"질문: {q}")}], model=_model_for('krcon'))
             seen = set()
-            for kq in ((kw.get('queries') if isinstance(kw, dict) else None) or [])[:6]:
+            for kq in _krcon_keywords(q):
                 if len(results) >= 6:
                     break
-                sr2 = krcon_client.search(str(kq), limit=4)
+                sr2 = krcon_client.search(kq, limit=4)
                 for r in (sr2.get('results', []) if isinstance(sr2, dict) else []):
                     if r['id'] not in seen:
                         seen.add(r['id'])
