@@ -91,10 +91,20 @@ def _login(op, cj):
     uid, pwd = _creds()
     if not uid or not pwd:
         return False
-    lock_path = COOKIE_PATH + '.lock'
-    lf = open(lock_path, 'w')
+    # flock으로 동시 재로그인 직렬화. 단 락파일을 못 열어도(권한 등) 로그인
+    # 자체는 진행(직렬화만 포기) — 500 방지.
+    lf = None
     try:
+        lf = open(COOKIE_PATH + '.lock', 'w')
         fcntl.flock(lf, fcntl.LOCK_EX)
+    except Exception:
+        if lf is not None:
+            try:
+                lf.close()
+            except Exception:
+                pass
+            lf = None
+    try:
         # 락 대기 중 다른 프로세스가 이미 로그인했을 수 있음 → 쿠키 재로드
         try:
             cj.load(ignore_discard=True, ignore_expires=True)
@@ -118,10 +128,11 @@ def _login(op, cj):
             _save_cookies(cj)
         return ok
     finally:
-        try:
-            fcntl.flock(lf, fcntl.LOCK_UN)
-        finally:
-            lf.close()
+        if lf is not None:
+            try:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+            finally:
+                lf.close()
 
 
 def _looks_logged_out(h):
