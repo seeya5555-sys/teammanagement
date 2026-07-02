@@ -6362,12 +6362,17 @@ def krcon_ai():
         results = sr.get('results', [])
         if not results:
             kw = _gemini_call_json([{'text': (
-                "다음 질문을 KR-CON(영문 선급/IMO 규정 검색 DB) 단어검색용 "
-                "간결한 영문 키워드 구 1~3개로 변환하라. 협약명 단독(SOLAS 등) 말고 "
-                "실제 규정 용어를 써라. JSON: {\"queries\": [\"...\", \"...\"]}\n\n"
+                "다음 질문을 KR-CON(영문 선급/IMO 규정 검색 DB) 단어검색용 영문 "
+                "키워드로 변환하라. 이 검색엔진은 입력한 모든 단어를 AND로 매칭해 "
+                "단어가 많으면 0건이 나온다. 그러니 각 키워드는 반드시 핵심어 "
+                "2단어(최대 3단어)로 짧게, 서로 다른 각도로 4~6개 제시하라. "
+                "협약명 단독(SOLAS 등)은 피하고 실제 규정 용어를 써라. 소문자, "
+                "구두점 없이. JSON: {\"queries\": [\"release gear\", \"on-load release\", ...]}\n\n"
                 f"질문: {q}")}], model=_model_for('krcon'))
             seen = set()
-            for kq in ((kw.get('queries') if isinstance(kw, dict) else None) or [])[:3]:
+            for kq in ((kw.get('queries') if isinstance(kw, dict) else None) or [])[:6]:
+                if len(results) >= 6:
+                    break
                 sr2 = krcon_client.search(str(kq), limit=4)
                 for r in (sr2.get('results', []) if isinstance(sr2, dict) else []):
                     if r['id'] not in seen:
