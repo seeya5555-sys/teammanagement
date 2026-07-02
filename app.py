@@ -6321,44 +6321,49 @@ def _krcon_keywords(q):
     return [str(x) for x in out][:6]
 
 
-def _krcon_multi_search(queries, per_limit=6, cap=20):
-    """여러 키워드를 KR-CON에 병렬 검색(회당 7~9초라 순차는 느림) 후
-    쿼리 순서 유지하며 dedup 병합."""
+def _krcon_multi_search(queries, per_limit=8, cap=20, target=8):
+    """여러 키워드를 KR-CON에 순차 검색 후 dedup 병합.
+    ⚠️단일세션 계정이라 동시요청=세션킥 폭풍 → 반드시 순차. 대신 결과가
+    target개 이상 모이면 조기 종료(KR-CON 회당 7~9초라 호출수 최소화)."""
     import krcon_client
-    from concurrent.futures import ThreadPoolExecutor
-    queries = [q for q in queries if q][:6]
-    if not queries:
-        return []
-    with ThreadPoolExecutor(max_workers=min(5, len(queries))) as ex:
-        per = list(ex.map(lambda kq: krcon_client.search(kq, limit=per_limit),
-                          queries))
     merged, seen = [], set()
-    for s2 in per:
-        if not isinstance(s2, dict):
-            continue
-        for r in s2.get('results', []):
-            if r['id'] not in seen:
-                seen.add(r['id'])
-                merged.append(r)
-                if len(merged) >= cap:
-                    return merged
+    for kq in [q for q in queries if q][:4]:
+        s2 = krcon_client.search(kq, limit=per_limit)
+        if isinstance(s2, dict):
+            for r in s2.get('results', []):
+                if r['id'] not in seen:
+                    seen.add(r['id'])
+                    merged.append(r)
+                    if len(merged) >= cap:
+                        return merged
+        if len(merged) >= target:
+            break
     return merged
 
 
+def _krcon_looks_nl(q):
+    """자연어/한글 질문이면 True — literal 검색이 어차피 0건일 가능성이 커
+    그 7~9초 낭비를 건너뛰고 바로 키워드추출로 가기 위함."""
+    if re.search(r'[가-힣]', q):
+        return True
+    return len(q.split()) > 3
+
+
 def _krcon_smart_search(q, limit=50):
-    """literal 검색 먼저(토큰0). 0건이면 Gemini 키워드추출→병렬 검색 병합.
-    반환 dict에 rephrased(사용된 키워드 리스트) 포함(자연어 폴백 표시용)."""
+    """literal 검색(토큰0) 먼저. 단 한글/긴 질문은 건너뛰고 바로 Gemini
+    키워드추출→순차 검색. 반환 dict에 rephrased(사용 키워드) 포함."""
     import krcon_client
-    sr = krcon_client.search(q, limit=limit)
-    if not isinstance(sr, dict):
-        return {'error': 'KRCON_UNAVAILABLE', 'query': q}
-    if sr.get('error') or sr.get('results'):
-        return sr
-    # 0건 + 에러없음 → 자연어로 보고 키워드 재검색(병렬)
+    if not _krcon_looks_nl(q):
+        sr = krcon_client.search(q, limit=limit)
+        if not isinstance(sr, dict):
+            return {'error': 'KRCON_UNAVAILABLE', 'query': q}
+        if sr.get('error') or sr.get('results'):
+            return sr
+    # 자연어이거나 literal 0건 → 키워드 추출 후 검색
     kws = _krcon_keywords(q)
     if not kws:
-        return sr  # 키워드 못 뽑으면 원래 0건 결과 그대로
-    merged = _krcon_multi_search(kws, per_limit=6, cap=min(limit, 20))
+        return krcon_client.search(q, limit=limit)  # 폴백: 원문 그대로
+    merged = _krcon_multi_search(kws, per_limit=8, cap=min(limit, 20), target=8)
     return {'query': q, 'rephrased': kws, 'categories': [],
             'total': len(merged), 'returned': len(merged), 'results': merged}
 
