@@ -6321,8 +6321,32 @@ def _krcon_keywords(q):
     return [str(x) for x in out][:6]
 
 
+def _krcon_multi_search(queries, per_limit=6, cap=20):
+    """여러 키워드를 KR-CON에 병렬 검색(회당 7~9초라 순차는 느림) 후
+    쿼리 순서 유지하며 dedup 병합."""
+    import krcon_client
+    from concurrent.futures import ThreadPoolExecutor
+    queries = [q for q in queries if q][:6]
+    if not queries:
+        return []
+    with ThreadPoolExecutor(max_workers=min(5, len(queries))) as ex:
+        per = list(ex.map(lambda kq: krcon_client.search(kq, limit=per_limit),
+                          queries))
+    merged, seen = [], set()
+    for s2 in per:
+        if not isinstance(s2, dict):
+            continue
+        for r in s2.get('results', []):
+            if r['id'] not in seen:
+                seen.add(r['id'])
+                merged.append(r)
+                if len(merged) >= cap:
+                    return merged
+    return merged
+
+
 def _krcon_smart_search(q, limit=50):
-    """literal 검색 먼저(토큰0). 0건이면 Gemini 키워드추출→여러 검색 병합.
+    """literal 검색 먼저(토큰0). 0건이면 Gemini 키워드추출→병렬 검색 병합.
     반환 dict에 rephrased(사용된 키워드 리스트) 포함(자연어 폴백 표시용)."""
     import krcon_client
     sr = krcon_client.search(q, limit=limit)
@@ -6330,22 +6354,12 @@ def _krcon_smart_search(q, limit=50):
         return {'error': 'KRCON_UNAVAILABLE', 'query': q}
     if sr.get('error') or sr.get('results'):
         return sr
-    # 0건 + 에러없음 → 자연어로 보고 키워드 재검색
+    # 0건 + 에러없음 → 자연어로 보고 키워드 재검색(병렬)
     kws = _krcon_keywords(q)
     if not kws:
         return sr  # 키워드 못 뽑으면 원래 0건 결과 그대로
-    merged, seen, cats = [], set(), []
-    for kq in kws:
-        if len(merged) >= limit:
-            break
-        s2 = krcon_client.search(kq, limit=min(limit, 8))
-        if not isinstance(s2, dict):
-            continue
-        for r in s2.get('results', []):
-            if r['id'] not in seen:
-                seen.add(r['id'])
-                merged.append(r)
-    return {'query': q, 'rephrased': kws, 'categories': cats,
+    merged = _krcon_multi_search(kws, per_limit=6, cap=min(limit, 20))
+    return {'query': q, 'rephrased': kws, 'categories': [],
             'total': len(merged), 'returned': len(merged), 'results': merged}
 
 
@@ -6408,15 +6422,7 @@ def krcon_ai():
                             'detail': sr.get('detail', '')}), 502
         results = sr.get('results', [])
         if not results:
-            seen = set()
-            for kq in _krcon_keywords(q):
-                if len(results) >= 6:
-                    break
-                sr2 = krcon_client.search(kq, limit=4)
-                for r in (sr2.get('results', []) if isinstance(sr2, dict) else []):
-                    if r['id'] not in seen:
-                        seen.add(r['id'])
-                        results.append(r)
+            results = _krcon_multi_search(_krcon_keywords(q), per_limit=4, cap=6)
         ids = [r['id'] for r in results]
     # id는 숫자만 허용(view 라우트와 동일 — injection 차단)
     ids = [str(i) for i in ids if str(i).isdigit()][:5]

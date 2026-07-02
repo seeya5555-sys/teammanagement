@@ -33,7 +33,6 @@
       <nav class="main-nav">
         {{ nlink('dashboard', '📊 대시보드') }}
         {{ nlink('index', '📋 Daily 업무관리') }}
-        {{ nlink('krcon_page', '📖 룰 검색') }}
 
         <div class="nav-group {% if request.endpoint in auto_eps %}active{% endif %}">
           <button type="button" class="nav-trigger">🤖 자동화 <span class="caret-sm">▾</span></button>
@@ -74,6 +73,7 @@
           </div>
         </div>
 
+        {{ nlink('krcon_page', '📖 룰 검색') }}
         {{ nlink('calendar_page', '📅 Calendar') }}
         {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
       </nav>
@@ -130,7 +130,6 @@
     <nav class="mm-panel">
       {{ nlink('dashboard', '📊 대시보드') }}
       {{ nlink('index', '📋 Daily 업무관리') }}
-      {{ nlink('krcon_page', '📖 룰 검색') }}
       <div class="mm-section">🤖 자동화</div>
       {% if session.role == 'admin' %}
       {{ nlink('automation_page', '자동화 허브') }}
@@ -151,6 +150,7 @@
       {{ nlink('reqgen_page', '도크 자재/수리') }}
       {{ nlink('dock_procure_page', 'Dock 발주현황') }}
       <div class="mm-section"></div>
+      {{ nlink('krcon_page', '📖 룰 검색') }}
       {{ nlink('calendar_page', '📅 Calendar') }}
       {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
     </nav>
