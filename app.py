@@ -428,6 +428,22 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_draft_status ON invoice_draft(status)")
 
+        # 자동화 헬스 보드(하트비트) — 맥측 health_push.py 가 각 러너 신선도를 주기 POST.
+        #   러너당 최근 30행만 유지(prune). 읽기=/api/automation/health, 페이지=/health(admin).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS automation_health (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                runner_key  TEXT NOT NULL,                        -- 러너 기술키(예: fundreq-auto)
+                status      TEXT NOT NULL,                        -- ok/warn/fail/unknown
+                note        TEXT,                                 -- 한글 상태메모(예: 32시간 전 성공)
+                ran_at      TEXT,                                 -- 마지막 성공/관측 실행 시각(ISO)
+                next_run    TEXT,                                 -- 다음 예정 실행(있으면)
+                reported_at TEXT NOT NULL                         -- 이 관측을 적재한 시각(ISO)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_automation_health_key "
+                     "ON automation_health(runner_key, reported_at)")
+
         # SVMS expense code 마스터(PKG_CO.SP_GET_EXP 357개) — 인보이스 라인 EXP_CD 편집 검색용. 맥이 ext로 적재.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS expense_code (
@@ -951,6 +967,141 @@ def _dashboard_ctx():
     return dict(stats=stats, events=events, events_count=events_count,
                 today_events=today_events, today_count=today_count, is_admin=is_admin,
                 scoped=scoped, sup_name=sup_name)
+
+
+@app.route('/api/dashboard/cockpit')
+@login_required
+def api_dashboard_cockpit():
+    """대시보드 '오늘의 조종석' 스트립 데이터.
+    · due: 45일 내 마감 임박(class_status_items due_date + calendar_events) 병합·정렬 상위6.
+    · approvals: 사람 판단대기 큐 카운트(FundReq/AOR/Invoice pending + WF1 mail issue pending) — admin 전용 큐.
+    · automation: automation_health 최신-러너 요약 + worst4.
+    담당선박 스코프는 due 에만 적용(_dashboard_ctx 와 동일 vin 패턴). 큐는 전사(admin)."""
+    today = date.today()
+    today_s = today.isoformat()
+    horizon = (today + timedelta(days=45)).isoformat()
+    is_admin = (session.get('role') == 'admin')
+
+    sup_id = session.get('supervisor_id')
+    scoped = bool(sup_id)
+    vessel_ids = []
+    if scoped:
+        vessel_ids = [r['vessel_id'] for r in
+                      query("SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?", (sup_id,))]
+
+    def vin(col):
+        if not scoped:
+            return ("1=1", [])
+        if not vessel_ids:
+            return ("0=1", [])
+        return (f"{col} IN ({','.join('?' * len(vessel_ids))})", list(vessel_ids))
+
+    def _days_left(iso_d):
+        try:
+            return (date.fromisoformat(iso_d[:10]) - today).days
+        except (ValueError, TypeError):
+            return None
+
+    # ── due: (1) class_status_items 마감일 ──
+    due = []
+    cvf, cvp = vin("cs.vessel_id")
+    ci = query(
+        "SELECT i.due_date, i.description, v.name AS vessel "
+        "FROM class_status_items i JOIN class_status cs ON cs.id=i.cs_id "
+        "LEFT JOIN vessels v ON v.id=cs.vessel_id "
+        "WHERE i.due_date IS NOT NULL AND i.due_date != '' "
+        f"AND i.due_date >= ? AND i.due_date <= ? AND {cvf}",
+        (today_s, horizon, *cvp))
+    for r in ci:
+        dl = _days_left(r['due_date'])
+        if dl is None:
+            continue
+        title = (r['description'] or '선급/기국 지적').strip()
+        if len(title) > 60:
+            title = title[:59] + '…'
+        due.append({'days_left': dl, 'vessel': r['vessel'] or '', 'title': title, 'source': 'class'})
+
+    # ── due: (2) calendar_events 45일 내(담당선박/본인/공용) ──
+    if scoped:
+        evf, evp = vin("vessel_id")
+        ce = query(
+            "SELECT ce.start_date, ce.title, v.name AS vessel FROM calendar_events ce "
+            "LEFT JOIN vessels v ON v.id=ce.vessel_id "
+            "WHERE ce.start_date >= ? AND ce.start_date <= ? "
+            f"AND (ce.supervisor_id=? OR ce.supervisor_id IS NULL OR {evf})",
+            (today_s, horizon, sup_id, *evp))
+    else:
+        ce = query(
+            "SELECT ce.start_date, ce.title, v.name AS vessel FROM calendar_events ce "
+            "LEFT JOIN vessels v ON v.id=ce.vessel_id "
+            "WHERE ce.start_date >= ? AND ce.start_date <= ?",
+            (today_s, horizon))
+    for r in ce:
+        dl = _days_left(r['start_date'])
+        if dl is None:
+            continue
+        due.append({'days_left': dl, 'vessel': r['vessel'] or '',
+                    'title': (r['title'] or '일정').strip(), 'source': 'calendar'})
+
+    due.sort(key=lambda x: x['days_left'])
+    due = due[:6]
+
+    # ── approvals: 사람 판단대기 큐(전사, admin 큐) ──
+    approvals = {'fundreq': 0, 'aor': 0, 'invoice': 0, 'wf1': 0, 'oldest': None}
+    if is_admin:
+        approvals['fundreq'] = (query("SELECT COUNT(*) c FROM fundreq_draft WHERE status='pending'",
+                                      one=True) or {'c': 0})['c']
+        approvals['aor'] = (query("SELECT COUNT(*) c FROM aor_draft WHERE status='pending'",
+                                  one=True) or {'c': 0})['c']
+        approvals['invoice'] = (query("SELECT COUNT(*) c FROM invoice_draft WHERE status='pending'",
+                                      one=True) or {'c': 0})['c']
+        approvals['wf1'] = (query("SELECT COUNT(*) c FROM mail_card "
+                                  "WHERE card_status='active' AND issue_status='pending'",
+                                  one=True) or {'c': 0})['c']
+        # oldest pending — 4개 큐 중 가장 오래된 created_at
+        oldest = None
+        for lbl, sql in (
+            ('비용청구', "SELECT MIN(created_at) m FROM fundreq_draft WHERE status='pending'"),
+            ('AOR',      "SELECT MIN(created_at) m FROM aor_draft WHERE status='pending'"),
+            ('인보이스', "SELECT MIN(created_at) m FROM invoice_draft WHERE status='pending'"),
+            ('WF1 메일', "SELECT MIN(created_at) m FROM mail_card "
+                          "WHERE card_status='active' AND issue_status='pending'"),
+        ):
+            row = query(sql, one=True)
+            m = row['m'] if row else None
+            if not m:
+                continue
+            dl = _days_left(m)
+            age = (0 - dl) if dl is not None else 0
+            if oldest is None or age > oldest['days']:
+                oldest = {'label': lbl, 'days': age}
+        approvals['oldest'] = oldest
+
+    # ── automation: 최신-러너 요약 + worst4 ──
+    runners, counts = _automation_health_summary()
+
+    def _ago(iso_d):
+        if not iso_d:
+            return None
+        try:
+            delta = datetime.now() - datetime.fromisoformat(iso_d)
+        except (ValueError, TypeError):
+            return None
+        h = delta.total_seconds() / 3600.0
+        if h < 1:
+            return '방금'
+        if h < 48:
+            return f'{int(round(h))}시간 전'
+        return f'{int(round(h / 24))}일 전'
+
+    worst = [{'label': r['label'], 'status': r['status'],
+              'ago': _ago(r['ran_at'] or r['reported_at'])}
+             for r in runners if r['status'] in ('fail', 'warn')][:4]
+    automation = {'ok': counts['ok'], 'warn': counts['warn'], 'fail': counts['fail'],
+                  'total': counts['total'], 'worst': worst}
+
+    return jsonify({'due': due, 'approvals': approvals, 'automation': automation,
+                    'is_admin': is_admin})
 
 
 @app.route('/')
@@ -6039,6 +6190,111 @@ def api_ext_key_regen():
     key = secrets.token_hex(24)
     execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)", (key,))
     return jsonify({'api_key': key})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  자동화 헬스 보드 (하트비트) — 맥측 health_push.py 가 POST, admin 이 /health 로 조회
+# ═════════════════════════════════════════════════════════════════
+# 러너 기술키 → (한글 표시명, 돈경로 여부). 미등록 키는 raw key 그대로 표시.
+AUTOMATION_LABELS = {
+    'fundreq-auto':    ('비용청구 자동상신',      True),
+    'jeonja-auto':     ('전자결재 자동상신',      True),
+    'soa-approve':     ('SOA 주말 자동승인',      True),
+    'invoice-auto':    ('인보이스 자동처리',      True),
+    'aor-prep':        ('AOR 준비 카드',          False),
+    'dock-sync':       ('입거 발주 SVMS 동기화',  False),
+    'fleet-map':       ('선박 위치지도 갱신',      False),
+    'fleet-map-crawl': ('선위 AIS 수집',          False),
+    'cls-push':        ('선급 검사현황 동기화',    False),
+    'mail-brief':      ('아침 메일 브리핑',        False),
+    'shipwiki-ingest': ('선박 위키 수집',          False),
+    'trmt-summary':    ('현안 요약 생성',          False),
+    'money-watch':     ('돈경로 감시견',          False),
+    'git-backup':      ('작업 백업',              False),
+    'jeonja-verify':   ('전자결재 검증',          False),
+    'wfmail':          ('메일→현안 카드 수집',     False),
+    'logrotate':       ('로그 정리',              False),
+}
+# status 정렬 우선순위(fail 먼저, 그다음 warn, ok, unknown)
+_HEALTH_ORDER = {'fail': 0, 'warn': 1, 'ok': 2, 'unknown': 3}
+
+
+def _automation_health_summary():
+    """러너별 최신 관측 + 최근 14개 히스토리(oldest→newest)를 조립.
+    반환: (runners[list], counts[dict]). Feature1 read 와 Feature2 cockpit 이 공유."""
+    rows = query("SELECT id, runner_key, status, note, ran_at, next_run, reported_at "
+                 "FROM automation_health ORDER BY runner_key, reported_at, id")
+    by_key = {}
+    for r in rows:
+        by_key.setdefault(r['runner_key'], []).append(r)
+
+    runners = []
+    counts = {'ok': 0, 'warn': 0, 'fail': 0, 'unknown': 0, 'total': 0}
+    for key, obs in by_key.items():
+        latest = obs[-1]
+        status = latest['status'] if latest['status'] in _HEALTH_ORDER else 'unknown'
+        label, money = AUTOMATION_LABELS.get(key, (key, False))
+        history = [(o['status'] if o['status'] in _HEALTH_ORDER else 'unknown')
+                   for o in obs[-14:]]
+        runners.append({
+            'key': key, 'label': label, 'money': money,
+            'status': status, 'note': latest['note'],
+            'ran_at': latest['ran_at'], 'next_run': latest['next_run'],
+            'reported_at': latest['reported_at'], 'history': history,
+        })
+        counts[status] = counts.get(status, 0) + 1
+        counts['total'] += 1
+
+    # fail → warn → ok → unknown, 동급이면 돈경로 먼저, 그다음 라벨
+    runners.sort(key=lambda x: (_HEALTH_ORDER.get(x['status'], 3),
+                                0 if x['money'] else 1, x['label']))
+    return runners, counts
+
+
+@app.route('/api/ext/automation/health', methods=['POST'])
+@api_key_required
+def api_ext_automation_health():
+    """맥측 하트비트 ingest. body: {"runners":[{key,status,ran_at,note,next_run}]}.
+    러너당 최근 30행만 유지(오래된 행 prune)."""
+    d = request.get_json(silent=True) or {}
+    runners = d.get('runners') or []
+    now = datetime.now().isoformat(timespec='seconds')
+    count = 0
+    touched = set()
+    for it in runners:
+        key = (it.get('key') or '').strip()
+        if not key:
+            continue
+        status = (it.get('status') or 'unknown').strip()
+        if status not in _HEALTH_ORDER:
+            status = 'unknown'
+        execute("INSERT INTO automation_health "
+                "(runner_key, status, note, ran_at, next_run, reported_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (key, status, it.get('note') or None, it.get('ran_at') or None,
+                 it.get('next_run') or None, now))
+        touched.add(key)
+        count += 1
+    # prune: 러너당 최신 30행 초과분 삭제
+    for key in touched:
+        execute("DELETE FROM automation_health WHERE runner_key=? AND id NOT IN "
+                "(SELECT id FROM automation_health WHERE runner_key=? "
+                " ORDER BY id DESC LIMIT 30)", (key, key))
+    return jsonify({'ok': True, 'count': count})
+
+
+@app.route('/api/automation/health', methods=['GET'])
+@admin_required
+def api_automation_health():
+    """헬스 보드 read (admin). 러너 최신상태+14 히스토리+요약 카운트."""
+    runners, counts = _automation_health_summary()
+    return jsonify({'runners': runners, 'counts': counts})
+
+
+@app.route('/health')
+@admin_required
+def health_page():
+    return render_template('health.html')
 
 
 # ---- 데이터 빌더 ----

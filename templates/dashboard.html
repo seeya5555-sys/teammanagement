@@ -109,10 +109,64 @@
   .fm-eta{font-size:11px;font-weight:600;color:var(--blue);background:var(--blue-bg);padding:2px 7px;border-radius:999px}
   .fm-btn{display:block;text-align:center;padding:10px;border-radius:9px;background:var(--blue);color:#fff;font-weight:700;font-size:13px;text-decoration:none;margin-top:2px}
   .fm-empty{padding:40px;text-align:center;color:var(--text-tertiary)}
+  /* ── 오늘의 조종석 스트립 ── */
+  .ckpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:0 -4px 14px}
+  .ckpt-card{background:var(--surface);border:1px solid var(--border-subtle);border-radius:14px;padding:13px 15px}
+  .ckpt-h{font-size:13px;font-weight:700;color:var(--text-primary);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .ckpt-hlink{margin-left:auto;font-size:11px;font-weight:600;color:var(--blue);text-decoration:none}
+  .ckpt-hlink:hover{text-decoration:underline}
+  /* DUE */
+  .ck-due{display:flex;align-items:center;gap:9px;padding:5px 0;border-top:1px solid var(--border-subtle);font-size:12.5px}
+  .ck-due:first-child{border-top:none}
+  .ck-dchip{flex:0 0 auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;min-width:42px;text-align:center}
+  .ck-dchip.red{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
+  .ck-dchip.amber{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-border)}
+  .ck-dchip.blue{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)}
+  .ck-dtxt{flex:1;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ck-dtxt b{font-weight:700}
+  .ck-dsrc{flex:0 0 auto;font-size:10px;color:var(--text-tertiary);background:var(--surface-2);padding:2px 7px;border-radius:999px}
+  /* approvals */
+  .ck-boxes{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .ck-box{display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 4px;border-radius:10px;
+          background:var(--surface-2);border:1px solid var(--border-subtle);text-decoration:none;color:inherit}
+  .ck-box:hover{border-color:var(--border)}
+  .ck-box.hot{background:var(--amber-bg);border-color:var(--amber-border)}
+  .ck-box .bn{font-size:20px;font-weight:700;line-height:1;color:var(--text-primary)}
+  .ck-box.hot .bn{color:var(--amber)}
+  .ck-box .bl{font-size:10.5px;color:var(--text-secondary);font-weight:600}
+  .ck-oldest{margin-top:9px;font-size:11.5px;color:var(--text-secondary)}
+  .ck-oldest b{color:var(--red);font-weight:700}
+  /* automation */
+  .ck-autohd{font-size:13px;color:var(--text-secondary);margin-bottom:9px}
+  .ck-autohd b{font-size:20px;color:var(--green);font-weight:700}
+  .ck-autohd.bad b{color:var(--red)}
+  .ck-arow{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;border-top:1px solid var(--border-subtle)}
+  .ck-arow:first-child{border-top:none}
+  .ck-adot{width:9px;height:9px;border-radius:999px;flex:0 0 auto}
+  .ck-adot.warn{background:var(--amber-dot)}.ck-adot.fail{background:var(--red-strong)}
+  .ck-albl{flex:1;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ck-aago{flex:0 0 auto;font-size:10.5px;color:var(--text-tertiary)}
+  .ck-none{font-size:12px;color:var(--text-tertiary);padding:4px 0}
 </style>
 {% endblock %}
 
 {% block content %}
+{# ── 오늘의 조종석 스트립 (기존 대시보드 위 추가 블록, 데이터 없으면 각 카드 숨김) ── #}
+<div class="ckpt" id="ckpt" hidden>
+  <div class="ckpt-card" id="ckDue" hidden>
+    <div class="ckpt-h">⏰ DUE 조기경보</div>
+    <div class="ckpt-body" id="ckDueBody"></div>
+  </div>
+  <div class="ckpt-card" id="ckApp" hidden>
+    <div class="ckpt-h">✅ 내 승인 대기</div>
+    <div class="ckpt-body" id="ckAppBody"></div>
+  </div>
+  <div class="ckpt-card" id="ckAuto" hidden>
+    <div class="ckpt-h">🤖 자동화 상태 <a class="ckpt-hlink" href="{{ url_for('health_page') }}">헬스 보드 →</a></div>
+    <div class="ckpt-body" id="ckAutoBody"></div>
+  </div>
+</div>
+
 <div class="fm-wrap">
   <div class="fm-bar">
     <h1>🗺 Fleet Map</h1>
@@ -197,6 +251,77 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+/* 오늘의 조종석 스트립 — /api/dashboard/cockpit 1회 로드. 데이터 없는 카드는 숨김. */
+(function(){
+  const wrap=document.getElementById('ckpt');
+  if(!wrap) return;
+  const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const TAB={fundreq:"{{ url_for('fundreq_page') }}",aor:"{{ url_for('aor_page') }}",
+             invoice:"{{ url_for('invoice_page') }}",wf1:"{{ url_for('mail_page') }}"};
+  function dchip(d){
+    let cls='blue',lbl='D-'+d;
+    if(d<0){cls='red';lbl='D+'+(-d);}
+    else if(d<=3){cls='red';}
+    else if(d<=10){cls='amber';}
+    return '<span class="ck-dchip '+cls+'">'+lbl+'</span>';
+  }
+  const SRC={class:'선급',calendar:'일정'};
+  function renderDue(due){
+    const box=document.getElementById('ckDue');
+    if(!due||!due.length){box.hidden=true;return;}
+    document.getElementById('ckDueBody').innerHTML=due.map(x=>
+      '<div class="ck-due">'+dchip(x.days_left)
+      +'<span class="ck-dtxt">'+(x.vessel?'<b>'+esc(x.vessel)+'</b> — ':'')+esc(x.title)+'</span>'
+      +'<span class="ck-dsrc">'+(SRC[x.source]||esc(x.source))+'</span></div>').join('');
+    box.hidden=false;
+  }
+  function abox(key,label,n){
+    const hot=n>0?' hot':'';
+    return '<a class="ck-box'+hot+'" href="'+TAB[key]+'"><span class="bn">'+n+'</span><span class="bl">'+label+'</span></a>';
+  }
+  function renderApp(a){
+    const box=document.getElementById('ckApp');
+    if(!a){box.hidden=true;return;}
+    const tot=(a.fundreq||0)+(a.aor||0)+(a.invoice||0)+(a.wf1||0);
+    if(!tot && !a.oldest){box.hidden=true;return;}
+    let html='<div class="ck-boxes">'+abox('fundreq','FundReq',a.fundreq||0)
+      +abox('aor','AOR',a.aor||0)+abox('invoice','Invoice',a.invoice||0)
+      +abox('wf1','WF1',a.wf1||0)+'</div>';
+    if(a.oldest&&a.oldest.days>0)
+      html+='<div class="ck-oldest">가장 오래 대기: '+esc(a.oldest.label)+' <b>'+a.oldest.days+'일</b> 경과</div>';
+    document.getElementById('ckAppBody').innerHTML=html;
+    box.hidden=false;
+  }
+  function renderAuto(au){
+    const box=document.getElementById('ckAuto');
+    if(!au||!au.total){box.hidden=true;return;}
+    const bad=(au.fail||0)>0;
+    let html='<div class="ck-autohd'+(bad?' bad':'')+'"><b>'+(au.ok||0)+'</b> / '+au.total+' 정상'
+      +((au.warn||0)?' · 지연 '+au.warn:'')+((au.fail||0)?' · 실패 '+au.fail:'')+'</div>';
+    if(au.worst&&au.worst.length){
+      html+=au.worst.map(w=>'<div class="ck-arow"><span class="ck-adot '+esc(w.status)+'"></span>'
+        +'<span class="ck-albl">'+esc(w.label)+'</span>'
+        +'<span class="ck-aago">'+(w.ago?esc(w.ago):'')+'</span></div>').join('');
+    }else{
+      html+='<div class="ck-none">문제 있는 러너 없음 ✓</div>';
+    }
+    document.getElementById('ckAutoBody').innerHTML=html;
+    box.hidden=false;
+  }
+  fetch('/api/dashboard/cockpit',{headers:{'Accept':'application/json'}})
+    .then(r=>r.ok?r.json():null)
+    .then(j=>{
+      if(!j) return;
+      renderDue(j.due);
+      renderApp(j.is_admin?j.approvals:null);
+      renderAuto(j.automation);
+      // 하나라도 보이면 래퍼 노출
+      const any=['ckDue','ckApp','ckAuto'].some(id=>!document.getElementById(id).hidden);
+      wrap.hidden=!any;
+    }).catch(()=>{});
+})();
+</script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.js"></script>
 <script>

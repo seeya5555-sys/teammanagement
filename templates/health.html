@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}자동화 상태 · TRMT3{% endblock %}
+
+{% block head %}
+<style>
+  .hb-wrap{max-width:1180px;margin:0 auto}
+  .hb-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 14px}
+  .hb-head h1{font-size:19px;margin:0;font-weight:700;color:var(--text-primary)}
+  .hb-spacer{flex:1}
+  .hb-updated{font-size:11.5px;color:var(--text-tertiary)}
+  /* 요약 pill */
+  .hb-pills{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .hb-pill{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border-subtle);
+           border-radius:12px;padding:9px 16px;min-width:96px}
+  .hb-pill .pn{font-size:22px;font-weight:700;line-height:1;color:var(--text-primary)}
+  .hb-pill .pl{font-size:11.5px;color:var(--text-secondary);font-weight:600}
+  .hb-pill.ok   .pn{color:var(--green)}
+  .hb-pill.warn .pn{color:var(--amber)}
+  .hb-pill.fail .pn{color:var(--red)}
+  /* 카드 그리드 */
+  .hb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .hb-card{background:var(--surface);border:1px solid var(--border-subtle);border-radius:14px;
+           padding:14px 15px 13px;position:relative}
+  .hb-card.st-warn{border-color:var(--amber-border);background:var(--amber-bg)}
+  .hb-card.st-fail{border-color:var(--red-border);background:var(--red-bg)}
+  .hb-ctop{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+  .hb-dot{width:11px;height:11px;border-radius:999px;flex:0 0 auto}
+  .hb-dot.ok{background:var(--green-border)}
+  .hb-dot.warn{background:var(--amber-dot)}
+  .hb-dot.fail{background:var(--red-strong)}
+  .hb-dot.unknown{background:var(--gray-dot)}
+  .hb-name{font-size:15px;font-weight:700;color:var(--text-primary);line-height:1.25}
+  .hb-key{font-size:10px;color:var(--text-tertiary);font-family:monospace}
+  .hb-money{font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:999px;
+            background:var(--red-bg);color:var(--red);border:1px solid var(--red-border);white-space:nowrap}
+  .hb-card.st-fail .hb-money,.hb-card.st-warn .hb-money{background:var(--surface)}
+  .hb-meta{font-size:12px;color:var(--text-secondary);line-height:1.65;margin:6px 0 9px}
+  .hb-meta .k{color:var(--text-tertiary)}
+  .hb-note{color:var(--text-primary)}
+  /* 14칸 히스토리 바 */
+  .hb-hist{display:flex;gap:3px}
+  .hb-hist i{flex:1;height:9px;border-radius:2px;background:var(--surface-3)}
+  .hb-hist i.ok{background:var(--green-border)}
+  .hb-hist i.warn{background:var(--amber-dot)}
+  .hb-hist i.fail{background:var(--red-strong)}
+  .hb-hist i.unknown{background:var(--gray-dot);opacity:.5}
+  .hb-foot{margin-top:18px;font-size:11.5px;color:var(--text-tertiary);line-height:1.7;
+           border-top:1px solid var(--border-subtle);padding-top:12px}
+  .hb-empty{padding:40px 12px;text-align:center;color:var(--text-tertiary);font-size:13px}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hb-wrap">
+  <div class="hb-head">
+    <h1>🤖 자동화 상태</h1>
+    <div class="hb-spacer"></div>
+    <span class="hb-updated" id="hbUpdated">로딩…</span>
+  </div>
+
+  <div class="hb-pills" id="hbPills"></div>
+  <div class="hb-grid" id="hbGrid">
+    <div class="hb-empty">불러오는 중…</div>
+  </div>
+
+  <div class="hb-foot">
+    데이터 소스: 맥미니의 <code>health_push.py</code> 하트비트가 30분마다 각 러너의 로그·산출물 신선도를 관측해 보고합니다.
+    상태는 예상 실행주기 대비 마지막 실행 경과시간으로 판정합니다 —
+    정상(주기 이내) · 지연(warn) · 실패(fail, 오래 침묵) · 미상(unknown, 로그 미발견). 화면은 60초마다 자동 갱신됩니다.
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const grid=document.getElementById('hbGrid');
+  const pills=document.getElementById('hbPills');
+  const upd=document.getElementById('hbUpdated');
+  const STLABEL={ok:'정상',warn:'지연',fail:'실패',unknown:'미상'};
+
+  function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+  function ago(iso){
+    if(!iso) return null;
+    const t=Date.parse(iso); if(isNaN(t)) return null;
+    const h=(Date.now()-t)/3.6e6;
+    if(h<1) return '방금';
+    if(h<48) return Math.round(h)+'시간 전';
+    return Math.round(h/24)+'일 전';
+  }
+  function histBar(hist){
+    const cells=[];
+    for(let i=0;i<14;i++){
+      const s=(hist&&hist[hist.length-14+i])||null;
+      cells.push('<i class="'+(s||'')+'"></i>');
+    }
+    return '<div class="hb-hist" title="최근 14회 상태(왼쪽=과거)">'+cells.join('')+'</div>';
+  }
+  function card(r){
+    const a=ago(r.ran_at);
+    let meta='';
+    meta+='<div><span class="k">마지막 성공</span> '+(a?esc(a):'<span class="k">기록 없음</span>')+'</div>';
+    if(r.note) meta+='<div class="hb-note">'+esc(r.note)+'</div>';
+    if(r.next_run){meta+='<div><span class="k">다음 실행</span> '+esc(r.next_run)+'</div>';}
+    return '<div class="hb-card st-'+esc(r.status)+'">'
+      +'<div class="hb-ctop">'
+        +'<span class="hb-dot '+esc(r.status)+'"></span>'
+        +'<span style="flex:1"><span class="hb-name">'+esc(r.label)+'</span>'
+          +' <span class="hb-key">'+esc(r.key)+'</span></span>'
+        +(r.money?'<span class="hb-money">돈경로</span>':'')
+      +'</div>'
+      +'<div class="hb-meta">'+meta+'</div>'
+      +histBar(r.history)
+    +'</div>';
+  }
+  function pill(cls,n,label){
+    return '<div class="hb-pill '+cls+'"><span class="pn">'+n+'</span><span class="pl">'+label+'</span></div>';
+  }
+  async function load(){
+    try{
+      const r=await fetch('/api/automation/health',{headers:{'Accept':'application/json'}});
+      if(!r.ok){grid.innerHTML='<div class="hb-empty">권한이 없거나 데이터를 불러올 수 없습니다.</div>';return;}
+      const j=await r.json();
+      const c=j.counts||{};
+      pills.innerHTML=
+        pill('', c.total||0, '전체')+
+        pill('ok', c.ok||0, '정상')+
+        pill('warn', c.warn||0, '지연')+
+        pill('fail', c.fail||0, '실패');
+      const rs=j.runners||[];
+      grid.innerHTML = rs.length ? rs.map(card).join('') : '<div class="hb-empty">아직 하트비트 데이터가 없습니다. 맥측 health_push.py 실행 후 표시됩니다.</div>';
+      upd.textContent='갱신: '+new Date().toLocaleTimeString('ko-KR');
+    }catch(e){
+      grid.innerHTML='<div class="hb-empty">불러오기 실패: '+esc(e.message)+'</div>';
+    }
+  }
+  load();
+  setInterval(load, 60000);
+})();
+</script>
+{% endblock %}
