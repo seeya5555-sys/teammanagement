@@ -6350,13 +6350,30 @@ def krcon_ai():
     if not GEMINI_API_KEY:
         return jsonify({'error': 'NO_API_KEY'}), 503
     import krcon_client
-    # 대상 문서: 프론트가 고른 id, 없으면 검색 상위 4건
+    # 대상 문서: 프론트가 이미 뜬 검색결과 id를 넘기면 그걸 쓰고,
+    # 없으면 질문으로 검색. 단어검색이 literal/AND라 자연어 질문은 0건이 나기
+    # 쉬워서, 직접검색이 비면 Gemini로 영문 키워드를 뽑아 재검색한다.
     if not ids:
-        sr = krcon_client.search(q, limit=4)
+        results = []
+        sr = krcon_client.search(q, limit=6)
         if isinstance(sr, dict) and sr.get('error'):
             return jsonify({'error': 'KRCON_UNAVAILABLE',
                             'detail': sr.get('detail', '')}), 502
-        ids = [r['id'] for r in sr.get('results', [])][:4]
+        results = sr.get('results', [])
+        if not results:
+            kw = _gemini_call_json([{'text': (
+                "다음 질문을 KR-CON(영문 선급/IMO 규정 검색 DB) 단어검색용 "
+                "간결한 영문 키워드 구 1~3개로 변환하라. 협약명 단독(SOLAS 등) 말고 "
+                "실제 규정 용어를 써라. JSON: {\"queries\": [\"...\", \"...\"]}\n\n"
+                f"질문: {q}")}], model=_model_for('krcon'))
+            seen = set()
+            for kq in ((kw.get('queries') if isinstance(kw, dict) else None) or [])[:3]:
+                sr2 = krcon_client.search(str(kq), limit=4)
+                for r in (sr2.get('results', []) if isinstance(sr2, dict) else []):
+                    if r['id'] not in seen:
+                        seen.add(r['id'])
+                        results.append(r)
+        ids = [r['id'] for r in results]
     # id는 숫자만 허용(view 라우트와 동일 — injection 차단)
     ids = [str(i) for i in ids if str(i).isdigit()][:5]
     if not ids:

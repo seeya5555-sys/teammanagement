@@ -132,8 +132,11 @@
     out.innerHTML = '<div class="kc-ai"><h3>🤖 AI 요약</h3><div class="ans"><span class="kc-spin"></span> Gemini가 룰 본문을 읽고 정리 중… (몇 초 걸립니다)</div></div>';
     setBusy(true);
     try{
+      // 이미 뜬 검색결과가 있으면 그 문서 id를 재사용(키워드가 이미 좋음).
+      // 없으면 q만 보내 서버가 키워드 추출→검색.
+      const ids = [...out.querySelectorAll('.kc-card')].map(c=>c.dataset.id).filter(Boolean).slice(0,5);
       const r = await fetch('/krcon/ai', {method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({q})});
+        body: JSON.stringify(ids.length ? {q, ids} : {q})});
       const d = await r.json();
       if(d.error){
         const msg = d.error==='NO_API_KEY' ? 'Gemini API 키 미설정' :
