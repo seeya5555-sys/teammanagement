@@ -7102,7 +7102,8 @@ def api_ext_aor_create():
     # dedup 조회에 hold/rejecting 포함 — 보류·리젝진행 중 prep 재적재가 동일 aor_cd 의
     # 신규 pending 을 만들면(양쪽 승인시) 이중 SVMS 상신 위험.
     ex = query("SELECT id, status FROM aor_draft WHERE aor_cd=? "
-               "AND status IN ('pending','hold','approved','submitting','submitted','rejecting') "
+               "AND status IN ('pending','hold','approved','submitting','submitted',"
+               "'rejecting','reject_submitting') "
                "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
     cm = d.get('cost_match')
     cols = dict(
@@ -7285,10 +7286,22 @@ def api_ext_aor_result(did):
 @app.route('/api/ext/aor/rejecting')
 @api_key_required
 def api_ext_aor_rejecting():
-    """맥 러너가 리젝할 rejecting 건 목록(STATUS=R 처리 + 통보메일 대상)."""
-    rows = query("SELECT id, aor_cd, reject_reason, raw_row FROM aor_draft "
-                 "WHERE status='rejecting' ORDER BY id ASC")
-    return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows]})
+    """맥 러너가 리젝할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
+    claim 후엔 관리자 approve/reset 이 409 → '리젝 실행중에 approved 로 뒤집혀
+    reject+submit 둘 다 실행' race 차단. /approved 의 submitting claim 패턴 준용.
+    ⚠️러너측 영향: 조회 즉시 락 — dry/verify 용도는 반드시 ?peek=1 로 호출할 것.
+    중단 잔류(reject_submitting)는 다음 조회에 재서빙(단일 러너 멱등 재처리)."""
+    cols = "id, aor_cd, reject_reason, raw_row"
+    if request.args.get('peek'):   # dry 검증 — 락 안 하고 조회만
+        rows = query(f"SELECT {cols} FROM aor_draft WHERE status='rejecting' ORDER BY id ASC")
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    out = [dict(r) for r in
+           query(f"SELECT {cols} FROM aor_draft WHERE status='reject_submitting' ORDER BY id ASC")]
+    for r in query(f"SELECT {cols} FROM aor_draft WHERE status='rejecting' ORDER BY id ASC"):
+        if execute_rc("UPDATE aor_draft SET status='reject_submitting' "
+                      "WHERE id=? AND status='rejecting'", (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'drafts': out})
 
 
 @app.route('/api/ext/aor/drafts/<int:did>/reject-result', methods=['POST'])
@@ -7299,8 +7312,10 @@ def api_ext_aor_reject_result(did):
     ok = bool(d.get('ok'))
     result = (d.get('result') or '')[:2000]
     new = 'rejected' if ok else 'reject_failed'
+    # reject_submitting = 조건부 claim 후 상태. 'rejecting' 도 허용(claim 도입 전 잔류분 호환).
     rc = execute_rc("UPDATE aor_draft SET status=?, submitted_at=datetime('now','localtime'), "
-                    "submit_result=? WHERE id=? AND status='rejecting'", (new, result, did))
+                    "submit_result=? WHERE id=? AND status IN ('reject_submitting','rejecting')",
+                    (new, result, did))
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
@@ -7376,7 +7391,8 @@ def api_ext_fundreq_create():
     if not opex_cd:
         return jsonify({'error': 'opex_cd required'}), 400
     ex = query("SELECT id, status FROM fundreq_draft WHERE opex_cd=? "
-               "AND status IN ('pending','approved','submitting','submitted','rejecting','rejected') "
+               "AND status IN ('pending','approved','submitting','submitted',"
+               "'rejecting','reject_submitting','rejected') "
                "ORDER BY id DESC LIMIT 1", (opex_cd,), one=True)
     cols = dict(
         vsl_cd=d.get('vsl_cd'), vsl_nm=d.get('vsl_nm'), subj=d.get('subj'),
@@ -7488,10 +7504,21 @@ def api_ext_fundreq_approved():
 @app.route('/api/ext/fundreq/rejecting')
 @api_key_required
 def api_ext_fundreq_rejecting():
-    """맥 러너가 리젝할 rejecting 건(STATUS=R + 통보메일 대상)."""
-    rows = query("SELECT id, opex_cd, vsl_cd, reject_reason, raw_row FROM fundreq_draft "
-                 "WHERE status='rejecting' ORDER BY id ASC")
-    return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows]})
+    """맥 러너가 리젝할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
+    claim 후 approve/reset 409 → reject+submit 이중실행 race 차단(/approved 패턴 준용).
+    ⚠️러너측 영향: 조회 즉시 락 — dry/verify 용도는 ?peek=1 로 호출할 것.
+    중단 잔류(reject_submitting)는 다음 조회에 재서빙(단일 러너 멱등 재처리)."""
+    cols = "id, opex_cd, vsl_cd, reject_reason, raw_row"
+    if request.args.get('peek'):   # dry 검증 — 락 안 하고 조회만
+        rows = query(f"SELECT {cols} FROM fundreq_draft WHERE status='rejecting' ORDER BY id ASC")
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    out = [dict(r) for r in
+           query(f"SELECT {cols} FROM fundreq_draft WHERE status='reject_submitting' ORDER BY id ASC")]
+    for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='rejecting' ORDER BY id ASC"):
+        if execute_rc("UPDATE fundreq_draft SET status='reject_submitting' "
+                      "WHERE id=? AND status='rejecting'", (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'drafts': out})
 
 
 @app.route('/api/ext/fundreq/drafts/<int:did>/result', methods=['POST'])
@@ -7512,8 +7539,9 @@ def api_ext_fundreq_reject_result(did):
     """리젝 결과: ok=True → rejected, else reject_failed."""
     d = request.get_json(silent=True) or {}
     ok = bool(d.get('ok'))
+    # reject_submitting = 조건부 claim 후 상태. 'rejecting' 도 허용(claim 도입 전 잔류분 호환).
     rc = execute_rc("UPDATE fundreq_draft SET status=?, done_at=datetime('now','localtime'), result=? "
-                    "WHERE id=? AND status='rejecting'",
+                    "WHERE id=? AND status IN ('reject_submitting','rejecting')",
                     ('rejected' if ok else 'reject_failed', (d.get('result') or '')[:2000], did))
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
@@ -7551,7 +7579,8 @@ def api_ext_invoice_create():
     if not inv_cd:
         return jsonify({'error': 'inv_cd required'}), 400
     ex = query("SELECT id, status FROM invoice_draft WHERE inv_cd=? "
-               "AND status IN ('pending','approved','submitting','submitted','rejecting','rejected') "
+               "AND status IN ('pending','approved','submitting','submitted',"
+               "'rejecting','reject_submitting','rejected') "
                "ORDER BY id DESC LIMIT 1", (inv_cd,), one=True)
     cols = dict(
         vsl_cd=d.get('vsl_cd'), vsl_nm=d.get('vsl_nm'),
@@ -7775,10 +7804,21 @@ def api_ext_invoice_approved():
 @app.route('/api/ext/invoice/rejecting')
 @api_key_required
 def api_ext_invoice_rejecting():
-    """맥 러너가 보류할 rejecting 건."""
-    rows = query("SELECT id, inv_cd, vsl_cd, reject_reason, raw_card FROM invoice_draft "
-                 "WHERE status='rejecting' ORDER BY id ASC")
-    return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows]})
+    """맥 러너가 보류할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
+    claim 후 approve/reset 409 → reject+confirm 이중실행 race 차단(/approved 패턴 준용).
+    ⚠️러너측 영향: 조회 즉시 락 — dry/verify 용도는 ?peek=1 로 호출할 것.
+    중단 잔류(reject_submitting)는 다음 조회에 재서빙(단일 러너 멱등 재처리)."""
+    cols = "id, inv_cd, vsl_cd, reject_reason, raw_card"
+    if request.args.get('peek'):   # dry 검증 — 락 안 하고 조회만
+        rows = query(f"SELECT {cols} FROM invoice_draft WHERE status='rejecting' ORDER BY id ASC")
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    out = [dict(r) for r in
+           query(f"SELECT {cols} FROM invoice_draft WHERE status='reject_submitting' ORDER BY id ASC")]
+    for r in query(f"SELECT {cols} FROM invoice_draft WHERE status='rejecting' ORDER BY id ASC"):
+        if execute_rc("UPDATE invoice_draft SET status='reject_submitting' "
+                      "WHERE id=? AND status='rejecting'", (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'drafts': out})
 
 
 @app.route('/api/ext/invoice/drafts/<int:did>/result', methods=['POST'])
@@ -7799,8 +7839,9 @@ def api_ext_invoice_reject_result(did):
     """리젝(보류) 결과: ok=True → rejected, else reject_failed."""
     d = request.get_json(silent=True) or {}
     ok = bool(d.get('ok'))
+    # reject_submitting = 조건부 claim 후 상태. 'rejecting' 도 허용(claim 도입 전 잔류분 호환).
     rc = execute_rc("UPDATE invoice_draft SET status=?, done_at=datetime('now','localtime'), result=? "
-                    "WHERE id=? AND status='rejecting'",
+                    "WHERE id=? AND status IN ('reject_submitting','rejecting')",
                     ('rejected' if ok else 'reject_failed', (d.get('result') or '')[:2000], did))
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 

@@ -19,7 +19,7 @@
   .st-approved{background:var(--blue-bg);color:var(--blue)}
   .st-submitting{background:var(--amber-bg);color:var(--amber)}
   .st-submitted{background:var(--green-bg);color:var(--green)}
-  .st-rejecting{background:var(--amber-bg);color:var(--amber)}
+  .st-rejecting,.st-reject_submitting{background:var(--amber-bg);color:var(--amber)}
   .st-rejected{background:var(--surface-3);color:var(--text-secondary)}
   .st-failed,.st-reject_failed{background:var(--red-bg);color:var(--red)}
   .fr-body{padding:10px 14px;font-size:13px;color:var(--text-secondary)}
@@ -97,7 +97,7 @@
   }
   function jparse(s){if(s==null)return null;if(typeof s!=='string')return s;try{return JSON.parse(s);}catch(e){return null;}}
   function card(d){
-    const dec=['approved','rejecting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
+    const dec=['approved','rejecting','reject_submitting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
     const gate=(d.gate||'').toUpperCase();
     const gateBadge=gate?`<span class="fr-badge ${gate==='PASS'?'b-pass':'b-hold'}">${gate==='PASS'?'✅PASS':'⏸HOLD'}</span>`:'';
     const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
