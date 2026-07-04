@@ -10675,27 +10675,33 @@ def _annotate_drafts_with_vessel(drafts):
         for d in drafts:
             d.setdefault('matched_vessel', None)
         return drafts
-    by_cd = {}
-    for v in vrows:
-        cd = (v['vsl_cd'] or '').strip().upper()
-        if cd:
-            by_cd.setdefault(cd, v)
-    # 내 로스터(현재 세션 감독) 선박 id 집합. 감독 미설정이면 None(=전체 로스터).
-    sup_id = session.get('supervisor_id')
-    my_ids = None
-    if sup_id:
-        my_ids = {r['vessel_id'] for r in
-                  query('SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?', (sup_id,))}
-    for d in drafts:
-        mv = None
-        cd = (d.get('vsl_cd') or '').strip().upper()
-        v = by_cd.get(cd) if cd else None
-        if v is None:
-            v = _match_vessel_by_name(d.get('vsl_nm') or d.get('vsl_cd'))
-        if v is not None:
-            in_roster = True if my_ids is None else (v['id'] in my_ids)
-            mv = {'id': v['id'], 'name': v['name'], 'in_my_roster': bool(in_roster)}
-        d['matched_vessel'] = mv
+    # 매칭 블록 전체를 방어적으로 감싼다 — supervisor_vessels 조회나 선명매칭이
+    # 어떤 이유로 예외를 던져도 목록 API(500)를 깨지 않고 표시기능만 조용히 생략.
+    try:
+        by_cd = {}
+        for v in vrows:
+            cd = (v['vsl_cd'] or '').strip().upper()
+            if cd:
+                by_cd.setdefault(cd, v)
+        # 내 로스터(현재 세션 감독) 선박 id 집합. 감독 미설정이면 None(=전체 로스터).
+        sup_id = session.get('supervisor_id')
+        my_ids = None
+        if sup_id:
+            my_ids = {r['vessel_id'] for r in
+                      query('SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?', (sup_id,))}
+        for d in drafts:
+            mv = None
+            cd = (d.get('vsl_cd') or '').strip().upper()
+            v = by_cd.get(cd) if cd else None
+            if v is None:
+                v = _match_vessel_by_name(d.get('vsl_nm') or d.get('vsl_cd'))
+            if v is not None:
+                in_roster = True if my_ids is None else (v['id'] in my_ids)
+                mv = {'id': v['id'], 'name': v['name'], 'in_my_roster': bool(in_roster)}
+            d['matched_vessel'] = mv
+    except Exception:
+        for d in drafts:
+            d.setdefault('matched_vessel', None)
     return drafts
 
 
