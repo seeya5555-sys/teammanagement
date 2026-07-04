@@ -28,6 +28,12 @@
   .aor-badge.st-reject_failed { background:var(--red-bg); color:var(--red); }
   .aor-badge.st-rejected { background:var(--surface-3); color:var(--text-secondary); }
   .aor-badge.st-hold { background:var(--purple-bg); color:var(--purple); }
+  /* P4 표시전용: 선박 soft매칭 칩 (read-only, 돈흐름 무관) */
+  .ves-chip { font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px;
+              white-space:nowrap; display:inline-block; margin-top:3px; }
+  .ves-chip.ok { background:var(--green-bg); color:var(--green); }
+  .ves-chip.other { background:var(--surface-3); color:var(--text-secondary); }
+  .ves-chip.none { background:var(--surface-2); color:var(--text-secondary); }
   .aor-body { padding:14px; display:flex; flex-direction:column; gap:10px; }
   .aor-cost { display:flex; gap:18px; align-items:center; font-size:14px;
               border-radius:8px; padding:9px 12px; flex-wrap:wrap; }
@@ -94,6 +100,14 @@
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
   const fmtAmt = (a, c) => (a == null || a === '') ? '—'
     : Number(a).toLocaleString('en-US', {maximumFractionDigits: 2}) + ' ' + (c || '');
+  // P4 표시전용: 서버가 부가한 matched_vessel → 선박 soft매칭 칩(read-only)
+  const vesselChip = d => {
+    const m = d && d.matched_vessel;
+    if (!m) return `<span class="ves-chip none" title="TRMT 로스터 미매칭(표시전용)">⚓ 미매칭</span>`;
+    const cls = m.in_my_roster ? 'ok' : 'other';
+    const t = m.in_my_roster ? '내 로스터 선박(표시전용)' : '타 로스터/미배정 선박(표시전용)';
+    return `<span class="ves-chip ${cls}" title="${esc(t)}">🔗 ${esc(m.name)}</span>`;
+  };
 
   function parseLines(raw) {
     // approval_line JSON = {recommend:"0003", lines:[{app_no,label}]} (구버전: 그냥 배열/문자열 허용)
@@ -176,6 +190,7 @@
         <div>
           <div class="aor-subj">${esc(d.vsl_nm || d.vsl_cd || '')} — ${esc(d.subj || '(제목 없음)')}</div>
           <div class="aor-meta">${esc(d.aor_cd)} · 요청 ${esc(d.req_user_nm || '?')} · draft #${d.id}</div>
+          <div>${vesselChip(d)}</div>
         </div>
         <div class="aor-badges">
           ${d.status !== 'pending' ? `<span class="aor-badge st-${esc(d.status)}">${esc(d.status)}</span>` : ''}

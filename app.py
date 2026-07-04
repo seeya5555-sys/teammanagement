@@ -7373,10 +7373,11 @@ def api_aor_list():
     _ensure_api_table()
     crew = query("SELECT v FROM api_settings WHERE k='aor_crew_submitted'", one=True)
     at = query("SELECT v FROM api_settings WHERE k='aor_stats_at'", one=True)
+    drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
     return jsonify({'count': len(rows), 'pending': pending['c'],
                     'crew_submitted': (int(crew['v']) if crew and str(crew['v']).isdigit() else None),
                     'crew_at': (at['v'] if at else None),
-                    'drafts': [dict(r) for r in rows]})
+                    'drafts': drafts})
 
 
 @app.route('/api/ext/aor/drafts', methods=['POST'])
@@ -7682,7 +7683,8 @@ def api_fundreq_list():
         rows = query("SELECT * FROM fundreq_draft ORDER BY CASE status WHEN 'pending' THEN 0 "
                      "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
     pending = query("SELECT COUNT(*) c FROM fundreq_draft WHERE status='pending'", one=True)
-    return jsonify({'drafts': [dict(r) for r in rows], 'pending': pending['c'],
+    drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
+    return jsonify({'drafts': drafts, 'pending': pending['c'],
                     'enabled': _automation_enabled()})
 
 
@@ -7880,7 +7882,8 @@ def api_invoice_list():
         rows = query("SELECT * FROM invoice_draft ORDER BY CASE status WHEN 'pending' THEN 0 "
                      "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
     pending = query("SELECT COUNT(*) c FROM invoice_draft WHERE status='pending'", one=True)
-    return jsonify({'drafts': [dict(r) for r in rows], 'pending': pending['c'],
+    drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
+    return jsonify({'drafts': drafts, 'pending': pending['c'],
                     'enabled': _automation_enabled()})
 
 
@@ -10652,6 +10655,48 @@ def _match_vessel_by_name(name):
         if n and (n in target or target in n):
             return v
     return None
+
+
+def _annotate_drafts_with_vessel(drafts):
+    """P4 표시전용(read-only): 각 draft 행에 matched_vessel:{id,name,in_my_roster} 부가.
+
+    돈 파이프라인·draft 원본·status·금액 무변경. money 테이블 write 없음(읽기시점 계산).
+    매칭 순서: vessels.vsl_cd 정확일치 우선 → 없으면 선명 정규화(_match_vessel_by_name).
+    in_my_roster = 매칭 선박이 현재 세션 감독의 supervisor_vessels 에 포함되는지
+      (supervisor_id 미설정 admin은 전체 로스터로 간주 → 매칭되면 True).
+    각 draft dict 에 'matched_vessel' 키만 추가(없으면 None). 리스트 그대로 반환.
+    """
+    if not drafts:
+        return drafts
+    try:
+        vrows = query('SELECT id, name, vsl_cd FROM vessels WHERE active=1')
+    except Exception:
+        # 조회 실패 시 표시기능만 조용히 생략 — 목록 응답 자체는 절대 깨지 않는다.
+        for d in drafts:
+            d.setdefault('matched_vessel', None)
+        return drafts
+    by_cd = {}
+    for v in vrows:
+        cd = (v['vsl_cd'] or '').strip().upper()
+        if cd:
+            by_cd.setdefault(cd, v)
+    # 내 로스터(현재 세션 감독) 선박 id 집합. 감독 미설정이면 None(=전체 로스터).
+    sup_id = session.get('supervisor_id')
+    my_ids = None
+    if sup_id:
+        my_ids = {r['vessel_id'] for r in
+                  query('SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?', (sup_id,))}
+    for d in drafts:
+        mv = None
+        cd = (d.get('vsl_cd') or '').strip().upper()
+        v = by_cd.get(cd) if cd else None
+        if v is None:
+            v = _match_vessel_by_name(d.get('vsl_nm') or d.get('vsl_cd'))
+        if v is not None:
+            in_roster = True if my_ids is None else (v['id'] in my_ids)
+            mv = {'id': v['id'], 'name': v['name'], 'in_my_roster': bool(in_roster)}
+        d['matched_vessel'] = mv
+    return drafts
 
 
 def _class_status_prompt():

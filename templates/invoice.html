@@ -12,6 +12,11 @@
   .fr-meta{font-size:12px;color:var(--text-secondary);margin-top:3px}
   .fr-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
   .fr-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  /* P4 표시전용: 선박 soft매칭 칩(read-only) */
+  .ves-chip{font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;white-space:nowrap;display:inline-block}
+  .ves-chip.ok{background:var(--green-bg);color:var(--green)}
+  .ves-chip.other{background:var(--surface-3);color:var(--text-secondary)}
+  .ves-chip.none{background:var(--surface-2);color:var(--text-secondary)}
   .b-tp{background:var(--purple-bg);color:var(--purple)}
   .b-pass{background:var(--green-bg);color:var(--green)}
   .b-hold{background:var(--amber-bg);color:var(--amber)}
@@ -84,6 +89,14 @@
 (function(){
   const $=s=>document.querySelector(s);
   const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  // P4 표시전용: 서버 matched_vessel → 선박 soft매칭 칩(read-only)
+  const vesselChip=d=>{
+    const m=d&&d.matched_vessel;
+    if(!m) return `<span class="ves-chip none" title="TRMT 로스터 미매칭(표시전용)">⚓ 미매칭</span>`;
+    const cls=m.in_my_roster?'ok':'other';
+    const t=m.in_my_roster?'내 로스터 선박(표시전용)':'타 로스터/미배정 선박(표시전용)';
+    return `<span class="ves-chip ${cls}" title="${esc(t)}">🔗 ${esc(m.name)}</span>`;
+  };
   async function api(method,url,body){
     const o={method,headers:{}};
     if(body){o.headers['Content-type']='application/json';o.body=JSON.stringify(body);}
@@ -106,7 +119,7 @@
     const e15=Array.isArray(_fl)&&_fl.some(f=>/E15|라인합/.test(String(f)));
     const e15Badge=e15?`<span class="fr-badge b-flag">⚠️라인합≠총액</span>`:'';
     // 헤더 메타
-    let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b></span>`
+    let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b> ${vesselChip(d)}</span>`
           +`<span>벤더 <b>${esc(d.vndr_nm||d.vndr_cd||'-')}</b></span>`
           +`<span>금액 <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b>${d.vat!=null?` (VAT ${esc(d.vat)})`:''}</span>`
           +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b></span>`
