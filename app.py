@@ -631,6 +631,20 @@ def init_db(drop=False):
         if iss_cols2 and 'wiki_thread_id' not in iss_cols2:
             conn.execute('ALTER TABLE issues ADD COLUMN wiki_thread_id TEXT')
             print('  - issues.wiki_thread_id column added')
+
+        # 선박 로스터 SSOT(P0) — 시스템 간 매칭 식별자 흡수 (additive, 전부 nullable/NULL 기본)
+        #   vsl_cd: SVMS 4자 코드 / vt_vessel_id: vesseltracker 내부 id / aliases: 구선명·표기 별칭 JSON
+        ves_cols = [r[1] for r in conn.execute('PRAGMA table_info(vessels)').fetchall()]
+        if ves_cols:
+            if 'vsl_cd' not in ves_cols:
+                conn.execute('ALTER TABLE vessels ADD COLUMN vsl_cd TEXT')
+                print('  - vessels.vsl_cd column added')
+            if 'vt_vessel_id' not in ves_cols:
+                conn.execute('ALTER TABLE vessels ADD COLUMN vt_vessel_id INTEGER')
+                print('  - vessels.vt_vessel_id column added')
+            if 'aliases' not in ves_cols:
+                conn.execute('ALTER TABLE vessels ADD COLUMN aliases TEXT')
+                print('  - vessels.aliases column added')
         conn.commit()
 
         if fresh and os.path.exists(SEED_FILE):
@@ -6617,6 +6631,70 @@ def _ext_vessels(sup_id=None):
             for r in rows]
 
 
+def _ext_roster(sup_id=None, include_inactive=False):
+    """선박 로스터 SSOT(P0) — 자동화 pull 접점.
+
+    설계 §2-3: id/name/vessel_key/imo/vsl_cd/vt_vessel_id/aliases/vessel_type/
+    active/supervisors 를 반환. 기본 active=1만, include_inactive면 전체.
+    sup_id 주면 그 감독 배정선만(supervisor_vessels 조인 — _ext_vessels 준용).
+    """
+    import json as _json
+    # active 컬럼 실존 여부(soft-delete가 active=0 사용) — 없으면 1 고정.
+    vcols = [r['name'] for r in query("PRAGMA table_info(vessels)")]
+    has_active = 'active' in vcols
+    has_vsl_cd = 'vsl_cd' in vcols
+    has_vt_id = 'vt_vessel_id' in vcols
+    has_aliases = 'aliases' in vcols
+
+    where = []
+    params = []
+    if sup_id:
+        base = ("SELECT v.* FROM vessels v "
+                "JOIN supervisor_vessels sv ON sv.vessel_id = v.id "
+                "WHERE sv.supervisor_id = ?")
+        params.append(sup_id)
+        if has_active and not include_inactive:
+            base += " AND v.active = 1"
+        base += " ORDER BY v.name"
+    else:
+        base = "SELECT * FROM vessels"
+        if has_active and not include_inactive:
+            base += " WHERE active = 1"
+        base += " ORDER BY name"
+    rows = query(base, tuple(params))
+
+    # 선박별 배정 감독 id 목록 (한 번에 조회 후 매핑)
+    sup_map = {}
+    for sv in query("SELECT vessel_id, supervisor_id FROM supervisor_vessels"):
+        sup_map.setdefault(sv['vessel_id'], []).append(sv['supervisor_id'])
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        raw_aliases = d.get('aliases') if has_aliases else None
+        parsed_aliases = []
+        if raw_aliases:
+            try:
+                val = _json.loads(raw_aliases)
+                if isinstance(val, list):
+                    parsed_aliases = val
+            except (ValueError, TypeError):
+                parsed_aliases = []
+        out.append({
+            'id':           d['id'],
+            'name':         d['name'],
+            'vessel_key':   _vkey(d['name']),
+            'imo':          d.get('imo'),
+            'vsl_cd':       d.get('vsl_cd') if has_vsl_cd else None,
+            'vt_vessel_id': d.get('vt_vessel_id') if has_vt_id else None,
+            'aliases':      parsed_aliases,
+            'vessel_type':  d.get('vessel_type'),
+            'active':       d['active'] if has_active else 1,
+            'supervisors':  sorted(sup_map.get(d['id'], [])),
+        })
+    return out
+
+
 def _class_digest(coc_list, stat_list, society):
     """CLASS STATUS 요약 — 선급 / COC합 / 중복표기 번호목록 (Class Status 탭 요약 패널과 동일)."""
     norm = lambda s: ' '.join((s or '').strip().lower().split())
@@ -6795,6 +6873,24 @@ def api_ext_vessels():
     # ?supervisor=<name> / ?supervisor_id=<id> 주면 해당 감독 담당선박만 (BV Push 등 외부 동기화용)
     sup_id = _resolve_supervisor_id(request.args)
     return jsonify(_ext_vessels(sup_id))
+
+
+@app.route('/api/ext/roster')
+@api_key_required
+def api_ext_roster():
+    """선박 로스터 SSOT(P0) — 자동화 pull 접점 (설계 §2-3).
+
+    ?supervisor_id=N / ?supervisor=<name> → 해당 감독 배정선만.
+    ?include_inactive=1 → active=0 포함(삭제선 이력).
+    기본은 active=1만.
+    """
+    from datetime import datetime as _dt
+    sup_id = _resolve_supervisor_id(request.args)
+    include_inactive = request.args.get('include_inactive') in ('1', 'true', 'yes')
+    return jsonify({
+        'vessels': _ext_roster(sup_id, include_inactive),
+        'generated_at': _dt.now().isoformat(timespec='seconds'),
+    })
 
 
 @app.route('/api/ext/summaries')
