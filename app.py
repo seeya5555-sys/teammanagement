@@ -9520,8 +9520,17 @@ def api_mail_issue_register(cid):
                 VALUES (?, ?, ?, NULL, ?, ?, '[]', ?, 'Open', ?, ?)""",
                 (sid, vid, _date.today().isoformat(), item, desc, prio, 'mail:' + user, wtid))
             iid = cur.lastrowid
-        db.execute("UPDATE mail_card SET issue_status='registered', issue_id=?, "
-                   "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?", (iid, user, cid))
+        # 조건부 마킹 — double-click/동시요청 가드: 이미 registered 면 rowcount 0 →
+        # 방금 쓴 이슈 INSERT/액션 append 까지 통째로 롤백(이슈 중복 등록 차단).
+        # rejected/not_applicable 에서의 재등록은 기존처럼 허용(결정 번복 플로우 보존).
+        cur2 = db.execute("UPDATE mail_card SET issue_status='registered', issue_id=?, "
+                          "decided_at=datetime('now','localtime'), decided_by=? "
+                          "WHERE id=? AND issue_status!='registered'", (iid, user, cid))
+        if cur2.rowcount == 0:
+            db.rollback()
+            prev = query('SELECT issue_id FROM mail_card WHERE id=?', (cid,), one=True)
+            return jsonify({'error': '이미 이슈 등록된 카드', 'issue_status': 'registered',
+                            'issue_id': prev['issue_id'] if prev else None}), 409
         db.commit()
     except Exception:
         db.rollback()
