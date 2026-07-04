@@ -7303,10 +7303,11 @@ def api_ext_aor_rejecting():
     # stale 회수(claim 서빙과 별개): claim 후 6h 넘게 결과 없으면 러너 사망 간주 →
     # rejecting 으로 되돌려 아래 조건부 claim 을 다시 타게 함. 6h = automation claim 의
     # stuck-running 만료 패턴 준용(짧으면 살아있는 실행을 오판→중복실행이라 보수적으로).
-    # submitted_at NULL = claim 스탬프 도입 전(구코드) claim 잔류분 → decided_at 폴백.
+    # submitted_at NOT NULL = 신코드 claim분만 stale 회수. NULL = 배포 순간 구코드 in-flight
+    # 잔류분 → 회수 제외(진행 중 러너 결과POST로 해소, 미해소 시 admin reset). 배포 race 차단.
     execute("UPDATE aor_draft SET status='rejecting', submitted_at=NULL "
-            "WHERE status='reject_submitting' AND COALESCE(submitted_at, decided_at, created_at) "
-            "< datetime('now','localtime','-6 hours')")
+            "WHERE status='reject_submitting' AND submitted_at IS NOT NULL "
+            "AND submitted_at < datetime('now','localtime','-6 hours')")
     out = []
     for r in query(f"SELECT {cols} FROM aor_draft WHERE status='rejecting' ORDER BY id ASC"):
         if execute_rc("UPDATE aor_draft SET status='reject_submitting', "
@@ -7531,10 +7532,11 @@ def api_ext_fundreq_rejecting():
         rows = query(f"SELECT {cols} FROM fundreq_draft WHERE status='rejecting' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
     # stale 회수(claim 서빙과 별개) — automation stuck-running 6h 만료 패턴 준용.
-    # done_at NULL = claim 스탬프 도입 전(구코드) claim 잔류분 → decided_at 폴백.
+    # done_at NOT NULL = 신코드 claim분만 stale 회수. NULL = 배포 순간 구코드 in-flight
+    # 잔류분 → 회수 제외(진행 중 러너 결과POST로 해소, 미해소 시 admin reset). 배포 race 차단.
     execute("UPDATE fundreq_draft SET status='rejecting', done_at=NULL "
-            "WHERE status='reject_submitting' AND COALESCE(done_at, decided_at, created_at) "
-            "< datetime('now','localtime','-6 hours')")
+            "WHERE status='reject_submitting' AND done_at IS NOT NULL "
+            "AND done_at < datetime('now','localtime','-6 hours')")
     out = []
     for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='rejecting' ORDER BY id ASC"):
         if execute_rc("UPDATE fundreq_draft SET status='reject_submitting', "
@@ -7846,10 +7848,11 @@ def api_ext_invoice_rejecting():
         rows = query(f"SELECT {cols} FROM invoice_draft WHERE status='rejecting' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
     # stale 회수(claim 서빙과 별개) — automation stuck-running 6h 만료 패턴 준용.
-    # done_at NULL = claim 스탬프 도입 전(구코드) claim 잔류분 → decided_at 폴백.
+    # done_at NOT NULL = 신코드 claim분만 stale 회수. NULL = 배포 순간 구코드 in-flight
+    # 잔류분 → 회수 제외(진행 중 러너 결과POST로 해소, 미해소 시 admin reset). 배포 race 차단.
     execute("UPDATE invoice_draft SET status='rejecting', done_at=NULL "
-            "WHERE status='reject_submitting' AND COALESCE(done_at, decided_at, created_at) "
-            "< datetime('now','localtime','-6 hours')")
+            "WHERE status='reject_submitting' AND done_at IS NOT NULL "
+            "AND done_at < datetime('now','localtime','-6 hours')")
     out = []
     for r in query(f"SELECT {cols} FROM invoice_draft WHERE status='rejecting' ORDER BY id ASC"):
         if execute_rc("UPDATE invoice_draft SET status='reject_submitting', "
