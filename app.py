@@ -824,8 +824,8 @@ def login():
             (u['id'],))
 
     nxt = request.args.get('next') or url_for('dashboard')
-    # 외부 URL 리다이렉트 방지
-    if not nxt.startswith('/'):
+    # 외부 URL 리다이렉트 방지 ('//evil.com' 같은 프로토콜-상대 URL 포함)
+    if not nxt.startswith('/') or nxt.startswith('//'):
         nxt = url_for('dashboard')
     return redirect(nxt)
 
@@ -6178,14 +6178,14 @@ def api_key_required(fn):
 
 # ---- 내부(로그인) : 키 조회/재발급 ----
 @app.route('/api/ext/key', methods=['GET'])
-@login_required
+@admin_required
 def api_ext_key_get():
     return jsonify({'api_key': _get_api_key(),
                     'base_url': request.host_url.rstrip('/')})
 
 
 @app.route('/api/ext/key/regenerate', methods=['POST'])
-@login_required
+@admin_required
 def api_ext_key_regen():
     _ensure_api_table()
     key = secrets.token_hex(24)
@@ -10931,5 +10931,7 @@ if __name__ == '__main__':
     else:
         _auto_migrate()
 
-    # 개발 환경
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # 개발 환경 — debug(Werkzeug 콘솔=원격 코드실행 위험)는 명시적으로 켤 때만.
+    # 기본 off. 로컬 개발 시 TRMT_DEBUG=1 로 실행.
+    debug = os.environ.get('TRMT_DEBUG') == '1'
+    app.run(host='0.0.0.0', port=5000, debug=debug)

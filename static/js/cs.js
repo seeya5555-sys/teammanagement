@@ -354,7 +354,7 @@ function openCsExportMail(survey, vesselName) {
   ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:600px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
-  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 ${q}Q 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${vn}</span></div>`
+  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 ${q}Q 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${escHtml(vn)}</span></div>`
     + `<div style="font-size:12px;color:#888;margin-bottom:12px">엑셀은 자동 다운로드됨. 아래 메일 드래프트 복사 → Outlook에 붙여넣고 엑셀 첨부해 발송. defect/observation·분기·수신인 자동.</div>`;
   const dl = document.createElement('button');
   dl.textContent = '⬇ 엑셀 다시 다운로드';

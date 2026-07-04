@@ -873,18 +873,29 @@ def _render_image_block(doc, content, base_indent):
 _GLOBAL_TEMP_FILES = []
 
 
+def _contain_in_static(candidate):
+    """candidate 경로가 static 디렉터리 밖(경로순회 ../)이면 None 반환."""
+    from app import app
+    root = os.path.realpath(app.static_folder)
+    real = os.path.realpath(candidate)
+    if real == root or real.startswith(root + os.sep):
+        return real
+    return None
+
+
 def _resolve_image_path(url, filename):
-    """저장된 이미지 URL → 파일 시스템 경로"""
+    """저장된 이미지 URL → 파일 시스템 경로 (static 디렉터리 밖 접근 차단)"""
     # url 예시: /static/uploads/dock/dock-1-1234-abc.jpg
     if url and url.startswith('/static/'):
         rel = url[len('/static/'):]
         # static 디렉터리 위치 — app 모듈에서 가져옴
         from app import app
-        return os.path.join(app.static_folder, rel)
+        return _contain_in_static(os.path.join(app.static_folder, rel))
     # 직접 filename으로 fallback
     if filename:
         from app import app
-        return os.path.join(app.static_folder, 'uploads', 'dock', filename)
+        return _contain_in_static(
+            os.path.join(app.static_folder, 'uploads', 'dock', filename))
     return None
 
 
