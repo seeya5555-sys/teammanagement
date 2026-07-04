@@ -7039,6 +7039,72 @@ def api_ext_class_status_push_flag():
     return jsonify({'flag': r['v'] if r else None})
 
 
+@app.route('/api/roster-sync/trigger', methods=['POST'])
+@admin_required
+def api_roster_sync_trigger():
+    """'선박 로스터 동기화' 버튼(admin) — cls-push 플래그 패턴 그대로.
+
+    선박 추가/삭제 후 누르면 flag 시각을 찍는다. 맥 flag-watcher(~1분 폴링)가
+    이 flag 변화를 감지 → roster-enrich(--commit) → fleet-map run.sh → (선택) cls-push
+    순서로 실행하고 완료 후 flag 를 clear 한다(roster_sync_done 갱신).
+    """
+    _ensure_api_table()
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('roster_sync_flag', ?)", (now,))
+    return jsonify({'ok': True, 'flagged_at': now})
+
+
+@app.route('/api/roster-sync/status')
+@admin_required
+def api_roster_sync_status():
+    """버튼 UI 상태표시용 — 현재 pending 여부 + 마지막 완료시각.
+
+    flag(요청시각) > done(완료시각)  이면 진행중(pending).
+    """
+    _ensure_api_table()
+    fr = query("SELECT v FROM api_settings WHERE k='roster_sync_flag'", one=True)
+    dn = query("SELECT v FROM api_settings WHERE k='roster_sync_done'", one=True)
+    dr = query("SELECT v FROM api_settings WHERE k='roster_sync_result'", one=True)
+    flag = fr['v'] if fr else None
+    done = dn['v'] if dn else None
+    pending = bool(flag) and (not done or done < flag)
+    return jsonify({
+        'pending': pending,
+        'flagged_at': flag,
+        'done_at': done,
+        'last_result': (dr['v'] if dr else None),
+    })
+
+
+@app.route('/api/ext/roster-sync/pending')
+@api_key_required
+def api_ext_roster_sync_pending():
+    """맥 flag-watcher 폴링용 — pending flag 시각 반환(cls push-flag 미러).
+
+    watcher 는 이 값이 자기 last_flag 와 다르면 sync 실행. clear 는 아래 done 콜.
+    """
+    r = query("SELECT v FROM api_settings WHERE k='roster_sync_flag'", one=True)
+    return jsonify({'flag': r['v'] if r else None})
+
+
+@app.route('/api/ext/roster-sync/done', methods=['POST'])
+@api_key_required
+def api_ext_roster_sync_done():
+    """맥 flag-watcher 완료 콜 — 처리한 flag 시각과 결과요약을 기록(flag clear).
+
+    body: {"flag":"<처리한 flag 시각>", "result":"<한줄 요약>"}.
+    done>=flag 이면 status 가 not-pending 으로 떨어진다.
+    """
+    _ensure_api_table()
+    d = request.get_json(silent=True) or {}
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('roster_sync_done', ?)",
+            (d.get('flag') or now,))
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('roster_sync_result', ?)",
+            (str(d.get('result') or '')[:500],))
+    return jsonify({'ok': True, 'done_at': d.get('flag') or now})
+
+
 @app.route('/api/ext/class-status/upload', methods=['POST'])
 @api_key_required
 def api_ext_class_status_upload():

@@ -448,6 +448,19 @@
 
       <!-- 선박 패널 -->
       <div class="admin-panel" data-admin-panel="vessels">
+        <!-- 온디맨드 로스터 동기화 (선박 추가/삭제 후 1회 클릭 → ~1분 내 전 자동화 연동) -->
+        <div class="admin-add-form" id="roster-sync-box"
+             style="margin-bottom:12px;background:var(--surface-2);border:1px solid var(--border-subtle)">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div>
+              <h3 style="margin:0 0 2px">자동화 연동</h3>
+              <div class="item-sub" id="roster-sync-status" style="color:var(--text-secondary)">
+                선박을 추가/삭제한 뒤 눌러 지도·선급 등 자동화를 즉시 갱신합니다.
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-roster-sync">선박 로스터 동기화</button>
+          </div>
+        </div>
         <div class="admin-list" id="admin-ves-list"></div>
         <div class="admin-add-form">
           <h3>새 선박 추가</h3>

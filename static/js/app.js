@@ -2249,6 +2249,38 @@ async function loadAdminVessels() {
   ]);
   renderAdminVesList();
   renderSupChipGroup();
+  refreshRosterSyncStatus();
+}
+
+// ---------- 로스터 자동화 동기화 (온디맨드 버튼) ----------
+async function refreshRosterSyncStatus() {
+  const box = $('#roster-sync-status');
+  const btn = $('#btn-roster-sync');
+  if (!box) return;
+  try {
+    const s = await api('/api/roster-sync/status');
+    if (s.pending) {
+      if (btn) btn.disabled = true;
+      box.textContent = '동기화 진행 중… 맥 러너가 처리하고 있습니다 (~1분).';
+    } else {
+      if (btn) btn.disabled = false;
+      const done = s.done_at ? `마지막 동기화: ${s.done_at}` : '아직 동기화 이력 없음';
+      box.textContent = done + (s.last_result ? ` · ${s.last_result}` : '');
+    }
+  } catch (e) {
+    box.textContent = '상태 조회 실패: ' + e.message;
+  }
+}
+async function triggerRosterSync() {
+  const btn = $('#btn-roster-sync');
+  if (!confirm('TRMT 선박 로스터를 전 자동화(지도·선급 등)에 동기화합니다.\n(맥 러너가 ~1분 내 처리)\n진행할까요?')) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/roster-sync/trigger', { method: 'POST' });
+    if (r.ok) alert('요청됨 — 맥 러너가 ~1분 내 동기화합니다. 상태는 이 화면에 표시됩니다.');
+    else { alert('요청 실패 (' + r.status + ')'); if (btn) btn.disabled = false; return; }
+  } catch (e) { alert('요청 실패: ' + e.message); if (btn) btn.disabled = false; return; }
+  refreshRosterSyncStatus();
 }
 function renderAdminVesList() {
   const list = $('#admin-ves-list');
@@ -3198,6 +3230,9 @@ function wireCommon() {
     document.querySelectorAll('.admin-tab').forEach(t => {
       t.addEventListener('click', () => switchAdminTab(t.dataset.adminTab));
     });
+    // 로스터 자동화 동기화 버튼
+    const rsBtn = $('#btn-roster-sync');
+    if (rsBtn) rsBtn.addEventListener('click', triggerRosterSync);
     // 감독 추가
     $('#btn-sup-add').addEventListener('click', addSupervisor);
     $('#sup-add-colors').addEventListener('click', (ev) => {
