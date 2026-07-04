@@ -7736,13 +7736,19 @@ def api_invoice_edit(did):
         sets.append('subject=?'); vals.append(subject)
         rc['subject'] = subject
     if 'exp_cd' in d or 'exp_nm' in d:
-        exp_cd = (d.get('exp_cd') or '').strip() or None
-        exp_nm = d.get('exp_nm')
-        if exp_cd and not exp_nm:                  # 코드만 주면 마스터서 명칭 해결
-            m = query('SELECT name FROM expense_code WHERE code=?', (exp_cd,), one=True)
-            exp_nm = m['name'] if m else None
-        sets += ['exp_cd=?', 'exp_nm=?']; vals += [exp_cd, exp_nm]
-        rc['exp_cd'], rc['exp_nm'], rc['exp_edited'] = exp_cd, exp_nm, True
+        if 'exp_cd' in d:                          # 코드가 오면 코드+명칭 페어로 갱신(정합 유지)
+            exp_cd = (d.get('exp_cd') or '').strip() or None
+            exp_nm = d.get('exp_nm')
+            if exp_cd and not exp_nm:              # 코드만 주면 마스터서 명칭 해결
+                m = query('SELECT name FROM expense_code WHERE code=?', (exp_cd,), one=True)
+                exp_nm = m['name'] if m else None
+            sets += ['exp_cd=?', 'exp_nm=?']; vals += [exp_cd, exp_nm]
+            rc['exp_cd'], rc['exp_nm'] = exp_cd, exp_nm
+        else:                                      # exp_nm 만 온 부분 payload — exp_cd 는 보존
+            exp_nm = d.get('exp_nm')
+            sets.append('exp_nm=?'); vals.append(exp_nm)
+            rc['exp_nm'] = exp_nm
+        rc['exp_edited'] = True
     if not sets:
         return jsonify({'error': '수정할 필드 없음(subject/exp_cd/exp_nm)'}), 400
     sets.append('raw_card=?'); vals.append(json.dumps(rc, ensure_ascii=False))
