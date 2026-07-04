@@ -7099,8 +7099,10 @@ def api_ext_aor_create():
     aor_cd = (d.get('aor_cd') or '').strip()
     if not aor_cd:
         return jsonify({'error': 'aor_cd required'}), 400
+    # dedup 조회에 hold/rejecting 포함 — 보류·리젝진행 중 prep 재적재가 동일 aor_cd 의
+    # 신규 pending 을 만들면(양쪽 승인시) 이중 SVMS 상신 위험.
     ex = query("SELECT id, status FROM aor_draft WHERE aor_cd=? "
-               "AND status IN ('pending','approved','submitting','submitted') "
+               "AND status IN ('pending','hold','approved','submitting','submitted','rejecting') "
                "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
     cm = d.get('cost_match')
     cols = dict(
