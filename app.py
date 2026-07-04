@@ -8680,7 +8680,7 @@ AUTOMATION_TASKS = {
     'soa_g1':   'SOA 실버 G1 (ATBG·ATGR·ATGV·ATMT)',
     'soa_g2':   'SOA 실버 G2 (ATNH·ATSH·ATSL·JATX)',
     'soa_g3':   'SOA 실버 G3 (PCBJ·PCBS·PCGV·PCMC)',
-    'soa_skrt': 'SOA 장금 (CPPS·INPS·KWPS·SAPS) +출금상신',
+    'soa_skrt': 'SOA 장금 (장금마리타임 SKRT 전체·신규선 자동편입) +출금상신',
     'jeonja':   '전자결재 자동상신',
     'fundreq':  '비용청구(Fund Request) 자동상신 — 장금·Technical·Submitted',
     'invoice_confirm': '인보이스 자동컨펌 — PIC/SUP/Remit 교정 + SVMS 컨펌 (승인 건만 처리)',
