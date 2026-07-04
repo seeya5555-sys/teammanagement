@@ -143,13 +143,14 @@
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>🔍 검증</button>
             <button class="au-b live" data-task="${task}" data-mode="live" ${dis}>▶ 자동승인</button>
             <button class="au-b rjt" data-task="${task}" data-mode="reject_mark" ${dis}>🟥 리젝체크</button>
-            <button class="au-b rjt2" data-task="${task}" data-mode="reject_submit" ${dis}>📤 리젝제출+메일</button>`;
+            <button class="au-b rjt2" data-task="${task}" data-mode="reject_submit" ${dis}>📤 리젝제출+메일</button>
+            <button class="au-b verify" data-task="${task}" data-mode="remark_cleanup" ${dis}>🧹 리마크정리</button>`;
     }
     return `<div class="au-row"><div class="au-name">${name}${statusChip(task)}</div><div class="au-btns">${btns}</div></div>`;
   }
   function fmt(r){
     const t=r.finished_at||r.started_at||r.requested_at||'';
-    const modeL=r.mode==='live'?'실행':'검증';
+    const modeL={live:'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리'}[r.mode]||'검증';
     return `<div class="au-logrow">
       <div class="au-logmeta">
         <span class="au-status st-${r.status}">${r.status}</span>
@@ -291,6 +292,7 @@
       live: `[${nm}]\n자동 ${(task==='jeonja'||task==='fundreq')?'상신':'승인'}을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`,
       reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
+      remark_cleanup: `[${nm}]\n컨펌(CFM_YN=Y)된 라인인데 리젝 리마크가 남아있는 것들의 리마크만 삭제합니다.\n(승인·금액·상태 무변경 — SVMS UI 버그 보정)`,
     }[mode];
     let cm=confirmMsg;
     if(mode==='live' && task==='jeonja'){   // 보류 반영 건수 명시(돈 안전)
