@@ -9452,11 +9452,6 @@ def api_mail_issue_register(cid):
             app.logger.exception('mail-issue-register')
             acts = []
         acts.append({'date': _date.today().isoformat(), 'progress': prog, 'important': False})
-        # 진행내역(actions)은 사람이 [추가] 눌렀을 때만 저장 = confirmed (suggested는 화면뿐). wiki 링크는 기존값 보존.
-        execute('UPDATE issues SET actions=?, wiki_thread_id=COALESCE(wiki_thread_id, ?), '
-                'updated_at=datetime("now","localtime") WHERE id=?',
-                (json.dumps(acts, ensure_ascii=False), wtid, mid))
-        iid = mid
     else:
         item = (d.get('item') if 'item' in d else r['issue_item']) or ''
         item = item.strip()
@@ -9475,13 +9470,29 @@ def api_mail_issue_register(cid):
                             'hint': '선박명 고쳐 다시'}), 400
         if not sid:
             return jsonify({'error': 'supervisor unresolved', 'field': 'supervisor'}), 400
-        iid = execute("""INSERT INTO issues
-            (supervisor_id, vessel_id, issue_date, due_date, item_topic, description,
-             actions, priority, status, created_by, wiki_thread_id)
-            VALUES (?, ?, ?, NULL, ?, ?, '[]', ?, 'Open', ?, ?)""",
-            (sid, vid, _date.today().isoformat(), item, desc, prio, 'mail:' + user, wtid))
-    execute("UPDATE mail_card SET issue_status='registered', issue_id=?, "
-            "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?", (iid, user, cid))
+    # 이슈 쓰기 + 카드 UPDATE 를 단일 트랜잭션으로 — 중간 실패 시 이슈만 생기고
+    # 카드가 pending 잔류(재클릭→이슈 중복 등록)하는 부분상태 방지.
+    db = get_db()
+    try:
+        if mode == 'append':
+            # 진행내역(actions)은 사람이 [추가] 눌렀을 때만 저장 = confirmed (suggested는 화면뿐). wiki 링크는 기존값 보존.
+            db.execute('UPDATE issues SET actions=?, wiki_thread_id=COALESCE(wiki_thread_id, ?), '
+                       'updated_at=datetime("now","localtime") WHERE id=?',
+                       (json.dumps(acts, ensure_ascii=False), wtid, mid))
+            iid = mid
+        else:
+            cur = db.execute("""INSERT INTO issues
+                (supervisor_id, vessel_id, issue_date, due_date, item_topic, description,
+                 actions, priority, status, created_by, wiki_thread_id)
+                VALUES (?, ?, ?, NULL, ?, ?, '[]', ?, 'Open', ?, ?)""",
+                (sid, vid, _date.today().isoformat(), item, desc, prio, 'mail:' + user, wtid))
+            iid = cur.lastrowid
+        db.execute("UPDATE mail_card SET issue_status='registered', issue_id=?, "
+                   "decided_at=datetime('now','localtime'), decided_by=? WHERE id=?", (iid, user, cid))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     _mail_maybe_archive(cid)
     return jsonify({'id': cid, 'issue_status': 'registered', 'issue_id': iid, 'ref': _ref('issue', iid)})
 
