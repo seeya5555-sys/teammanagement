@@ -4816,6 +4816,18 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
 .flash-hl { animation: flashHl 2.4s ease-in-out; }
 .flash-hl.issue-card { box-shadow: 0 0 0 2px #e0b94b; border-radius: 10px; }
 
+/* 로스터 동기화 버튼 진행 스피너(inline, currentColor) */
+@keyframes rsSpin { to { transform: rotate(360deg); } }
+.rs-spinner {
+  display: inline-block; width: 12px; height: 12px; margin-right: 6px;
+  vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: rsSpin .7s linear infinite;
+}
+/* 결과 배너 색(웜페이퍼 시맨틱 토큰) */
+#roster-sync-banner.rs-ok   { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+#roster-sync-banner.rs-warn { background: var(--amber-bg); color: var(--amber); border-color: var(--amber-border); }
+#roster-sync-banner.rs-err  { background: var(--red-bg);   color: var(--red);   border-color: var(--red-border); }
+
 .vmh-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .vmh-name { font-size: 17px; font-weight: 700; }
 .vmh-type { font-size: 10.5px; color: var(--text-tertiary); font-weight: 600; border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }

@@ -2252,35 +2252,124 @@ async function loadAdminVessels() {
   refreshRosterSyncStatus();
 }
 
-// ---------- 로스터 자동화 동기화 (온디맨드 버튼) ----------
+// ---------- 로스터 자동화 동기화 (온디맨드 버튼 + 실시간 폴링 UX) ----------
+let ROSTER_SYNC_POLLING = false;   // 폴링 재진입/중복 트리거 방지
+
+// last_result(예: "enrich=OK · fleet-map=OK" / "enrich=FAIL(rc1) · fleet-map=OK")
+// 안에 OK 아닌 단계(FAIL/TIMEOUT/EXC)가 하나라도 있으면 부분실패로 판정.
+function rosterResultFailed(result) {
+  return /=\s*(FAIL|TIMEOUT|EXC)/i.test(result || '');
+}
+function setRosterButton(disabled, label) {
+  const btn = $('#btn-roster-sync');
+  if (!btn) return;
+  btn.disabled = disabled;
+  btn.innerHTML = label;
+}
+function setRosterBanner(kind, msg) {   // kind: 'ok' | 'warn' | 'err' | null(숨김)
+  const b = $('#roster-sync-banner');
+  if (!b) return;
+  b.classList.remove('rs-ok', 'rs-warn', 'rs-err');
+  if (!kind) { b.style.display = 'none'; b.textContent = ''; return; }
+  b.classList.add('rs-' + kind);
+  b.textContent = msg;
+  b.style.display = 'block';
+}
+function renderRosterStatusLine(s) {   // 상태표시 줄 갱신(마지막 동기화 시각·단계결과)
+  const box = $('#roster-sync-status');
+  if (!box) return;
+  const done = s.done_at ? `마지막 동기화: ${s.done_at}` : '아직 동기화 이력 없음';
+  box.textContent = done + (s.last_result ? ` · ${s.last_result}` : '');
+}
+
 async function refreshRosterSyncStatus() {
   const box = $('#roster-sync-status');
-  const btn = $('#btn-roster-sync');
   if (!box) return;
+  if (ROSTER_SYNC_POLLING) return;   // 폴링 중엔 폴링 로직이 UI 소유
   try {
     const s = await api('/api/roster-sync/status');
     if (s.pending) {
-      if (btn) btn.disabled = true;
+      setRosterButton(true, '<span class="rs-spinner"></span>동기화 중…');
       box.textContent = '동기화 진행 중… 맥 러너가 처리하고 있습니다 (~1분).';
     } else {
-      if (btn) btn.disabled = false;
-      const done = s.done_at ? `마지막 동기화: ${s.done_at}` : '아직 동기화 이력 없음';
-      box.textContent = done + (s.last_result ? ` · ${s.last_result}` : '');
+      setRosterButton(false, '선박 로스터 동기화');
+      renderRosterStatusLine(s);
     }
   } catch (e) {
     box.textContent = '상태 조회 실패: ' + e.message;
   }
 }
+
 async function triggerRosterSync() {
-  const btn = $('#btn-roster-sync');
+  if (ROSTER_SYNC_POLLING) return;   // 진행 중 중복 클릭 무시
   if (!confirm('TRMT 선박 로스터를 전 자동화(지도·선급 등)에 동기화합니다.\n(맥 러너가 ~1분 내 처리)\n진행할까요?')) return;
-  if (btn) btn.disabled = true;
+
+  const clickAt = Date.now();       // 완료 판정 기준(이 시각 이후로 done 갱신되면 완료)
+  setRosterBanner(null);
+  setRosterButton(true, '<span class="rs-spinner"></span>동기화 중… (최대 ~2분)');
+
+  // 1) 트리거
   try {
-    const r = await fetch('/api/roster-sync/trigger', { method: 'POST' });
-    if (r.ok) alert('요청됨 — 맥 러너가 ~1분 내 동기화합니다. 상태는 이 화면에 표시됩니다.');
-    else { alert('요청 실패 (' + r.status + ')'); if (btn) btn.disabled = false; return; }
-  } catch (e) { alert('요청 실패: ' + e.message); if (btn) btn.disabled = false; return; }
-  refreshRosterSyncStatus();
+    const r = await fetch('/api/roster-sync/trigger', {
+      method: 'POST', credentials: 'same-origin',
+    });
+    if (!r.ok) {
+      setRosterButton(false, '선박 로스터 동기화');
+      setRosterBanner('err', `요청 실패 (HTTP ${r.status})`);
+      return;
+    }
+  } catch (e) {
+    setRosterButton(false, '선박 로스터 동기화');
+    setRosterBanner('err', '요청 실패: ' + e.message);
+    return;
+  }
+
+  // done_at("YYYY-MM-DD HH:MM:SS", localtime) → epoch ms. 파싱 실패 시 0.
+  const doneEpoch = (v) => {
+    if (!v) return 0;
+    const t = Date.parse(v.replace(' ', 'T'));   // 로컬 타임존으로 해석
+    return isNaN(t) ? 0 : t;
+  };
+  // 트리거 직전 기준선(관대하게 5초 뒤로): 이 값보다 큰 done 이면 이번 실행 결과로 간주.
+  const baseline = clickAt - 5000;
+
+  // 2) 폴링: ~4초 간격, 최대 ~3분
+  ROSTER_SYNC_POLLING = true;
+  const INTERVAL = 4000, MAX_MS = 180000;
+  const started = Date.now();
+
+  const finishOK = (s) => {
+    ROSTER_SYNC_POLLING = false;
+    setRosterButton(false, '선박 로스터 동기화');
+    renderRosterStatusLine(s);
+    if (rosterResultFailed(s.last_result)) {
+      setRosterBanner('warn', '일부 실패: ' + (s.last_result || '결과 미상') + ' — 로그 확인 필요');
+    } else {
+      setRosterBanner('ok', '동기화 완료' + (s.done_at ? ` · ${s.done_at}` : ''));
+    }
+  };
+
+  const poll = async () => {
+    if (Date.now() - started > MAX_MS) {   // 3분 초과 → 지연 안내(폭주 방지)
+      ROSTER_SYNC_POLLING = false;
+      setRosterButton(false, '선박 로스터 동기화');
+      setRosterBanner('warn', '진행 지연 — 백그라운드에서 계속됩니다. 잠시 후 새로고침으로 확인하세요.');
+      return;
+    }
+    let s;
+    try {
+      s = await api('/api/roster-sync/status');
+    } catch (e) {
+      // 네트워크/HTTP 오류: 조용히 재시도
+      setTimeout(poll, INTERVAL);
+      return;
+    }
+    // 완료 판정: pending 해제 AND done_at 이 이번 클릭(baseline) 이후로 갱신됨.
+    const doneAfter = doneEpoch(s.done_at) >= baseline;
+    if (!s.pending && doneAfter) { finishOK(s); return; }
+    setTimeout(poll, INTERVAL);
+  };
+  setTimeout(poll, INTERVAL);   // 첫 폴은 4초 뒤(러너 픽업 여유)
 }
 function renderAdminVesList() {
   const list = $('#admin-ves-list');
