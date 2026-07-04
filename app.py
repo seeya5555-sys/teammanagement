@@ -3157,6 +3157,8 @@ def api_cs_attachment_upload(sid):
     f = request.files['file']
     if not f.filename:
         return jsonify({'error': '파일명이 없습니다.'}), 400
+    if not _ext_allowed(f.filename):
+        return jsonify({'error': '허용되지 않는 파일 형식입니다.'}), 400
 
     ext = os.path.splitext(f.filename)[1]
     stored = f"cs_{uuid.uuid4().hex}{ext}"
@@ -3784,6 +3786,8 @@ def api_vt_attachment_upload(vid):
     f = request.files['file']
     if not f.filename:
         return jsonify({'error': '파일명이 없습니다.'}), 400
+    if not _ext_allowed(f.filename):
+        return jsonify({'error': '허용되지 않는 파일 형식입니다.'}), 400
 
     ext = os.path.splitext(f.filename)[1]
     stored = f"vt_{uuid.uuid4().hex}{ext}"
