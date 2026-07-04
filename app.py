@@ -7289,16 +7289,28 @@ def api_ext_aor_rejecting():
     """맥 러너가 리젝할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
     claim 후엔 관리자 approve/reset 이 409 → '리젝 실행중에 approved 로 뒤집혀
     reject+submit 둘 다 실행' race 차단. /approved 의 submitting claim 패턴 준용.
+    이번 호출에서 새로 claim 성공한 행만 반환 — 기존 reject_submitting 은 재서빙하지
+    않음(재서빙하면 폴러 2개/재시도 시 동일 건이 중복 SVMS 리젝될 수 있음).
+    crash 복구는 claim 서빙과 분리한 stale 회수(아래 6h)로 — 회수분도 조건부 claim 을
+    다시 통과해야 서빙되므로 단일 소비 보장. claim 시각은 submitted_at 재사용(스키마
+    무변경) — reject-result 가 최종 시각으로 덮어씀.
     ⚠️러너측 영향: 조회 즉시 락 — dry/verify 용도는 반드시 ?peek=1 로 호출할 것.
-    중단 잔류(reject_submitting)는 다음 조회에 재서빙(단일 러너 멱등 재처리)."""
+    러너 사망으로 결과 미보고된 건은 최대 6h 후 자동 회수돼 다음 run 이 재처리."""
     cols = "id, aor_cd, reject_reason, raw_row"
     if request.args.get('peek'):   # dry 검증 — 락 안 하고 조회만
         rows = query(f"SELECT {cols} FROM aor_draft WHERE status='rejecting' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
-    out = [dict(r) for r in
-           query(f"SELECT {cols} FROM aor_draft WHERE status='reject_submitting' ORDER BY id ASC")]
+    # stale 회수(claim 서빙과 별개): claim 후 6h 넘게 결과 없으면 러너 사망 간주 →
+    # rejecting 으로 되돌려 아래 조건부 claim 을 다시 타게 함. 6h = automation claim 의
+    # stuck-running 만료 패턴 준용(짧으면 살아있는 실행을 오판→중복실행이라 보수적으로).
+    # submitted_at NULL = claim 스탬프 도입 전(구코드) claim 잔류분 → decided_at 폴백.
+    execute("UPDATE aor_draft SET status='rejecting', submitted_at=NULL "
+            "WHERE status='reject_submitting' AND COALESCE(submitted_at, decided_at, created_at) "
+            "< datetime('now','localtime','-6 hours')")
+    out = []
     for r in query(f"SELECT {cols} FROM aor_draft WHERE status='rejecting' ORDER BY id ASC"):
-        if execute_rc("UPDATE aor_draft SET status='reject_submitting' "
+        if execute_rc("UPDATE aor_draft SET status='reject_submitting', "
+                      "submitted_at=datetime('now','localtime') "
                       "WHERE id=? AND status='rejecting'", (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
@@ -7312,7 +7324,10 @@ def api_ext_aor_reject_result(did):
     ok = bool(d.get('ok'))
     result = (d.get('result') or '')[:2000]
     new = 'rejected' if ok else 'reject_failed'
-    # reject_submitting = 조건부 claim 후 상태. 'rejecting' 도 허용(claim 도입 전 잔류분 호환).
+    # reject_submitting = 조건부 claim 후 상태. 'rejecting' 도 계속 허용 — ① 배포 순간
+    # 구코드(claim 없이 진행)의 in-flight 잔류분 하위호환, ② stale 회수로 rejecting 에
+    # 되돌아간 건의 뒤늦은 결과 수용(기록 안 하면 재claim→중복 SVMS 리젝). 두 상태 모두
+    # 러너 경로에서만 도달하므로 상태머신 우회 아님.
     rc = execute_rc("UPDATE aor_draft SET status=?, submitted_at=datetime('now','localtime'), "
                     "submit_result=? WHERE id=? AND status IN ('reject_submitting','rejecting')",
                     (new, result, did))
@@ -7506,16 +7521,24 @@ def api_ext_fundreq_approved():
 def api_ext_fundreq_rejecting():
     """맥 러너가 리젝할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
     claim 후 approve/reset 409 → reject+submit 이중실행 race 차단(/approved 패턴 준용).
+    이번 호출에서 새로 claim 성공한 행만 반환 — 기존 reject_submitting 재서빙 안 함
+    (폴러 2개/재시도 시 중복 SVMS 리젝 방지). crash 복구 = 분리된 stale 회수(6h).
+    claim 시각은 done_at 재사용(스키마 무변경) — reject-result 가 최종 시각으로 덮어씀.
     ⚠️러너측 영향: 조회 즉시 락 — dry/verify 용도는 ?peek=1 로 호출할 것.
-    중단 잔류(reject_submitting)는 다음 조회에 재서빙(단일 러너 멱등 재처리)."""
+    러너 사망으로 결과 미보고된 건은 최대 6h 후 자동 회수돼 다음 run 이 재처리."""
     cols = "id, opex_cd, vsl_cd, reject_reason, raw_row"
     if request.args.get('peek'):   # dry 검증 — 락 안 하고 조회만
         rows = query(f"SELECT {cols} FROM fundreq_draft WHERE status='rejecting' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
-    out = [dict(r) for r in
-           query(f"SELECT {cols} FROM fundreq_draft WHERE status='reject_submitting' ORDER BY id ASC")]
+    # stale 회수(claim 서빙과 별개) — automation stuck-running 6h 만료 패턴 준용.
+    # done_at NULL = claim 스탬프 도입 전(구코드) claim 잔류분 → decided_at 폴백.
+    execute("UPDATE fundreq_draft SET status='rejecting', done_at=NULL "
+            "WHERE status='reject_submitting' AND COALESCE(done_at, decided_at, created_at) "
+            "< datetime('now','localtime','-6 hours')")
+    out = []
     for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='rejecting' ORDER BY id ASC"):
-        if execute_rc("UPDATE fundreq_draft SET status='reject_submitting' "
+        if execute_rc("UPDATE fundreq_draft SET status='reject_submitting', "
+                      "done_at=datetime('now','localtime') "
                       "WHERE id=? AND status='rejecting'", (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
@@ -7539,7 +7562,8 @@ def api_ext_fundreq_reject_result(did):
     """리젝 결과: ok=True → rejected, else reject_failed."""
     d = request.get_json(silent=True) or {}
     ok = bool(d.get('ok'))
-    # reject_submitting = 조건부 claim 후 상태. 'rejecting' 도 허용(claim 도입 전 잔류분 호환).
+    # 'rejecting' 도 계속 허용 — ① 배포 순간 구코드 in-flight 잔류분 호환,
+    # ② stale 회수(6h)로 rejecting 에 되돌아간 건의 뒤늦은 결과 수용(기록 안 하면 재claim→중복실행).
     rc = execute_rc("UPDATE fundreq_draft SET status=?, done_at=datetime('now','localtime'), result=? "
                     "WHERE id=? AND status IN ('reject_submitting','rejecting')",
                     ('rejected' if ok else 'reject_failed', (d.get('result') or '')[:2000], did))
@@ -7806,16 +7830,24 @@ def api_ext_invoice_approved():
 def api_ext_invoice_rejecting():
     """맥 러너가 보류할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
     claim 후 approve/reset 409 → reject+confirm 이중실행 race 차단(/approved 패턴 준용).
+    이번 호출에서 새로 claim 성공한 행만 반환 — 기존 reject_submitting 재서빙 안 함
+    (폴러 2개/재시도 시 중복 SVMS 보류 방지). crash 복구 = 분리된 stale 회수(6h).
+    claim 시각은 done_at 재사용(스키마 무변경) — reject-result 가 최종 시각으로 덮어씀.
     ⚠️러너측 영향: 조회 즉시 락 — dry/verify 용도는 ?peek=1 로 호출할 것.
-    중단 잔류(reject_submitting)는 다음 조회에 재서빙(단일 러너 멱등 재처리)."""
+    러너 사망으로 결과 미보고된 건은 최대 6h 후 자동 회수돼 다음 run 이 재처리."""
     cols = "id, inv_cd, vsl_cd, reject_reason, raw_card"
     if request.args.get('peek'):   # dry 검증 — 락 안 하고 조회만
         rows = query(f"SELECT {cols} FROM invoice_draft WHERE status='rejecting' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
-    out = [dict(r) for r in
-           query(f"SELECT {cols} FROM invoice_draft WHERE status='reject_submitting' ORDER BY id ASC")]
+    # stale 회수(claim 서빙과 별개) — automation stuck-running 6h 만료 패턴 준용.
+    # done_at NULL = claim 스탬프 도입 전(구코드) claim 잔류분 → decided_at 폴백.
+    execute("UPDATE invoice_draft SET status='rejecting', done_at=NULL "
+            "WHERE status='reject_submitting' AND COALESCE(done_at, decided_at, created_at) "
+            "< datetime('now','localtime','-6 hours')")
+    out = []
     for r in query(f"SELECT {cols} FROM invoice_draft WHERE status='rejecting' ORDER BY id ASC"):
-        if execute_rc("UPDATE invoice_draft SET status='reject_submitting' "
+        if execute_rc("UPDATE invoice_draft SET status='reject_submitting', "
+                      "done_at=datetime('now','localtime') "
                       "WHERE id=? AND status='rejecting'", (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
@@ -7839,7 +7871,8 @@ def api_ext_invoice_reject_result(did):
     """리젝(보류) 결과: ok=True → rejected, else reject_failed."""
     d = request.get_json(silent=True) or {}
     ok = bool(d.get('ok'))
-    # reject_submitting = 조건부 claim 후 상태. 'rejecting' 도 허용(claim 도입 전 잔류분 호환).
+    # 'rejecting' 도 계속 허용 — ① 배포 순간 구코드 in-flight 잔류분 호환,
+    # ② stale 회수(6h)로 rejecting 에 되돌아간 건의 뒤늦은 결과 수용(기록 안 하면 재claim→중복실행).
     rc = execute_rc("UPDATE invoice_draft SET status=?, done_at=datetime('now','localtime'), result=? "
                     "WHERE id=? AND status IN ('reject_submitting','rejecting')",
                     ('rejected' if ok else 'reject_failed', (d.get('result') or '')[:2000], did))
