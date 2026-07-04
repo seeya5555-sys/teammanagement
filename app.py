@@ -8917,6 +8917,13 @@ def api_ext_automation_enqueue():
 def api_ext_automation_claim():
     if not _automation_enabled():
         return jsonify({'run': None, 'disabled': True})
+    # stuck-running 회수(보수적): 러너 사망(맥 다운 등)으로 6시간 넘게 running 이면 failed 처리.
+    # 짧게 잡으면 살아있는 장기 run 을 오판→이중 dispatch(돈경로) 위험이라 길게(6h) —
+    # 재큐잉 안 함(사람이 허브에서 재실행). 정상 run 은 수 분 내라 6h 오탐 없음.
+    execute("UPDATE automation_run SET status='failed', finished_at=datetime('now','localtime'), "
+            "summary=COALESCE(summary,'') || ' [auto-expired: running>6h, 러너 무응답 간주]' "
+            "WHERE status='running' AND started_at IS NOT NULL "
+            "AND started_at < datetime('now','localtime','-6 hours')")
     # 진행중이 있으면 신규 claim 안 함(스크립트 순차 실행 — SVMS 세션 충돌 방지)
     running = query("SELECT 1 FROM automation_run WHERE status='running' LIMIT 1", one=True)
     if running:
@@ -8925,8 +8932,11 @@ def api_ext_automation_claim():
                 one=True)
     if not row:
         return jsonify({'run': None})
-    execute("UPDATE automation_run SET status='running', started_at=datetime('now','localtime') "
-            "WHERE id=? AND status='queued'", (row['id'],))
+    # 조건부 claim — rowcount 0 이면(다른 폴러가 먼저 잡음) dispatch 안 함(이중실행 방지)
+    rc = execute_rc("UPDATE automation_run SET status='running', started_at=datetime('now','localtime') "
+                    "WHERE id=? AND status='queued'", (row['id'],))
+    if not rc:
+        return jsonify({'run': None, 'busy': True})
     return jsonify({'run': {'run_id': row['run_id'], 'task': row['task'], 'mode': row['mode']}})
 
 
