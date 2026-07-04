@@ -193,20 +193,105 @@ a { color: inherit; text-decoration: none; }
   position: absolute; top: 0; right: 0; bottom: 0;
   width: min(82vw, 320px); background: var(--surface);
   box-shadow: -8px 0 28px rgba(0,0,0,.22);
-  padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); overflow-y: auto;
-  display: flex; flex-direction: column; gap: 3px;
+  display: flex; flex-direction: column;
+}
+/* ── 드로어 헤더: 브랜드 마크 + 사이트명 + 닫기 ── */
+.mm-head {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(14px + env(safe-area-inset-top)) 16px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.mm-mark {
+  width: 32px; height: 32px; border-radius: 9px;
+  background: var(--nav-bg); color: var(--nav-text);
+  font-weight: 700; font-size: 12px; letter-spacing: .5px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow-sm); flex: 0 0 auto;
+}
+.mm-brand { display: flex; flex-direction: column; line-height: 1.2; }
+.mm-brand b { font-size: 14.5px; font-weight: 700; }
+.mm-brand span { font-size: 10px; color: var(--text-tertiary); }
+/* ── 드로어 본문(스크롤 영역) ── */
+.mm-body {
+  flex: 1; overflow-y: auto;
+  padding: 10px 12px 8px;
+  display: flex; flex-direction: column; gap: 1px;
 }
 .mm-panel .nav-link {
-  display: block; padding: 11px 14px; border-radius: 8px; font-size: 14.5px;
-  color: var(--text-primary);
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 12px; border-radius: 9px;
+  font-size: 13.5px; font-weight: 500; color: var(--text-primary);
 }
-.mm-panel .nav-link.active { color: var(--blue); background: var(--blue-bg); }
+.mm-panel .nav-link .nav-ic { width: 18px; height: 18px; }
+.mm-panel .nav-link.active {
+  color: var(--blue-text); background: var(--blue-bg); font-weight: 650;
+  box-shadow: inset 0 0 0 1px var(--blue-border);
+}
+/* 닫기 버튼 — .nav-link 기반이라 기존 close 핸들러 재사용, 외관만 별도 */
+.mm-panel .mm-close {
+  margin-left: auto; width: 30px; height: 30px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-subtle); border-radius: 8px;
+  background: var(--surface-2); color: var(--text-secondary);
+  cursor: pointer; flex: 0 0 auto;
+}
+.mm-panel .mm-close .nav-ic { width: 15px; height: 15px; color: inherit; }
+/* ── 섹션 헤더: 그룹 아이콘 + 캡션 + 우측으로 흐르는 구분선 ── */
 .mm-section {
-  font-size: 11px; font-weight: 700; letter-spacing: .4px;
+  display: flex; align-items: center; gap: 8px;
+  margin: 13px 4px 4px; padding: 0 8px;
+  font-size: 10.5px; font-weight: 750; letter-spacing: 1px;
   color: var(--text-tertiary); text-transform: uppercase;
-  margin: 12px 6px 3px; padding-top: 10px; border-top: 1px solid var(--border-subtle);
 }
-.mm-section:empty { padding: 0; margin: 6px 6px; }
+.mm-section .nav-ic { width: 13px; height: 13px; stroke-width: 2; color: inherit; }
+.mm-section::after { content: ""; flex: 1; height: 1px; background: var(--border-subtle); margin-left: 2px; }
+.mm-section:empty { padding: 0; margin: 12px 6px; }
+/* ── 하위 항목: 들여쓰기 + 왼쪽 레일 + 불릿 도트로 소속 표시 ── */
+.mm-sub-group { display: flex; flex-direction: column; gap: 1px; }
+.mm-panel .mm-sub-group .nav-link {
+  margin-left: 14px; gap: 10px;
+  padding: 7.5px 12px 7.5px 14px;
+  border-left: 2px solid var(--border-subtle);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px; color: var(--text-secondary);
+}
+.mm-panel .mm-sub-group .nav-link::before {
+  content: ""; width: 4px; height: 4px; border-radius: 99px;
+  background: var(--border-strong); flex: 0 0 auto;
+}
+.mm-panel .mm-sub-group .nav-link.active {
+  color: var(--blue-text); background: var(--blue-bg); font-weight: 650;
+  border-left-color: var(--blue); box-shadow: none;
+}
+.mm-panel .mm-sub-group .nav-link.active::before { background: var(--blue); }
+/* ── 드로어 푸터: 사용자 아바타/이름/권한 + 로그아웃 ── */
+.mm-foot {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 10px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+}
+.mm-avatar {
+  width: 30px; height: 30px; border-radius: 99px;
+  background: var(--blue-bg); color: var(--blue-text);
+  border: 1px solid var(--blue-border);
+  font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.mm-user { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.mm-user b { font-size: 12.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mm-user span { font-size: 10.5px; color: var(--text-tertiary); }
+.mm-logout {
+  margin-left: auto; flex: 0 0 auto;
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11.5px; color: var(--text-secondary);
+  border: 1px solid var(--border-subtle); background: var(--surface);
+  border-radius: 8px; padding: 5px 10px;
+}
+.mm-logout .nav-ic { width: 15px; height: 15px; color: inherit; }
 body.mm-lock { overflow: hidden; }
 
 .user-menu { display: flex; align-items: center; gap: 10px; margin-left: auto; }

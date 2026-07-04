@@ -174,31 +174,53 @@
   <div class="mobile-menu" id="mobile-menu" hidden>
     <div class="mm-backdrop" id="mm-backdrop"></div>
     <nav class="mm-panel">
-      {{ nlink('dashboard', '📊 대시보드') }}
-      {{ nlink('index', '📋 Daily 업무관리') }}
-      <div class="mm-section">🤖 자동화</div>
-      {% if session.role == 'admin' %}
-      {{ nlink('automation_page', '자동화 허브') }}
-      {{ nlink('health_page', '자동화 상태') }}
-      {{ nlink('mail_page', '메일 처리') }}
-      {{ nlink('aor_page', 'AOR') }}
-      {{ nlink('fundreq_page', '비용청구') }}
-      {{ nlink('invoice_page', '인보이스') }}
-      {% endif %}
-      <div class="mm-section">🔍 Survey</div>
-      {{ nlink('class_status_page', 'Class Status') }}
-      {{ nlink('condition_survey', 'Condition Survey') }}
-      {{ nlink('vetting_status', 'Vetting Status') }}
-      <div class="mm-section">📄 Report</div>
-      {{ nlink('dry_dock_page', 'Dry Dock Report', report_eps) }}
-      {{ nlink('boarding_page', 'Boarding Report', report_eps) }}
-      <div class="mm-section">🛠 입거 준비</div>
-      {{ nlink('reqgen_page', '도크 자재/수리') }}
-      {{ nlink('dock_procure_page', 'Dock 발주현황') }}
-      <div class="mm-section"></div>
-      {% if session.role == 'admin' %}{{ nlink('krcon_page', '📖 룰 검색') }}{% endif %}
-      {{ nlink('calendar_page', '📅 Calendar') }}
-      {{ nlink('expenses_page', '💰 Expenses', expense_eps) }}
+      {# 드로어 헤더 — 닫기 버튼은 nav-link 클래스로 기존 '링크 클릭 시 닫기' 핸들러 재사용(JS 무변경) #}
+      <div class="mm-head">
+        <span class="mm-mark">T3</span>
+        <span class="mm-brand"><b>TRMT3</b><span>Tanker Management Team 3</span></span>
+        <button type="button" class="nav-link mm-close" aria-label="메뉴 닫기"><svg class="nav-ic" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="mm-body">
+        {{ nlink('dashboard', '대시보드', icon='dashboard') }}
+        {{ nlink('index', 'Daily 업무관리', icon='clipboard') }}
+        <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화</div>
+        {% if session.role == 'admin' %}
+        <div class="mm-sub-group">
+          {{ nlink('automation_page', '자동화 허브') }}
+          {{ nlink('health_page', '자동화 상태') }}
+          {{ nlink('mail_page', '메일 처리') }}
+          {{ nlink('aor_page', 'AOR') }}
+          {{ nlink('fundreq_page', '비용청구') }}
+          {{ nlink('invoice_page', '인보이스') }}
+        </div>
+        {% endif %}
+        <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-search-check"/></svg>Survey</div>
+        <div class="mm-sub-group">
+          {{ nlink('class_status_page', 'Class Status') }}
+          {{ nlink('condition_survey', 'Condition Survey') }}
+          {{ nlink('vetting_status', 'Vetting Status') }}
+        </div>
+        <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-file-text"/></svg>Report</div>
+        <div class="mm-sub-group">
+          {{ nlink('dry_dock_page', 'Dry Dock Report', report_eps) }}
+          {{ nlink('boarding_page', 'Boarding Report', report_eps) }}
+        </div>
+        <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-anchor"/></svg>입거 준비</div>
+        <div class="mm-sub-group">
+          {{ nlink('reqgen_page', '도크 자재/수리') }}
+          {{ nlink('dock_procure_page', 'Dock 발주현황') }}
+        </div>
+        <div class="mm-section"></div>
+        {% if session.role == 'admin' %}{{ nlink('krcon_page', '룰 검색', icon='book-open') }}{% endif %}
+        {{ nlink('calendar_page', 'Calendar', icon='calendar') }}
+        {{ nlink('expenses_page', 'Expenses', expense_eps, icon='wallet') }}
+      </div>
+      {# 드로어 푸터 — 모바일에서 사용자 확인·로그아웃 접근성 확보 #}
+      <div class="mm-foot">
+        <span class="mm-avatar">{{ (session.display_name or session.username or '?')[:1] }}</span>
+        <span class="mm-user"><b>{{ session.display_name or session.username }}</b><span>{{ session.role }}</span></span>
+        <a class="mm-logout" href="{{ url_for('logout') }}"><svg class="nav-ic" aria-hidden="true"><use href="#i-logout"/></svg>로그아웃</a>
+      </div>
     </nav>
   </div>
   {% endblock %}
