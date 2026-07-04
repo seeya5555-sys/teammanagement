@@ -20,7 +20,7 @@
   .st-approved{background:var(--blue-bg);color:var(--blue)}
   .st-submitting{background:var(--amber-bg);color:var(--amber)}
   .st-submitted{background:var(--green-bg);color:var(--green)}
-  .st-rejecting{background:var(--amber-bg);color:var(--amber)}
+  .st-rejecting,.st-reject_submitting{background:var(--amber-bg);color:var(--amber)}
   .st-rejected{background:var(--surface-3);color:var(--text-secondary)}
   .st-failed,.st-reject_failed{background:var(--red-bg);color:var(--red)}
   .fr-body{padding:10px 14px;font-size:13px;color:var(--text-secondary)}
@@ -69,7 +69,7 @@
     return {ok:r.ok,j};
   }
   function card(d){
-    const dec=['approved','rejecting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
+    const dec=['approved','rejecting','reject_submitting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
     const isAor=(d.tp==='A'||d.tp==='P');
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd)}</b></span><span>Cost <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></span>`;
     if(isAor) kv+=`<span>AOR <b>${esc(d.ref_no||'-')}</b> (${esc(d.ref_amt)})</span><span>차액 <b>${esc(d.diff)}</b></span>`;
