@@ -1470,7 +1470,7 @@ def api_issue_export():
                 '우선순위', '상태', '마감일', 'TSI Comment'])
     COL_WIDTHS = [5, 12, 30, 40, 44, 12, 11, 12, 34]
     N_COLS   = len(HEADERS)
-    PRI_COL, STAT_COL, TSI_COL = 6, 7, 9
+    PRI_COL, STAT_COL = 6, 7
 
     F = 'Malgun Gothic'
     title_font   = Font(name=F, size=14, bold=True, color='FFFFFF')
@@ -4283,7 +4283,6 @@ def api_dock_section_create(rid):
 
     # 같은 부모 아래 마지막 순서
     cond = 'parent_id IS NULL' if not parent_id else 'parent_id = ?'
-    cp = (rid,) if not parent_id else (parent_id,)
     last = query(f'''
         SELECT COALESCE(MAX(display_order), -1) AS mx
           FROM dock_report_sections
@@ -6420,7 +6419,6 @@ def krcon_ai():
     # 없으면 질문으로 검색. 단어검색이 literal/AND라 자연어 질문은 0건이 나기
     # 쉬워서, 직접검색이 비면 Gemini로 영문 키워드를 뽑아 재검색한다.
     if not ids:
-        results = []
         sr = krcon_client.search(q, limit=6)
         if isinstance(sr, dict) and sr.get('error'):
             return jsonify({'error': 'KRCON_UNAVAILABLE',

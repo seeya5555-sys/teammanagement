@@ -368,50 +368,8 @@ function expandAll() {
   saveExpanded(); render();
 }
 
-// ───────────── 업로드 ─────────────
-function openUpload() {
-  $('#cls-upload-results').innerHTML = '';
-  $('#cls-upload-hint').textContent = '';
-  const m = $('#cls-upload-modal'); m.hidden = false; m.classList.add('open');
-}
-function closeUpload() { const m = $('#cls-upload-modal'); m.hidden = true; m.classList.remove('open'); }
-
-async function uploadFiles(fileList) {
-  const files = [...fileList];
-  if (!files.length) return;
-  const fd = new FormData();
-  files.forEach(f => fd.append('files', f));
-  const box = $('#cls-upload-results');
-  box.innerHTML = '';
-  $('#cls-upload-hint').textContent = `${files.length}개 파일 분석 중… (AI 추출, 잠시 소요)`;
-  const spin = el('div', { class: 'cls-up-spin' }, '⏳ 추출 중…');
-  box.append(spin);
-  try {
-    const r = await fetch('/api/class-status/upload', { method: 'POST', body: fd });
-    const j = await r.json();
-    box.innerHTML = '';
-    (j.results || []).forEach(res => box.append(uploadResultRow(res)));
-    $('#cls-upload-hint').textContent = '완료. 목록을 갱신했습니다.';
-    await loadData();
-  } catch (e) {
-    box.innerHTML = '';
-    box.append(el('div', { class: 'cls-up-row err' }, '업로드 실패: ' + e.message));
-    $('#cls-upload-hint').textContent = '';
-  }
-}
-
-function uploadResultRow(res) {
-  if (!res.ok) {
-    return el('div', { class: 'cls-up-row err' },
-      el('span', { class: 'cls-up-file' }, res.filename),
-      el('span', {}, ' ✕ ' + (res.message || '실패') + (res.detail ? ` (${String(res.detail).slice(0, 80)})` : '')));
-  }
-  const matchTxt = res.matched ? `→ ${res.matched_name}` : `→ 미매칭 (${res.vessel_name || '?'})`;
-  return el('div', { class: 'cls-up-row ' + (res.matched ? 'ok' : 'warn') },
-    el('span', { class: 'cls-up-file' }, res.filename),
-    el('span', { class: 'cls-up-vessel' }, matchTxt),
-    el('span', { class: 'cls-up-cnt' }, ` [${res.class_society || '?'}] 선급지적 ${res.coc_count} · 기국 ${res.statutory_count}`));
-}
+// (제거됨) 사용되지 않는 업로드 모달 코드 — openUpload/uploadFiles 등은 어디서도 호출되지
+// 않았고 참조하던 #cls-upload-* 요소와 /api/class-status/upload 엔드포인트도 존재하지 않음.
 
 // ───────────── Init ─────────────
 function wireUpload() {
