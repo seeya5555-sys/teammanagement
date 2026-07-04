@@ -6893,6 +6893,132 @@ def api_ext_roster():
     })
 
 
+def _imo_check(imo):
+    """IMO 번호 유효성 — 7자리 숫자 + 체크섬(마지막 자리 = 앞 6자리 가중합 %10).
+    가중치 7,6,5,4,3,2. 유효하면 정규화 문자열 반환, 아니면 None."""
+    s = str(imo or '').strip()
+    if not (len(s) == 7 and s.isdigit()):
+        return None
+    total = sum(int(s[i]) * (7 - i) for i in range(6))
+    if total % 10 != int(s[6]):
+        return None
+    return s
+
+
+def _vsl_cd_sane(code):
+    """VSL_CD sanity — 영숫자 2~6자. 유효하면 대문자 정규화 반환, 아니면 None."""
+    s = str(code or '').strip().upper()
+    if 2 <= len(s) <= 6 and s.isalnum():
+        return s
+    return None
+
+
+@app.route('/api/ext/vessels/<int:vid>/identifiers', methods=['PUT'])
+@api_key_required
+def api_ext_vessel_identifiers(vid):
+    """자동화 write-back 접점(설계 §3) — 선박 식별자 메타 부분 갱신.
+
+    body(모두 optional): {"vsl_cd","imo","vt_vessel_id","aliases":[...]}.
+      - payload 에 있는 필드만 UPDATE. 없는 필드는 건드리지 않음(NULL 로 안 지움 —
+        기존 invoice edit 교훈). 값이 기존과 동일하면 no-op(변경목록에서 제외).
+      - imo: 7자리+체크섬 실패 시 400 거부. vsl_cd: 영숫자 2~6자 아니면 400.
+      - aliases: 리스트만 허용 → JSON 문자열로 저장.
+      - vt_vessel_id: 정수(또는 null 명시 시 무시 — NULL 지우기 금지 원칙).
+    응답: {"id","changed":{field:{"from":..,"to":..}}, "noop":[...]}.
+    """
+    import json as _json
+    row = query('SELECT * FROM vessels WHERE id=?', (vid,), one=True)
+    if not row:
+        return jsonify({'error': 'not_found', 'message': f'vessel id {vid} 없음'}), 404
+    d = request.get_json(silent=True) or {}
+    cur = dict(row)
+
+    vcols = [r['name'] for r in query("PRAGMA table_info(vessels)")]
+
+    sets, params, changed, noop = [], [], {}, []
+
+    # --- imo ---
+    if 'imo' in d and d['imo'] is not None:
+        norm = _imo_check(d['imo'])
+        if norm is None:
+            return jsonify({'error': 'bad_imo',
+                            'message': 'IMO는 7자리 숫자+체크섬 유효값이어야 합니다.',
+                            'value': d['imo']}), 400
+        old = (str(cur.get('imo')).strip() if cur.get('imo') else None)
+        if old == norm:
+            noop.append('imo')
+        else:
+            sets.append('imo = ?'); params.append(norm)
+            changed['imo'] = {'from': old, 'to': norm}
+
+    # --- vsl_cd ---
+    if 'vsl_cd' in d and d['vsl_cd'] is not None:
+        if 'vsl_cd' not in vcols:
+            return jsonify({'error': 'no_column',
+                            'message': 'vessels.vsl_cd 컬럼 없음(마이그레이션 필요)'}), 400
+        norm = _vsl_cd_sane(d['vsl_cd'])
+        if norm is None:
+            return jsonify({'error': 'bad_vsl_cd',
+                            'message': 'VSL_CD는 영숫자 2~6자여야 합니다.',
+                            'value': d['vsl_cd']}), 400
+        old = (str(cur.get('vsl_cd')).strip().upper() if cur.get('vsl_cd') else None)
+        if old == norm:
+            noop.append('vsl_cd')
+        else:
+            sets.append('vsl_cd = ?'); params.append(norm)
+            changed['vsl_cd'] = {'from': cur.get('vsl_cd'), 'to': norm}
+
+    # --- vt_vessel_id ---
+    if 'vt_vessel_id' in d and d['vt_vessel_id'] is not None:
+        if 'vt_vessel_id' not in vcols:
+            return jsonify({'error': 'no_column',
+                            'message': 'vessels.vt_vessel_id 컬럼 없음(마이그레이션 필요)'}), 400
+        try:
+            newv = int(d['vt_vessel_id'])
+        except (ValueError, TypeError):
+            return jsonify({'error': 'bad_vt_vessel_id',
+                            'message': 'vt_vessel_id는 정수여야 합니다.',
+                            'value': d['vt_vessel_id']}), 400
+        old = cur.get('vt_vessel_id')
+        if old == newv:
+            noop.append('vt_vessel_id')
+        else:
+            sets.append('vt_vessel_id = ?'); params.append(newv)
+            changed['vt_vessel_id'] = {'from': old, 'to': newv}
+
+    # --- aliases (JSON 배열) ---
+    if 'aliases' in d and d['aliases'] is not None:
+        if 'aliases' not in vcols:
+            return jsonify({'error': 'no_column',
+                            'message': 'vessels.aliases 컬럼 없음(마이그레이션 필요)'}), 400
+        al = d['aliases']
+        if not isinstance(al, list) or not all(isinstance(x, str) for x in al):
+            return jsonify({'error': 'bad_aliases',
+                            'message': 'aliases는 문자열 리스트여야 합니다.'}), 400
+        new_json = _json.dumps(al, ensure_ascii=False)
+        old_raw = cur.get('aliases')
+        old_list = []
+        if old_raw:
+            try:
+                v = _json.loads(old_raw)
+                if isinstance(v, list):
+                    old_list = v
+            except (ValueError, TypeError):
+                old_list = []
+        if old_list == al:
+            noop.append('aliases')
+        else:
+            sets.append('aliases = ?'); params.append(new_json)
+            changed['aliases'] = {'from': old_list, 'to': al}
+
+    if sets:
+        params.append(vid)
+        execute(f'UPDATE vessels SET {", ".join(sets)} WHERE id = ?', params)
+
+    return jsonify({'id': vid, 'name': cur.get('name'),
+                    'changed': changed, 'noop': noop})
+
+
 @app.route('/api/ext/summaries')
 @api_key_required
 def api_ext_summaries():
