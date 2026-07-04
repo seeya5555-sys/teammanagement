@@ -7662,30 +7662,44 @@ def api_ext_invoice_expense_codes():
 @app.route('/api/invoice/drafts/<int:did>/edit', methods=['POST'])
 @admin_required
 def api_invoice_edit(did):
-    """적요(subject)·expense(exp_cd/exp_nm) 사람 교정 — prep 오선택 방지. raw_card도 동기화(confirm.py가 사용)."""
+    """적요(subject)·expense(exp_cd/exp_nm) 사람 교정 — prep 오선택 방지. raw_card도 동기화(confirm.py가 사용).
+    payload 에 있는 필드만 갱신(없는 필드 NULL 덮어쓰기 방지) + pending 조건부 갱신(TOCTOU 가드)."""
     d = request.get_json(silent=True) or {}
     row = query('SELECT raw_card, status FROM invoice_draft WHERE id=?', (did,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
     if row['status'] != 'pending':
         return jsonify({'error': '대기(pending) 카드만 편집 가능 — 현재 %s' % row['status']}), 409
-    subject = d.get('subject')
-    exp_cd = (d.get('exp_cd') or '').strip() or None
-    exp_nm = d.get('exp_nm')
-    if exp_cd and not exp_nm:                      # 코드만 주면 마스터서 명칭 해결
-        m = query('SELECT name FROM expense_code WHERE code=?', (exp_cd,), one=True)
-        exp_nm = m['name'] if m else None
     try:
         rc = json.loads(row['raw_card'] or '{}')
     except Exception:
         app.logger.exception('invoice-edit')
         rc = {}
-    if subject is not None:
+    sets, vals = [], []
+    if 'subject' in d:                             # payload 에 온 필드만 반영
+        subject = d.get('subject')
+        sets.append('subject=?'); vals.append(subject)
         rc['subject'] = subject
-    rc['exp_cd'], rc['exp_nm'], rc['exp_edited'] = exp_cd, exp_nm, True
-    execute("UPDATE invoice_draft SET subject=?, exp_cd=?, exp_nm=?, raw_card=? WHERE id=?",
-            (subject, exp_cd, exp_nm, json.dumps(rc, ensure_ascii=False), did))
-    return jsonify({'id': did, 'subject': subject, 'exp_cd': exp_cd, 'exp_nm': exp_nm})
+    if 'exp_cd' in d or 'exp_nm' in d:
+        exp_cd = (d.get('exp_cd') or '').strip() or None
+        exp_nm = d.get('exp_nm')
+        if exp_cd and not exp_nm:                  # 코드만 주면 마스터서 명칭 해결
+            m = query('SELECT name FROM expense_code WHERE code=?', (exp_cd,), one=True)
+            exp_nm = m['name'] if m else None
+        sets += ['exp_cd=?', 'exp_nm=?']; vals += [exp_cd, exp_nm]
+        rc['exp_cd'], rc['exp_nm'], rc['exp_edited'] = exp_cd, exp_nm, True
+    if not sets:
+        return jsonify({'error': '수정할 필드 없음(subject/exp_cd/exp_nm)'}), 400
+    sets.append('raw_card=?'); vals.append(json.dumps(rc, ensure_ascii=False))
+    # 조건부 claim — 위 SELECT 후 승인/리젝으로 상태가 바뀌었으면(race) 덮어쓰지 않음
+    n = execute_rc(f"UPDATE invoice_draft SET {', '.join(sets)} WHERE id=? AND status='pending'",
+                   (*vals, did))
+    if not n:
+        cur = query('SELECT status FROM invoice_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': '대기(pending) 카드만 편집 가능 — 현재 %s'
+                        % (cur['status'] if cur else '?')}), 409
+    return jsonify({'id': did, 'subject': rc.get('subject'),
+                    'exp_cd': rc.get('exp_cd'), 'exp_nm': rc.get('exp_nm')})
 
 
 @app.route('/api/invoice/drafts/<int:did>/reject', methods=['POST'])
