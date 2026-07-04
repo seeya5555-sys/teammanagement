@@ -7240,8 +7240,10 @@ def api_aor_delete(did):
 @app.route('/api/aor/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_aor_clear_decided():
-    """처리완료(승인·리젝 등) 일괄 삭제 — 대기(pending)·보류(hold)·진행중(submitting)은 보존."""
-    n = execute_rc("DELETE FROM aor_draft WHERE status NOT IN ('pending','hold','submitting')")
+    """처리완료 일괄 삭제 — 명시 허용리스트(fundreq/invoice와 동일 패턴).
+    블록리스트('pending','hold','submitting' 제외)였을 땐 approved/rejecting(러너 미처리분)까지
+    조용히 삭제돼 SVMS 액션 유실 위험 → 종결상태만 명시 삭제."""
+    n = execute_rc("DELETE FROM aor_draft WHERE status IN ('submitted','rejected','failed','reject_failed')")
     return jsonify({'ok': True, 'deleted': n})
 
 
