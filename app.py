@@ -9099,6 +9099,25 @@ def api_ext_dockproc_vessels():
     return jsonify({'vessels': [dict(r) for r in rows]})
 
 
+@app.route('/api/ext/dock_procure/quotes')
+@api_key_required
+def api_ext_dockproc_quotes():
+    """SVMS Dock draft 봉투 조립용 — 발주완료(stg_order=1)+견적금액 있는 R/S/ST 라인.
+    cat_code R=Shore Repair(ITEM_CD 04) · S/ST=Spare/Store(03). 조립·환산은 맥 조립기가 수행."""
+    vc = (request.args.get('vsl_cd') or '').strip().upper()
+    if not vc:
+        return jsonify({'error': 'vsl_cd required'}), 400
+    rows = query(
+        "SELECT d.vsl_nm, d.vsl_cd, d.req_no, d.cat_code, d.category, d.subject, d.equipment, "
+        "d.quote_amt, d.quote_cur, d.quote_src, d.svms_req_no "
+        "FROM dock_procure d "
+        "WHERE d.quote_amt IS NOT NULL AND d.stg_order=1 AND d.cat_code IN ('R','S','ST') "
+        "AND (UPPER(d.vsl_cd)=? OR d.vsl_nm IN (SELECT vsl_nm FROM dock_procure_vessel WHERE UPPER(vsl_cd)=?)) "
+        "ORDER BY d.cat_code, d.req_no",
+        (vc, vc))
+    return jsonify({'vsl_cd': vc, 'quotes': [dict(r) for r in rows]})
+
+
 @app.route('/api/ext/dock_procure/links')
 @api_key_required
 def api_ext_dockproc_links():
