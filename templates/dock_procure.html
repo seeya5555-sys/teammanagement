@@ -139,6 +139,8 @@
     <div class="hint">📤 <b>INDEX 엑셀</b>을 여기로 <b>드래그&드롭</b>하거나 버튼으로 업로드하면 R/S/ST 라인이 큐에 자동 적재됩니다. 수정본 재업로드 시 <span class="new">REQ.NO 기준 중복제외</span> — 추가된 라인만 증분 반영. <span style="color:var(--text-tertiary)">(페인트 P·조선소 SY는 메일견적이라 아래 ＋ 버튼으로 직접 추가)</span></div>
     <button class="dp-btn primary" id="dp-upbtn">📤 INDEX 엑셀 업로드</button>
     <button class="dp-btn" id="dp-addbtn">＋ 라인 추가 (P/SY)</button>
+    <button class="dp-btn" id="dp-syncbtn" title="SVMS 수리·구매 발주현황을 지금 당겨와 견적금액·상태 최신화(자동은 시간당)">🔄 SVMS 발주 새로고침</button>
+    <span id="dp-syncstat" style="font-size:11px;color:var(--text-tertiary)"></span>
   </div>
 
   <div class="dp-toolbar" style="flex-direction:column;align-items:stretch;gap:7px">
@@ -542,10 +544,38 @@
     toast(j.req_no+' 추가됨'); await load(DATA.current);
   };
 
+  function bindSyncBtn(){
+    const btn=$('#dp-syncbtn'), stat=$('#dp-syncstat'); if(!btn) return;
+    let poll=null;
+    async function refreshStatus(){
+      try{ const r=await fetch('/api/dock_procure/sync/status'); const j=await r.json();
+        if(j.pending){ btn.disabled=true; stat.textContent='⏳ SVMS 당겨오는 중…';
+          if(!poll) poll=setInterval(refreshStatus, 5000);   // 로드시 이미 pending이면 폴링 시작
+        }
+        else{ btn.disabled=false;
+          stat.textContent = j.done_at ? ('✓ 최근 '+j.done_at+(j.last_result?(' · '+j.last_result):'')) : '';
+          if(poll){ clearInterval(poll); poll=null; await load(DATA.current); }   // 완료 → 라인 새로고침
+        }
+      }catch(e){}
+    }
+    btn.onclick=async()=>{
+      btn.disabled=true; stat.textContent='요청 보냄…';
+      try{
+        const r=await fetch('/api/dock_procure/sync/trigger',{method:'POST'});
+        if(!r.ok){ btn.disabled=false; stat.textContent='요청 실패'; return; }
+      }catch(e){ btn.disabled=false; stat.textContent='요청 실패(네트워크)'; return; }
+      stat.textContent='⏳ SVMS 당겨오는 중… (최대 1~2분)';
+      if(poll) clearInterval(poll);
+      poll=setInterval(refreshStatus, 5000);
+    };
+    refreshStatus();
+  }
+
   load();
   loadShipyards();
   bindShipyardSel();
   bindYardFile();
+  bindSyncBtn();
 })();
 </script>
 {% endblock %}

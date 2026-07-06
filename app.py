@@ -7150,6 +7150,54 @@ def api_ext_roster_sync_done():
     return jsonify({'ok': True, 'done_at': d.get('flag') or now})
 
 
+# ===== dock_procure 수동 SVMS 발주 새로고침(dock_sync 온디맨드 트리거) — roster-sync 패턴 =====
+@app.route('/api/dock_procure/sync/trigger', methods=['POST'])
+@login_required
+def api_dockproc_sync_trigger():
+    """'SVMS 발주 새로고침' 버튼 — 시각 flag. 맥 dock-sync watcher(~1분 폴링)가 감지→dock_sync.sh --live→done."""
+    _ensure_api_table()
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_sync_flag', ?)", (now,))
+    return jsonify({'ok': True, 'flagged_at': now})
+
+
+@app.route('/api/dock_procure/sync/status')
+@login_required
+def api_dockproc_sync_status():
+    """버튼 UI 상태 — flag>done 이면 pending."""
+    _ensure_api_table()
+    fr = query("SELECT v FROM api_settings WHERE k='dock_sync_flag'", one=True)
+    dn = query("SELECT v FROM api_settings WHERE k='dock_sync_done'", one=True)
+    dr = query("SELECT v FROM api_settings WHERE k='dock_sync_result'", one=True)
+    flag = fr['v'] if fr else None
+    done = dn['v'] if dn else None
+    return jsonify({'pending': bool(flag) and (not done or done < flag),
+                    'flagged_at': flag, 'done_at': done, 'last_result': (dr['v'] if dr else None)})
+
+
+@app.route('/api/ext/dock_procure/sync/pending')
+@api_key_required
+def api_ext_dockproc_sync_pending():
+    """맥 watcher 폴링용 — flag>done(실제 pending)일 때만 flag 반환(.state 유실 시 과거 flag 재실행 방지)."""
+    fr = query("SELECT v FROM api_settings WHERE k='dock_sync_flag'", one=True)
+    dn = query("SELECT v FROM api_settings WHERE k='dock_sync_done'", one=True)
+    flag = fr['v'] if fr else None
+    done = dn['v'] if dn else None
+    return jsonify({'flag': flag if (flag and (not done or done < flag)) else None})
+
+
+@app.route('/api/ext/dock_procure/sync/done', methods=['POST'])
+@api_key_required
+def api_ext_dockproc_sync_done():
+    """맥 watcher 완료 콜 — 처리 flag+결과 기록(flag clear)."""
+    _ensure_api_table()
+    d = request.get_json(silent=True) or {}
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_sync_done', ?)", (d.get('flag') or now,))
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_sync_result', ?)", (str(d.get('result') or '')[:500],))
+    return jsonify({'ok': True, 'done_at': d.get('flag') or now})
+
+
 @app.route('/api/ext/class-status/upload', methods=['POST'])
 @api_key_required
 def api_ext_class_status_upload():
