@@ -93,6 +93,23 @@
   .dp-code:hover{color:var(--blue)}
   .dp-empty{text-align:center;color:var(--text-tertiary);padding:40px;font-size:13px}
   .dp-foot{margin-top:12px;font-size:11px;color:var(--text-tertiary);display:flex;gap:16px;flex-wrap:wrap}
+  .dy-card{margin-top:22px;border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--surface-2,#fff)}
+  .dy-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+  .dy-head h3{font-size:15px;font-weight:700;margin:0}
+  .dy-up{display:flex;gap:8px;align-items:center}
+  .dy-up select{font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:#fff}
+  .dy-btn{font-size:12px;padding:5px 10px;background:var(--blue-bg,#eaf1fb);color:var(--blue-text,#2a5a9a);border-radius:6px;cursor:pointer;font-weight:600}
+  .dy-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .dy-tbl th{text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font-size:11px;color:var(--text-secondary)}
+  .dy-tbl td{padding:5px 8px;border-bottom:1px solid var(--border)}
+  .dy-tbl .c{text-align:center}
+  .dy-amt{width:118px;text-align:right;font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:600;border:1px solid transparent;border-radius:6px;padding:3px 5px;background:transparent}
+  .dy-amt:focus{border-color:var(--border);background:#fff;outline:none}
+  .dy-cur{font-size:11px;border:1px solid transparent;border-radius:5px;padding:3px;background:transparent;cursor:pointer}
+  .dy-cur:focus{border-color:var(--border);background:#fff;outline:none}
+  .dy-rmk{width:100%;font-size:11.5px;color:var(--text-secondary);border:1px solid transparent;border-radius:6px;padding:3px 5px;background:transparent}
+  .dy-rmk:focus{border-color:var(--border);background:#fff;outline:none}
+  .dy-foot{margin-top:8px;font-size:11px;color:var(--text-tertiary)}
   .dp-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--nav-bg);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:2000;box-shadow:0 4px 16px rgba(0,0,0,.2);display:none}
 </style>
 {% endblock %}
@@ -157,6 +174,22 @@
     <span>● SVMS = 기존 자동화 연동(R/S/ST) · MAIL = 페인트·조선소 메일견적</span>
     <span>● Phase 2: SVMS 발주상태 자동동기화 예정</span>
   </div>
+
+  <!-- 조선소(Yard) 견적 → SVMS Yard Repair 7카테고리 -->
+  <div class="dy-card">
+    <div class="dy-head">
+      <h3>🏗 조선소 (SVMS Yard Repair)</h3>
+      <div class="dy-up">
+        <select id="dy-profile"></select>
+        <label class="dy-btn">📤 견적서 업로드<input type="file" id="dy-file" accept=".xlsx,.xlsm" hidden></label>
+      </div>
+    </div>
+    <table class="dy-tbl">
+      <thead><tr><th style="width:130px">카테고리</th><th class="c" style="width:150px">금액(Plan)</th><th class="c" style="width:90px">통화</th><th>Remark</th></tr></thead>
+      <tbody id="dy-body"></tbody>
+    </table>
+    <div class="dy-foot" id="dy-foot"></div>
+  </div>
 </div>
 <div class="dp-toast" id="dp-toast"></div>
 {% endblock %}
@@ -200,6 +233,69 @@
     const r = await fetch('/api/dock_procure/lines'+q);
     DATA = await r.json();
     render();
+    loadYard(DATA.current);          // 조선소(Yard) 7카테고리 동기 로드
+  }
+
+  // ===== 조선소(Yard) 견적 → SVMS Yard Repair 7카테고리 =====
+  const YCATS = ['General','Paint','Steel','Deck','Engine','Electric','Discount'];
+  async function loadYardProfiles(){
+    try{
+      const r = await fetch('/api/dock_yard/profiles'); const j = await r.json();
+      $('#dy-profile').innerHTML = '<option value="">조선소 선택…</option>' +
+        (j.profiles||[]).map(p=>`<option value="${esc(p.file)}">${esc(p.yard_name)}</option>`).join('');
+    }catch(e){}
+  }
+  async function loadYard(vsl){
+    if(!vsl){ renderYard([]); return; }
+    const r = await fetch('/api/dock_yard?vsl_nm='+encodeURIComponent(vsl));
+    const j = await r.json();
+    renderYard(j.lines||[]);
+  }
+  function renderYard(lines){
+    const byC={}; lines.forEach(l=>byC[l.category]=l);
+    $('#dy-body').innerHTML = YCATS.map(c=>{
+      const l=byC[c]||{}; const has=!!l.id; const lock=(l.src==='manual')?' 🔒':'';
+      return `<tr>
+        <td>${c}${lock}</td>
+        <td class="c"><input class="dy-amt" data-id="${has?l.id:''}" value="${l.amount!=null?esc(fmtAmt(l.amount)):''}" placeholder="—" inputmode="decimal"${has?'':' disabled'}></td>
+        <td class="c"><select class="dy-cur" data-id="${has?l.id:''}"${has?'':' disabled'}>${CURS.map(x=>`<option value="${x}"${(l.cur||'USD')===x?' selected':''}>${x}</option>`).join('')}</select></td>
+        <td><input class="dy-rmk" data-id="${has?l.id:''}" value="${esc(l.remark||'')}" placeholder="—"${has?'':' disabled'}></td>
+      </tr>`;
+    }).join('');
+    const tot={}; lines.forEach(l=>{ if(l.amount!=null){ const cu=l.cur||'USD'; tot[cu]=(tot[cu]||0)+Number(l.amount);} });
+    $('#dy-foot').innerHTML = lines.length
+      ? ('합계 '+Object.entries(tot).map(([c,v])=>fmtAmt(v)+' '+c).join(' · ')+' · 🔒=수동수정(견적 재업로드시 보존)')
+      : '조선소 프로파일 선택 후 견적서(xlsx) 업로드하면 7카테고리 자동작성 → 필요시 금액 수정';
+    bindYard();
+  }
+  function bindYard(){
+    document.querySelectorAll('.dy-amt').forEach(inp=>{
+      inp.onfocus=()=>{ inp.value=inp.value.replace(/,/g,''); };
+      inp.onblur=async()=>{ const id=inp.dataset.id; if(!id)return; const v=inp.value.trim();
+        const r=await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:v})});
+        if(!r.ok){ inp.style.borderColor='var(--red-dot,#d33)'; return; } inp.style.borderColor=''; await loadYard(DATA.current); };
+    });
+    document.querySelectorAll('.dy-cur').forEach(sel=>sel.onchange=async()=>{ const id=sel.dataset.id; if(!id)return;
+      await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({cur:sel.value})}); await loadYard(DATA.current); });
+    document.querySelectorAll('.dy-rmk').forEach(inp=>inp.onblur=async()=>{ const id=inp.dataset.id; if(!id)return;
+      await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({remark:inp.value})}); });
+  }
+  function bindYardFile(){
+    $('#dy-file').onchange=async e=>{
+      const f=e.target.files[0]; if(!f)return;
+      const prof=$('#dy-profile').value;
+      e.target.value='';
+      if(!prof){ toast('조선소 프로파일 먼저 선택'); return; }
+      if(!DATA.current){ toast('선박 먼저 선택'); return; }
+      const ves=DATA.vessels.find(v=>v.vsl_nm===DATA.current)||{};
+      const fd=new FormData(); fd.append('file',f); fd.append('vsl_nm',DATA.current); fd.append('profile',prof); if(ves.vsl_cd)fd.append('vsl_cd',ves.vsl_cd);
+      toast('견적 파싱 중…');
+      const r=await fetch('/api/dock_yard/upload',{method:'POST',body:fd}); const j=await r.json();
+      if(!r.ok){ toast('실패: '+(j.error||'오류')); return; }
+      let msg=`조선소 반영 (최종 ${fmtAmt(j.final_total)}) — 신규 ${j.added}·갱신 ${j.updated}·잠김스킵 ${j.skipped_manual}`;
+      if(j.unmapped && Object.keys(j.unmapped).length) msg+=' ⚠️미매핑섹션 '+Object.keys(j.unmapped).join(',');
+      toast(msg); await loadYard(DATA.current);
+    };
   }
 
   function render(){
@@ -413,6 +509,8 @@
   };
 
   load();
+  loadYardProfiles();
+  bindYardFile();
 })();
 </script>
 {% endblock %}

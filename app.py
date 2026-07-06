@@ -569,6 +569,23 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_procure_vsl ON dock_procure(vsl_nm)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dock_yard (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                vsl_nm     TEXT NOT NULL,                   -- 그룹 키
+                vsl_cd     TEXT,
+                category   TEXT NOT NULL,                   -- General/Paint/Steel/Deck/Engine/Electric/Discount
+                amount     REAL,
+                cur        TEXT DEFAULT 'USD',
+                remark     TEXT,
+                src        TEXT DEFAULT 'auto',             -- auto(견적파싱) / manual(사용자수정 잠금)
+                yard_name  TEXT,                            -- 조선소명(프로파일)
+                sort_no    INTEGER,                         -- 7카테고리 표시순서
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                UNIQUE(vsl_nm, category)                    -- 선박당 카테고리 1행(7행)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_yard_vsl ON dock_yard(vsl_nm)")
         try:                                            # 기존 배포 DB 마이그레이션(Phase 2 컬럼)
             _dpc = [r[1] for r in conn.execute("PRAGMA table_info(dock_procure)").fetchall()]
             if 'svms_status' not in _dpc:
@@ -9116,6 +9133,181 @@ def api_ext_dockproc_quotes():
         "ORDER BY d.cat_code, d.req_no",
         (vc, vc))
     return jsonify({'vsl_cd': vc, 'quotes': [dict(r) for r in rows]})
+
+
+# ===== 조선소(Yard) 견적 → SVMS Yard Repair 7카테고리 (dock_yard) =====
+YARD_CATEGORIES = ["General", "Paint", "Steel", "Deck", "Engine", "Electric", "Discount"]
+_YARD_TOTAL_ROW = re.compile(r'total price|final discount|after dicount|after discount|normal total|sub ?total|소계|합계', re.I)
+
+
+def _yard_profiles_dir():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yard_profiles')
+
+
+def _list_yard_profiles():
+    d = _yard_profiles_dir()
+    out = []
+    if os.path.isdir(d):
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith('.json'):
+                continue
+            try:
+                with open(os.path.join(d, fn), encoding='utf-8') as f:
+                    p = json.load(f)
+                out.append({'file': fn, 'yard_name': p.get('yard_name', fn)})
+            except Exception:
+                app.logger.debug('yard-profile load skip: %s', fn, exc_info=True)
+    return out
+
+
+def _load_yard_profile(name):
+    fn = name if name.endswith('.json') else name + '.json'
+    path = os.path.join(_yard_profiles_dir(), os.path.basename(fn))   # basename=경로탈출 방지
+    with open(path, encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _yard_parse_quote(fileobj, profile):
+    """조선소 견적 xlsx → 7카테고리 소계. 총계행(텍스트) 제외 + Item No 첫정수=섹션. (yard_parse.py 검증본 이식)"""
+    import openpyxl
+    c = profile["cols"]
+    ci, cd, cq, cn = c["item_no"], c["desc"], c["qty"], c["net_total"]
+    smap = profile["section_map"]
+    wb = openpyxl.load_workbook(fileobj, data_only=True, read_only=True)
+    ws = wb[profile.get("sheet", "Quotation")]
+    sect = {}
+    cur_sec = None
+    for r in ws.iter_rows(values_only=True):
+        def cell(i):
+            return r[i] if i < len(r) else None
+        itm, desc, qty, nt = cell(ci), cell(cd), cell(cq), cell(cn)
+        s = str(itm).strip() if itm is not None else ""
+        m = re.match(r'^(\d+)', s)
+        if m:
+            cur_sec = m.group(1)
+        rowtext = " ".join(str(x) for x in r if isinstance(x, str))
+        if not isinstance(nt, (int, float)) or not nt or not cur_sec:
+            continue
+        if _YARD_TOTAL_ROW.search(rowtext):              # 총계/소계행 제외
+            continue
+        if isinstance(qty, str):
+            try:
+                float(qty.replace(',', ''))             # 숫자문자열 qty("1")는 라인 허용
+            except (TypeError, ValueError):
+                continue                                 # 진짜 텍스트(총계 라벨) = 제외
+        sect[cur_sec] = sect.get(cur_sec, 0.0) + nt
+    cat = {k: 0.0 for k in YARD_CATEGORIES}
+    unmapped = {}
+    for sec, amt in sect.items():
+        c2 = smap.get(sec)
+        if c2 in cat:
+            cat[c2] += amt
+        else:
+            unmapped[sec] = round(unmapped.get(sec, 0.0) + amt, 2)
+    line_total = sum(cat.values())
+    cat["Discount"] = round(-line_total * profile.get("discount_rate", 0.0), 2)
+    cat = {k: round(v, 2) for k, v in cat.items()}
+    return {"categories": cat, "line_total": round(line_total, 2),
+            "final_total": round(sum(cat.values()), 2), "unmapped": unmapped,
+            "yard_name": profile.get("yard_name")}
+
+
+@app.route('/api/dock_yard/profiles')
+@login_required
+def api_dock_yard_profiles():
+    return jsonify({'profiles': _list_yard_profiles()})
+
+
+@app.route('/api/dock_yard')
+@login_required
+def api_dock_yard_lines():
+    vsl = request.args.get('vsl_nm')
+    rows = query("SELECT * FROM dock_yard WHERE vsl_nm=? ORDER BY sort_no, category", (vsl,)) if vsl else []
+    return jsonify({'lines': [dict(r) for r in rows]})
+
+
+@app.route('/api/dock_yard/upload', methods=['POST'])
+@login_required
+def api_dock_yard_upload():
+    """조선소 견적 xlsx 업로드 → 7카테고리 파싱 → dock_yard upsert(manual 잠금은 금액 보존)."""
+    f = request.files.get('file')
+    vsl_nm = (request.form.get('vsl_nm') or '').strip()
+    prof_name = (request.form.get('profile') or '').strip()
+    if not f or not f.filename or not f.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return jsonify({'error': '.xlsx 견적 파일 필요'}), 400
+    if not vsl_nm:
+        return jsonify({'error': 'vsl_nm 필요'}), 400
+    if not prof_name:
+        return jsonify({'error': '조선소 프로파일 선택 필요'}), 400
+    try:
+        profile = _load_yard_profile(prof_name)
+    except Exception:
+        return jsonify({'error': '프로파일 로드 실패'}), 400
+    try:
+        import io as _io
+        res = _yard_parse_quote(_io.BytesIO(f.read()), profile)
+    except Exception as e:
+        app.logger.exception('yard-upload')
+        return jsonify({'error': '견적 파싱 실패 — 프로파일/시트 형식을 확인하세요'}), 400
+    vsl_cd = (request.form.get('vsl_cd') or '').strip().upper() or None
+    added = updated = skipped = 0
+    for i, catn in enumerate(YARD_CATEGORIES):
+        amt = res["categories"].get(catn, 0.0)
+        ex = query("SELECT id, src FROM dock_yard WHERE vsl_nm=? AND category=?", (vsl_nm, catn), one=True)
+        if ex and (ex['src'] or 'auto') == 'manual':          # 사용자 수정건: 금액/통화만 보존, metadata는 갱신
+            execute("UPDATE dock_yard SET yard_name=?, vsl_cd=COALESCE(?,vsl_cd), sort_no=?, "
+                    "updated_at=datetime('now','localtime') WHERE id=?",
+                    (res.get("yard_name"), vsl_cd, i, ex['id']))
+            skipped += 1
+            continue
+        if ex:
+            execute("UPDATE dock_yard SET amount=?, cur='USD', src='auto', yard_name=?, "
+                    "vsl_cd=COALESCE(?,vsl_cd), sort_no=?, updated_at=datetime('now','localtime') WHERE id=?",
+                    (amt, res.get("yard_name"), vsl_cd, i, ex['id']))
+            updated += 1
+        else:
+            execute("INSERT INTO dock_yard (vsl_nm, vsl_cd, category, amount, cur, src, yard_name, sort_no) "
+                    "VALUES (?,?,?,?,'USD','auto',?,?)",
+                    (vsl_nm, vsl_cd, catn, amt, res.get("yard_name"), i))
+            added += 1
+    return jsonify({'ok': True, 'added': added, 'updated': updated, 'skipped_manual': skipped,
+                    'categories': res["categories"], 'final_total': res["final_total"],
+                    'unmapped': res["unmapped"]})
+
+
+@app.route('/api/dock_yard/<int:lid>', methods=['PATCH'])
+@login_required
+def api_dock_yard_patch(lid):
+    if not query("SELECT id FROM dock_yard WHERE id=?", (lid,), one=True):
+        return jsonify({'error': 'not found'}), 404
+    d = request.get_json(silent=True) or {}
+    sets, params = [], []
+    if 'amount' in d:
+        raw = d.get('amount')
+        if raw in (None, ''):
+            amt = None
+        else:
+            try:
+                amt = float(str(raw).replace(',', ''))
+            except (TypeError, ValueError):
+                return jsonify({'error': 'amount must be numeric'}), 400
+            if not math.isfinite(amt):
+                return jsonify({'error': 'amount must be finite'}), 400
+        sets.append('amount=?'); params.append(amt)
+        sets.append("src='manual'")
+    if 'cur' in d:
+        cur = (d.get('cur') or '').strip().upper()
+        if not re.fullmatch(r'[A-Z]{3}', cur):
+            return jsonify({'error': 'cur must be 3-letter'}), 400
+        sets.append('cur=?'); params.append(cur)
+        sets.append("src='manual'")
+    if 'remark' in d:
+        sets.append('remark=?'); params.append(d.get('remark'))
+    if sets:
+        sets.append("updated_at=datetime('now','localtime')")
+        params.append(lid)
+        execute(f"UPDATE dock_yard SET {', '.join(sets)} WHERE id=?", tuple(params))
+    return jsonify({'ok': True})
 
 
 @app.route('/api/ext/dock_procure/links')

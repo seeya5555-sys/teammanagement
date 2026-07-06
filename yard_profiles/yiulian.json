@@ -1,0 +1,15 @@
+{
+  "yard_name": "YiuLian Dockyards (Zhoushan)",
+  "match_hint": ["yiulian", "cmhk", "zhoushan"],
+  "sheet": "Quotation",
+  "cols": {"item_no": 0, "desc": 2, "qty": 16, "net_total": 19},
+  "discount_rate": 0.32,
+  "section_map": {
+    "2": "General", "3": "General",
+    "4": "Paint",
+    "6": "Steel",
+    "5": "Deck", "9": "Deck", "10": "Deck", "11": "Deck", "12": "Deck", "18": "Deck", "24": "Deck", "21": "Deck",
+    "7": "Engine", "8": "Engine", "13": "Engine", "14": "Engine", "15": "Engine", "19": "Engine", "20": "Engine", "22": "Engine", "23": "Engine", "25": "Engine", "40": "Engine",
+    "16": "Electric", "17": "Electric"
+  }
+}
