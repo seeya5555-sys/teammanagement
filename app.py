@@ -9160,6 +9160,40 @@ def api_ext_dockproc_quotes():
     return jsonify({'vsl_cd': vc, 'quotes': [dict(r) for r in rows]})
 
 
+@app.route('/api/ext/dock/push_data')
+@api_key_required
+def api_ext_dock_push_data():
+    """④ SVMS Dock draft 조립기(맥 build_envelope.py DRY)용 통합 소스.
+    vessel(조선소 벤더) + yard 7카테고리 + paint(P) + repair(R) + spare/store(S/ST) 계획금액.
+    ⚠️ 읽기전용. 조립·환산·BATCH_FLAG diff·SP_SET 저장은 전부 맥 조립기+형 컨펌(안전커널)."""
+    vc = (request.args.get('vsl_cd') or '').strip().upper()
+    if not vc:
+        return jsonify({'error': 'vsl_cd required'}), 400
+    ves = query("SELECT vsl_nm, vsl_cd, shipyard, shipyard_vndr_cd, shipyard_vndr_nm "
+                "FROM dock_procure_vessel WHERE UPPER(vsl_cd)=? ORDER BY updated_at DESC", (vc,), one=True)
+    if not ves:
+        return jsonify({'error': 'unknown vsl_cd (dock_procure_vessel에 vsl_cd 매칭 없음)'}), 404
+    vsl_nm = ves['vsl_nm']
+    yard = query("SELECT category, amount, cur, remark, src, sort_no FROM dock_yard "
+                 "WHERE vsl_nm=? ORDER BY sort_no, category", (vsl_nm,))
+    lines = query(
+        "SELECT req_no, cat_code, category, subject, equipment, quote_amt, quote_cur, quote_src, "
+        "vendor, svms_req_no, stg_order FROM dock_procure "
+        "WHERE vsl_nm=? AND quote_amt IS NOT NULL ORDER BY cat_code, req_no", (vsl_nm,))
+    def bycat(*codes):
+        return [dict(r) for r in lines if r['cat_code'] in codes]
+    return jsonify({
+        'vessel': {'vsl_nm': vsl_nm, 'vsl_cd': ves['vsl_cd'],
+                   'shipyard': ves['shipyard'],
+                   'shipyard_vndr_cd': ves['shipyard_vndr_cd'],
+                   'shipyard_vndr_nm': ves['shipyard_vndr_nm']},
+        'yard': [dict(r) for r in yard],       # dock_yard 7카테고리 → P_IC_YR
+        'paint': bycat('P'),                   # → P_IC_DP(02)
+        'repair': bycat('R'),                  # → P_IC_SR(04)
+        'spare': bycat('S', 'ST'),             # → P_IC_SS(03)
+    })
+
+
 # ===== 조선소(Yard) 견적 → SVMS Yard Repair 7카테고리 (dock_yard) =====
 YARD_CATEGORIES = ["General", "Paint", "Steel", "Deck", "Engine", "Electric", "Discount"]
 _YARD_TOTAL_ROW = re.compile(r'total price|final discount|after dicount|after discount|normal total|sub ?total|소계|합계', re.I)
