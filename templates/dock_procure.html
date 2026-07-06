@@ -410,7 +410,7 @@
       <td><div class="dp-stages">${stg(l,'stg_quote','견적<br>작성')}${stg(l,'stg_vendor','벤더<br>제출')}${stg(l,'stg_order','발주<br>완료')}</div></td>
       <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No">🔗${esc(l.svms_req_no)}</div>`:''}</td>
       <td class="c"><div class="dp-qwrap"><input class="dp-quote" data-id="${l.id}" value="${l.quote_amt!=null?esc(fmtAmt(l.quote_amt)):''}" placeholder="—" inputmode="decimal"><select class="dp-cur" data-id="${l.id}">${CURS.map(c=>`<option value="${c}"${(l.quote_cur||'USD')===c?' selected':''}>${c}</option>`).join('')}</select></div></td>
-      <td><input class="dp-rmk" data-id="${l.id}" value="${esc(l.remark||'')}" placeholder="—"></td>
+      <td>${l.cat_code==='P'?`<input class="dp-vnd" data-id="${l.id}" value="${esc(l.vendor||'')}" placeholder="업체(도료사)" title="페인트 자재 업체 — SVMS Dock Paint 02 VNDR_NM" style="width:100%;margin-bottom:3px;font-size:11px;color:var(--text-secondary)">`:''}<input class="dp-rmk" data-id="${l.id}" value="${esc(l.remark||'')}" placeholder="—"></td>
       <td style="white-space:nowrap">${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)">📋</button><button class="dp-lnk" data-id="${l.id}" title="SVMS Inq No 수동연결 (Tier3)">🔗</button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제">✕</button></td>
     </tr>`;
   }
@@ -434,6 +434,14 @@
       const id=inp.dataset.id;
       await fetch(`/api/dock_procure/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({remark:inp.value})});
       const l=DATA.lines.find(x=>x.id==id); if(l)l.remark=inp.value;
+    });
+    document.querySelectorAll('.dp-vnd').forEach(inp=>inp.onblur=async()=>{   // 페인트(P) 업체 수동입력
+      const id=inp.dataset.id;
+      const r=await fetch(`/api/dock_procure/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({vendor:inp.value})});
+      if(!r.ok){ inp.style.borderColor='var(--red-dot,#d33)'; toast('업체 저장 실패'); return; }
+      inp.style.borderColor='';
+      const v=inp.value.trim().slice(0,200); inp.value=v;                    // 서버 canonical(trim+200자)과 일치
+      const l=DATA.lines.find(x=>x.id==id); if(l)l.vendor=v||null;
     });
     document.querySelectorAll('.dp-quote').forEach(inp=>{
       inp.onfocus=()=>{ inp.value=inp.value.replace(/,/g,''); };   // 편집 중엔 쉼표 제거(raw)

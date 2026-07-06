@@ -563,6 +563,7 @@ def init_db(drop=False):
                 quote_amt    REAL,                            -- 발주업체 확정 견적금액(SVMS Spare/Shore 연동용, 수정가능)
                 quote_cur    TEXT DEFAULT 'USD',              -- 견적 통화
                 quote_src    TEXT DEFAULT 'auto',             -- auto=SVMS 발주금액 자동입력 / manual=사용자수정 잠금(폴러 안 덮음)
+                vendor       TEXT,                            -- 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 UNIQUE(vsl_nm, req_no)
@@ -602,6 +603,8 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN quote_src TEXT DEFAULT 'auto'")
                 # 기존에 수동입력된 금액은 잠가서 폴러가 안 덮게
                 conn.execute("UPDATE dock_procure SET quote_src='manual' WHERE quote_amt IS NOT NULL")
+            if 'vendor' not in _dpc:
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN vendor TEXT")   # 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
         except Exception:
             app.logger.debug('init-db migration skip', exc_info=True)
 
@@ -9059,6 +9062,15 @@ def api_dockproc_patch(lid):
     sets, params = [], []
     if 'remark' in d:
         sets.append('remark=?'); params.append(d.get('remark'))
+    if 'vendor' in d:                                   # 페인트(P) 수동 업체명(SVMS Dock Paint 02 VNDR_NM 소스)
+        v = d.get('vendor')
+        if v is not None and not isinstance(v, str):    # 타입 엄격(조용한 null overwrite 방지)
+            return jsonify({'error': 'vendor must be a string or null'}), 400
+        _row = query("SELECT cat_code FROM dock_procure WHERE id=?", (lid,), one=True)
+        if not _row or _row['cat_code'] != 'P':         # 서버단 P라인 강제(UI 게이팅 우회 차단)
+            return jsonify({'error': 'vendor is only editable on Paint(P) lines'}), 400
+        vv = (v.strip()[:200] or None) if isinstance(v, str) else None   # trim + 200자 상한
+        sets.append('vendor=?'); params.append(vv)
     if 'quote_amt' in d:                                # 발주업체 확정 견적금액(수정가능, SVMS 연동 소스)
         raw = d.get('quote_amt')
         if raw in (None, ''):
@@ -9139,6 +9151,23 @@ def api_ext_dockproc_quotes():
 YARD_CATEGORIES = ["General", "Paint", "Steel", "Deck", "Engine", "Electric", "Discount"]
 _YARD_TOTAL_ROW = re.compile(r'total price|final discount|after dicount|after discount|normal total|sub ?total|소계|합계', re.I)
 
+# General/Paint는 "항상 고정 형식"(손유석 지시) — AI가 형식을 못 지키면 빈 스켈레톤으로 강제(값은 형 수동입력).
+_YARD_GEN_SKELETON = "입거 예상일정 : 일, 상가일정 : "
+_YARD_PAINT_SKELETON = "Top : SA %, SA %, The other area :  (m2)"
+# full-shape 검증(lead token만 아니라 구조 토큰 전부 존재해야 통과 — 올마이트 반영)
+_YARD_GEN_RE = re.compile(r'^입거 예상일정 : .*상가일정 : ', re.S)
+_YARD_PAINT_RE = re.compile(r'^Top : .*The other area : .*m2', re.S)
+
+
+def _yard_norm_remark(cat, remark):
+    """General/Paint remark를 고정 형식으로 보장(구조 토큰 전부 있어야 AI 원문 유지, 아니면 빈 스켈레톤). 나머지 카테고리는 AI 원문."""
+    r = (remark or '').strip()
+    if cat == "General":
+        return r if _YARD_GEN_RE.match(r) else _YARD_GEN_SKELETON
+    if cat == "Paint":
+        return r if _YARD_PAINT_RE.match(r) else _YARD_PAINT_SKELETON
+    return r or None
+
 _YARD_AI_PROMPT = """너는 선박 입거수리(dry dock) 견적 분석가다. 조선소 견적서를 SVMS Yard Repair
 7카테고리로 집계하고 카테고리별 작업요약(remark)을 작성한다.
 
@@ -9154,7 +9183,11 @@ _YARD_AI_PROMPT = """너는 선박 입거수리(dry dock) 견적 분석가다. �
 규칙:
 - 각 라인의 Net Total(할인 반영된 라인 금액)만 합산한다. 소계/총계행(Total, Sub-total, Normal Total, discount 라벨)은 합산에서 제외.
 - EGCS/스크러버(scrubber) 등 별도 스페셜 프로젝트 시트는 제외한다.
-- remark = 해당 카테고리 주요 작업 1줄 영문 요약 (예 Engine: "E/R pipe fabrication, Valves, Aux Boiler & Donkey boiler, IG Scrubber etc."). General remark엔 입거/상가 일정이 견적에 있으면 포함.
+- remark(Steel/Deck/Engine/Electric) = 해당 카테고리에서 **금액이 큰 작업 위주로** 영문 1줄 요약(고액 항목을 앞에, 소액은 "etc."로 묶음). 예 Engine: "E/R pipe fabrication, Valves, Aux Boiler & Donkey boiler, IG Scrubber etc."
+- ⚠️ General·Paint remark는 **반드시 아래 고정 형식 그대로** 출력한다(형식 문구·구두점 유지). 각 값은 견적서에서 **확실히 찾은 경우에만** 채우고, 없거나 불확실하면 그 자리는 **공란으로 비워둔다**(절대 추정·창작 금지 — 사람이 수동입력):
+    General  형식: "입거 예상일정 : {N}일, 상가일정 : {상가 날짜범위}"      (예 "입거 예상일정 : 48일, 상가일정 : 4/25-30")
+    Paint    형식: "Top : SA{등급} {비율}%, SA{등급} {비율}%, The other area : {처리방식} ({면적}m2)"   (예 "Top : SA2.0 20%, SA1.0 10%, The other area : full blasting (28,899m2)")
+  값을 못 찾으면 예: General="입거 예상일정 : 일, 상가일정 : " / Paint="Top : SA %, SA %, The other area :  (m2)" 처럼 숫자만 비운 채 형식은 유지.
 - currency는 견적 표기 그대로. ⚠️ 견적서에 없는 금액·작업을 지어내지 마라.
 - quote_total = 견적서에 명시된 최종 총액(할인 후). 없으면 카테고리 합.
 
@@ -9329,7 +9362,7 @@ def api_dock_yard_upload():
     if rule:                                           # ✅ 금액=규칙(결정), Remark=AI
         source = 'rule+ai'
         cur_default = 'USD'
-        catmap = {c: {'amount': round(rule['categories'][c], 2), 'remark': ai_remarks.get(c)}
+        catmap = {c: {'amount': round(rule['categories'][c], 2), 'remark': _yard_norm_remark(c, ai_remarks.get(c))}
                   for c in YARD_CATEGORIES}
         if rule.get('unmapped'):
             warns.append('⚠️ 미매핑 섹션: ' + ','.join(rule['unmapped'].keys()) + ' — 프로파일 보강 필요')
@@ -9351,7 +9384,7 @@ def api_dock_yard_upload():
                 amt = 0.0
             if cn == 'Discount' and amt > 0:
                 amt = -amt
-            catmap[cn] = {'amount': amt, 'remark': (c.get('remark') or None)}
+            catmap[cn] = {'amount': amt, 'remark': _yard_norm_remark(cn, c.get('remark'))}
         _missing = [x for x in YARD_CATEGORIES if x not in catmap]
         if _missing:
             warns.append('⚠️ AI 누락 카테고리: ' + ','.join(_missing))
