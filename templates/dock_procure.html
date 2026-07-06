@@ -181,7 +181,7 @@
     <div class="dy-head">
       <h3>🏗 조선소 (SVMS Yard Repair)</h3>
       <div class="dy-up">
-        <select id="dy-profile"></select>
+        <select id="dy-shipyard" title="SVMS 조선소 벤더마스터 — 선택 시 봉투 조선소(VNDR_CD) 확정. ✓=결정적 파싱 프로파일 보유, 없으면 AI 파싱(비결정, 금액 확인 필요)"></select>
         <label class="dy-btn">📤 견적서 업로드<input type="file" id="dy-file" accept=".xlsx,.xlsm" hidden></label>
       </div>
     </div>
@@ -239,14 +239,23 @@
 
   // ===== 조선소(Yard) 견적 → SVMS Yard Repair 7카테고리 =====
   const YCATS = ['General','Paint','Steel','Deck','Engine','Electric','Discount'];
-  async function loadYardProfiles(){
+  let SHIPYARDS=[], SY_SYNCED=false;
+  async function loadShipyards(){
     try{
-      const r = await fetch('/api/dock_yard/profiles'); const j = await r.json();
-      $('#dy-profile').innerHTML = '<option value="">조선소 선택…</option>' +
-        (j.profiles||[]).map(p=>`<option value="${esc(p.file)}">${esc(p.yard_name)}</option>`).join('');
+      const r = await fetch('/api/dock_yard/shipyards'); const j = await r.json();
+      SHIPYARDS = j.shipyards||[]; SY_SYNCED = !!j.synced;
+      renderShipyardSel();
     }catch(e){}
   }
+  function renderShipyardSel(){
+    const sel=$('#dy-shipyard'); if(!sel) return;
+    if(!SY_SYNCED){ sel.innerHTML='<option value="">(조선소 마스터 미동기화)</option>'; return; }
+    const cur=(DATA.vessels.find(v=>v.vsl_nm===DATA.current)||{}).shipyard_vndr_cd||'';
+    sel.innerHTML = '<option value="">조선소 선택…</option>' +
+      SHIPYARDS.map(s=>`<option value="${esc(s.vndr_cd)}"${s.vndr_cd===cur?' selected':''}>${esc(s.vndr_nm_eng||s.vndr_nm)}${s.has_profile?' ✓':''}</option>`).join('');
+  }
   async function loadYard(vsl){
+    renderShipyardSel();                 // 현재 선박의 조선소 선택 반영
     if(!vsl){ renderYard([]); return; }
     const r = await fetch('/api/dock_yard?vsl_nm='+encodeURIComponent(vsl));
     const j = await r.json();
@@ -285,15 +294,26 @@
       await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({src:'auto'})});
       toast('잠금 해제 — 다음 견적 업로드 시 갱신됨'); await loadYard(DATA.current); });
   }
+  function bindShipyardSel(){
+    const sel=$('#dy-shipyard'); if(!sel) return;
+    sel.onchange=async()=>{
+      if(!DATA.current){ toast('선박 먼저 선택'); renderShipyardSel(); return; }
+      const vndr=sel.value;
+      const r=await fetch('/api/dock_procure/shipyard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vsl_nm:DATA.current,vndr_cd:vndr})});
+      const j=await r.json();
+      if(!r.ok){ toast('조선소 저장 실패: '+(j.error||'')); renderShipyardSel(); return; }
+      const v=DATA.vessels.find(x=>x.vsl_nm===DATA.current); if(v){v.shipyard_vndr_cd=j.vndr_cd;v.shipyard_vndr_nm=j.vndr_nm;}
+      toast('조선소: '+(j.vndr_nm||'(해제)'));
+    };
+  }
   function bindYardFile(){
     $('#dy-file').onchange=async e=>{
       const f=e.target.files[0]; if(!f)return;
-      const prof=$('#dy-profile').value;
       e.target.value='';
-      if(!prof){ toast('조선소 프로파일 먼저 선택'); return; }
       if(!DATA.current){ toast('선박 먼저 선택'); return; }
       const ves=DATA.vessels.find(v=>v.vsl_nm===DATA.current)||{};
-      const fd=new FormData(); fd.append('file',f); fd.append('vsl_nm',DATA.current); fd.append('profile',prof); if(ves.vsl_cd)fd.append('vsl_cd',ves.vsl_cd);
+      if(!ves.shipyard_vndr_cd){ toast('조선소 먼저 선택'); return; }   // 조선소=봉투 VNDR 소스 + 프로파일 자동매칭
+      const fd=new FormData(); fd.append('file',f); fd.append('vsl_nm',DATA.current); if(ves.vsl_cd)fd.append('vsl_cd',ves.vsl_cd);
       toast('견적 파싱 중…');
       const r=await fetch('/api/dock_yard/upload',{method:'POST',body:fd}); const j=await r.json();
       if(!r.ok){ toast('실패: '+(j.error||'오류')); return; }
@@ -523,7 +543,8 @@
   };
 
   load();
-  loadYardProfiles();
+  loadShipyards();
+  bindShipyardSel();
   bindYardFile();
 })();
 </script>

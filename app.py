@@ -587,6 +587,14 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_yard_vsl ON dock_yard(vsl_nm)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS yard_vendor (            -- SVMS 조선소 벤더마스터 캐시(맥이 pull→적재)
+                vndr_cd     TEXT PRIMARY KEY,                   -- PKG_CM_VNDR VNDR_CD (dock 봉투 DR_CD/VNDR_CD 소스)
+                vndr_nm     TEXT,                               -- 국문명
+                vndr_nm_eng TEXT,                               -- 영문명
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
         try:                                            # 기존 배포 DB 마이그레이션(Phase 2 컬럼)
             _dpc = [r[1] for r in conn.execute("PRAGMA table_info(dock_procure)").fetchall()]
             if 'svms_status' not in _dpc:
@@ -605,6 +613,11 @@ def init_db(drop=False):
                 conn.execute("UPDATE dock_procure SET quote_src='manual' WHERE quote_amt IS NOT NULL")
             if 'vendor' not in _dpc:
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN vendor TEXT")   # 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
+            _dpv = [r[1] for r in conn.execute("PRAGMA table_info(dock_procure_vessel)").fetchall()]
+            if 'shipyard_vndr_cd' not in _dpv:                # 선택된 조선소 벤더(SVMS) → dock 봉투 DR_CD/VNDR_CD
+                conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN shipyard_vndr_cd TEXT")
+            if 'shipyard_vndr_nm' not in _dpv:
+                conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN shipyard_vndr_nm TEXT")
         except Exception:
             app.logger.debug('init-db migration skip', exc_info=True)
 
@@ -9250,10 +9263,21 @@ def _list_yard_profiles():
             try:
                 with open(os.path.join(d, fn), encoding='utf-8') as f:
                     p = json.load(f)
-                out.append({'file': fn, 'yard_name': p.get('yard_name', fn)})
+                out.append({'file': fn, 'yard_name': p.get('yard_name', fn),
+                            'vndr_cd': p.get('vndr_cd')})   # 조선소 벤더(SVMS) 매칭용
             except Exception:
                 app.logger.debug('yard-profile load skip: %s', fn, exc_info=True)
     return out
+
+
+def _find_yard_profile_by_vndr(vndr_cd):
+    """선택된 조선소 벤더코드로 파싱 프로파일 파일명 찾기(없으면 None → AI 폴백)."""
+    if not vndr_cd:
+        return None
+    for p in _list_yard_profiles():
+        if (p.get('vndr_cd') or '').strip().upper() == vndr_cd.strip().upper():
+            return p['file']
+    return None
 
 
 def _load_yard_profile(name):
@@ -9314,6 +9338,70 @@ def api_dock_yard_profiles():
     return jsonify({'profiles': _list_yard_profiles()})
 
 
+@app.route('/api/dock_yard/shipyards')
+@login_required
+def api_dock_yard_shipyards():
+    """조선소 드롭다운 소스 — SVMS 벤더마스터(SYD_YN=Y) 캐시 + 로컬 프로파일 vndr_cd 매칭 표시."""
+    rows = query("SELECT vndr_cd, vndr_nm, vndr_nm_eng FROM yard_vendor ORDER BY COALESCE(NULLIF(vndr_nm_eng,''),vndr_nm)")
+    profs = {(p.get('vndr_cd') or '').strip().upper() for p in _list_yard_profiles() if (p.get('vndr_cd') or '').strip()}
+    out = [dict(r, has_profile=((r['vndr_cd'] or '').strip().upper() in profs)) for r in [dict(x) for x in rows]]
+    return jsonify({'shipyards': out, 'synced': bool(rows)})
+
+
+@app.route('/api/ext/dock_yard/shipyards', methods=['POST'])
+@api_key_required
+def api_ext_dock_yard_shipyards():
+    """맥 yard_vendors_sync.py 가 SVMS 조선소 벤더 목록 적재(full-replace)."""
+    d = request.get_json(silent=True) or {}
+    ships = d.get('shipyards') or []
+    if not isinstance(ships, list) or not ships:
+        return jsonify({'error': 'shipyards[] 필요'}), 400
+    dedup = {}                                                # vndr_cd 중복 제거(마지막 값 채택)
+    for s in ships:
+        if not isinstance(s, dict):
+            continue
+        cd = (s.get('vndr_cd') or '').strip()
+        if not cd:
+            continue
+        dedup[cd] = (cd, (s.get('vndr_nm') or '').strip()[:200], (s.get('vndr_nm_eng') or '').strip()[:200])
+    if not dedup:
+        return jsonify({'error': '유효 vndr_cd 없음'}), 400
+    rows = [(cd, nm, en) for (cd, nm, en) in dedup.values()]
+    db = get_db()                                             # 원자적 full-replace(DELETE+INSERT 단일 트랜잭션, 부분상태 방지)
+    try:
+        db.execute("DELETE FROM yard_vendor")
+        db.executemany("INSERT OR REPLACE INTO yard_vendor (vndr_cd, vndr_nm, vndr_nm_eng, updated_at) "
+                       "VALUES (?,?,?,datetime('now','localtime'))", rows)
+        db.commit()
+    except Exception:
+        db.rollback()
+        app.logger.exception('yard-vendor replace')
+        return jsonify({'error': '적재 실패(rollback)'}), 500
+    return jsonify({'ok': True, 'count': len(rows)})
+
+
+@app.route('/api/dock_procure/shipyard', methods=['POST'])
+@login_required
+def api_dockproc_set_shipyard():
+    """선박의 조선소 벤더 선택 저장(드롭다운) → dock 봉투 DR_CD/VNDR_CD/VNDR_NM 소스."""
+    d = request.get_json(silent=True) or {}
+    vsl_nm = (d.get('vsl_nm') or '').strip()
+    vndr_cd = (d.get('vndr_cd') or '').strip() or None
+    if not vsl_nm:
+        return jsonify({'error': 'vsl_nm 필요'}), 400
+    vndr_nm = None
+    if vndr_cd:
+        row = query("SELECT vndr_nm FROM yard_vendor WHERE vndr_cd=?", (vndr_cd,), one=True)
+        if not row:
+            return jsonify({'error': '알 수 없는 조선소 벤더코드'}), 400
+        vndr_nm = row['vndr_nm']
+    rc = execute_rc("UPDATE dock_procure_vessel SET shipyard_vndr_cd=?, shipyard_vndr_nm=?, "
+                    "updated_at=datetime('now','localtime') WHERE vsl_nm=?", (vndr_cd, vndr_nm, vsl_nm))
+    if not rc:                                                # 없는 선박 → 404(조용한 ok 방지)
+        return jsonify({'error': 'unknown vsl_nm'}), 404
+    return jsonify({'ok': True, 'vndr_cd': vndr_cd, 'vndr_nm': vndr_nm})
+
+
 @app.route('/api/dock_yard')
 @login_required
 def api_dock_yard_lines():
@@ -9335,7 +9423,12 @@ def api_dock_yard_upload():
         return jsonify({'error': 'vsl_nm 필요'}), 400
     data = f.read()
     import io as _io
-    # 프로파일(선택) — 규칙파서 교차검증/폴백용
+    # 프로파일 해석: 명시된 profile 우선, 없으면 선택된 조선소 벤더(vndr_cd)로 자동매칭
+    if not prof_name:
+        _v = query("SELECT shipyard_vndr_cd FROM dock_procure_vessel WHERE vsl_nm=?", (vsl_nm,), one=True)
+        if _v and _v['shipyard_vndr_cd']:
+            prof_name = _find_yard_profile_by_vndr(_v['shipyard_vndr_cd']) or ''
+    # 프로파일(선택) — 규칙파서(결정적 금액). 없으면 AI 폴백(비결정 경고).
     profile = None
     if prof_name:
         try:
