@@ -562,6 +562,7 @@ def init_db(drop=False):
                 svms_synced_at TEXT,                          -- Phase 2: 마지막 동기화 시각
                 quote_amt    REAL,                            -- 발주업체 확정 견적금액(SVMS Spare/Shore 연동용, 수정가능)
                 quote_cur    TEXT DEFAULT 'USD',              -- 견적 통화
+                quote_src    TEXT DEFAULT 'auto',             -- auto=SVMS 발주금액 자동입력 / manual=사용자수정 잠금(폴러 안 덮음)
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 UNIQUE(vsl_nm, req_no)
@@ -580,6 +581,10 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN quote_amt REAL")
             if 'quote_cur' not in _dpc:
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN quote_cur TEXT DEFAULT 'USD'")
+            if 'quote_src' not in _dpc:
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN quote_src TEXT DEFAULT 'auto'")
+                # 기존에 수동입력된 금액은 잠가서 폴러가 안 덮게
+                conn.execute("UPDATE dock_procure SET quote_src='manual' WHERE quote_amt IS NOT NULL")
         except Exception:
             app.logger.debug('init-db migration skip', exc_info=True)
 
@@ -9054,6 +9059,12 @@ def api_dockproc_patch(lid):
         if not re.fullmatch(r'[A-Z]{3}', cur):         # 3자 통화코드 strict(silent truncation 금지)
             return jsonify({'error': 'quote_cur must be a 3-letter code'}), 400
         sets.append('quote_cur=?'); params.append(cur)
+    if 'quote_amt' in d or 'quote_cur' in d:            # 사용자 직접수정 → manual 잠금(폴러 자동덮어쓰기 차단)
+        # 금액만 비우면(clear) 자동입력 재개, 그 외(값 입력/통화 변경)는 manual 잠금
+        if 'quote_amt' in d and d.get('quote_amt') in (None, ''):
+            sets.append('quote_src=?'); params.append('auto')   # 금액 clear = 자동입력 재개(통화 동반 무관)
+        else:
+            sets.append('quote_src=?'); params.append('manual')
     if sets:
         sets.append("updated_at=datetime('now','localtime')")
         params.append(lid)
@@ -9144,30 +9155,45 @@ def api_ext_dockproc_sync():
             if len(misses) < 20:
                 misses.append({'inq': inq, 'subject': subj[:70]})
             continue
-        cur = plan.get(row['id'])
-        if not cur or rank > cur[0]:                     # 같은 행 여러건이면 최고 rank만(취소 제외 후)
+        prev = plan.get(row['id'])
+        if not prev or rank > prev[0]:                   # 같은 행 여러건이면 최고 rank만(취소 제외 후)
+            _amt = it.get('amt')
+            try:
+                _amt = None if _amt in (None, '') else float(str(_amt).replace(',', ''))
+            except (TypeError, ValueError):
+                _amt = None                              # 파싱 실패=자동입력 안 함(0 저장 방지)
             plan[row['id']] = (rank, status, (it.get('vendor') or '').strip() or None,
-                               inq, row, (it.get('submit') or '').strip() or None)
+                               inq, row, (it.get('submit') or '').strip() or None,
+                               _amt, (it.get('cur') or '').strip().upper() or None)
     changes = []
-    for rid, (rank, status, vendor, inq, row, submit) in plan.items():
+    for rid, (rank, status, vendor, inq, row, submit, amt, cur) in plan.items():
         q, v, o = (1 if rank >= 1 else 0), (1 if rank >= 2 else 0), (1 if rank >= 3 else 0)
         new_remark = row['remark']
         # 옵션 b: 발주완료 시 Vendor명을 Remark에 기입. 단 신규완료/빈Remark일 때만(매폴 수동메모 덮어쓰기 방지)
         if o and vendor and (not row['stg_order'] or not (row['remark'] or '').strip()):
             new_remark = vendor
+        # 발주금액 자동입력: 발주완료(o)·금액있음·manual아님 일 때만(사용자 수정 우선)
+        set_q = (o == 1 and amt is not None and (row['quote_src'] or 'auto') != 'manual')
+        new_qamt = amt if set_q else row['quote_amt']
+        new_qcur = ((cur if (cur and _re.fullmatch(r'[A-Z]{3}', cur)) else 'USD')
+                    if set_q else row['quote_cur'])      # SVMS CUR_CD 이상값 방어
+        new_qsrc = 'auto' if set_q else (row['quote_src'] or 'auto')
         before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'],
-                  row['svms_req_no'], row['svms_submit'])
-        after = (q, v, o, new_remark, row['svms_req_no'] or inq, submit)   # COALESCE(기존,신규)=멱등
+                  row['svms_req_no'], row['svms_submit'], row['quote_amt'], row['quote_cur'], row['quote_src'])
+        after = (q, v, o, new_remark, row['svms_req_no'] or inq, submit,
+                 new_qamt, new_qcur, new_qsrc)   # COALESCE(기존,신규)=멱등
         if before != after:
             changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
                             'status': status, 'stages': [q, v, o],
-                            'remark': new_remark, 'inq_no': inq, 'submit': submit})
+                            'remark': new_remark, 'inq_no': inq, 'submit': submit,
+                            'quote_amt': new_qamt, 'quote_cur': new_qcur, 'quote_src': new_qsrc})
             if not dry:
                 execute(
                     "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, remark=?, "
                     "svms_req_no=COALESCE(svms_req_no,?), svms_status=?, svms_submit=?, "
+                    "quote_amt=?, quote_cur=?, quote_src=?, "
                     "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?",
-                    (q, v, o, new_remark, inq, status, submit, rid))
+                    (q, v, o, new_remark, inq, status, submit, new_qamt, new_qcur, new_qsrc, rid))
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses})
