@@ -9139,6 +9139,66 @@ def api_ext_dockproc_quotes():
 YARD_CATEGORIES = ["General", "Paint", "Steel", "Deck", "Engine", "Electric", "Discount"]
 _YARD_TOTAL_ROW = re.compile(r'total price|final discount|after dicount|after discount|normal total|sub ?total|소계|합계', re.I)
 
+_YARD_AI_PROMPT = """너는 선박 입거수리(dry dock) 견적 분석가다. 조선소 견적서를 SVMS Yard Repair
+7카테고리로 집계하고 카테고리별 작업요약(remark)을 작성한다.
+
+카테고리 배정 기준:
+- General : 일반서비스·입거비 (general service, docking)
+- Paint   : 선체도장 (hull painting)
+- Steel   : 강재수리 (structural steelwork)
+- Deck    : 갑판부 (seachest, rudder, propeller, windlass, anchor, cargo pump, life boat, fire wire)
+- Engine  : 기관부 (valve, tank cleaning, main/aux engine, boiler, pump, pipe/WBT, IGS, cooler, ER crane)
+- Electric: 전기 (alternator, electric motor)
+- Discount: 최종할인 (final discount) — 반드시 음수 금액
+
+규칙:
+- 각 라인의 Net Total(할인 반영된 라인 금액)만 합산한다. 소계/총계행(Total, Sub-total, Normal Total, discount 라벨)은 합산에서 제외.
+- EGCS/스크러버(scrubber) 등 별도 스페셜 프로젝트 시트는 제외한다.
+- remark = 해당 카테고리 주요 작업 1줄 영문 요약 (예 Engine: "E/R pipe fabrication, Valves, Aux Boiler & Donkey boiler, IG Scrubber etc."). General remark엔 입거/상가 일정이 견적에 있으면 포함.
+- currency는 견적 표기 그대로. ⚠️ 견적서에 없는 금액·작업을 지어내지 마라.
+- quote_total = 견적서에 명시된 최종 총액(할인 후). 없으면 카테고리 합.
+
+출력은 JSON만:
+{"currency":"USD","quote_total":873184.25,
+ "categories":[{"cat":"General","amount":449244,"remark":"..."}, ... 7개]}"""
+
+
+def _yard_xlsx_to_text(raw_bytes, max_rows=3000):
+    """조선소 견적 xlsx → 텍스트(전체 시트, Net Total 잘림 방지 위해 행제한 넉넉히)."""
+    import io as _io
+    from openpyxl import load_workbook
+    wb = load_workbook(_io.BytesIO(raw_bytes), read_only=True, data_only=True)
+    out = []
+    n = 0
+    for ws in wb.worksheets:
+        out.append(f"### SHEET: {ws.title}")
+        for r in ws.iter_rows(values_only=True):
+            cells = ['' if c is None else str(c).strip() for c in r]
+            while cells and cells[-1] == '':
+                cells.pop()
+            if not cells:
+                continue
+            out.append(' | '.join(cells))
+            n += 1
+            if n >= max_rows:
+                return '\n'.join(out)
+    return '\n'.join(out)
+
+
+def _yard_ai_extract(raw_bytes):
+    """Gemini Flash로 견적 → 7카테고리 금액+remark+총액. 실패/키없음 시 None."""
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        text = _yard_xlsx_to_text(raw_bytes)
+        res = _gemini_call_json([{'text': _YARD_AI_PROMPT + "\n\n[견적서]\n" + text}])
+    except Exception:
+        app.logger.exception('yard-ai-extract')
+        return None
+    if not isinstance(res, dict) or res.get('error') or not res.get('categories'):
+        return None
+    return res
+
 
 def _yard_profiles_dir():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yard_profiles')
@@ -9237,42 +9297,96 @@ def api_dock_yard_upload():
         return jsonify({'error': '.xlsx 견적 파일 필요'}), 400
     if not vsl_nm:
         return jsonify({'error': 'vsl_nm 필요'}), 400
-    if not prof_name:
-        return jsonify({'error': '조선소 프로파일 선택 필요'}), 400
-    try:
-        profile = _load_yard_profile(prof_name)
-    except Exception:
-        return jsonify({'error': '프로파일 로드 실패'}), 400
-    try:
-        import io as _io
-        res = _yard_parse_quote(_io.BytesIO(f.read()), profile)
-    except Exception as e:
-        app.logger.exception('yard-upload')
-        return jsonify({'error': '견적 파싱 실패 — 프로파일/시트 형식을 확인하세요'}), 400
+    data = f.read()
+    import io as _io
+    # 프로파일(선택) — 규칙파서 교차검증/폴백용
+    profile = None
+    if prof_name:
+        try:
+            profile = _load_yard_profile(prof_name)
+        except Exception:
+            profile = None
+    ai = _yard_ai_extract(data)                       # 1차 = Gemini
+    rule = None
+    if profile:
+        try:
+            rule = _yard_parse_quote(_io.BytesIO(data), profile)
+        except Exception:
+            app.logger.exception('yard-rule')
+            rule = None
+
+    warns = []
+    yard_nm = (profile or {}).get('yard_name')
+    if ai and ai.get('categories'):                   # AI 채택
+        source = 'ai'
+        cur_default = (ai.get('currency') or 'USD').strip().upper()[:3] or 'USD'
+        catmap = {}
+        for c in ai['categories']:
+            cn = c.get('cat')
+            if cn not in YARD_CATEGORIES:
+                continue
+            try:
+                amt = round(float(str(c.get('amount') or 0).replace(',', '')), 2)
+            except (TypeError, ValueError):
+                amt = 0.0
+            if not math.isfinite(amt):
+                amt = 0.0
+            if cn == 'Discount' and amt > 0:              # Discount는 음수 강제
+                amt = -amt
+            catmap[cn] = {'amount': amt, 'remark': (c.get('remark') or None)}
+        _missing = [x for x in YARD_CATEGORIES if x not in catmap]
+        if _missing:
+            warns.append('⚠️ AI 누락 카테고리: ' + ','.join(_missing))
+        if not profile:
+            warns.append('⚠️ 프로파일 없음 — 규칙파서 독립검증 생략(AI 총액만 대조)')
+        ai_sum = round(sum(v['amount'] for v in catmap.values()), 2)
+        qt = ai.get('quote_total')
+        try:
+            qt = float(str(qt).replace(',', '')) if qt not in (None, '') else None
+        except (TypeError, ValueError):
+            qt = None
+        if qt is not None and abs(ai_sum - qt) > max(1.0, abs(qt) * 0.005):
+            warns.append(f'⚠️ AI 합계 {ai_sum:,.0f} ≠ 견적총액 {qt:,.0f} — 확인 필요')
+        if rule:                                       # 규칙파서 교차검증
+            rsum = round(sum(rule['categories'].values()), 2)
+            if abs(ai_sum - rsum) > max(1.0, abs(rsum) * 0.01):
+                warns.append(f'⚠️ AI {ai_sum:,.0f} vs 규칙파서 {rsum:,.0f} 차이 — 확인 필요')
+    elif rule:                                         # AI 실패 → 규칙 폴백
+        source = 'rule'
+        cur_default = 'USD'
+        catmap = {c: {'amount': rule['categories'][c], 'remark': None} for c in YARD_CATEGORIES}
+        warns.append('AI 파싱 실패 — 규칙파서(프로파일) 폴백')
+        if rule.get('unmapped'):
+            warns.append('미매핑 섹션: ' + ','.join(rule['unmapped'].keys()))
+    else:
+        return jsonify({'error': 'AI 파싱 실패 + 규칙 폴백 없음 — 조선소 프로파일 선택 또는 Gemini 키 확인'}), 400
+
     vsl_cd = (request.form.get('vsl_cd') or '').strip().upper() or None
     added = updated = skipped = 0
     for i, catn in enumerate(YARD_CATEGORIES):
-        amt = res["categories"].get(catn, 0.0)
+        c = catmap.get(catn) or {'amount': 0.0, 'remark': None}
+        amt, rmk = c['amount'], c.get('remark')
         ex = query("SELECT id, src FROM dock_yard WHERE vsl_nm=? AND category=?", (vsl_nm, catn), one=True)
-        if ex and (ex['src'] or 'auto') == 'manual':          # 사용자 수정건: 금액/통화만 보존, metadata는 갱신
+        if ex and (ex['src'] or 'auto') == 'manual':   # 수동수정건: 금액/통화/remark 보존, metadata만 갱신
             execute("UPDATE dock_yard SET yard_name=?, vsl_cd=COALESCE(?,vsl_cd), sort_no=?, "
-                    "updated_at=datetime('now','localtime') WHERE id=?",
-                    (res.get("yard_name"), vsl_cd, i, ex['id']))
+                    "updated_at=datetime('now','localtime') WHERE id=?", (yard_nm, vsl_cd, i, ex['id']))
             skipped += 1
             continue
         if ex:
-            execute("UPDATE dock_yard SET amount=?, cur='USD', src='auto', yard_name=?, "
-                    "vsl_cd=COALESCE(?,vsl_cd), sort_no=?, updated_at=datetime('now','localtime') WHERE id=?",
-                    (amt, res.get("yard_name"), vsl_cd, i, ex['id']))
+            execute("UPDATE dock_yard SET amount=?, cur=?, remark=?, src='auto', "
+                    "yard_name=?, vsl_cd=COALESCE(?,vsl_cd), sort_no=?, updated_at=datetime('now','localtime') WHERE id=?",
+                    (amt, cur_default, rmk, yard_nm, vsl_cd, i, ex['id']))
             updated += 1
         else:
-            execute("INSERT INTO dock_yard (vsl_nm, vsl_cd, category, amount, cur, src, yard_name, sort_no) "
-                    "VALUES (?,?,?,?,'USD','auto',?,?)",
-                    (vsl_nm, vsl_cd, catn, amt, res.get("yard_name"), i))
+            execute("INSERT INTO dock_yard (vsl_nm, vsl_cd, category, amount, cur, remark, src, yard_name, sort_no) "
+                    "VALUES (?,?,?,?,?,?,'auto',?,?)",
+                    (vsl_nm, vsl_cd, catn, amt, cur_default, rmk, yard_nm, i))
             added += 1
-    return jsonify({'ok': True, 'added': added, 'updated': updated, 'skipped_manual': skipped,
-                    'categories': res["categories"], 'final_total': res["final_total"],
-                    'unmapped': res["unmapped"]})
+    final = round(sum(c['amount'] for c in catmap.values()), 2)
+    verified = not any('⚠️' in w for w in warns)
+    return jsonify({'ok': True, 'source': source, 'verified': verified, 'warns': warns,
+                    'added': added, 'updated': updated, 'skipped_manual': skipped,
+                    'final_total': final})
 
 
 @app.route('/api/dock_yard/<int:lid>', methods=['PATCH'])
@@ -9303,6 +9417,8 @@ def api_dock_yard_patch(lid):
         sets.append("src='manual'")
     if 'remark' in d:
         sets.append('remark=?'); params.append(d.get('remark'))
+    if d.get('src') == 'auto':                          # 🔒 언락 — 재업로드 시 덮어씀
+        sets.append("src=?"); params.append('auto')
     if sets:
         sets.append("updated_at=datetime('now','localtime')")
         params.append(lid)

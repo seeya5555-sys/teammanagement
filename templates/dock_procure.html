@@ -110,6 +110,7 @@
   .dy-rmk{width:100%;font-size:11.5px;color:var(--text-secondary);border:1px solid transparent;border-radius:6px;padding:3px 5px;background:transparent}
   .dy-rmk:focus{border-color:var(--border);background:#fff;outline:none}
   .dy-foot{margin-top:8px;font-size:11px;color:var(--text-tertiary)}
+  .dy-lock{cursor:pointer;font-size:11px}
   .dp-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--nav-bg);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:2000;box-shadow:0 4px 16px rgba(0,0,0,.2);display:none}
 </style>
 {% endblock %}
@@ -254,7 +255,8 @@
   function renderYard(lines){
     const byC={}; lines.forEach(l=>byC[l.category]=l);
     $('#dy-body').innerHTML = YCATS.map(c=>{
-      const l=byC[c]||{}; const has=!!l.id; const lock=(l.src==='manual')?' 🔒':'';
+      const l=byC[c]||{}; const has=!!l.id;
+      const lock=(has && l.src==='manual')?` <span class="dy-lock" data-id="${l.id}" title="클릭하여 잠금해제 (견적 재업로드 시 덮어씀)">🔒</span>`:'';
       return `<tr>
         <td>${c}${lock}</td>
         <td class="c"><input class="dy-amt" data-id="${has?l.id:''}" value="${l.amount!=null?esc(fmtAmt(l.amount)):''}" placeholder="—" inputmode="decimal"${has?'':' disabled'}></td>
@@ -279,6 +281,9 @@
       await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({cur:sel.value})}); await loadYard(DATA.current); });
     document.querySelectorAll('.dy-rmk').forEach(inp=>inp.onblur=async()=>{ const id=inp.dataset.id; if(!id)return;
       await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({remark:inp.value})}); });
+    document.querySelectorAll('.dy-lock').forEach(el=>el.onclick=async()=>{ const id=el.dataset.id;
+      await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({src:'auto'})});
+      toast('잠금 해제 — 다음 견적 업로드 시 갱신됨'); await loadYard(DATA.current); });
   }
   function bindYardFile(){
     $('#dy-file').onchange=async e=>{
@@ -292,8 +297,8 @@
       toast('견적 파싱 중…');
       const r=await fetch('/api/dock_yard/upload',{method:'POST',body:fd}); const j=await r.json();
       if(!r.ok){ toast('실패: '+(j.error||'오류')); return; }
-      let msg=`조선소 반영 (최종 ${fmtAmt(j.final_total)}) — 신규 ${j.added}·갱신 ${j.updated}·잠김스킵 ${j.skipped_manual}`;
-      if(j.unmapped && Object.keys(j.unmapped).length) msg+=' ⚠️미매핑섹션 '+Object.keys(j.unmapped).join(',');
+      let msg=`조선소 반영 (${j.source==='ai'?'AI':'규칙'}, 최종 ${fmtAmt(j.final_total)}) — 신규${j.added}·갱신${j.updated}·잠김${j.skipped_manual}`;
+      if(j.warns && j.warns.length) msg += ' · ' + j.warns.join(' · ');
       toast(msg); await loadYard(DATA.current);
     };
   }
