@@ -9158,9 +9158,12 @@ _YARD_AI_PROMPT = """너는 선박 입거수리(dry dock) 견적 분석가다. �
 - currency는 견적 표기 그대로. ⚠️ 견적서에 없는 금액·작업을 지어내지 마라.
 - quote_total = 견적서에 명시된 최종 총액(할인 후). 없으면 카테고리 합.
 
+- ⚠️ categories 배열에는 7개 카테고리(General,Paint,Steel,Deck,Engine,Electric,Discount)를
+  빠짐없이 모두 포함하고, 각 항목의 remark를 반드시 작성한다(해당 작업이 없으면 remark="").
+
 출력은 JSON만:
 {"currency":"USD","quote_total":873184.25,
- "categories":[{"cat":"General","amount":449244,"remark":"..."}, ... 7개]}"""
+ "categories":[{"cat":"General","amount":449244,"remark":"..."}, ... 7개 전부]}"""
 
 
 def _yard_xlsx_to_text(raw_bytes, max_rows=3000):
@@ -9306,7 +9309,13 @@ def api_dock_yard_upload():
             profile = _load_yard_profile(prof_name)
         except Exception:
             profile = None
-    ai = _yard_ai_extract(data)                       # 1차 = Gemini
+    # 하이브리드: 금액=규칙파서(결정적) 우선, Remark=Gemini(AI). 프로파일 없으면 AI 금액 폴백(비결정 경고).
+    ai = _yard_ai_extract(data)                       # Remark(+프로파일 없을때 금액 폴백)
+    ai_remarks = {}
+    if ai and ai.get('categories'):
+        for c in ai['categories']:
+            if c.get('cat') in YARD_CATEGORIES:
+                ai_remarks[c['cat']] = (c.get('remark') or None)
     rule = None
     if profile:
         try:
@@ -9317,7 +9326,16 @@ def api_dock_yard_upload():
 
     warns = []
     yard_nm = (profile or {}).get('yard_name')
-    if ai and ai.get('categories'):                   # AI 채택
+    if rule:                                           # ✅ 금액=규칙(결정), Remark=AI
+        source = 'rule+ai'
+        cur_default = 'USD'
+        catmap = {c: {'amount': round(rule['categories'][c], 2), 'remark': ai_remarks.get(c)}
+                  for c in YARD_CATEGORIES}
+        if rule.get('unmapped'):
+            warns.append('⚠️ 미매핑 섹션: ' + ','.join(rule['unmapped'].keys()) + ' — 프로파일 보강 필요')
+        if not ai:
+            warns.append('Remark 생성 실패(Gemini) — 금액만 반영')
+    elif ai and ai.get('categories'):                  # 프로파일 없음 → AI 금액(비결정 경고)
         source = 'ai'
         cur_default = (ai.get('currency') or 'USD').strip().upper()[:3] or 'USD'
         catmap = {}
@@ -9331,33 +9349,13 @@ def api_dock_yard_upload():
                 amt = 0.0
             if not math.isfinite(amt):
                 amt = 0.0
-            if cn == 'Discount' and amt > 0:              # Discount는 음수 강제
+            if cn == 'Discount' and amt > 0:
                 amt = -amt
             catmap[cn] = {'amount': amt, 'remark': (c.get('remark') or None)}
         _missing = [x for x in YARD_CATEGORIES if x not in catmap]
         if _missing:
             warns.append('⚠️ AI 누락 카테고리: ' + ','.join(_missing))
-        if not profile:
-            warns.append('⚠️ 프로파일 없음 — 규칙파서 독립검증 생략(AI 총액만 대조)')
-        ai_sum = round(sum(v['amount'] for v in catmap.values()), 2)
-        qt = ai.get('quote_total')
-        try:
-            qt = float(str(qt).replace(',', '')) if qt not in (None, '') else None
-        except (TypeError, ValueError):
-            qt = None
-        if qt is not None and abs(ai_sum - qt) > max(1.0, abs(qt) * 0.005):
-            warns.append(f'⚠️ AI 합계 {ai_sum:,.0f} ≠ 견적총액 {qt:,.0f} — 확인 필요')
-        if rule:                                       # 규칙파서 교차검증
-            rsum = round(sum(rule['categories'].values()), 2)
-            if abs(ai_sum - rsum) > max(1.0, abs(rsum) * 0.01):
-                warns.append(f'⚠️ AI {ai_sum:,.0f} vs 규칙파서 {rsum:,.0f} 차이 — 확인 필요')
-    elif rule:                                         # AI 실패 → 규칙 폴백
-        source = 'rule'
-        cur_default = 'USD'
-        catmap = {c: {'amount': rule['categories'][c], 'remark': None} for c in YARD_CATEGORIES}
-        warns.append('AI 파싱 실패 — 규칙파서(프로파일) 폴백')
-        if rule.get('unmapped'):
-            warns.append('미매핑 섹션: ' + ','.join(rule['unmapped'].keys()))
+        warns.append('⚠️ 프로파일 없음 — AI 금액(같은 견적도 값 변동 가능). 반드시 확인, 프로파일 요청 권장')
     else:
         return jsonify({'error': 'AI 파싱 실패 + 규칙 폴백 없음 — 조선소 프로파일 선택 또는 Gemini 키 확인'}), 400
 

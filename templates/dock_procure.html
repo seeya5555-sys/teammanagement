@@ -304,6 +304,7 @@
   }
 
   function render(){
+    const _dyc=document.querySelector('.dy-card'); if(_dyc) _dyc.style.display=(FILTER==='SY')?'':'none';   // 조선소 카드는 조선소(SY) 필터일때만
     // vessel card selector
     const vc = $('#dp-vcards');
     if(!DATA.vessels.length){
