@@ -618,6 +618,8 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN shipyard_vndr_cd TEXT")
             if 'shipyard_vndr_nm' not in _dpv:
                 conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN shipyard_vndr_nm TEXT")
+            if 'dk_cd' not in _dpv:                        # SVMS 입거수리 Dock No(푸싱 대상 draft). 설정된 선박만 자동푸싱 opt-in
+                conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN dk_cd TEXT")
         except Exception:
             app.logger.debug('init-db migration skip', exc_info=True)
 
@@ -7196,6 +7198,107 @@ def api_ext_dockproc_sync_done():
     execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_sync_done', ?)", (d.get('flag') or now,))
     execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_sync_result', ?)", (str(d.get('result') or '')[:500],))
     return jsonify({'ok': True, 'done_at': d.get('flag') or now})
+
+
+# ===== SVMS Dock SP_SET 푸싱(draft) — 수동 버튼 + 맥 스케줄러(토큰0). Submit은 항상 형(자동 안 함) =====
+@app.route('/api/dock_procure/set-dkcd', methods=['POST'])
+@login_required
+def api_dockproc_set_dkcd():
+    """선박↔SVMS Dock No(DK_CD) 매핑 저장. 푸싱 대상 + 매일 자동푸싱 opt-in 키."""
+    d = request.get_json(silent=True) or {}
+    vsl_nm = (d.get('vsl_nm') or '').strip()
+    dk_cd = (d.get('dk_cd') or '').strip() or None
+    if not vsl_nm:
+        return jsonify({'error': 'vsl_nm 필요'}), 400
+    if dk_cd and not re.fullmatch(r'[A-Z0-9]{6,30}', dk_cd):   # SVMS Dock No 형식(예 SAPSMD2607060001)
+        return jsonify({'error': 'DK_CD 형식 오류(영대문자+숫자 6~30)'}), 400
+    rc = execute_rc("UPDATE dock_procure_vessel SET dk_cd=?, updated_at=datetime('now','localtime') WHERE vsl_nm=?",
+                    (dk_cd, vsl_nm))
+    if not rc:
+        return jsonify({'error': 'unknown vsl_nm'}), 404
+    return jsonify({'ok': True, 'dk_cd': dk_cd})
+
+
+def _push_req():
+    r = query("SELECT v FROM api_settings WHERE k='dock_push_req'", one=True)
+    if not r or not r['v']:
+        return None
+    try:
+        return json.loads(r['v'])
+    except Exception:
+        return None
+
+
+@app.route('/api/dock_procure/push/trigger', methods=['POST'])
+@login_required
+def api_dockproc_push_trigger():
+    """'SVMS Dock 푸싱' 버튼 — 대상 선박 요청을 **단일 원자 row(dock_push_req JSON)**로 기록
+    (ts+vsl_cd+dk_cd 스냅샷 → wrong-vessel race 방지, vsl_cd 키). 맥 push-watcher가 push_dock --save(draft)."""
+    _ensure_api_table()
+    d = request.get_json(silent=True) or {}
+    vsl_nm = (d.get('vsl_nm') or '').strip()
+    if not vsl_nm:
+        return jsonify({'error': 'vsl_nm 필요'}), 400
+    v = query("SELECT vsl_cd, dk_cd FROM dock_procure_vessel WHERE vsl_nm=?", (vsl_nm,), one=True)
+    if not v or not v['dk_cd']:
+        return jsonify({'error': 'DK_CD 미설정 — 먼저 SVMS Dock No를 지정하세요'}), 400
+    if not v['vsl_cd']:
+        return jsonify({'error': 'SVMS 선박코드(vsl_cd) 미설정'}), 400
+    now = query("SELECT strftime('%Y-%m-%d %H:%M:%f','now','localtime') t", one=True)['t']  # 밀리초=같은초 연타 구분
+    req = json.dumps({'ts': now, 'vsl_cd': v['vsl_cd'], 'dk_cd': v['dk_cd']}, ensure_ascii=False)
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_push_req', ?)", (req,))   # 단일 원자 write
+    return jsonify({'ok': True, 'flagged_at': now, 'vsl_nm': vsl_nm})
+
+
+@app.route('/api/dock_procure/push/status')
+@login_required
+def api_dockproc_push_status():
+    _ensure_api_table()
+    req = _push_req()
+    dn = query("SELECT v FROM api_settings WHERE k='dock_push_done'", one=True)
+    dr = query("SELECT v FROM api_settings WHERE k='dock_push_result'", one=True)
+    flag = req.get('ts') if req else None
+    done = dn['v'] if dn else None
+    return jsonify({'pending': bool(flag) and (not done or done < flag),
+                    'flagged_at': flag, 'done_at': done, 'last_result': (dr['v'] if dr else None)})
+
+
+@app.route('/api/ext/dock_procure/push/pending')
+@api_key_required
+def api_ext_dockproc_push_pending():
+    """맥 push-watcher 폴링용 — pending(ts>done)일 때만 원자 스냅샷(vsl_cd/dk_cd) 반환."""
+    req = _push_req()
+    dn = query("SELECT v FROM api_settings WHERE k='dock_push_done'", one=True)
+    flag = req.get('ts') if req else None
+    done = dn['v'] if dn else None
+    pending = bool(flag) and (not done or done < flag)
+    if pending and req:
+        return jsonify({'flag': flag, 'vsl_cd': req.get('vsl_cd'), 'dk_cd': req.get('dk_cd')})
+    return jsonify({'flag': None, 'vsl_cd': None, 'dk_cd': None})
+
+
+@app.route('/api/ext/dock_procure/push/done', methods=['POST'])
+@api_key_required
+def api_ext_dockproc_push_done():
+    _ensure_api_table()
+    d = request.get_json(silent=True) or {}
+    now = query("SELECT strftime('%Y-%m-%d %H:%M:%f','now','localtime') t", one=True)['t']
+    fl = d.get('flag')
+    # flag 형식 검증(YYYY-MM-DD HH:MM...) — malformed면 now로 대체(pending 판정 깨짐 방지)
+    if not (isinstance(fl, str) and re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}', fl)):
+        fl = now
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_push_done', ?)", (fl,))
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_push_result', ?)", (str(d.get('result') or '')[:500],))
+    return jsonify({'ok': True, 'done_at': fl})
+
+
+@app.route('/api/ext/dock_procure/push-targets')
+@api_key_required
+def api_ext_dockproc_push_targets():
+    """맥 매일 스케줄러용 — DK_CD 설정된(opt-in) 선박만 자동푸싱 대상."""
+    rows = query("SELECT vsl_nm, vsl_cd, dk_cd FROM dock_procure_vessel "
+                 "WHERE dk_cd IS NOT NULL AND dk_cd<>'' AND vsl_cd IS NOT NULL AND vsl_cd<>''")
+    return jsonify({'targets': [dict(r) for r in rows]})
 
 
 @app.route('/api/ext/class-status/upload', methods=['POST'])

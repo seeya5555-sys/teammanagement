@@ -141,6 +141,8 @@
     <button class="dp-btn" id="dp-addbtn">＋ 라인 추가 (P/SY)</button>
     <button class="dp-btn" id="dp-syncbtn" title="SVMS 수리·구매 발주현황을 지금 당겨와 견적금액·상태 최신화(자동은 시간당)">🔄 SVMS 발주 새로고침</button>
     <span id="dp-syncstat" style="font-size:11px;color:var(--text-tertiary)"></span>
+    <button class="dp-btn" id="dp-pushbtn" title="현재 선박의 TRMT 데이터를 SVMS 입거수리 draft로 푸싱(계획 draft만, 증분·상신은 형이 SVMS서)">⬆️ SVMS Dock 푸싱</button>
+    <span id="dp-pushstat" style="font-size:11px;color:var(--text-tertiary)"></span>
   </div>
 
   <div class="dp-toolbar" style="flex-direction:column;align-items:stretch;gap:7px">
@@ -571,11 +573,51 @@
     refreshStatus();
   }
 
+  function bindPushBtn(){
+    const btn=$('#dp-pushbtn'), stat=$('#dp-pushstat'); if(!btn) return;
+    let poll=null;
+    async function refreshStatus(){
+      try{ const r=await fetch('/api/dock_procure/push/status'); const j=await r.json();
+        if(j.pending){ btn.disabled=true; stat.textContent='⏳ SVMS 푸싱 중…'; if(!poll) poll=setInterval(refreshStatus,5000); }
+        else{ btn.disabled=false;
+          stat.textContent = j.done_at ? ('✓ 최근 '+j.done_at+(j.last_result?(' · '+j.last_result):'')) : '';
+          if(poll){ clearInterval(poll); poll=null; await load(DATA.current); }
+        }
+      }catch(e){}
+    }
+    btn.onclick=async()=>{
+      if(!DATA.current){ toast('선박 먼저 선택'); return; }
+      let ves=DATA.vessels.find(v=>v.vsl_nm===DATA.current)||{};
+      if(!ves.dk_cd){   // DK_CD 미설정 → 입력받아 저장
+        const v=prompt('SVMS Dock No(DK_CD) 입력 — 예: SAPSMD2607060001 (SVMS 입거수리 화면 Dock No)', '');
+        if(v===null) return;
+        const dk=v.trim().toUpperCase();
+        const sr=await fetch('/api/dock_procure/set-dkcd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vsl_nm:DATA.current,dk_cd:dk})});
+        const sj=await sr.json();
+        if(!sr.ok){ toast('DK_CD 저장 실패: '+(sj.error||'')); return; }
+        ves.dk_cd=sj.dk_cd; toast('Dock No 저장: '+sj.dk_cd);
+        if(!sj.dk_cd) return;
+      }
+      if(!confirm(`SVMS "${ves.dk_cd}" draft에 푸싱할까요?\n(계획 draft만 저장 — 상신/Submit은 형이 SVMS서 직접. 변경분만 반영)`)) return;
+      btn.disabled=true; stat.textContent='요청 보냄…';
+      try{
+        const r=await fetch('/api/dock_procure/push/trigger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vsl_nm:DATA.current})});
+        const j=await r.json();
+        if(!r.ok){ btn.disabled=false; stat.textContent='요청 실패: '+(j.error||''); return; }
+      }catch(e){ btn.disabled=false; stat.textContent='요청 실패(네트워크)'; return; }
+      stat.textContent='⏳ SVMS 푸싱 중… (최대 1~2분)';
+      if(poll) clearInterval(poll);
+      poll=setInterval(refreshStatus, 5000);
+    };
+    refreshStatus();
+  }
+
   load();
   loadShipyards();
   bindShipyardSel();
   bindYardFile();
   bindSyncBtn();
+  bindPushBtn();
 })();
 </script>
 {% endblock %}
