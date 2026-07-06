@@ -8,6 +8,7 @@ DB 재초기화     :  python app.py --init-db
 """
 import os
 import re
+import math
 import sys
 import uuid
 import json
@@ -559,6 +560,8 @@ def init_db(drop=False):
                 svms_status  TEXT,                            -- Phase 2: 마지막 관측 SVMS Status
                 svms_submit  TEXT,                            -- Phase 2: 견적제출수/의뢰수 "n/m"
                 svms_synced_at TEXT,                          -- Phase 2: 마지막 동기화 시각
+                quote_amt    REAL,                            -- 발주업체 확정 견적금액(SVMS Spare/Shore 연동용, 수정가능)
+                quote_cur    TEXT DEFAULT 'USD',              -- 견적 통화
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 UNIQUE(vsl_nm, req_no)
@@ -573,6 +576,10 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_synced_at TEXT")
             if 'svms_submit' not in _dpc:
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_submit TEXT")
+            if 'quote_amt' not in _dpc:
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN quote_amt REAL")
+            if 'quote_cur' not in _dpc:
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN quote_cur TEXT DEFAULT 'USD'")
         except Exception:
             app.logger.debug('init-db migration skip', exc_info=True)
 
@@ -9026,9 +9033,31 @@ def api_dockproc_prep(lid):
 @login_required
 def api_dockproc_patch(lid):
     d = request.get_json(silent=True) or {}
+    # 검증 먼저 전부 통과시킨 뒤 단일 UPDATE — partial update 방지(올마이트 검토 반영)
+    sets, params = [], []
     if 'remark' in d:
-        execute("UPDATE dock_procure SET remark=?, updated_at=datetime('now','localtime') WHERE id=?",
-                (d.get('remark'), lid))
+        sets.append('remark=?'); params.append(d.get('remark'))
+    if 'quote_amt' in d:                                # 발주업체 확정 견적금액(수정가능, SVMS 연동 소스)
+        raw = d.get('quote_amt')
+        if raw in (None, ''):
+            amt = None
+        else:
+            try:
+                amt = float(str(raw).replace(',', ''))
+            except (TypeError, ValueError):
+                return jsonify({'error': 'quote_amt must be numeric'}), 400
+            if not math.isfinite(amt) or amt < 0:      # nan/inf/음수 차단(금액 도메인)
+                return jsonify({'error': 'quote_amt must be a finite non-negative number'}), 400
+        sets.append('quote_amt=?'); params.append(amt)
+    if 'quote_cur' in d:
+        cur = (d.get('quote_cur') or '').strip().upper()
+        if not re.fullmatch(r'[A-Z]{3}', cur):         # 3자 통화코드 strict(silent truncation 금지)
+            return jsonify({'error': 'quote_cur must be a 3-letter code'}), 400
+        sets.append('quote_cur=?'); params.append(cur)
+    if sets:
+        sets.append("updated_at=datetime('now','localtime')")
+        params.append(lid)
+        execute(f"UPDATE dock_procure SET {', '.join(sets)} WHERE id=?", tuple(params))
     return jsonify({'ok': True})
 
 

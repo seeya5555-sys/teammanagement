@@ -78,6 +78,9 @@
   .st-sent{background:var(--amber-bg);color:var(--amber)} .st-done{background:var(--green-bg);color:var(--green)}
   .dp-rmk{font-size:11.5px;color:var(--text-secondary);border:1px solid transparent;border-radius:6px;padding:2px 4px;min-width:90px;background:transparent}
   .dp-rmk:focus{border-color:var(--border);background:#fff;outline:none}
+  .dp-quote{width:78px;text-align:right;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;font-weight:600;color:var(--text-primary);border:1px solid transparent;border-radius:6px;padding:2px 4px;background:transparent}
+  .dp-quote:focus{border-color:var(--border);background:#fff;outline:none}
+  .dp-cur{font-size:9px;color:var(--text-tertiary);margin-left:3px}
   .dp-sec td{padding:8px 12px !important;background:var(--surface-3) !important;font-weight:700;font-size:11px;letter-spacing:.4px;color:var(--text-secondary);text-transform:uppercase}
   .dp-del{color:var(--text-tertiary);cursor:pointer;font-size:14px;border:none;background:none}
   .dp-del:hover{color:var(--red)}
@@ -139,6 +142,7 @@
         <th style="width:58px" class="c">견적출처</th>
         <th style="width:200px" class="c">진행 단계</th>
         <th style="width:88px" class="c">상태</th>
+        <th style="width:120px" class="c">발주 견적</th>
         <th style="width:150px">Remark</th>
         <th style="width:80px" class="c"></th>
       </tr>
@@ -203,7 +207,7 @@
       $('#dp-vsub').textContent='INDEX 엑셀을 업로드하세요';
       $('#dp-vmeta').innerHTML=''; $('#dp-cards').innerHTML='';
       $('#dp-filters').innerHTML='';
-      $('#dp-body').innerHTML='<tr><td colspan="9" class="dp-empty">아직 항목이 없습니다. INDEX 엑셀을 업로드하면 큐가 자동 생성됩니다.</td></tr>';
+      $('#dp-body').innerHTML='<tr><td colspan="10" class="dp-empty">아직 항목이 없습니다. INDEX 엑셀을 업로드하면 큐가 자동 생성됩니다.</td></tr>';
       return;
     }
     vc.innerHTML = DATA.vessels.map(v=>{
@@ -270,10 +274,10 @@
       if(!ls.length) return;
       any=true;
       const src = (c.code==='P'||c.code==='SY')?' · 견적 메일수신':'';
-      body.insertAdjacentHTML('beforeend',`<tr class="dp-sec"><td colspan="9">■ ${c.nm} — ${CATNM[c.code]} (${c.code})${src} <span style="font-weight:400;color:var(--text-tertiary)">· ${ls.length}건</span></td></tr>`);
+      body.insertAdjacentHTML('beforeend',`<tr class="dp-sec"><td colspan="10">■ ${c.nm} — ${CATNM[c.code]} (${c.code})${src} <span style="font-weight:400;color:var(--text-tertiary)">· ${ls.length}건</span></td></tr>`);
       ls.forEach(l=>body.insertAdjacentHTML('beforeend', rowHtml(l)));
     });
-    if(!any) body.innerHTML='<tr><td colspan="9" class="dp-empty">조건에 맞는 항목이 없습니다.</td></tr>';
+    if(!any) body.innerHTML='<tr><td colspan="10" class="dp-empty">조건에 맞는 항목이 없습니다.</td></tr>';
     bindRows();
   }
 
@@ -299,6 +303,7 @@
       <td class="c"><span class="dp-src ${l.source}">${esc(l.source||'')}</span></td>
       <td><div class="dp-stages">${stg(l,'stg_quote','견적<br>작성')}${stg(l,'stg_vendor','벤더<br>제출')}${stg(l,'stg_order','발주<br>완료')}</div></td>
       <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No">🔗${esc(l.svms_req_no)}</div>`:''}</td>
+      <td class="c"><input class="dp-quote" data-id="${l.id}" value="${l.quote_amt!=null?esc(l.quote_amt):''}" placeholder="—" inputmode="decimal"><span class="dp-cur">${esc(l.quote_cur||'USD')}</span></td>
       <td><input class="dp-rmk" data-id="${l.id}" value="${esc(l.remark||'')}" placeholder="—"></td>
       <td style="white-space:nowrap">${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)">📋</button><button class="dp-lnk" data-id="${l.id}" title="SVMS Inq No 수동연결 (Tier3)">🔗</button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제">✕</button></td>
     </tr>`;
@@ -323,6 +328,13 @@
       const id=inp.dataset.id;
       await fetch(`/api/dock_procure/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({remark:inp.value})});
       const l=DATA.lines.find(x=>x.id==id); if(l)l.remark=inp.value;
+    });
+    document.querySelectorAll('.dp-quote').forEach(inp=>inp.onblur=async()=>{
+      const id=inp.dataset.id, v=inp.value.trim();
+      const r=await fetch(`/api/dock_procure/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({quote_amt:v})});
+      if(!r.ok){inp.style.borderColor='var(--red-dot,#d33)';return;}
+      inp.style.borderColor='';
+      const l=DATA.lines.find(x=>x.id==id); if(l)l.quote_amt=(v===''?null:parseFloat(v.replace(/,/g,'')));
     });
     document.querySelectorAll('.dp-cpy').forEach(b=>b.onclick=async()=>{
       const l=DATA.lines.find(x=>x.id==b.dataset.id);
