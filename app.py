@@ -9159,6 +9159,81 @@ def api_dockproc_upload():
                     'added_reqs': added_reqs, 'total': len(lines)}), 201
 
 
+# ===== 입거 requisition 템플릿 다운로드 (예시용 / 작성용) =====
+#   예시용 = 손유석이 검토한 실제 채움본(Owner reviewed) 원본 그대로.
+#   작성용 = 같은 워크북에서 선박별 입력 내용만 제거(구조·라벨·수식·하이퍼링크·슬롯 보존).
+_DOCKPROC_TMPL = os.path.join(app.root_path, 'static', 'dock_templates', 'docking_requisition.xlsx')
+
+
+def _dockproc_blank_workbook(wb):
+    """Docking Requisition 워크북을 작성용(빈) 버전으로 변환(in-place).
+    - INDEX: 선박별 헤더(VESSEL/TYPE/SURVEY/SHIPYARD/DUE) + 슬롯 EQUIPMENT/SUBJECT/REMARK 제거.
+             OWNER 기본값·No.·REQ.NUMBER·CATEGORY·PREPARED BY·LINK(하이퍼링크)는 보존.
+    - R*/S*/ST*: 헤더 입력값·ITEM LIST 본문 제거. OWNER/VESSEL 수식·REQ.NO·라벨·No. 보존.
+    - _TEMPLATE(빈 마스터)·HOW TO USE(설명)는 그대로.
+    """
+    import re
+    from openpyxl.cell.cell import MergedCell
+
+    def _clr(ws, coord):
+        c = ws[coord]
+        if not isinstance(c, MergedCell):
+            c.value = None
+
+    for ws in wb.worksheets:
+        name = ws.title
+        if name in ('HOW TO USE', '_TEMPLATE'):
+            continue
+        if name == 'INDEX':
+            for coord in ('G2', 'C3', 'G3', 'C4', 'G4'):
+                _clr(ws, coord)
+            for r in range(6, ws.max_row + 1):
+                for col in ('D', 'E', 'H'):
+                    _clr(ws, f'{col}{r}')
+            continue
+        if re.fullmatch(r'(R|S|ST)\d+', name):
+            for coord in ('G3', 'C5', 'C6', 'C7', 'G5', 'G6'):
+                _clr(ws, coord)
+            for r in range(11, ws.max_row + 1):
+                for c in range(2, 10):  # B..I
+                    cell = ws.cell(row=r, column=c)
+                    if not isinstance(cell, MergedCell):
+                        cell.value = None
+    return wb
+
+
+@app.route('/dock_procure/template/example')
+@login_required
+def dockproc_tmpl_example():
+    from flask import send_file
+    if not os.path.exists(_DOCKPROC_TMPL):
+        abort(404)
+    return send_file(_DOCKPROC_TMPL, as_attachment=True,
+                     download_name='Docking_Requisition_예시용.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/dock_procure/template/blank')
+@login_required
+def dockproc_tmpl_blank():
+    from flask import send_file
+    import io as _io, openpyxl
+    if not os.path.exists(_DOCKPROC_TMPL):
+        abort(404)
+    try:
+        wb = openpyxl.load_workbook(_DOCKPROC_TMPL)
+        _dockproc_blank_workbook(wb)
+        bio = _io.BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+    except Exception as e:
+        app.logger.exception('dockproc-blank-template')
+        return jsonify({'error': f'작성용 템플릿 생성 실패: {e}'}), 500
+    return send_file(bio, as_attachment=True,
+                     download_name='Docking_Requisition_작성용.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 @app.route('/api/dock_procure/<int:lid>/stage', methods=['POST'])
 @login_required
 def api_dockproc_stage(lid):
