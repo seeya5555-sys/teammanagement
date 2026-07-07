@@ -9973,8 +9973,6 @@ def api_automation_run():
         review_model = str(p.get('review_model') or 'auto').strip()
         if review_model not in ('auto', 'claude-haiku-4-5', 'openai/gpt-5.4-mini'):
             return jsonify({'error': '검증모델 선택값이 올바르지 않습니다.'}), 400
-        if mode == 'live' and review_model == 'openai/gpt-5.4-mini':
-            return jsonify({'error': 'GPT 5.4 mini는 현재 실기입 차단 상태입니다. Auto 또는 Haiku를 선택하세요.'}), 400
         pp = {'vsl_cd': vsl}
         if fm: pp['fm_dm'] = fm
         if to: pp['to_dm'] = to
