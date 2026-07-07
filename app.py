@@ -9954,7 +9954,8 @@ def api_automation_run():
     task, mode = task.strip(), mode.strip()
     if task not in AUTOMATION_TASKS or mode not in AUTOMATION_MODES:
         return jsonify({'error': 'bad task/mode'}), 400
-    # 선박별 SOA 검증: params(vsl_cd 필수, 기간·부서 옵션) 검증. verify=DRY / live=실기입(체크박스+리젝리마크).
+    # 선박별 SOA 검증: params(vsl_cd 필수, 기간·부서·검증모델 옵션) 검증.
+    # live=실기입(체크박스+리젝리마크). 순수 DRY는 카나리/CLI용으로만 유지.
     params = None
     if task == 'soa_vessel':
         p = d.get('params')
@@ -9969,10 +9970,16 @@ def api_automation_run():
             return jsonify({'error': '기간(YYYYMM, 시작<=끝)을 확인하세요.'}), 400
         if sl and sl not in ('04', '05'):
             return jsonify({'error': '부서는 05(Technical)/04(Crew)만.'}), 400
+        review_model = str(p.get('review_model') or 'auto').strip()
+        if review_model not in ('auto', 'claude-haiku-4-5', 'openai/gpt-5.4-mini'):
+            return jsonify({'error': '검증모델 선택값이 올바르지 않습니다.'}), 400
+        if mode == 'live' and review_model == 'openai/gpt-5.4-mini':
+            return jsonify({'error': 'GPT 5.4 mini는 현재 실기입 차단 상태입니다. Auto 또는 Haiku를 선택하세요.'}), 400
         pp = {'vsl_cd': vsl}
         if fm: pp['fm_dm'] = fm
         if to: pp['to_dm'] = to
         if sl: pp['sl_tp'] = sl
+        pp['review_model'] = review_model
         params = json.dumps(pp)
     if not _automation_enabled():
         return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
