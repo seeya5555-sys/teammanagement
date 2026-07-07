@@ -311,9 +311,16 @@ def init_db(drop=False):
                 started_at    TEXT,
                 finished_at   TEXT,
                 exit_code     INTEGER,
-                summary       TEXT
+                summary       TEXT,
+                params        TEXT
             )
         """)
+        try:                                            # 마이그: 기존 DB에 params 추가(선박별 SOA 검증 버튼)
+            _cols = [r[1] for r in conn.execute("PRAGMA table_info(automation_run)").fetchall()]
+            if 'params' not in _cols:
+                conn.execute("ALTER TABLE automation_run ADD COLUMN params TEXT")
+        except Exception:
+            app.logger.debug('automation_run params 마이그 skip', exc_info=True)
 
         # Daily 사이드바 선박 커스텀 순서 (유저별, 드래그앤드롭 저장)
         conn.execute("""
@@ -8903,6 +8910,7 @@ AUTOMATION_TASKS = {
     'aor_reject': 'AOR 리젝 — STATUS=R + 관리사 통보메일 (reject 시 자동큐)',
     'reqgen_save': '구매청구 DRAFT 저장 — 승인된 입거 requisition 시트 SVMS 저장 (approve 시 자동큐)',
     'shipwiki_ingest': '선박 위키 신규수집 — 범주 메일 최근 7일 크롤·분류·적재 (외부 발송·승인 0)',
+    'soa_vessel': '선박별 SOA 검증 — 선박코드 입력 (검증단계까지만: 체크박스+리젝리마크, 승인·출금·제출·메일 안 함)',
 }
 # verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일 / remark_cleanup=컨펌된 라인 잔존 RJT_RMK 삭제(SVMS UI버그 보정)
 AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit', 'remark_cleanup')
@@ -9937,11 +9945,35 @@ def automation_page():
 @admin_required
 def api_automation_run():
     _ensure_api_table()
-    d = request.get_json(silent=True) or {}
-    task = (d.get('task') or '').strip()
-    mode = (d.get('mode') or 'verify').strip()
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'error': 'bad body'}), 400
+    task, mode = d.get('task'), (d.get('mode') or 'verify')
+    if not isinstance(task, str) or not isinstance(mode, str):   # non-str 방어(500 회피, 올마이트)
+        return jsonify({'error': 'bad task/mode'}), 400
+    task, mode = task.strip(), mode.strip()
     if task not in AUTOMATION_TASKS or mode not in AUTOMATION_MODES:
         return jsonify({'error': 'bad task/mode'}), 400
+    # 선박별 SOA 검증: params(vsl_cd 필수, 기간·부서 옵션) 검증. verify=DRY / live=실기입(체크박스+리젝리마크).
+    params = None
+    if task == 'soa_vessel':
+        p = d.get('params')
+        if not isinstance(p, dict):
+            p = {}
+        vsl = str(p.get('vsl_cd') or '').strip().upper()
+        if not re.match(r'^[A-Z]{4}$', vsl):
+            return jsonify({'error': '선박코드(VSL_CD 4자 영문)를 정확히 입력하세요.'}), 400
+        fm, to, sl = (str(p.get(k) or '').strip() for k in ('fm_dm', 'to_dm', 'sl_tp'))
+        def _ym(v): return bool(re.match(r'^[0-9]{6}$', v)) and '01' <= v[4:] <= '12'
+        if (fm and not _ym(fm)) or (to and not _ym(to)) or (fm and to and fm > to):
+            return jsonify({'error': '기간(YYYYMM, 시작<=끝)을 확인하세요.'}), 400
+        if sl and sl not in ('04', '05'):
+            return jsonify({'error': '부서는 05(Technical)/04(Crew)만.'}), 400
+        pp = {'vsl_cd': vsl}
+        if fm: pp['fm_dm'] = fm
+        if to: pp['to_dm'] = to
+        if sl: pp['sl_tp'] = sl
+        params = json.dumps(pp)
     if not _automation_enabled():
         return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
     # lock: 같은 task가 queued/running이면 거부(중복클릭·동시실행 방지)
@@ -9951,8 +9983,8 @@ def api_automation_run():
         return jsonify({'error': '이미 실행 대기/진행중입니다.'}), 409
     import uuid
     rid = uuid.uuid4().hex[:12]
-    execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by) "
-            "VALUES (?,?,?, 'queued', ?)", (rid, task, mode, session.get('username', '')))
+    execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by, params) "
+            "VALUES (?,?,?, 'queued', ?, ?)", (rid, task, mode, session.get('username', ''), params))
     return jsonify({'ok': True, 'run_id': rid})
 
 
@@ -10044,7 +10076,7 @@ def api_ext_automation_claim():
     running = query("SELECT 1 FROM automation_run WHERE status='running' LIMIT 1", one=True)
     if running:
         return jsonify({'run': None, 'busy': True})
-    row = query("SELECT id,run_id,task,mode FROM automation_run WHERE status='queued' ORDER BY id ASC LIMIT 1",
+    row = query("SELECT id,run_id,task,mode,params FROM automation_run WHERE status='queued' ORDER BY id ASC LIMIT 1",
                 one=True)
     if not row:
         return jsonify({'run': None})
@@ -10053,7 +10085,18 @@ def api_ext_automation_claim():
                     "WHERE id=? AND status='queued'", (row['id'],))
     if not rc:
         return jsonify({'run': None, 'busy': True})
-    return jsonify({'run': {'run_id': row['run_id'], 'task': row['task'], 'mode': row['mode']}})
+    try:
+        _params = json.loads(row['params']) if row['params'] else {}
+    except Exception:
+        _params = {}
+    if not isinstance(_params, dict):
+        _params = {}
+    # soa_vessel은 vsl_cd 필수 — 무효면 dispatch 안 하고 failed 처리(fail-closed, 올마이트)
+    if row['task'] == 'soa_vessel' and not re.match(r'^[A-Z]{4}$', str(_params.get('vsl_cd') or '')):
+        execute("UPDATE automation_run SET status='failed', finished_at=datetime('now','localtime'), "
+                "summary='params 무효(vsl_cd 없음/형식오류) — dispatch 취소' WHERE id=?", (row['id'],))
+        return jsonify({'run': None})
+    return jsonify({'run': {'run_id': row['run_id'], 'task': row['task'], 'mode': row['mode'], 'params': _params}})
 
 
 @app.route('/api/ext/automation/<run_id>/done', methods=['POST'])

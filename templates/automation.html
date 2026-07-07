@@ -85,6 +85,24 @@
 
   <div id="au-soa" class="jl"></div>
 
+  <div class="au-sec">선박별 SOA 검증 (온디맨드)</div>
+  <div id="au-vessel" style="max-width:920px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)">
+      <input id="sv-vsl" placeholder="선박코드 (예: SVGW)" maxlength="4" autocomplete="off"
+             style="text-transform:uppercase;width:130px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      <input id="sv-fm" placeholder="시작 YYYYMM" maxlength="6" inputmode="numeric"
+             style="width:110px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      <input id="sv-to" placeholder="끝 YYYYMM" maxlength="6" inputmode="numeric"
+             style="width:110px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      <select id="sv-tp" style="padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        <option value="05">Technical (05)</option><option value="04">Crew (04)</option></select>
+      <button class="au-b verify" id="sv-dry" type="button">🔍 검증 (DRY·0write)</button>
+      <button class="au-b live" id="sv-live" type="button">▶ 검증 실기입 (체크박스+리젝리마크)</button>
+    </div>
+    <div class="au-note" style="margin-top:6px">선박코드(SVMS 등록 전선박) 입력 후 실행. 기간·부서 비우면 전체(202601~202612·Technical) 기본.
+    <b>검증(DRY)</b>=판정 미리보기(0 write). <b>실기입</b>=CFM_YN 체크 + 금액불일치 RJT_YN 리마크. <b>승인·출금·리젝제출·메일은 안 함.</b> 결과는 아래 실행로그·텔레그램.</div>
+  </div>
+
   <div class="au-sec">전자결재</div>
   <div id="au-jeonja"></div>
   <div id="au-jeonja-list" class="jl"></div>
@@ -328,6 +346,19 @@
     if(ok){ alert(`로그 ${j.deleted}건 삭제됨`); await load(); }
     else { alert((j&&j.error)||'삭제 실패'); }
   }
+  async function runVessel(mode){
+    const vsl=($('#sv-vsl').value||'').trim().toUpperCase();
+    if(!/^[A-Z]{4}$/.test(vsl)){ alert('선박코드(4자 영문)를 정확히 입력하세요.'); return; }
+    const fm=($('#sv-fm').value||'').trim(), to=($('#sv-to').value||'').trim(), sl=$('#sv-tp').value;
+    if((fm&&!/^\d{6}$/.test(fm))||(to&&!/^\d{6}$/.test(to))){ alert('기간은 YYYYMM 형식.'); return; }
+    const params={vsl_cd:vsl}; if(fm)params.fm_dm=fm; if(to)params.to_dm=to; if(sl)params.sl_tp=sl;
+    if(mode==='live' && !confirm(`[선박별 SOA 검증 — ${vsl}]\n검증 실기입(CFM_YN 체크 + 금액불일치 RJT_YN 리마크)을 실행합니다.\n승인·출금·리젝제출·관리사메일은 안 합니다.\n진행할까요?`)) return;
+    const {ok,j}=await api('POST','/api/automation/run',{task:'soa_vessel',mode,params});
+    if(!ok){ alert(j.error||'실행 실패'); return; }
+    await load();
+  }
+  $('#sv-dry').onclick=()=>runVessel('verify');
+  $('#sv-live').onclick=()=>runVessel('live');
   $('#au-ks').onclick=toggleKs;
   $('#au-log-head').onclick=(e)=>{ if(e.target.closest('#au-log-clear'))return; LOG_OPEN=!LOG_OPEN; renderLog(); };
   $('#au-log-clear').onclick=(e)=>{ e.stopPropagation(); clearLog(); };
