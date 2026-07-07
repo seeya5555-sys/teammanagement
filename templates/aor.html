@@ -61,6 +61,8 @@
   .aor-empty { color:var(--text-tertiary); padding:40px 0; text-align:center; }
   .flex-spacer { flex:1; }
   .warn-note { font-size:12px; color:var(--amber); }
+  .aor-check { width:17px; height:17px; margin-top:2px; flex-shrink:0; cursor:pointer; accent-color:var(--red); }
+  .aor-selall { display:flex; align-items:center; gap:5px; font-size:12px; color:var(--text-secondary); cursor:pointer; }
 </style>
 {% endblock %}
 
@@ -78,6 +80,12 @@
     <button class="btn btn-outline btn-sm" data-filter="all" type="button">전체</button>
   </div>
   <span class="aor-count" id="aor-count"></span>
+  <label class="aor-selall" id="aor-selall-wrap" hidden>
+    <input type="checkbox" id="aor-selall"> 전체선택
+  </label>
+  <button class="btn btn-sm" id="aor-bulk-del" type="button" hidden
+          style="border:1px solid var(--red-border);background:var(--red-bg);color:var(--red)"
+          title="선택한 미처리 AOR을 목록에서 삭제 (다음 SVMS 불러오기때 여전히 결재대기면 다시 나타남)">🗑 선택 삭제 (0)</button>
   <span class="flex-spacer"></span>
   <button class="btn btn-primary btn-sm" id="aor-pull" type="button">🔄 SVMS에서 불러오기</button>
   <button class="btn btn-outline btn-sm" id="aor-refresh" type="button">새로고침</button>
@@ -137,10 +145,14 @@
     if (!data.drafts.length) {
       listEl.innerHTML = '<div class="aor-empty">' +
         (filter === 'pending' ? '대기 중인 AOR 없음 👍' : 'AOR draft 없음') + '</div>';
+      updateBulkBar();
       return;
     }
     listEl.innerHTML = '';
     data.drafts.forEach(d => listEl.appendChild(card(d)));
+    const sa = document.getElementById('aor-selall');
+    if (sa) sa.checked = false;
+    updateBulkBar();
   }
 
   function confBadge(c) {
@@ -187,6 +199,7 @@
 
     el.innerHTML = `
       <div class="aor-card-top">
+        ${editable ? `<input type="checkbox" class="aor-check" title="선택 삭제용">` : ''}
         <div>
           <div class="aor-subj">${esc(d.vsl_nm || d.vsl_cd || '')} — ${esc(d.subj || '(제목 없음)')}</div>
           <div class="aor-meta">${esc(d.aor_cd)} · 요청 ${esc(d.req_user_nm || '?')} · draft #${d.id}</div>
@@ -242,7 +255,44 @@
     if (hd) hd.addEventListener('click', () => holdDraft(el, d));
     const uh = el.querySelector('.act-unhold');
     if (uh) uh.addEventListener('click', () => unhold(el, d));
+    const chk = el.querySelector('.aor-check');
+    if (chk) chk.addEventListener('change', updateBulkBar);
     return el;
+  }
+
+  function checkedIds() {
+    return Array.from(document.querySelectorAll('.aor-check:checked'))
+      .map(c => c.closest('.aor-card'))
+      .filter(Boolean)
+      .map(el => Number(el.dataset.id));
+  }
+
+  function updateBulkBar() {
+    const boxes = document.querySelectorAll('.aor-check');
+    const selWrap = document.getElementById('aor-selall-wrap');
+    const selAll = document.getElementById('aor-selall');
+    const delBtn = document.getElementById('aor-bulk-del');
+    selWrap.hidden = boxes.length === 0;         // 미처리 카드 있을 때만 전체선택 노출
+    const sel = checkedIds().length;
+    delBtn.hidden = sel === 0;
+    delBtn.textContent = '🗑 선택 삭제 (' + sel + ')';
+    if (selAll) selAll.checked = boxes.length > 0 && sel === boxes.length;
+  }
+
+  async function bulkDelete() {
+    const ids = checkedIds();
+    if (!ids.length) return;
+    if (!confirm(ids.length + '건의 미처리 AOR을 목록에서 삭제합니다.\n'
+      + '(다음 SVMS 불러오기때 여전히 결재대기(submit) 상태면 다시 나타납니다)\n진행할까요?')) return;
+    try {
+      const r = await fetch('/api/aor/drafts/bulk-delete', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids})
+      });
+      const j = await r.json();
+      if (r.ok) { load(); }
+      else { alert(j.error || '삭제 실패'); }
+    } catch (e) { alert('삭제 실패: ' + e.message); }
   }
 
   async function holdDraft(el, d) {
@@ -318,6 +368,11 @@
       load();
     }));
   document.getElementById('aor-refresh').addEventListener('click', load);
+  document.getElementById('aor-bulk-del').addEventListener('click', bulkDelete);
+  document.getElementById('aor-selall').addEventListener('change', (e) => {
+    document.querySelectorAll('.aor-check').forEach(c => { c.checked = e.target.checked; });
+    updateBulkBar();
+  });
   document.getElementById('aor-clear-decided').addEventListener('click', async () => {
     if (!confirm('승인·리젝된 AOR 건을 일괄 삭제합니다.\n(대기·보류·진행중 건은 그대로 유지)\n진행할까요?')) return;
     try {

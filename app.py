@@ -7725,6 +7725,23 @@ def api_aor_delete(did):
     return jsonify({'id': did, 'deleted': True})
 
 
+@app.route('/api/aor/drafts/bulk-delete', methods=['POST'])
+@admin_required
+def api_aor_bulk_delete():
+    """체크박스 다중선택 삭제 — 미처리(pending) 건만 허용(진행중·완료건 보호).
+    삭제해도 다음 aor_prep 푸싱때 SVMS에 여전히 STATUS=S면 신규 aor_cd로 재적재됨."""
+    d = request.get_json(silent=True) or {}
+    raw = d.get('ids') or []
+    if not isinstance(raw, list) or not raw:
+        return jsonify({'error': 'ids required'}), 400
+    ids = [int(x) for x in raw if str(x).isdigit()][:500]   # 양수 id만
+    if not ids:
+        return jsonify({'error': 'no valid ids'}), 400
+    ph = ','.join('?' * len(ids))
+    n = execute_rc(f"DELETE FROM aor_draft WHERE id IN ({ph}) AND status='pending'", tuple(ids))
+    return jsonify({'ok': True, 'deleted': n, 'requested': len(ids)})
+
+
 @app.route('/api/aor/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_aor_clear_decided():
