@@ -129,6 +129,7 @@
 (function(){
   const SOA=['soa_g1','soa_g2','soa_g3','soa_skrt'];
   let TASKS={}, ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
+  let LOG_SCROLLS={}, LOG_SIG=null;
   let JLIST=[], JREV=null, JSIG='', JPENDING={}, JOPEN=false;   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게) / JOPEN: 리스트 펼침(기본 접힘)
   let SOPEN=false;   // SOA 섹션 펼침(기본 접힘)
   const JBKT={pass:'✅ 통과',costslip:'📄 CostSlip',mismatch:'⚠️ DN≠Cost',escalate:'🚨 차액≥$1k',flag:'✋ 사람확인',already:'✔️ 이미결재'};
@@ -174,7 +175,7 @@
   function fmt(r){
     const t=r.finished_at||r.started_at||r.requested_at||'';
     const modeL={live:'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리'}[r.mode]||'검증';
-    return `<div class="au-logrow">
+    return `<div class="au-logrow" data-run-id="${escA(r.run_id||'')}">
       <div class="au-logmeta">
         <span class="au-status st-${r.status}">${r.status}</span>
         <b>${TASKS[r.task]||r.task}</b><span>· ${modeL}</span><span>· ${t}</span>
@@ -301,7 +302,21 @@
     // 펼침일 때만 리스트 DOM 렌더(비용↓)
     runsEl.hidden=!LOG_OPEN;
     if(LOG_OPEN){
-      runsEl.innerHTML=RUNS.length?RUNS.map(fmt).join(''):'<div class="au-note">아직 실행 기록 없음.</div>';
+      runsEl.querySelectorAll('.au-logrow[data-run-id]').forEach(row=>{
+        const box=row.querySelector('.au-logsum');
+        if(box&&row.dataset.runId) LOG_SCROLLS[row.dataset.runId]=box.scrollTop;
+      });
+      const html=RUNS.length?RUNS.map(fmt).join(''):'<div class="au-note">아직 실행 기록 없음.</div>';
+      if(html!==LOG_SIG||!runsEl.innerHTML){
+        runsEl.innerHTML=html;
+        LOG_SIG=html;
+      }
+      const ids=new Set(RUNS.map(r=>String(r.run_id||'')));
+      Object.keys(LOG_SCROLLS).forEach(k=>{ if(!ids.has(k)) delete LOG_SCROLLS[k]; });
+      runsEl.querySelectorAll('.au-logrow[data-run-id]').forEach(row=>{
+        const box=row.querySelector('.au-logsum'), y=LOG_SCROLLS[row.dataset.runId];
+        if(box&&row.dataset.runId&&y!==undefined) box.scrollTop=y;
+      });
     }
     $('#au-log-clear').disabled=!RUNS.some(r=>r.status==='done'||r.status==='failed');
     const cl=$('#au-log-cleared');
