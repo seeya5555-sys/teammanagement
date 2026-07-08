@@ -193,7 +193,7 @@
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
     renderJeonja();
     renderLog();
-    document.querySelectorAll('.au-b').forEach(btn=>btn.onclick=onRun);
+    document.querySelectorAll('.au-b[data-task],.au-b[data-all]').forEach(btn=>btn.onclick=onRun);
   }
   function jAmt(it){
     const dn=it.dn?esc(it.dn):'', cost=(it.cost!==null&&it.cost!==undefined)?esc(it.cost):'';
@@ -308,8 +308,10 @@
     cl.textContent=CLEARED?`마지막 비움: ${CLEARED.at} · ${CLEARED.by||'?'} · ${CLEARED.n}건 삭제`:'';
   }
   async function onRun(e){
-    if(e.target.dataset.all){ return runAllSoa(e.target.dataset.all); }  // SOA 전체 한방에
-    const task=e.target.dataset.task, mode=e.target.dataset.mode;
+    const btn=e.currentTarget||e.target;
+    if(btn.dataset.all){ return runAllSoa(btn.dataset.all); }  // SOA 전체 한방에
+    const task=btn.dataset.task, mode=btn.dataset.mode;
+    if(!task||!mode){ console.warn('automation button missing task/mode', btn); return; }  // 스타일용 .au-b가 잘못 바인딩돼도 빈 task/mode POST 금지
     const nm=TASKS[task]||task;
     const confirmMsg={
       live: `[${nm}]\n자동 ${(task==='jeonja'||task==='fundreq')?'상신':'승인'}을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`,
