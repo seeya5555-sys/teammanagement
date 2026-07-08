@@ -788,6 +788,69 @@ col.c-edit   { width: 156px; }
   flex: 1;
 }
 
+.manual-trigger {
+  height: 30px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.manual-trigger:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+.page-manual-modal { z-index: 1100; }
+.page-manual-box { width: min(620px, 94vw); }
+.page-manual-body {
+  display: grid;
+  gap: 14px;
+}
+.page-manual-section {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+}
+.page-manual-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.page-manual-section ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.page-manual-section li + li { margin-top: 4px; }
+.mm-manual {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.mm-manual:hover { background: var(--surface-2); }
+.mm-manual .nav-ic { width: 18px; height: 18px; }
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1686,6 +1749,8 @@ col.c-edit   { width: 156px; }
   .admin-tabs { padding: 0 14px; }
   .admin-tab { padding: 9px 10px; font-size: 12px; }
   .admin-trigger span.trig-label { display: none; }
+  .manual-trigger span.trig-label { display: none; }
+  .manual-trigger { padding: 0 8px; }
 }
 
 /* ───── Inline textarea 편집 — 저장/취소 버튼 (rev.6) ───── */

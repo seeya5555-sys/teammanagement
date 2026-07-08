@@ -72,9 +72,6 @@
 {% block content %}
 <h1 class="page-title">🤖 자동화 모음</h1>
 <div class="au-wrap">
-  <p class="au-note">버튼을 누르면 맥미니가 해당 자동화를 실행하고 <b>텔레그램으로 결과를 보고</b>합니다(데쿠 호출 없음, 최대 ~1분 지연).
-  <b>검증</b>=읽기전용 미리보기(승인/상신 안 함). <b>자동승인/자동상신</b>=스케줄러와 동일하게 clean 건만 자동 처리, 예외는 미처리. 정기 스케줄러는 그대로 유지됩니다.</p>
-
   <div class="au-master" id="au-master">
     <div>
       <b>마스터 스위치</b>
@@ -104,8 +101,6 @@
       </select>
       <button class="au-b live" id="sv-live" type="button">▶ 검증 실기입</button>
     </div>
-    <div class="au-note" style="margin-top:6px">선박코드(SVMS 등록 전선박) 입력 후 실행. 기간·부서 비우면 전체(202601~202612·Technical) 기본.
-    <b>검증 실기입</b>=CFM_YN 체크 + 금액불일치 RJT_YN 리마크. <b>승인·출금·리젝제출·메일은 안 함.</b> GPT mini는 과플래그 가능성이 있어 결과 추가확인 전제. 결과는 아래 실행로그·텔레그램.</div>
   </div>
 
   <div class="au-sec">전자결재</div>
