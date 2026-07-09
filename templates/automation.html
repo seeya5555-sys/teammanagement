@@ -85,8 +85,8 @@
   <div class="au-sec">선박별 SOA 검증 (온디맨드)</div>
   <div id="au-vessel" style="max-width:920px">
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)">
-      <input id="sv-vsl" placeholder="선박코드 (예: SVGW)" maxlength="4" autocomplete="off"
-             style="text-transform:uppercase;width:130px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      <input id="sv-vsl" placeholder="선박코드 (예: SVGW,SAPS)" autocomplete="off"
+             style="text-transform:uppercase;width:190px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
       <input id="sv-fm" placeholder="시작 YYYYMM" maxlength="6" inputmode="numeric"
              style="width:110px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
       <input id="sv-to" placeholder="끝 YYYYMM" maxlength="6" inputmode="numeric"
@@ -364,17 +364,25 @@
     else { alert((j&&j.error)||'삭제 실패'); }
   }
   async function runVessel(mode){
-    const vsl=($('#sv-vsl').value||'').trim().toUpperCase();
-    if(!/^[A-Z]{4}$/.test(vsl)){ alert('선박코드(4자 영문)를 정확히 입력하세요.'); return; }
+    const codes=($('#sv-vsl').value||'').trim().toUpperCase().split(/[\s,;/]+/).filter(Boolean);
+    const seen=new Set(), vessels=[];
+    for(const c of codes){
+      if(!/^[A-Z]{4}$/.test(c)){ alert('선박코드(4자 영문)를 정확히 입력하세요.'); return; }
+      if(!seen.has(c)){ vessels.push(c); seen.add(c); }
+    }
+    if(!vessels.length){ alert('선박코드(4자 영문)를 정확히 입력하세요.'); return; }
+    if(vessels.length>5){ alert('선박별 SOA 검증은 한 번에 최대 5척까지 실행합니다.'); return; }
     const fm=($('#sv-fm').value||'').trim(), to=($('#sv-to').value||'').trim(), sl=$('#sv-tp').value;
     const reviewModel=$('#sv-review-model').value||'auto';
     if((fm&&!/^\d{6}$/.test(fm))||(to&&!/^\d{6}$/.test(to))){ alert('기간은 YYYYMM 형식.'); return; }
-    const params={vsl_cd:vsl}; if(fm)params.fm_dm=fm; if(to)params.to_dm=to; if(sl)params.sl_tp=sl;
+    const params=vessels.length===1?{vsl_cd:vessels[0]}:{vsl_cds:vessels}; if(fm)params.fm_dm=fm; if(to)params.to_dm=to; if(sl)params.sl_tp=sl;
     params.review_model=reviewModel;
     const modelWarn = reviewModel==='openai/gpt-5.4-mini' ? '\n\nGPT 5.4 mini는 과플래그 가능성이 있어 결과 추가확인 전제로 실행합니다.' : '';
-    if(mode==='live' && !confirm(`[선박별 SOA 검증 — ${vsl}]\n검증 실기입(CFM_YN 체크 + 금액불일치 RJT_YN 리마크)을 실행합니다.\n승인·출금·리젝제출·관리사메일은 안 합니다.${modelWarn}\n진행할까요?`)) return;
+    const title=vessels.length===1?vessels[0]:`${vessels.join(', ')} (${vessels.length}척)`;
+    if(mode==='live' && !confirm(`[선박별 SOA 검증 — ${title}]\n검증 실기입(CFM_YN 체크 + 금액불일치 RJT_YN 리마크)을 실행합니다.\n승인·출금·리젝제출·관리사메일은 안 합니다.${modelWarn}\n진행할까요?`)) return;
     const {ok,j}=await api('POST','/api/automation/run',{task:'soa_vessel',mode,params});
     if(!ok){ alert(j.error||'실행 실패'); return; }
+    if(j.count>1){ alert(`선박별 SOA 검증 ${j.count}건을 큐에 넣었습니다.`); }
     await load();
   }
   $('#sv-live').onclick=()=>runVessel('live');

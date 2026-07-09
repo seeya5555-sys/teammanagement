@@ -8921,6 +8921,51 @@ def _automation_enabled():
     return (row['v'] if row else '1') != '0'
 
 
+def _soa_vessel_codes_from_params(p):
+    raw = p.get('vsl_cds')
+    if raw is None:
+        raw = p.get('vsl_cd')
+    if isinstance(raw, str):
+        candidates = re.split(r'[\s,;/]+', raw.strip().upper())
+    elif isinstance(raw, list):
+        candidates = [str(x or '').strip().upper() for x in raw]
+    else:
+        candidates = []
+    out = []
+    seen = set()
+    for code in candidates:
+        if not code:
+            continue
+        if not re.match(r'^[A-Z]{4}$', code):
+            raise ValueError('선박코드(VSL_CD 4자 영문)를 정확히 입력하세요.')
+        if code not in seen:
+            out.append(code)
+            seen.add(code)
+    if not out:
+        raise ValueError('선박코드(VSL_CD 4자 영문)를 정확히 입력하세요.')
+    if len(out) > 5:
+        raise ValueError('선박별 SOA 검증은 한 번에 최대 5척까지 실행합니다.')
+    return out
+
+
+def _soa_vessel_params(p, vsl):
+    fm, to, sl = (str(p.get(k) or '').strip() for k in ('fm_dm', 'to_dm', 'sl_tp'))
+    def _ym(v): return bool(re.match(r'^[0-9]{6}$', v)) and '01' <= v[4:] <= '12'
+    if (fm and not _ym(fm)) or (to and not _ym(to)) or (fm and to and fm > to):
+        raise ValueError('기간(YYYYMM, 시작<=끝)을 확인하세요.')
+    if sl and sl not in ('04', '05'):
+        raise ValueError('부서는 05(Technical)/04(Crew)만.')
+    review_model = str(p.get('review_model') or 'auto').strip()
+    if review_model not in ('auto', 'claude-haiku-4-5', 'openai/gpt-5.4-mini'):
+        raise ValueError('검증모델 선택값이 올바르지 않습니다.')
+    pp = {'vsl_cd': vsl}
+    if fm: pp['fm_dm'] = fm
+    if to: pp['to_dm'] = to
+    if sl: pp['sl_tp'] = sl
+    pp['review_model'] = review_model
+    return pp
+
+
 # ===================== Dock Procurement (입거 발주현황 트래커) =====================
 _DOCKPROC_CAT_NM = {'R': 'SHORE REPAIR', 'S': 'SPARE', 'ST': 'STORE',
                     'P': 'PAINT', 'SY': 'SHIPYARD'}
@@ -9954,31 +9999,19 @@ def api_automation_run():
     task, mode = task.strip(), mode.strip()
     if task not in AUTOMATION_TASKS or mode not in AUTOMATION_MODES:
         return jsonify({'error': 'bad task/mode'}), 400
-    # 선박별 SOA 검증: params(vsl_cd 필수, 기간·부서·검증모델 옵션) 검증.
+    # 선박별 SOA 검증: params(vsl_cd/vsl_cds 필수, 기간·부서·검증모델 옵션) 검증.
     # live=실기입(체크박스+리젝리마크). 순수 DRY는 카나리/CLI용으로만 유지.
     params = None
+    vessel_params = []
     if task == 'soa_vessel':
         p = d.get('params')
         if not isinstance(p, dict):
             p = {}
-        vsl = str(p.get('vsl_cd') or '').strip().upper()
-        if not re.match(r'^[A-Z]{4}$', vsl):
-            return jsonify({'error': '선박코드(VSL_CD 4자 영문)를 정확히 입력하세요.'}), 400
-        fm, to, sl = (str(p.get(k) or '').strip() for k in ('fm_dm', 'to_dm', 'sl_tp'))
-        def _ym(v): return bool(re.match(r'^[0-9]{6}$', v)) and '01' <= v[4:] <= '12'
-        if (fm and not _ym(fm)) or (to and not _ym(to)) or (fm and to and fm > to):
-            return jsonify({'error': '기간(YYYYMM, 시작<=끝)을 확인하세요.'}), 400
-        if sl and sl not in ('04', '05'):
-            return jsonify({'error': '부서는 05(Technical)/04(Crew)만.'}), 400
-        review_model = str(p.get('review_model') or 'auto').strip()
-        if review_model not in ('auto', 'claude-haiku-4-5', 'openai/gpt-5.4-mini'):
-            return jsonify({'error': '검증모델 선택값이 올바르지 않습니다.'}), 400
-        pp = {'vsl_cd': vsl}
-        if fm: pp['fm_dm'] = fm
-        if to: pp['to_dm'] = to
-        if sl: pp['sl_tp'] = sl
-        pp['review_model'] = review_model
-        params = json.dumps(pp)
+        try:
+            vessel_params = [_soa_vessel_params(p, vsl) for vsl in _soa_vessel_codes_from_params(p)]
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+        params = json.dumps(vessel_params[0], ensure_ascii=False)
     if not _automation_enabled():
         return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
     # lock: 같은 task가 queued/running이면 거부(중복클릭·동시실행 방지)
@@ -9987,9 +10020,26 @@ def api_automation_run():
     if busy:
         return jsonify({'error': '이미 실행 대기/진행중입니다.'}), 409
     import uuid
+    user = session.get('username', '')
+    if task == 'soa_vessel' and len(vessel_params) > 1:
+        run_ids = []
+        db = get_db()
+        try:
+            for pp in vessel_params:
+                rid = uuid.uuid4().hex[:12]
+                db.execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by, params) "
+                           "VALUES (?,?,?, 'queued', ?, ?)",
+                           (rid, task, mode, user, json.dumps(pp, ensure_ascii=False)))
+                run_ids.append({'run_id': rid, 'vsl_cd': pp['vsl_cd']})
+            db.commit()
+        except sqlite3.Error:
+            db.rollback()
+            app.logger.exception('soa-vessel multi enqueue failed')
+            return jsonify({'error': '선박별 SOA 검증 큐 적재 실패 — 아무 작업도 큐에 넣지 않았습니다.'}), 500
+        return jsonify({'ok': True, 'run_ids': run_ids, 'count': len(run_ids)})
     rid = uuid.uuid4().hex[:12]
     execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by, params) "
-            "VALUES (?,?,?, 'queued', ?, ?)", (rid, task, mode, session.get('username', ''), params))
+            "VALUES (?,?,?, 'queued', ?, ?)", (rid, task, mode, user, params))
     return jsonify({'ok': True, 'run_id': rid})
 
 
