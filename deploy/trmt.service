@@ -12,7 +12,7 @@ EnvironmentFile=/etc/trmt.env
 # gunicorn 은 __main__ 을 안 타므로 마이그레이션을 여기서 강제(init_db 자체migrate + _auto_migrate 둘 다).
 ExecStartPre=/bin/bash -lc 'cd /home/opc/app && venv/bin/python3 -c "import app; app.init_db(drop=False); app._auto_migrate()"'
 # 503MB RAM: -w 1 --threads 8 (I/O·DB bound, 메모리 안전값). 부하 실측 후 증설.
-ExecStart=/bin/bash -lc 'cd /home/opc/app && exec venv/bin/gunicorn -w 1 --threads 8 -k gthread -b 127.0.0.1:5000 --timeout 60 --graceful-timeout 30 --max-requests 500 --max-requests-jitter 50 --error-logfile - app:app'
+ExecStart=/bin/bash -lc 'cd /home/opc/app && exec venv/bin/gunicorn -w 1 --threads 8 -k gthread -b 0.0.0.0:5000 --timeout 60 --graceful-timeout 30 --max-requests 500 --max-requests-jitter 50 --error-logfile - app:app'
 Restart=always
 RestartSec=3
 MemoryHigh=300M
