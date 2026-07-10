@@ -19,11 +19,14 @@ SCTL=$(command -v systemctl)
 echo "opc ALL=(ALL) NOPASSWD: $SCTL restart trmt" | sudo tee /etc/sudoers.d/trmt-autodeploy >/dev/null
 sudo chmod 440 /etc/sudoers.d/trmt-autodeploy
 
-echo "[4/5] systemd service + timer 설치"
+echo "[4/5] gunicorn 보장 + trmt.service(gunicorn) 설치 + autodeploy service/timer 설치"
+"$APP_DIR/venv/bin/python3" -c "import gunicorn" 2>/dev/null || "$APP_DIR/venv/bin/pip" install "gunicorn>=21,<24"
+sudo cp "$APP_DIR/deploy/trmt.service"            /etc/systemd/system/
 sudo cp "$APP_DIR/deploy/trmt-autodeploy.service" /etc/systemd/system/
 sudo cp "$APP_DIR/deploy/trmt-autodeploy.timer"   /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now trmt-autodeploy.timer
+sudo systemctl restart trmt
 
 echo "[5/5] 완료. 타이머 상태:"
 systemctl status trmt-autodeploy.timer --no-pager | head -6 || true

@@ -24,7 +24,10 @@ rm -rf "teammanagement-${BRANCH}" trmt_u.zip
 cd "$APP_DIR"
 
 source venv/bin/activate
-python3 -c "import app; app.init_db(drop=False)"
+# gunicorn 없으면 설치(venv 재구축/신규 서버 대비). 있으면 즉시 skip.
+python3 -c "import gunicorn" 2>/dev/null || pip install "gunicorn>=21,<24"
+# 마이그레이션(gunicorn은 __main__을 안 타므로 init_db 자체migrate + _auto_migrate 둘 다).
+python3 -c "import app; app.init_db(drop=False); app._auto_migrate()"
 sudo systemctl restart trmt
 echo "$REMOTE" > "$SHA_FILE"
 echo "$(date '+%F %T') deploy done -> ${REMOTE:0:7}"
