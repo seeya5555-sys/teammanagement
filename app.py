@@ -85,6 +85,10 @@ def get_db():
         g.db = sqlite3.connect(app.config['DATABASE'])
         g.db.row_factory = sqlite3.Row
         g.db.execute('PRAGMA foreign_keys = ON')
+        # 동시성: WAL 은 읽기/쓰기가 서로 안 막음. busy_timeout 으로 잠금 대기 재시도.
+        g.db.execute('PRAGMA journal_mode = WAL')
+        g.db.execute('PRAGMA busy_timeout = 5000')
+        g.db.execute('PRAGMA synchronous = NORMAL')
     return g.db
 
 @app.teardown_appcontext
@@ -12287,4 +12291,5 @@ if __name__ == '__main__':
     # 개발 환경 — debug(Werkzeug 콘솔=원격 코드실행 위험)는 명시적으로 켤 때만.
     # 기본 off. 로컬 개발 시 TRMT_DEBUG=1 로 실행.
     debug = os.environ.get('TRMT_DEBUG') == '1'
-    app.run(host='0.0.0.0', port=5000, debug=debug)
+    # threaded: 요청을 스레드로 병렬 처리(개발서버 단일요청 병목 해소, 임시 조치).
+    app.run(host='0.0.0.0', port=5000, debug=debug, threaded=True)
