@@ -1193,7 +1193,7 @@ async function saveAllInlineRows(survey, category) {
 let _modalCtx = null;  // { vesselId, quarter, surveyId? }
 
 function openSurveyModal(vesselId, quarter, survey) {
-  _modalCtx = { vesselId, quarter, surveyId: survey?.id };
+  _modalCtx = { vesselId, quarter, surveyId: survey?.id, _originalVendor: survey?.vendor || '' };
   $('#cs-modal-title').textContent =
     survey ? `분기 수검 정보 — ${quarter}Q (${S.year})` : `${quarter}Q 신규 수검`;
   $('#cs-f-vendor').value = survey?.vendor || '';
@@ -1212,8 +1212,15 @@ function closeSurveyModal() {
 
 async function saveSurveyModal() {
   if (!_modalCtx) return;
+  const vendorSel = $('#cs-f-vendor');
+  const knownOptions = Array.from(vendorSel.options).map(o => o.value).filter(v => v !== '');
+  const selectedVendor = vendorSel.value;
+  const originalVendor = _modalCtx._originalVendor;
+  // If the select shows '' but the original vendor was a non-empty custom value
+  // not in the select options, exclude vendor from payload to avoid overwriting it.
+  const vendorIsUnresolvable = selectedVendor === '' && originalVendor && !knownOptions.includes(originalVendor);
   const payload = {
-    vendor:          $('#cs-f-vendor').value || null,
+    ...(vendorIsUnresolvable ? {} : { vendor: selectedVendor || null }),
     management:      $('#cs-f-mgmt').value.trim() || null,
     inspection_date: $('#cs-f-date').value || null,
     overall_remark:  $('#cs-f-remark').value.trim() || null,

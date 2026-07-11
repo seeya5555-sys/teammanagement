@@ -281,11 +281,18 @@ function collectForm() {
   };
 }
 
+let _brepSaving = false;
 async function saveReport(thenEdit = false) {
+  if (_brepSaving) return;
   const data = collectForm();
   if (!data.title) { alert('제목을 입력하세요.'); return; }
   if (!data.vessel_id) { alert('선박을 선택하세요.'); return; }
 
+  _brepSaving = true;
+  const btnSave     = $('#brep-btn-save');
+  const btnSaveEdit = $('#brep-btn-save-edit');
+  if (btnSave)     btnSave.disabled     = true;
+  if (btnSaveEdit) btnSaveEdit.disabled = true;
   try {
     if (B.editingId) {
       await api(`/api/boarding-reports/${B.editingId}`, {
@@ -304,6 +311,10 @@ async function saveReport(thenEdit = false) {
     }
   } catch (e) {
     alert('저장 실패: ' + e.message);
+  } finally {
+    _brepSaving = false;
+    if (btnSave)     btnSave.disabled     = false;
+    if (btnSaveEdit) btnSaveEdit.disabled = false;
   }
 }
 

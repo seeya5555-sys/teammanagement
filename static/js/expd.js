@@ -234,16 +234,21 @@ function onUseTypeChange(r, v, cardSel) {
 }
 
 const _saveTimers = {};
+const _pendingPatches = {};
 function save(r, patch) {
   Object.assign(r, patch);
   // 합계/갤러리에 영향 주는 변경은 즉시 반영
   if ('amount' in patch || 'currency' in patch) recomputeTotals();
   if ('amount' in patch || 'currency' in patch || 'vendor' in patch || 'remark' in patch) renderGallery();
+  // Accumulate per-receipt pending patch so rapid successive edits are merged
+  _pendingPatches[r.id] = Object.assign(_pendingPatches[r.id] || {}, patch);
   clearTimeout(_saveTimers[r.id]);
   setSaveStatus('저장 중...', 'busy');
   _saveTimers[r.id] = setTimeout(async () => {
+    const mergedPatch = _pendingPatches[r.id];
+    delete _pendingPatches[r.id];
     try {
-      await api(`/api/biz-receipts/${r.id}`, { method: 'PUT', body: JSON.stringify(patch) });
+      await api(`/api/biz-receipts/${r.id}`, { method: 'PUT', body: JSON.stringify(mergedPatch) });
       setSaveStatus('저장됨', 'ok');
     } catch (e) {
       setSaveStatus('저장 실패: ' + e.message, 'err');

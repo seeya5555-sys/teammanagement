@@ -194,9 +194,16 @@ function collectForm() {
   };
 }
 
+let _tripSaving = false;
 async function saveTrip(thenOpen = false) {
+  if (_tripSaving) return;
   const data = collectForm();
   if (!data.title) { alert('출장명을 입력하세요.'); return; }
+  _tripSaving = true;
+  const btnSave     = $('#exp-btn-save');
+  const btnSaveOpen = $('#exp-btn-save-open');
+  if (btnSave)     btnSave.disabled     = true;
+  if (btnSaveOpen) btnSaveOpen.disabled = true;
   try {
     let id = EXP.editingId;
     if (id) {
@@ -210,6 +217,10 @@ async function saveTrip(thenOpen = false) {
     await reload();
   } catch (e) {
     alert('저장 실패: ' + e.message);
+  } finally {
+    _tripSaving = false;
+    if (btnSave)     btnSave.disabled     = false;
+    if (btnSaveOpen) btnSaveOpen.disabled = false;
   }
 }
 

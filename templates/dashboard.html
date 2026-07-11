@@ -326,7 +326,7 @@
 <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.js"></script>
 <script>
 (function(){
-  const esc=s=>(s==null?'':String(s)).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const esc=s=>(s==null?'':String(s)).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
   // 데이터 신선도 ALERT — 파이프라인 미갱신/선박별 noon 누락을 사이트 상단 배너로
   // 신선도 알림. noon 누락은 현재 감독필터(curSup)에 맞춰 본인 담당선박만 표시.
   function renderAlert(){
@@ -407,7 +407,7 @@
     if(!FLEET.length){renderAlert();document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
     FLEET.forEach(v=>{
       const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
-      const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(v.name).setLatLng([v.lat,v.lng]);tt.addTo(map);
+      const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(esc(v.name)).setLatLng([v.lat,v.lng]);tt.addTo(map);
       m.on('click',()=>openV(v));markers.push({v,m,tt});
     });
     const bar=document.getElementById('fmSup');
@@ -460,7 +460,7 @@
     const on=!!v.email_watch;
     const warn=v.ais_stale?' <span style="color:#b7791f;font-size:11px">AIS 끊김 — 이메일 선위 권장</span>':'';
     return '<div class="fm-line"><span class="lk">🛰️ AIS off → 이메일선위</span><span class="lv">'+
-      '<button onclick="fmToggleEmail(\''+esc(v.name).replace(/'/g,"\\'")+'\','+(on?'false':'true')+')" '+
+      '<button type="button" class="fm-email-toggle" data-vessel="'+esc(v.name)+'" data-enable="'+(on?'false':'true')+'" '+
       'style="cursor:pointer;border:1px solid '+(on?'#b7791f':'var(--border)')+';background:'+(on?'#fef3c7':'var(--surface)')+
       ';color:'+(on?'#92400e':'var(--text)')+';border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600">'+
       (on?'ON · 해제':'OFF · 켜기')+'</button>'+warn+'</span></div>';
@@ -474,6 +474,13 @@
         location.reload();
       }).catch(()=>alert('토글 요청 실패'));
   };
+  // DH2: inline onclick 폐기 → 위임 리스너. 선박명이 속성/JS 컨텍스트로 새지 않게
+  // data-vessel(esc된 값)만 읽어 호출한다(문자열 인터폴레이션 XSS 차단).
+  document.addEventListener('click',function(ev){
+    const b=ev.target.closest&&ev.target.closest('.fm-email-toggle');
+    if(!b) return;
+    window.fmToggleEmail(b.getAttribute('data-vessel')||'', b.getAttribute('data-enable')==='true');
+  });
   // slowspace 섹션: 최신 동정만(Notification 있을 때만). ETA/Next Port는 표시 안 함(손유석 지시).
   function slowSec(v){
     if(!v.slow_last_notif) return '';

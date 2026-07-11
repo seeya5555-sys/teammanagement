@@ -91,10 +91,10 @@ function dDayBadge(due) {
   const n = dDay(due);
   if (n === null) return null;
   let cls, txt;
-  if (n < 0)       { cls = 'dday-overdue'; txt = `D${n}`; }
+  if (n < 0)       { cls = 'dday-overdue'; txt = `D+${-n}`; }
   else if (n === 0){ cls = 'dday-today';   txt = 'D-DAY'; }
-  else if (n <= 3) { cls = 'dday-soon';    txt = `D+${n}`; }
-  else             { cls = 'dday-later';   txt = `D+${n}`; }
+  else if (n <= 3) { cls = 'dday-soon';    txt = `D-${n}`; }
+  else             { cls = 'dday-later';   txt = `D-${n}`; }
   return el('span', { class: `dday ${cls}`, title: `마감: ${due}` }, txt);
 }
 
@@ -1787,6 +1787,9 @@ function closeModal() { $('#issue-modal').hidden = true; document.body.style.ove
 
 async function saveIssue(ev) {
   ev.preventDefault();
+  const btn = ev.target.querySelector('[type=submit]') || ev.submitter;
+  if (btn && btn.disabled) return;
+  if (btn) btn.disabled = true;
   const cleanActions = S.editingActions
     .filter(a => (a.progress || '').trim() !== '')
     .map(a => ({
@@ -1806,8 +1809,8 @@ async function saveIssue(ev) {
     priority:      $('#f-priority').value,
     status:        $('#f-status').value,
   };
-  if (!payload.item_topic) { alert('제목을 입력하세요.'); return; }
-  if (!payload.vessel_id)  { alert('선박을 선택하세요.'); return; }
+  if (!payload.item_topic) { if (btn) btn.disabled = false; alert('제목을 입력하세요.'); return; }
+  if (!payload.vessel_id)  { if (btn) btn.disabled = false; alert('선박을 선택하세요.'); return; }
 
   try {
     if (S.editingId) {
@@ -1825,6 +1828,8 @@ async function saveIssue(ev) {
     await reloadAll();
   } catch (err) {
     alert('저장 실패: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1840,6 +1845,10 @@ async function confirmDelete(iid) {
 
 // ───────────── 캘린더(일정)에 등록 ─────────────
 async function addIssueToCalendar(i) {
+  if (!addIssueToCalendar._saving) addIssueToCalendar._saving = {};
+  if (addIssueToCalendar._saving[i.id]) return;
+  addIssueToCalendar._saving[i.id] = true;
+  try {
   // 중복 체크
   let existing = null;
   try {
@@ -1905,6 +1914,9 @@ async function addIssueToCalendar(i) {
     }
   } catch (err) {
     alert('일정 등록 실패: ' + err.message);
+  }
+  } finally {
+    addIssueToCalendar._saving[i.id] = false;
   }
 }
 
@@ -2219,6 +2231,9 @@ async function moveSupervisor(sid, direction) {
 async function addSupervisor() {
   const name = $('#sup-add-name').value.trim();
   if (!name) { alert('이름을 입력하세요.'); return; }
+  const btn = $('#btn-sup-add');
+  if (btn && btn.disabled) return;
+  if (btn) btn.disabled = true;
   try {
     await api('/api/supervisors', {
       method: 'POST',
@@ -2232,6 +2247,7 @@ async function addSupervisor() {
     $('#sup-add-email').value = '';
     await loadAdminSupervisors();
   } catch (err) { alert('추가 실패: ' + err.message); }
+  finally { if (btn) btn.disabled = false; }
 }
 async function deleteSupervisor(id, name) {
   if (!confirm(`감독 "${name}"을(를) 삭제하시겠습니까?\n(이슈가 있으면 비활성 처리됩니다)`)) return;
@@ -2434,6 +2450,9 @@ async function addVessel() {
   const name = $('#ves-add-name').value.trim();
   if (!name) { alert('선박명을 입력하세요.'); return; }
   if (!ADMIN.selectedSupIds.size) { alert('담당 감독을 최소 1명 선택하세요.'); return; }
+  const btn = $('#btn-ves-add');
+  if (btn && btn.disabled) return;
+  if (btn) btn.disabled = true;
   try {
     await api('/api/vessels', {
       method: 'POST',
@@ -2455,6 +2474,7 @@ async function addVessel() {
     ADMIN.selectedSupIds.clear();
     await loadAdminVessels();
   } catch (err) { alert('추가 실패: ' + err.message); }
+  finally { if (btn) btn.disabled = false; }
 }
 async function deleteVessel(id, name) {
   if (!confirm(`선박 "${name}"을(를) 삭제하시겠습니까?\n(이슈가 있으면 비활성 처리됩니다)`)) return;
@@ -2536,6 +2556,9 @@ async function addUser() {
   const password = $('#user-add-password').value;
   if (!username) { alert('사용자명을 입력하세요.'); return; }
   if (password.length < 6) { alert('비밀번호는 6자 이상이어야 합니다.'); return; }
+  const btn = $('#btn-user-add');
+  if (btn && btn.disabled) return;
+  if (btn) btn.disabled = true;
   try {
     await api('/api/users', {
       method: 'POST',
@@ -2551,6 +2574,7 @@ async function addUser() {
     $('#user-add-display').value  = '';
     await loadAdminUsers();
   } catch (err) { alert('추가 실패: ' + err.message); }
+  finally { if (btn) btn.disabled = false; }
 }
 async function deleteUser(id, username) {
   if (!confirm(`사용자 "${username}"을(를) 비활성 처리하시겠습니까?`)) return;
@@ -2722,6 +2746,9 @@ async function unassignMyVessel(vid, vname) {
 async function addVesselFromMyVes() {
   const name = $('#myves-add-name').value.trim();
   if (!name) { alert('선박명을 입력하세요.'); return; }
+  const btn = $('#btn-myves-add');
+  if (btn && btn.disabled) return;
+  if (btn) btn.disabled = true;
   try {
     await api('/api/vessels', {
       method: 'POST',
@@ -2742,6 +2769,7 @@ async function addVesselFromMyVes() {
     if ($('#myves-add-manager')) $('#myves-add-manager').value = '';
     await renderMyVesList();
   } catch (err) { alert('추가 실패: ' + err.message); }
+  finally { if (btn) btn.disabled = false; }
 }
 
 // ═══════════════════════════════════════════════════════════
