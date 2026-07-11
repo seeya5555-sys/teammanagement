@@ -12,7 +12,7 @@ const E = {
   tree: [],
   byId: new Map(),
   activeSecId: null,
-  saveTimer: null,
+  saveTimers: new Map(),
   canEdit: true,
 };
 
@@ -1564,15 +1564,24 @@ async function uploadDefectFiles(items, idx, b, getCurrent, rebuild, fileList) {
   }
 }
 function scheduleBlockSave(blockId, getContent) {
-  clearTimeout(E.saveTimer);
+  clearTimeout(E.saveTimers.get(blockId));
   setSaveStatus('저장 대기...', 'busy');
-  E.saveTimer = setTimeout(async () => {
+  // Capture the owning section at schedule time (not in the callback) to avoid
+  // updating the wrong section cache if the user navigates away before the save fires.
+  const owningSecId = (() => {
+    for (const [sid, info] of E.byId.entries()) {
+      if ((info.section.blocks || []).some(b => b.id === blockId)) return sid;
+    }
+    return E.activeSecId;
+  })();
+  E.saveTimers.set(blockId, setTimeout(async () => {
+    E.saveTimers.delete(blockId);
     setSaveStatus('저장 중...', 'busy');
     try {
       await api(`/api/boarding-blocks/${blockId}`, {
         method: 'PUT', body: JSON.stringify({ content: getContent() }),
       });
-      const info = E.byId.get(E.activeSecId);
+      const info = E.byId.get(owningSecId);
       if (info) {
         const target = (info.section.blocks || []).find(b => b.id === blockId);
         if (target) target.content = getContent();
@@ -1581,7 +1590,7 @@ function scheduleBlockSave(blockId, getContent) {
     } catch (e) {
       setSaveStatus('저장 실패: ' + e.message, 'err');
     }
-  }, 500);
+  }, 500));
 }
 
 async function addBlockAt(blockType, position) {

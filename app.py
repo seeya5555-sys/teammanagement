@@ -2419,7 +2419,10 @@ def _cs_survey_with_counts(s):
 def api_cs_surveys_list():
     """연도 + (선택)감독별 모든 선박의 분기별 서베이 목록.
     응답 구조: [{vessel: {...}, surveys: {1: {...}, 2: {...}}}]"""
-    year = int(request.args.get('year') or 2026)
+    try:
+        year = int(request.args.get('year') or 2026)
+    except (TypeError, ValueError):
+        year = 2026
     sup_id = request.args.get('supervisor_id')
 
     # 선박 목록 — 감독 필터 적용
@@ -5810,13 +5813,39 @@ def _trip_to_dict(r):
     return d
 
 
+import re as _re
+# 서버 업로드(api_receipt_upload)가 발급하는 파일명 형식만 허용.
+#   rcpt-<trip_id>-<ms_epoch>-<hex8>.<ext>  (base=secrets.token_hex(4)=8 hex chars)
+_RECEIPT_FNAME_RE = _re.compile(
+    r'^rcpt-\d+-\d+-[0-9a-fA-F]+\.(?:jpg|jpeg|png|gif|webp|heic|heif|bmp)$')
+
+
+def _safe_receipt_filename(fname):
+    """클라이언트가 준 image_filename을 신뢰하지 않는다.
+    basename으로 축소 후 서버발급 패턴에 정확히 맞을 때만 그 basename을 반환.
+    아니면 None (경로순회 `../..`·임의 파일 참조 차단)."""
+    if not fname:
+        return None
+    base = os.path.basename(str(fname))
+    return base if _RECEIPT_FNAME_RE.match(base) else None
+
+
 def _delete_receipt_image(fname):
     if not fname:
         return
-    p = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt', fname)
+    rdir = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt')
+    # 방어적 containment: basename으로 축소하고, 실제 경로가 receipt 디렉터리
+    # 밖으로 벗어나면(기존에 저장됐을 수 있는 악성 값 대비) 삭제하지 않는다.
+    base = os.path.basename(str(fname))
+    p = os.path.join(rdir, base)
     try:
-        if os.path.exists(p):
-            os.remove(p)
+        real_p = os.path.realpath(p)
+        real_dir = os.path.realpath(rdir)
+        if os.path.commonpath([real_p, real_dir]) != real_dir:
+            app.logger.warning('delete-receipt-image: refusing out-of-dir path %r', fname)
+            return
+        if os.path.exists(real_p):
+            os.remove(real_p)
     except Exception:
         app.logger.exception('delete-receipt-image')
 
@@ -6136,7 +6165,7 @@ def api_receipt_create(tid):
              occur_date, card_no, remark, currency, amount, extracted_raw, display_order)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     ''', (
-        tid, d.get('image_filename') or None, d.get('image_url') or None,
+        tid, _safe_receipt_filename(d.get('image_filename')), d.get('image_url') or None,
         d.get('vendor') or None, d.get('cost_type') or None, d.get('use_type') or None,
         d.get('occur_date') or None, d.get('card_no') or None, d.get('remark') or None,
         d.get('currency') or None, amount, d.get('extracted_raw') or None, mx + 1,
@@ -7772,12 +7801,20 @@ def api_ext_aor_approved():
     if request.args.get('peek'):   # dry 검증 — 락 안 하고 조회만
         rows = query(f"SELECT {cols} FROM aor_draft WHERE status='approved' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
-    # claim 전 기존 submitting = 이전 run 중단 잔류(stuck). 단일 러너라 정상 진행분과 안 겹침 → 멱등 재처리.
-    out = [dict(r) for r in
-           query(f"SELECT {cols} FROM aor_draft WHERE status='submitting' ORDER BY id ASC")]
+    # N1 하드닝: 기존 submitting 을 재서빙하지 않는다(폴러 2개/GET 재시도 시 동일 건 중복
+    # SVMS 상신 방지 — rejecting 패턴 준용). 상신은 '절반 성공'(SVMS 반영 후 크래시) 가능 →
+    # stale submitting 을 approved 로 되돌려 자동 재상신하면 이중 상신 위험. 6h 넘은 stale 은
+    # 'failed'(사람 재검토)로 fail-closed. submitted_at 을 claim 시각으로 재사용(스키마 무변경);
+    # NULL = 배포순간 구코드 in-flight 잔류분 → stale 제외(진행중 러너 결과POST로 해소).
+    execute("UPDATE aor_draft SET status='failed', "
+            "submit_result=COALESCE(submit_result,'')||' [auto:6h+ submitting→failed, 사람 재검토]' "
+            "WHERE status='submitting' AND submitted_at IS NOT NULL "
+            "AND submitted_at < datetime('now','localtime','-6 hours')")
+    out = []
     for r in query(f"SELECT {cols} FROM aor_draft WHERE status='approved' ORDER BY id ASC"):
-        # 조건부 claim — 'approved'→'submitting' 락 성공분만 추가(동시 호출 중복 방지)
-        if execute_rc("UPDATE aor_draft SET status='submitting' WHERE id=? AND status='approved'",
+        # 조건부 claim + claim 시각 스탬프. 락 성공분만 서빙(동시 호출 중복 방지).
+        if execute_rc("UPDATE aor_draft SET status='submitting', "
+                      "submitted_at=datetime('now','localtime') WHERE id=? AND status='approved'",
                       (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
@@ -8024,9 +8061,16 @@ def api_ext_fundreq_approved():
     if request.args.get('peek'):
         rows = query(f"SELECT {cols} FROM fundreq_draft WHERE status='approved' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
-    out = [dict(r) for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='submitting' ORDER BY id ASC")]
+    # N1 하드닝: 기존 submitting 재서빙 안 함(중복 상신 방지). stale(6h+ claim)=failed(사람 재검토),
+    # 자동 재상신 안 함(절반성공 이중상신 방지). done_at 을 claim 시각으로 재사용(스키마 무변경).
+    execute("UPDATE fundreq_draft SET status='failed', "
+            "result=COALESCE(result,'')||' [auto:6h+ submitting→failed, 사람 재검토]' "
+            "WHERE status='submitting' AND done_at IS NOT NULL "
+            "AND done_at < datetime('now','localtime','-6 hours')")
+    out = []
     for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='approved' ORDER BY id ASC"):
-        if execute_rc("UPDATE fundreq_draft SET status='submitting' WHERE id=? AND status='approved'", (r['id'],)):
+        if execute_rc("UPDATE fundreq_draft SET status='submitting', done_at=datetime('now','localtime') "
+                      "WHERE id=? AND status='approved'", (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
 
@@ -8341,9 +8385,16 @@ def api_ext_invoice_approved():
     if request.args.get('peek'):
         rows = query(f"SELECT {cols} FROM invoice_draft WHERE status='approved' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
-    out = [dict(r) for r in query(f"SELECT {cols} FROM invoice_draft WHERE status='submitting' ORDER BY id ASC")]
+    # N1 하드닝: 기존 submitting 재서빙 안 함(중복 컨펌 방지). stale(6h+ claim)=failed(사람 재검토),
+    # 자동 재컨펌 안 함(절반성공 이중처리 방지). done_at 을 claim 시각으로 재사용(스키마 무변경).
+    execute("UPDATE invoice_draft SET status='failed', "
+            "result=COALESCE(result,'')||' [auto:6h+ submitting→failed, 사람 재검토]' "
+            "WHERE status='submitting' AND done_at IS NOT NULL "
+            "AND done_at < datetime('now','localtime','-6 hours')")
+    out = []
     for r in query(f"SELECT {cols} FROM invoice_draft WHERE status='approved' ORDER BY id ASC"):
-        if execute_rc("UPDATE invoice_draft SET status='submitting' WHERE id=? AND status='approved'", (r['id'],)):
+        if execute_rc("UPDATE invoice_draft SET status='submitting', done_at=datetime('now','localtime') "
+                      "WHERE id=? AND status='approved'", (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
 
@@ -8880,9 +8931,16 @@ def api_ext_reqgen_approved():
     if request.args.get('peek'):
         rows = query(f"SELECT {cols} FROM reqgen_draft WHERE status='approved' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
-    out = [dict(r) for r in query(f"SELECT {cols} FROM reqgen_draft WHERE status='saving' ORDER BY id ASC")]
+    # N1 하드닝: 기존 saving 재서빙 안 함(중복 SVMS 저장 방지). stale(6h+ claim)=failed(사람 재검토),
+    # 자동 재저장 안 함(절반성공 이중저장 방지). done_at 을 claim 시각으로 재사용(스키마 무변경).
+    execute("UPDATE reqgen_draft SET status='failed', "
+            "result=COALESCE(result,'')||' [auto:6h+ saving→failed, 사람 재검토]' "
+            "WHERE status='saving' AND done_at IS NOT NULL "
+            "AND done_at < datetime('now','localtime','-6 hours')")
+    out = []
     for r in query(f"SELECT {cols} FROM reqgen_draft WHERE status='approved' ORDER BY id ASC"):
-        if execute_rc("UPDATE reqgen_draft SET status='saving' WHERE id=? AND status='approved'", (r['id'],)):
+        if execute_rc("UPDATE reqgen_draft SET status='saving', done_at=datetime('now','localtime') "
+                      "WHERE id=? AND status='approved'", (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
 

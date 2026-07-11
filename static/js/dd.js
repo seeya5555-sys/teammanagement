@@ -302,11 +302,18 @@ function collectForm() {
   };
 }
 
+let _ddSaving = false;
 async function saveReport(thenEdit = false) {
+  if (_ddSaving) return;
   const data = collectForm();
   if (!data.title) { alert('제목을 입력하세요.'); return; }
   if (!data.vessel_id) { alert('선박을 선택하세요.'); return; }
 
+  _ddSaving = true;
+  const btnSave     = $('#dd-btn-save');
+  const btnSaveEdit = $('#dd-btn-save-edit');
+  if (btnSave)     btnSave.disabled     = true;
+  if (btnSaveEdit) btnSaveEdit.disabled = true;
   try {
     if (DD.editingId) {
       await api(`/api/dock-reports/${DD.editingId}`, {
@@ -328,6 +335,10 @@ async function saveReport(thenEdit = false) {
     }
   } catch (e) {
     alert('저장 실패: ' + e.message);
+  } finally {
+    _ddSaving = false;
+    if (btnSave)     btnSave.disabled     = false;
+    if (btnSaveEdit) btnSaveEdit.disabled = false;
   }
 }
 
