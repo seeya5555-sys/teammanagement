@@ -22,17 +22,29 @@ def setup_database(path):
             email_from TEXT,
             email_date TEXT,
             email_msg_id TEXT,
+            thread_key TEXT,
             thread_summary_ko TEXT,
             summary_ko TEXT,
             body_en TEXT,
+            action_summary TEXT,
             issue_item TEXT,
             issue_desc TEXT,
             issue_match_id INTEGER,
             issue_vessel TEXT,
+            issue_supervisor TEXT,
             issue_priority TEXT,
+            card_category TEXT,
             issue_status TEXT NOT NULL DEFAULT 'pending',
+            reply_status TEXT NOT NULL DEFAULT 'none',
             card_status TEXT NOT NULL DEFAULT 'active',
             pending INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE shipwiki_card (
+            id INTEGER PRIMARY KEY,
+            slug TEXT,
+            card_type TEXT,
+            title TEXT,
+            body TEXT
         );
         INSERT INTO mail_card
           (email_subject, email_from, email_date, email_msg_id, thread_summary_ko,
@@ -119,6 +131,61 @@ def main():
             assert row['reviewer'] == 'aizawa'
             assert 'Daily 반영' in row['review_json']
             assert 'should not overwrite' not in row['review_json']
+
+        # 카드 적재 범주는 첨부된 고정 목록만 허용하고, 정상 payload는 DB·목록 응답에 보존한다.
+        bad_category = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook-bad-category', 'outlook_categories': ['현안'],
+            'card_category': '기술-Next DD',
+        })
+        assert bad_category.status_code == 400, bad_category.get_data(as_text=True)
+        created = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook-category-aor', 'email_subject': 'AOR approval request',
+            'thread_key': 'thread-category-aor',
+            'outlook_categories': ['현안'], 'card_category': 'AOR',
+        })
+        assert created.status_code == 201, created.get_data(as_text=True)
+        category_card_id = created.get_json()['id']
+        # 구 runner가 범주를 아직 전송하지 않아도 기존 pending 카드의 확정 범주를 덮어쓰면 안 된다.
+        legacy_update = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook-category-aor-retry', 'email_subject': 'legacy runner retry',
+            'thread_key': 'thread-category-aor',
+            'outlook_categories': ['현안'],
+        })
+        assert legacy_update.status_code == 200, legacy_update.get_data(as_text=True)
+        default_insert = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook-default-category', 'outlook_categories': ['현안'],
+        })
+        assert default_insert.status_code == 201, default_insert.get_data(as_text=True)
+        default_card_id = default_insert.get_json()['id']
+        explicit_null = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook-null-category', 'outlook_categories': ['현안'],
+            'card_category': None,
+        })
+        assert explicit_null.status_code == 201, explicit_null.get_data(as_text=True)
+        with appmod.app.app_context():
+            default_row = appmod.query('SELECT card_category FROM mail_card WHERE id=?', (default_card_id,), one=True)
+            assert default_row['card_category'] == '기술-Normal'
+        for n, category in enumerate(('SIRE', '기술-COC&Flag', '기술-Normal', '기술-Urgent'), start=1):
+            accepted = client.post('/api/ext/mail/cards', headers=headers, json={
+                'email_msg_id': f'outlook-category-{n}', 'outlook_categories': ['현안'],
+                'card_category': category,
+            })
+            assert accepted.status_code == 201, accepted.get_data(as_text=True)
+        non_string = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook-list-category', 'outlook_categories': ['현안'],
+            'card_category': ['AOR'],
+        })
+        assert non_string.status_code == 400, non_string.get_data(as_text=True)
+        with appmod.app.app_context():
+            row = appmod.query('SELECT card_category FROM mail_card WHERE id=?', (category_card_id,), one=True)
+            assert row['card_category'] == 'AOR'
+        with client.session_transaction() as sess:
+            sess['user_id'] = 1
+            sess['role'] = 'admin'
+        listed = client.get('/api/mail/cards')
+        assert listed.status_code == 200
+        assert any(c['id'] == category_card_id and c['card_category'] == 'AOR'
+                   for c in listed.get_json()['cards'])
 
     print('PASS: aizawa mail review queue contract')
 

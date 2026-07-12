@@ -10971,6 +10971,11 @@ def api_mail_delete_selected():
 
 
 # ---- ext (맥미니) ----
+# 카드 적재 범주: Outlook의 `현안` allowlist와 별개인 TRMT 업무 분류다.
+# 첨부된 목록 외 값은 저장하지 않아 downstream 필터/집계가 오염되지 않게 한다.
+MAIL_CARD_CATEGORIES = ('AOR', 'SIRE', '기술-COC&Flag', '기술-Normal', '기술-Urgent')
+
+
 @app.route('/api/ext/mail/cards', methods=['POST'])
 @api_key_required
 def api_ext_mail_create():
@@ -10990,6 +10995,15 @@ def api_ext_mail_create():
     prio = d.get('issue_priority') or 'Normal'
     if prio not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
         prio = 'Normal'
+    has_card_category = 'card_category' in d
+    card_category = d.get('card_category')
+    if not has_card_category or card_category is None:
+        # 구 runner의 미전송/null은 UPDATE에서 기존값을 보존하고, 신규만 안전 기본값을 적용한다.
+        card_category = None
+    elif not isinstance(card_category, str) or card_category.strip() not in MAIL_CARD_CATEGORIES:
+        return jsonify({'error': 'invalid card_category', 'allowed': list(MAIL_CARD_CATEGORIES)}), 400
+    else:
+        card_category = card_category.strip()
     # 1) 동일 Outlook source message ID는 상태와 무관하게 한 번만 적재한다.
     # 삭제/완료 카드를 재동기화로 되살려 원본·이슈 제안이 중복되는 것을 막는다.
     if msg_id:
@@ -11001,7 +11015,7 @@ def api_ext_mail_create():
     #    콘텐츠(제목/발신/일자/msg_id/요약/맥락/원문)는 항상 갱신. 이슈제안(item/desc/prio/vessel/match)은
     #    아직 미처리(issue_status='pending')일 때만 갱신(등록·리젝된 카드의 결정 보존). 회신·상태·결정은 절대 안 건드림.
     if tkey:
-        ex = query("SELECT id FROM mail_card WHERE thread_key=? AND card_status='active' ORDER BY id DESC",
+        ex = query("SELECT id, card_category FROM mail_card WHERE thread_key=? AND card_status='active' ORDER BY id DESC",
                    (tkey,), one=True)
         if ex:
             execute("""UPDATE mail_card SET
@@ -11010,6 +11024,7 @@ def api_ext_mail_create():
                 issue_item    =CASE WHEN issue_status='pending' THEN ? ELSE issue_item     END,
                 issue_desc    =CASE WHEN issue_status='pending' THEN ? ELSE issue_desc     END,
                 issue_priority=CASE WHEN issue_status='pending' THEN ? ELSE issue_priority END,
+                card_category =CASE WHEN issue_status='pending' THEN ? ELSE card_category  END,
                 issue_vessel  =CASE WHEN issue_status='pending' THEN ? ELSE issue_vessel   END,
                 issue_match_id=CASE WHEN issue_status='pending' THEN ? ELSE issue_match_id END
                 WHERE id=?""", (
@@ -11017,19 +11032,21 @@ def api_ext_mail_create():
                 msg_id, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
                 d.get('action_summary') or None,
                 d.get('issue_item') or None, d.get('issue_desc') or None, prio,
+                card_category if card_category is not None else ex['card_category'],
                 d.get('issue_vessel') or None, d.get('issue_match_id'), ex['id']))
             return jsonify({'id': ex['id'], 'updated': True}), 200
     # 3) 신규(또는 삭제된 스레드) → INSERT
     cid = execute("""INSERT INTO mail_card
         (email_subject, email_from, email_date, email_msg_id, thread_key, summary_ko, thread_summary_ko, body_en,
-         action_summary, issue_item, issue_desc, issue_match_id, issue_priority, issue_vessel, issue_supervisor,
+         action_summary, issue_item, issue_desc, issue_match_id, issue_priority, card_category, issue_vessel, issue_supervisor,
          issue_status, reply_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
         d.get('email_subject') or None, d.get('email_from') or None, d.get('email_date') or None,
         msg_id, tkey, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
         d.get('action_summary') or None,
         d.get('issue_item') or None, d.get('issue_desc') or None,
-        d.get('issue_match_id'), prio, d.get('issue_vessel') or None, d.get('issue_supervisor') or None,
+        d.get('issue_match_id'), prio, card_category or '기술-Normal',
+        d.get('issue_vessel') or None, d.get('issue_supervisor') or None,
         issue_status))
     return jsonify({'id': cid}), 201
 
@@ -12434,6 +12451,9 @@ def _auto_migrate():
             if cols and 'action_summary' not in cols:   # 현안 액션추가용 1~2문장 요약
                 conn.execute("ALTER TABLE mail_card ADD COLUMN action_summary TEXT")
                 print('[auto_migrate] mail_card.action_summary 추가됨')
+            if cols and 'card_category' not in cols:    # Outlook 현안 여부와 분리된 TRMT 카드 적재 범주
+                conn.execute("ALTER TABLE mail_card ADD COLUMN card_category TEXT")
+                print('[auto_migrate] mail_card.card_category 추가됨')
         except Exception as e:
             print(f'[auto_migrate] mail_card.pending 점검 건너뜀: {e}')
 

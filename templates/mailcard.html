@@ -23,6 +23,8 @@
   .b-i{background:var(--blue-bg);color:var(--blue)}.b-r{background:var(--green-bg);color:var(--green)}
   .b-info{background:var(--amber-bg);color:var(--amber)}.b-na{background:var(--surface-3);color:var(--text-tertiary)}.b-done{background:var(--surface-3);color:var(--text-secondary)}
   .b-pend{background:var(--amber-bg);color:var(--amber)}
+  .b-cat-aor{background:var(--green-bg);color:var(--green)}.b-cat-sire{background:var(--blue-bg);color:var(--blue)}
+  .b-cat-coc{background:#fce7f3;color:#be185d}.b-cat-normal{background:var(--surface-3);color:var(--text-secondary)}.b-cat-urgent{background:var(--red-bg);color:var(--red)}
   .mc-sum{background:var(--blue-bg);border-bottom:1px solid var(--blue-border);padding:9px 15px;font-size:13px;color:var(--blue-text)}
   /* 스레드 전체 1~2줄 요약 — 카드 맨 위, 항상 표시 */
   .mc-thread{background:var(--amber-bg);border-bottom:1px solid var(--amber-border);padding:8px 15px;font-size:12.5px;color:var(--amber);line-height:1.45}
@@ -117,6 +119,7 @@
 
   function issueBadge(s){return {pending:'<span class="bdg b-i">이슈감</span>',registered:'<span class="bdg b-done">이슈 등록됨</span>',rejected:'<span class="bdg b-na">이슈 리젝</span>',not_applicable:'<span class="bdg b-na">이슈 해당없음</span>'}[s]||'';}
   function replyBadge(s){return {none:'',needs_info:'<span class="bdg b-info">회신 지시대기</span>',translated:'<span class="bdg b-r">번역됨</span>',draft_requested:'<span class="bdg b-info">Draft 대기</span>',draft_created:'<span class="bdg b-done">회신 Draft 생성됨</span>',dismissed:'<span class="bdg b-na">회신 안함</span>'}[s]||'';}
+  function categoryBadge(v){const cls={AOR:'b-cat-aor',SIRE:'b-cat-sire','기술-COC&Flag':'b-cat-coc','기술-Normal':'b-cat-normal','기술-Urgent':'b-cat-urgent'}[v];return cls?`<span class="bdg ${cls}">${esc(v)}</span>`:'';}
 
   function wikiBand(w){
     if(!w)return'';
@@ -203,7 +206,7 @@
     el.innerHTML=`<div class="mc-top"><input type="checkbox" class="mc-pick" title="선택" style="margin-top:3px;width:16px;height:16px;flex:none;cursor:pointer">
       <div><div class="mc-subj">${esc(c.email_subject||'(제목없음)')}</div>
         <div class="mc-meta">${esc(c.email_from||'?')} · ${esc(c.email_date||'')} · #${c.id}</div></div>
-      <div class="mc-badges">${c.pending?'<span class="bdg b-pend">⏸ 보류</span>':''}${issueBadge(c.issue_status)}${replyBadge(c.reply_status)}</div></div>
+      <div class="mc-badges">${categoryBadge(c.card_category)}${c.pending?'<span class="bdg b-pend">⏸ 보류</span>':''}${issueBadge(c.issue_status)}${replyBadge(c.reply_status)}</div></div>
       ${c.thread_summary_ko?`<div class="mc-thread">🧵 <b>요약</b> · ${esc(c.thread_summary_ko)}</div>`:''}
       ${wikiBand(c.wiki)}
       ${aizawaBand(c.aizawa_review)}
