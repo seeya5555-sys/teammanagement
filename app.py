@@ -10958,10 +10958,14 @@ def api_mail_delete_selected():
 @app.route('/api/ext/mail/cards', methods=['POST'])
 @api_key_required
 def api_ext_mail_create():
-    """맥미니 ingest: 스캔한 메일 + 요약 + 이슈제안 적재.
-    스레드 단위(thread_key) upsert: 같은 스레드 active 카드 있으면 최신 내용으로 갱신(사람 손댄 상태 보존),
-    없으면(신규 또는 삭제된 스레드) 새 카드. thread_key 없으면(구버전) msg_id dedup + insert 폴백."""
+    """맥미니 ingest: 스캔한 Outlook 원본 메일별 요약·이슈제안을 적재한다.
+    현 runner는 source message ID 단위 카드를 사용하며, 같은 ID 재전송만 dedup한다.
+    thread_key는 구버전 호환용이며, 명시적으로 제공된 외부 클라이언트만 스레드 upsert를 사용한다."""
     d = request.get_json(silent=True) or {}
+    # runner 경로를 우회한 외부 적재도 '현안' allowlist를 강제한다.
+    categories = d.get('outlook_categories') or []
+    if not isinstance(categories, list) or '현안' not in [str(c).strip() for c in categories]:
+        return jsonify({'error': "Outlook category '현안' required"}), 400
     msg_id = (d.get('email_msg_id') or '').strip() or None
     tkey = (d.get('thread_key') or '').strip() or None
     issue_status = (d.get('issue_status') or 'pending').strip()
@@ -10970,9 +10974,10 @@ def api_ext_mail_create():
     prio = d.get('issue_priority') or 'Normal'
     if prio not in ('Normal', 'Urgent', 'COC & Flag', 'Next DD'):
         prio = 'Normal'
-    # 1) 동일 msg_id active = 같은 메일 재적재 → dedup(무변경)
+    # 1) 동일 Outlook source message ID는 상태와 무관하게 한 번만 적재한다.
+    # 삭제/완료 카드를 재동기화로 되살려 원본·이슈 제안이 중복되는 것을 막는다.
     if msg_id:
-        dup = query("SELECT id FROM mail_card WHERE email_msg_id=? AND card_status='active'",
+        dup = query("SELECT id FROM mail_card WHERE email_msg_id=?",
                     (msg_id,), one=True)
         if dup:
             return jsonify({'id': dup['id'], 'dedup': True}), 200

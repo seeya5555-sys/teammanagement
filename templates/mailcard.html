@@ -69,7 +69,8 @@
 {% block content %}
 <h1 class="page-title">📬 메일 처리 <span class="muted">(이슈 등록 + 회신 작성)</span></h1>
 <div class="mc-head">
-  <button class="btn btn-p btn-sm" id="mc-pull" type="button">📥 메일 지금 풀링</button>
+  <button class="btn btn-p btn-sm" id="mc-pull" type="button">📥 현안 메일 동기화</button>
+  <span class="mc-count">수동 실행 · <b>00.손유석 + 지정 선박 15개</b> · Outlook <b>현안</b> 범주만 분석</span>
   <button class="btn btn-sm" id="mc-tall" type="button">🌐 전체 번역</button>
   <div style="display:flex;gap:6px;margin-left:8px">
     <button class="btn btn-p btn-sm" data-f="active" type="button">처리중</button>
@@ -322,7 +323,7 @@
     alert('삭제 '+(r.j.deleted||0)+'건 완료');load();
   };
   document.getElementById('mc-tall').onclick=async()=>{const b=document.getElementById('mc-tall');b.disabled=true;b.textContent='번역 중…';const r=await api('POST','/api/mail/translate-all',{});b.textContent='🌐 전체 번역';b.disabled=false;alert('번역 '+(r.j.translated||0)+'건'+(r.j.errors&&r.j.errors.length?(' / 실패 '+r.j.errors.length):''));load();};
-  document.getElementById('mc-pull').onclick=async(e)=>{const b=e.currentTarget,o=b.textContent;b.disabled=true;b.textContent='요청 중…';const r=await api('POST','/api/wf/pull-now',{});b.textContent=r.ok?'✅ 요청됨':'✕ 실패';setTimeout(()=>{b.textContent=o;b.disabled=false;},4000);};
+  document.getElementById('mc-pull').onclick=async(e)=>{const b=e.currentTarget,o=b.textContent;b.disabled=true;b.textContent='요청 중…';const r=await api('POST','/api/wf/pull-now',{});b.textContent=r.ok?'✅ 요청됨 · 현안 범주만':'✕ 실패';setTimeout(()=>{b.textContent=o;b.disabled=false;},4000);};
   load();
 })();
 </script>
