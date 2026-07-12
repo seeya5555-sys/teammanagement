@@ -176,6 +176,13 @@
         </div>
       </div>
     </div>
+    {# 모바일에서는 핵심 업무 탭을 항상 노출하고 나머지는 햄버거 메뉴로 제공. #}
+    <nav class="mobile-tabbar" aria-label="핵심 메뉴">
+      {{ nlink('dashboard', '대시보드', icon='dashboard') }}
+      {{ nlink('index', 'Daily', icon='clipboard') }}
+      {% if session.role == 'admin' %}{{ nlink('mail_page', '메일', icon='workflow') }}{% endif %}
+      {{ nlink('calendar_page', 'Calendar', icon='calendar') }}
+    </nav>
   </header>
 
   <div class="mobile-menu" id="mobile-menu" hidden>

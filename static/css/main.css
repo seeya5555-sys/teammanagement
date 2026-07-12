@@ -1092,8 +1092,31 @@ col.c-edit   { width: 156px; }
   border-top: 1px solid var(--border-subtle);
 }
 
+/* ── 모바일 핵심 탭: 햄버거를 열지 않아도 자주 쓰는 업무로 즉시 이동 ── */
+.mobile-tabbar { display: none; }
+
 /* ─────────── Responsive ─────────── */
 @media (max-width: 768px) {
+  .mobile-tabbar {
+    display: flex;
+    height: 42px;
+    padding: 4px 10px 6px;
+    gap: 4px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface);
+  }
+  .mobile-tabbar .nav-link {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    gap: 4px;
+    padding: 7px 4px;
+    font-size: 11px;
+    line-height: 1;
+  }
+  .mobile-tabbar .nav-ic { width: 14px; height: 14px; }
+  .mobile-tabbar .nav-link.active { font-weight: 700; }
+
   .main-content { padding: 14px; }
   .page-title { font-size: 18px; }
   .brand-sub { display: none; }
