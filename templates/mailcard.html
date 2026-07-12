@@ -135,6 +135,20 @@
       ${w.evidence?`<div style="margin-top:2px;color:var(--text-tertiary)">${esc(w.evidence)}</div>`:''}
       <div style="margin-top:4px">${basis} · ${daily} · <a href="/shipwiki?ship=${encodeURIComponent(w.slug||'')}">위키 열기</a></div></div>`;
   }
+  function aizawaBand(a){
+    if(!a)return '<div class="mc-wiki" style="background:#f8fafc;border-color:#cbd5e1"><span class="wk-h">🤖 Aizawa 직접검토</span> <span class="tip">수동 동기화 뒤 검토 대기</span></div>';
+    if(a.status!=='completed'||!a.review)return `<div class="mc-wiki" style="background:#f8fafc;border-color:#cbd5e1"><span class="wk-h">🤖 Aizawa 직접검토</span> <span class="tip">${esc(a.status||'대기')} · Daily/Outlook 변경 없음</span></div>`;
+    const r=a.review, ev=(r.evidence||[]).map(x=>`<li>${esc(x)}</li>`).join(''), ac=(r.recommended_actions||[]).map(x=>`<li>${esc(x)}</li>`).join(''), qs=(r.questions||[]).map(x=>`<li>${esc(x)}</li>`).join('');
+    const ic=r.issue_candidate||{};
+    return `<details class="mc-wiki" data-sec="aizawa"><summary><span class="wk-h">🤖 Aizawa 직접검토</span> <b>${esc(r.headline||'검토 초안')}</b> <span class="tip">· 승인 전 초안</span></summary>
+      <div style="margin-top:7px">${esc(r.assessment||'')}</div>
+      ${ev?`<div class="tip" style="margin-top:6px">근거</div><ul style="margin:3px 0 0 18px">${ev}</ul>`:''}
+      ${ac?`<div class="tip" style="margin-top:6px">권고 행동 (사람 확인 후)</div><ul style="margin:3px 0 0 18px">${ac}</ul>`:''}
+      ${ic.recommendation?`<div class="tip" style="margin-top:6px">이슈 제안: ${esc(ic.recommendation)}${ic.target_issue_id?' → #'+esc(ic.target_issue_id):''}${ic.reason?' · '+esc(ic.reason):''}</div>`:''}
+      ${qs?`<div class="tip" style="margin-top:6px">확인 질문</div><ul style="margin:3px 0 0 18px">${qs}</ul>`:''}
+      <div class="tip" style="margin-top:7px">이 검토는 Daily·카드 상태·F-up·Outlook category·외부 회신을 변경하지 않음. 기존 버튼을 사람이 눌러야 반영됨.</div></details>`;
+  }
+
   function card(c){
     const el=document.createElement('div');el.className='mc-card';el.dataset.id=c.id;
     el.dataset.prio=c.issue_priority||'Normal';
@@ -192,6 +206,7 @@
       <div class="mc-badges">${c.pending?'<span class="bdg b-pend">⏸ 보류</span>':''}${issueBadge(c.issue_status)}${replyBadge(c.reply_status)}</div></div>
       ${c.thread_summary_ko?`<div class="mc-thread">🧵 <b>요약</b> · ${esc(c.thread_summary_ko)}</div>`:''}
       ${wikiBand(c.wiki)}
+      ${aizawaBand(c.aizawa_review)}
       ${(c.body_en||c.summary_ko)?`<details class="mc-mail" data-sec="mail"${op('mail')}><summary>📨 받은메일 원문 / 한글 번역</summary>
         <div class="mc-mail-body">
           ${c.body_en?`<div><div class="mm-lbl">원문 (English)</div><div class="mm-en">${esc(c.body_en)}</div></div>`:''}
