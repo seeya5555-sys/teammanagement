@@ -108,6 +108,41 @@ def main():
         assert saved.status_code == 201, saved.get_data(as_text=True)
         assert saved.get_json()['status'] == 'completed'
 
+        # 새 계약은 하나의 메일에서 독립적인 후보를 복수 반환한다. 이 검증은 DB 쓰기 없이 계약만 확인한다.
+        multi_review = {
+            'headline': 'BWTS·발전기 관련 독립 현안 검토',
+            'assessment': '장비와 정상복구 목적이 달라 두 후보로 분리한 판단 초안.',
+            'evidence': ['메일에 BWTS alarm 및 generator overheating이 함께 언급됨'],
+            'recommended_actions': ['각 후보를 별도 승인 단계에서 검토'],
+            'questions': [],
+            'issues': [
+                {'title': 'BWTS alarm 지속', 'summary': '기존 #99 진행 상황 확인 필요',
+                 'recommendation': 'append', 'reason': '동일 BWTS alarm 연속 건', 'target_issue_id': 99,
+                 'confidence': 92, 'evidence': ['alarm remains active'], 'questions': []},
+                {'title': 'Generator overheating', 'summary': '별도 장비 이상으로 신규 현안 후보',
+                 'recommendation': 'new', 'reason': 'BWTS와 장비·복구 목적이 다름', 'target_issue_id': None,
+                 'confidence': 78, 'evidence': ['overheating reported'], 'questions': ['운항 영향 확인 필요']},
+            ],
+        }
+        assert appmod._valid_aizawa_review(multi_review)
+        assert len(appmod._mail_review_issues(multi_review)) == 2
+        assert not appmod._valid_aizawa_review(dict(multi_review, issues=[dict(multi_review['issues'][0], confidence=101)]))
+        assert appmod._valid_aizawa_review(dict(multi_review, issues=[]))
+        assert not appmod._valid_aizawa_review(dict(multi_review, issues=multi_review['issues'] * 5))
+        assert appmod._valid_aizawa_review(dict(multi_review, issues=[dict(multi_review['issues'][0], confidence=92.0, target_issue_id=99.0)]))
+        assert not appmod._valid_aizawa_review(dict(multi_review, issues=[dict(multi_review['issues'][0], confidence=92.5)]))
+        assert not appmod._valid_aizawa_review(dict(multi_review, issues=[dict(multi_review['issues'][0], target_issue_id=99.5)]))
+        assert not appmod._valid_aizawa_review(dict(multi_review, issues=[dict(multi_review['issues'][0], target_issue_id=True)]))
+        legacy_only = {
+            'headline': '구 review', 'assessment': '이전 단일 후보 형식', 'evidence': [],
+            'recommended_actions': [], 'questions': [],
+            'issue_candidate': {'recommendation': 'append', 'reason': '기존 Daily에 연결', 'target_issue_id': 99},
+        }
+        normalized_legacy = appmod._mail_review_issues(legacy_only)
+        assert len(normalized_legacy) == 1
+        assert normalized_legacy[0]['recommendation'] == 'append'
+        assert normalized_legacy[0]['target_issue_id'] == 99
+
         # 결과 적재는 review 테이블만 바꿔야 한다. 기존 자동 후보·카드 상태는 승인 전 그대로다.
         with appmod.app.app_context():
             source = appmod.query('SELECT issue_status, issue_item, issue_desc, card_status, pending FROM mail_card WHERE id=1', one=True)
@@ -194,10 +229,34 @@ def main():
         with client.session_transaction() as sess:
             sess['user_id'] = 1
             sess['role'] = 'admin'
+        pull = client.post('/api/wf/pull-now')
+        assert pull.status_code == 200, pull.get_data(as_text=True)
+        pull_ts = pull.get_json()['ts']
+        pull_status = client.get('/api/wf/pull-status')
+        assert pull_status.status_code == 200
+        assert pull_status.get_json()['pending'] is True
+        assert pull_status.get_json()['requested_at'] == pull_ts
+        # runner 완료는 같은 request timestamp만 수락한다. UI는 pending=false를 완료 조건으로 쓴다.
+        with appmod.app.app_context():
+            appmod.execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('wf_pull_done', ?)", (str(pull_ts),))
+        done_status = client.get('/api/wf/pull-status').get_json()
+        assert done_status['pending'] is False and done_status['requested_at'] == pull_ts and done_status['completed_at'] == pull_ts
         listed = client.get('/api/mail/cards')
         assert listed.status_code == 200
+        listed_cards = listed.get_json()['cards']
+        assert any(c['id'] == 1 and len(c['aizawa_review']['issues']) == 1
+                   for c in listed_cards), listed_cards
         assert any(c['id'] == category_card_id and c['card_category'] == 'AOR'
-                   for c in listed.get_json()['cards'])
+                   for c in listed_cards)
+        page = client.get('/mail')
+        assert page.status_code == 200, page.get_data(as_text=True)
+        page_html = page.get_data(as_text=True)
+        assert '현안 메일 검토' in page_html
+        # 동기화 완료는 client clock/completed_at 형식이 아니라 server pending 상태로만 판정한다.
+        assert '!r.j.pending&&r.j.requested_at' in page_html
+        assert 'data-filter="all">전체' in page_html
+        assert "\"'\":'&#39;'" in page_html
+        assert "'동기화 상태 확인 실패';$('#mr-sync').disabled=false" in page_html
 
         # 7/12 이전의 직접 범주 payload는 server ingest에서도 거절한다.
         before_cutoff = client.post('/api/ext/mail/cards', headers=headers, json={

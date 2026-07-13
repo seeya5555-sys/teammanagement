@@ -10711,10 +10711,41 @@ def api_mail_list():
     for r in rows:
         d = dict(r)
         d['aizawa_review'] = reviews.get(d['id'])
+        if d['aizawa_review'] and isinstance(d['aizawa_review'].get('review'), dict):
+            # 프론트가 구/신 review schema를 따로 해석하지 않도록 read-only 후보 목록을 제공한다.
+            d['aizawa_review']['issues'] = _mail_review_issues(d['aizawa_review']['review'])
         d['wiki'] = (_wiki_match_for_card(d) if d.get('card_status') != 'archived' else None)
         d['aor'] = (_aor_detect(d) if d.get('card_status') != 'archived' else {'is_aor': False})
         cards.append(d)
     return jsonify({'count': len(rows), 'active': act['c'], 'pending': pnd['c'], 'cards': cards})
+
+
+def _mail_review_issues(review):
+    """새 다중 후보/구 단일 후보 검토 JSON을 화면용 공통 목록으로 정규화한다.
+
+    이 함수는 read-only다. 후보는 Aizawa의 판단 초안이며 여기서 Daily·카드·Outlook
+    상태를 만들거나 변경하지 않는다.
+    """
+    if not isinstance(review, dict):
+        return []
+    items = review.get('issues')
+    if isinstance(items, list):
+        return items
+    # 2026-07-13 이전 단일 후보 결과도 새 탭에서 잃지 않도록 한 건으로 표시한다.
+    legacy = review.get('issue_candidate')
+    if not isinstance(legacy, dict) or not legacy.get('recommendation'):
+        return []
+    return [{
+        'title': review.get('headline') or '현안 후보',
+        'summary': review.get('assessment') or '',
+        'recommendation': legacy.get('recommendation'),
+        'reason': legacy.get('reason') or '',
+        'target_issue_id': legacy.get('target_issue_id'),
+        'confidence': None,
+        'evidence': review.get('evidence') if isinstance(review.get('evidence'), list) else [],
+        'questions': review.get('questions') if isinstance(review.get('questions'), list) else [],
+        'legacy': True,
+    }]
 
 
 def _mail_get(cid):
@@ -11167,14 +11198,43 @@ def api_ext_mail_review_queue():
 AIZAWA_REVIEW_RECOMMENDATIONS = {'new', 'append', 'not_applicable', 'needs_human'}
 MAX_AIZAWA_REVIEW_TEXT = 4000
 MAX_AIZAWA_REVIEW_LIST = 12
+MAX_AIZAWA_REVIEW_ISSUES = 8
 
 
 def _valid_aizawa_review_text(value):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= MAX_AIZAWA_REVIEW_TEXT
 
 
+def _valid_aizawa_review_issue(candidate):
+    """후보 하나의 read-only 분석 계약. target issue를 LLM이 지어내지 않게 타입만 허용한다."""
+    if not isinstance(candidate, dict):
+        return False
+    if not _valid_aizawa_review_text(candidate.get('title')):
+        return False
+    if not _valid_aizawa_review_text(candidate.get('summary')):
+        return False
+    if candidate.get('recommendation') not in AIZAWA_REVIEW_RECOMMENDATIONS:
+        return False
+    for key in ('evidence', 'questions'):
+        values = candidate.get(key, [])
+        if not isinstance(values, list) or len(values) > MAX_AIZAWA_REVIEW_LIST \
+                or any(not _valid_aizawa_review_text(x) for x in values):
+            return False
+    reason = candidate.get('reason')
+    target = candidate.get('target_issue_id')
+    confidence = candidate.get('confidence')
+    return ((reason is None or _valid_aizawa_review_text(reason))
+            # JSON/LLM이 92.0처럼 whole-number float를 낼 수 있다. bool·소수 ID는 계속 거절한다.
+            and (target is None or type(target) is int or (type(target) is float and target.is_integer()))
+            and (confidence is None or ((type(confidence) is int or (type(confidence) is float and confidence.is_integer())) and 0 <= confidence <= 100)))
+
+
 def _valid_aizawa_review(review):
-    """LLM 출력의 최소 계약·크기 상한. 비정형/불완전 결과는 저장하지 않고 runner가 안전 재시도한다."""
+    """LLM 출력의 최소 계약·크기 상한. 비정형/불완전 결과는 저장하지 않고 runner가 안전 재시도한다.
+
+    새 계약은 한 메일의 독립 현안을 ``issues[]``에 담는다. 이전 단일 ``issue_candidate``
+    계약도 저장 데이터 호환을 위해 수락한다.
+    """
     required_text = ('headline', 'assessment')
     required_lists = ('evidence', 'recommended_actions', 'questions')
     if not isinstance(review, dict) or any(not _valid_aizawa_review_text(review.get(k)) for k in required_text):
@@ -11182,6 +11242,9 @@ def _valid_aizawa_review(review):
     if any(not isinstance(review.get(k), list) or len(review[k]) > MAX_AIZAWA_REVIEW_LIST
            or any(not _valid_aizawa_review_text(x) for x in review[k]) for k in required_lists):
         return False
+    items = review.get('issues')
+    if isinstance(items, list):
+        return len(items) <= MAX_AIZAWA_REVIEW_ISSUES and all(_valid_aizawa_review_issue(x) for x in items)
     candidate = review.get('issue_candidate')
     if not isinstance(candidate, dict) or candidate.get('recommendation') not in AIZAWA_REVIEW_RECOMMENDATIONS:
         return False
