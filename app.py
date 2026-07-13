@@ -11132,6 +11132,28 @@ def api_ext_mail_create():
     return jsonify({'id': cid}), 201
 
 
+@app.route('/api/ext/mail/cards/seen')
+@api_key_required
+def api_ext_mail_cards_seen():
+    """Mac runner ledger 복구용 source message ID 존재 확인.
+
+    이 endpoint는 읽기 전용이다. 로컬 ``posted_ids.txt``가 서버 DB 초기화/복구보다
+    앞서는 경우에만 해당 메일을 다시 POST하게 하며, Daily·Outlook·카드 상태는 바꾸지 않는다.
+    """
+    requested = []
+    for value in request.args.getlist('id'):
+        message_id = value.strip()
+        if message_id and message_id not in requested:
+            requested.append(message_id)
+    if len(requested) > 100 or any(len(message_id) > 512 for message_id in requested):
+        return jsonify({'error': 'up to 100 message IDs, each <= 512 chars'}), 400
+    if not requested:
+        return jsonify({'seen': []})
+    placeholders = ','.join('?' for _ in requested)
+    rows = query(f"SELECT email_msg_id FROM mail_card WHERE email_msg_id IN ({placeholders})", requested) or []
+    return jsonify({'seen': [row['email_msg_id'] for row in rows if row['email_msg_id']]})
+
+
 # ---- Aizawa direct review: 자동 후보는 보존하되, 결과는 별도 draft 큐에만 저장한다. ----
 _AIZAWA_REVIEW_TABLE_READY = False
 

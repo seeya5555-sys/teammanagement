@@ -192,6 +192,19 @@ def main():
         })
         assert created.status_code == 201, created.get_data(as_text=True)
         category_card_id = created.get_json()['id']
+        seen = client.get('/api/ext/mail/cards/seen?id=outlook-category-aor&id=missing&id=outlook-category-aor', headers=headers)
+        assert seen.status_code == 200, seen.get_data(as_text=True)
+        assert seen.get_json() == {'seen': ['outlook-category-aor']}
+        comma_card = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook,category,comma', 'email_date': '2026-07-13 09:00',
+            'email_subject': 'comma source ID', 'email_body': 'body', 'email_folder': '00.손유석',
+            'outlook_categories': ['AOR'],
+        })
+        assert comma_card.status_code == 201, comma_card.get_data(as_text=True)
+        comma_seen = client.get('/api/ext/mail/cards/seen?id=outlook%2Ccategory%2Ccomma', headers=headers)
+        assert comma_seen.get_json() == {'seen': ['outlook,category,comma']}
+        too_many = '&'.join('id=' + str(n) for n in range(101))
+        assert client.get('/api/ext/mail/cards/seen?' + too_many, headers=headers).status_code == 400
         # 구 runner가 범주를 아직 전송하지 않아도 기존 pending 카드의 확정 범주를 덮어쓰면 안 된다.
         legacy_update = client.post('/api/ext/mail/cards', headers=headers, json={
             'email_msg_id': 'outlook-category-aor-retry', 'email_date': '2026-07-13 08:00', 'email_subject': 'legacy runner retry',
