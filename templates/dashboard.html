@@ -383,7 +383,7 @@
     setTimeout(()=>toggleWind(a),300);   // 기본 ON(바람 보이게) — 버튼 누르면 끔(손유석)
     return c;}});
   map.addControl(new WindCtl());
-  let FLEET=[],markers=[],routeLayer=null,trackLayer=null,portMarkers=[],curSup='__all',fmQ='',STALE=null,MYSUP=null;
+  let FLEET=[],markers=[],routeLayer=null,trackLayer=null,trackRequest=0,trackController=null,trackVessel='',portMarkers=[],curSup='__all',fmQ='',STALE=null,MYSUP=null;
   function icon(v){
     const due=v.cls_due_state==='overdue'?' due-overdue':(v.cls_due_state==='soon'?' due-soon':'');
     const sire=v.sire_obs_overdue?'<span class="sire-flag" title="SIRE 검사일 +3주 초과 · Observation 미완료"></span>':'';
@@ -509,11 +509,16 @@
       setTrackState('숨김');
       return;
     }
+    // popup 전환/닫기 및 연속 클릭 뒤의 느린 응답이 현재 선박 지도 상태를 덮지 못하게 한다.
+    const requestId=++trackRequest;
+    if(trackController)trackController.abort();
+    trackController=new AbortController();
     if(b){b.disabled=true;b.textContent='조회 중';}
     setTrackState('AIS 이전 항적 조회 중…');
-    fetch('{{ url_for("api_fleet_map_track") }}?'+new URLSearchParams({vessel:vessel}))
+    fetch('{{ url_for("api_fleet_map_track") }}?'+new URLSearchParams({vessel:vessel}), {signal:trackController.signal})
       .then(r=>r.json().then(d=>({ok:r.ok,d:d})))
       .then(res=>{
+        if(requestId!==trackRequest || trackVessel!==vessel || !document.getElementById('fmPanel').classList.contains('open'))return;
         if(!res.ok || !res.d.available || !Array.isArray(res.d.points) || res.d.points.length<2){
           setTrackState(res.d.error==='unavailable'?'AIS 항적 데이터 연결 불가':'AIS 이전 항적 없음','#b7791f');
           return;
@@ -523,8 +528,16 @@
         if(b)b.textContent='숨기기';
         setTrackState(res.d.points.length+'개 측위 · '+(res.d.cached?'cache':'AIS'), '#5b21b6');
       })
-      .catch(()=>setTrackState('AIS 이전 항적 조회 실패','#b91c1c'))
-      .finally(()=>{if(b){b.disabled=false;if(!trackLayer)b.textContent='표시';}});
+      .catch(err=>{
+        if(err.name!=='AbortError' && requestId===trackRequest && trackVessel===vessel)
+          setTrackState('AIS 이전 항적 조회 실패','#b91c1c');
+      })
+      .finally(()=>{
+        if(requestId===trackRequest && trackVessel===vessel){
+          trackController=null;
+          if(b){b.disabled=false;if(!trackLayer)b.textContent='표시';}
+        }
+      });
   };
   document.addEventListener('click',function(ev){
     const b=ev.target.closest&&ev.target.closest('.fm-track-toggle');
@@ -532,6 +545,7 @@
     window.fmToggleTrack(b.getAttribute('data-vessel')||'');
   });
   function openV(v){
+    trackVessel=v.name;
     document.getElementById('fmName').textContent=v.name;
     document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · '+v.lat.toFixed(1)+'°, '+v.lng.toFixed(1)+'°';
     const bl=v.bl==='L'?'lade':(v.bl==='B'?'ball':'gray');
@@ -575,10 +589,21 @@
       slowSec(v);
     document.getElementById('fmPanel').classList.add('open');drawRoute(v);
   }
-  window.fmClose=function(){document.getElementById('fmPanel').classList.remove('open');clearRoute();};
+  window.fmClose=function(){
+    document.getElementById('fmPanel').classList.remove('open');
+    trackVessel='';
+    clearRoute();
+  };
   function portDot(xy,label){const pm=L.marker(xy,{icon:L.divIcon({className:'',html:'<div class="port"></div>',iconSize:[9,9],iconAnchor:[5,5]})}).addTo(map);
     const ptt=L.tooltip({permanent:true,direction:'bottom',offset:[0,4],className:'port-label'}).setContent(esc(label)).setLatLng(xy);ptt.addTo(map);portMarkers.push(pm,ptt);}
-  function clearRoute(){[routeLayer,trackLayer].forEach(l=>l&&map.removeLayer(l));routeLayer=trackLayer=null;portMarkers.forEach(p=>map.removeLayer(p));portMarkers=[];if(window._fmA)clearInterval(window._fmA);}
+  function clearRoute(){
+    ++trackRequest;
+    if(trackController){trackController.abort();trackController=null;}
+    [routeLayer,trackLayer].forEach(l=>l&&map.removeLayer(l));
+    routeLayer=trackLayer=null;
+    portMarkers.forEach(p=>map.removeLayer(p));portMarkers=[];
+    if(window._fmA)clearInterval(window._fmA);
+  }
   function drawRoute(v){
     clearRoute();const all=[[v.lat,v.lng]];
     // 회색 noon 항적(breadcrumb)은 표시 안 함 — noon 위치 튐으로 지저분. In→Next searoute만.
