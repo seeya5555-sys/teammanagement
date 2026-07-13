@@ -105,11 +105,7 @@ function parseTSV(text) {
 function renderTabs() {
   const bar = $('#vt-tab-bar');
   bar.innerHTML = '';
-  // 손유석 단독 운영 — '전체' 탭 및 타 감독 탭 제거
-  for (const s of S.supervisors) {
-    if ((s.name || '').trim() !== ONLY_SUP_VT) continue;
-    bar.append(tabEl(s.id, s.name, s.color, S.activeTab == s.id));
-  }
+  bar.hidden = true;
 }
 
 function tabEl(id, name, color, active) {
@@ -195,13 +191,10 @@ function renderContext() {
       );
     }).length;
   }
-  const tabName = S.activeTab === 'all'
-    ? '전체'
-    : (S.supervisors.find(x => x.id == S.activeTab)?.name + ' 담당' || '');
   if (q) {
-    c.textContent = `${S.year}년 · ${tabName} ${filteredCount}/${totalCount}척  (검색: "${S.search}")`;
+    c.textContent = `${S.year}년 · ${filteredCount}/${totalCount}척  (검색: "${S.search}")`;
   } else {
-    c.textContent = `${S.year}년 · ${tabName} ${totalCount}척`;
+    c.textContent = `${S.year}년 · ${totalCount}척`;
   }
 }
 

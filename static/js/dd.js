@@ -184,7 +184,6 @@ function renderCard(r) {
   // 푸터 — 작성자, 업데이트 시각
   card.append(
     el('div', { class: 'dd-card-foot' },
-      el('span', {}, r.supervisor_name ? `담당: ${r.supervisor_name}` : ''),
       el('span', {}, r.updated_at ? `최근 수정: ${fmtDate(r.updated_at.slice(0,10))}` : ''),
     )
   );
@@ -221,6 +220,9 @@ function fillVesselSupervisorSelects() {
   for (const v of DD.vessels) vSel.append(el('option', { value: v.id }, v.name));
   sSel.innerHTML = '<option value="">미지정</option>';
   for (const s of DD.supervisors) sSel.append(el('option', { value: s.id }, s.name));
+  const singleSupervisor = DD.supervisors.length === 1;
+  sSel.closest('label').hidden = singleSupervisor;
+  if (singleSupervisor) sSel.value = String(DD.supervisors[0].id);
 }
 
 function openNew() {
@@ -231,6 +233,7 @@ function openNew() {
   fillVesselSupervisorSelects();
   // 폼 초기화
   $('#dd-form').reset();
+  if (DD.supervisors.length === 1) $('#dd-supervisor').value = String(DD.supervisors[0].id);
   $('#dd-status').value = 'draft';
   $('#dd-template-name-row').hidden = true;
   openModal();

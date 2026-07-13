@@ -128,7 +128,6 @@ function renderCard(t) {
 
   card.append(
     el('div', { class: 'dd-card-foot' },
-      el('span', {}, t.supervisor_name ? `담당: ${t.supervisor_name}` : ''),
       el('span', { class: 'expd-total-chip' }, fmtTotals(t.totals)),
     )
   );

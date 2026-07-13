@@ -215,7 +215,7 @@
       <span class="meta"><span class="lbl">오늘 일정</span><span class="num">{{ today_count }}<small>건</small></span></span>
       {% if today_events %}<span class="today-sched">{% for e in today_events[:2] %}{{ e['title'] }}{% if not loop.last %} · {% endif %}{% endfor %}{% if today_count > 2 %} +{{ today_count - 2 }}{% endif %}</span><span class="caret">▾</span>{% endif %}
     </a>
-    <span class="scope">{% if scoped %}<b>{{ sup_name }}</b> 담당 기준{% else %}전체 선박 기준{% endif %}</span>
+    <span class="scope">담당 선박 기준</span>
   </div>
 
   {% if today_events %}
@@ -232,7 +232,7 @@
 
   <div class="fm-sup" id="fmSup">
     <input id="fmSearch" class="fm-search" type="text" placeholder="🔍 선박명 검색…" autocomplete="off"/>
-    <span class="lbl">감독 필터</span>
+
   </div>
   <div class="fm-stage">
     <div id="fmmap"></div>
@@ -407,12 +407,9 @@
     });
     const bar=document.getElementById('fmSup');
     const sups=d.supervisors||[];
-    // 감독 1명뿐이면 그 감독이 기본(전체 버튼 불필요), 아니면 로그인 감독/전체
-    const defKey=(sups.length===1)?sups[0]:((MYSUP && sups.indexOf(MYSUP)>=0)?MYSUP:'__all');
-    if(defKey!=='__all') curSup=defKey;
-    const mk=(label,key,cnt)=>{const b=document.createElement('button');b.innerHTML=esc(label)+'<span class="n">'+cnt+'</span>';if(key===defKey)b.classList.add('on');b.onclick=()=>filt(key,b);bar.appendChild(b);return b;};
-    if(sups.length>1) mk('전체','__all',FLEET.length);   // 감독 단일이면 전체 버튼 생략(손유석 전용)
-    sups.forEach(s=>mk(s,s,FLEET.filter(v=>v.supervisor===s).length));
+    // 단일 사용자 UI: 감독별 필터 버튼을 노출하지 않고 로그인 담당 범위로 고정.
+    const defKey=(MYSUP && sups.indexOf(MYSUP)>=0)?MYSUP:(sups.length===1?sups[0]:'__all');
+    curSup=defKey;
     applyFilters(); renderAlert();
     // 선명 검색: 입력하면 일치 선박만 표시, 단일 일치면 그쪽으로 이동(줌 유지)
     const si=document.getElementById('fmSearch');
@@ -484,7 +481,7 @@
   }
   function openV(v){
     document.getElementById('fmName').textContent=v.name;
-    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · 감독 '+esc(v.supervisor||'-')+' · '+v.lat.toFixed(1)+'°, '+v.lng.toFixed(1)+'°';
+    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · '+v.lat.toFixed(1)+'°, '+v.lng.toFixed(1)+'°';
     const bl=v.bl==='L'?'lade':(v.bl==='B'?'ball':'gray');
     const blTxt=v.bl==='L'?'🛢 Laden':(v.bl==='B'?'💧 Ballast':'B/L —');
     document.getElementById('fmBadges').innerHTML='<span class="pill '+bl+'">'+blTxt+'</span>'+

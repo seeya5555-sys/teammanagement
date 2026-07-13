@@ -156,11 +156,7 @@ function eventCoversDate(ev, ymdStr) {
 function renderTabs() {
   const bar = $('#cal-tab-bar');
   bar.innerHTML = '';
-  // 손유석 단독 운영 — '전체' 탭 및 타 감독 탭 제거
-  for (const s of S.supervisors) {
-    if ((s.name || '').trim() !== ONLY_SUP_CAL) continue;
-    bar.append(tabEl(s.id, s.name, s.color, S.activeTab == s.id));
-  }
+  bar.hidden = true;
 }
 
 function tabEl(id, name, color, active) {
@@ -185,10 +181,7 @@ function render() {
 
   // 컨텍스트
   const ctx = $('#cal-context');
-  const tabName = S.activeTab === 'all'
-    ? '전체'
-    : (S.supervisors.find(x => x.id == S.activeTab)?.name + ' 담당' || '');
-  ctx.textContent = `${tabName} · 일정 ${S.events.length}건`;
+  ctx.textContent = `일정 ${S.events.length}건`;
 
   renderGrid();
   renderSideList();
@@ -451,13 +444,14 @@ function getColor() {
 
 function fillSupervisorVesselSelects() {
   const supSel = $('#cal-f-supervisor');
-  supSel.innerHTML = '<option value="">(공용 / 전체)</option>';
+  supSel.innerHTML = '';
   for (const s of S.supervisors) {
     if (isHiddenSupervisor(s)) continue;
     const o = document.createElement('option');
     o.value = s.id; o.textContent = s.name;
     supSel.append(o);
   }
+  if (S.activeTab !== 'all') supSel.value = String(S.activeTab);
   const vSel = $('#cal-f-vessel');
   vSel.innerHTML = '<option value="">(선택 안 함)</option>';
   for (const v of S.vessels) {
@@ -533,11 +527,10 @@ async function deleteCurrent() {
 async function init() {
   try {
     await Promise.all([loadSupervisors(), loadVessels()]);
-    fillSupervisorVesselSelects();
-
-    // 손유석 단독 운영 — 항상 손유석 탭으로 고정
+    // 단일 사용자 운영 — 담당자 필터는 내부 scope로만 고정하고 UI에는 노출하지 않는다.
     const onlySup = S.supervisors.find(s => (s.name || '').trim() === ONLY_SUP_CAL);
-    if (onlySup) S.activeTab = onlySup.id;  // 미존재 시 'all' 유지(타 감독 scope 방지)
+    if (onlySup) S.activeTab = onlySup.id;
+    fillSupervisorVesselSelects();
     renderTabs();
 
     // 오늘이 표시 월에 있으면 자동 선택

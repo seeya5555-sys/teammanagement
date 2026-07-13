@@ -17,7 +17,8 @@ const S = {
   supervisors:  [],
   vessels:      [],
   activeTab:    'all',
-  activeSubTab: localStorage.getItem('trmt_subtab') || 'open',  // 'open' = Open+진행중 / 'closed' = Closed / 'all' / 'summary'
+  activeSubTab: ['open', 'closed', 'summary'].includes(localStorage.getItem('trmt_subtab'))
+    ? localStorage.getItem('trmt_subtab') : 'open',
   issues:       [],
   summary:      { rows: [], generated_at: null },
   summaryCounts: {},   // { scopeKey: n }
@@ -252,12 +253,8 @@ function autoCollapseNewDates() {
 function renderTabs() {
   const bar = $('#tab-bar');
   bar.innerHTML = '';
-  // 손유석 단독 운영 — '전체' 탭 및 타 감독 탭 제거 (탭 카운트는 진행중만)
-  for (const s of S.supervisors) {
-    if ((s.name || '').trim() !== ONLY_SUP_NAME) continue;
-    const active = (s.open_count || 0) + (s.progress_count || 0);
-    bar.append(tabEl(s.id, s.name, s.color, active, S.activeTab == s.id));
-  }
+  // 단일 사용자 운영: 담당자 분류 자체를 UI에 노출하지 않는다.
+  bar.hidden = true;
   renderSubTabs();
 }
 
@@ -281,15 +278,11 @@ function renderSubTabs() {
     }
   }
 
-  // 손유석 단독 운영 — '전체'·'요약' 서브탭을 손유석 탭에 그대로 노출(옛 '전체' 부모탭에서 이동).
-  const showAllSummary = true;
-  if (showAllSummary) {
-    bar.append(subtabEl('all',  '전체',   openCnt + doneCnt, S.activeSubTab === 'all'));
-  }
+  const showSummary = true;
   bar.append(subtabEl('open',   '진행중', openCnt, S.activeSubTab === 'open'));
   bar.append(subtabEl('closed', '완료',   doneCnt, S.activeSubTab === 'closed'));
-  if (showAllSummary) {
-    const sumCnt = S.summaryCounts[String(S.activeTab)];  // 손유석 scope 카운트만(없으면 배지 없음)
+  if (showSummary) {
+    const sumCnt = S.summaryCounts[String(S.activeTab)];
     bar.append(subtabEl('summary', '요약', (sumCnt === undefined ? null : sumCnt), S.activeSubTab === 'summary'));
   }
 }
@@ -393,7 +386,7 @@ function renderTabContext() {
     const open = S.supervisors.reduce((a,s)=>a+s.open_count, 0);
     const prog = S.supervisors.reduce((a,s)=>a+s.progress_count, 0);
     const done = S.supervisors.reduce((a,s)=>a+s.closed_count, 0);
-    const parts = [`전체 감독 · <strong>${S.supervisors.length}</strong>명`];
+    const parts = ['업무 현황'];
     if (isClosedSub) {
       parts.push(`Closed <strong>${done}</strong>`);
     } else if (isAllSub) {
@@ -413,7 +406,7 @@ function renderTabContext() {
   const vesCount = (s.vessels || '').split(',').filter(x => x.trim()).length;
   const trigger = el('button', {
     class: 'myves-trigger',
-    title: `${s.name} 담당 선박 상세 보기`,
+    title: '담당 선박 상세 보기',
     onclick: openMyVessels,
   },
     el('span', { class: 'ves-icon' }, '🛥'),
@@ -564,7 +557,7 @@ function renderSummaryView() {
   }
 }
 
-// 요약 행 → 원본 이슈로 이동 (전체 대분류/전체 소분류 + 제목 검색 필터)
+// 요약 행 → 원본 이슈로 이동 (단일 사용자 scope + 제목 검색 필터)
 // 요약 행에서 검색용 제목 추출: item 필드 우선, 없으면 현안업무 첫 줄에서 [M/D] 제거
 function summaryTitle(r) {
   if (r.item && String(r.item).trim()) return String(r.item).trim();
@@ -575,8 +568,8 @@ function summaryTitle(r) {
 async function gotoIssueFromSummary(r) {
   const title = summaryTitle(r);
   S.activeTab = onlySupId();
-  S.activeSubTab = 'all';
-  try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
+  S.activeSubTab = 'open';
+  try { localStorage.setItem('trmt_subtab', 'open'); } catch (_) {}
   // 제목으로 검색(q) — 직접 검색한 것과 동일하게 필터링
   S.filters.q = title;
   S.filters.item_topic = title;   // 새 서버면 정확일치까지 적용되어 딱 하나만
@@ -969,10 +962,7 @@ function rowEl(i, no) {
     el('span', { class: 'row-caret' }, expanded ? '▾' : '▸'),
     el('span', { class: 'topic-text' }, i.item_topic));
   topicTd.append(line);
-  if (S.activeTab === 'all') {
-    topicTd.append(el('div', { class: `sup-chip c-${i.supervisor_color}` },
-      el('span', { class: `tab-dot dot-${i.supervisor_color}` }), i.supervisor_name));
-  }
+
   if (i.att_count > 0) topicTd.append(el('span', { class: 'topic-att' }, `📎 ${i.att_count}`));
   topicTd.addEventListener('click', () => toggleRow(i.id));
   tr.append(topicTd);
@@ -1416,10 +1406,7 @@ function cardEl(i, no) {
   if (no != null) head.append(el('span', { class: 'issue-card-no' }, 'No.' + no));
   head.append(el('span', { class: 'card-caret' }, expanded ? '▾' : '▸'));
   if (i.issue_date) head.append(el('span', { class: 'card-date' }, i.issue_date));
-  if (S.activeTab === 'all') {
-    head.append(el('span', { class: `sup-chip c-${i.supervisor_color}` },
-      el('span', { class: `tab-dot dot-${i.supervisor_color}` }), i.supervisor_name));
-  }
+
   head.append(priBadge(i.priority));
   const dd = dDayBadge(i.due_date);
   if (dd) head.append(dd);
@@ -1656,7 +1643,9 @@ function fillFormSelects() {
   for (const s of S.supervisors) {
     sup.append(el('option', { value: s.id }, s.name));
   }
-  refillVesselSelect(S.activeTab === 'all' ? null : S.activeTab);
+  const currentSupervisorId = S.user.supervisor_id || onlySupId();
+  if (currentSupervisorId != null && currentSupervisorId !== 'all') sup.value = String(currentSupervisorId);
+  refillVesselSelect(currentSupervisorId === 'all' ? null : currentSupervisorId);
 }
 
 async function refillVesselSelect(supervisorId) {

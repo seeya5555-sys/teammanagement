@@ -70,12 +70,7 @@ const esc = (s) => String(s == null ? '' : s);
 function renderTabs() {
   const bar = $('#cls-tab-bar');
   bar.innerHTML = '';
-  // Class Status 탭은 손유석 담당선박만 — '전체' 탭 및 타 감독 탭 제거
-  for (const s of S.supervisors) {
-    if (isHiddenSup(s)) continue;
-    if ((s.name || '').trim() !== ONLY_SUP) continue;
-    bar.append(tabEl(s.id, s.name, s.color, String(S.activeTab) === String(s.id)));
-  }
+  bar.hidden = true;
 }
 function tabEl(id, name, color, active) {
   const t = el('div', { class: 'tab' + (active ? ' active' : ''), 'data-id': id },
