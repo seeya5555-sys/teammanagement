@@ -10559,6 +10559,61 @@ def _trmtdb_positions():
             _trmtdb_position_refreshing = False
 
 
+def _trmtdb_track_points(row):
+    """TRMT DB AIS 응답의 과거 선위를 지도용 최소 필드로 정규화한다.
+
+    ship-position API 배포본별 배열 키(history/track/positions)를 모두 받아들이되,
+    원본의 MMSI·provider 메타데이터는 브라우저에 전달하지 않는다.
+    """
+    if not isinstance(row, dict):
+        return []
+    raw_points = []
+    for key in ('history', 'track', 'positions'):
+        values = row.get(key)
+        if isinstance(values, list):
+            raw_points.extend(values)
+    points, seen = [], set()
+    for point in raw_points:
+        if not isinstance(point, dict):
+            continue
+        try:
+            raw_lat = point.get('latitude')
+            if raw_lat is None:
+                raw_lat = point.get('lat')
+            raw_lng = point.get('longitude')
+            if raw_lng is None:
+                raw_lng = point.get('lng', point.get('lon'))
+            lat = float(raw_lat)
+            lng = float(raw_lng)
+        except (TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            continue
+        event_at = point.get('event_at') or point.get('timestamp') or point.get('reported_at')
+        event_at = str(event_at) if event_at is not None else ''
+        # 동일 측위 중복은 polyline의 불필요한 정점을 만들지 않는다.
+        identity = (lat, lng, event_at)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        points.append({'lat': lat, 'lng': lng, 'event_at': event_at})
+    # ISO-8601 timestamps sort lexically. timestamp 없는 레코드는 마지막에 보낸다.
+    points.sort(key=lambda item: (not bool(item['event_at']), item['event_at'] or ''))
+    # API가 고해상도 이력을 주는 경우에도 지도 렌더 비용은 제한하되 가장 최신 구간을 남긴다.
+    return points[-2000:]
+
+
+def _trmtdb_track_row_for_vessel(rows, vessel):
+    """IMO가 있으면 IMO exact-match만 허용하고, 없을 때만 정규화 선명 fallback한다."""
+    wanted_imo = str(vessel.get('imo') or '').strip()
+    if wanted_imo:
+        return next((row for row in rows if isinstance(row, dict)
+                     and str(row.get('imo') or '').strip() == wanted_imo), None)
+    wanted_name = _vkey(vessel.get('name'))
+    return next((row for row in rows if isinstance(row, dict)
+                 and _vkey(row.get('vessel_name') or row.get('name')) == wanted_name), None)
+
+
 def _overlay_trmtdb_positions(fleet, override_keys):
     """TRMT DB의 latest 위치를 fleet_map 항목에 병합. 이메일 수동 override가 최우선이다."""
     upstream, fetched_at, error, cached = _trmtdb_positions()
@@ -10929,6 +10984,39 @@ def api_fleet_map_data():
         my_sup = _r['name'] if _r else None
     data['my_supervisor'] = my_sup
     return jsonify(data)
+
+
+@app.route('/api/fleet-map/track')
+@login_required
+def api_fleet_map_track():
+    """선택·권한범위 내 선박의 TRMT DB AIS 이전 항적만 반환한다."""
+    vessel_name = str(request.args.get('vessel') or '').strip()
+    if not vessel_name or len(vessel_name) > 120:
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+
+    # 동일 로그인/담당선박 스코프를 Fleet Map 본문과 공유한다. 이름만 아는 사용자가
+    # 타 담당선박 AIS 이력을 조회하는 것을 막는다.
+    visible_response = api_fleet_map_data()
+    visible = visible_response.get_json(silent=True) or {}
+    vessel = next((v for v in visible.get('fleet') or []
+                   if _vkey(v.get('name')) == _vkey(vessel_name)), None)
+    if vessel is None:
+        return jsonify({'ok': False, 'error': 'vessel not available'}), 404
+
+    upstream, fetched_at, upstream_error, cached = _trmtdb_positions()
+    source = _trmtdb_track_row_for_vessel(upstream, vessel)
+    points = _trmtdb_track_points(source)
+    return jsonify({
+        'ok': True,
+        'vessel': vessel.get('name'),
+        'points': points,
+        'available': len(points) >= 2,
+        'source': 'TRMT DB AIS',
+        'fetched_at': fetched_at,
+        'cached': cached,
+        # upstream의 상세 오류·endpoint/key는 브라우저에 노출하지 않는다.
+        'error': ('unavailable' if upstream_error else None),
+    })
 
 
 @app.route('/dashboard/classic')
