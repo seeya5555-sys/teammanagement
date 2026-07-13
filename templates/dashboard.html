@@ -100,6 +100,20 @@
   .fm-sec{font-size:11.5px;font-weight:700;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.03em;margin-bottom:-4px}
   .fm-line{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px dashed var(--border-subtle)}.fm-line:last-child{border-bottom:0}
   .fm-line .lk{color:var(--text-secondary);flex:0 0 104px}.fm-line .lv{color:var(--text-primary);font-weight:600}
+  .fm-track-row{background:var(--blue-bg);border:1px solid var(--blue-border,var(--border));border-radius:10px;padding:8px 10px}
+  .fm-track-toggle{cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600;min-height:32px;touch-action:manipulation}
+  @media(max-width:600px){
+    .fm-stage{height:calc(100svh - 216px);min-height:420px;border-radius:10px}
+    .fm-panel{top:auto;bottom:0;right:0;width:100%;max-width:none;height:min(72%,560px);border-left:0;border-top:1px solid var(--border);box-shadow:0 -6px 24px rgba(0,0,0,.08);transform:translateY(100%)}
+    .fm-panel.open{transform:translateY(0)}
+    .fm-ph{padding:11px 14px}.fm-ph h2{font-size:16px}.fm-ph .badges{margin-top:5px}
+    .fm-pb{padding:10px 14px;gap:8px;-webkit-overflow-scrolling:touch}
+    .fm-grid{gap:7px}.fm-card{padding:9px}.fm-card .v{font-size:21px}
+    .fm-line{align-items:flex-start;flex-wrap:wrap;gap:4px;padding:7px 0}
+    .fm-line .lk{flex:1 1 100%}.fm-line .lv{width:100%}
+    .fm-track-row{position:sticky;top:-10px;z-index:2;padding:9px 10px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+    .fm-track-toggle{min-height:44px;padding:5px 14px;font-size:14px}
+  }
   .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
   .pill.red{background:var(--red-bg,#fbe4e1);color:var(--red,#c0392b)}.pill.amber{background:#fff3e0;color:#b7791f}
   .pill.blue{background:var(--blue-bg);color:var(--blue)}.pill.green{background:#e4f0e6;color:#3f7a4f}
@@ -492,9 +506,8 @@
       '<div class="fm-line"><span class="lk">동정</span><span class="lv">'+esc(v.slow_last_notif.text||'')+(v.slow_last_notif.ts?' <small>('+esc(String(v.slow_last_notif.ts).slice(0,16))+')</small>':'')+'</span></div>';
   }
   function trackToggle(v){
-    return '<div class="fm-line"><span class="lk">🧭 AIS 이전 항적</span><span class="lv">'+
-      '<button type="button" class="fm-track-toggle" data-vessel="'+esc(v.name)+'" '+
-      'style="cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600">표시</button>'+
+    return '<div class="fm-line fm-track-row"><span class="lk">🧭 AIS 이전 항적</span><span class="lv">'+
+      '<button type="button" class="fm-track-toggle" data-vessel="'+esc(v.name)+'" aria-pressed="false">표시</button>'+
       '<small id="fmTrackState" style="margin-left:6px;color:var(--muted)">TRMT DB AIS</small></span></div>';
   }
   function setTrackState(text, color){
@@ -505,7 +518,7 @@
     const b=document.querySelector('.fm-track-toggle');
     if(trackLayer){
       map.removeLayer(trackLayer); trackLayer=null;
-      if(b)b.textContent='표시';
+      if(b){b.textContent='표시';b.setAttribute('aria-pressed','false');}
       setTrackState('숨김');
       return;
     }
@@ -525,7 +538,7 @@
         }
         const xy=res.d.points.map(p=>[p.lat,p.lng]);
         trackLayer=L.polyline(xy,{color:'#7c3aed',weight:4,opacity:.88,lineJoin:'round'}).addTo(map);
-        if(b)b.textContent='숨기기';
+        if(b){b.textContent='숨기기';b.setAttribute('aria-pressed','true');}
         setTrackState(res.d.points.length+'개 측위 · '+(res.d.cached?'cache':'AIS'), '#5b21b6');
       })
       .catch(err=>{
@@ -576,8 +589,8 @@
       '</div>'+
       dueLine+
       '<div class="fm-sec">운항 상태 '+posSrcLabel(v)+'</div>'+
-      emailToggle(v)+
       trackToggle(v)+
+      emailToggle(v)+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
       cargo+
