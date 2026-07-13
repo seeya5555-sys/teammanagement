@@ -7905,6 +7905,7 @@ def api_ext_aor_stats():
 @app.route('/api/wf/pull-now', methods=['POST'])
 @admin_required
 def api_wf_pull_now():
+    """사용자 버튼이 Mac의 on-demand Outlook runner에 수집 요청을 남긴다."""
     import time as _t
     _ensure_api_table()
     ts = str(int(_t.time()))
@@ -7912,11 +7913,44 @@ def api_wf_pull_now():
     return jsonify({'ok': True, 'ts': int(ts)})
 
 
+@app.route('/api/wf/pull-status')
+@admin_required
+def api_wf_pull_status():
+    """수동 Outlook 수집의 요청/완료 상태. 실제 수집은 Mac runner만 수행한다."""
+    _ensure_api_table()
+    rows = {r['k']: r['v'] for r in (query("SELECT k, v FROM api_settings WHERE k IN ('wf_pull_request','wf_pull_done','wf_pull_result')") or [])}
+    try:
+        requested = int(rows.get('wf_pull_request') or 0)
+    except (TypeError, ValueError):
+        requested = 0
+    try:
+        completed = int(rows.get('wf_pull_done') or 0)
+    except (TypeError, ValueError):
+        completed = 0
+    return jsonify({'pending': bool(requested and completed < requested), 'requested_at': requested or None,
+                    'completed_at': completed or None, 'result': rows.get('wf_pull_result') or None})
+
+
 @app.route('/api/wf/pull-flag')
 @api_key_required
 def api_wf_pull_flag():
     row = query("SELECT v FROM api_settings WHERE k='wf_pull_request'", one=True)
     return jsonify({'ts': int(row['v']) if row and (row['v'] or '').isdigit() else 0})
+
+
+@app.route('/api/ext/wf/pull-done', methods=['POST'])
+@api_key_required
+def api_ext_wf_pull_done():
+    """Mac runner가 실제 Outlook 조회 종료 후 결과를 기록한다."""
+    d = request.get_json(silent=True) or {}
+    ts = str(d.get('ts') or '')
+    if not ts.isdigit():
+        return jsonify({'error': 'numeric ts required'}), 400
+    result = str(d.get('result') or '').strip()[:500]
+    _ensure_api_table()
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('wf_pull_done', ?)", (ts,))
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('wf_pull_result', ?)", (result,))
+    return jsonify({'ok': True, 'done': int(ts)})
 
 
 # ═════════════════════════════════════════════════════════════════
