@@ -9276,6 +9276,30 @@ def api_dockproc_vessel_create():
     return jsonify({'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd, 'vtype': vtype}), 201
 
 
+@app.route('/api/dock_procure/vessel', methods=['DELETE'])
+@login_required
+def api_dockproc_vessel_delete():
+    """입거선박 삭제 — 선박 레코드 + 해당 선박의 모든 라인(dock_procure)·조선소(dock_yard) 데이터 일괄 삭제.
+    되돌릴 수 없음(UI confirm 게이트). Dry Dock 보고서(dock_reports 계열)는 별개 기능이라 건드리지 않음."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'error': 'JSON object 필요'}), 400
+    vsl_nm = str(d.get('vsl_nm') or '').strip()
+    if not vsl_nm:
+        return jsonify({'error': '선박명(vsl_nm) 필수'}), 400
+    if not query("SELECT vsl_nm FROM dock_procure_vessel WHERE vsl_nm=?", (vsl_nm,), one=True):
+        return jsonify({'error': f'"{vsl_nm}" 없음'}), 404
+    db = get_db()
+    lines = db.execute("SELECT COUNT(*) c FROM dock_procure WHERE vsl_nm=?", (vsl_nm,)).fetchone()['c']
+    yard = db.execute("SELECT COUNT(*) c FROM dock_yard WHERE vsl_nm=?", (vsl_nm,)).fetchone()['c']
+    # 3개 테이블 원자적 삭제 — 단일 트랜잭션(중간 실패 시 자동 rollback, 부분삭제 방지)
+    with db:
+        db.execute("DELETE FROM dock_procure WHERE vsl_nm=?", (vsl_nm,))
+        db.execute("DELETE FROM dock_yard WHERE vsl_nm=?", (vsl_nm,))
+        db.execute("DELETE FROM dock_procure_vessel WHERE vsl_nm=?", (vsl_nm,))
+    return jsonify({'ok': True, 'vsl_nm': vsl_nm, 'deleted_lines': lines, 'deleted_yard': yard})
+
+
 @app.route('/api/dock_procure/upload', methods=['POST'])
 @login_required
 def api_dockproc_upload():

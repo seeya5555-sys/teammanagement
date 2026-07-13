@@ -366,13 +366,25 @@
       `<div><div class="lbl">SVMS 코드</div><div class="val"><span id="dp-vcode" class="dp-code ${ves.vsl_cd?'':'unset'}" title="클릭하여 SVMS 선박코드 설정(제목 생성·역추적용)">${ves.vsl_cd?esc(ves.vsl_cd):'＋설정'}</span></div></div>`+
       (ves.shipyard?`<div><div class="lbl">Shipyard</div><div class="val">${esc(ves.shipyard)}</div></div>`:'')+
       (ves.due_date?`<div><div class="lbl">Due Date</div><div class="val dp-due">${esc(ves.due_date)}</div></div>`:'')+
-      `<div><div class="lbl">총 항목</div><div class="val">${DATA.lines.length}</div></div>`;
+      `<div><div class="lbl">총 항목</div><div class="val">${DATA.lines.length}</div></div>`+
+      `<div style="align-self:center"><button class="dp-btn" id="dp-delvbtn" title="이 입거선박 삭제(라인·조선소 데이터 포함, 되돌릴 수 없음)" style="color:var(--red,#c0392b);border-color:var(--red-border,#e8b4b4)">🗑 선박 삭제</button></div>`;
     $('#dp-vcode').onclick=async()=>{
       const cur=ves.vsl_cd||'';
       const v=prompt('SVMS 선박코드 입력 (예: SAPS) — 정규 제목 생성·역추적 매칭용',cur);
       if(v===null)return;
       const r=await fetch('/api/dock_procure/vessel_code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vsl_nm:ves.vsl_nm,vsl_cd:v.trim()})});
       if(!r.ok){toast('실패');return;} toast('SVMS코드 저장: '+(v.trim().toUpperCase()||'(해제)')); await load(ves.vsl_nm);
+    };
+    $('#dp-delvbtn').onclick=async()=>{
+      const n=DATA.lines.length;
+      if(!confirm(`"${ves.vsl_nm}" 선박을 삭제할까요?\n라인 ${n}건 + 조선소 견적까지 함께 삭제됩니다. 되돌릴 수 없습니다.`)) return;
+      try{
+        const r=await fetch('/api/dock_procure/vessel',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({vsl_nm:ves.vsl_nm})});
+        const j=await r.json().catch(()=>({}));
+        if(!r.ok){ toast('삭제 실패: '+(j.error||'오류')); return; }
+        toast(`삭제됨: ${ves.vsl_nm} (라인 ${j.deleted_lines||0})`);
+        DATA.current=null; await load();   // 남은 선박 중 첫 번째 자동 선택(없으면 빈 화면)
+      }catch(e){ toast('요청 실패(네트워크)'); }
     };
 
     // summary cards
