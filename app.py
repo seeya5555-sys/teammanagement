@@ -10983,12 +10983,32 @@ def api_ext_mail_create():
     현 runner는 source message ID 단위 카드를 사용하며, 같은 ID 재전송만 dedup한다.
     thread_key는 구버전 호환용이며, 명시적으로 제공된 외부 클라이언트만 스레드 upsert를 사용한다."""
     d = request.get_json(silent=True) or {}
-    # runner 경로를 우회한 외부 적재도 '현안' allowlist를 강제한다.
+    # runner 경로를 우회한 외부 적재도 `현안` seed 또는 명시적으로 검증 가능한 동일-thread 회신만 허용한다.
     categories = d.get('outlook_categories') or []
-    if not isinstance(categories, list) or '현안' not in [str(c).strip() for c in categories]:
-        return jsonify({'error': "Outlook category '현안' required"}), 400
+    if not isinstance(categories, list):
+        return jsonify({'error': 'outlook_categories must be a list'}), 400
+    has_outlook_category = '현안' in [str(c).strip() for c in categories]
     msg_id = (d.get('email_msg_id') or '').strip() or None
+    # 동일 Outlook source message ID는 상태와 무관하게 한 번만 적재한다. 검증 정책 변경 후의 재동기화도 no-op이다.
+    if msg_id:
+        dup = query("SELECT id FROM mail_card WHERE email_msg_id=?", (msg_id,), one=True)
+        if dup:
+            return jsonify({'id': dup['id'], 'dedup': True}), 200
     tkey = (d.get('thread_key') or '').strip() or None
+    inherited_thread = d.get('thread_category_inherited') is True and bool(tkey)
+    if not has_outlook_category and not inherited_thread:
+        return jsonify({'error': "Outlook category '현안' or verified thread inheritance required"}), 400
+    try:
+        category_date = datetime.strptime((d.get('email_date') or '')[:10], '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return jsonify({'error': 'email_date YYYY-MM-DD required for category ingestion'}), 400
+    if category_date < date(2026, 7, 12):
+        return jsonify({'error': 'category ingestion starts 2026-07-12'}), 400
+    if inherited_thread:
+        source = query("SELECT id FROM mail_card WHERE thread_key=? AND card_status='active' "
+                       "AND category_seed=1 AND substr(COALESCE(email_date, ''), 1, 10) >= '2026-07-12'", (tkey,), one=True)
+        if not source:
+            return jsonify({'error': 'no active category seed for inherited thread'}), 400
     issue_status = (d.get('issue_status') or 'pending').strip()
     if issue_status not in ('pending', 'not_applicable'):
         issue_status = 'pending'
@@ -11004,13 +11024,6 @@ def api_ext_mail_create():
         return jsonify({'error': 'invalid card_category', 'allowed': list(MAIL_CARD_CATEGORIES)}), 400
     else:
         card_category = card_category.strip()
-    # 1) 동일 Outlook source message ID는 상태와 무관하게 한 번만 적재한다.
-    # 삭제/완료 카드를 재동기화로 되살려 원본·이슈 제안이 중복되는 것을 막는다.
-    if msg_id:
-        dup = query("SELECT id FROM mail_card WHERE email_msg_id=?",
-                    (msg_id,), one=True)
-        if dup:
-            return jsonify({'id': dup['id'], 'dedup': True}), 200
     # 2) 같은 스레드 active 카드 존재 → 최신 스레드 내용으로 갱신.
     #    콘텐츠(제목/발신/일자/msg_id/요약/맥락/원문)는 항상 갱신. 이슈제안(item/desc/prio/vessel/match)은
     #    아직 미처리(issue_status='pending')일 때만 갱신(등록·리젝된 카드의 결정 보존). 회신·상태·결정은 절대 안 건드림.
@@ -11025,6 +11038,7 @@ def api_ext_mail_create():
                 issue_desc    =CASE WHEN issue_status='pending' THEN ? ELSE issue_desc     END,
                 issue_priority=CASE WHEN issue_status='pending' THEN ? ELSE issue_priority END,
                 card_category =CASE WHEN issue_status='pending' THEN ? ELSE card_category  END,
+                category_seed =CASE WHEN ? THEN 1 ELSE category_seed END,
                 issue_vessel  =CASE WHEN issue_status='pending' THEN ? ELSE issue_vessel   END,
                 issue_match_id=CASE WHEN issue_status='pending' THEN ? ELSE issue_match_id END
                 WHERE id=?""", (
@@ -11033,19 +11047,20 @@ def api_ext_mail_create():
                 d.get('action_summary') or None,
                 d.get('issue_item') or None, d.get('issue_desc') or None, prio,
                 card_category if card_category is not None else ex['card_category'],
+                has_outlook_category,
                 d.get('issue_vessel') or None, d.get('issue_match_id'), ex['id']))
             return jsonify({'id': ex['id'], 'updated': True}), 200
     # 3) 신규(또는 삭제된 스레드) → INSERT
     cid = execute("""INSERT INTO mail_card
         (email_subject, email_from, email_date, email_msg_id, thread_key, summary_ko, thread_summary_ko, body_en,
-         action_summary, issue_item, issue_desc, issue_match_id, issue_priority, card_category, issue_vessel, issue_supervisor,
+         action_summary, issue_item, issue_desc, issue_match_id, issue_priority, card_category, category_seed, issue_vessel, issue_supervisor,
          issue_status, reply_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none')""", (
         d.get('email_subject') or None, d.get('email_from') or None, d.get('email_date') or None,
         msg_id, tkey, d.get('summary_ko') or None, d.get('thread_summary_ko') or None, d.get('body_en') or None,
         d.get('action_summary') or None,
         d.get('issue_item') or None, d.get('issue_desc') or None,
-        d.get('issue_match_id'), prio, card_category or '기술-Normal',
+        d.get('issue_match_id'), prio, card_category or '기술-Normal', int(has_outlook_category),
         d.get('issue_vessel') or None, d.get('issue_supervisor') or None,
         issue_status))
     return jsonify({'id': cid}), 201
@@ -12451,6 +12466,9 @@ def _auto_migrate():
             if cols and 'action_summary' not in cols:   # 현안 액션추가용 1~2문장 요약
                 conn.execute("ALTER TABLE mail_card ADD COLUMN action_summary TEXT")
                 print('[auto_migrate] mail_card.action_summary 추가됨')
+            if cols and 'category_seed' not in cols:    # direct `현안` seed 여부: 무범주 회신 상속 검증용
+                conn.execute("ALTER TABLE mail_card ADD COLUMN category_seed INTEGER NOT NULL DEFAULT 0")
+                print('[auto_migrate] mail_card.category_seed 추가됨')
             if cols and 'card_category' not in cols:    # Outlook 현안 여부와 분리된 TRMT 카드 적재 범주
                 conn.execute("ALTER TABLE mail_card ADD COLUMN card_category TEXT")
                 print('[auto_migrate] mail_card.card_category 추가됨')
