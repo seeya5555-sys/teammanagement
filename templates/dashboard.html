@@ -207,10 +207,6 @@
       <span class="meta"><span class="lbl">AOR 대기</span><span class="num">{{ stats.aor_pending }}<small>건</small></span></span>
       {% if stats.aor_crew_submitted %}<span class="flags"><span class="fl blue">Crew {{ stats.aor_crew_submitted }}</span></span>{% endif %}
     </a>
-    <a class="{% if not stats.mail_active %}zero{% endif %}" href="{{ url_for('mail_page') }}">
-      <span class="ico">📬</span>
-      <span class="meta"><span class="lbl">메일 처리 대기</span><span class="num">{{ stats.mail_active }}<small>건</small></span></span>
-    </a>
     {% endif %}
     <a id="todaySchedChip" class="{% if not today_count %}zero{% endif %}" href="{{ url_for('calendar_page') }}"
        onclick="return toggleTodaySched(event)"
@@ -258,7 +254,7 @@
   if(!wrap) return;
   const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const TAB={fundreq:"{{ url_for('fundreq_page') }}",aor:"{{ url_for('aor_page') }}",
-             invoice:"{{ url_for('invoice_page') }}",wf1:"{{ url_for('mail_page') }}"};
+             invoice:"{{ url_for('invoice_page') }}"};
   function dchip(d){
     let cls='blue',lbl='D-'+d;
     if(d<0){cls='red';lbl='D+'+(-d);}
@@ -283,11 +279,10 @@
   function renderApp(a){
     const box=document.getElementById('ckApp');
     if(!a){box.hidden=true;return;}
-    const tot=(a.fundreq||0)+(a.aor||0)+(a.invoice||0)+(a.wf1||0);
+    const tot=(a.fundreq||0)+(a.aor||0)+(a.invoice||0);
     if(!tot && !a.oldest){box.hidden=true;return;}
     let html='<div class="ck-boxes">'+abox('fundreq','FundReq',a.fundreq||0)
-      +abox('aor','AOR',a.aor||0)+abox('invoice','Invoice',a.invoice||0)
-      +abox('wf1','WF1',a.wf1||0)+'</div>';
+      +abox('aor','AOR',a.aor||0)+abox('invoice','Invoice',a.invoice||0)+'</div>';
     if(a.oldest&&a.oldest.days>0)
       html+='<div class="ck-oldest">가장 오래 대기: '+esc(a.oldest.label)+' <b>'+a.oldest.days+'일</b> 경과</div>';
     document.getElementById('ckAppBody').innerHTML=html;

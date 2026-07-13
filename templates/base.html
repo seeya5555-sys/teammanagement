@@ -67,7 +67,7 @@
 
       {% set survey_eps = ['class_status_page','condition_survey','vetting_status'] %}
       {% set report_eps = ['dry_dock_page','dry_dock_edit_page','boarding_page','boarding_edit_page'] %}
-      {% set auto_eps = ['automation_page','mail_page','aor_page','fundreq_page','invoice_page','health_page'] %}
+      {% set auto_eps = ['automation_page','aor_page','fundreq_page','invoice_page','health_page'] %}
       {% set dockprep_eps = ['reqgen_page','dock_procure_page'] %}
       {% set expense_eps = ['expenses_page','expense_detail_page'] %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
@@ -84,7 +84,6 @@
             {% if session.role == 'admin' %}
             {{ nlink('automation_page', '자동화 허브') }}
             {{ nlink('health_page', '자동화 상태') }}
-            {{ nlink('mail_page', '메일 처리') }}
             {{ nlink('aor_page', 'AOR') }}
             {{ nlink('fundreq_page', '비용청구') }}
             {{ nlink('invoice_page', '인보이스') }}
@@ -180,7 +179,6 @@
     <nav class="mobile-tabbar" aria-label="핵심 메뉴">
       {{ nlink('dashboard', '대시보드', icon='dashboard') }}
       {{ nlink('index', 'Daily', icon='clipboard') }}
-      {% if session.role == 'admin' %}{{ nlink('mail_page', '메일', icon='workflow') }}{% endif %}
       {{ nlink('calendar_page', 'Calendar', icon='calendar') }}
     </nav>
   </header>
@@ -202,7 +200,6 @@
         <div class="mm-sub-group">
           {{ nlink('automation_page', '자동화 허브') }}
           {{ nlink('health_page', '자동화 상태') }}
-          {{ nlink('mail_page', '메일 처리') }}
           {{ nlink('aor_page', 'AOR') }}
           {{ nlink('fundreq_page', '비용청구') }}
           {{ nlink('invoice_page', '인보이스') }}
@@ -660,10 +657,6 @@
     health_page: {
       title: '자동화 상태 설명서',
       sections: [['화면', ['각 자동화 러너, 스케줄러, 최근 실행 상태를 확인합니다.', '오래 멈춘 항목이나 실패 로그가 있는 항목을 우선 점검합니다.']]]
-    },
-    mail_page: {
-      title: '메일 처리 설명서',
-      sections: [['주요 버튼', ['이슈 등록: 메일 내용을 TRMT Daily 업무로 등록합니다.', '기존 이슈에 추가: 메일 내용을 선택한 기존 업무의 후속 조치로 붙입니다.', '회신 작성: 메일 회신 초안을 만들거나 수정합니다.']]]
     },
     aor_page: {
       title: 'AOR 설명서',

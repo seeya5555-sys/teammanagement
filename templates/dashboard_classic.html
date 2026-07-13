@@ -97,12 +97,6 @@
       </div>
     </a>
 
-    {# 3) 메일 처리 대기 #}
-    <a class="dash-card {% if not stats.mail_active %}dash-zero{% endif %}" href="{{ url_for('mail_page') }}">
-      <div class="dash-card-head"><span>📬 메일 처리 대기</span><span class="arrow">→</span></div>
-      <div class="dash-main"><span class="dash-num">{{ stats.mail_active }}</span><span class="dash-unit">건 active</span></div>
-      <div class="dash-sub"><span class="dash-empty">이슈 등록 / 회신 대기</span></div>
-    </a>
     {% endif %}
 
     {# 5) 다가오는 일정 #}
