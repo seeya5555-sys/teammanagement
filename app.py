@@ -9249,6 +9249,33 @@ def api_dockproc_vessel_code():
     return jsonify({'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd})
 
 
+@app.route('/api/dock_procure/vessel', methods=['POST'])
+@login_required
+def api_dockproc_vessel_create():
+    """새 입거선박 등록 — INDEX 엑셀 없이 빈 선박을 직접 생성(여러 선박 동시 진행용).
+    라인은 이후 '＋ 라인 추가(P/SY)'·조선소 견적 업로드·INDEX 엑셀로 채운다."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):                        # array/scalar/None 바디 → 400(500 방지)
+        return jsonify({'error': 'JSON object 필요'}), 400
+    vsl_nm = str(d.get('vsl_nm') or '').strip()        # 비문자 입력도 안전 강제
+    if not vsl_nm:
+        return jsonify({'error': '선박명(vsl_nm) 필수'}), 400
+    if len(vsl_nm) > 120:
+        return jsonify({'error': '선박명이 너무 김(최대 120자)'}), 400
+    if query("SELECT vsl_nm FROM dock_procure_vessel WHERE vsl_nm=?", (vsl_nm,), one=True):
+        return jsonify({'error': f'"{vsl_nm}" 이미 등록됨'}), 409
+    vsl_cd = (str(d.get('vsl_cd') or '').strip().upper()[:20]) or None
+    vtype = (str(d.get('vtype') or '').strip()[:60]) or None
+    try:                                               # PK(vsl_nm) race → IntegrityError 를 409 로(pre-check TOCTOU 보강)
+        execute(
+            "INSERT INTO dock_procure_vessel (vsl_nm, vsl_cd, vtype, updated_at) "
+            "VALUES (?,?,?,datetime('now','localtime'))",
+            (vsl_nm, vsl_cd, vtype))
+    except sqlite3.IntegrityError:
+        return jsonify({'error': f'"{vsl_nm}" 이미 등록됨'}), 409
+    return jsonify({'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd, 'vtype': vtype}), 201
+
+
 @app.route('/api/dock_procure/upload', methods=['POST'])
 @login_required
 def api_dockproc_upload():
