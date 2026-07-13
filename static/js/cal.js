@@ -444,14 +444,15 @@ function getColor() {
 
 function fillSupervisorVesselSelects() {
   const supSel = $('#cal-f-supervisor');
-  supSel.innerHTML = '';
+  // 공용 일정은 기존처럼 유지한다. 담당자 선택 UI만 단일 사용자 환경에서 숨긴다.
+  supSel.innerHTML = '<option value="">(공용 일정)</option>';
   for (const s of S.supervisors) {
     if (isHiddenSupervisor(s)) continue;
     const o = document.createElement('option');
     o.value = s.id; o.textContent = s.name;
     supSel.append(o);
   }
-  if (S.activeTab !== 'all') supSel.value = String(S.activeTab);
+
   const vSel = $('#cal-f-vessel');
   vSel.innerHTML = '<option value="">(선택 안 함)</option>';
   for (const v of S.vessels) {

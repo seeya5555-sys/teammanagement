@@ -17,7 +17,7 @@ const S = {
   supervisors:  [],
   vessels:      [],
   activeTab:    'all',
-  activeSubTab: ['open', 'closed', 'summary'].includes(localStorage.getItem('trmt_subtab'))
+  activeSubTab: ['open', 'closed', 'all', 'summary'].includes(localStorage.getItem('trmt_subtab'))
     ? localStorage.getItem('trmt_subtab') : 'open',
   issues:       [],
   summary:      { rows: [], generated_at: null },
@@ -568,8 +568,9 @@ function summaryTitle(r) {
 async function gotoIssueFromSummary(r) {
   const title = summaryTitle(r);
   S.activeTab = onlySupId();
-  S.activeSubTab = 'open';
-  try { localStorage.setItem('trmt_subtab', 'open'); } catch (_) {}
+  // '전체'는 선택 UI로는 노출하지 않지만, 요약의 완료 항목까지 정확히 찾기 위한 내부 범위로 사용한다.
+  S.activeSubTab = 'all';
+  try { localStorage.setItem('trmt_subtab', 'all'); } catch (_) {}
   // 제목으로 검색(q) — 직접 검색한 것과 동일하게 필터링
   S.filters.q = title;
   S.filters.item_topic = title;   // 새 서버면 정확일치까지 적용되어 딱 하나만
