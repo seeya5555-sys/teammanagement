@@ -3130,7 +3130,7 @@ function wireEvents() {
     downloadExport('#btn-export-summary', '/api/issues/summary-export?' + p.toString(), 'TRMT_업무요약.xlsx');
   });
 
-  // 업무 요약 — 현재 탭(전체/감독)의 전체 이슈를 요약하여 '요약' 탭에 저장·갱신
+  // 업무 요약 — 단일 사용자 감독 scope의 이슈만 요약하여 '요약' 탭에 저장·갱신
   $('#btn-summary-gen').addEventListener('click', async () => {
     const btn = $('#btn-summary-gen');
     const label = btn.querySelector('span');
@@ -3138,16 +3138,16 @@ function wireEvents() {
     if (label) label.textContent = '요약 생성 중...';
     btn.disabled = true;
     try {
-      // 어느 탭에서 누르든 항상 "전체" 스코프로 생성 (감독별 분리 저장도 함께 갱신됨)
-      const res = await api('/api/issues/summary-generate', { method: 'POST' });
+      const supervisorId = onlySupId();
+      const res = await api('/api/issues/summary-generate?supervisor_id=' + encodeURIComponent(supervisorId), { method: 'POST' });
       if (res.counts) Object.assign(S.summaryCounts, res.counts);
       else S.summaryCounts['all'] = (res.rows || []).length;
-      // 전체 대분류 + 요약 서브탭으로 전환해 전체 요약을 표시
-      S.activeTab = 'all';
+      // 단일 사용자 scope + 요약 서브탭으로 전환
+      S.activeTab = supervisorId;
       S.activeSubTab = 'summary';
       S.summary = res;
       try { localStorage.setItem('trmt_subtab', 'summary'); } catch (_) {}
-      await loadVessels(null);
+      await loadVessels(supervisorId);
       renderTabs();
       renderVesselFilter();
       renderTabContext();
