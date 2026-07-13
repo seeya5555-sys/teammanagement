@@ -11005,8 +11005,8 @@ def api_mail_delete_selected():
 
 
 # ---- ext (맥미니) ----
-# 카드 적재 범주: Outlook의 `현안` allowlist와 별개인 TRMT 업무 분류다.
-# 첨부된 목록 외 값은 저장하지 않아 downstream 필터/집계가 오염되지 않게 한다.
+# 카드 적재는 Outlook의 5개 category allowlist에서만 허용한다.
+# 이 값은 TRMT card_category 허용값과 같은 목록을 공유한다.
 MAIL_CARD_CATEGORIES = ('AOR', 'SIRE', '기술-COC&Flag', '기술-Normal', '기술-Urgent')
 
 
@@ -11017,11 +11017,11 @@ def api_ext_mail_create():
     현 runner는 source message ID 단위 카드를 사용하며, 같은 ID 재전송만 dedup한다.
     thread_key는 구버전 호환용이며, 명시적으로 제공된 외부 클라이언트만 스레드 upsert를 사용한다."""
     d = request.get_json(silent=True) or {}
-    # runner 경로를 우회한 외부 적재도 `현안` seed 또는 명시적으로 검증 가능한 동일-thread 회신만 허용한다.
+    # runner 경로를 우회한 외부 적재도 5개 Outlook category seed 또는 명시적으로 검증 가능한 동일-thread 회신만 허용한다.
     categories = d.get('outlook_categories') or []
     if not isinstance(categories, list):
         return jsonify({'error': 'outlook_categories must be a list'}), 400
-    has_outlook_category = '현안' in [str(c).strip() for c in categories]
+    has_outlook_category = bool(set(str(c).strip() for c in categories) & set(MAIL_CARD_CATEGORIES))
     msg_id = (d.get('email_msg_id') or '').strip() or None
     # 동일 Outlook source message ID는 상태와 무관하게 한 번만 적재한다. 검증 정책 변경 후의 재동기화도 no-op이다.
     if msg_id:
@@ -11031,7 +11031,8 @@ def api_ext_mail_create():
     tkey = (d.get('thread_key') or '').strip() or None
     inherited_thread = d.get('thread_category_inherited') is True and bool(tkey)
     if not has_outlook_category and not inherited_thread:
-        return jsonify({'error': "Outlook category '현안' or verified thread inheritance required"}), 400
+        return jsonify({'error': 'allowed Outlook category or verified thread inheritance required',
+                        'allowed': list(MAIL_CARD_CATEGORIES)}), 400
     try:
         category_date = datetime.strptime((d.get('email_date') or '')[:10], '%Y-%m-%d').date()
     except (TypeError, ValueError):

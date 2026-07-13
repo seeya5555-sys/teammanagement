@@ -135,14 +135,25 @@ def main():
 
         # 카드 적재 범주는 첨부된 고정 목록만 허용하고, 정상 payload는 DB·목록 응답에 보존한다.
         bad_category = client.post('/api/ext/mail/cards', headers=headers, json={
-            'email_msg_id': 'outlook-bad-category', 'outlook_categories': ['현안'],
+            'email_msg_id': 'outlook-bad-category', 'outlook_categories': ['AOR'],
             'card_category': '기술-Next DD',
         })
         assert bad_category.status_code == 400, bad_category.get_data(as_text=True)
+        # 더 이상 적재 신호가 아닌 `현안` 단독 및 임의 category는 API 경계에서 거절해야 한다.
+        legacy_category = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook-legacy-category', 'email_date': '2026-07-13 08:00',
+            'outlook_categories': ['현안'], 'card_category': 'AOR',
+        })
+        assert legacy_category.status_code == 400, legacy_category.get_data(as_text=True)
+        unknown_category = client.post('/api/ext/mail/cards', headers=headers, json={
+            'email_msg_id': 'outlook-unknown-category', 'email_date': '2026-07-13 08:00',
+            'outlook_categories': ['Other'], 'card_category': 'AOR',
+        })
+        assert unknown_category.status_code == 400, unknown_category.get_data(as_text=True)
         created = client.post('/api/ext/mail/cards', headers=headers, json={
             'email_msg_id': 'outlook-category-aor', 'email_date': '2026-07-12 00:00', 'email_subject': 'AOR approval request',
             'thread_key': 'thread-category-aor',
-            'outlook_categories': ['현안'], 'card_category': 'AOR',
+            'outlook_categories': ['AOR'], 'card_category': 'AOR',
         })
         assert created.status_code == 201, created.get_data(as_text=True)
         category_card_id = created.get_json()['id']
@@ -150,16 +161,16 @@ def main():
         legacy_update = client.post('/api/ext/mail/cards', headers=headers, json={
             'email_msg_id': 'outlook-category-aor-retry', 'email_date': '2026-07-13 08:00', 'email_subject': 'legacy runner retry',
             'thread_key': 'thread-category-aor',
-            'outlook_categories': ['현안'],
+            'outlook_categories': ['AOR'],
         })
         assert legacy_update.status_code == 200, legacy_update.get_data(as_text=True)
         default_insert = client.post('/api/ext/mail/cards', headers=headers, json={
-            'email_msg_id': 'outlook-default-category', 'email_date': '2026-07-13 08:00', 'outlook_categories': ['현안'],
+            'email_msg_id': 'outlook-default-category', 'email_date': '2026-07-13 08:00', 'outlook_categories': ['AOR'],
         })
         assert default_insert.status_code == 201, default_insert.get_data(as_text=True)
         default_card_id = default_insert.get_json()['id']
         explicit_null = client.post('/api/ext/mail/cards', headers=headers, json={
-            'email_msg_id': 'outlook-null-category', 'email_date': '2026-07-13 08:00', 'outlook_categories': ['현안'],
+            'email_msg_id': 'outlook-null-category', 'email_date': '2026-07-13 08:00', 'outlook_categories': ['AOR'],
             'card_category': None,
         })
         assert explicit_null.status_code == 201, explicit_null.get_data(as_text=True)
@@ -168,12 +179,12 @@ def main():
             assert default_row['card_category'] == '기술-Normal'
         for n, category in enumerate(('SIRE', '기술-COC&Flag', '기술-Normal', '기술-Urgent'), start=1):
             accepted = client.post('/api/ext/mail/cards', headers=headers, json={
-                'email_msg_id': f'outlook-category-{n}', 'email_date': '2026-07-13 08:00', 'outlook_categories': ['현안'],
+                'email_msg_id': f'outlook-category-{n}', 'email_date': '2026-07-13 08:00', 'outlook_categories': [category],
                 'card_category': category,
             })
             assert accepted.status_code == 201, accepted.get_data(as_text=True)
         non_string = client.post('/api/ext/mail/cards', headers=headers, json={
-            'email_msg_id': 'outlook-list-category', 'outlook_categories': ['현안'],
+            'email_msg_id': 'outlook-list-category', 'outlook_categories': ['AOR'],
             'card_category': ['AOR'],
         })
         assert non_string.status_code == 400, non_string.get_data(as_text=True)
@@ -191,12 +202,12 @@ def main():
         # 7/12 이전의 직접 범주 payload는 server ingest에서도 거절한다.
         before_cutoff = client.post('/api/ext/mail/cards', headers=headers, json={
             'email_msg_id': 'outlook-before-category-start', 'email_date': '2026-07-11 23:59',
-            'outlook_categories': ['현안'], 'card_category': 'AOR',
+            'outlook_categories': ['AOR'], 'card_category': 'AOR',
         })
         assert before_cutoff.status_code == 400, before_cutoff.get_data(as_text=True)
         malformed_date = client.post('/api/ext/mail/cards', headers=headers, json={
             'email_msg_id': 'outlook-malformed-category-date', 'email_date': '2026/07/13',
-            'outlook_categories': ['현안'], 'card_category': 'AOR',
+            'outlook_categories': ['AOR'], 'card_category': 'AOR',
         })
         assert malformed_date.status_code == 400, malformed_date.get_data(as_text=True)
         # direct `현안` seed가 실제로 없는 thread는 표식만 위조해도 무범주 회신을 적재할 수 없다.
@@ -233,7 +244,7 @@ def main():
             r = client.post('/api/ext/mail/cards', headers=headers, json={
                 'email_msg_id': msg, 'email_subject': 'Same title distinct folder',
                 'email_date': '2026-07-13 09:00', 'thread_key': f'{folder}\x1fsame title distinct folder',
-                'outlook_categories': ['현안'], 'card_category': 'AOR',
+                'outlook_categories': ['AOR'], 'card_category': 'AOR',
             })
             assert r.status_code in (200, 201), r.get_data(as_text=True)
         with appmod.app.app_context():

@@ -71,9 +71,9 @@
 {% block content %}
 <h1 class="page-title">📬 메일 처리 <span class="muted">(이슈 등록 + 회신 작성)</span></h1>
 <div class="mc-head">
-  <button class="btn btn-p btn-sm" id="mc-pull" type="button">📥 현안 메일 동기화</button>
+  <button class="btn btn-p btn-sm" id="mc-pull" type="button">📥 범주 메일 동기화</button>
   <span id="mc-pull-status" class="mc-count" role="status" aria-live="polite"></span>
-  <span class="mc-count">수동 실행 · <b>00.손유석 + 지정 선박 15개</b> · Outlook <b>현안</b> 범주만 분석</span>
+  <span class="mc-count">수동 실행 · <b>00.손유석 + 지정 선박 15개</b> · Outlook <b>AOR / SIRE / 기술-COC&amp;Flag / 기술-Normal / 기술-Urgent</b> 범주만 분석</span>
   <button class="btn btn-sm" id="mc-tall" type="button">🌐 전체 번역</button>
   <div style="display:flex;gap:6px;margin-left:8px">
     <button class="btn btn-p btn-sm" data-f="active" type="button">처리중</button>
@@ -345,7 +345,7 @@
   const pullBtn=document.getElementById('mc-pull'), pullStatus=document.getElementById('mc-pull-status');
   const pullState=async()=>{const r=await api('GET','/api/wf/pull-status');if(!r.ok)return null;return r.j;};
   const showPull=async(wait=0)=>{const s=await pullState();if(!s){pullStatus.textContent='상태 확인 실패';return true;}if(s.pending){pullStatus.textContent='Mac에서 Outlook 조회 대기/진행 중…';return false;}if(s.completed_at){pullStatus.textContent=s.result||'완료 — 신규 현안 없음';load();}return true;};
-  pullBtn.onclick=async(e)=>{const b=e.currentTarget;b.disabled=true;pullStatus.textContent='요청 전송 중…';const r=await api('POST','/api/wf/pull-now',{});if(!r.ok){pullStatus.textContent='요청 실패: '+((r.j&&r.j.error)||r.status);b.disabled=false;return;}pullStatus.textContent='요청됨 · Mac Outlook 조회 대기…';let n=0;const timer=setInterval(async()=>{n++;const done=await showPull();if(done||n>=45){clearInterval(timer);b.disabled=false;if(n>=45&&!done)pullStatus.textContent='조회가 오래 걸림 · 잠시 후 새로고침';}},2000);};
+  pullBtn.onclick=async(e)=>{const b=e.currentTarget;b.disabled=true;pullStatus.textContent='요청 전송 중…';const r=await api('POST','/api/wf/pull-now',{});if(!r.ok){pullStatus.textContent='요청 실패: '+((r.j&&r.j.error)||r.status);b.disabled=false;return;}pullStatus.textContent='요청됨 · Mac Outlook 조회 대기…';const started=Date.now();const poll=async()=>{const done=await showPull();if(done){b.disabled=false;return;}const elapsed=Math.floor((Date.now()-started)/1000);if(elapsed>=90)pullStatus.textContent='Mac Outlook 조회 진행 중 · '+elapsed+'초 경과 · 완료 결과 대기…';setTimeout(poll,2000);};setTimeout(poll,2000);};
   load();
 })();
 </script>
