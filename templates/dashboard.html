@@ -394,11 +394,17 @@
     return L.divIcon({className:'',iconSize:[27,27],iconAnchor:[13,13],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">🚢'+sire+pos+'</div>'});
   }
 
+  function loadFleet(){
   fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
+    // 서버 45초 TTL과 30초 polling으로 upstream 부하를 제한하며 최신 위치를 반영한다.
+    markers.forEach(o=>{map.removeLayer(o.m);map.removeLayer(o.tt);}); markers=[];
+    document.querySelectorAll('.fm-empty').forEach(el=>el.remove());
+
     FLEET=d.fleet||[];
     STALE=d.staleness; MYSUP=d.my_supervisor||null;
+    const pf=d.position_feed||{};
     document.getElementById('fmUpdated').textContent= d.empty ? '데이터 없음 — 맥 스케줄러 첫 동기화 대기'
-      : ('⟳ 온디맨드+맥 스케줄러 · 선위 '+(d.generated_at||'')+' · TRMT '+String(d.trmt_generated_at||'').slice(0,16));
+      : ('⟳ TRMT DB 실시간'+(pf.cached?' (cache)':'')+' · 매칭 '+(pf.matched||0)+'척 · '+(pf.fetched_at||'갱신 대기')+(pf.error?' · TRMT DB 연결 실패, 기본 선위':'') );
     if(!FLEET.length){renderAlert();document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
     FLEET.forEach(v=>{
       const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
@@ -413,13 +419,17 @@
     applyFilters(); renderAlert();
     // 선명 검색: 입력하면 일치 선박만 표시, 단일 일치면 그쪽으로 이동(줌 유지)
     const si=document.getElementById('fmSearch');
-    if(si){
+    if(si&&!si.dataset.fmBound){
+      si.dataset.fmBound='1';
       si.addEventListener('input',()=>{ fmQ=si.value.trim().toLowerCase(); const vis=applyFilters();
         if(fmQ && vis.length===1){ map.panTo([vis[0].v.lat,vis[0].v.lng]); } });
       si.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ const vis=applyFilters();
         if(vis.length){ map.panTo([vis[0].v.lat,vis[0].v.lng]); openV(vis[0].v); } } });
     }
   }).catch(()=>{document.getElementById('fmUpdated').textContent='데이터 로드 실패';});
+  }
+  loadFleet();
+  window.setInterval(loadFleet,30000);
 
   // 감독필터 + 선명검색 동시 적용. 보이는 마커 배열 반환.
   function applyFilters(){
@@ -437,10 +447,12 @@
     document.querySelectorAll('#fmSup button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
     applyFilters();renderAlert();fmClose();
   }
-  // 선위 소스 라벨: 이메일 override > AIS(vesseltracker) > SVMS noon. 끊김 경고 포함.
+  // 선위 소스 라벨: 이메일 override > TRMT DB 실시간 > SVMS noon. 끊김 경고 포함.
   function posSrcLabel(v){
     if(v.pos_source==='email')
       return '<span style="color:#b7791f">📡 위치=Master 이메일'+(v.pos_reported_at?' ('+esc(String(v.pos_reported_at).slice(0,16).replace("T"," "))+')':'')+'</span>';
+    if(v.pos_source==='trmtdb')
+      return '<span style="color:#2f6f9f">🛰 위치=TRMT DB 실시간</span>'+(v.position_ts?' ('+esc(String(v.position_ts).slice(0,16).replace("T"," "))+')':'');
     if(String(v.position_source||'').indexOf('AIS')>=0){
       const ts=v.position_ts?' ('+esc(String(v.position_ts).slice(0,16).replace("T"," "))+')':'';
       return '<span style="color:#2f6f9f">🛰 위치=AIS</span>'+ts+(v.ais_stale?' <span style="color:#b7791f">⚠ 신호 끊김</span>':'');

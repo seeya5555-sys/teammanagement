@@ -14,6 +14,11 @@ import uuid
 import json
 import sqlite3
 import secrets
+import threading
+import time
+import http.client
+import urllib.error
+import urllib.request
 from functools import wraps
 from datetime import timedelta, date, datetime
 
@@ -10502,6 +10507,104 @@ def api_ext_shipwiki_push():
 # ───────────────────────── Fleet Map (대시보드) ─────────────────────────
 FLEET_MAP_FILE = os.path.join(INSTANCE_DIR, 'fleet_map.json')
 
+# Fleet Map 위치는 기존 SVMS/VesselTracker 적재본을 fallback으로 유지하되, 화면 조회 시
+# TRMT DB의 최신 ship-position으로 덮어쓴다. 키는 반드시 systemd EnvironmentFile에만 둔다.
+TRMTDB_SHIP_POSITION_URL = os.getenv(
+    'TRMTDB_SHIP_POSITION_URL',
+    'https://trmtdb.duckdns.org/api/ship-position?platform=ALL',
+)
+TRMTDB_POSITION_CACHE_TTL = 45
+_trmtdb_position_cache = {'at': 0.0, 'loaded': False, 'vessels': [], 'fetched_at': None, 'error': None}
+_trmtdb_position_lock = threading.Lock()
+_trmtdb_position_refreshing = False
+
+
+def _trmtdb_positions():
+    """TRMT DB 위치 API를 서버에서만 조회한다. upstream 장애 시 마지막 정상본/SVMS fallback."""
+    global _trmtdb_position_refreshing
+    now = time.monotonic()
+    with _trmtdb_position_lock:
+        cached = _trmtdb_position_cache
+        if (cached['loaded'] or cached['error']) and now - cached['at'] < TRMTDB_POSITION_CACHE_TTL:
+            return cached['vessels'], cached['fetched_at'], cached['error'], True
+        api_key = os.getenv('TRMTDB_API_KEY')
+        if not api_key:
+            return cached['vessels'], cached['fetched_at'], 'TRMT DB API key not configured', cached['loaded']
+        # slow upstream는 lock 밖에서 호출한다. 동시 요청은 마지막 정상 cache/SVMS를 즉시 받는다.
+        if _trmtdb_position_refreshing:
+            return cached['vessels'], cached['fetched_at'], cached['error'], cached['loaded']
+        _trmtdb_position_refreshing = True
+    try:
+            req = urllib.request.Request(
+                TRMTDB_SHIP_POSITION_URL,
+                headers={'x-api-key': api_key, 'Accept': 'application/json'},
+            )
+            with urllib.request.urlopen(req, timeout=20) as res:
+                payload = json.loads(res.read().decode('utf-8'))
+            vessels = payload.get('vessels') if isinstance(payload, dict) else None
+            if not isinstance(vessels, list):
+                raise ValueError('TRMT DB ship-position payload missing vessels[]')
+            with _trmtdb_position_lock:
+                cached.update({'at': time.monotonic(), 'loaded': True, 'vessels': vessels,
+                               'fetched_at': datetime.utcnow().isoformat(timespec='seconds'), 'error': None})
+            return vessels, cached['fetched_at'], None, False
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
+            http.client.HTTPException, ValueError, json.JSONDecodeError) as exc:
+        # 오류 문자열은 사용자 API 응답에 내보내지 않는다(상세 upstream 정보/키 누출 방지).
+        with _trmtdb_position_lock:
+            cached.update({'at': time.monotonic(), 'error': type(exc).__name__})
+            return cached['vessels'], cached['fetched_at'], cached['error'], cached['loaded']
+    finally:
+        with _trmtdb_position_lock:
+            _trmtdb_position_refreshing = False
+
+
+def _overlay_trmtdb_positions(fleet, override_keys):
+    """TRMT DB의 latest 위치를 fleet_map 항목에 병합. 이메일 수동 override가 최우선이다."""
+    upstream, fetched_at, error, cached = _trmtdb_positions()
+    by_name, by_imo = {}, {}
+    for row in upstream:
+        if not isinstance(row, dict):
+            continue
+        latest = row.get('latest') if isinstance(row.get('latest'), dict) else {}
+        try:
+            lat, lng = float(latest.get('latitude')), float(latest.get('longitude'))
+        except (TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            continue
+        row = {**row, '_latest': latest, '_lat': lat, '_lng': lng}
+        if row.get('vessel_name'):
+            by_name[_vkey(row['vessel_name'])] = row
+        if row.get('imo') not in (None, ''):
+            by_imo[str(row['imo']).strip()] = row
+    matched = 0
+    for v in fleet:
+        if _vkey(v.get('name')) in override_keys:
+            continue
+        src = by_imo.get(str(v.get('imo') or '').strip()) or by_name.get(_vkey(v.get('name')))
+        if not src:
+            continue
+        latest = src['_latest']
+        v['lat'], v['lng'] = src['_lat'], src['_lng']
+        for source_key, target_key in (('heading', 'course'), ('speed', 'speed')):
+            if latest.get(source_key) is not None:
+                try:
+                    v[target_key] = float(latest[source_key])
+                except (TypeError, ValueError):
+                    pass
+        # 상태는 기존 SVMS 상태 체계를 유지한다. 이 API는 실시간 위치 전용이다.
+        v['position_source'] = 'TRMT DB ' + str(latest.get('platform') or '')
+        v['position_ts'] = latest.get('event_at') or src.get('latest_event_at')
+        v['pos_source'] = 'trmtdb'
+        v['pos_reported_at'] = v['position_ts']
+        event_date = str(v['position_ts'] or '')[:10].replace('-', '')
+        if len(event_date) == 8 and event_date.isdigit():
+            v['rpt_dt'] = event_date
+        matched += 1
+    return {'source': 'TRMT DB', 'fetched_at': fetched_at, 'matched': matched,
+            'upstream_vessels': len(upstream), 'cached': cached, 'error': error}
+
 
 @app.route('/api/ext/fleet-map/push', methods=['POST'])
 @api_key_required
@@ -10684,6 +10787,7 @@ def api_fleet_map_data():
             overrides = json.load(f)
     except (FileNotFoundError, ValueError):
         overrides = {}
+    override_keys = set()
     if overrides:
         now_k = datetime.utcnow() + timedelta(hours=9)
         for v in fleet:
@@ -10710,9 +10814,12 @@ def api_fleet_map_data():
             if o.get('speed') is not None: v['speed'] = o['speed']
             v['pos_source'] = o.get('source') or 'email'
             v['pos_reported_at'] = o.get('reported_at') or o.get('stored_at')
+            override_keys.add(_vkey(v.get('name')))
             # 신선도 ALERT 오탐 방지: override 보고일을 rpt_dt로
             if len(ov_date) == 8 and ov_date.isdigit():
                 v['rpt_dt'] = ov_date
+    # 실시간 위치는 TRMT DB를 우선 사용. 명시적인 Master 이메일 override만 그보다 우선한다.
+    data['position_feed'] = _overlay_trmtdb_positions(fleet, override_keys)
     # 감독 = TRMT supervisor_vessels(권위)로 채움 — 이슈 없는 선박도 올바른 감독/필터 표시.
     vsup = {_vkey(r['vname']): r['sname'] for r in
             query("SELECT v.name AS vname, s.name AS sname FROM supervisor_vessels sv "
