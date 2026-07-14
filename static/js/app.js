@@ -1285,7 +1285,7 @@ function startEditActionEntry(entryEl, issue, idx) {
   entryEl.classList.remove('important');
 
   const dateIn = el('input', { type: 'date', value: orig.date });
-  const progIn = el('input', { type: 'text', value: orig.progress, placeholder: '조치 내용' });
+  const progIn = el('textarea', { class: 'act-prog-ta', rows: 2, placeholder: '조치 내용 (줄바꿈 Enter, 저장 Ctrl/⌘+Enter)' }, orig.progress);
   const impBtn = el('button', {
     type: 'button', class: 'mini-btn imp' + (imp ? ' on' : ''),
     title: '중요 표시', onclick: (ev) => {
@@ -1342,7 +1342,8 @@ function startEditActionEntry(entryEl, issue, idx) {
   };
 
   progIn.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); finish('save'); }
+    if (e.isComposing) return;
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); finish('save'); }
     if (e.key === 'Escape') finish('cancel');
   });
   dateIn.addEventListener('keydown', (e) => {
@@ -1669,11 +1670,11 @@ function renderActionEditor() {
       type: 'date', value: a.date || '',
       onchange: (e) => { S.editingActions[idx].date = e.target.value; },
     });
-    const progIn = el('input', {
-      type: 'text', value: a.progress || '',
+    const progIn = el('textarea', {
+      class: 'act-prog-ta', rows: 2,
       placeholder: '조치 / 팔로우업 내용',
       oninput: (e) => { S.editingActions[idx].progress = e.target.value; },
-    });
+    }, a.progress || '');
     const impBtn = el('button', {
       type: 'button',
       class: 'imp-toggle' + (a.important ? ' on' : ''),
@@ -1700,7 +1701,7 @@ function addActionEntry() {
   renderActionEditor();
   const rows = $('#f-action-editor').querySelectorAll('.act-edit-row');
   const last = rows[rows.length - 1];
-  last?.querySelector('input[type="text"]')?.focus();
+  last?.querySelector('textarea, input[type="text"]')?.focus();
 }
 
 async function openNew() {

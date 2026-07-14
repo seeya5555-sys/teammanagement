@@ -572,6 +572,27 @@ col.c-edit   { width: 156px; }
 .act-entry .act-progress {
   font-size: 11px;
   color: var(--text-primary);
+  white-space: pre-line;
+}
+.act-prog-ta {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text-primary);
+  outline: none;
+  resize: vertical;
+  min-height: 2.4em;
+  box-sizing: border-box;
+}
+.act-prog-ta:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(24,95,165,0.15);
 }
 .act-entry.important .act-progress {
   color: var(--red);
