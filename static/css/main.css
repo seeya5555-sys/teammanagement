@@ -5,6 +5,11 @@
 /* ─────────── Reset ─────────── */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; padding: 0; }
+/* Daily 페이지 데스크탑 한정: body를 viewport로 캡하는 height:100%가 sticky topnav의 containing block을
+   viewport 높이로 제한 → 그만큼 스크롤하면 topnav이 sticky에서 풀려 사라지고 선박헤더(top:54px) 위 빈 띠 발생.
+   body만 콘텐츠 높이로 늘려 topnav 상시 고정 → gap 소멸. html 무변경·타 페이지 무영향(daily 스코프).
+   모바일(≤768px)은 현행 유지(topnav 스크롤아웃 + vmain top:0으로 이미 gap 없음). */
+@media (min-width: 769px) { body.page-daily { height: auto; min-height: 100%; } }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard",
                "Noto Sans KR", system-ui, Roboto, Helvetica, Arial, sans-serif;
