@@ -5017,17 +5017,27 @@ col.c-stat { width: 92px; }
 .issue-card-det { margin-top: 11px; border-top: 1px solid var(--border-subtle); padding-top: 11px; }
 .issue-card-det .exp-desc { font-size: 12px; }
 
-/* rev.4: 진행사항 편집행은 타임라인 세로배치 예외 → 한 줄(날짜/조치내용/버튼) + 넓은 입력칸 */
+/* rev.5: 진행사항 편집행 — 데스크탑은 한 줄 유지, 모바일만 세로 스택(날짜/조치내용/버튼줄, DOM=시각순서 유지) */
 .exp-acts-wrap .act-entry.editing,
 .issue-card-det .act-entry.editing { flex-direction: row; align-items: center; gap: 6px; padding: 6px 8px; }
 .exp-acts-wrap .act-entry.editing::before,
 .issue-card-det .act-entry.editing::before { display: none; }
-.exp-acts-wrap .act-entry.editing input[type="text"],
-.issue-card-det .act-entry.editing input[type="text"] { flex: 1 1 auto; min-width: 220px; font-size: 12.5px; padding: 6px 10px; }
+.exp-acts-wrap .act-entry.editing .act-prog-ta,
+.issue-card-det .act-entry.editing .act-prog-ta { flex: 1 1 auto; min-width: 220px; min-height: 2.6em; font-size: 12.5px; padding: 6px 10px; }
 .exp-acts-wrap .act-entry.editing input[type="date"],
 .issue-card-det .act-entry.editing input[type="date"] { flex: 0 0 auto; font-size: 12px; padding: 5px 7px; }
 .exp-acts-wrap .act-entry.editing .mini-btn,
 .issue-card-det .act-entry.editing .mini-btn { width: 30px; height: 30px; font-size: 13px; flex: 0 0 auto; }
+@media (max-width: 768px) {
+  /* 모바일만: 편집행 wrap → 날짜 / textarea(전체폭) / 버튼줄 순으로 자연 줄바꿈 (order 미사용 = Tab순서 일치). 데스크탑은 위 규칙 그대로 한 줄 유지 */
+  .exp-acts-wrap .act-entry.editing,
+  .issue-card-det .act-entry.editing { flex-wrap: wrap; }
+  .exp-acts-wrap .act-entry.editing .act-prog-ta,
+  .issue-card-det .act-entry.editing .act-prog-ta { flex: 1 1 100%; width: 100%; min-width: 0; font-size: 16px; min-height: 4.2em; }
+  .exp-acts-wrap .act-entry.editing .mini-btn,
+  .issue-card-det .act-entry.editing .mini-btn { width: 40px; height: 40px; }
+  #f-action-editor .act-edit-row .act-prog-ta { font-size: 16px; min-height: 4.2em; }
+}
 
 /* rev.4: 선박 내 검색 input (선명 옆) */
 .vmh-search { flex: 1 1 200px; max-width: 420px; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 11px; font-size: 12.5px; background: var(--surface-2); color: var(--text-secondary); }
