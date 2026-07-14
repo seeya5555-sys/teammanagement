@@ -102,6 +102,16 @@
   .fm-line .lk{color:var(--text-secondary);flex:0 0 104px}.fm-line .lv{color:var(--text-primary);font-weight:600}
   .fm-track-row{background:var(--blue-bg);border:1px solid var(--blue-border,var(--border));border-radius:10px;padding:8px 10px}
   .fm-track-toggle{cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600;min-height:32px;touch-action:manipulation}
+  .fm-np{display:flex;flex-direction:column;gap:7px;padding:8px 0;border-bottom:1px dashed var(--border-subtle)}
+  .fm-np-head{display:flex;align-items:center;gap:8px;font-size:13px}
+  .fm-np-head .lk{color:var(--text-secondary);flex:0 0 104px}.fm-np-head .lv{color:var(--text-primary);font-weight:600}
+  .fm-np-form{display:flex;gap:6px;margin-left:112px}
+  .fm-np-form input{min-width:0;flex:1;border:1px solid var(--border);background:var(--surface);color:var(--text-primary);border-radius:8px;padding:6px 8px;font-size:12px}
+  .fm-np-form input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-bg)}
+  .fm-np-form button{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text-primary);font-size:12px;font-weight:700;padding:6px 9px;cursor:pointer}
+  .fm-np-form button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  .fm-np-state{margin-left:112px;font-size:11px;color:var(--text-tertiary)}
+  .fm-np-state.manual{color:#b7791f;font-weight:700}
   @media(max-width:600px){
     .fm-stage{height:calc(100svh - 216px);min-height:420px;border-radius:10px}
     .fm-panel{top:auto;bottom:0;right:0;width:100%;max-width:none;height:min(72%,560px);border-left:0;border-top:1px solid var(--border);box-shadow:0 -6px 24px rgba(0,0,0,.08);transform:translateY(100%)}
@@ -409,7 +419,7 @@
   }
 
   function loadFleet(){
-  fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
+  return fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
     // 서버 45초 TTL과 30초 polling으로 upstream 부하를 제한하며 최신 위치를 반영한다.
     markers.forEach(o=>{map.removeLayer(o.m);map.removeLayer(o.tt);}); markers=[];
     document.querySelectorAll('.fm-empty').forEach(el=>el.remove());
@@ -483,6 +493,25 @@
       ';color:'+(on?'#92400e':'var(--text)')+';border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600">'+
       (on?'ON · 해제':'OFF · 켜기')+'</button>'+warn+'</span></div>';
   }
+  function nextPortSec(v){
+    const np=v.next_port||{};
+    const manual=!!(v.next_port_manual&&v.next_port_manual.active);
+    const auto=v.next_port_auto||{};
+    const state=manual
+      ? '<div class="fm-np-state manual">Manual override'+(auto.name?' · auto: '+esc(auto.name):'')+'</div>'
+      : '<div class="fm-np-state">Automatic source'+(np.cd?' · code '+esc(np.cd):'')+'</div>';
+    const reset=manual?'<button type="button" class="fm-nextport-reset" data-vessel="'+esc(v.name)+'">Reset</button>':'';
+    return '<div class="fm-np">'+
+      '<div class="fm-np-head"><span class="lk">Next Port</span><span class="lv">'+
+      esc(np.name||'—')+(v.eta?' <span class="fm-eta">ETA '+esc(v.eta)+'</span>':'')+'</span></div>'+
+      state+
+      '<div class="fm-np-form">'+
+        '<input class="fm-nextport-input" data-vessel="'+esc(v.name)+'" type="text" maxlength="120" placeholder="Port name or UN/LOCODE" autocomplete="off"/>'+
+        '<button type="button" class="fm-nextport-save primary" data-vessel="'+esc(v.name)+'">Save</button>'+
+        reset+
+      '</div>'+
+    '</div>';
+  }
   window.fmToggleEmail=function(vessel,enable){
     fetch('{{ url_for("api_fleet_map_email_watch_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({vessel:vessel,enabled:enable})})
@@ -498,6 +527,40 @@
     const b=ev.target.closest&&ev.target.closest('.fm-email-toggle');
     if(!b) return;
     window.fmToggleEmail(b.getAttribute('data-vessel')||'', b.getAttribute('data-enable')==='true');
+  });
+  function refreshFleetPanel(vessel){
+    loadFleet().then(()=>{ const nv=FLEET.find(x=>(x.name||'')===vessel); if(nv) openV(nv); });
+  }
+  document.addEventListener('click',function(ev){
+    const save=ev.target.closest&&ev.target.closest('.fm-nextport-save');
+    const reset=ev.target.closest&&ev.target.closest('.fm-nextport-reset');
+    if(!save&&!reset) return;
+    const vessel=(save||reset).getAttribute('data-vessel')||'';
+    if(save){
+      const input=document.querySelector('.fm-nextport-input[data-vessel="'+CSS.escape(vessel)+'"]');
+      const port=input?input.value.trim():'';
+      fetch('{{ url_for("api_fleet_map_next_port_override_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({vessel:vessel,port:port})})
+        .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
+          if(!ok||!j.ok){alert('Next Port 저장 실패: '+(j.error||''));return;}
+          refreshFleetPanel(vessel);
+        }).catch(()=>alert('Next Port 저장 요청 실패'));
+    }else{
+      fetch('{{ url_for("api_fleet_map_next_port_override_delete") }}',{method:'DELETE',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({vessel:vessel})})
+        .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
+          if(!ok||!j.ok){alert('Next Port reset 실패: '+(j.error||''));return;}
+          refreshFleetPanel(vessel);
+        }).catch(()=>alert('Next Port reset 요청 실패'));
+    }
+  });
+  document.addEventListener('keydown',function(ev){
+    const input=ev.target.closest&&ev.target.closest('.fm-nextport-input');
+    if(!input||ev.key!=='Enter') return;
+    ev.preventDefault();
+    const vessel=input.getAttribute('data-vessel')||'';
+    const btn=document.querySelector('.fm-nextport-save[data-vessel="'+CSS.escape(vessel)+'"]');
+    if(btn) btn.click();
   });
   // slowspace 섹션: 최신 동정만(Notification 있을 때만). ETA/Next Port는 표시 안 함(손유석 지시).
   function slowSec(v){
@@ -598,7 +661,7 @@
       '<div class="fm-line"><span class="lk">최근/Plan</span><span class="lv">'+esc(v.vetting_plan||'—')+'</span></div>'+
       '<div class="fm-sec">항로 (운항보고서 Schedule)</div>'+
       '<div class="fm-line"><span class="lk">In Port</span><span class="lv">'+esc((v.prev_port&&v.prev_port.name)||'—')+'</span></div>'+
-      '<div class="fm-line"><span class="lk">Next Port</span><span class="lv">'+esc((v.next_port&&v.next_port.name)||'—')+(v.eta?' <span class="fm-eta">ETA '+esc(v.eta)+'</span>':'')+'</span></div>'+
+      nextPortSec(v)+
       slowSec(v);
     document.getElementById('fmPanel').classList.add('open');drawRoute(v);
   }

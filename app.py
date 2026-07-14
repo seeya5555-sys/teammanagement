@@ -340,6 +340,27 @@ def init_db(drop=False):
             )
         """)
 
+        # Fleet Map manual Next Port override. Snapshot tracks the automatic source identity
+        # so a changed upstream next-port automatically invalidates stale manual entries.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fleet_next_port_override (
+                vessel_key     TEXT PRIMARY KEY,
+                vessel_name    TEXT NOT NULL,
+                manual_label   TEXT NOT NULL,
+                manual_code    TEXT,
+                manual_lat     REAL NOT NULL,
+                manual_lng     REAL NOT NULL,
+                auto_snapshot  TEXT NOT NULL,
+                active         INTEGER NOT NULL DEFAULT 1,
+                inactivated_at TEXT,
+                inactivated_reason TEXT,
+                created_by     TEXT,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_by     TEXT,
+                updated_at     TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+
         # AOR(Technical) 검토→상신 draft 큐 (prep 엔진이 ingest, 사람이 /aor 탭서 승인→맥이 SVMS 상신)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS aor_draft (
@@ -10506,6 +10527,24 @@ def api_ext_shipwiki_push():
 
 # ───────────────────────── Fleet Map (대시보드) ─────────────────────────
 FLEET_MAP_FILE = os.path.join(INSTANCE_DIR, 'fleet_map.json')
+FLEET_MAP_PACKAGED_DIR = os.path.join(BASE_DIR, 'data', 'fleet_map')
+FLEET_MAP_AUTOMATION_DIR = os.path.abspath(os.path.join(BASE_DIR, '..', '..', 'automation', 'fleet-map'))
+FLEET_LOCODE_FILES = (
+    os.path.join(FLEET_MAP_PACKAGED_DIR, 'locode.json'),
+    os.path.join(FLEET_MAP_AUTOMATION_DIR, 'locode.json'),
+)
+FLEET_LOCODE_NAME_FILES = (
+    os.path.join(FLEET_MAP_PACKAGED_DIR, 'locode_name.json'),
+    os.path.join(FLEET_MAP_AUTOMATION_DIR, 'locode_name.json'),
+)
+FLEET_COUNTRY_MAP_FILES = (
+    os.path.join(FLEET_MAP_PACKAGED_DIR, 'country_map.json'),
+    os.path.join(FLEET_MAP_AUTOMATION_DIR, 'country_map.json'),
+)
+FLEET_LOCODE_LABEL_FILES = (
+    os.path.join(FLEET_MAP_PACKAGED_DIR, 'locode_labels.json'),
+)
+_fleet_port_catalog_cache = None
 
 # Fleet Map 위치는 기존 SVMS/VesselTracker 적재본을 fallback으로 유지하되, 화면 조회 시
 # TRMT DB의 최신 ship-position으로 덮어쓴다. 키는 반드시 systemd EnvironmentFile에만 둔다.
@@ -10517,6 +10556,338 @@ TRMTDB_POSITION_CACHE_TTL = 45
 _trmtdb_position_cache = {'at': 0.0, 'loaded': False, 'vessels': [], 'fetched_at': None, 'error': None}
 _trmtdb_position_lock = threading.Lock()
 _trmtdb_position_refreshing = False
+_fleet_next_port_lock = threading.RLock()
+
+
+def _norm_port_text(s):
+    return re.sub(r'[^A-Z0-9]+', '', str(s or '').upper())
+
+
+def _norm_locode(s):
+    code = _norm_port_text(s)
+    return code if re.fullmatch(r'[A-Z]{2}[A-Z0-9]{3}', code or '') else ''
+
+
+def _valid_latlng_pair(xy):
+    if not (isinstance(xy, (list, tuple)) and len(xy) == 2):
+        return None
+    try:
+        lat, lng = float(xy[0]), float(xy[1])
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lng)):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    return [lat, lng]
+
+
+def _load_json_first(paths):
+    for path in paths:
+        try:
+            with open(path, encoding='utf-8') as f:
+                return json.load(f)
+        except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def _fleet_port_catalog():
+    """Read-only deterministic port catalog used by Fleet Map correction/overrides."""
+    global _fleet_port_catalog_cache
+    if _fleet_port_catalog_cache is not None:
+        return _fleet_port_catalog_cache
+    locodes, by_name, countries, labels = {}, {}, {}, {}
+    raw = _load_json_first(FLEET_LOCODE_FILES)
+    if isinstance(raw, dict):
+        for code, xy in raw.items():
+            point = _valid_latlng_pair(xy)
+            if isinstance(code, str) and point:
+                locodes[_norm_port_text(code)] = point
+    raw_countries = _load_json_first(FLEET_COUNTRY_MAP_FILES)
+    if isinstance(raw_countries, dict):
+        countries = {str(k).upper(): str(v).upper() for k, v in raw_countries.items()}
+    raw_labels = _load_json_first(FLEET_LOCODE_LABEL_FILES)
+    if isinstance(raw_labels, dict):
+        labels = {_norm_locode(k): str(v).strip() for k, v in raw_labels.items()
+                  if _norm_locode(k) and str(v).strip()}
+    idx = _load_json_first(FLEET_LOCODE_NAME_FILES)
+    if isinstance(idx, dict):
+        for key, xy in (idx.get('by') or {}).items():
+            if not (isinstance(key, str) and '|' in key and isinstance(xy, list) and len(xy) == 2):
+                continue
+            point = _valid_latlng_pair(xy)
+            if not point:
+                continue
+            point = (round(point[0], 6), round(point[1], 6))
+            iso, name_key = key.split('|', 1)
+            by_name.setdefault(name_key, set()).add(point)
+            by_name.setdefault(iso + '|' + name_key, set()).add(point)
+    for code, label in labels.items():
+        xy = locodes.get(code)
+        if not xy:
+            continue
+        point = (round(float(xy[0]), 6), round(float(xy[1]), 6))
+        name_key = _norm_port_text(label)
+        by_name.setdefault(name_key, set()).add(point)
+        by_name.setdefault(code[:2] + '|' + name_key, set()).add(point)
+    _fleet_port_catalog_cache = {
+        'locodes': locodes,
+        'by_name': by_name,
+        'countries': countries,
+        'labels': labels,
+    }
+    return _fleet_port_catalog_cache
+
+
+def _fleet_extract_next_port_code(v):
+    port = v.get('next_port') if isinstance(v, dict) else None
+    candidates = []
+    if isinstance(port, dict):
+        candidates.extend(port.get(key) for key in ('cd', 'code', 'locode', 'unlocode'))
+    if not isinstance(v, dict):
+        return ''
+    candidates.extend((v.get('next_port_cd'), v.get('dest_cd')))
+    for candidate in candidates:
+        code = _norm_locode(candidate)
+        if code:
+            return code
+    return ''
+
+
+def _fleet_auto_next_port_identity(v):
+    """Normalized automatic Next Port identity. Prefer explicit code over display text."""
+    if not isinstance(v, dict):
+        return None
+    code = _fleet_extract_next_port_code(v)
+    if code:
+        return 'CODE:' + code
+    port = v.get('next_port') if isinstance(v.get('next_port'), dict) else {}
+    text = port.get('name') or v.get('dest_port') or v.get('next_port')
+    norm = _norm_port_text(text)
+    return ('TEXT:' + norm) if norm else None
+
+
+def _fleet_resolve_port_input(value):
+    """Resolve user-entered UN/LOCODE or unambiguous catalog name to name/code/xy."""
+    if not isinstance(value, str):
+        return None, 'port must be text'
+    raw = value.strip()
+    if not raw:
+        return None, 'port required'
+    if len(raw) > 120:
+        return None, 'port too long'
+    cat = _fleet_port_catalog()
+    code = _norm_locode(raw)
+    if code:
+        xy = cat['locodes'].get(code)
+        if xy:
+            return {'label': cat['labels'].get(code) or code, 'code': code, 'xy': xy}, None
+
+    parts = [p.strip() for p in raw.split(',') if p.strip()]
+    name_raw = parts[0] if parts else raw
+    name_key = _norm_port_text(re.sub(r'\(.*?\)|=.*', ' ', name_raw).split('/')[0])
+    if not name_key:
+        return None, 'port required'
+    lookup_key = name_key
+    if len(parts) > 1:
+        iso = cat['countries'].get(parts[-1].upper())
+        if not iso:
+            return None, 'unknown country'
+        lookup_key = iso + '|' + name_key
+    matches = cat['by_name'].get(lookup_key) or set()
+    if len(matches) != 1:
+        return None, 'unknown or ambiguous port'
+    lat, lng = next(iter(matches))
+    label = re.sub(r'\s+', ' ', raw).strip()
+    return {'label': label, 'code': None, 'xy': [float(lat), float(lng)]}, None
+
+
+def _fleet_apply_code_first_next_port(v):
+    """Correct automatic Next Port coordinates when an explicit code is present."""
+    if not isinstance(v, dict):
+        return
+    code = _fleet_extract_next_port_code(v)
+    if not code:
+        return
+    xy = _fleet_port_catalog()['locodes'].get(code)
+    if not xy:
+        return
+    port = v.get('next_port')
+    if not isinstance(port, dict):
+        port = {}
+    port['cd'] = code
+    port['xy'] = [float(xy[0]), float(xy[1])]
+    if not port.get('name'):
+        port['name'] = _fleet_port_catalog()['labels'].get(code) or code
+    v['next_port'] = port
+    v['dest_xy'] = port['xy']
+    v['dest_port'] = port.get('name') or v.get('dest_port')
+    v['next_port_source'] = 'code'
+    v['route_legs'] = _fleet_route_to_destination(v, port['xy'])
+
+
+def _fleet_route_to_destination(v, dest_xy):
+    dest = _valid_latlng_pair(dest_xy)
+    if not dest:
+        return []
+    legs = v.get('route_legs') if isinstance(v, dict) else None
+    if isinstance(legs, list):
+        valid_legs = []
+        for leg in legs:
+            if not isinstance(leg, list):
+                continue
+            pts = []
+            for point in leg:
+                pt = _valid_latlng_pair(point)
+                if pt:
+                    pts.append(pt)
+            if len(pts) >= 2:
+                valid_legs.append(pts)
+        if valid_legs:
+            valid_legs[-1][-1] = dest
+            return valid_legs
+    here = _valid_latlng_pair([v.get('lat'), v.get('lng')]) if isinstance(v, dict) else None
+    return [[here, dest]] if here else []
+
+
+def _ensure_fleet_next_port_override_table():
+    execute("""
+        CREATE TABLE IF NOT EXISTS fleet_next_port_override (
+            vessel_key     TEXT PRIMARY KEY,
+            vessel_name    TEXT NOT NULL,
+            manual_label   TEXT NOT NULL,
+            manual_code    TEXT,
+            manual_lat     REAL NOT NULL,
+            manual_lng     REAL NOT NULL,
+            auto_snapshot  TEXT NOT NULL,
+            active         INTEGER NOT NULL DEFAULT 1,
+            inactivated_at TEXT,
+            inactivated_reason TEXT,
+            created_by     TEXT,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_by     TEXT,
+            updated_at     TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    cols = {r['name'] for r in query("PRAGMA table_info(fleet_next_port_override)")}
+    for col, ddl in (
+            ('active', "ALTER TABLE fleet_next_port_override ADD COLUMN active INTEGER NOT NULL DEFAULT 1"),
+            ('inactivated_at', "ALTER TABLE fleet_next_port_override ADD COLUMN inactivated_at TEXT"),
+            ('inactivated_reason', "ALTER TABLE fleet_next_port_override ADD COLUMN inactivated_reason TEXT"),
+            ('updated_by', "ALTER TABLE fleet_next_port_override ADD COLUMN updated_by TEXT")):
+        if col not in cols:
+            execute(ddl)
+
+
+def _fleet_load_manual_overrides(ensure_schema=True):
+    if ensure_schema:
+        _ensure_fleet_next_port_override_table()
+    elif not query("SELECT name FROM sqlite_master WHERE type='table' AND name='fleet_next_port_override'", one=True):
+        return {}
+    return {
+        r['vessel_key']: dict(r)
+        for r in query("SELECT * FROM fleet_next_port_override WHERE active=1")
+    }
+
+
+def _fleet_apply_manual_next_port_overrides(fleet, ensure_schema=True):
+    overrides = _fleet_load_manual_overrides(ensure_schema=ensure_schema)
+    if not overrides:
+        return
+    for v in fleet:
+        key = _vkey(v.get('name'))
+        row = overrides.get(key)
+        if not row:
+            continue
+        auto_id = _fleet_auto_next_port_identity(v)
+        if not auto_id or row['auto_snapshot'] != auto_id:
+            continue
+        xy = [float(row['manual_lat']), float(row['manual_lng'])]
+        auto_port = v.get('next_port') if isinstance(v.get('next_port'), dict) else {}
+        v['next_port_auto'] = {'name': auto_port.get('name'), 'cd': auto_port.get('cd') or auto_port.get('code')}
+        v['next_port'] = {
+            'name': row['manual_label'],
+            'cd': row['manual_code'],
+            'xy': xy,
+            'manual': True,
+            'source': 'manual',
+        }
+        v['dest_port'] = row['manual_label']
+        v['dest_xy'] = xy
+        v['next_port_manual'] = {'active': True, 'label': row['manual_label'], 'code': row['manual_code']}
+        v['route_legs'] = _fleet_route_to_destination(v, xy)
+
+
+def _fleet_invalidate_next_port_overrides_from_push(fleet, actor='fleet-push'):
+    """One-way invalidate active manual overrides whose automatic source changed/missing."""
+    _ensure_fleet_next_port_override_table()
+    active = query("SELECT vessel_key, auto_snapshot FROM fleet_next_port_override WHERE active=1")
+    if not active:
+        return 0
+    current = {}
+    for v in fleet or []:
+        if not isinstance(v, dict):
+            continue
+        _fleet_apply_code_first_next_port(v)
+        current[_vkey(v.get('name'))] = _fleet_auto_next_port_identity(v)
+    updates = []
+    for row in active:
+        if row['vessel_key'] not in current:
+            continue
+        auto_id = current.get(row['vessel_key'])
+        if not auto_id:
+            updates.append(('auto identity missing', row['vessel_key']))
+        elif auto_id != row['auto_snapshot']:
+            updates.append(('auto identity changed', row['vessel_key']))
+    if not updates:
+        return 0
+    db = get_db()
+    for reason, key in updates:
+        db.execute("""
+            UPDATE fleet_next_port_override
+               SET active=0,
+                   inactivated_at=datetime('now','localtime'),
+                   inactivated_reason=?,
+                   updated_by=?,
+                   updated_at=datetime('now','localtime')
+             WHERE vessel_key=? AND active=1
+        """, (reason, actor, key))
+    db.commit()
+    return len(updates)
+
+
+def _fleet_visible_auto_vessels():
+    """Fleet items visible to the current UI user, with corrected automatic next port only."""
+    try:
+        with open(FLEET_MAP_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+    except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError):
+        return []
+    fleet = data.get('fleet') or []
+    for v in fleet:
+        _fleet_apply_code_first_next_port(v)
+    vsup = {_vkey(r['vname']): r['sname'] for r in
+            query("SELECT v.name AS vname, s.name AS sname FROM supervisor_vessels sv "
+                  "JOIN vessels v ON v.id=sv.vessel_id JOIN supervisors s ON s.id=sv.supervisor_id")}
+    for v in fleet:
+        v['supervisor'] = vsup.get(_vkey(v.get('name')))
+    fleet = [v for v in fleet if v.get('supervisor')]
+    is_admin = (session.get('role') == 'admin')
+    sup_id = session.get('supervisor_id')
+    if sup_id and not is_admin:
+        srow = query("SELECT name FROM supervisors WHERE id=?", (sup_id,), one=True)
+        sup_name = srow['name'] if srow else None
+        allowed = {(_vkey(r['name'])) for r in
+                   query("SELECT v.name FROM supervisor_vessels sv "
+                         "JOIN vessels v ON v.id=sv.vessel_id WHERE sv.supervisor_id=?", (sup_id,))}
+        if allowed:
+            fleet = [v for v in fleet if _vkey(v.get('name')) in allowed]
+        elif sup_name:
+            fleet = [v for v in fleet if v.get('supervisor') == sup_name]
+        else:
+            fleet = []
+    return fleet
 
 
 def _trmtdb_positions():
@@ -10679,13 +11050,18 @@ def api_ext_fleet_map_push():
                 or not isinstance(v.get('lat'), (int, float))
                 or not isinstance(v.get('lng'), (int, float))):
             return jsonify({'ok': False, 'error': 'invalid fleet item (name/lat/lng required)'}), 400
-    d['_received_at'] = datetime.now().isoformat(timespec='seconds')
-    tmp = FLEET_MAP_FILE + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(d, f, ensure_ascii=False)
-    os.replace(tmp, FLEET_MAP_FILE)
+    with _fleet_next_port_lock:
+        for v in d['fleet']:
+            _fleet_apply_code_first_next_port(v)
+        d['_received_at'] = datetime.now().isoformat(timespec='seconds')
+        tmp = FLEET_MAP_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(tmp, FLEET_MAP_FILE)
+        invalidated = _fleet_invalidate_next_port_overrides_from_push(d['fleet'])
     return jsonify({'ok': True, 'count': len(d.get('fleet') or []),
-                    'generated_at': d.get('generated_at')})
+                    'generated_at': d.get('generated_at'),
+                    'next_port_overrides_invalidated': invalidated})
 
 
 FLEET_OVERRIDE_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_overrides.json')
@@ -10825,6 +11201,83 @@ def api_ext_fleet_map_email_watch_get():
     return jsonify({'ok': True, 'vessels': list(w.values()), 'keys': list(w.keys())})
 
 
+@app.route('/api/fleet-map/next-port-override', methods=['POST'])
+@login_required
+def api_fleet_map_next_port_override_set():
+    """Dashboard write endpoint: save per-vessel manual Next Port override."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'ok': False, 'error': 'invalid json'}), 400
+    if session.get('role') != 'admin' and not session.get('supervisor_id'):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    vessel = d.get('vessel')
+    port_input = d.get('port')
+    if not isinstance(vessel, str) or not vessel.strip() or len(vessel) > 120:
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    resolved, err = _fleet_resolve_port_input(port_input)
+    if err:
+        return jsonify({'ok': False, 'error': err}), 400
+    key = _vkey(vessel)
+    with _fleet_next_port_lock:
+        visible = _fleet_visible_auto_vessels()
+        v = next((x for x in visible if _vkey(x.get('name')) == key), None)
+        if not v:
+            return jsonify({'ok': False, 'error': 'vessel not found'}), 400
+        auto_id = _fleet_auto_next_port_identity(v)
+        if not auto_id:
+            return jsonify({'ok': False, 'error': 'automatic next port unavailable'}), 400
+        _ensure_fleet_next_port_override_table()
+        xy = resolved['xy']
+        user = session.get('username') or str(session.get('supervisor_id') or '')
+        db = get_db()
+        db.execute("""
+            INSERT INTO fleet_next_port_override
+                (vessel_key, vessel_name, manual_label, manual_code, manual_lat, manual_lng,
+                 auto_snapshot, active, inactivated_at, inactivated_reason, created_by, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?, ?, datetime('now','localtime'))
+            ON CONFLICT(vessel_key) DO UPDATE SET
+                vessel_name=excluded.vessel_name,
+                manual_label=excluded.manual_label,
+                manual_code=excluded.manual_code,
+                manual_lat=excluded.manual_lat,
+                manual_lng=excluded.manual_lng,
+                auto_snapshot=excluded.auto_snapshot,
+                active=1,
+                inactivated_at=NULL,
+                inactivated_reason=NULL,
+                updated_by=excluded.updated_by,
+                updated_at=datetime('now','localtime')
+        """, (key, v.get('name') or vessel.strip(), resolved['label'], resolved.get('code'),
+              float(xy[0]), float(xy[1]), auto_id, user, user))
+        db.commit()
+    return jsonify({'ok': True, 'vessel': v.get('name'), 'next_port': {
+        'name': resolved['label'], 'cd': resolved.get('code'), 'xy': [float(xy[0]), float(xy[1])],
+        'manual': True,
+    }})
+
+
+@app.route('/api/fleet-map/next-port-override', methods=['DELETE'])
+@login_required
+def api_fleet_map_next_port_override_delete():
+    """Dashboard write endpoint: clear per-vessel manual Next Port override."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'ok': False, 'error': 'invalid json'}), 400
+    if session.get('role') != 'admin' and not session.get('supervisor_id'):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    vessel = d.get('vessel')
+    if not isinstance(vessel, str) or not vessel.strip() or len(vessel) > 120:
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    key = _vkey(vessel)
+    visible_keys = {_vkey(v.get('name')) for v in _fleet_visible_auto_vessels()}
+    if key not in visible_keys:
+        return jsonify({'ok': False, 'error': 'vessel not found'}), 400
+    with _fleet_next_port_lock:
+        _ensure_fleet_next_port_override_table()
+        execute("DELETE FROM fleet_next_port_override WHERE vessel_key=?", (key,))
+    return jsonify({'ok': True, 'vessel': vessel.strip()})
+
+
 @app.route('/api/fleet-map/data')
 @login_required
 def api_fleet_map_data():
@@ -10836,6 +11289,8 @@ def api_fleet_map_data():
         return jsonify({'fleet': [], 'supervisors': [], 'generated_at': None,
                         'empty': True})
     fleet = data.get('fleet') or []
+    for v in fleet:
+        _fleet_apply_code_first_next_port(v)
     # 선위 override(이메일 등 외부 소스) 병합 — 특정 선박만 임시로 다른 소스 위치 사용.
     try:
         with open(FLEET_OVERRIDE_FILE, encoding='utf-8') as f:
@@ -10936,6 +11391,7 @@ def api_fleet_map_data():
         else:
             fleet = []
         data = {**data, 'fleet': fleet, 'scoped_to': sup_name}
+    _fleet_apply_manual_next_port_overrides(fleet, ensure_schema=False)
     # ── 데이터 신선도 ALERT (사이트 내 표시) ─────────────────────────────
     # KST = UTC+9 (서버 TZ 무관하게 utcnow 기준). 6h 스케줄 → 파이프라인/선박별 누락 산출.
     now_k = datetime.utcnow() + timedelta(hours=9)
@@ -11724,6 +12180,36 @@ def _auto_migrate():
                 conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
         except Exception as e:
             print(f'[auto_migrate] schema 재적용 건너뜀: {e}')
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fleet_next_port_override (
+                    vessel_key     TEXT PRIMARY KEY,
+                    vessel_name    TEXT NOT NULL,
+                    manual_label   TEXT NOT NULL,
+                    manual_code    TEXT,
+                    manual_lat     REAL NOT NULL,
+                    manual_lng     REAL NOT NULL,
+                    auto_snapshot  TEXT NOT NULL,
+                    active         INTEGER NOT NULL DEFAULT 1,
+                    inactivated_at TEXT,
+                    inactivated_reason TEXT,
+                    created_by     TEXT,
+                    created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    updated_by     TEXT,
+                    updated_at     TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                )
+            """)
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(fleet_next_port_override)').fetchall()]
+            for col, ddl in (
+                    ('active', "ALTER TABLE fleet_next_port_override ADD COLUMN active INTEGER NOT NULL DEFAULT 1"),
+                    ('inactivated_at', "ALTER TABLE fleet_next_port_override ADD COLUMN inactivated_at TEXT"),
+                    ('inactivated_reason', "ALTER TABLE fleet_next_port_override ADD COLUMN inactivated_reason TEXT"),
+                    ('updated_by', "ALTER TABLE fleet_next_port_override ADD COLUMN updated_by TEXT")):
+                if col not in cols:
+                    conn.execute(ddl)
+            conn.commit()
+        except Exception as e:
+            print(f'[auto_migrate] fleet_next_port_override 점검 건너뜀: {e}')
         # vt_findings.user_remark (자율 입력 Remark), priority (중요 체크)
         try:
             cols = [r[1] for r in conn.execute('PRAGMA table_info(vt_findings)').fetchall()]
