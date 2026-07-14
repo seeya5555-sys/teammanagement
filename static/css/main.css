@@ -4977,6 +4977,8 @@ tr.cls-urgent-row .c-no { color: #dc2626; font-weight: 700; }
   .daily-main { border-radius: 12px; }
   .daily-main .vmh-vsel { margin: 12px 14px 0; width: calc(100% - 28px); }
   .daily-main .card-list { padding: 12px; }
+  /* 모바일 topnav는 스크롤 시 사라짐(고정 안 됨) → 선박헤더를 viewport 최상단에 붙여 상단 빈 띠(gap) 제거. 데스크탑은 topnav 54px 아래 유지 */
+  .daily-main .vmain-head { top: 0; }
 }
 
 /* ═══ rev.4 컴팩트 행 + 펼침 카드(상세+진행사항 타임라인) ═══ */
