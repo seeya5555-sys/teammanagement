@@ -2978,7 +2978,7 @@ function wireEvents() {
   // 나머지(Today·검색·필터·업무요약추출·items)는 안 쓰므로 툴바째 숨김. (필터 요소는 DOM 유지 → JS 정상)
   {
     const pa = document.querySelector('.page-actions');
-    ['#btn-export-xlsx', '#btn-export-xlsx-en', '#btn-summary-gen'].forEach(s => {
+    ['#btn-pdf-print', '#btn-export-xlsx', '#btn-export-xlsx-en', '#btn-summary-gen'].forEach(s => {
       const b = $(s); if (b && pa) pa.append(b);
     });
     const tb = document.querySelector('.toolbar'); if (tb) tb.style.display = 'none';
@@ -3009,6 +3009,74 @@ function wireEvents() {
   $('#btn-export-xlsx').addEventListener('click', () => {
     window.location = '/api/issues/export?' + buildExportParams().toString();
   });
+
+  // PDF 추출 — 현재 선택 선박의 이슈를 전체 펼쳐 클린 문서로 만들고 인쇄(브라우저 'PDF로 저장', 폭 맞춤)
+  function ensurePdfArea() {
+    let a = document.getElementById('pdf-print-area');
+    if (!a) { a = document.createElement('div'); a.id = 'pdf-print-area'; document.body.appendChild(a); }
+    return a;
+  }
+  function buildPdfDoc() {
+    const g = curVesselGroup();
+    if (!g || g.id === '__none__') { alert('좌측에서 선박을 먼저 선택하세요.'); return null; }
+    const rows = displayIssues(g.issues);
+    if (!rows.length) { alert('추출할 이슈가 없습니다.'); return null; }
+    const noMap = chronoNoMap(g.issues);
+    const parts = [];
+    parts.push(`<div class="pdf-head">
+      <div class="pdf-title">${escHtml(g.name)}</div>
+      <div class="pdf-meta">${escHtml(subtabCountLabel())} 이슈 ${rows.length}건 · 추출일 ${todayISO()}</div>
+    </div>`);
+    for (const i of rows) {
+      const no = noMap.get(i.id) || '';
+      const pri = (PRI_MAP[i.priority] || PRI_MAP.Normal).label;
+      const stat = (STAT_MAP[i.status] || STAT_MAP.Open).label;
+      const acts = Array.isArray(i.actions) ? i.actions : [];
+      const actHtml = acts.length
+        ? acts.map(a => `<div class="pdf-act"><span class="pdf-act-date">${escHtml(a.date || '')}</span><span class="pdf-act-prog">${escHtml(a.progress || '')}</span></div>`).join('')
+        : '<div class="pdf-act pdf-act-empty">—</div>';
+      parts.push(`<div class="pdf-issue">
+        <div class="pdf-issue-head">
+          <span class="pdf-no">#${no}</span>
+          <span class="pdf-topic">${escHtml(i.item_topic || '(제목 없음)')}</span>
+          <span class="pdf-badge pdf-pri">${escHtml(pri)}</span>
+          <span class="pdf-badge pdf-stat">${escHtml(stat)}</span>
+          <span class="pdf-date">발생일 ${escHtml(i.issue_date || '-')}</span>
+        </div>
+        <div class="pdf-sec"><div class="pdf-lab">상세 내용</div><div class="pdf-desc">${escHtml(i.description || '—')}</div></div>
+        <div class="pdf-sec"><div class="pdf-lab">진행사항 (조치 이력)</div>${actHtml}</div>
+      </div>`);
+    }
+    return parts.join('');
+  }
+  {
+    const btnPdf = $('#btn-pdf-print');
+    if (btnPdf) btnPdf.addEventListener('click', () => {
+      // 1) 화면 행도 전체 펼침(상세+현안) — 사용자가 한눈에 확인
+      const g = curVesselGroup();
+      if (g && g.issues) {
+        for (const i of displayIssues(g.issues)) { S.expandedRows.add(i.id); S.expandedActions.add(i.id); }
+        renderTable(); renderCards();
+      }
+      // 2) 클린 인쇄 문서 생성 후 인쇄(브라우저 PDF 저장, 폭 맞춤)
+      const html = buildPdfDoc();
+      if (html == null) return;
+      const area = ensurePdfArea();
+      area.innerHTML = html;
+      document.body.classList.add('pdf-printing');   // 인쇄 스타일 스코프(지출 영수증 인쇄와 충돌 방지)
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return; cleaned = true;
+        document.body.classList.remove('pdf-printing');
+        area.innerHTML = '';                         // hidden DOM에 이전 선박 데이터 잔존 방지
+        window.removeEventListener('afterprint', cleanup);
+      };
+      window.addEventListener('afterprint', cleanup, { once: true });
+      try { window.print(); }
+      catch (e) { cleanup(); return; }
+      setTimeout(cleanup, 60000);                     // afterprint 미발생 브라우저 폴백(cleaned 가드로 중복 무해)
+    });
+  }
 
   // 선박→담당자(영문 메일 인사말). 정규화 선명으로 매칭.
   const EN_CONTACT = {

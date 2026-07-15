@@ -5050,3 +5050,29 @@ col.c-stat { width: 92px; }
 .vmh-search { flex: 1 1 200px; max-width: 420px; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 11px; font-size: 12.5px; background: var(--surface-2); color: var(--text-secondary); }
 .vmh-search:focus { outline: none; border-color: var(--blue-border); background: var(--surface); color: var(--text-primary); }
 @media (max-width: 768px) { .vmh-search { flex-basis: 100%; max-width: none; order: 5; } .vmh-row { flex-wrap: wrap; } }
+
+/* ── Daily PDF 추출: 화면엔 숨김, 인쇄 시에만 클린 문서 노출(폭 맞춤). body.pdf-printing 스코프로 지출 영수증 인쇄와 분리 ── */
+#pdf-print-area { display: none; }
+@media print {
+  body.pdf-printing > *:not(#pdf-print-area) { display: none !important; }
+  body.pdf-printing #pdf-print-area {
+    display: block !important; position: static; width: 100%;
+    color: #111; font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    font-size: 11px; line-height: 1.45;
+  }
+  body.pdf-printing #pdf-print-area .pdf-head { border-bottom: 2px solid #333; margin-bottom: 10px; padding-bottom: 6px; }
+  body.pdf-printing #pdf-print-area .pdf-title { font-size: 18px; font-weight: 700; }
+  body.pdf-printing #pdf-print-area .pdf-meta { font-size: 11px; color: #555; margin-top: 2px; }
+  body.pdf-printing #pdf-print-area .pdf-issue { border: 1px solid #ccc; border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; page-break-inside: auto; }
+  body.pdf-printing #pdf-print-area .pdf-issue-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border-bottom: 1px solid #eee; padding-bottom: 4px; margin-bottom: 5px; page-break-after: avoid; }
+  body.pdf-printing #pdf-print-area .pdf-no { font-weight: 700; color: #444; }
+  body.pdf-printing #pdf-print-area .pdf-topic { font-weight: 700; font-size: 12px; flex: 1 1 auto; word-break: break-word; }
+  body.pdf-printing #pdf-print-area .pdf-badge { border: 1px solid #999; border-radius: 3px; padding: 0 5px; font-size: 10px; white-space: nowrap; }
+  body.pdf-printing #pdf-print-area .pdf-date { font-size: 10px; color: #666; white-space: nowrap; }
+  body.pdf-printing #pdf-print-area .pdf-lab { font-weight: 700; font-size: 10px; color: #666; margin: 5px 0 2px; }
+  body.pdf-printing #pdf-print-area .pdf-desc { white-space: pre-wrap; word-break: break-word; }
+  body.pdf-printing #pdf-print-area .pdf-act { display: flex; gap: 8px; padding: 2px 0; border-top: 1px dotted #e5e5e5; }
+  body.pdf-printing #pdf-print-area .pdf-act-date { flex: 0 0 auto; color: #777; font-size: 10px; min-width: 70px; }
+  body.pdf-printing #pdf-print-area .pdf-act-prog { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+  body.pdf-printing #pdf-print-area .pdf-act-empty { color: #999; border-top: none; }
+}
