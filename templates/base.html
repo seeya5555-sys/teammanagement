@@ -113,7 +113,7 @@
           <div class="nav-submenu">
             {{ nlink('reqgen_page', '도크 자재/수리') }}
             {{ nlink('dock_procure_page', 'Dock 발주현황') }}
-            {% if session.role == 'admin' %}<a href="/drydock" class="nav-link">⚓ Dock Manager</a>{% endif %}
+            {% if session.role == 'admin' %}<a href="/drydock" class="nav-link">Dock Manager</a>{% endif %}
           </div>
         </div>
 
@@ -221,7 +221,7 @@
         <div class="mm-sub-group">
           {{ nlink('reqgen_page', '도크 자재/수리') }}
           {{ nlink('dock_procure_page', 'Dock 발주현황') }}
-          {% if session.role == 'admin' %}<a href="/drydock" class="nav-link">⚓ Dock Manager</a>{% endif %}
+          {% if session.role == 'admin' %}<a href="/drydock" class="nav-link">Dock Manager</a>{% endif %}
         </div>
         <div class="mm-section"></div>
         <button type="button" class="mm-manual" id="btn-page-manual-mobile"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>현재 탭 설명서</button>
