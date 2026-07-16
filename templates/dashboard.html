@@ -100,6 +100,17 @@
   .fm-sec{font-size:11.5px;font-weight:700;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.03em;margin-bottom:-4px}
   .fm-line{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px dashed var(--border-subtle)}.fm-line:last-child{border-bottom:0}
   .fm-line .lk{color:var(--text-secondary);flex:0 0 104px}.fm-line .lv{color:var(--text-primary);font-weight:600}
+  /* 선위 소스 스와이프 토글 (AIS on/off) */
+  .fm-swipe{display:inline-block;position:relative;width:46px;height:26px;border-radius:999px;background:var(--border-strong);cursor:pointer;vertical-align:middle;transition:background .18s;flex:0 0 auto}
+  .fm-swipe.on{background:var(--green,#0F6E56)}
+  .fm-swipe .fm-swipe-k{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .18s}
+  .fm-swipe.on .fm-swipe-k{left:23px}
+  /* 대체 선위 세그먼트 */
+  .fm-seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .fm-seg .fm-src{border:0;background:var(--surface);color:var(--text-secondary);padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;min-height:32px}
+  .fm-seg .fm-src+.fm-src{border-left:1px solid var(--border)}
+  .fm-seg .fm-src.act-svms{background:var(--amber-bg,#F7F0DE);color:var(--amber,#8A6100)}
+  .fm-seg .fm-src.act-mail{background:var(--purple-bg,#ECEBF7);color:var(--purple,#534AB7)}
   .fm-track-row{background:var(--blue-bg);border:1px solid var(--blue-border,var(--border));border-radius:10px;padding:8px 10px}
   .fm-track-toggle{cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600;min-height:32px;touch-action:manipulation}
   .fm-np{display:flex;flex-direction:column;gap:7px;padding:8px 0;border-bottom:1px dashed var(--border-subtle)}
@@ -473,6 +484,8 @@
   }
   // 선위 소스 라벨: 이메일 override > TRMT DB 실시간 > SVMS noon. 끊김 경고 포함.
   function posSrcLabel(v){
+    if(v.pos_mode==='svms')
+      return '<span style="color:#8a6100">📊 위치=SVMS 운항데이터 <span style="font-size:11px">(수동 AIS off)</span></span>';
     if(v.pos_source==='email')
       return '<span style="color:#b7791f">📡 위치=Master 이메일'+(v.pos_reported_at?' ('+esc(String(v.pos_reported_at).slice(0,16).replace("T"," "))+')':'')+'</span>';
     if(v.pos_source==='trmtdb')
@@ -483,15 +496,22 @@
     }
     return '(SVMS noon)';
   }
-  // AIS off 대응 토글: 켜면 그 배가 이메일 선위 watch 등록 → 워처가 Outlook 메일에서 선위 갱신
-  function emailToggle(v){
-    const on=!!v.email_watch;
-    const warn=v.ais_stale?' <span style="color:#b7791f;font-size:11px">AIS 끊김 — 이메일 선위 권장</span>':'';
-    return '<div class="fm-line"><span class="lk">🛰️ AIS off → 이메일선위</span><span class="lv">'+
-      '<button type="button" class="fm-email-toggle" data-vessel="'+esc(v.name)+'" data-enable="'+(on?'false':'true')+'" '+
-      'style="cursor:pointer;border:1px solid '+(on?'#b7791f':'var(--border)')+';background:'+(on?'#fef3c7':'var(--surface)')+
-      ';color:'+(on?'#92400e':'var(--text)')+';border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600">'+
-      (on?'ON · 해제':'OFF · 켜기')+'</button>'+warn+'</span></div>';
+  // 선위 소스 3택: AIS(스와이프 ON) / OFF 시 [SVMS | 이메일] 선택. 상호배타.
+  function posSourceControl(v){
+    const mode=v.pos_mode||'ais';
+    const aisOn=(mode==='ais');
+    // 스와이프: ON=AIS 자동, 누르면 OFF(→기본 SVMS 고정). data-src=누르면 갈 소스.
+    const sw='<span class="fm-swipe'+(aisOn?' on':'')+'" role="switch" aria-checked="'+(aisOn?'true':'false')+'" '+
+      'data-vessel="'+esc(v.name)+'" data-src="'+(aisOn?'svms':'ais')+'" title="AIS 실시간 on/off"><span class="fm-swipe-k"></span></span>';
+    const warn=(aisOn&&v.ais_stale)?' <span style="color:#b7791f;font-size:11px">AIS 끊김 — off 권장</span>':'';
+    let seg='';
+    if(!aisOn){
+      seg='<div class="fm-line fm-seg-line"><span class="lk">대체 선위</span><span class="lv"><span class="fm-seg">'+
+        '<button type="button" class="fm-src'+(mode==='svms'?' act-svms':'')+'" data-vessel="'+esc(v.name)+'" data-src="svms">📊 SVMS</button>'+
+        '<button type="button" class="fm-src'+(mode==='email'?' act-mail':'')+'" data-vessel="'+esc(v.name)+'" data-src="email">✉️ 이메일</button>'+
+        '</span></span></div>';
+    }
+    return '<div class="fm-line"><span class="lk">🛰️ AIS 수신</span><span class="lv">'+sw+warn+'</span></div>'+seg;
   }
   function nextPortSec(v){
     const np=v.next_port||{};
@@ -512,21 +532,21 @@
       '</div>'+
     '</div>';
   }
-  window.fmToggleEmail=function(vessel,enable){
-    fetch('{{ url_for("api_fleet_map_email_watch_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({vessel:vessel,enabled:enable})})
+  window.fmSetPosSource=function(vessel,source){
+    fetch('{{ url_for("api_fleet_map_pos_source_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({vessel:vessel,source:source})})
       .then(r=>r.json()).then(res=>{
-        if(!res.ok){alert('토글 실패: '+(res.error||''));return;}
+        if(!res.ok){alert('선위 소스 변경 실패: '+(res.error||''));return;}
         // 데이터 새로고침해서 마커/패널 반영
         location.reload();
-      }).catch(()=>alert('토글 요청 실패'));
+      }).catch(()=>alert('선위 소스 변경 요청 실패'));
   };
   // DH2: inline onclick 폐기 → 위임 리스너. 선박명이 속성/JS 컨텍스트로 새지 않게
   // data-vessel(esc된 값)만 읽어 호출한다(문자열 인터폴레이션 XSS 차단).
   document.addEventListener('click',function(ev){
-    const b=ev.target.closest&&ev.target.closest('.fm-email-toggle');
+    const b=ev.target.closest&&ev.target.closest('.fm-swipe,.fm-src');
     if(!b) return;
-    window.fmToggleEmail(b.getAttribute('data-vessel')||'', b.getAttribute('data-enable')==='true');
+    window.fmSetPosSource(b.getAttribute('data-vessel')||'', b.getAttribute('data-src')||'ais');
   });
   function refreshFleetPanel(vessel){
     loadFleet().then(()=>{ const nv=FLEET.find(x=>(x.name||'')===vessel); if(nv) openV(nv); });
@@ -653,7 +673,7 @@
       dueLine+
       '<div class="fm-sec">운항 상태 '+posSrcLabel(v)+'</div>'+
       trackToggle(v)+
-      emailToggle(v)+
+      posSourceControl(v)+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
       cargo+

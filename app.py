@@ -11159,6 +11159,18 @@ def _load_email_watch():
         return {}
 
 
+# 수동 'SVMS 운항데이터 고정'(AIS off) 선박 — trmtdb/vesseltracker 오버레이를 건너뛰고 SVMS noon 위치 사용.
+FLEET_AIS_OFF_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_ais_off.json')
+
+
+def _load_ais_off():
+    try:
+        with open(FLEET_AIS_OFF_FILE, encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
 @app.route('/api/fleet-map/email-watch', methods=['POST'])
 @login_required
 def api_fleet_map_email_watch_set():
@@ -11173,6 +11185,13 @@ def api_fleet_map_email_watch_set():
         w[key] = {'vessel': d['vessel'],
                   'since': datetime.now().isoformat(timespec='seconds'),
                   'by': session.get('username') or session.get('supervisor_id')}
+        # 상호배타 — email 켜면 수동 SVMS 고정(ais-off) 해제(구 endpoint 우회로 두 모드 공존 차단).
+        _off = _load_ais_off()
+        if _off.pop(key, None) is not None:
+            _t = FLEET_AIS_OFF_FILE + '.tmp'
+            with open(_t, 'w', encoding='utf-8') as f:
+                json.dump(_off, f, ensure_ascii=False)
+            os.replace(_t, FLEET_AIS_OFF_FILE)
     else:
         w.pop(key, None)
         # watch 해제 시 이메일 override도 제거 → 즉시 AIS/SVMS 위치로 복귀
@@ -11199,6 +11218,64 @@ def api_ext_fleet_map_email_watch_get():
     """워처(맥)용 — 현재 이메일 선위 watch 켜진 선박 목록."""
     w = _load_email_watch()
     return jsonify({'ok': True, 'vessels': list(w.values()), 'keys': list(w.keys())})
+
+
+@app.route('/api/fleet-map/pos-source', methods=['POST'])
+@login_required
+def api_fleet_map_pos_source_set():
+    """대시보드 선박별 선위 소스 토글(상호배타 3택):
+      source='ais'   → 자동(TRMT DB 실시간/AIS 우선). 이메일·SVMS 고정 해제.
+      source='svms'  → AIS off, SVMS 운항데이터(noon)로 고정.
+      source='email' → Master 이메일 선위 override watch(기존).
+    payload: {vessel, source}."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict) or not d.get('vessel'):
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    source = str(d.get('source') or '').strip().lower()
+    if source not in ('ais', 'svms', 'email'):
+        return jsonify({'ok': False, 'error': 'source required (ais|svms|email)'}), 400
+    vessel = d.get('vessel')
+    if not isinstance(vessel, str) or not vessel.strip() or len(vessel) > 120:
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    vessel = vessel.strip()
+    key = _vkey(vessel)
+    w = _load_email_watch()
+    off = _load_ais_off()
+    # 상호배타 — 먼저 두 모드 다 해제한 뒤 선택 모드만 설정.
+    was_email = w.pop(key, None) is not None
+    off.pop(key, None)
+    meta = {'vessel': vessel, 'since': datetime.now().isoformat(timespec='seconds'),
+            'by': session.get('username') or session.get('supervisor_id')}
+    if source == 'email':
+        w[key] = meta
+    elif source == 'svms':
+        off[key] = meta
+    # 이메일 모드가 아니면 이메일 override(위치)도 항상 제거 → 즉시 AIS/SVMS 복귀(orphan override 방지).
+    if source != 'email':
+        try:
+            with open(FLEET_OVERRIDE_FILE, encoding='utf-8') as f:
+                ov = json.load(f)
+            if ov.pop(key, None) is not None:
+                t2 = FLEET_OVERRIDE_FILE + '.tmp'
+                with open(t2, 'w', encoding='utf-8') as f:
+                    json.dump(ov, f, ensure_ascii=False)
+                os.replace(t2, FLEET_OVERRIDE_FILE)
+        except (FileNotFoundError, ValueError):
+            pass
+    for path, obj in ((FLEET_EMAIL_WATCH_FILE, w), (FLEET_AIS_OFF_FILE, off)):
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(obj, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    return jsonify({'ok': True, 'source': source, 'vessel': vessel})
+
+
+@app.route('/api/ext/fleet-map/ais-off')
+@api_key_required
+def api_ext_fleet_map_ais_off_get():
+    """워처(맥 vt_overlay)용 — 수동 'SVMS 고정'(AIS off) 선박 목록. 키=선명 strip+lower."""
+    off = _load_ais_off()
+    return jsonify({'ok': True, 'vessels': list(off.values()), 'keys': list(off.keys())})
 
 
 @app.route('/api/fleet-map/next-port-override', methods=['POST'])
@@ -11328,8 +11405,10 @@ def api_fleet_map_data():
             # 신선도 ALERT 오탐 방지: override 보고일을 rpt_dt로
             if len(ov_date) == 8 and ov_date.isdigit():
                 v['rpt_dt'] = ov_date
-    # 실시간 위치는 TRMT DB를 우선 사용. 명시적인 Master 이메일 override만 그보다 우선한다.
-    data['position_feed'] = _overlay_trmtdb_positions(fleet, override_keys)
+    # 실시간 위치는 TRMT DB를 우선 사용. 이메일 override + 수동 SVMS 고정(ais-off) 선박은 덮어쓰기 제외.
+    _ais_off = _load_ais_off()
+    _ais_off_keys = set(_ais_off.keys())
+    data['position_feed'] = _overlay_trmtdb_positions(fleet, override_keys | _ais_off_keys)
     # 감독 = TRMT supervisor_vessels(권위)로 채움 — 이슈 없는 선박도 올바른 감독/필터 표시.
     vsup = {_vkey(r['vname']): r['sname'] for r in
             query("SELECT v.name AS vname, s.name AS sname FROM supervisor_vessels sv "
@@ -11368,12 +11447,15 @@ def api_fleet_map_data():
     _watch = _load_email_watch()
     _now_epoch = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
     for v in fleet:
-        v['email_watch'] = _vkey(v.get('name')) in _watch
+        _k = _vkey(v.get('name'))
+        v['email_watch'] = _k in _watch
+        v['ais_off'] = _k in _ais_off_keys              # 수동 SVMS 고정
+        v['pos_mode'] = 'email' if v['email_watch'] else ('svms' if v['ais_off'] else 'ais')
         ep = v.get('position_ts_epoch')
         src = str(v.get('position_source') or '')
-        # AIS 소스인데 마지막 측위가 AIS_STALE_HOURS 초과 → 끊김(이메일모드 켜져있으면 표시 안 함)
+        # AIS 소스인데 마지막 측위가 AIS_STALE_HOURS 초과 → 끊김(이메일/SVMS 수동모드면 표시 안 함)
         v['ais_stale'] = bool(
-            ep and 'AIS' in src and not v['email_watch']
+            ep and 'AIS' in src and not v['email_watch'] and not v['ais_off']
             and (_now_epoch - float(ep)) > AIS_STALE_HOURS * 3600)
     is_admin = (session.get('role') == 'admin')
     sup_id = session.get('supervisor_id')
