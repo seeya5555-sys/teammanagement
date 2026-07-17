@@ -45,16 +45,16 @@
 {% block content %}
 <div class="kc-wrap">
   <div class="kc-hero">
-    <h1>📖 KR-Con 룰 검색</h1>
+    <h1><svg class="ic-svg"><use href="#i-book-open"/></svg> KR-Con 룰 검색</h1>
     <div class="sub">KR선급 <b>KR-CON</b> — 클래스룰 · SOLAS · IMO · 코드(LSA/FSS/IBC…) · Resolution · Circular · IACS</div>
   </div>
 
   <div class="kc-searchbar">
     <input id="kc-q" class="kc-input" type="text" placeholder="자연어로 검색  예) Ballast water 배출 규정, 구명정 검사 주기, enclosed space entry" autocomplete="off">
     <button id="kc-go" class="kc-btn go">검색</button>
-    <button id="kc-ai" class="kc-btn ai" title="검색 상위 문서를 Gemini가 읽고 답변 합성">🤖 AI 요약</button>
+    <button id="kc-ai" class="kc-btn ai" title="검색 상위 문서를 Gemini가 읽고 답변 합성"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg> AI 요약</button>
   </div>
-  <div class="kc-tip">💡 영문 용어면 그대로(무료), 자연어/한글 질문이면 AI가 알아서 키워드로 바꿔 검색합니다. 답을 정리해서 보려면 <b>🤖 AI 요약</b>.</div>
+  <div class="kc-tip">영문 용어면 그대로(무료), 자연어/한글 질문이면 AI가 알아서 키워드로 바꿔 검색합니다. 답을 정리해서 보려면 <b>AI 요약</b>.</div>
 
   <div id="kc-out"></div>
 </div>
@@ -89,7 +89,7 @@
     }
     let h = '';
     if(d.rephrased && d.rephrased.length){
-      h += '<div class="kc-tip" style="margin-bottom:10px">🔎 자연어로 이해해서 <b>'+
+      h += '<div class="kc-tip" style="margin-bottom:10px">자연어로 이해해서 <b>'+
            d.rephrased.map(esc).join('</b>, <b>')+'</b> (으)로 검색함</div>';
     }
     if(d.categories && d.categories.length){
@@ -106,7 +106,7 @@
       '<div class="kc-card" data-id="'+r.id+'">'+
         '<div class="kc-title" data-act="view" data-id="'+r.id+'">'+esc(r.title||('문서 '+r.id))+'</div>'+
         (r.snippet ? '<div class="kc-snip">'+esc(r.snippet)+'…</div>' : '')+
-        '<div class="kc-row"><button class="kc-mini" data-act="view" data-id="'+r.id+'">📄 본문 보기</button></div>'+
+        '<div class="kc-row"><button class="kc-mini" data-act="view" data-id="'+r.id+'"><svg class="ic-svg"><use href="#i-file-text"/></svg> 본문 보기</button></div>'+
         '<div class="kc-slot"></div>'+
       '</div>').join('')+'</div>';
     out.innerHTML = h;
@@ -123,7 +123,7 @@
       if(d.error){ slot.innerHTML='<div class="kc-err">본문 로드 실패: '+esc(d.error)+'</div>'; return; }
       let meta = [];
       if(d.effective_date) meta.push('발효일 '+esc(d.effective_date));
-      if(d.pdf) meta.push('<a href="'+esc(d.pdf)+'" target="_blank" rel="noopener">📎 원문 PDF</a>');
+      if(d.pdf) meta.push('<a href="'+esc(d.pdf)+'" target="_blank" rel="noopener"><svg class="ic-svg" viewBox="0 0 24 24"><path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485L21 12"/></svg> 원문 PDF</a>');
       slot.innerHTML = (meta.length?'<div class="kc-meta">'+meta.join(' · ')+'</div>':'')+
                        '<div class="kc-body">'+esc(d.text||'(본문 없음)')+'</div>';
     }catch(e){ slot.innerHTML='<div class="kc-err">'+esc(String(e))+'</div>'; }
@@ -133,7 +133,7 @@
     const q = qEl.value.trim();
     if(!q) return;
     lastQuery = q;
-    out.innerHTML = '<div class="kc-ai"><h3>🤖 AI 요약</h3><div class="ans"><span class="kc-spin"></span> Gemini가 룰 본문을 읽고 정리 중… (몇 초 걸립니다)</div></div>';
+    out.innerHTML = '<div class="kc-ai"><h3><svg class="ic-svg" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg> AI 요약</h3><div class="ans"><span class="kc-spin"></span> Gemini가 룰 본문을 읽고 정리 중… (몇 초 걸립니다)</div></div>';
     setBusy(true);
     try{
       // 이미 뜬 검색결과가 있으면 그 문서 id를 재사용(키워드가 이미 좋음).
@@ -151,7 +151,7 @@
       let src = (d.sources||[]).map(s =>
         '<a href="'+(s.pdf?esc(s.pdf):'#')+'" '+(s.pdf?'target="_blank" rel="noopener"':'')+'>['+s.id+'] '+
         esc(s.title||('문서 '+s.id))+'</a>'+(s.eff?' ('+esc(s.eff)+')':'')).join('<br>');
-      out.innerHTML = '<div class="kc-ai"><h3>🤖 AI 요약 <span style="font-weight:600;color:var(--text-tertiary)">· KR-CON 발췌 기반</span></h3>'+
+      out.innerHTML = '<div class="kc-ai"><h3><svg class="ic-svg" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg> AI 요약 <span style="font-weight:600;color:var(--text-tertiary)">· KR-CON 발췌 기반</span></h3>'+
         '<div class="ans">'+esc(d.answer||'(응답 없음)')+'</div>'+
         (src?'<div class="src"><b>근거 문서</b><br>'+src+'</div>':'')+
         '<div class="src" style="margin-top:8px;color:var(--text-tertiary)">※ 원문 확인 후 사용하세요. 아래 "검색" 버튼으로 전체 결과를 볼 수 있습니다.</div></div>';

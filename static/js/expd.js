@@ -82,9 +82,9 @@ function renderHeader() {
     ? `${fmtDate(E.trip.trip_start)} ~ ${fmtDate(E.trip.trip_end)}` : '';
   const cards = (E.trip.corp_cards || []).join(', ');
   const bits = [];
-  if (period) bits.push('📅 ' + period);
+  if (period) bits.push(period);
   bits.push(E.trip.status === 'settled' ? '정산완료' : '진행 중');
-  if (cards) bits.push('💳 ' + cards);
+  if (cards) bits.push('법인카드 ' + cards);
   $('#expd-subtitle').textContent = bits.join('  ·  ');
   renderTotals();
 
@@ -205,10 +205,12 @@ function renderRow(r, idx) {
   // 삭제
   const delTd = el('td', { class: 'del' });
   if (canEdit) {
-    delTd.append(el('button', {
-      class: 'expd-del-btn', type: 'button', title: '삭제',
+    const delBtn = el('button', {
+      class: 'expd-del-btn', type: 'button', title: '삭제', 'aria-label': '삭제',
       onclick: () => deleteReceipt(r),
-    }, '×'));
+    });
+    delBtn.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    delTd.append(delBtn);
   }
   tr.append(delTd);
 
@@ -426,7 +428,7 @@ function openReview(up, ex) {
     }
     if (msgs.length) {
       warn.innerHTML = '';
-      warn.append(el('strong', {}, '⚠ 확인 필요'), el('br'),
+      warn.append(el('strong', {}, '확인 필요'), el('br'),
         ...msgs.flatMap(m => [document.createTextNode(m), el('br')]));
       warn.append(el('span', { class: 'expd-warn-hint' }, '다시 촬영하거나, 값을 채운 뒤 추가하세요.'));
       warn.hidden = false;

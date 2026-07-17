@@ -265,7 +265,7 @@ function evTooltip(ev) {
   if (!ev.all_day && ev.start_time) {
     lines.push(`${ev.start_time}${ev.end_time ? ' - ' + ev.end_time : ''}`);
   }
-  if (ev.location) lines.push(`📍 ${ev.location}`);
+  if (ev.location) lines.push(` ${ev.location}`);
   if (ev.category) lines.push(`[${ev.category}]`);
   return lines.join('\n');
 }
@@ -335,12 +335,12 @@ function renderSideList() {
       meta.append(el('span', { class: 'cal-side-time' }, tlbl));
     }
     if (ev.category) meta.append(el('span', { class: 'cal-side-cat' }, ev.category));
-    if (ev.location) meta.append(el('span', { class: 'cal-side-loc' }, '📍 ' + ev.location));
+    if (ev.location) meta.append(el('span', { class: 'cal-side-loc' }, ' ' + ev.location));
 
     // 선박명 (있으면)
     if (ev.vessel_id) {
       const v = S.vessels.find(x => x.id === ev.vessel_id);
-      if (v) meta.append(el('span', { class: 'cal-side-vessel' }, '🚢 ' + v.name));
+      if (v) meta.append(el('span', { class: 'cal-side-vessel' }, ' ' + v.name));
     }
     body.append(meta);
     if (ev.notes) body.append(el('div', { class: 'cal-side-notes' }, ev.notes));

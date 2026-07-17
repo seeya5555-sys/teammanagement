@@ -15,13 +15,13 @@
   <button class="btn btn-primary" id="cls-push-btn" type="button"
           title="선급검사 API에서 담당선박 Class Status를 받아 업데이트(온디맨드)"
           style="border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8">
-    📥 API에서 Pushing
+    <svg class="ic-svg"><use href="#i-inbox"/></svg> API에서 Pushing
   </button>
   {% endif %}
   <button class="btn btn-outline" type="button" onclick="location.href='/api/class-status/export-all'"
-          title="전체 선박 Class Status 엑셀 다운로드">⬇ 전체 엑셀</button>
+          title="전체 선박 Class Status 엑셀 다운로드"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg> 전체 엑셀</button>
   <button class="btn btn-outline" id="cls-export-mgr-btn" type="button"
-          title="관리사 선택 → 그 관리사 선박 Class Status 일괄 엑셀 추출">📑 관리사별 추출</button>
+          title="관리사 선택 → 그 관리사 선박 Class Status 일괄 엑셀 추출"><svg class="ic-svg"><use href="#i-file-text"/></svg> 관리사별 추출</button>
   <div class="cls-bulk-toggle">
     <button class="btn btn-outline btn-sm" id="cls-collapse-all" type="button" title="모든 선박 카드 접기">전체 접기</button>
     <button class="btn btn-outline btn-sm" id="cls-expand-all" type="button" title="모든 선박 카드 펼치기">전체 펼치기</button>
@@ -33,7 +33,7 @@
     </svg>
     <input type="text" id="cls-search" class="cs-search-input"
            placeholder="선박명 / 지적 내용 / 요약 검색...">
-    <button type="button" class="cs-search-clear" id="cls-search-clear" title="검색어 지우기" hidden>×</button>
+    <button type="button" class="cs-search-clear" id="cls-search-clear" title="검색어 지우기" hidden><svg class="ic-svg"><use href="#i-x"/></svg></button>
   </div>
   <span class="cs-context" id="cls-context"></span>
 </div>

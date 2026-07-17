@@ -5,9 +5,9 @@
 /* ═══════════════════════════════════════════════════════════════
    TRMT3  —  Daily 업무관리 (rev.3)
      · 셀 클릭 → 인라인 편집 (모달 X)
-     · ✏ 편집 버튼    → 전체 편집 모달
-     · 📎 첨부 버튼    → 첨부 전용 모달 (미리보기/다운로드/삭제)
-     · 🗑 삭제 버튼
+     ·  편집 버튼    → 전체 편집 모달
+     ·  첨부 버튼    → 첨부 전용 모달 (미리보기/다운로드/삭제)
+     ·  삭제 버튼
      · 인라인 추가 행 (툴바의 "+ 신규 이슈" or 각 날짜 그룹의 "+ 이 날짜로 추가")
    ═══════════════════════════════════════════════════════════════ */
 
@@ -409,7 +409,7 @@ function renderTabContext() {
     title: '담당 선박 상세 보기',
     onclick: openMyVessels,
   },
-    el('span', { class: 'ves-icon' }, '🛥'),
+    el('span', { class: 'ves-icon', html: '<svg class="ic-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10.189V14"/><path d="M12 2v3"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 1.62 6"/><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg>' }),
     `담당 선박 ${vesCount}척`,
     el('span', { class: 'caret' }, '▸'));
   c.append(trigger);
@@ -804,7 +804,7 @@ function fillVesselList() {
       shown++;
       const cnt = vBadgeCount(v);
       const badge = el('span', { class: 'vsb-badge' + (v.risk ? ' risk' : '') + (cnt === 0 ? ' zero' : '') },
-        v.risk ? el('span', { class: 'vsb-flag' }, '⚑') : null, String(cnt));
+        v.risk ? el('span', { class: 'vsb-flag', html: '<svg class="ic-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>' }) : null, String(cnt));
       const handle = el('span', { class: 'vsb-drag', title: '드래그로 순서 변경' }, '≡');
       const item = el('div', {
         class: 'vsb-item' + (String(S.selectedVessel) === String(v.id) ? ' active' : ''),
@@ -840,7 +840,7 @@ function renderVmainHead() {
   const lf = S.linkFilter || S.filters.q || S.filters.item_topic;
   if (lf) {
     const chip = el('div', { class: 'vmh-linkfilter' },
-      el('span', { class: 'vmh-lf-lbl' }, '🔍 링크 필터'),
+      el('span', { class: 'vmh-lf-lbl' }, ' 링크 필터'),
       el('b', { class: 'vmh-lf-q' }, lf),
       el('button', { class: 'vmh-lf-x', title: '필터 해제 — 전체 보기로' }, '✕ 해제'));
     chip.querySelector('.vmh-lf-x').addEventListener('click', clearLinkFilter);
@@ -852,7 +852,7 @@ function renderVmainHead() {
     for (const grp of groups) {
       const og = el('optgroup', { label: grp.type });
       for (const v of grp.vessels) {
-        const o = el('option', { value: String(v.id) }, `${v.name}  (${v.risk ? '⚑' : ''}${vBadgeCount(v)})`);
+        const o = el('option', { value: String(v.id) }, `${v.name} (${vBadgeCount(v)})`);
         if (String(v.id) === String(S.selectedVessel)) o.selected = true;
         og.append(o);
       }
@@ -880,7 +880,7 @@ function renderVmainHead() {
       el('span', { class: 'k-dim' }, ' · 완료 '), el('b', { class: 'k-dim' }, String(done)),
       el('span', { class: 'k-dim' }, ' · 전체 '), el('b', { class: 'k-dim' }, String(g.issues.length))),
     newBtn));
-  const QF = [['all', '전체'], ['recent', '최근 발생'], ['stale', '장기 미종결'], ['risk', '⚑ COC·Urgent']];
+  const QF = [['all', '전체'], ['recent', '최근 발생'], ['stale', '장기 미종결'], ['risk', ' COC·Urgent']];
   const qf = el('div', { class: 'vmh-qf' });
   for (const [k, label] of QF) {
     const c = el('span', { class: 'qchip' + (S.quickFilter === k ? ' on' : '') + (k === 'risk' ? ' risk' : '') }, label);
@@ -900,7 +900,7 @@ function monthBarRow(month, collapsed, count) {
   const tr = el('tr', { class: 'month-bar' });
   const td = el('td', { colspan: '8' },
     el('div', { class: 'group-bar-inner' },
-      el('span', { class: 'gb-caret' }, collapsed ? '▶' : '▼'),
+      el('span', { class: 'gb-caret' }, collapsed ? '▸' : '▾'),
       el('span', { class: 'gb-date' }, month),
       el('span', { class: 'gb-count' }, `${count} items`)));
   tr.append(td);
@@ -911,7 +911,7 @@ function monthBarRow(month, collapsed, count) {
 function dateBarRow(date, collapsed, count) {
   const tr = el('tr', { class: 'group-bar nested' });
   const inner = el('div', { class: 'group-bar-inner' },
-    el('span', { class: 'gb-caret' }, collapsed ? '▶' : '▼'),
+    el('span', { class: 'gb-caret' }, collapsed ? '▸' : '▾'),
     el('span', { class: 'gb-date' }, date),
     el('span', { class: 'gb-count' }, `${count} item${count>1?'s':''}`));
 
@@ -964,7 +964,7 @@ function rowEl(i, no) {
     el('span', { class: 'topic-text' }, i.item_topic));
   topicTd.append(line);
 
-  if (i.att_count > 0) topicTd.append(el('span', { class: 'topic-att' }, `📎 ${i.att_count}`));
+  if (i.att_count > 0) topicTd.append(el('span', { class: 'topic-att' }, ` ${i.att_count}`));
   topicTd.addEventListener('click', () => toggleRow(i.id));
   tr.append(topicTd);
 
@@ -1087,9 +1087,9 @@ function renderActionCell(issue) {
             class: 'act-arrow',
             title: expanded ? '접기' : '모두 보기',
             onclick: (ev) => { ev.stopPropagation(); toggleActionExpand(issue.id); },
-          }, expanded ? '▼' : '▶'));
+          }, expanded ? '▾' : '▸'));
         } else {
-          entry.append(el('span', { class: 'act-arrow', style: 'visibility:hidden' }, '▶'));
+          entry.append(el('span', { class: 'act-arrow', style: 'visibility:hidden' }, '▸'));
         }
       }
 
@@ -1390,7 +1390,7 @@ function renderCards() {
 function inlineAddCardHint() {
   return el('div', {
     style: 'background:var(--blue-bg); border:1px solid var(--blue-border); padding:10px 12px; border-radius:8px; font-size:12px; color:var(--blue-text); margin-bottom:10px',
-  }, '📝 데스크톱에서 상단 인라인 입력 폼을 이용해 새 이슈를 추가하세요.');
+  }, ' 데스크톱에서 상단 인라인 입력 폼을 이용해 새 이슈를 추가하세요.');
 }
 
 function cardEl(i, no) {
@@ -1448,7 +1448,7 @@ function isAllCollapsed() {
 }
 function updateToggleAllButton() {
   const collapsed = isAllCollapsed();
-  $('#toggle-all-icon').textContent  = collapsed ? '▶' : '▼';
+  $('#toggle-all-icon').textContent  = collapsed ? '▸' : '▾';
   $('#toggle-all-label').textContent = collapsed ? '전체 펼치기' : '전체 접기';
 }
 function toggleAll() {
@@ -1637,7 +1637,7 @@ async function loadVesselsForSupervisor(supId) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  Edit Modal (✏ 버튼 — 전체 편집)
+//  Edit Modal ( 버튼 — 전체 편집)
 // ═══════════════════════════════════════════════════════════
 function fillFormSelects() {
   const sup = $('#f-supervisor');
@@ -1912,7 +1912,7 @@ async function addIssueToCalendar(i) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  Attach Modal (📎 버튼)
+//  Attach Modal ( 버튼)
 // ═══════════════════════════════════════════════════════════
 async function openAttach(iid) {
   try {
@@ -2002,13 +2002,13 @@ function attachItemEl(a) {
 
 function fileIcon(filename) {
   const ext = (filename.split('.').pop() || '').toLowerCase();
-  let icon = '📄';
-  if (ext === 'pdf') icon = '📕';
-  else if (['doc','docx','rtf'].includes(ext)) icon = '📘';
-  else if (['xls','xlsx','csv'].includes(ext))  icon = '📗';
-  else if (['ppt','pptx'].includes(ext))         icon = '📙';
-  else if (['zip','rar','7z'].includes(ext))     icon = '🗜';
-  else if (['txt','md','log'].includes(ext))     icon = '📝';
+  let icon = 'FILE';
+  if (ext === 'pdf') icon = 'PDF';
+  else if (['doc','docx','rtf'].includes(ext)) icon = 'DOC';
+  else if (['xls','xlsx','csv'].includes(ext))  icon = 'XLS';
+  else if (['ppt','pptx'].includes(ext))         icon = 'PPT';
+  else if (['zip','rar','7z'].includes(ext))     icon = 'ZIP';
+  else if (['txt','md','log'].includes(ext))     icon = 'TXT';
 
   return el('div', { class: 'attach-fileicon' },
     el('span', { style: 'font-size:40px; line-height:1' }, icon),
@@ -3129,7 +3129,7 @@ function wireEvents() {
     ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
     const box = document.createElement('div');
     box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
-    box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:10px">📄 영문 엑셀 추출 + 메일 드래프트</div>';
+    box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:10px"> 영문 엑셀 추출 + 메일 드래프트</div>';
 
     // 모드 토글
     let mode = hasVessel ? 'vessel' : 'person';
@@ -3149,8 +3149,8 @@ function wireEvents() {
     const lbl = document.createElement('div');
     lbl.style.cssText = 'font-size:12px;font-weight:600;color:#555;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center';
     const copyBtn = document.createElement('button');
-    copyBtn.className = 'btn btn-outline btn-sm'; copyBtn.textContent = '📋 메일 복사';
-    lbl.innerHTML = '<span>✉ 메일 드래프트 (복붙용 · 영문)</span>'; lbl.appendChild(copyBtn);
+    copyBtn.className = 'btn btn-outline btn-sm'; copyBtn.textContent = ' 메일 복사';
+    lbl.innerHTML = '<span> 메일 드래프트 (복붙용 · 영문)</span>'; lbl.appendChild(copyBtn);
     box.appendChild(lbl);
     const ta = document.createElement('textarea');
     ta.style.cssText = 'width:100%;height:280px;padding:10px;border:1px solid #d3d1c7;border-radius:8px;font-size:12.5px;line-height:1.5;font-family:inherit;resize:vertical;margin-bottom:14px';
@@ -3175,7 +3175,7 @@ function wireEvents() {
 
     copyBtn.onclick = async () => {
       try { await navigator.clipboard.writeText(ta.value); } catch (_) { ta.select(); document.execCommand('copy'); }
-      copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 메일 복사', 1500);
+      copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = ' 메일 복사', 1500);
     };
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
@@ -3183,7 +3183,7 @@ function wireEvents() {
     cancel.className = 'btn btn-outline btn-sm'; cancel.textContent = '닫기';
     cancel.onclick = () => ov.remove();
     const dl = document.createElement('button');
-    dl.className = 'btn btn-primary btn-sm'; dl.textContent = '⬇ 영문 엑셀 다운로드';
+    dl.className = 'btn btn-primary btn-sm'; dl.textContent = ' 영문 엑셀 다운로드';
     dl.onclick = () => { window.location = dlUrl(); };
     row.appendChild(cancel); row.appendChild(dl);
     box.appendChild(row);

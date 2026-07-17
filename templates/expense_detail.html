@@ -18,8 +18,8 @@
   <div class="expd-totals no-print" id="expd-totals"></div>
 
   <div class="expd-add-bar no-print" id="expd-add-bar">
-    <button class="btn btn-primary" id="expd-btn-camera">📷 촬영</button>
-    <button class="btn btn-outline"  id="expd-btn-gallery">🖼️ 업로드</button>
+    <button class="btn btn-primary" id="expd-btn-camera"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> 촬영</button>
+    <button class="btn btn-outline"  id="expd-btn-gallery"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> 업로드</button>
     <input type="file" id="expd-inp-camera"  accept="image/*" capture="environment" hidden>
     <input type="file" id="expd-inp-gallery" accept="image/*" multiple hidden>
     <span class="form-hint">사진을 올리면 자동 추출 후 표에 한 줄씩 추가됩니다.</span>
@@ -76,7 +76,7 @@
       <button type="button" class="btn btn-outline btn-sm" id="expd-crop-orig">원본 사용</button>
       <span class="flex-spacer"></span>
       <button type="button" class="btn btn-outline btn-sm" id="expd-crop-reset">초기화</button>
-      <button type="button" class="btn btn-primary" id="expd-crop-apply">적용 ▶</button>
+      <button type="button" class="btn btn-primary" id="expd-crop-apply">적용</button>
     </div>
   </div>
 </div>
@@ -120,7 +120,7 @@
     <div class="modal-foot">
       <button type="button" class="btn btn-danger btn-outline" id="expd-rv-retake">다시 촬영</button>
       <span class="flex-spacer"></span>
-      <button type="button" class="btn btn-primary" id="expd-rv-add">표에 추가 ▶</button>
+      <button type="button" class="btn btn-primary" id="expd-rv-add">표에 추가</button>
     </div>
   </div>
 </div>

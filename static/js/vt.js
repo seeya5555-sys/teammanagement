@@ -55,6 +55,15 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 
+// 인라인 SVG 라인 아이콘 (Lucide 스타일) — 이모지 대체용, 순수 표현
+function svgIcon(paths, size = 13) {
+  const span = document.createElement('span');
+  span.innerHTML = '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '"'
+    + ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
+    + ' style="vertical-align:-2px">' + paths + '</svg>';
+  return span.firstElementChild;
+}
+
 async function api(url, options = {}) {
   const opts = { ...options };
   if (opts.body && typeof opts.body === 'string') {
@@ -209,8 +218,8 @@ function vesselBlock(item) {
     onclick: () => toggleVessel(v.id),
     title: '클릭으로 Vetting 표 펼치기/접기',
   },
-    el('span', { class: 'cs-vessel-caret' }, isExpanded ? '▼' : '▶'),
-    el('span', { class: 'cs-vessel-icon' }, '🚢'),
+    el('span', { class: 'cs-vessel-caret' }, isExpanded ? '▾' : '▸'),
+    el('span', { class: 'cs-vessel-icon', html: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M19.38 20A11.6 11.6 0 0021 14l-8.19-3.64a2 2 0 00-1.62 0L3 14a11.6 11.6 0 001.62 6"/><path d="M19 13V7a2 2 0 00-2-2H7a2 2 0 00-2 2v6"/></svg>' }),
     el('strong', { class: 'cs-vessel-name' }, v.name),
     el('span', { class: 'cs-vessel-type' }, v.vessel_type || ''),
     lastUpdateLabelVT(item.last_updated),
@@ -398,7 +407,7 @@ function vettingRow(item, vt) {
     title: S.expandedVettings.has(vt.id) ? '접기' : '펼치기',
   });
   caretTd.append(el('span', { class: 'vt-caret-icon' },
-    S.expandedVettings.has(vt.id) ? '▼' : '▶'));
+    S.expandedVettings.has(vt.id) ? '▾' : '▸'));
   tr.append(caretTd);
 
   // 2) Report# 셀 — 클릭 시 편집 모드만
@@ -447,7 +456,7 @@ function vettingRow(item, vt) {
   }
   actions.append(attBtn);
 
-  // 📅 캘린더 등록
+  //  캘린더 등록
   const calBtn = el('button', {
     class: 'icon-btn',
     title: '일정에 등록',
@@ -640,11 +649,11 @@ function detailRow(vt) {
   // 보고서 → 지적 항목 자동 생성 (Gemini) + 엑셀 추출
   td.append(el('div', { class: 'csx-bar' },
     el('button', { class: 'btn btn-outline btn-sm', onclick: () => openVtExtract(vt) },
-      '📄 보고서에서 자동 생성'),
+      ' 보고서에서 자동 생성'),
     el('button', {
       class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
       onclick: () => { window.location = `/api/vettings/${vt.id}/export`; },
-    }, '⬇ 엑셀 추출')));
+    }, ' 엑셀 추출')));
 
   // Overall Remark
   const remarkSec = el('div', { class: 'cs-finding-section' });
@@ -656,12 +665,12 @@ function detailRow(vt) {
       style: 'margin-left:auto',
       onclick: () => generateObsSummary(vt),
       title: 'Priority 체크 + 현재 Open Status 기준으로 지적 상세 요약을 Overall Remark에 자동 작성',
-    }, '📝 지적 상세'),
+    }, ' 지적 상세'),
     el('button', {
       class: 'btn btn-outline btn-sm',
       style: 'margin-left:6px',
       onclick: () => editOverallRemark(vt),
-    }, '✏ 편집'),
+    }, ' 편집'),
   ));
   remarkSec.append(el('div', { class: 'cs-overall-body' },
     vt.overall_remark || el('span', { class: 'placeholder' }, '(작성된 메모 없음)')));
@@ -722,7 +731,7 @@ function findingsSection(vt, findings) {
     btnRow.append(el('button', {
       class: 'btn btn-primary btn-sm',
       onclick: () => saveAllInlineRows(vt),
-    }, '💾 전체 저장'));
+    }, ' 전체 저장'));
     btnRow.append(el('button', {
       class: 'btn btn-outline btn-sm',
       onclick: () => { vt._inlineAdd = null; render(); },

@@ -73,12 +73,12 @@
 {% endblock %}
 {% block content %}
 <div class="rg-head">
-  <h2 style="margin:0">🧾 도크 자재/수리</h2>
+  <h2 style="margin:0"><svg class="ic-svg" aria-hidden="true"><use href="#i-file-text"/></svg> 도크 자재/수리</h2>
   <span class="rg-count" id="rg-count"></span>
   <div style="margin-left:auto;display:flex;gap:8px">
-    <button class="rg-b rs" id="rg-reload">🔄 새로고침</button>
-    <button class="rg-b del" id="rg-clear">🗑 처리완료 비우기</button>
-    <button class="rg-b del" id="rg-clearall">🗑 전체 삭제</button>
+    <button class="rg-b rs" id="rg-reload"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg> 새로고침</button>
+    <button class="rg-b del" id="rg-clear"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> 처리완료 비우기</button>
+    <button class="rg-b del" id="rg-clearall"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> 전체 삭제</button>
   </div>
 </div>
 <div class="rg-note">
@@ -87,13 +87,13 @@
 </div>
 <div class="rg-up">
   <div class="rg-drop" id="rg-drop">
-    <span class="ic">📂</span>
+    <span class="ic"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
     <span id="rg-dropmsg">엑셀 파일을 <b>드래그</b>하거나 <b>클릭</b>해서 선택 (.xlsx)</span>
   </div>
   <input type="file" id="rg-file" accept=".xlsx,.xlsm" style="display:none">
   <input type="text" id="rg-vsl" placeholder="VSL_CD (예 SAPS)">
-  <button class="rg-b" style="background:var(--blue-dot);color:#fff" id="rg-upload">⬆ 업로드·파싱</button>
-  <button type="button" class="rg-b rs" id="rg-tmplbtn" title="입거 requisition 업로드 템플릿 다운로드 (예시용/작성용)">📥 업로드 템플릿</button>
+  <button class="rg-b" style="background:var(--blue-dot);color:#fff" id="rg-upload"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg> 업로드·파싱</button>
+  <button type="button" class="rg-b rs" id="rg-tmplbtn" title="입거 requisition 업로드 템플릿 다운로드 (예시용/작성용)"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg> 업로드 템플릿</button>
   <span class="rg-res" id="rg-upmsg"></span>
 </div>
 <div class="rg-bar">
@@ -101,11 +101,11 @@
     <label>Voyage<input class="v" id="bar-voyage" placeholder="0003E"></label>
     <label>Port (코드)<input class="p" id="bar-port" placeholder="CNZOS"></label>
     <label>Date<input class="d" id="bar-date" placeholder="YYYYMMDD"></label>
-    <button class="rg-pushall" id="rg-pushall">✅ 전체 승인 (SVMS 일괄저장)</button>
+    <button class="rg-pushall" id="rg-pushall"><svg class="ic-svg" aria-hidden="true"><use href="#i-check-circle"/></svg> 전체 승인 (SVMS 일괄저장)</button>
     <span class="hint" id="bar-hint">대기 카드 전체에 공통 적용</span>
   </div>
   <details id="bar-repair" style="width:100%;margin-top:4px">
-    <summary style="cursor:pointer;font-size:12px;color:var(--blue);font-weight:600">🔧 수리신청(R) 공통 입력 — Cause / Inspection / Stock</summary>
+    <summary style="cursor:pointer;font-size:12px;color:var(--blue);font-weight:600"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> 수리신청(R) 공통 입력 — Cause / Inspection / Stock</summary>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
       <label style="flex:1;min-width:280px">Cause of Defect/Default
         <textarea id="bar-cause" rows="4" style="width:100%;border:1px solid var(--border-strong);border-radius:8px;padding:7px 10px;font-size:12px">1. Please submit your repair quotation in accordance with the Working Scope detailed in "Item 3" below.
@@ -122,15 +122,15 @@
 <!-- 업로드 템플릿 다운로드 모달 -->
 <div class="rg-modal" id="rg-tmpl-modal">
   <div class="rg-modal-box">
-    <h3>📥 업로드 템플릿 다운로드</h3>
+    <h3><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg> 업로드 템플릿 다운로드</h3>
     <div class="sub">입거 도크 자재/수리 requisition 워크북(INDEX + R/S/ST 시트).</div>
     <div class="rg-tmpl-opts">
       <a class="rg-tmpl-opt" href="/dock_procure/template/example">
-        <span class="ic">📗</span>
+        <span class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-file-text"/></svg></span>
         <span><span class="t">예시용 (작성 완료본)</span><br><span class="d">Owner 검토본 — 실제 채워진 예시로 작성 참고용</span></span>
       </a>
       <a class="rg-tmpl-opt" href="/dock_procure/template/blank">
-        <span class="ic">📄</span>
+        <span class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-file-text"/></svg></span>
         <span><span class="t">작성용 (빈 양식)</span><br><span class="d">구조·수식·슬롯은 그대로, 내용만 비운 새 작성용</span></span>
       </a>
     </div>
@@ -187,14 +187,15 @@
     const busy=(d.status==='saving');
     // 수리신청 장비(C5=Category/Equipment) 비면 SVMS 빈 값 저장 → 승인 차단됨(서버), 카드에 경고 표시
     const eqEmpty=isRepair && !(d.equipment && String(d.equipment).trim());
-    let acts=`<button class="rg-b del" data-act="delete">🗑 삭제</button>`;
+    const trashIc=`<svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
+    let acts=`<button class="rg-b del" data-act="delete">${trashIc} 삭제</button>`;
     if(d.status==='approved') acts=`<span class="rg-decided">승인됨 — 맥 러너 대기/실행중</span>`
-        +`<button class="rg-b rs" data-act="reset">↩ 취소</button>`;
-    else if(d.status==='saving') acts=`<span class="rg-decided">⏳ SVMS 저장중…</span>`;
-    else if(d.status==='saved') acts=`<span class="rg-decided">✅ SVMS 저장됨 ${d.req_no?('· REQ_NO '+esc(d.req_no)):''}</span>`
-        +`<button class="rg-b del" data-act="delete">🗑 삭제</button>`;
-    else if(d.status==='failed') acts=`<span class="rg-err">🚨 저장 실패: ${esc(d.result||'')}</span>`
-        +`<button class="rg-b rs" data-act="reset">↩ 재시도</button><button class="rg-b del" data-act="delete">🗑 삭제</button>`;
+        +`<button class="rg-b rs" data-act="reset">취소</button>`;
+    else if(d.status==='saving') acts=`<span class="rg-decided">SVMS 저장중…</span>`;
+    else if(d.status==='saved') acts=`<span class="rg-decided"><svg class="ic-svg" style="color:var(--green)"><use href="#i-check-circle"/></svg> SVMS 저장됨 ${d.req_no?('· REQ_NO '+esc(d.req_no)):''}</span>`
+        +`<button class="rg-b del" data-act="delete">${trashIc} 삭제</button>`;
+    else if(d.status==='failed') acts=`<span class="rg-err">저장 실패: ${esc(d.result||'')}</span>`
+        +`<button class="rg-b rs" data-act="reset">재시도</button><button class="rg-b del" data-act="delete">${trashIc} 삭제</button>`;
 
     const vpd = (d.voyage||d.port||d.req_dt)
       ? `<span>Voy: <b>${esc(d.voyage)}</b></span><span>Port: <b>${esc(d.port)}</b></span><span>Date: <b>${esc(d.req_dt)}</b></span>` : '';
@@ -207,14 +208,14 @@
         </div>
         <div class="rg-badges">
           <span class="rg-badge ${isRepair?'b-store':(isStore?'b-store':'b-spare')}" style="${isRepair?'background:#FCEBEB;color:#A32D2D':''}">${isRepair?'수리신청':esc(d.kind_nm)}</span>
-          ${eqEmpty?'<span class="rg-badge" style="background:#FCEBEB;color:#A32D2D">⚠ 장비/Category 비어있음 — 입력 후 승인</span>':''}
+          ${eqEmpty?'<span class="rg-badge" style="background:#FCEBEB;color:#A32D2D">장비/Category 비어있음 — 입력 후 승인</span>':''}
           <span class="rg-badge st-${d.status}">${esc(d.status)}</span>
         </div>
       </div>
       <div class="rg-body">
         <div class="rg-kv"><span>장비: ${(isRepair && d.status==='pending')
             ? `<input data-equip value="${esc(d.equipment||'').replace(/"/g,'&quot;')}" placeholder="장비/Category 입력" style="border:1px solid ${eqEmpty?'#A32D2D':'#B4B2A9'};border-radius:6px;padding:3px 8px;font-size:12px;width:210px">`
-            : `<b>${eqEmpty?'<span style="color:#A32D2D">⚠ 비어있음</span>':esc(d.equipment)}</b>`}</span><span>Dept: <b>Engine</b></span>
+            : `<b>${eqEmpty?'<span style="color:#A32D2D">비어있음</span>':esc(d.equipment)}</b>`}</span><span>Dept: <b>Engine</b></span>
           ${isRepair?'<span>Reason: <b>PMS</b></span>':`<span>Exp: <b>${esc(d.exp_cd)}</b></span>`}<span>Dock: <b>Y</b></span>${vpd}</div>
         ${isRepair?`<div style="margin-bottom:8px;font-size:12px"><b>Stock of Spare:</b>
           ${d.status==='pending'
@@ -233,7 +234,7 @@
     try{
       const j=await api('GET','/api/reqgen/drafts');
       const ds=j.drafts||[];
-      countEl.textContent=`대기 ${j.pending} · 전체 ${ds.length}` + (j.enabled?'':' · ⚠️자동화 OFF');
+      countEl.textContent=`대기 ${j.pending} · 전체 ${ds.length}` + (j.enabled?'':' · 자동화 OFF');
       $('#rg-pushall').disabled = !(j.pending>0) || !j.enabled;
       list.innerHTML = ds.length ? ds.map(card).join('') : '<div class="rg-empty">카드 없음 — 엑셀을 업로드하세요.</div>';
     }catch(e){ list.innerHTML=`<div class="rg-err" style="padding:20px">${esc(e.message)}</div>`; }
@@ -249,7 +250,7 @@
   const drop=$('#rg-drop'), fileInput=$('#rg-file'), dropMsg=$('#rg-dropmsg');
   function showName(){
     const f=fileInput.files[0];
-    dropMsg.innerHTML = f ? `📄 <b>${esc(f.name)}</b> — 업로드 누르세요`
+    dropMsg.innerHTML = f ? `<svg class="ic-svg"><use href="#i-file-text"/></svg> <b>${esc(f.name)}</b> — 업로드 누르세요`
                           : '엑셀 파일을 <b>드래그</b>하거나 <b>클릭</b>해서 선택 (.xlsx)';
   }
   drop.addEventListener('click',()=>fileInput.click());
@@ -271,11 +272,11 @@
     msg.textContent='파싱 중…';
     try{
       const j=await api('POST','/api/reqgen/upload',fd,true);
-      msg.textContent=`✅ ${j.count}건 적재 (${esc(j.vsl_nm||'')} ${esc(j.vsl_cd||'')})`
+      msg.textContent=`${j.count}건 적재 (${esc(j.vsl_nm||'')} ${esc(j.vsl_cd||'')})`
         + (j.skipped_manager?` · MANAGER ${j.skipped_manager}건 제외(AOR 처리)`:'')
         + (j.skipped_quote?` · 견적작성 선행 ${j.skipped_quote}건 제외(중복방지)`:'');
       fileInput.value=''; showName(); await load();
-    }catch(e){ msg.textContent='🚨 '+e.message; }
+    }catch(e){ msg.textContent='오류: '+e.message; }
   });
 
   // 전체 승인
@@ -283,18 +284,18 @@
     const voyage=$('#bar-voyage').value.trim(), port=$('#bar-port').value.trim(), req_dt=$('#bar-date').value.trim();
     const cause=$('#bar-cause').value.trim(), inspection=$('#bar-inspection').value.trim();
     const miss=[['Voyage',voyage],['Port',port],['Date',req_dt]].filter(x=>!x[1]).map(x=>x[0]);
-    if(miss.length){ $('#bar-hint').textContent='🚨 입력 필요: '+miss.join(', '); return; }
+    if(miss.length){ $('#bar-hint').textContent='입력 필요: '+miss.join(', '); return; }
     if(!confirm(`대기 카드 전체를 Voyage ${voyage} / Port ${port} / Date ${req_dt} 로 SVMS에 일괄 저장할까요?`)) return;
     $('#rg-pushall').disabled=true; $('#bar-hint').textContent='승인 중…';
     try{
       const j=await api('POST','/api/reqgen/approve-all',{voyage,port,req_dt,cause,inspection});
       const nb=(j.blocked&&j.blocked.length)?j.blocked.length:0;
       let m;
-      if(!j.approved && nb) m=`⚠ 승인 0건 — ${nb}건 장비/Category 비어 전부 제외(${j.blocked.join(', ')}) · 카드에서 장비 입력 후 다시 승인`;
-      else { m=`✅ ${j.approved}건 승인 — 맥 러너 저장중(1~2분)`; if(nb) m+=` · ⚠ ${nb}건 비어 제외(${j.blocked.join(', ')})`; }
+      if(!j.approved && nb) m=`승인 0건 — ${nb}건 장비/Category 비어 전부 제외(${j.blocked.join(', ')}) · 카드에서 장비 입력 후 다시 승인`;
+      else { m=`${j.approved}건 승인 — 맥 러너 저장중(1~2분)`; if(nb) m+=` · ${nb}건 비어 제외(${j.blocked.join(', ')})`; }
       $('#bar-hint').textContent=m;  // textContent라 자동 escape — esc() 불필요(이중이스케이프 방지)
       await load();
-    }catch(e){ $('#bar-hint').textContent='🚨 '+e.message; $('#rg-pushall').disabled=false; }
+    }catch(e){ $('#bar-hint').textContent='오류: '+e.message; $('#rg-pushall').disabled=false; }
   });
 
   // 카드 액션 (삭제/취소만)

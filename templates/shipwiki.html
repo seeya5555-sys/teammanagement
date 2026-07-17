@@ -77,11 +77,11 @@
 {% endblock %}
 {% block content %}
 <div class="sw-head">
-  <h2 style="margin:0">📚 선박 위키</h2>
+  <h2 style="margin:0"><svg class="ic-svg"><use href="#i-book-open"/></svg> 선박 위키</h2>
   <span class="sw-count" id="sw-count"></span>
   <div style="margin-left:auto;display:flex;gap:8px">
-    <button class="sw-b rs" id="sw-reload">🔄 새로고침</button>
-    <button class="sw-b del" id="sw-clear">🗑 적용완료 비우기</button>
+    <button class="sw-b rs" id="sw-reload"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg> 새로고침</button>
+    <button class="sw-b del" id="sw-clear"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> 적용완료 비우기</button>
   </div>
 </div>
 <div class="sw-note">
@@ -90,7 +90,7 @@
   실제로 확인하면 <b>신뢰도 승격</b>. 결정은 맥이 가져가 <code>wiki/</code> 파일로 반영(발송·자동확정 없음).
 </div>
 <div class="sw-mergebox" id="sw-mergebox" style="display:none">
-  <b>🔀 병합 모드</b> <span id="sw-mergecnt">0건 선택</span> — 같은 이슈인 카드들을 고르고
+  <b><svg class="ic-svg" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg> 병합 모드</b> <span id="sw-mergecnt">0건 선택</span> — 같은 이슈인 카드들을 고르고
   <button class="sw-b" style="background:var(--purple);color:#fff" id="sw-mergego">병합 승격</button>
   <button class="sw-b rs" id="sw-mergecancel">취소</button>
 </div>
@@ -161,7 +161,7 @@
     let badges=`<span class="sw-badge c-${esc(cat)}">${esc(cat)}</span>`
       +`<span class="sw-badge t-${tier}">${tier}</span>`;
     if(conf) badges+=`<span class="sw-badge cf-${conf}">${esc(conf)}</span>`;
-    if(d.multi==1 && tier==='pending') badges+=`<span class="sw-badge sw-flag">🔀 multi</span>`;
+    if(d.multi==1 && tier==='pending') badges+=`<span class="sw-badge sw-flag">multi</span>`;
     if(st!=='open') badges+=`<span class="sw-badge st-${st}">${st}</span>`;
 
     // raw 링크 라인 → 앵커
@@ -173,27 +173,27 @@
     let acts='';
     if(st==='open'){
       if(MERGE){
-        acts=`<button class="sw-b ${isSel?'b-merge':'rs'}" data-act="toggle">${isSel?'✓ 선택됨':'＋ 병합에 추가'}</button>`;
+        acts=`<button class="sw-b ${isSel?'b-merge':'rs'}" data-act="toggle">${isSel?'<svg class="ic-svg" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg> 선택됨':'＋ 병합에 추가'}</button>`;
       } else if(tier==='pending'){
-        acts=`<button class="sw-b b-promote" data-act="promote">⬆ 승격</button>`
-            +`<button class="sw-b b-merge" data-act="mergestart">🔀 병합</button>`
-            +(d.multi==1?`<button class="sw-b b-split" data-act="split">✂ 쪼개기 표시</button>`:'')
-            +`<button class="sw-b b-reject" data-act="reject">✖ 리젝</button>`;
+        acts=`<button class="sw-b b-promote" data-act="promote"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg> 승격</button>`
+            +`<button class="sw-b b-merge" data-act="mergestart"><svg class="ic-svg" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg> 병합</button>`
+            +(d.multi==1?`<button class="sw-b b-split" data-act="split"><svg class="ic-svg" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></svg> 쪼개기 표시</button>`:'')
+            +`<button class="sw-b b-reject" data-act="reject"><svg class="ic-svg"><use href="#i-x"/></svg> 리젝</button>`;
       } else if(tier==='auto'){
-        acts=`<button class="sw-b b-upgrade" data-act="upgrade">✔ 신뢰도 승격</button>`
-            +`<button class="sw-b b-reject" data-act="reject">✖ 리젝</button>`;
+        acts=`<button class="sw-b b-upgrade" data-act="upgrade"><svg class="ic-svg"><use href="#i-check-circle"/></svg> 신뢰도 승격</button>`
+            +`<button class="sw-b b-reject" data-act="reject"><svg class="ic-svg"><use href="#i-x"/></svg> 리젝</button>`;
       } else { // confirmed
-        acts=`<button class="sw-b b-upgrade" data-act="upgrade">✏ 판단 보강</button>`;
+        acts=`<button class="sw-b b-upgrade" data-act="upgrade"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg> 판단 보강</button>`;
       }
-      if(d.decision==='split_flag') acts=`<span class="sw-decided">✂ 쪼개기 후보로 표시됨 (수기/데쿠 분리 대기)</span>`+acts;
+      if(d.decision==='split_flag') acts=`<span class="sw-decided">쪼개기 후보로 표시됨 (수기/데쿠 분리 대기)</span>`+acts;
     } else if(st==='decided'){
       acts=`<span class="sw-decided">결정: <b>${esc(d.decision)}</b>${d.merge_group?' (병합)':''} — 맥 적용 대기</span>`
-          +`<button class="sw-b rs" data-act="reset">↩ 취소</button>`;
-    } else if(st==='applying'){ acts=`<span class="sw-decided">⏳ 맥 적용중…</span>`; }
-    else if(st==='applied'){ acts=`<span class="sw-decided">✅ wiki 반영됨 ${d.result?'· '+esc((d.result||'').split('/').pop()):''}</span>`
-          +`<button class="sw-b del" data-act="delete">🗑</button>`; }
-    else if(st==='failed'){ acts=`<span class="sw-err">🚨 적용 실패: ${esc(d.result||'')}</span>`
-          +`<button class="sw-b rs" data-act="reset">↩ 재시도</button>`; }
+          +`<button class="sw-b rs" data-act="reset">취소</button>`;
+    } else if(st==='applying'){ acts=`<span class="sw-decided"><svg class="ic-svg"><use href="#i-clock"/></svg> 맥 적용중…</span>`; }
+    else if(st==='applied'){ acts=`<span class="sw-decided"><svg class="ic-svg" style="color:var(--green)"><use href="#i-check-circle"/></svg> wiki 반영됨 ${d.result?'· '+esc((d.result||'').split('/').pop()):''}</span>`
+          +`<button class="sw-b del" data-act="delete"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>`; }
+    else if(st==='failed'){ acts=`<span class="sw-err"><svg class="ic-svg" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> 적용 실패: ${esc(d.result||'')}</span>`
+          +`<button class="sw-b rs" data-act="reset">재시도</button>`; }
 
     return `<div class="sw-card ${st==='applying'?'is-busy':''} ${isSel?'sel':''}" data-id="${d.id}">
       <div class="sw-top">
@@ -245,7 +245,7 @@
       CARDS=j.cards||[];
       const s=j.stat||{};
       countEl.textContent=`미결 pending ${s.pending_open||0} · auto ${s.auto_n||0} · confirmed ${s.confirmed_n||0}`
-        +(s.decided_n?` · 적용대기 ${s.decided_n}`:'')+(j.enabled?'':' · ⚠️자동화 OFF');
+        +(s.decided_n?` · 적용대기 ${s.decided_n}`:'')+(j.enabled?'':' · 자동화 OFF');
       renderShips(j.ships||[]);
       render();
     }catch(e){ list.innerHTML=`<div class="sw-err" style="padding:20px">${esc(e.message)}</div>`; }
@@ -293,7 +293,7 @@
         await api('POST',`/api/shipwiki/cards/${MODAL.id}/decide`,body);
       }
       closeModal(); await load();
-    }catch(e){ $('#m-err').textContent='🚨 '+e.message; }
+    }catch(e){ $('#m-err').textContent=e.message; }
   });
 
   // ---- 카드 액션 ----

@@ -36,6 +36,20 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 
+// 이모지 대체용 인라인 SVG 라인 아이콘 (Lucide 스타일 24×24, .ic-svg가 stroke 처리)
+const IC_PATHS = {
+  x:      '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  trash:  '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+  image:  '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+  camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+};
+function icSvg(name, extraAttrs = '') {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"' +
+    (extraAttrs ? ' ' + extraAttrs : '') + '>' + (IC_PATHS[name] || '') + '</svg>';
+  return tpl.content.firstChild;
+}
+
 async function api(url, opts = {}) {
   const headers = opts.body instanceof FormData
     ? (opts.headers || {})
@@ -182,7 +196,7 @@ function renderTOCNodes(nodes, container) {
         el('button', { class: 'dde-toc-btn', title: '아래로',
           onclick: (e) => { e.stopPropagation(); moveSection(n.id, 'down'); }}, '↓'),
         el('button', { class: 'dde-toc-btn', title: '다른 섹션으로 이동…',
-          onclick: (e) => { e.stopPropagation(); openReparentModal(n.id); }}, '↗'),
+          onclick: (e) => { e.stopPropagation(); openReparentModal(n.id); }}, '이동'),
       ) : null,
     );
     container.append(item);
@@ -211,13 +225,13 @@ function showTocCtxMenu(ev, sid) {
   addItem('↑ 위로', () => moveSection(sid, 'up'));
   addItem('↓ 아래로', () => moveSection(sid, 'down'));
   addSep();
-  addItem('↗ 다른 섹션으로 이동…', () => openReparentModal(sid));
+  addItem(' 다른 섹션으로 이동…', () => openReparentModal(sid));
   if (info && info.depth > 0) {
-    addItem('⤴ 최상위로 이동', () => reparentSection(sid, null));
+    addItem(' 최상위로 이동', () => reparentSection(sid, null));
   }
   addSep();
   addItem('이름 변경', () => renameSection(sid));
-  addItem('🗑 삭제', () => deleteSection(sid));
+  addItem(' 삭제', () => deleteSection(sid));
 
   document.body.append(menu);
   menu.style.position = 'fixed';
@@ -605,7 +619,7 @@ function renderTailAdder(position) {
     { type: 'paragraph',   icon: 'T',  label: '텍스트' },
     { type: 'bullet_list', icon: '•',  label: '불릿' },
     { type: 'table',       icon: '▦',  label: '표' },
-    { type: 'image',       icon: '🖼', label: '사진' },
+    { type: 'image',       icon: '사진', label: '사진' },
   ];
   for (const it of items) {
     wrap.append(el('button', {
@@ -629,7 +643,7 @@ function renderEmptyInserter() {
     { type: 'paragraph',   icon: 'T',  label: '텍스트', desc: '단락 본문' },
     { type: 'bullet_list', icon: '•',  label: '불릿 리스트', desc: '항목 나열' },
     { type: 'table',       icon: '▦',  label: '표', desc: '행/열 데이터' },
-    { type: 'image',       icon: '🖼', label: '사진 갤러리', desc: '여러 장 가능' },
+    { type: 'image',       icon: '사진', label: '사진 갤러리', desc: '여러 장 가능' },
   ];
   for (const it of items) {
     grid.append(el('button', {
@@ -667,7 +681,7 @@ function showInsertMenu(anchor, position) {
     { type: 'paragraph',   icon: 'T',  label: '텍스트' },
     { type: 'bullet_list', icon: '•',  label: '불릿 리스트' },
     { type: 'table',       icon: '▦',  label: '표' },
-    { type: 'image',       icon: '🖼', label: '사진 (갤러리)' },
+    { type: 'image',       icon: '사진', label: '사진 (갤러리)' },
   ];
   for (const it of items) {
     menu.append(el('button', {
@@ -1687,7 +1701,7 @@ function renderTable(body, b) {
     el('button', { class: 'btn btn-outline btn-sm', type: 'button',
       onclick: () => insertCol(nCols()) }, '+ 열 추가'),
     el('span', { class: 'dde-table-hint' },
-      '💡 Excel 표를 복사·붙여넣기 · 셀 우클릭으로 병합/분할/헤더 행 수 변경 · 셀 클릭 + Ctrl로 다중 선택'),
+      ' Excel 표를 복사·붙여넣기 · 셀 우클릭으로 병합/분할/헤더 행 수 변경 · 셀 클릭 + Ctrl로 다중 선택'),
   );
 
   body.append(tblWrap, ctrls);
@@ -1746,7 +1760,7 @@ function renderImageGallery(body, b) {
         class: 'dde-image-drop',
         onclick: () => triggerAddImages(),
       },
-        el('div', { class: 'dde-image-drop-icon' }, '📷'),
+        el('div', { class: 'dde-image-drop-icon' }, '사진'),
         el('div', { class: 'dde-image-drop-text' }, '클릭하거나 사진을 끌어다 놓기'),
         el('div', { class: 'dde-image-drop-hint' }, '여러 장 한번에 선택·드롭 가능 (Ctrl/Shift)'),
       ));
@@ -1769,14 +1783,14 @@ function renderImageGallery(body, b) {
               [images[idx - 1], images[idx]] = [images[idx], images[idx - 1]];
               rebuild();
               scheduleBlockSave(b.id, getCurrent);
-            }}, '◀'),
+            }}, '이동'),
           el('button', { class: 'dde-img-mv', type: 'button', title: '오른쪽으로',
             disabled: idx === images.length - 1,
             onclick: () => {
               [images[idx], images[idx + 1]] = [images[idx + 1], images[idx]];
               rebuild();
               scheduleBlockSave(b.id, getCurrent);
-            }}, '▶'),
+            }}, '이동'),
           el('button', { class: 'dde-img-x', type: 'button', title: '제거',
             onclick: () => {
               if (!confirm('이 사진을 제거하시겠습니까?')) return;

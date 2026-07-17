@@ -223,7 +223,7 @@ function vesselSummary(item) {
       if (op > 0) {
         num.append(el('strong', { class: 'cs-q-open-on' }, String(op)));
       } else if (cl > 0) {
-        num.append(el('strong', { class: 'cs-q-all-closed' }, '✓'));
+        num.append(el('strong', { class: 'cs-q-all-closed', html: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-1px"><path d="M20 6L9 17l-5-5"/></svg>' }));
       } else {
         num.append(el('span', { class: 'cs-q-empty-data' }, '–'));
       }
@@ -262,8 +262,8 @@ function vesselBlock(item) {
     onclick: () => toggleVessel(v.id),
     title: '클릭으로 분기 표 펼치기/접기',
   },
-    el('span', { class: 'cs-vessel-caret' }, isExpanded ? '▼' : '▶'),
-    el('span', { class: 'cs-vessel-icon' }, '🚢'),
+    el('span', { class: 'cs-vessel-caret' }, isExpanded ? '▾' : '▸'),
+    el('span', { class: 'cs-vessel-icon', html: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M19.38 20A11.6 11.6 0 0021 14l-8.19-3.64a2 2 0 00-1.62 0L3 14a11.6 11.6 0 001.62 6"/><path d="M19 13V7a2 2 0 00-2-2H7a2 2 0 00-2 2v6"/><path d="M12 10.19V14"/><path d="M12 2v3"/></svg>' }),
     el('strong', { class: 'cs-vessel-name' }, v.name),
     el('span', { class: 'cs-vessel-type' }, v.vessel_type || ''),
     // Last update (Status 마지막 변경일)
@@ -346,17 +346,17 @@ function openCsExportMail(survey, vesselName) {
   ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:600px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
-  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 ${q}Q 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${escHtml(vn)}</span></div>`
+  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px"> ${q}Q 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${escHtml(vn)}</span></div>`
     + `<div style="font-size:12px;color:#888;margin-bottom:12px">엑셀은 자동 다운로드됨. 아래 메일 드래프트 복사 → Outlook에 붙여넣고 엑셀 첨부해 발송. defect/observation·분기·수신인 자동.</div>`;
   const dl = document.createElement('button');
-  dl.textContent = '⬇ 엑셀 다시 다운로드';
+  dl.textContent = ' 엑셀 다시 다운로드';
   dl.style.cssText = 'width:100%;height:38px;border:1px solid #1f4e78;background:#1f4e78;color:#fff;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:12px';
   dl.addEventListener('click', () => { ifr.src = exportUrl; });
   box.appendChild(dl);
   const lbl = document.createElement('div');
   lbl.style.cssText = 'font-size:12px;font-weight:600;color:#555;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center';
   const copyBtn = document.createElement('button');
-  copyBtn.textContent = '📋 복사';
+  copyBtn.textContent = ' 복사';
   copyBtn.style.cssText = 'border:1px solid #d3d1c7;background:#faf9f5;border-radius:6px;padding:2px 10px;font-size:12px;cursor:pointer';
   lbl.append(Object.assign(document.createElement('span'), { textContent: '메일 드래프트' }), copyBtn);
   box.appendChild(lbl);
@@ -365,7 +365,7 @@ function openCsExportMail(survey, vesselName) {
   ta.style.cssText = 'width:100%;height:300px;border:1px solid #d3d1c7;border-radius:8px;padding:10px;font-size:12px;font-family:ui-monospace,monospace;line-height:1.5;resize:vertical';
   box.appendChild(ta);
   copyBtn.addEventListener('click', () => {
-    ta.select(); navigator.clipboard.writeText(ta.value).then(() => { copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 복사', 1500); });
+    ta.select(); navigator.clipboard.writeText(ta.value).then(() => { copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = ' 복사', 1500); });
   });
   const close = document.createElement('button');
   close.textContent = '닫기';
@@ -385,7 +385,7 @@ function quarterRow(vesselId, quarter, survey, vesselName) {
   if (survey) {
     const expanded = S.expandedSurveys.has(survey.id);
     qCell.append(
-      el('span', { class: 'cs-caret' }, expanded ? '▼' : '▶'),
+      el('span', { class: 'cs-caret' }, expanded ? '▾' : '▸'),
       ` ${quarter}Q`,
     );
     qCell.style.cursor = 'pointer';
@@ -437,7 +437,7 @@ function quarterRow(vesselId, quarter, survey, vesselName) {
   // 액션 (첨부 + 메모 + 삭제)
   const actions = el('td', { class: 'cs-actions' });
   if (survey) {
-    // 📎 첨부
+    //  첨부
     const attBtn = el('button', {
       class: 'icon-btn',
       title: `첨부파일${survey.attach_count ? ` (${survey.attach_count})` : ''}`,
@@ -452,7 +452,7 @@ function quarterRow(vesselId, quarter, survey, vesselName) {
     }
     actions.append(attBtn);
 
-    // 📝 메모
+    //  메모
     const memoBtn = el('button', {
       class: 'icon-btn',
       title: 'Overall Remark / 상세 편집',
@@ -466,7 +466,7 @@ function quarterRow(vesselId, quarter, survey, vesselName) {
     if (survey.overall_remark) memoBtn.classList.add('has-memo');
     actions.append(memoBtn);
 
-    // 📅 캘린더 등록
+    //  캘린더 등록
     const calBtn = el('button', {
       class: 'icon-btn',
       title: '일정에 등록',
@@ -479,7 +479,7 @@ function quarterRow(vesselId, quarter, survey, vesselName) {
       <line x1="3" y1="10" x2="21" y2="10"/></svg>`;
     actions.append(calBtn);
 
-    // 🗑 삭제
+    //  삭제
     const rm = el('button', {
       class: 'icon-btn danger',
       title: '이 분기 서베이 삭제',
@@ -679,11 +679,11 @@ function detailRow(survey, vesselName) {
   // 보고서 → 항목 자동 생성 (Gemini) + 엑셀 추출(+메일 드래프트 모달)
   td.append(el('div', { class: 'csx-bar' },
     el('button', { class: 'btn btn-outline btn-sm', onclick: () => openCsExtract(survey) },
-      '📄 보고서에서 자동 생성'),
+      ' 보고서에서 자동 생성'),
     el('button', {
       class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
       onclick: () => openCsExportMail(survey, vesselName),
-    }, '⬇ 엑셀 추출')));
+    }, ' 엑셀 추출')));
 
   const defects      = (survey.findings || []).filter(f => f.category === 'Defect');
   const observations = (survey.findings || []).filter(f => f.category === 'Observation');
@@ -769,7 +769,7 @@ function findingsSection(survey, category, findings) {
   table.append(tbody);
   sec.append(el('div', { class: 'tbl-scroll' }, table));
 
-  // 버튼 영역 — + 추가 / 💾 저장 / 취소
+  // 버튼 영역 — + 추가 /  저장 / 취소
   const btnRow = el('div', { class: 'cs-add-btn-row' });
   btnRow.append(el('button', {
     class: 'btn btn-outline btn-sm',
@@ -782,7 +782,7 @@ function findingsSection(survey, category, findings) {
     btnRow.append(el('button', {
       class: 'btn btn-primary btn-sm',
       onclick: () => saveAllInlineRows(survey, category),
-    }, `💾 전체 저장`));
+    }, ` 전체 저장`));
     btnRow.append(el('button', {
       class: 'btn btn-outline btn-sm',
       onclick: () => { survey._inlineAdd = null; render(); },

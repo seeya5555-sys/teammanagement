@@ -166,7 +166,7 @@ function vesselCard(g) {
       snap.has_file
         ? el('a', { class: 'cls-src cls-src-dl', href: `/api/class-status/${snap.id}/file`,
                     target: '_blank', rel: 'noopener',
-                    title: '원본 미리보기: ' + (snap.source_filename || '') }, '👁 ' + (snap.source_filename || '원본 보기'))
+                    title: '원본 미리보기: ' + (snap.source_filename || '') }, (snap.source_filename || '원본 보기'))
         : (snap.source_filename ? el('span', { class: 'cls-src', title: snap.source_filename }, snap.source_filename) : ''),
       el('span', { class: 'cls-counts' }, `선급지적 ${coc.length} · 기국 ${stat.length}`)),
     el('div', { class: 'cls-actions' },
@@ -376,7 +376,7 @@ function wireUpload() {
     pushBtn.disabled = true;
     try {
       const r = await fetch('/api/class-status/push', { method: 'POST' });
-      if (r.ok) alert('요청됨 📥 — 선급 API에서 가져오는 중입니다. 1~2분 후 목록을 새로고침하세요. (결과는 텔레그램 보고)');
+      if (r.ok) alert('요청됨 — 선급 API에서 가져오는 중입니다. 1~2분 후 목록을 새로고침하세요. (결과는 텔레그램 보고)');
       else alert('요청 실패 (' + r.status + ')');
     } catch (e) { alert('요청 실패: ' + e.message); }
     finally { pushBtn.disabled = false; }
@@ -419,7 +419,7 @@ async function openMgrExport() {
   ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
-  box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:4px">📑 관리사별 Class Status 추출 + 메일 드래프트'
+  box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:4px"><svg class="ic-svg"><use href="#i-file-text"/></svg> 관리사별 Class Status 추출 + 메일 드래프트'
     + (supName ? ` <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${supName} 담당</span>` : '') + '</div>'
     + '<div style="font-size:12px;color:#888;margin-bottom:12px">관리사 선택 → 엑셀(영문) 다운로드 + 오른쪽 메일 드래프트 복사해서 발송. 지적 없는 선박 자동 제외.</div>';
   const sel = document.createElement('select');
@@ -435,8 +435,9 @@ async function openMgrExport() {
   const lbl = document.createElement('div');
   lbl.style.cssText = 'font-size:12px;font-weight:600;color:#555;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center';
   const copyBtn = document.createElement('button');
-  copyBtn.className = 'btn btn-outline btn-sm'; copyBtn.textContent = '📋 메일 복사';
-  lbl.innerHTML = '<span>✉ 메일 드래프트 (복붙용 · 영문)</span>';
+  const COPY_LABEL = '<svg class="ic-svg"><use href="#i-clipboard"/></svg> 메일 복사';
+  copyBtn.className = 'btn btn-outline btn-sm'; copyBtn.innerHTML = COPY_LABEL;
+  lbl.innerHTML = '<span><svg class="ic-svg" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> 메일 드래프트 (복붙용 · 영문)</span>';
   lbl.appendChild(copyBtn);
   box.appendChild(lbl);
   const ta = document.createElement('textarea');
@@ -445,8 +446,9 @@ async function openMgrExport() {
   box.appendChild(ta);
   sel.addEventListener('change', () => { ta.value = mailDraft(sel.value); });
   copyBtn.onclick = async () => {
-    try { await navigator.clipboard.writeText(ta.value); copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 메일 복사', 1500); }
-    catch (_) { ta.select(); document.execCommand('copy'); copyBtn.textContent = '✓ 복사됨'; setTimeout(() => copyBtn.textContent = '📋 메일 복사', 1500); }
+    const COPIED_LABEL = '<svg class="ic-svg"><use href="#i-check-circle"/></svg> 복사됨';
+    try { await navigator.clipboard.writeText(ta.value); copyBtn.innerHTML = COPIED_LABEL; setTimeout(() => copyBtn.innerHTML = COPY_LABEL, 1500); }
+    catch (_) { ta.select(); document.execCommand('copy'); copyBtn.innerHTML = COPIED_LABEL; setTimeout(() => copyBtn.innerHTML = COPY_LABEL, 1500); }
   };
 
   const row = document.createElement('div');
@@ -455,7 +457,7 @@ async function openMgrExport() {
   cancel.className = 'btn btn-outline btn-sm'; cancel.textContent = '닫기';
   cancel.onclick = () => ov.remove();
   const dl = document.createElement('button');
-  dl.className = 'btn btn-primary btn-sm'; dl.textContent = '⬇ 엑셀 다운로드';
+  dl.className = 'btn btn-primary btn-sm'; dl.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg> 엑셀 다운로드';
   dl.onclick = () => {
     let url = '/api/class-status/export-by-manager?manager=' + encodeURIComponent(sel.value);
     if (S.activeTab && S.activeTab !== 'all') url += '&supervisor_id=' + S.activeTab;

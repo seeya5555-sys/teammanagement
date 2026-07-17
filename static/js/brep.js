@@ -154,9 +154,9 @@ function renderCard(r) {
   );
 
   const meta = el('div', { class: 'dd-card-meta' });
-  if (r.port)     meta.append(el('span', { class: 'dd-meta-text' }, '🏭 ' + r.port));
+  if (r.port)     meta.append(el('span', { class: 'dd-meta-text' }, ' ' + r.port));
   const period = fmtPeriod(r);
-  if (period)     meta.append(el('span', { class: 'dd-meta-text' }, '📅 ' + period));
+  if (period)     meta.append(el('span', { class: 'dd-meta-text' }, ' ' + period));
   card.append(meta);
 
   card.append(
@@ -167,7 +167,7 @@ function renderCard(r) {
   return card;
 }
 
-// 카드 badge 클릭 → 진행 중 ↔ 완료 즉시 전환
+// 카드 badge 클릭 → 진행 중  완료 즉시 전환
 async function toggleStatus(r, badgeEl) {
   const next = r.status === 'done' ? 'draft' : 'done';
   badgeEl.style.opacity = '0.5';

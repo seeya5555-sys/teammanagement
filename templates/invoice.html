@@ -66,20 +66,20 @@
 {% endblock %}
 {% block content %}
 <div class="fr-head">
-  <h2 style="margin:0">🧾 인보이스 자동컨펌</h2>
+  <h2 style="margin:0"><svg class="ic-svg"><use href="#i-file-text"/></svg> 인보이스 자동컨펌</h2>
   <span class="fr-count" id="fr-count"></span>
   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-    <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify">🔍 카드적재(prep)</button>
-    <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit">▶ 체크한 것 일괄승인+컨펌</button>
-    <button class="fr-b rs" id="fr-collapse">🔼 전체펼치기</button>
-    <button class="fr-b rs" id="fr-reload">🔄 새로고침</button>
-    <button class="fr-b del" id="fr-clear">🗑 처리완료 비우기</button>
+    <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify"><svg class="ic-svg"><use href="#i-search-check"/></svg>카드적재(prep)</button>
+    <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit"><svg class="ic-svg" viewBox="0 0 24 24"><path d="m7 5 12 7-12 7V5Z"/></svg>체크한 것 일괄승인+컨펌</button>
+    <button class="fr-b rs" id="fr-collapse">전체펼치기</button>
+    <button class="fr-b rs" id="fr-reload"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>새로고침</button>
+    <button class="fr-b del" id="fr-clear"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>처리완료 비우기</button>
   </div>
 </div>
 <div class="fr-note">
-  <b>[🔍카드적재]</b> 누르면 SVMS 컨펌대기 인보이스가 PDF 대조·교정안과 함께 카드로 적재됨(~1~2분).
+  <b>[카드적재]</b> 누르면 SVMS 컨펌대기 인보이스가 PDF 대조·교정안과 함께 카드로 적재됨(~1~2분).
   <b>opt-out</b>: <span class="b-pass" style="padding:1px 6px;border-radius:999px">PASS</span> 카드는 디폴트 <b>승인</b>(체크), <span class="b-hold" style="padding:1px 6px;border-radius:999px">HOLD</span> 카드는 디폴트 해제 →
-  <b>[▶체크한 것 일괄승인+컨펌]</b> 누르면 <b>체크된 카드 전부 한 번에 승인</b>+PIC/SUP/Remit 교정+SVMS 컨펌. 미체크·HOLD·리젝은 제외. 카드별로 체크 해제·개별 리젝도 가능.
+  <b>[체크한 것 일괄승인+컨펌]</b> 누르면 <b>체크된 카드 전부 한 번에 승인</b>+PIC/SUP/Remit 교정+SVMS 컨펌. 미체크·HOLD·리젝은 제외. 카드별로 체크 해제·개별 리젝도 가능.
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
 <datalist id="expcodes"></datalist>
@@ -92,10 +92,10 @@
   // P4 표시전용: 서버 matched_vessel → 선박 soft매칭 칩(read-only)
   const vesselChip=d=>{
     const m=d&&d.matched_vessel;
-    if(!m) return `<span class="ves-chip none" title="TRMT 로스터 미매칭(표시전용)">⚓ 미매칭</span>`;
+    if(!m) return `<span class="ves-chip none" title="TRMT 로스터 미매칭(표시전용)"><svg class="ic-svg"><use href="#i-anchor"/></svg> 미매칭</span>`;
     const cls=m.in_my_roster?'ok':'other';
     const t=m.in_my_roster?'내 로스터 선박(표시전용)':'타 로스터/미배정 선박(표시전용)';
-    return `<span class="ves-chip ${cls}" title="${esc(t)}">🔗 ${esc(m.name)}</span>`;
+    return `<span class="ves-chip ${cls}" title="${esc(t)}"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> ${esc(m.name)}</span>`;
   };
   async function api(method,url,body){
     const o={method,headers:{}};
@@ -104,20 +104,20 @@
     return {ok:r.ok,j};
   }
   function mark(v,label){
-    if(v===1||v===true) return `<span class="mok">${label} ✓</span>`;
-    if(v===0||v===false) return `<span class="mng">${label} ✗</span>`;
+    if(v===1||v===true) return `<span class="mok">${label} <svg class="ic-svg" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>`;
+    if(v===0||v===false) return `<span class="mng">${label} <svg class="ic-svg" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span>`;
     return `<span class="mun">${label} —</span>`;
   }
   function jparse(s){if(s==null)return null;if(typeof s!=='string')return s;try{return JSON.parse(s);}catch(e){return null;}}
   function card(d){
     const dec=['approved','rejecting','reject_submitting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
     const gate=(d.gate||'').toUpperCase();
-    const gateBadge=gate?`<span class="fr-badge ${gate==='PASS'?'b-pass':'b-hold'}">${gate==='PASS'?'✅PASS':'⏸HOLD'}</span>`:'';
+    const gateBadge=gate?`<span class="fr-badge ${gate==='PASS'?'b-pass':'b-hold'}">${gate==='PASS'?'PASS':'HOLD'}</span>`:'';
     const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
     // 라인합≠총액(E15) 사전경고 배지 — 접힌 상태에서도 보이게
     const _fl=jparse(d.flags)||[];
     const e15=Array.isArray(_fl)&&_fl.some(f=>/E15|라인합/.test(String(f)));
-    const e15Badge=e15?`<span class="fr-badge b-flag">⚠️라인합≠총액</span>`:'';
+    const e15Badge=e15?`<span class="fr-badge b-flag">라인합≠총액</span>`:'';
     // 헤더 메타
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b> ${vesselChip(d)}</span>`
           +`<span>벤더 <b>${esc(d.vndr_nm||d.vndr_cd||'-')}</b></span>`
@@ -140,7 +140,7 @@
         +`<div class="fr-edit">`
         +`<label>적요 <input class="fr-subj-in" value="${esc(d.subject||'')}" placeholder="적요(라인 내용)"></label>`
         +`<label>EXP <input class="fr-exp-in" list="expcodes" value="${esc(d.exp_cd||'')}" placeholder="코드/명칭 검색"></label>`
-        +`<button class="fr-b ed" data-act="edit">💾 수정저장</button>`
+        +`<button class="fr-b ed" data-act="edit"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>수정저장</button>`
         +`<span class="fr-exp-nm mun">${d.exp_nm?esc(d.exp_nm):''}${d.exp_conf!=null?` (conf ${esc(d.exp_conf)})`:''}</span>`
         +`</div>`
         +`${d.exp_reason?`<div class="mun" style="margin-top:3px">${esc(d.exp_reason)}</div>`:''}</div>`;
@@ -157,12 +157,12 @@
     if(d.status==='pending'){
       const checked=gate==='PASS'?'checked':'';
       acts=`<label class="fr-optout"><input type="checkbox" data-optout ${checked}> 승인(컨펌)</label>
-            <button class="fr-b ap" data-act="approve">✅ 승인</button>
+            <button class="fr-b ap" data-act="approve"><svg class="ic-svg"><use href="#i-check-circle"/></svg>승인</button>
             <input class="fr-rsn" placeholder="리젝(보류) 사유 입력 후 리젝 →" />
-            <button class="fr-b rj" data-act="reject">🚫 리젝</button>
+            <button class="fr-b rj" data-act="reject"><svg class="ic-svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg>리젝</button>
             <button class="fr-b del" data-act="delete">삭제</button>`;
     } else if(d.status==='approved'||d.status==='rejecting'){
-      const lbl=d.status==='approved'?'✅ 승인 대기':'🚫 리젝(보류) 대기';
+      const lbl=d.status==='approved'?'승인 대기':'리젝(보류) 대기';
       acts=`<span class="fr-decided">${lbl}${d.reject_reason?(' — 사유: '+esc(d.reject_reason)):''} (${esc(d.decided_by||'')})</span>
             <button class="fr-b rs" data-act="reset">결정 취소</button>`;
     } else {
@@ -171,7 +171,7 @@
     const dcoll=true;   // 탭 진입 시 전 카드 기본 접힘(스캔 편하게). 펼침은 사용자가 클릭, 8s 새로고침엔 스냅샷으로 유지
     return `<div class="fr-card${dcoll?' collapsed':''}" data-id="${d.id}" data-status="${esc(d.status)}" data-gate="${esc(gate)}">
       <div class="fr-top">
-        <span class="fr-caret">▾</span>
+        <span class="fr-caret"><svg class="ic-svg"><use href="#i-chevron-down"/></svg></span>
         <div style="flex:1"><div class="fr-subj">${esc(d.vndr_nm||d.vndr_cd||d.inv_cd)}</div>
         <div class="fr-meta">${esc(d.inv_cd)} · ${esc(d.vsl_nm||d.vsl_cd||'')} · <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></div></div>
         <div class="fr-badges">${e15Badge}${gateBadge}${stbadge}</div>
@@ -191,7 +191,7 @@
     const {ok,j}=await api('GET','/api/invoice/drafts');
     if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
     const ds=j.drafts||[];
-    $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · ⚠️킬스위치 ON');
+    $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · 킬스위치 ON');
     $('#fr-list').innerHTML=ds.length?ds.map(card).join(''):'<div class="fr-empty">카드 없음 — [카드적재(prep)] 실행</div>';
     document.querySelectorAll('.fr-card').forEach(el=>{
       const s=snap[el.dataset.id];
@@ -241,7 +241,7 @@
   $('#fr-verify').onclick=async()=>{
     if(!confirm('SVMS 컨펌대기 인보이스 prep → 카드 적재할까요? (~1~2분)'))return;
     const {ok,j}=await api('POST','/api/automation/run',{task:'invoice_confirm',mode:'verify'});
-    alert(ok?'✅ 적재 실행 — 1~2분 후 카드 적재됨. 새로고침하세요.':('🚨 '+(j.error||'실패')));
+    alert(ok?'적재 실행 — 1~2분 후 카드 적재됨. 새로고침하세요.':(j.error||'실패'));
   };
   $('#fr-submit').onclick=async()=>{
     // 체크된 pending 카드 = 이번에 일괄 승인할 것(opt-out). 이미 approved 건도 함께 컨펌됨.
@@ -257,14 +257,14 @@
       if(!r.ok){alert('일괄승인 실패: '+(r.j.error||''));return;}
     }
     const {ok,j}=await api('POST','/api/automation/run',{task:'invoice_confirm',mode:'live'});
-    alert(ok?`✅ ${checkedIds.length}건 승인+컨펌 실행 — 1~2분 후 반영. 새로고침.`:('🚨 '+(j.error||'실패')));
+    alert(ok?`${checkedIds.length}건 승인+컨펌 실행 — 1~2분 후 반영. 새로고침.`:(j.error||'실패'));
     load();
   };
   $('#fr-collapse').onclick=()=>{
     const cards=[...document.querySelectorAll('.fr-card')];
     const anyOpen=cards.some(el=>!el.classList.contains('collapsed'));
     cards.forEach(el=>el.classList.toggle('collapsed', anyOpen));   // 하나라도 열려있으면 전부 접기, 아니면 전부 펼치기
-    $('#fr-collapse').textContent=anyOpen?'🔼 전체펼치기':'🔽 전체접기';
+    $('#fr-collapse').textContent=anyOpen?'전체펼치기':'전체접기';
   };
   $('#fr-reload').onclick=load;
   $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌/보류/실패) 카드를 비울까요?'))return;

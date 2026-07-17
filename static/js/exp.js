@@ -120,10 +120,10 @@ function renderCard(t) {
   const meta = el('div', { class: 'dd-card-meta' });
   const period = (t.trip_start || t.trip_end)
     ? `${fmtDate(t.trip_start)} ~ ${fmtDate(t.trip_end)}` : '';
-  if (period) meta.append(el('span', { class: 'dd-meta-text' }, '📅 ' + period));
-  meta.append(el('span', { class: 'dd-meta-chip' }, `🧾 영수증 ${t.receipt_count || 0}건`));
+  if (period) meta.append(el('span', { class: 'dd-meta-text' }, ' ' + period));
+  meta.append(el('span', { class: 'dd-meta-chip' }, ` 영수증 ${t.receipt_count || 0}건`));
   if (t.corp_cards && t.corp_cards.length)
-    meta.append(el('span', { class: 'dd-meta-text' }, '💳 ' + t.corp_cards.join(', ')));
+    meta.append(el('span', { class: 'dd-meta-text' }, ' ' + t.corp_cards.join(', ')));
   card.append(meta);
 
   card.append(

@@ -70,7 +70,7 @@
 </style>
 {% endblock %}
 {% block content %}
-<h1 class="page-title">🤖 자동화 모음</h1>
+<h1 class="page-title"><svg class="ic-svg"><use href="#i-workflow"/></svg> 자동화 모음</h1>
 <div class="au-wrap">
   <div class="au-master" id="au-master">
     <div>
@@ -99,7 +99,7 @@
         <option value="claude-haiku-4-5">Haiku</option>
         <option value="openai/gpt-5.4-mini">GPT 5.4 mini (추가확인)</option>
       </select>
-      <button class="au-b live" id="sv-live" type="button">▶ 검증 실기입</button>
+      <button class="au-b live" id="sv-live" type="button"> 검증 실기입</button>
     </div>
   </div>
 
@@ -112,7 +112,7 @@
       <span class="au-log-caret" id="au-log-caret">▸</span>
       <h3>실행 로그 (audit)</h3>
       <span class="au-log-meta" id="au-log-meta"></span>
-      <button class="au-log-clear" id="au-log-clear" type="button" title="완료/실패 로그 비우기 (진행중은 보존)">🗑 비우기</button>
+      <button class="au-log-clear" id="au-log-clear" type="button" title="완료/실패 로그 비우기 (진행중은 보존)"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> 비우기</button>
     </div>
     <div id="au-runs" hidden></div>
     <div class="au-log-cleared" id="au-log-cleared"></div>
@@ -127,7 +127,7 @@
   let LOG_SCROLLS={}, LOG_SIG=null;
   let JLIST=[], JREV=null, JSIG='', JPENDING={}, JOPEN=false;   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게) / JOPEN: 리스트 펼침(기본 접힘)
   let SOPEN=false;   // SOA 섹션 펼침(기본 접힘)
-  const JBKT={pass:'✅ 통과',costslip:'📄 CostSlip',mismatch:'⚠️ DN≠Cost',escalate:'🚨 차액≥$1k',flag:'✋ 사람확인',already:'✔️ 이미결재'};
+  const JBKT={pass:'통과',costslip:'CostSlip',mismatch:'DN≠Cost',escalate:'차액≥$1k',flag:'사람확인',already:'이미결재'};
   const escA=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
   const $=s=>document.querySelector(s);
   const esc=s=>String(s).replace(/</g,'&lt;');
@@ -152,18 +152,18 @@
     const dis=b?'disabled':'';
     let btns='';
     if(opts.resend){
-      btns=`<button class="au-b live" data-task="${task}" data-mode="verify" ${dis}>📨 재발송</button>`;
+      btns=`<button class="au-b live" data-task="${task}" data-mode="verify" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> 재발송</button>`;
     } else if(opts.money){   // 전자결재
-      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>🔍 검증</button>
-            <button class="au-b live money" data-task="${task}" data-mode="live" ${dis}>▶ 자동상신</button>`;
+      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증</button>
+            <button class="au-b live money" data-task="${task}" data-mode="live" ${dis}> 자동상신</button>`;
     } else if(opts.prep){    // AOR prep — Submitted AOR 카드화(/aor 큐 적재). 상신 아님(읽기+적재)
-      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>▶ AOR prep 실행 (/aor 큐 적재)</button>`;
+      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}> AOR prep 실행 (/aor 큐 적재)</button>`;
     } else {                 // SOA 그룹: 승인 + 리젝 워크플로우
-      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}>🔍 검증</button>
-            <button class="au-b live" data-task="${task}" data-mode="live" ${dis}>▶ 자동승인</button>
-            <button class="au-b rjt" data-task="${task}" data-mode="reject_mark" ${dis}>🟥 리젝체크</button>
-            <button class="au-b rjt2" data-task="${task}" data-mode="reject_submit" ${dis}>📤 리젝제출+메일</button>
-            <button class="au-b verify" data-task="${task}" data-mode="remark_cleanup" ${dis}>🧹 리마크정리</button>`;
+      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증</button>
+            <button class="au-b live" data-task="${task}" data-mode="live" ${dis}> 자동승인</button>
+            <button class="au-b rjt" data-task="${task}" data-mode="reject_mark" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg> 리젝체크</button>
+            <button class="au-b rjt2" data-task="${task}" data-mode="reject_submit" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 리젝제출+메일</button>
+            <button class="au-b verify" data-task="${task}" data-mode="remark_cleanup" ${dis}>리마크정리</button>`;
     }
     return `<div class="au-row"><div class="au-name">${name}${statusChip(task)}</div><div class="au-btns">${btns}</div></div>`;
   }
@@ -223,15 +223,15 @@
     const sig=JSON.stringify(JLIST)+'|'+JREV+'|'+JOPEN;
     if(sig===JSIG) return;   // 변화 없으면 재그리기 안 함(체크 중 깜빡임 방지)
     JSIG=sig;
-    if(!JLIST.length){ el.innerHTML=`<div class="jl-empty">검증 결과 없음 — 🔍검증을 누르면 현재 상신대기 전자결재를 전수 검토해 여기 띄웁니다.</div>`; return; }
+    if(!JLIST.length){ el.innerHTML=`<div class="jl-empty">검증 결과 없음 — 검증을 누르면 현재 상신대기 전자결재를 전수 검토해 여기 띄웁니다.</div>`; return; }
     const sub=JLIST.filter(x=>x.bucket!=='already'), already=JLIST.filter(x=>x.bucket==='already');
     const nHold=sub.filter(x=>x.excluded).length;
-    let body=`<div class="jl-rev">검토시각 ${JREV||'-'} · 상신대상 ${sub.length}건 중 보류 ${nHold}건 · ▶자동상신 시 <b>${sub.length-nHold}건</b> 상신 예정`+
+    let body=`<div class="jl-rev">검토시각 ${JREV||'-'} · 상신대상 ${sub.length}건 중 보류 ${nHold}건 · 자동상신 시 <b>${sub.length-nHold}건</b> 상신 예정`+
       `<br><span class="jl-note">미체크=상신 / 불일치(DN≠Cost)는 기본 보류(빨강) — 직접 풀어야 상신</span></div>`;
     body+=`<div class="jl-grp">상신 대상 — 체크 = 보류(상신 제외)</div>`;
     body+= sub.length?sub.map(jrow).join(''):`<div class="jl-empty">상신 대상 없음</div>`;
     if(already.length){
-      body+=`<div class="jl-grp">✔️ 이미결재 — 상신 불필요</div>`;
+      body+=`<div class="jl-grp">이미결재 — 상신 불필요</div>`;
       body+=already.map(jrow).join('');
     }
     // 접기 헤더 — 기본 접힘. 헤더에 요약(상신대상/보류/시각) 표시해 펼치지 않아도 파악 가능.
@@ -246,12 +246,12 @@
     const anyBusy=SOA.some(busy);
     const dEn=(!ENABLED)?'disabled':'';                 // 검증은 ENABLED만 보면 됨
     const dAll=(!ENABLED||anyBusy)?'disabled':'';        // 실행계열은 진행중이면도 막음
-    const allRow=`<div class="au-row au-allrow"><div class="au-name">⚡ SOA 전체 한방에<span class="au-desc">4그룹·16척 일괄 적재 → 러너가 순차 실행</span></div>`+
+    const allRow=`<div class="au-row au-allrow"><div class="au-name"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> SOA 전체 한방에<span class="au-desc">4그룹·16척 일괄 적재 → 러너가 순차 실행</span></div>`+
       `<div class="au-btns">`+
-      `<button class="au-b verify" data-all="verify" ${dEn}>🔍 검증 전체</button>`+
-      `<button class="au-b live" data-all="live" ${dAll}>▶ 자동승인 전체</button>`+
-      `<button class="au-b rjt" data-all="reject_mark" ${dAll}>🟥 리젝체크 전체</button>`+
-      `<button class="au-b rjt2" data-all="reject_submit" ${dAll}>📤 리젝제출+메일 전체</button>`+
+      `<button class="au-b verify" data-all="verify" ${dEn}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증 전체</button>`+
+      `<button class="au-b live" data-all="live" ${dAll}> 자동승인 전체</button>`+
+      `<button class="au-b rjt" data-all="reject_mark" ${dAll}><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg> 리젝체크 전체</button>`+
+      `<button class="au-b rjt2" data-all="reject_submit" ${dAll}><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 리젝제출+메일 전체</button>`+
       `</div></div>`;
     const body=allRow+SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
     el.innerHTML=`<div class="jl-head${SOPEN?' open':''}" id="soa-head"><span class="jl-caret">▸</span>SOA 정기검토 · 자동승인<span class="jl-headmeta">4그룹·16척</span></div>`+

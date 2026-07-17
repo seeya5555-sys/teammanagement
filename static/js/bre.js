@@ -34,6 +34,18 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 
+// 인라인 라인아이콘 SVG 생성 (stroke 스타일은 .ic-svg CSS가 처리)
+function svgIcon(inner) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24" aria-hidden="true">' + inner + '</svg>';
+  return tpl.content.firstElementChild;
+}
+const IC_X = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>';
+const IC_CAMERA = '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>';
+const IC_IMAGE = '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>';
+const IC_CLIPBOARD = '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>';
+const IC_ALERT = '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>';
+
 async function api(url, opts = {}) {
   const headers = opts.body instanceof FormData
     ? (opts.headers || {})
@@ -73,7 +85,7 @@ async function loadReport() {
   $('#bre-title').textContent = r.title || '제목 없음';
   const subs = [];
   if (r.vessel_name) subs.push(r.vessel_name);
-  if (r.port)        subs.push('🏭 ' + r.port);
+  if (r.port)        subs.push(r.port);
   if (r.boarding_start || r.boarding_end) {
     subs.push(`${(r.boarding_start||'').replace(/-/g,'.')} ~ ${(r.boarding_end||'').replace(/-/g,'.')}`);
   }
@@ -165,7 +177,7 @@ function renderTOCNodes(nodes, container) {
         el('button', { class: 'dde-toc-btn', title: '아래로',
           onclick: (e) => { e.stopPropagation(); moveSection(n.id, 'down'); }}, '↓'),
         el('button', { class: 'dde-toc-btn', title: '다른 섹션으로 이동…',
-          onclick: (e) => { e.stopPropagation(); openReparentModal(n.id); }}, '↗'),
+          onclick: (e) => { e.stopPropagation(); openReparentModal(n.id); }}, '이동'),
       ) : null,
     );
     container.append(item);
@@ -193,13 +205,13 @@ function showTocCtxMenu(ev, sid) {
   addItem('↑ 위로', () => moveSection(sid, 'up'));
   addItem('↓ 아래로', () => moveSection(sid, 'down'));
   addSep();
-  addItem('↗ 다른 섹션으로 이동…', () => openReparentModal(sid));
+  addItem(' 다른 섹션으로 이동…', () => openReparentModal(sid));
   if (info && info.depth > 0) {
-    addItem('⤴ 최상위로 이동', () => reparentSection(sid, null));
+    addItem(' 최상위로 이동', () => reparentSection(sid, null));
   }
   addSep();
   addItem('이름 변경', () => renameSection(sid));
-  addItem('🗑 삭제', () => deleteSection(sid));
+  addItem('삭제', () => deleteSection(sid));
 
   document.body.append(menu);
   menu.style.position = 'fixed';
@@ -565,9 +577,9 @@ function getBlockMenu() {
     { type: 'paragraph',    icon: 'T',  label: '텍스트',      desc: '단락 본문' },
     { type: 'bullet_list',  icon: '•',  label: '불릿 리스트', desc: '항목 나열' },
     { type: 'table',        icon: '▦',  label: '표',          desc: '행/열 데이터' },
-    { type: 'image',        icon: '🖼', label: '사진 갤러리', desc: '여러 장' },
-    { type: 'info_table',   icon: '📋', label: '정보 표',     desc: 'Label-Value' },
-    { type: 'defect_table', icon: '⚠️', label: 'Defect List', desc: '결함 항목 표' },
+    { type: 'image',        icon: svgIcon(IC_IMAGE),     label: '사진 갤러리', desc: '여러 장' },
+    { type: 'info_table',   icon: svgIcon(IC_CLIPBOARD), label: '정보 표',     desc: 'Label-Value' },
+    { type: 'defect_table', icon: svgIcon(IC_ALERT),     label: 'Defect List', desc: '결함 항목 표' },
   ];
 }
 
@@ -634,7 +646,7 @@ function renderBlock(b, idx, total) {
       el('button', { class: 'dde-block-btn', title: '아래로', disabled: idx === total - 1,
         onclick: () => moveBlock(b.id, 'down') }, '↓'),
       el('button', { class: 'dde-block-btn dde-block-del', title: '삭제',
-        onclick: () => deleteBlock(b.id) }, '✕'),
+        onclick: () => deleteBlock(b.id) }, svgIcon(IC_X)),
     ));
   }
 
@@ -796,7 +808,7 @@ function renderBulletList(body, b) {
             else items.splice(i, 1);
             rebuild();
             scheduleBlockSave(b.id, getCurrent);
-          }}, '✕'),
+          }}, svgIcon(IC_X)),
       );
       list.append(row);
     });
@@ -904,7 +916,7 @@ function renderTable(body, b) {
           colWidths.splice(ci, 1);
           rebuild();
           scheduleBlockSave(b.id, getCurrent);
-        }}, '✕');
+        }}, svgIcon(IC_X));
       th.append(inp, delBtn);
       if (ci < headers.length - 1) {
         th.append(el('div', {
@@ -1038,7 +1050,7 @@ function renderImageGallery(body, b) {
       wrap.append(el('div', {
         class: 'dde-image-drop', onclick: () => triggerAddImages(),
       },
-        el('div', { class: 'dde-image-drop-icon' }, '📷'),
+        el('div', { class: 'dde-image-drop-icon' }, '사진'),
         el('div', { class: 'dde-image-drop-text' }, '클릭하거나 사진을 끌어다 놓기'),
         el('div', { class: 'dde-image-drop-hint' }, '여러 장 한번에 선택·드롭 가능'),
       ));
@@ -1059,14 +1071,14 @@ function renderImageGallery(body, b) {
               [images[idx - 1], images[idx]] = [images[idx], images[idx - 1]];
               rebuild();
               scheduleBlockSave(b.id, getCurrent);
-            }}, '◀'),
+            }}, '이동'),
           el('button', { class: 'dde-img-mv', type: 'button', title: '오른쪽으로',
             disabled: idx === images.length - 1,
             onclick: () => {
               [images[idx], images[idx + 1]] = [images[idx + 1], images[idx]];
               rebuild();
               scheduleBlockSave(b.id, getCurrent);
-            }}, '▶'),
+            }}, '이동'),
           el('button', { class: 'dde-img-x', type: 'button', title: '제거',
             onclick: () => {
               if (!confirm('이 사진을 제거하시겠습니까?')) return;
@@ -1460,7 +1472,7 @@ function renderDefectPhoto(photoCell, items, idx, b, getCurrent, rebuild) {
       class: 'bre-defect-photo-add', type: 'button',
       title: '클릭 또는 사진을 끌어다 놓기',
       onclick: () => uploadDefectImage(items, idx, b, getCurrent, rebuild),
-    }, '📷', el('br'), el('span', {}, '사진 추가')));
+    }, '사진', el('br'), el('span', {}, '사진 추가')));
     return;
   }
 

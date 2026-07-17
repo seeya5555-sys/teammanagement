@@ -46,18 +46,18 @@
 {% endblock %}
 {% block content %}
 <div class="fr-head">
-  <h2 style="margin:0">💰 비용청구 승인</h2>
+  <h2 style="margin:0"><svg class="ic-svg"><use href="#i-wallet"/></svg> 비용청구 승인</h2>
   <span class="fr-count" id="fr-count"></span>
   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-    <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify">🔍 검증(카드적재)</button>
-    <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit">▶ 자동상신/리젝 실행</button>
-    <button class="fr-b rs" id="fr-reload">🔄 새로고침</button>
-    <button class="fr-b del" id="fr-clear">🗑 처리완료 비우기</button>
+    <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify"><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증(카드적재)</button>
+    <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></svg> 자동상신/리젝 실행</button>
+    <button class="fr-b rs" id="fr-reload"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg> 새로고침</button>
+    <button class="fr-b del" id="fr-clear"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> 처리완료 비우기</button>
   </div>
 </div>
 <div class="fr-note">
-  <b>[🔍검증]</b> 누르면 장금 Technical Submitted 건이 카드로 적재됨(~1~2분). 카드마다 <b>승인</b>/<b>리젝</b> 결정 →
-  <b>[▶자동상신/리젝 실행]</b> 누르면 승인=SVMS 상신, 리젝=STATUS=R+관리사 통보메일 실행. (검증결과 ✅pass는 승인 권장, ⚠️불일치/🚨차액은 리젝 권장)
+  <b>[검증]</b> 누르면 장금 Technical Submitted 건이 카드로 적재됨(~1~2분). 카드마다 <b>승인</b>/<b>리젝</b> 결정 →
+  <b>[자동상신/리젝 실행]</b> 누르면 승인=SVMS 상신, 리젝=STATUS=R+관리사 통보메일 실행. (검증결과 <span style="color:var(--green);font-weight:700">pass</span>는 승인 권장, <span style="color:var(--red);font-weight:700">불일치/차액</span>은 리젝 권장)
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
 {% endblock %}
@@ -69,10 +69,10 @@
   // P4 표시전용: 서버 matched_vessel → 선박 soft매칭 칩(read-only)
   const vesselChip=d=>{
     const m=d&&d.matched_vessel;
-    if(!m) return `<span class="ves-chip none" title="TRMT 로스터 미매칭(표시전용)">⚓ 미매칭</span>`;
+    if(!m) return `<span class="ves-chip none" title="TRMT 로스터 미매칭(표시전용)"><svg class="ic-svg"><use href="#i-anchor"/></svg> 미매칭</span>`;
     const cls=m.in_my_roster?'ok':'other';
     const t=m.in_my_roster?'내 로스터 선박(표시전용)':'타 로스터/미배정 선박(표시전용)';
-    return `<span class="ves-chip ${cls}" title="${esc(t)}">🔗 ${esc(m.name)}</span>`;
+    return `<span class="ves-chip ${cls}" title="${esc(t)}"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> ${esc(m.name)}</span>`;
   };
   const TP={A:'AOR',P:'Pre-del',O:'OPEX'};
   async function api(method,url,body){
@@ -87,16 +87,16 @@
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd)}</b> ${vesselChip(d)}</span><span>Cost <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></span>`;
     if(isAor) kv+=`<span>AOR <b>${esc(d.ref_no||'-')}</b> (${esc(d.ref_amt)})</span><span>차액 <b>${esc(d.diff)}</b></span>`;
     if(d.dn) kv+=`<span>첨부판독 <b>${esc(d.dn)}</b></span>`;
-    const vbadge=d.verdict?`<span class="fr-badge b-${esc(d.verdict)}">${({pass:'✅검토통과',escalate:'🚨AOR차액≥$1k',mismatch:'⚠️DN≠Cost',flag:'✋확인필요'})[d.verdict]||esc(d.verdict)}</span>`:'';
+    const vbadge=d.verdict?`<span class="fr-badge b-${esc(d.verdict)}">${({pass:'검토통과',escalate:'AOR차액≥$1k',mismatch:'DN≠Cost',flag:'확인필요'})[d.verdict]||esc(d.verdict)}</span>`:'';
     const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
     let acts;
     if(d.status==='pending'){
-      acts=`<button class="fr-b ap" data-act="approve">✅ 승인</button>
+      acts=`<button class="fr-b ap" data-act="approve"><svg class="ic-svg"><use href="#i-check-circle"/></svg> 승인</button>
             <input class="fr-rsn" placeholder="리젝 사유 입력 후 리젝 →" />
-            <button class="fr-b rj" data-act="reject">🚫 리젝</button>
+            <button class="fr-b rj" data-act="reject"><svg class="ic-svg"><use href="#i-x"/></svg> 리젝</button>
             <button class="fr-b del" data-act="delete">삭제</button>`;
     } else if(d.status==='approved'||d.status==='rejecting'){
-      const lbl=d.status==='approved'?'✅ 승인 대기':'🚫 리젝 대기';
+      const lbl=d.status==='approved'?'승인 대기':'리젝 대기';
       acts=`<span class="fr-decided">${lbl}${d.reject_reason?(' — 사유: '+esc(d.reject_reason)):''} (${esc(d.decided_by||'')})</span>
             <button class="fr-b rs" data-act="reset">결정 취소</button>`;
     } else {
@@ -117,7 +117,7 @@
     const {ok,j}=await api('GET','/api/fundreq/drafts');
     if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
     const ds=j.drafts||[];
-    $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · ⚠️킬스위치 ON');
+    $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · 킬스위치 ON');
     $('#fr-list').innerHTML=ds.length?ds.map(card).join(''):'<div class="fr-empty">카드 없음 — 허브에서 [검증] 실행</div>';
     document.querySelectorAll('.fr-card').forEach(el=>{
       el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
@@ -139,12 +139,12 @@
   $('#fr-verify').onclick=async()=>{
     if(!confirm('장금 Technical Submitted 건 검토 → 카드 적재할까요? (~1~2분)'))return;
     const {ok,j}=await api('POST','/api/automation/run',{task:'fundreq',mode:'verify'});
-    alert(ok?'✅ 검증 실행 — 1~2분 후 카드 적재됨. 새로고침하세요.':('🚨 '+(j.error||'실패')));
+    alert(ok?'검증 실행 — 1~2분 후 카드 적재됨. 새로고침하세요.':('실패: '+(j.error||'오류')));
   };
   $('#fr-submit').onclick=async()=>{
     if(!confirm('승인=SVMS 상신 / 리젝=STATUS=R+통보메일을 지금 실행할까요?\n(clean 건만 처리, 예외 미처리·텔레그램 보고)'))return;
     const {ok,j}=await api('POST','/api/automation/run',{task:'fundreq',mode:'live'});
-    alert(ok?'✅ 실행 — 1~2분 후 반영됨. 새로고침하세요.':('🚨 '+(j.error||'실패')));
+    alert(ok?'실행 — 1~2분 후 반영됨. 새로고침하세요.':('실패: '+(j.error||'오류')));
   };
   $('#fr-reload').onclick=load;
   $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(상신/리젝/실패) 카드를 비울까요?'))return;

@@ -176,9 +176,9 @@ function renderCard(r) {
   // 메타 정보 (조선소 / 기간 / 회차)
   const meta = el('div', { class: 'dd-card-meta' });
   if (r.dock_no)   meta.append(el('span', { class: 'dd-meta-chip' }, r.dock_no));
-  if (r.shipyard)  meta.append(el('span', { class: 'dd-meta-text' }, '🏭 ' + r.shipyard));
+  if (r.shipyard)  meta.append(el('span', { class: 'dd-meta-text' }, ' ' + r.shipyard));
   const period = fmtPeriod(r);
-  if (period)      meta.append(el('span', { class: 'dd-meta-text' }, '📅 ' + period));
+  if (period)      meta.append(el('span', { class: 'dd-meta-text' }, ' ' + period));
   card.append(meta);
 
   // 푸터 — 작성자, 업데이트 시각
@@ -191,7 +191,7 @@ function renderCard(r) {
   return card;
 }
 
-// 카드 badge 클릭 → 진행 중 ↔ 완료 즉시 전환
+// 카드 badge 클릭 → 진행 중  완료 즉시 전환
 async function toggleStatus(r, badgeEl) {
   const next = r.status === 'done' ? 'draft' : 'done';
   badgeEl.style.opacity = '0.5';

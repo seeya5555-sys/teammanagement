@@ -161,6 +161,14 @@ a { color: inherit; text-decoration: none; }
 .nav-link.active  { color: var(--nav-text-active); background: var(--nav-active); }
 .nav-link.disabled { color: var(--nav-text-dim); pointer-events: none; opacity: 0.55; }
 
+/* ── 공용 인라인 아이콘 유틸 (전 탭) — 텍스트 크기에 맞춰 스케일, 이모지 대체용 ── */
+.ic-svg {
+  width: 1em; height: 1em; flex: 0 0 auto; vertical-align: -0.14em;
+  stroke: currentColor; fill: none; stroke-width: 1.75;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+button .ic-svg, .btn .ic-svg, a .ic-svg { margin-right: 5px; }
+
 /* ── 인라인 SVG 라인 아이콘 (스프라이트 <use>) — 24×24 viewBox · stroke 1.75 ── */
 .nav-ic {
   width: 16px; height: 16px; flex: 0 0 auto;
