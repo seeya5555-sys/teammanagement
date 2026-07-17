@@ -2,6 +2,16 @@
    TRMT3  —  Main Stylesheet
    ═══════════════════════════════════════════════════════════════ */
 
+/* ─────────── Display 폰트 self-host (Source Serif 4 latin variable) ───────────
+   외부 CDN 의존 제거 — 선박 회선/오프라인/프라이버시 대비. latin variable(400~700). */
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("../fonts/source-serif-4-var.woff2") format("woff2");
+}
+
 /* ─────────── Reset ─────────── */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; padding: 0; }
@@ -41,7 +51,12 @@ a { color: inherit; text-decoration: none; }
   --border:          #D3D1C7;
   --border-strong:   #B4B2A9;
 
-  /* Accents */
+  /* Primary accent — 잉크블루 (현 #185FA5에서 채도↓ 진화, A 에디토리얼 톤) */
+  --accent:          #1D5B94;
+  --accent-hover:    #174C7D;
+  --accent-tint:     #EDF2F7;
+
+  /* Blue — Next DD / info 배지 전용 (primary와 격리) */
   --blue:            #185FA5;
   --blue-hover:      #0F4C85;
   --blue-bg:         #E6F1FB;
@@ -77,19 +92,31 @@ a { color: inherit; text-decoration: none; }
   --green-bg:        #EAF3DE;
   --green-border:    #97C459;
 
-  --nav-bg:          #1E293B;
-  --nav-text:        #FFFFFF;
-  --nav-text-dim:    rgba(255,255,255,0.65);
+  /* Nav — 웜잉크 다크 헤더 (A스타일) */
+  --nav-bg:          #26241E;
+  --nav-text:        #C9C6BC;
+  --nav-text-active: #FFFFFF;
+  --nav-text-dim:    rgba(255,255,255,0.60);
+  --nav-border:      #3A372F;
+  --nav-hover:       #333028;
+  --nav-active:      #3A372E;
 
-  /* Shadows — 기존에 쓰이던 rgba 그림자의 토큰화 */
-  --shadow-sm:       0 1px 3px rgba(31,31,29,.06), 0 1px 2px rgba(31,31,29,.04);
-  --shadow-lg:       0 18px 50px rgba(15,23,42,.18);
+  /* Danger 버튼 — solid (배지 red와 구분되게 한 톤 어둡게) */
+  --danger-btn:      #8F2B2B;
+  --danger-btn-hover:#7A2424;
+
+  /* Display 폰트 — 라틴/숫자 세리프 (KPI 숫자·브랜드명 에디토리얼 손맛; 한글은 body 폰트로 폴백) */
+  --font-display:    "Source Serif 4", "Pretendard Variable", "Pretendard", Georgia, "Times New Roman", serif;
+
+  /* Shadows — A스타일은 그림자 배제; 드롭다운/모달만 최소 유지 */
+  --shadow-sm:       none;
+  --shadow-lg:       0 12px 32px rgba(38,36,30,.14);
 }
 
 /* ─────────── Topnav ─────────── */
 .topnav {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border-subtle);
+  background: var(--nav-bg);
+  border-bottom: 1px solid var(--nav-border);
   position: sticky; top: 0; z-index: 50;
 }
 .topnav-inner {
@@ -104,56 +131,57 @@ a { color: inherit; text-decoration: none; }
 .brand {
   display: flex; align-items: center; gap: 10px;
   padding-right: 16px;
-  border-right: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--nav-border);
   height: 32px;
 }
 .brand-mark {
   width: 30px; height: 30px;
-  background: var(--nav-bg); color: white;
+  background: transparent; color: #E8E4D8;
+  border: 1.5px solid #8A8574;
   border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
   font-weight: 600; font-size: 12px; letter-spacing: 0.5px;
 }
 .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
-.brand-name { font-weight: 600; font-size: 15px; color: var(--text-primary); }
-.brand-sub  { font-size: 10px; color: var(--text-tertiary); }
+.brand-name { font-weight: 600; font-size: 15px; color: var(--nav-text-active); font-family: var(--font-display); letter-spacing: .02em; }
+.brand-sub  { font-size: 10px; color: var(--nav-text-dim); }
 
 .main-nav { display: flex; gap: 2px; flex: 1; height: 54px; align-items: center; }
 .nav-link {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 8px 12px;
   border-radius: 6px;
-  color: var(--text-secondary);
+  color: var(--nav-text);
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
   transition: background 0.1s;
 }
-.nav-link:hover   { background: var(--surface-2); color: var(--text-primary); }
-.nav-link.active  { color: var(--blue); background: var(--blue-bg); }
-.nav-link.disabled { color: var(--text-tertiary); pointer-events: none; opacity: 0.55; }
+.nav-link:hover   { background: var(--nav-hover); color: var(--nav-text-active); }
+.nav-link.active  { color: var(--nav-text-active); background: var(--nav-active); }
+.nav-link.disabled { color: var(--nav-text-dim); pointer-events: none; opacity: 0.55; }
 
 /* ── 인라인 SVG 라인 아이콘 (스프라이트 <use>) — 24×24 viewBox · stroke 1.75 ── */
 .nav-ic {
   width: 16px; height: 16px; flex: 0 0 auto;
   stroke: currentColor; fill: none; stroke-width: 1.75;
   stroke-linecap: round; stroke-linejoin: round;
-  color: var(--text-tertiary);
+  color: var(--nav-text);
 }
 .nav-link.active .nav-ic,
-.nav-group.active > .nav-trigger .nav-ic { color: var(--blue); }
+.nav-group.active > .nav-trigger .nav-ic { color: var(--nav-text-active); }
 
 /* ── nav 대분류 드롭다운 (click 방식) ── */
 .nav-group { position: relative; display: inline-flex; }
 .nav-group > .nav-trigger {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 8px 12px; border-radius: 6px;
-  color: var(--text-secondary); font-size: 13px; font-weight: 500;
+  color: var(--nav-text); font-size: 13px; font-weight: 500;
   white-space: nowrap; cursor: pointer; background: none; border: none;
   font-family: inherit; transition: background 0.1s;
 }
-.nav-group > .nav-trigger:hover { background: var(--surface-2); color: var(--text-primary); }
-.nav-group.active > .nav-trigger { color: var(--blue); background: var(--blue-bg); }
+.nav-group > .nav-trigger:hover { background: var(--nav-hover); color: var(--nav-text-active); }
+.nav-group.active > .nav-trigger { color: var(--nav-text-active); background: var(--nav-active); }
 .nav-group > .nav-trigger .caret-sm { width: 12px; height: 12px; opacity: .6; transition: transform .12s; }
 .nav-group.open > .nav-trigger .caret-sm { transform: rotate(180deg); }
 .nav-submenu {
@@ -178,6 +206,9 @@ a { color: inherit; text-decoration: none; }
 }
 .nav-submenu .nav-link.active { color: var(--blue-text); font-weight: 650; }
 .nav-submenu .nav-link.active::before { background: var(--blue); }
+/* 흰 드롭다운 시트 안에서는 아이콘색을 다크헤더용에서 되돌림 */
+.nav-submenu .nav-ic { color: var(--text-tertiary); }
+.nav-submenu .nav-link.active .nav-ic { color: var(--blue); }
 
 /* ── 모바일 햄버거 + 시트 메뉴 (≤768px 에서만 노출) ── */
 .nav-burger {
@@ -228,7 +259,8 @@ a { color: inherit; text-decoration: none; }
   padding: 9px 12px; border-radius: 9px;
   font-size: 13.5px; font-weight: 500; color: var(--text-primary);
 }
-.mm-panel .nav-link .nav-ic { width: 18px; height: 18px; }
+/* 모바일 드로어는 흰 패널 → 아이콘색을 다크헤더용(--nav-text)에서 되돌림 */
+.mm-panel .nav-link .nav-ic { width: 18px; height: 18px; color: var(--text-tertiary); }
 .mm-panel .nav-link.active {
   color: var(--blue-text); background: var(--blue-bg); font-weight: 650;
   box-shadow: inset 0 0 0 1px var(--blue-border);
@@ -300,15 +332,15 @@ a { color: inherit; text-decoration: none; }
 body.mm-lock { overflow: hidden; }
 
 .user-menu { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-.user-name { font-size: 13px; color: var(--text-secondary); }
+.user-name { font-size: 13px; color: var(--nav-text); }
 .logout-btn {
   width: 30px; height: 30px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 6px;
-  color: var(--text-secondary);
+  color: var(--nav-text);
   transition: background 0.1s;
 }
-.logout-btn:hover { background: var(--red-bg); color: var(--red); }
+.logout-btn:hover { background: var(--nav-hover); color: #E88A8A; }
 
 /* ─────────── Main content ─────────── */
 .main-content {
@@ -341,12 +373,14 @@ body.mm-lock { overflow: hidden; }
 }
 .btn-sm    { height: 30px; font-size: 12px; padding: 0 10px; }
 .btn-block { width: 100%; justify-content: center; height: 38px; font-size: 14px; }
-.btn-primary  { background: var(--blue); color: white; border-color: var(--blue); }
-.btn-primary:hover { background: var(--blue-hover); border-color: var(--blue-hover); }
+.btn-primary  { background: var(--accent); color: white; border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn-outline  { background: var(--surface); color: var(--text-primary); border-color: var(--border); }
 .btn-outline:hover { background: var(--surface-2); }
-.btn-danger   { background: var(--surface); color: var(--red); border-color: var(--red-border); }
-.btn-danger:hover { background: var(--red-bg); }
+.btn-danger   { background: var(--danger-btn); color: #fff; border-color: var(--danger-btn); }
+.btn-danger:hover { background: var(--danger-btn-hover); border-color: var(--danger-btn-hover); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:disabled, .btn[disabled] { opacity: .5; cursor: not-allowed; }
 
 /* ─────────── Tab bar ─────────── */
 .tab-bar {
