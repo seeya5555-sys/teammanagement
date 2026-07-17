@@ -167,7 +167,7 @@ a { color: inherit; text-decoration: none; }
   stroke: currentColor; fill: none; stroke-width: 1.75;
   stroke-linecap: round; stroke-linejoin: round;
 }
-button .ic-svg, .btn .ic-svg, a .ic-svg { margin-right: 5px; }
+button .ic-svg:not(:only-child), .btn .ic-svg:not(:only-child), a .ic-svg:not(:only-child) { margin-right: 5px; }
 
 /* ── 인라인 SVG 라인 아이콘 (스프라이트 <use>) — 24×24 viewBox · stroke 1.75 ── */
 .nav-ic {

@@ -450,9 +450,11 @@
     const pos=v.email_watch
       ? '<span title="이메일 선위 모드(AIS off 대응)" style="position:absolute;top:-8px;left:-8px;color:#e6a11e"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="filter:drop-shadow(0 0 1px #16232e)"><path d="M12 3v18"/><path d="M5 8a10 10 0 0 1 14 0"/><path d="M8 12a5 5 0 0 1 8 0"/></svg></span>'
       : (v.ais_stale?'<span title="AIS 신호 끊김 — 이메일 선위 후보" style="position:absolute;top:-5px;left:-5px;width:10px;height:10px;border-radius:50%;background:#e0a800;border:1.5px solid #fff;box-shadow:0 0 0 1px #b7791f"></span>':'');
-    // 침로(course) 방향 삼각 마커 — 데이터 없으면 북(0°)
-    const rot=(v.course!=null?Number(v.course):0);
-    const tri='<svg viewBox="0 0 24 24" style="transform:rotate('+rot+'deg)"><path d="M12 2.5 L18.5 20 L12 15.5 L5.5 20 Z"/></svg>';
+    // 침로는 유효한 0–359°일 때만 방향 삼각형에 반영. 미수신/비정상값은 neutral marker로 표시.
+    const rawCourse=Number(v.course);
+    const hasCourse=Number.isFinite(rawCourse);
+    const rot=hasCourse ? ((rawCourse % 360) + 360) % 360 : 0;
+    const tri='<svg viewBox="0 0 24 24" class="'+(hasCourse?'':'fm-marker-neutral')+'" style="transform:rotate('+rot+'deg)"><path d="M12 2.5 L18.5 20 L12 15.5 L5.5 20 Z"/></svg>';
     return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">'+tri+sire+pos+'</div>'});
   }
 

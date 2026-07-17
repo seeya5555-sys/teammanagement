@@ -1783,14 +1783,14 @@ function renderImageGallery(body, b) {
               [images[idx - 1], images[idx]] = [images[idx], images[idx - 1]];
               rebuild();
               scheduleBlockSave(b.id, getCurrent);
-            }}, '이동'),
+            }}, '왼쪽 이동'),
           el('button', { class: 'dde-img-mv', type: 'button', title: '오른쪽으로',
             disabled: idx === images.length - 1,
             onclick: () => {
               [images[idx], images[idx + 1]] = [images[idx + 1], images[idx]];
               rebuild();
               scheduleBlockSave(b.id, getCurrent);
-            }}, '이동'),
+            }}, '오른쪽 이동'),
           el('button', { class: 'dde-img-x', type: 'button', title: '제거',
             onclick: () => {
               if (!confirm('이 사진을 제거하시겠습니까?')) return;
