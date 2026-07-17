@@ -6,6 +6,8 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.css"/>
 <style>
   .fm-wrap{margin:-8px -4px 0}
+  /* Course 미수신 선박은 북향으로 오인되지 않도록 hollow neutral marker로 표시. */
+  .fm-marker-neutral path{fill:var(--surface,#fff);stroke:#7c8792;stroke-width:2.2}
   .fm-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
   .fm-bar h1{font-size:17px;margin:0;font-weight:700}
   .fm-legend{display:flex;gap:12px;font-size:11.5px;color:var(--text-secondary)}
@@ -452,7 +454,7 @@
       : (v.ais_stale?'<span title="AIS 신호 끊김 — 이메일 선위 후보" style="position:absolute;top:-5px;left:-5px;width:10px;height:10px;border-radius:50%;background:#e0a800;border:1.5px solid #fff;box-shadow:0 0 0 1px #b7791f"></span>':'');
     // 침로는 유효한 0–359°일 때만 방향 삼각형에 반영. 미수신/비정상값은 neutral marker로 표시.
     const rawCourse=Number(v.course);
-    const hasCourse=Number.isFinite(rawCourse);
+    const hasCourse=v.course!==null && v.course!==undefined && String(v.course).trim()!=='' && Number.isFinite(rawCourse);
     const rot=hasCourse ? ((rawCourse % 360) + 360) % 360 : 0;
     const tri='<svg viewBox="0 0 24 24" class="'+(hasCourse?'':'fm-marker-neutral')+'" style="transform:rotate('+rot+'deg)"><path d="M12 2.5 L18.5 20 L12 15.5 L5.5 20 Z"/></svg>';
     return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">'+tri+sire+pos+'</div>'});
