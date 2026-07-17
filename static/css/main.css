@@ -372,10 +372,13 @@ body.mm-lock { overflow: hidden; }
 /* ─────────── Cross-tab operational UI system ───────────
    Dashboard의 A-style hierarchy를 운영 탭에도 동일하게 적용한다.
    탭별 업무 로직/DOM id는 건드리지 않고, 제목 → 작업영역 → 데이터 surface 순서를 고정한다. */
-.ops-page-header,
-.page-header {
-  min-height: 58px;
+.ops-page-header {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 58px;
   padding: 0 0 14px;
   margin-bottom: 14px;
   border-bottom: 1px solid var(--border-subtle);
@@ -389,8 +392,7 @@ body.mm-lock { overflow: hidden; }
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-.ops-page-header .page-title,
-.page-header .page-title {
+.ops-page-header .page-title {
   font-family: var(--font-display);
   font-size: 25px;
   font-weight: 650;
@@ -436,19 +438,12 @@ body.mm-lock { overflow: hidden; }
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border-subtle);
 }
-.grid-wrap { border-radius: 10px; overflow: clip; }
-.ex-table thead th {
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  letter-spacing: .06em;
-}
 
 @media (max-width: 768px) {
   .main-content { padding: 14px 12px 24px; }
-  .ops-page-header,
-  .page-header { min-height: 0; padding-bottom: 11px; margin-bottom: 11px; }
-  .ops-page-header .page-title,
-  .page-header .page-title { font-size: 22px; }
+  .ops-page-header { min-height: 0; padding-bottom: 11px; margin-bottom: 11px; align-items: flex-start; }
+  .ops-page-header > :last-child { max-width: 100%; }
+  .ops-page-header .page-title { font-size: 22px; }
   .toolbar,
   .cs-toolbar { padding: 8px; gap: 6px; }
 }
