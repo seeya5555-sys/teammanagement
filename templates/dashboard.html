@@ -640,10 +640,20 @@
     if(!b) return;
     window.fmToggleTrack(b.getAttribute('data-vessel')||'');
   });
+  // 좌표 표시용 도-분(DDM) 포맷: 25.25148 → "25-15.1N" / 56.5148 → "056-30.9E".
+  // (지도 마커·트랙 등 Leaflet API에는 원본 decimal 그대로 쓰고, 사람이 읽는 표시에만 사용)
+  function toDDM(dec,isLat){
+    if(!Number.isFinite(dec)) return '—';               // null·NaN·Infinity·비수치 방어(isNaN coercion 회피)
+    if(Math.abs(dec)>(isLat?90:180)) return '—';        // 위경도 유효범위 밖=이상데이터
+    const hemi=dec<0?(isLat?'S':'W'):(isLat?'N':'E');
+    const t=Math.round(Math.abs(dec)*600);              // 전체 0.1분 단위 정수화 → 반올림·carry 일관
+    const deg=Math.floor(t/600), min=(t%600)/10;        // 분이 60으로 튀어도 정수나눗셈이 도로 흡수
+    return String(deg).padStart(isLat?2:3,'0')+'-'+min.toFixed(1).padStart(4,'0')+hemi;
+  }
   function openV(v){
     trackVessel=v.name;
     document.getElementById('fmName').textContent=v.name;
-    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · '+v.lat.toFixed(1)+'°, '+v.lng.toFixed(1)+'°';
+    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · '+toDDM(v.lat,true)+' '+toDDM(v.lng,false);
     const bl=v.bl==='L'?'lade':(v.bl==='B'?'ball':'gray');
     const blTxt=v.bl==='L'?'🛢 Laden':(v.bl==='B'?'💧 Ballast':'B/L —');
     document.getElementById('fmBadges').innerHTML='<span class="pill '+bl+'">'+blTxt+'</span>'+
