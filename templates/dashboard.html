@@ -17,7 +17,17 @@
   .fm-kpi a{flex:0 0 auto}
   .fm-kpi a{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border-subtle);border-radius:11px;padding:7px 14px;text-decoration:none;color:inherit;transition:box-shadow .1s,transform .1s}
   .fm-kpi a:hover{box-shadow:0 4px 12px rgba(0,0,0,.09);transform:translateY(-1px);border-color:var(--border)}
-  .fm-kpi .ico{font-size:15px;line-height:1}
+  .svic{width:16px;height:16px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+  .fm-kpi .ico{display:inline-flex;align-items:center;color:var(--text-secondary)}
+  .fm-kpi .ico .svic{width:17px;height:17px}
+  .fm-kpi a.hot .ico,.fm-kpi a.warn .ico{color:inherit}
+  .fm-bar h1{display:flex;align-items:center;gap:7px}
+  .fm-bar h1 .svic{width:18px;height:18px;color:var(--text-secondary)}
+  .ckpt-h{display:flex;align-items:center;gap:6px}
+  .ckpt-h .svic{width:15px;height:15px;color:var(--text-secondary)}
+  .fm-legend .svic{width:13px;height:13px;vertical-align:-2px;color:var(--text-tertiary)}
+  .fm-search-wrap{position:relative;display:flex;align-items:center}
+  .fm-search-wrap .svic{position:absolute;left:10px;width:15px;height:15px;color:var(--text-tertiary);pointer-events:none}
   .fm-kpi .meta{display:flex;flex-direction:column;gap:1px}
   .fm-kpi .lbl{font-size:11px;color:var(--text-secondary);font-weight:600;white-space:nowrap}
   .fm-kpi .num{font-size:19px;font-weight:700;line-height:1;color:var(--text-primary)}
@@ -189,26 +199,26 @@
 {# ── 오늘의 조종석 스트립 (기존 대시보드 위 추가 블록, 데이터 없으면 각 카드 숨김) ── #}
 <div class="ckpt" id="ckpt" hidden>
   <div class="ckpt-card" id="ckDue" hidden>
-    <div class="ckpt-h">⏰ DUE 조기경보</div>
+    <div class="ckpt-h"><svg class="svic" aria-hidden="true"><use href="#i-clock"/></svg>DUE 조기경보</div>
     <div class="ckpt-body" id="ckDueBody"></div>
   </div>
   <div class="ckpt-card" id="ckApp" hidden>
-    <div class="ckpt-h">✅ 내 승인 대기</div>
+    <div class="ckpt-h"><svg class="svic" aria-hidden="true"><use href="#i-check-circle"/></svg>내 승인 대기</div>
     <div class="ckpt-body" id="ckAppBody"></div>
   </div>
   <div class="ckpt-card" id="ckAuto" hidden>
-    <div class="ckpt-h">🤖 자동화 상태 <a class="ckpt-hlink" href="{{ url_for('health_page') }}">헬스 보드 →</a></div>
+    <div class="ckpt-h"><svg class="svic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화 상태 <a class="ckpt-hlink" href="{{ url_for('health_page') }}">헬스 보드 →</a></div>
     <div class="ckpt-body" id="ckAutoBody"></div>
   </div>
 </div>
 
 <div class="fm-wrap">
   <div class="fm-bar">
-    <h1>🗺 Fleet Map</h1>
+    <h1><svg class="svic" aria-hidden="true"><use href="#i-map"/></svg>Fleet Map</h1>
     <div class="fm-legend">
       <span><i style="background:#c0392b"></i>COC/Flag</span><span><i style="background:#b7791f"></i>Urgent</span>
       <span><i style="background:#3f7a4f"></i>이슈없음</span><span><i style="background:#8a8175"></i>일반이슈</span>
-      <span title="Class/Flag 만기 임박·초과 선박은 마커가 펄스로 깜빡임">💢 펄스=Class/Flag 만기</span>
+      <span title="Class/Flag 만기 임박·초과 선박은 마커가 펄스로 깜빡임"><svg class="svic" aria-hidden="true"><use href="#i-activity"/></svg>펄스=Class/Flag 만기</span>
     </div>
     <div class="fm-spacer"></div>
     <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">카드형 전체 →</a>
@@ -218,27 +228,27 @@
   {# KPI 스트립 — 구 대시보드 집계(_dashboard_ctx)를 맵 위 한 줄 칩으로. 클릭=해당 탭. #}
   <div class="fm-kpi">
     <a class="{% if stats.issues_open %}{% if stats.issues_urgent or stats.issues_coc %}hot{% endif %}{% else %}zero{% endif %}" href="{{ url_for('index') }}">
-      <span class="ico">📋</span>
+      <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-clipboard"/></svg></span>
       <span class="meta"><span class="lbl">현안 (Open)</span><span class="num">{{ stats.issues_open }}<small>건</small></span></span>
       {% if stats.issues_urgent or stats.issues_coc or stats.issues_dd %}
       <span class="flags">
-        {% if stats.issues_urgent %}<span class="fl red">🚨{{ stats.issues_urgent }}</span>{% endif %}
+        {% if stats.issues_urgent %}<span class="fl red">Urgent {{ stats.issues_urgent }}</span>{% endif %}
         {% if stats.issues_coc %}<span class="fl amber">COC {{ stats.issues_coc }}</span>{% endif %}
         {% if stats.issues_dd %}<span class="fl blue">DD {{ stats.issues_dd }}</span>{% endif %}
       </span>{% endif %}
     </a>
     <a class="{% if stats.class_due %}warn{% else %}zero{% endif %}" href="{{ url_for('class_status_page') }}">
-      <span class="ico">🔍</span>
+      <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-search-check"/></svg></span>
       <span class="meta"><span class="lbl">Class 만기 (D-30)</span><span class="num">{{ stats.class_due }}<small>건</small></span></span>
     </a>
     <a class="{% if stats.vetting_open %}{% if stats.vetting_pri %}hot{% else %}warn{% endif %}{% else %}zero{% endif %}" href="{{ url_for('vetting_status') }}">
-      <span class="ico">🛡</span>
+      <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-shield"/></svg></span>
       <span class="meta"><span class="lbl">Vetting Open</span><span class="num">{{ stats.vetting_open }}<small>건</small></span></span>
-      {% if stats.vetting_pri %}<span class="flags"><span class="fl red">⭐{{ stats.vetting_pri }}</span></span>{% endif %}
+      {% if stats.vetting_pri %}<span class="flags"><span class="fl red">우선 {{ stats.vetting_pri }}</span></span>{% endif %}
     </a>
     {% if is_admin %}
     <a class="{% if not stats.aor_pending %}zero{% endif %}" href="{{ url_for('aor_page') }}">
-      <span class="ico">🤖</span>
+      <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-inbox"/></svg></span>
       <span class="meta"><span class="lbl">AOR 대기</span><span class="num">{{ stats.aor_pending }}<small>건</small></span></span>
       {% if stats.aor_crew_submitted %}<span class="flags"><span class="fl blue">Crew {{ stats.aor_crew_submitted }}</span></span>{% endif %}
     </a>
@@ -246,7 +256,7 @@
     <a id="todaySchedChip" class="{% if not today_count %}zero{% endif %}" href="{{ url_for('calendar_page') }}"
        onclick="return toggleTodaySched(event)"
        {% if today_events %}aria-haspopup="true" aria-expanded="false"{% endif %}>
-      <span class="ico">📅</span>
+      <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-calendar"/></svg></span>
       <span class="meta"><span class="lbl">오늘 일정</span><span class="num">{{ today_count }}<small>건</small></span></span>
       {% if today_events %}<span class="today-sched">{% for e in today_events[:2] %}{{ e['title'] }}{% if not loop.last %} · {% endif %}{% endfor %}{% if today_count > 2 %} +{{ today_count - 2 }}{% endif %}</span><span class="caret">▾</span>{% endif %}
     </a>
@@ -255,7 +265,7 @@
 
   {% if today_events %}
   <div id="todaySchedPop" aria-label="오늘 일정 상세">
-    <div class="tsp-hd"><span>📅 오늘 일정 · {{ today_count }}건</span><a href="{{ url_for('calendar_page') }}">캘린더 →</a></div>
+    <div class="tsp-hd"><span><svg class="svic" aria-hidden="true" style="vertical-align:-2px"><use href="#i-calendar"/></svg> 오늘 일정 · {{ today_count }}건</span><a href="{{ url_for('calendar_page') }}">캘린더 →</a></div>
     {% for e in today_events %}
     <div class="tsp-row">
       <span class="tsp-t{% if not e['start_time'] %} allday{% endif %}">{{ e['start_time'] or '종일' }}</span>
@@ -266,8 +276,10 @@
   {% endif %}
 
   <div class="fm-sup" id="fmSup">
-    <input id="fmSearch" class="fm-search" type="text" placeholder="🔍 선박명 검색…" autocomplete="off"/>
-
+    <span class="fm-search-wrap">
+      <svg class="svic" aria-hidden="true"><use href="#i-search-check"/></svg>
+      <input id="fmSearch" class="fm-search" type="text" placeholder="선박명 검색…" autocomplete="off" style="padding-left:30px"/>
+    </span>
   </div>
   <div class="fm-stage">
     <div id="fmmap"></div>
