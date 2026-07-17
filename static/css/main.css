@@ -369,6 +369,112 @@ body.mm-lock { overflow: hidden; }
 .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
 .page-actions { display: flex; gap: 8px; }
 
+/* ─────────── Cross-tab operational UI system ───────────
+   Dashboard의 A-style hierarchy를 운영 탭에도 동일하게 적용한다.
+   탭별 업무 로직/DOM id는 건드리지 않고, 제목 → 작업영역 → 데이터 surface 순서를 고정한다. */
+.ops-page-header,
+.page-header {
+  min-height: 58px;
+  align-items: center;
+  padding: 0 0 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ops-page-header > div:first-child { min-width: 0; }
+.ops-page-kicker {
+  margin: 0 0 2px;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.ops-page-header .page-title,
+.page-header .page-title {
+  font-family: var(--font-display);
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -.45px;
+}
+.toolbar,
+.cs-toolbar {
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.toolbar .count-label,
+.cs-toolbar .cs-context {
+  padding-left: 8px;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+.tab-bar {
+  margin-bottom: 10px;
+  border-bottom-color: var(--border);
+}
+.tab { padding: 9px 14px; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab.active .tab-count { background: var(--accent-tint); color: var(--accent); }
+
+/* Queue, report and status surfaces share one quiet paper treatment. */
+:is(.aor-card,.fr-card,.rg-card,.sw-card,.au-row,.au-logrow,.hb-card,.kc-card,.dp-card,.dp-vhead,.dd-card,.brep-card,.exp-card) {
+  border-color: var(--border-subtle);
+  border-radius: 10px;
+  box-shadow: none;
+  background: var(--surface);
+}
+:is(.aor-card-top,.fr-top,.rg-top,.sw-top) {
+  background: var(--surface-2);
+  border-bottom-color: var(--border-subtle);
+}
+:is(.aor-list,.fr-list,.rg-list,.sw-list) { gap: 10px; }
+:is(.aor-head,.fr-head,.rg-head,.sw-head,.dp-wrap > .dp-head) {
+  min-height: 52px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.grid-wrap { border-radius: 10px; overflow: clip; }
+.ex-table thead th {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  letter-spacing: .06em;
+}
+
+@media (max-width: 768px) {
+  .main-content { padding: 14px 12px 24px; }
+  .ops-page-header,
+  .page-header { min-height: 0; padding-bottom: 11px; margin-bottom: 11px; }
+  .ops-page-header .page-title,
+  .page-header .page-title { font-size: 22px; }
+  .toolbar,
+  .cs-toolbar { padding: 8px; gap: 6px; }
+}
+
+/* Report/expense editors are task workspaces, not exceptions to the shell.
+   Preserve their dense authoring layout while giving the title, sidebar and
+   evidence surfaces the same paper hierarchy used by the operational tabs. */
+:is(.dde-topbar,.expd-topbar) {
+  min-height: 56px;
+  padding: 0 0 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+:is(.dde-title,.expd-title) {
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -.35px;
+}
+:is(.dde-sidebar,.dde-main,.expd-totals,.expd-add-bar,.expd-table-wrap,.expd-receipt-cell) {
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+.expd-table thead th { background: var(--surface-2); color: var(--text-secondary); }
+.expd-table tbody tr:nth-child(odd) { background: var(--surface); }
+
 /* ─────────── Buttons ─────────── */
 .btn {
   display: inline-flex; align-items: center; gap: 6px;

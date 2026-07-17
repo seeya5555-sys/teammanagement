@@ -65,8 +65,8 @@
 </style>
 {% endblock %}
 {% block content %}
-<div class="fr-head">
-  <h2 style="margin:0"><svg class="ic-svg"><use href="#i-file-text"/></svg> 인보이스 자동컨펌</h2>
+<header class="fr-head ops-page-header">
+  <div><p class="ops-page-kicker">Approval queue</p><h2 class="page-title" style="margin:0"><svg class="ic-svg"><use href="#i-file-text"/></svg> 인보이스 자동컨펌</h2></div>
   <span class="fr-count" id="fr-count"></span>
   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
     <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify"><svg class="ic-svg"><use href="#i-search-check"/></svg>카드적재(prep)</button>
@@ -75,7 +75,7 @@
     <button class="fr-b rs" id="fr-reload"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>새로고침</button>
     <button class="fr-b del" id="fr-clear"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>처리완료 비우기</button>
   </div>
-</div>
+</header>
 <div class="fr-note">
   <b>[카드적재]</b> 누르면 SVMS 컨펌대기 인보이스가 PDF 대조·교정안과 함께 카드로 적재됨(~1~2분).
   <b>opt-out</b>: <span class="b-pass" style="padding:1px 6px;border-radius:999px">PASS</span> 카드는 디폴트 <b>승인</b>(체크), <span class="b-hold" style="padding:1px 6px;border-radius:999px">HOLD</span> 카드는 디폴트 해제 →

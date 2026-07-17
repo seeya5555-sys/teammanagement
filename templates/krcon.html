@@ -3,8 +3,8 @@
 {% block head %}
 <style>
   .kc-wrap{max-width:920px;margin:0 auto}
-  .kc-hero{text-align:center;padding:22px 0 10px}
-  .kc-hero h1{font-size:26px;font-weight:800;color:var(--text-primary);margin:0 0 4px;letter-spacing:-.5px}
+  .kc-hero{text-align:left;padding:0 0 14px}
+  .kc-hero h1{font-family:var(--font-display);font-size:25px;font-weight:650;color:var(--text-primary);margin:0 0 4px;letter-spacing:-.45px}
   .kc-hero .sub{color:var(--text-secondary);font-size:13px}
   .kc-hero .sub b{color:var(--blue)}
   .kc-searchbar{display:flex;gap:8px;margin:16px 0 6px}
@@ -44,10 +44,10 @@
 {% endblock %}
 {% block content %}
 <div class="kc-wrap">
-  <div class="kc-hero">
-    <h1><svg class="ic-svg"><use href="#i-book-open"/></svg> KR-Con 룰 검색</h1>
-    <div class="sub">KR선급 <b>KR-CON</b> — 클래스룰 · SOLAS · IMO · 코드(LSA/FSS/IBC…) · Resolution · Circular · IACS</div>
-  </div>
+  <header class="kc-hero ops-page-header">
+    <div><p class="ops-page-kicker">Regulatory search</p><h1><svg class="ic-svg"><use href="#i-book-open"/></svg> KR-Con 룰 검색</h1>
+    <div class="sub">KR선급 <b>KR-CON</b> — 클래스룰 · SOLAS · IMO · 코드(LSA/FSS/IBC…) · Resolution · Circular · IACS</div></div>
+  </header>
 
   <div class="kc-searchbar">
     <input id="kc-q" class="kc-input" type="text" placeholder="자연어로 검색  예) Ballast water 배출 규정, 구명정 검사 주기, enclosed space entry" autocomplete="off">

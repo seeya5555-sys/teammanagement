@@ -76,14 +76,14 @@
 </style>
 {% endblock %}
 {% block content %}
-<div class="sw-head">
-  <h2 style="margin:0"><svg class="ic-svg"><use href="#i-book-open"/></svg> 선박 위키</h2>
+<header class="sw-head ops-page-header">
+  <div><p class="ops-page-kicker">Knowledge review</p><h2 class="page-title" style="margin:0"><svg class="ic-svg"><use href="#i-book-open"/></svg> 선박 위키</h2></div>
   <span class="sw-count" id="sw-count"></span>
   <div style="margin-left:auto;display:flex;gap:8px">
     <button class="sw-b rs" id="sw-reload"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg> 새로고침</button>
     <button class="sw-b del" id="sw-clear"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> 적용완료 비우기</button>
   </div>
-</div>
+</header>
 <div class="sw-note">
   메일→이슈 지식노트 파이프라인의 <b>검토·승격</b> 단계. <b>pending</b>(사람판단 대기)을 검토해서
   <b>승격</b>(확정 위키) / <b>병합</b>(여러 건→1) / <b>리젝</b> / <b>쪼개기 표시</b>. <b>auto</b>(자동·미검증)는 답변근거 금지 라벨 —
