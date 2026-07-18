@@ -394,9 +394,9 @@
     if(html){ box.innerHTML=html+'<button class="fm-al-x" title="닫기" onclick="this.parentNode.hidden=true">×</button>'; box.hidden=false; }
     else { box.hidden=true; }
   }
-  // minZoom=2: 전세계 한눈뷰가 최대 축소뷰(손유석 지정 줌2). maxZoom=10. 줌은 스크롤로만.
-  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:2,maxZoom:10,
-    maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],2);
+  // minZoom=3: 최대 축소뷰를 줌3으로 고정(손유석 2026-07-18, 기존 줌2에서 한 스케일 확대). maxZoom=10. 줌은 스크롤로만.
+  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:3,maxZoom:10,
+    maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],3);
   // Fleet Map B(해도) — 슬레이트/다크 차트 basemap + 위경도 그리드
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
     {attribution:'© CARTO © OSM',subdomains:'abcd',maxZoom:19}).addTo(map);
