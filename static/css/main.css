@@ -360,6 +360,12 @@ body.mm-lock { overflow: hidden; }
   padding: 20px;
 }
 
+/* Fleet Map(대시보드) 전용 — 지도를 브라우저 폭 끝까지 full-bleed (2026-07-18 손유석 요청) */
+body.page-fleet .main-content {
+  max-width: none;
+  padding: 14px 16px;
+}
+
 /* ─────────── Page header ─────────── */
 .page-header {
   display: flex; align-items: baseline; justify-content: space-between;
