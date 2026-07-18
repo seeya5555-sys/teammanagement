@@ -217,6 +217,9 @@ button .ic-svg, .btn .ic-svg, a .ic-svg { margin-right: 5px; }
 }
 .nav-submenu .nav-link.active { color: var(--nav-text-active); background: var(--nav-active); font-weight: 650; }
 .nav-submenu .nav-link.active::before { background: #FFFFFF; }
+/* hover 시에도 흰 글씨(어두운 hover 배경에서 가독) — text-primary가 순서상 덮는 문제 해소 */
+.nav-submenu .nav-link:hover { color: var(--nav-text-active); }
+.nav-submenu .nav-link:hover::before { background: #FFFFFF; }
 /* 흰 드롭다운 시트 안에서는 아이콘색을 다크헤더용에서 되돌림 */
 .nav-submenu .nav-ic { color: var(--text-tertiary); }
 .nav-submenu .nav-link.active .nav-ic { color: var(--blue); }
