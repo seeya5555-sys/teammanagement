@@ -6906,6 +6906,11 @@ def _ext_vetting_digests():
             for v in enr
             if (v.get('open_count') or 0) > 0 and (v.get('overall_remark') or '').strip()
         )
+        # open 지적이 하나도 없을 때(전부 close/0)만, 작성된 최신 remark 를 지적상세로 노출
+        # (= 형 수기 SIRE 현황). open>0 Report 가 있으면 위 집계 그대로 유지 → 기존 선박 동작 불변.
+        if not any((v.get('open_count') or 0) > 0 for v in enr):
+            detail = next(((v.get('overall_remark') or '').strip()
+                           for v in enr if (v.get('overall_remark') or '').strip()), '')
         out.append({
             'ref': _ref('vetting_digest', ve['id']),
             'vessel_name': ve['name'],

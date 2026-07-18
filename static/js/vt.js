@@ -295,10 +295,15 @@ function vettingDigest(item) {
   const openCnt = (obsSrc.open_count != null) ? obsSrc.open_count : 0;
 
   // 지적 상세: Open 항목이 있는 모든 Report의 Overall Remark, 최신순, 빈 줄 구분
-  const detail = vts
+  let detail = vts
     .filter(v => (v.open_count || 0) > 0 && (v.overall_remark || '').trim())
     .map(v => v.overall_remark.trim())
     .join('\n\n');
+  // open 지적이 하나도 없을 때만 작성된 최신 remark 노출(ext /vetting-digests 와 동일 규칙)
+  if (!vts.some(v => (v.open_count || 0) > 0)) {
+    const r = vts.find(v => (v.overall_remark || '').trim());
+    detail = r ? r.overall_remark.trim() : '';
+  }
 
   const detailCell = el('td', { class: 'vt-dg-detail' });
   if (detail) {
