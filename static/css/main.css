@@ -105,8 +105,9 @@ a { color: inherit; text-decoration: none; }
   --danger-btn:      #8F2B2B;
   --danger-btn-hover:#7A2424;
 
-  /* Display 폰트 — 라틴/숫자 세리프 (KPI 숫자·브랜드명 에디토리얼 손맛; 한글은 body 폰트로 폴백) */
-  --font-display:    "Source Serif 4", "Pretendard Variable", "Pretendard", Georgia, "Times New Roman", serif;
+  /* Display 폰트 — 타이틀/브랜드는 nav와 동일한 sans로 통일 (2026-07-18 손유석 요청, 세리프 제거) */
+  --font-display:    -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard",
+                     "Noto Sans KR", system-ui, Roboto, Helvetica, Arial, sans-serif;
 
   /* Shadows — A스타일은 그림자 배제; 드롭다운/모달만 최소 유지 */
   --shadow-sm:       none;
