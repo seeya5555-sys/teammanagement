@@ -2378,6 +2378,54 @@ async function triggerRosterSync() {
   };
   setTimeout(poll, INTERVAL);   // 첫 폴은 4초 뒤(러너 픽업 여유)
 }
+
+// ───────────── VLCC-SIRE 푸시 (roster-sync 패턴 축약) ─────────────
+let VLCC_PUSH_POLLING = false;
+function setVlccBanner(kind, msg) {
+  const b = $('#vlcc-push-banner');
+  if (!b) return;
+  if (!kind) { b.style.display = 'none'; return; }
+  const c = { ok: ['#0f5132', '#d1e7dd'], warn: ['#664d03', '#fff3cd'], err: ['#842029', '#f8d7da'] }[kind] || ['', ''];
+  b.style.display = 'block'; b.style.color = c[0]; b.style.background = c[1]; b.textContent = msg;
+}
+function setVlccButton(disabled, label) {
+  const btn = $('#btn-vlcc-push');
+  if (!btn) return;
+  btn.disabled = disabled;
+  btn.innerHTML = label;
+}
+async function triggerVlccPush() {
+  if (VLCC_PUSH_POLLING) return;
+  if (!confirm('내 담당선박의 SIRE 지적상세·COC 수리상세를 VLCC-SIRE 앱에 반영합니다.\n(BBC 카테고리 제외 · 맥 러너가 ~1분 내 처리)\n진행할까요?')) return;
+  const clickAt = Date.now();
+  setVlccBanner(null);
+  setVlccButton(true, '<span class="rs-spinner"></span>푸시 중… (최대 ~2분)');
+  try {
+    const r = await fetch('/api/vlcc-push/trigger', { method: 'POST', credentials: 'same-origin' });
+    if (!r.ok) { setVlccButton(false, 'VLCC-SIRE 푸시'); setVlccBanner('err', `요청 실패 (HTTP ${r.status})`); return; }
+  } catch (e) { setVlccButton(false, 'VLCC-SIRE 푸시'); setVlccBanner('err', '요청 실패: ' + e.message); return; }
+  const doneEpoch = (v) => { if (!v) return 0; const t = Date.parse(v.replace(' ', 'T')); return isNaN(t) ? 0 : t; };
+  const baseline = clickAt - 5000;
+  VLCC_PUSH_POLLING = true;
+  const INTERVAL = 4000, MAX_MS = 180000, started = Date.now();
+  const poll = async () => {
+    if (Date.now() - started > MAX_MS) {
+      VLCC_PUSH_POLLING = false; setVlccButton(false, 'VLCC-SIRE 푸시');
+      setVlccBanner('warn', '진행 지연 — 백그라운드에서 계속됩니다. 잠시 후 새로고침으로 확인하세요.'); return;
+    }
+    let s;
+    try { s = await api('/api/vlcc-push/status'); }
+    catch (e) { setTimeout(poll, INTERVAL); return; }
+    if (!s.pending && doneEpoch(s.done_at) >= baseline) {
+      VLCC_PUSH_POLLING = false; setVlccButton(false, 'VLCC-SIRE 푸시');
+      setVlccBanner('ok', '푸시 완료' + (s.last_result ? ' · ' + s.last_result : '') + (s.done_at ? ` · ${s.done_at}` : ''));
+      return;
+    }
+    setTimeout(poll, INTERVAL);
+  };
+  setTimeout(poll, INTERVAL);
+}
+
 function renderAdminVesList() {
   const list = $('#admin-ves-list');
   list.innerHTML = '';
@@ -3409,6 +3457,9 @@ function wireCommon() {
     // 로스터 자동화 동기화 버튼
     const rsBtn = $('#btn-roster-sync');
     if (rsBtn) rsBtn.addEventListener('click', triggerRosterSync);
+    // VLCC-SIRE 푸시 버튼
+    const vpBtn = $('#btn-vlcc-push');
+    if (vpBtn) vpBtn.addEventListener('click', triggerVlccPush);
     // 감독 추가
     $('#btn-sup-add').addEventListener('click', addSupervisor);
     $('#sup-add-colors').addEventListener('click', (ev) => {

@@ -6811,6 +6811,9 @@ def _class_digest(coc_list, stat_list, society):
         due = (it.get('due_date') or '').strip()
         if due:
             s += ' // DUE DATE : ' + due
+        act = (it.get('action_taken') or '').strip()
+        if act:
+            s += '\n조치사항 : ' + act
         return s
     stat_matched = set()
     lines = []
@@ -6844,7 +6847,7 @@ def _ext_class_status():
             v = query('SELECT name FROM vessels WHERE id=?', (cs['vessel_id'],), one=True)
             if v:
                 vname = v['name']
-        items = query('SELECT id, category, no, issued_date, description, due_date, remark, importance '
+        items = query('SELECT id, category, no, issued_date, description, due_date, remark, importance, action_taken '
                       'FROM class_status_items WHERE cs_id=? ORDER BY category, no', (cs['id'],))
         coc_l = [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'COC']
         stat_l = [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'STATUTORY']
@@ -7255,6 +7258,56 @@ def api_ext_dockproc_sync_done():
     now = query("SELECT datetime('now','localtime') t", one=True)['t']
     execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_sync_done', ?)", (d.get('flag') or now,))
     execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_sync_result', ?)", (str(d.get('result') or '')[:500],))
+    return jsonify({'ok': True, 'done_at': d.get('flag') or now})
+
+
+# ===== vlcc-sire 푸시(SIRE 지적상세 + COC 수리상세 → vlcc-sire.vercel.app) — dock_procure 패턴 =====
+# 버튼(admin) → flag. 맥 vlcc-push watcher(~1분 폴링)가 감지 → push.py --commit → done.
+# 스케줄(13/18시)은 맥 launchd 가 push.py 직접 실행(버튼 무관).
+@app.route('/api/vlcc-push/trigger', methods=['POST'])
+@admin_required
+def api_vlcc_push_trigger():
+    """'VLCC-SIRE 푸시' 버튼(admin) — 시각 flag. 맥 watcher 가 감지→push.py→done."""
+    _ensure_api_table()
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('vlcc_push_flag', ?)", (now,))
+    return jsonify({'ok': True, 'flagged_at': now})
+
+
+@app.route('/api/vlcc-push/status')
+@admin_required
+def api_vlcc_push_status():
+    """버튼 UI 상태 — flag>done 이면 pending."""
+    _ensure_api_table()
+    fr = query("SELECT v FROM api_settings WHERE k='vlcc_push_flag'", one=True)
+    dn = query("SELECT v FROM api_settings WHERE k='vlcc_push_done'", one=True)
+    dr = query("SELECT v FROM api_settings WHERE k='vlcc_push_result'", one=True)
+    flag = fr['v'] if fr else None
+    done = dn['v'] if dn else None
+    return jsonify({'pending': bool(flag) and (not done or done < flag),
+                    'flagged_at': flag, 'done_at': done, 'last_result': (dr['v'] if dr else None)})
+
+
+@app.route('/api/ext/vlcc-push/pending')
+@api_key_required
+def api_ext_vlcc_push_pending():
+    """맥 watcher 폴링용 — flag>done(실제 pending)일 때만 flag 반환(과거 flag 재실행 방지)."""
+    fr = query("SELECT v FROM api_settings WHERE k='vlcc_push_flag'", one=True)
+    dn = query("SELECT v FROM api_settings WHERE k='vlcc_push_done'", one=True)
+    flag = fr['v'] if fr else None
+    done = dn['v'] if dn else None
+    return jsonify({'flag': flag if (flag and (not done or done < flag)) else None})
+
+
+@app.route('/api/ext/vlcc-push/done', methods=['POST'])
+@api_key_required
+def api_ext_vlcc_push_done():
+    """맥 watcher 완료 콜 — 처리 flag+결과 기록(flag clear)."""
+    _ensure_api_table()
+    d = request.get_json(silent=True) or {}
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('vlcc_push_done', ?)", (d.get('flag') or now,))
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('vlcc_push_result', ?)", (str(d.get('result') or '')[:500],))
     return jsonify({'ok': True, 'done_at': d.get('flag') or now})
 
 
