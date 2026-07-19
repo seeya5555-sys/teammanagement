@@ -482,7 +482,8 @@
     if(!FLEET.length){renderAlert();document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
     FLEET.forEach(v=>{
       const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
-      const _pos=(v.lat!=null&&v.lng!=null)?(Math.abs(v.lat).toFixed(2)+'°'+(v.lat>=0?'N':'S')+' '+Math.abs(v.lng).toFixed(2)+'°'+(v.lng>=0?'E':'W')):'—';
+      const _dms=(dd,pos,neg)=>{const a=Math.abs(dd),d=Math.floor(a),mf=(a-d)*60,m=Math.floor(mf),s=Math.round((mf-m)*60);let mm=m,ss=s;if(ss===60){ss=0;mm+=1;}return d+'°'+String(mm).padStart(2,'0')+"'"+String(ss).padStart(2,'0')+'"'+(dd>=0?pos:neg);};
+      const _pos=(v.lat!=null&&v.lng!=null)?(_dms(v.lat,'N','S')+' '+_dms(v.lng,'E','W')):'—';
       const _sc=((v.speed!=null?v.speed:'—')+'kn · '+_pos);
       const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(esc(v.name)+'<span class="sc">'+esc(_sc)+'</span>').setLatLng([v.lat,v.lng]);tt.addTo(map);
       m.on('click',()=>openV(v));markers.push({v,m,tt});
