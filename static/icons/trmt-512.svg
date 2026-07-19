@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#1E293B"/>
+  <rect x="54" y="54" width="404" height="404" rx="98" fill="#185FA5"/>
+  <text x="256" y="320" text-anchor="middle" font-family="Arial,sans-serif" font-size="166" font-weight="700" fill="#fff">T3</text>
+</svg>
