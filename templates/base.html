@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
   {% block head %}{% endblock %}
 </head>
-<body class="{% block bodyclass %}{% endblock %}">
+<body class="{% block bodyclass %}{% endblock %}{% if embedded %} embedded{% endif %}">
 {# ═══ 공용 SVG 아이콘 스프라이트 (Lucide 스타일 · 24×24 · stroke 1.75 · currentColor) ═══ #}
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>

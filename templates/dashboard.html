@@ -2,9 +2,15 @@
 {% block title %}대시보드 · TRMT3{% endblock %}
 
 {% block head %}
+{% if embedded %}<base target="_top">{% endif %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.css"/>
 <style>
+  /* Mobile app embed: reuse this exact Fleet Map UI/data without duplicate map logic. */
+  body.embedded .topnav, body.embedded .mobile-tabbar, body.embedded .mobile-menu { display:none !important; }
+  body.embedded .main-content { padding:10px 10px 0; }
+  body.embedded .fm-stage { height:calc(100vh - 154px); min-height:420px; }
+  @media (max-width:768px){ body.embedded .fm-stage { height:calc(100vh - 138px); min-height:390px; } }
   .fm-wrap{margin:-8px -4px 0}
   /* Course 미수신 선박은 북향으로 오인되지 않도록 hollow neutral marker로 표시. */
   .fm-marker-neutral path{fill:var(--surface,#fff);stroke:#7c8792;stroke-width:2.2}

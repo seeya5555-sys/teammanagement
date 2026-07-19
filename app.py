@@ -24,7 +24,7 @@ from datetime import timedelta, date, datetime
 
 from flask import (
     Flask, g, request, jsonify, session, render_template,
-    redirect, url_for, send_from_directory, abort
+    redirect, url_for, send_from_directory, abort, make_response
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -940,7 +940,13 @@ def dashboard():
     """Fleet Map — 지도 기반 대시보드(SVMS noon 선위 + TRMT 현황 조인).
     데이터는 /api/fleet-map/data (감독 스코프). 상단 KPI 스트립은 구 대시보드 집계
     (_dashboard_ctx)를 재사용. 카드형 전체는 /dashboard/classic 백업 경로."""
-    return render_template('dashboard.html', **_dashboard_ctx())
+    embedded = request.args.get('embed') == '1'
+    response = make_response(render_template('dashboard.html', embedded=embedded, **_dashboard_ctx()))
+    if embedded:
+        # `/mobile` is same-origin; reject all external framing of the map surface.
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        response.headers['Content-Security-Policy'] = "frame-ancestors 'self'"
+    return response
 
 
 @app.route('/mobile')
