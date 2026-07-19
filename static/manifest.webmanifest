@@ -4,7 +4,7 @@
   "short_name": "TRMT",
   "description": "Tanker Management Team 3",
   "lang": "ko",
-  "start_url": "/dashboard",
+  "start_url": "/mobile",
   "scope": "/",
   "display": "standalone",
   "background_color": "#F8F7F4",

@@ -943,6 +943,13 @@ def dashboard():
     return render_template('dashboard.html', **_dashboard_ctx())
 
 
+@app.route('/mobile')
+@login_required
+def mobile_app():
+    """Mobile-first TRMT shell backed by the existing server and session."""
+    return render_template('mobile.html', **_dashboard_ctx())
+
+
 def _dashboard_ctx():
     """대시보드 집계 컨텍스트(stats/events/scope) — Fleet Map 상단 KPI 스트립과
     구 카드형(/dashboard/classic) 양쪽에서 공유."""
@@ -1464,6 +1471,42 @@ def _issue_to_dict(row):
         app.logger.warning('issue-to-dict: %s', e)
         d['actions'] = []
     return d
+
+
+@app.route('/api/mobile/issues')
+@login_required
+def api_mobile_issue_list():
+    """Mobile Daily card feed with server-enforced supervisor scope.
+
+    기존 `/api/issues`의 범용 목록 권한을 바꾸지 않는다. mobile 화면은
+    non-admin에게 현재 로그인 감독의 Open 이슈만 내보내며, 감독 연결이
+    없는 member 계정은 빈 목록을 받는다.
+    """
+    is_admin = session.get('role') == 'admin'
+    sup_id = session.get('supervisor_id')
+    if not is_admin and not sup_id:
+        return jsonify([])
+
+    where = ["i.status != 'Closed'"]
+    params = []
+    if not is_admin:
+        where.append('i.supervisor_id = ?')
+        params.append(sup_id)
+
+    sql = f'''
+        SELECT i.*, v.name AS vessel_name, v.short_name AS vessel_short
+          FROM issues i
+          JOIN vessels v ON v.id = i.vessel_id
+         WHERE {' AND '.join(where)}
+         ORDER BY CASE i.priority
+                    WHEN 'Urgent' THEN 0
+                    WHEN 'COC & Flag' THEN 1
+                    WHEN 'Next DD' THEN 2
+                    ELSE 3 END,
+                  COALESCE(i.due_date, '9999-12-31'), i.issue_date ASC, i.id ASC
+         LIMIT 40
+    '''
+    return jsonify([_issue_to_dict(r) for r in query(sql, tuple(params))])
 
 
 # ─────────────────────────────────────────────────────────────────
