@@ -2419,6 +2419,8 @@ async function triggerVlccPush() {
     if (!s.pending && doneEpoch(s.done_at) >= baseline) {
       VLCC_PUSH_POLLING = false; setVlccButton(false, 'VLCC-SIRE 푸시');
       setVlccBanner('ok', '푸시 완료' + (s.last_result ? ' · ' + s.last_result : '') + (s.done_at ? ` · ${s.done_at}` : ''));
+      const lp = $('#vlcc-last-push');
+      if (lp && s.last_push_at) lp.textContent = '마지막 업데이트: ' + s.last_push_at + ' KST';
       return;
     }
     setTimeout(poll, INTERVAL);

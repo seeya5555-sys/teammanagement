@@ -1059,9 +1059,17 @@ def _dashboard_ctx():
         except sqlite3.Error:
             pass
 
+    vlcc_last_push = None
+    if is_admin:
+        try:
+            r = query("SELECT v FROM api_settings WHERE k='vlcc_last_push_at'", one=True)
+            vlcc_last_push = r['v'] if r else None
+        except sqlite3.Error:
+            pass
+
     return dict(stats=stats, events=events, events_count=events_count,
                 today_events=today_events, today_count=today_count, is_admin=is_admin,
-                scoped=scoped, sup_name=sup_name)
+                scoped=scoped, sup_name=sup_name, vlcc_last_push=vlcc_last_push)
 
 
 @app.route('/api/dashboard/cockpit')
@@ -7287,10 +7295,12 @@ def api_vlcc_push_status():
     fr = query("SELECT v FROM api_settings WHERE k='vlcc_push_flag'", one=True)
     dn = query("SELECT v FROM api_settings WHERE k='vlcc_push_done'", one=True)
     dr = query("SELECT v FROM api_settings WHERE k='vlcc_push_result'", one=True)
+    lp = query("SELECT v FROM api_settings WHERE k='vlcc_last_push_at'", one=True)
     flag = fr['v'] if fr else None
     done = dn['v'] if dn else None
     return jsonify({'pending': bool(flag) and (not done or done < flag),
-                    'flagged_at': flag, 'done_at': done, 'last_result': (dr['v'] if dr else None)})
+                    'flagged_at': flag, 'done_at': done, 'last_result': (dr['v'] if dr else None),
+                    'last_push_at': (lp['v'] if lp else None)})
 
 
 @app.route('/api/ext/vlcc-push/pending')
@@ -7314,6 +7324,18 @@ def api_ext_vlcc_push_done():
     execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('vlcc_push_done', ?)", (d.get('flag') or now,))
     execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('vlcc_push_result', ?)", (str(d.get('result') or '')[:500],))
     return jsonify({'ok': True, 'done_at': d.get('flag') or now})
+
+
+@app.route('/api/ext/vlcc-push/mark', methods=['POST'])
+@api_key_required
+def api_ext_vlcc_push_mark():
+    """push.py 성공 실행 완료 콜(자동 스케줄·수동 버튼 공통) — 마지막 푸시 시각 기록.
+    버튼 flag/done 핸드셰이크와 독립(수동뿐 아니라 launchd 13/18시 자동도 여기 기록).
+    시각은 서버가 KST(UTC+9)로 스탬프 — client clock/TZ 의존·역행·형식오류 배제(올마이트)."""
+    _ensure_api_table()
+    ts = (datetime.utcnow() + timedelta(hours=9)).strftime('%Y-%m-%d %H:%M')
+    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('vlcc_last_push_at', ?)", (ts,))
+    return jsonify({'ok': True, 'last_push_at': ts})
 
 
 # ===== SVMS Dock SP_SET 푸싱(draft) — 수동 버튼 + 맥 스케줄러(토큰0). Submit은 항상 형(자동 안 함) =====
