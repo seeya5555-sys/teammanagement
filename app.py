@@ -2047,9 +2047,40 @@ def api_issue_summary_export():
         as_attachment=True, download_name=fname)
 
 
+def _issue_write_scope(iid=None, payload=None):
+    """Return a scoped issue row or raise 403 for non-admin cross-supervisor writes."""
+    if session.get('role') == 'admin':
+        if not iid:
+            return None
+        row = query('SELECT id, supervisor_id, vessel_id FROM issues WHERE id=?', (iid,), one=True)
+        if not row:
+            abort(404)
+        return row
+    sup_id = session.get('supervisor_id')
+    if not sup_id:
+        abort(403)
+    if iid:
+        row = query('SELECT id, supervisor_id, vessel_id FROM issues WHERE id=?', (iid,), one=True)
+        if not row:
+            abort(404)
+        if row['supervisor_id'] != sup_id:
+            abort(403)
+        return row
+    if payload is not None:
+        # The browser cannot choose another supervisor, and the vessel must belong to it.
+        if int(payload.get('supervisor_id') or 0) != sup_id:
+            abort(403)
+        vessel_id = int(payload.get('vessel_id') or 0)
+        if not query('SELECT 1 FROM supervisor_vessels WHERE supervisor_id=? AND vessel_id=?',
+                     (sup_id, vessel_id), one=True):
+            abort(403)
+    return None
+
+
 @app.route('/api/issues/<int:iid>')
 @login_required
 def api_issue_get(iid):
+    _issue_write_scope(iid)
     r = query('''
         SELECT i.*,
                s.name       AS supervisor_name,
@@ -2074,6 +2105,7 @@ def api_issue_get(iid):
 @login_required
 def api_issue_create():
     d = request.get_json(silent=True) or {}
+    _issue_write_scope(payload=d)
     for k in ('supervisor_id', 'vessel_id', 'issue_date', 'item_topic'):
         if not d.get(k):
             return jsonify({'error': f'필수 항목 누락: {k}'}), 400
@@ -2105,9 +2137,19 @@ def api_issue_create():
 @app.route('/api/issues/<int:iid>', methods=['PUT'])
 @login_required
 def api_issue_update(iid):
-    if not query('SELECT id FROM issues WHERE id=?', (iid,), one=True):
-        abort(404)
+    current = _issue_write_scope(iid)
     d = request.get_json(silent=True) or {}
+    if session.get('role') != 'admin':
+        sup_id = session.get('supervisor_id')
+        if 'supervisor_id' in d and int(d.get('supervisor_id') or 0) != sup_id:
+            abort(403)
+        vessel_id = int(d.get('vessel_id') or current['vessel_id'])
+        # Preserve a legacy issue's current vessel even if it was later unassigned/inactivated.
+        # A changed vessel must still be one of the member's currently assigned vessels.
+        if vessel_id != current['vessel_id'] and not query(
+                'SELECT 1 FROM supervisor_vessels WHERE supervisor_id=? AND vessel_id=?',
+                (sup_id, vessel_id), one=True):
+            abort(403)
     fields = ['supervisor_id', 'vessel_id', 'issue_date', 'due_date',
               'item_topic',    'description', 'actions',
               'priority',      'status']
@@ -2134,6 +2176,7 @@ def api_issue_update(iid):
 @app.route('/api/issues/<int:iid>', methods=['DELETE'])
 @login_required
 def api_issue_delete(iid):
+    _issue_write_scope(iid)
     atts = query('SELECT stored_name FROM attachments WHERE issue_id=?', (iid,))
     for a in atts:
         p = os.path.join(UPLOAD_DIR, a['stored_name'])
@@ -5769,8 +5812,7 @@ def _ext_allowed(filename):
 @app.route('/api/issues/<int:iid>/attachments', methods=['POST'])
 @login_required
 def api_attachment_upload(iid):
-    if not query('SELECT id FROM issues WHERE id=?', (iid,), one=True):
-        abort(404)
+    _issue_write_scope(iid)
     if 'file' not in request.files:
         return jsonify({'error': '파일이 없습니다.'}), 400
     f = request.files['file']
@@ -5804,6 +5846,7 @@ def api_attachment_download(aid):
     a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
     if not a:
         abort(404)
+    _issue_write_scope(a['issue_id'])
     # ?inline=1 이면 브라우저에서 바로 표시 (이미지 썸네일 / PDF 미리보기용)
     inline = request.args.get('inline') == '1'
     return send_from_directory(
@@ -5819,6 +5862,7 @@ def api_attachment_delete(aid):
     a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
     if not a:
         abort(404)
+    _issue_write_scope(a['issue_id'])
     p = os.path.join(UPLOAD_DIR, a['stored_name'])
     if os.path.exists(p):
         os.remove(p)
