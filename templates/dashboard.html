@@ -214,6 +214,13 @@
   <div class="ckpt-card" id="ckAuto" hidden>
     <div class="ckpt-h"><svg class="svic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화 상태 <a class="ckpt-hlink" href="{{ url_for('health_page') }}">헬스 보드 →</a></div>
     <div class="ckpt-body" id="ckAutoBody"></div>
+    {% if is_admin %}
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-subtle);display:flex;justify-content:flex-end">
+      <button type="button" class="btn btn-primary" id="btn-vlcc-push">VLCC-SIRE 푸시</button>
+    </div>
+    <div id="vlcc-push-banner" role="status" aria-live="polite"
+         style="display:none;margin-top:10px;padding:8px 12px;border-radius:8px;font-size:13px;line-height:1.4;border:1px solid transparent"></div>
+    {% endif %}
   </div>
 </div>
 
