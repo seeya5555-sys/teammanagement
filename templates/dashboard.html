@@ -482,7 +482,8 @@
     if(!FLEET.length){renderAlert();document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
     FLEET.forEach(v=>{
       const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
-      const _sc=((v.speed!=null?v.speed:'—')+'kn · '+(v.course!=null?String(v.course).padStart(3,'0'):'—')+'°');
+      const _pos=(v.lat!=null&&v.lng!=null)?(Math.abs(v.lat).toFixed(2)+'°'+(v.lat>=0?'N':'S')+' '+Math.abs(v.lng).toFixed(2)+'°'+(v.lng>=0?'E':'W')):'—';
+      const _sc=((v.speed!=null?v.speed:'—')+'kn · '+_pos);
       const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(esc(v.name)+'<span class="sc">'+esc(_sc)+'</span>').setLatLng([v.lat,v.lng]);tt.addTo(map);
       m.on('click',()=>openV(v));markers.push({v,m,tt});
     });
