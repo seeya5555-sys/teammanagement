@@ -7144,7 +7144,10 @@ def _ext_vetting_digests():
         if not vts:
             continue
         enr = [_vetting_with_counts(v) for v in vts]
-        latest = enr[0]
+        # 상단(요약) 기준: 'Next Plan'(계획된 다음 검사)이 있으면 Date 미입력이어도 우선.
+        # 여러 Next Plan이면 새로 만든 것(id 최신) 우선. 프론트 vt.js vettingDigest 와 동일 규칙.
+        next_plans = [v for v in enr if (v.get('valid') or '') == 'Next Plan']
+        latest = max(next_plans, key=lambda v: v.get('id') or 0) if next_plans else enr[0]
         # OBS: 최신이 'Next Plan'이면 그 이전(Next Plan 아닌 최신) Report 수치 사용
         obs_src = latest
         if (latest.get('valid') or '') == 'Next Plan':
