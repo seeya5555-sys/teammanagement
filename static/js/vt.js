@@ -282,7 +282,15 @@ function vettingDigest(item) {
   const vts = (item.vettings || []).slice().sort((a, b) =>
     (b.inspection_date || '').localeCompare(a.inspection_date || ''));
   if (!vts.length) return null;
-  const latest = vts[0];
+  // 상단 표시 우선순위: 'Next Plan'(계획된 다음 검사)이 있으면 Date 미입력이어도 그것을 상단에.
+  // 없으면 기존대로 최신 날짜 Report.
+  // 여러 Next Plan이면 "새로 만든 것"(id 최신) 우선, tie-break로 date 최신.
+  const nextPlans = vts.filter(v => (v.valid || '') === 'Next Plan');
+  const latest = nextPlans.length
+    ? nextPlans.slice().sort((a, b) =>
+        ((Number(b.id) || 0) - (Number(a.id) || 0)) ||
+        (b.inspection_date || '').localeCompare(a.inspection_date || ''))[0]
+    : vts[0];
   const status = latest.valid || '';
   const statusCls = status === 'Next Plan' ? 'vt-dg-next'
     : status === 'Last Result' ? 'vt-dg-last' : '';
