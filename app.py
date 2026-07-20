@@ -28,6 +28,8 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+import hmac, hashlib
+from itsdangerous import URLSafeTimedSerializer, BadData
 
 # ═════════════════════════════════════════════════════════════════
 #  Config
@@ -68,6 +70,65 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
     SEND_FILE_MAX_AGE_DEFAULT=0,                   # static(css/js) 매번 재검증 — 모바일 캐시 stale 방지
 )
+
+# ── 네이티브 앱 Bearer 토큰 (스테이트리스, 세션쿠키와 병행) ──────────────
+_TOKEN_SALT   = 'trmt-mobile-bearer-v1'
+_TOKEN_MAXAGE = 60 * 60 * 24 * 30          # 30일
+_token_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'], salt=_TOKEN_SALT)
+
+def _pw_fingerprint(pw_hash):
+    """비번 해시의 keyed HMAC 지문 — 비번 변경 시 기존 토큰 무효화용.
+    서명 토큰 payload는 암호화 안 되므로 해시 원문을 넣지 않고 HMAC 값만 넣음."""
+    key = app.config['SECRET_KEY']
+    if isinstance(key, str):
+        key = key.encode()
+    msg = b'trmt-pv-v1 ' + (pw_hash or '').encode()
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+def _issue_token(u):
+    return _token_serializer.dumps({'uid': u['id'], 'pv': _pw_fingerprint(u['password_hash'])})
+
+# 토큰 엔드포인트 brute-force 방어 (in-memory, canonical user_id 키, thread-safe, hard-bounded).
+# 키 설계: 존재하는(active) 유저만 DB user_id(int) 버킷 생성. 비존재 username은 엔드포인트에서
+# 조회 직후 401로 끝나 버킷을 아예 안 만듦 → 키 개수 ≤ 관측된 유저수(하드 상한, 공격자가
+# 임의 username으로 키 증식 불가=메모리 DoS 봉쇄). 존재/비존재 첫 응답 모두 401이라
+# enumeration 불가. IP/XFF 미사용(프록시 spoof 무관), canonical id라 username 대소문자 변형
+# 우회도 봉쇄. 성공 시 해당 버킷만 리셋(교차오염 없음). 만료 버킷은 재조회 시 자동 pop.
+# gunicorn 멀티워커면 워커별 카운터(무의존 tradeoff, 실효 한도 ≈ MAX×워커수).
+_TOKEN_FAILS       = {}           # user_id(int) -> [실패 epoch, ...]
+_TOKEN_FAIL_LOCK   = threading.Lock()
+_TOKEN_FAIL_WINDOW = 15 * 60      # 15분
+_TOKEN_FAIL_MAX    = 10           # 윈도우당 최대 실패 → 초과 시 429
+# 비존재 username 경로의 timing oracle 완화용 더미 해시(값 무의미). 존재 유저와 동일하게
+# check_password_hash 1회를 태워 "존재=느림/비존재=빠름" 시간차로 enumeration하는 걸 막음.
+_DUMMY_PW_HASH     = generate_password_hash('trmt-mobile-timing-equalizer')
+
+def _token_rate_limited(key):
+    """해당 버킷이 현재 차단 상태인지(윈도우 내 실패 ≥ MAX). 기록은 안 함."""
+    now = time.time()
+    with _TOKEN_FAIL_LOCK:
+        fails = [t for t in _TOKEN_FAILS.get(key, []) if now - t < _TOKEN_FAIL_WINDOW]
+        if fails:
+            _TOKEN_FAILS[key] = fails
+        else:
+            _TOKEN_FAILS.pop(key, None)
+        return len(fails) >= _TOKEN_FAIL_MAX
+
+def _token_note_fail(key):
+    now = time.time()
+    with _TOKEN_FAIL_LOCK:
+        # opportunistic sweep: 윈도우 완전만료된 버킷 전체 정리(삭제/비활성 user_id 잔존 방지).
+        # dict 크기는 유저수 상한이라 값쌈. 이걸로 stale key가 실제로 소멸해 하드 상한이 성립.
+        for k in [k for k, v in list(_TOKEN_FAILS.items())
+                  if all(now - t >= _TOKEN_FAIL_WINDOW for t in v)]:
+            _TOKEN_FAILS.pop(k, None)
+        fails = [t for t in _TOKEN_FAILS.get(key, []) if now - t < _TOKEN_FAIL_WINDOW]
+        fails.append(now)
+        _TOKEN_FAILS[key] = fails
+
+def _token_reset_fails(key):
+    with _TOKEN_FAIL_LOCK:
+        _TOKEN_FAILS.pop(key, None)
 
 
 # static(css/js) URL에 파일 수정시각을 ?v= 로 자동 부착 — 파일 변경 시 URL이 바뀌어
@@ -867,6 +928,56 @@ def _seed_issues(conn):
 
 
 # ═════════════════════════════════════════════════════════════════
+#  네이티브 앱 Bearer 인증 (세션쿠키와 병행, /api/ 범위 한정)
+# ═════════════════════════════════════════════════════════════════
+@app.before_request
+def _bearer_auth():
+    """/api/ 요청에서 Authorization: Bearer <token> 이면 세션에 유저를 투명 주입.
+    static·/login·돈경로/자동화 웹 라우트엔 훅 자체가 안 걸림. 세션쿠키 로그인 우선."""
+    if not request.path.startswith('/api/'):
+        return                      # ← 범위 제한: /api/ 밖은 미접촉
+    if request.path.startswith('/api/ext/'):
+        return                      # ← 돈경로/워커 엔드포인트(@api_key_required) 완전 제외
+    if 'user_id' in session:
+        return                      # ← 세션쿠키 로그인이 이미 있으면 우선(브라우저=cookie, 앱=Bearer로 분리)
+    hdr = request.headers.get('Authorization', '')
+    parts = hdr.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != 'bearer':
+        return                      # scheme은 대소문자 무시(RFC 7235)
+    tok = parts[1].strip()
+    if not tok:
+        return
+    try:
+        data = _token_serializer.loads(tok, max_age=_TOKEN_MAXAGE)
+    except BadData:
+        return                      # 무효/만료/위조 → login_required가 401 처리
+    if not isinstance(data, dict):
+        return
+    u = query('SELECT * FROM users WHERE id=? AND active=1', (data.get('uid'),), one=True)
+    if not u:
+        return
+    pv = data.get('pv')
+    if not isinstance(pv, str) or not hmac.compare_digest(pv, _pw_fingerprint(u['password_hash'])):
+        return                      # 비번 변경/위조 → 토큰 폐기
+    session['user_id']       = u['id']
+    session['username']      = u['username']
+    session['display_name']  = u['display_name'] or u['username']
+    session['role']          = u['role']
+    session['supervisor_id'] = u['supervisor_id']
+    g._token_auth = True
+
+@app.after_request
+def _suppress_bearer_session_cookie(response):
+    """Bearer 인증 요청은 세션쿠키를 발행하지 않음(stateless).
+    after_request가 save_session()보다 먼저 실행되므로 여기서 억제하면
+    view가 세션을 수정했더라도 Set-Cookie가 나가지 않음."""
+    if getattr(g, '_token_auth', False):
+        session.permanent = False
+        session.modified  = False
+    return response
+
+
+# ═════════════════════════════════════════════════════════════════
 #  Auth decorators
 # ═════════════════════════════════════════════════════════════════
 def login_required(f):
@@ -932,6 +1043,42 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+
+@app.route('/api/auth/token', methods=['POST'])
+def api_auth_token():
+    """네이티브 앱 로그인: username/password → Bearer 토큰."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'error': 'bad_request'}), 400
+    un = d.get('username'); pw = d.get('password')
+    username = (un if isinstance(un, str) else '').strip()
+    password = pw if isinstance(pw, str) else ''
+    # 조회 먼저(username indexed, 값쌈). 존재 유저만 canonical user_id 버킷으로 rate-limit.
+    u = query('SELECT * FROM users WHERE username=? AND active=1', (username,), one=True)
+    if not u:
+        # 비존재/비활성: 버킷 생성·카운트 안 함(임의 username 키증식 차단) → 존재 유저와
+        # 동일하게 401. 응답(401)도, 더미 해시로 처리시간도 균일 → status/timing enumeration 방지.
+        check_password_hash(_DUMMY_PW_HASH, password)
+        return jsonify({'error': 'invalid_credentials'}), 401
+    if _token_rate_limited(u['id']):
+        return jsonify({'error': 'rate_limited'}), 429
+    if not check_password_hash(u['password_hash'], password):
+        _token_note_fail(u['id'])
+        return jsonify({'error': 'invalid_credentials'}), 401
+    _token_reset_fails(u['id'])       # 성공 시 해당 계정 버킷만 초기화
+    execute('UPDATE users SET last_login_at=datetime("now","localtime") WHERE id=?', (u['id'],))
+    resp = jsonify({
+        'token':         _issue_token(u),
+        'expires_in':    _TOKEN_MAXAGE,
+        'user_id':       u['id'],
+        'username':      u['username'],
+        'display_name':  u['display_name'] or u['username'],
+        'role':          u['role'],
+        'supervisor_id': u['supervisor_id'],
+    })
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @app.route('/dashboard')
