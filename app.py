@@ -8553,6 +8553,24 @@ def api_ext_invoice_create():
     return jsonify({'id': did, 'status': 'pending'}), 201
 
 
+@app.route('/api/ext/invoice/drafts/by-inv/<inv_cd>')
+@api_key_required
+def api_ext_invoice_lookup(inv_cd):
+    """백필용 조회(읽기전용): inv_cd로 현재 draft의 id/status/has_pdf 반환. DB write·금전효과 없음.
+    prep 엔진이 카드 재적재(POST) 없이 did만 얻어 미리보기 PDF만 올리기 위한 최소 경로."""
+    inv_cd = (inv_cd or '').strip()
+    if not inv_cd:
+        return jsonify({'error': 'inv_cd required'}), 400
+    row = query("SELECT id, status FROM invoice_draft WHERE inv_cd=? "
+                "AND status IN ('pending','approved','submitting','submitted',"
+                "'rejecting','reject_submitting','rejected') "
+                "ORDER BY id DESC LIMIT 1", (inv_cd,), one=True)
+    if not row:
+        return jsonify({'found': False}), 404
+    return jsonify({'found': True, 'id': row['id'], 'status': row['status'],
+                    'has_pdf': os.path.exists(_invoice_pdf_path(row['id']))})
+
+
 @app.route('/api/ext/invoice/drafts/<int:did>/pdf', methods=['POST'])
 @api_key_required
 def api_ext_invoice_pdf_upload(did):
