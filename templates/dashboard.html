@@ -388,6 +388,14 @@
 <script>
 (function(){
   const esc=s=>(s==null?'':String(s)).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+  // noon report ETA 표시(선박 보고 LT). 시간 있으면 'MM/DD HH:MM LT±ZD', 날짜만이면 'MM/DD'(LT 미표기). eta 없으면 null.
+  function etaDisp(v){
+    if(!v||!v.eta) return null;
+    if(!String(v.eta).includes(':')) return v.eta;   // 날짜만(시간 미보고) → LT 안 붙임
+    let z='';const zd=String(v.eta_zd==null?'':v.eta_zd).trim();
+    if(/^-?\d{1,2}$/.test(zd)){const n=parseInt(zd,10);if(n>=-12&&n<=14)z=(n>=0?'+':'')+n;}  // 실제 timezone 범위(-12~+14)만
+    return v.eta+' LT'+z;
+  }
   // 데이터 신선도 ALERT — 파이프라인 미갱신/선박별 noon 누락을 사이트 상단 배너로
   // 신선도 알림. noon 누락은 현재 감독필터(curSup)에 맞춰 본인 담당선박만 표시.
   function renderAlert(){
@@ -571,7 +579,7 @@
     const reset=manual?'<button type="button" class="fm-nextport-reset" data-vessel="'+esc(v.name)+'">Reset</button>':'';
     return '<div class="fm-np">'+
       '<div class="fm-np-head"><span class="lk">Next Port</span><span class="lv">'+
-      esc(np.name||'—')+(v.eta?' <span class="fm-eta">ETA '+esc(v.eta)+'</span>':'')+'</span></div>'+
+      esc(np.name||'—')+(etaDisp(v)?' <span class="fm-eta">ETA '+esc(etaDisp(v))+'</span>':'')+'</span></div>'+
       state+
       '<div class="fm-np-form">'+
         '<input class="fm-nextport-input" data-vessel="'+esc(v.name)+'" type="text" maxlength="120" placeholder="Port name or UN/LOCODE" autocomplete="off"/>'+
@@ -762,7 +770,7 @@
     clearRoute();const all=[[v.lat,v.lng]];
     // 회색 noon 항적(breadcrumb)은 표시 안 함 — noon 위치 튐으로 지저분. In→Next searoute만.
     if(v.prev_port&&v.prev_port.xy){portDot(v.prev_port.xy,(v.prev_port.name||'In Port')+' · 출항');all.push(v.prev_port.xy);}
-    if(v.next_port&&v.next_port.xy){portDot(v.next_port.xy,(v.next_port.name||'Next Port')+' · 도착예정');all.push(v.next_port.xy);}
+    if(v.next_port&&v.next_port.xy){const ed=etaDisp(v);portDot(v.next_port.xy,(v.next_port.name||'Next Port')+(ed?' · ETA '+ed:' · 도착예정'));all.push(v.next_port.xy);}
     const legs=(v.route_legs&&v.route_legs.length)?v.route_legs:[];
     if(legs.length){routeLayer=L.polyline(legs,{color:'#2f6f9f',weight:3,opacity:.9,dashArray:'2 9'}).addTo(map);
       let off=0;window._fmA=setInterval(()=>{off=(off-2)%22;routeLayer.setStyle({dashOffset:String(off)});},60);}
