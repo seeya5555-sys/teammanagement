@@ -24,7 +24,7 @@ from datetime import timedelta, date, datetime
 
 from flask import (
     Flask, g, request, jsonify, session, render_template,
-    redirect, url_for, send_from_directory, abort, make_response
+    redirect, url_for, send_from_directory, send_file, abort, make_response
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -37,8 +37,10 @@ from itsdangerous import URLSafeTimedSerializer, BadData
 BASE_DIR     = os.path.abspath(os.path.dirname(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, 'instance')
 UPLOAD_DIR   = os.path.join(BASE_DIR, 'static', 'uploads')
+INVOICE_PDF_DIR = os.path.join(INSTANCE_DIR, 'invoice_pdfs')  # 인보이스 미리보기 PDF(컨펌/리젝 시 자동삭제)
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR,   exist_ok=True)
+os.makedirs(INVOICE_PDF_DIR, exist_ok=True)
 
 DATABASE        = os.path.join(INSTANCE_DIR, 'trmt.db')
 SCHEMA_FILE     = os.path.join(BASE_DIR, 'schema.sql')
@@ -8463,6 +8465,21 @@ def invoice_page():
     return render_template('invoice.html')
 
 
+def _invoice_pdf_path(did):
+    """미리보기 PDF 파일 경로(draft id 기준). 파일명=id.pdf 라 경로주입 불가."""
+    return os.path.join(INVOICE_PDF_DIR, '%d.pdf' % int(did))
+
+
+def _invoice_pdf_delete(did):
+    """미리보기 PDF 삭제 — best-effort(실패해도 호출측 흐름 안 막음)."""
+    try:
+        p = _invoice_pdf_path(did)
+        if os.path.exists(p):
+            os.remove(p)
+    except Exception:
+        app.logger.exception('invoice-pdf-delete')
+
+
 @app.route('/api/invoice/drafts')
 @admin_required
 def api_invoice_list():
@@ -8474,8 +8491,21 @@ def api_invoice_list():
                      "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
     pending = query("SELECT COUNT(*) c FROM invoice_draft WHERE status='pending'", one=True)
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
+    for dd in drafts:   # 미리보기 PDF 존재 여부(프론트 링크 표시용)
+        dd['has_pdf'] = os.path.exists(_invoice_pdf_path(dd['id']))
     return jsonify({'drafts': drafts, 'pending': pending['c'],
                     'enabled': _automation_enabled()})
+
+
+@app.route('/api/invoice/drafts/<int:did>/pdf')
+@admin_required
+def api_invoice_pdf(did):
+    """컨펌대기 인보이스 원본 PDF 미리보기(inline). 컨펌/리젝되면 파일이 삭제돼 404."""
+    p = _invoice_pdf_path(did)
+    if not os.path.exists(p):
+        abort(404)
+    return send_file(p, mimetype='application/pdf', as_attachment=False,
+                     download_name='invoice_%d.pdf' % did, conditional=True)
 
 
 @app.route('/api/ext/invoice/drafts', methods=['POST'])
@@ -8521,6 +8551,38 @@ def api_ext_invoice_create():
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (inv_cd, *cols.values()))
     return jsonify({'id': did, 'status': 'pending'}), 201
+
+
+@app.route('/api/ext/invoice/drafts/<int:did>/pdf', methods=['POST'])
+@api_key_required
+def api_ext_invoice_pdf_upload(did):
+    """prep 엔진이 3자 대조된 원본 PDF를 적재(미리보기용). raw body 또는 multipart 'pdf'.
+    저장은 컨펌대기 동안만 — 컨펌/리젝/삭제 시 자동 정리된다."""
+    MAX = 25 * 1024 * 1024
+    # 조기 방어: 선언된 크기가 이미 초과면 body 안 읽고 거부
+    if request.content_length and request.content_length > MAX:
+        return jsonify({'error': 'too large'}), 413
+    row = query('SELECT status FROM invoice_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    # 미결정(pending/approved/rejecting) 건에만 저장 — 이미 컨펌/리젝/진행 완료건에
+    # 지연 upload가 삭제된 PDF 를 되살리는 race 차단.
+    if row['status'] not in ('pending', 'approved', 'rejecting'):
+        return jsonify({'error': 'not accepting', 'status': row['status']}), 409
+    data = request.files['pdf'].read() if request.files.get('pdf') else request.get_data()
+    if not data:
+        return jsonify({'error': 'empty'}), 400
+    if len(data) > MAX:
+        return jsonify({'error': 'too large'}), 413
+    if data[:5] != b'%PDF-':
+        return jsonify({'error': 'not pdf'}), 400
+    # atomic write — partial PDF 노출/기존파일 손상 방지
+    final = _invoice_pdf_path(did)
+    tmp = final + '.tmp'
+    with open(tmp, 'wb') as fh:
+        fh.write(data)
+    os.replace(tmp, final)
+    return jsonify({'id': did, 'stored': True, 'bytes': len(data)})
 
 
 @app.route('/api/invoice/drafts/<int:did>/approve', methods=['POST'])
@@ -8688,6 +8750,7 @@ def api_invoice_delete(did):
     if not query('SELECT id FROM invoice_draft WHERE id=?', (did,), one=True):
         return jsonify({'error': 'not found'}), 404
     execute('DELETE FROM invoice_draft WHERE id=?', (did,))
+    _invoice_pdf_delete(did)   # 행 삭제 시 미리보기 PDF 고아파일 정리
     return jsonify({'id': did, 'deleted': True})
 
 
@@ -8695,7 +8758,11 @@ def api_invoice_delete(did):
 @admin_required
 def api_invoice_clear_decided():
     """처리완료 일괄 삭제 — 대기(pending)·결정대기(approved/rejecting)·진행중(submitting)은 보존."""
+    ids = [r['id'] for r in query("SELECT id FROM invoice_draft "
+                                   "WHERE status IN ('submitted','rejected','failed','reject_failed')")]
     n = execute_rc("DELETE FROM invoice_draft WHERE status IN ('submitted','rejected','failed','reject_failed')")
+    for i in ids:   # 삭제된 행의 미리보기 PDF 고아파일 정리
+        _invoice_pdf_delete(i)
     return jsonify({'ok': True, 'deleted': n})
 
 
@@ -8760,6 +8827,8 @@ def api_ext_invoice_result(did):
     rc = execute_rc("UPDATE invoice_draft SET status=?, done_at=datetime('now','localtime'), result=? "
                     "WHERE id=? AND status='submitting'",
                     ('submitted' if ok else 'failed', (d.get('result') or '')[:2000], did))
+    if rc and ok:   # 컨펌 성공 → 미리보기 PDF 자동삭제(실패건은 재검토 위해 보존)
+        _invoice_pdf_delete(did)
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
@@ -8774,6 +8843,8 @@ def api_ext_invoice_reject_result(did):
     rc = execute_rc("UPDATE invoice_draft SET status=?, done_at=datetime('now','localtime'), result=? "
                     "WHERE id=? AND status IN ('reject_submitting','rejecting')",
                     ('rejected' if ok else 'reject_failed', (d.get('result') or '')[:2000], did))
+    if rc and ok:   # 리젝 성공 → 미리보기 PDF 자동삭제(실패건은 재검토 위해 보존)
+        _invoice_pdf_delete(did)
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 

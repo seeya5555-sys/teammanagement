@@ -62,6 +62,16 @@
   .fr-caret{color:var(--text-tertiary);font-size:11px;margin-right:6px;display:inline-block;transition:transform .15s;flex-shrink:0}
   .fr-card.collapsed .fr-caret{transform:rotate(-90deg)}
   .fr-card.collapsed .fr-body{display:none}
+  /* PDF 미리보기 링크 + 모달 */
+  .pdf-lnk{color:var(--blue);font-weight:600;text-decoration:none;cursor:pointer}
+  .pdf-lnk:hover{text-decoration:underline}
+  .pdf-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9000;align-items:center;justify-content:center;padding:24px}
+  .pdf-modal.open{display:flex}
+  .pdf-box{background:#fff;border-radius:12px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.3)}
+  .pdf-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+  .pdf-bar .pdf-ttl{font-weight:700;font-size:13px;color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pdf-bar a,.pdf-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:8px;padding:5px 10px;cursor:pointer;text-decoration:none}
+  .pdf-frame{flex:1;border:0;width:100%}
 </style>
 {% endblock %}
 {% block content %}
@@ -83,12 +93,22 @@
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
 <datalist id="expcodes"></datalist>
+<div class="pdf-modal" id="pdf-modal">
+  <div class="pdf-box">
+    <div class="pdf-bar">
+      <span class="pdf-ttl" id="pdf-ttl">PDF</span>
+      <a id="pdf-open" href="#" target="_blank" rel="noopener">새 탭</a>
+      <button id="pdf-close" type="button">닫기 ✕</button>
+    </div>
+    <iframe class="pdf-frame" id="pdf-frame" title="인보이스 PDF 미리보기"></iframe>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
 (function(){
   const $=s=>document.querySelector(s);
-  const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // P4 표시전용: 서버 matched_vessel → 선박 soft매칭 칩(read-only)
   const vesselChip=d=>{
     const m=d&&d.matched_vessel;
@@ -125,9 +145,14 @@
           +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b></span>`
           +`<span>INV_DT <b>${esc(d.inv_dt||'-')}</b></span>`;
     // 대조결과
+    const pdfEl=d.match_src
+      ? (d.has_pdf
+          ? ` · <a class="pdf-lnk" data-pdf="${d.id}" data-nm="${esc(d.match_src)}"><svg class="ic-svg" viewBox="0 0 24 24" style="width:13px;height:13px;vertical-align:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg> ${esc(d.match_src)}</a>`
+          : ` <span class="mun">· ${esc(d.match_src)}</span>`)
+      : '';
     const matchLine=`<div class="fr-sect"><div class="fr-sect-t">PDF 대조</div>`
       +`${mark(d.inv_no_match,'INV_NO')} &nbsp; ${mark(d.amt_match,'금액')} &nbsp; ${mark(d.date_match,'날짜')}`
-      +`${d.match_src?` <span class="mun">· ${esc(d.match_src)}</span>`:''}</div>`;
+      +`${pdfEl}</div>`;
     // 교정내역
     const corr=`<div class="fr-sect"><div class="fr-sect-t">교정내역</div><div class="fr-corr">`
       +`PIC <i>${esc(d.cur_pic||'-')}</i> → <b>${esc(d.set_pic||'박은미')}</b> &nbsp;`
@@ -203,10 +228,23 @@
         el.classList.toggle('collapsed', !!s.coll);   // 접힘 상태 유지(8s 새로고침 대비)
       }
       el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
+      el.querySelectorAll('.pdf-lnk').forEach(a=>a.onclick=e=>{e.preventDefault();e.stopPropagation();openPdf(a.dataset.pdf,a.dataset.nm);});
       const top=el.querySelector('.fr-top');
       if(top)top.onclick=()=>el.classList.toggle('collapsed');   // 헤더 클릭 = 접기/펼치기
     });
   }
+  // PDF 미리보기 모달 (컨펌되면 서버 파일 삭제돼 자연히 404)
+  function openPdf(id,nm){
+    const url=`/api/invoice/drafts/${id}/pdf`;
+    $('#pdf-ttl').textContent=nm||'PDF';
+    $('#pdf-frame').src=url;
+    $('#pdf-open').href=url;
+    $('#pdf-modal').classList.add('open');
+  }
+  function closePdf(){$('#pdf-modal').classList.remove('open');$('#pdf-frame').src='about:blank';}
+  $('#pdf-close').onclick=closePdf;
+  $('#pdf-modal').onclick=e=>{if(e.target.id==='pdf-modal')closePdf();};
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closePdf();});
   async function loadExp(){
     const {ok,j}=await api('GET','/api/invoice/expense-codes');
     if(ok&&j.codes){$('#expcodes').innerHTML=j.codes.map(c=>`<option value="${esc(c.code)} ${esc(c.name||c.name_en||'')}">`).join('');}
