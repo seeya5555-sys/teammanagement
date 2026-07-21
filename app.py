@@ -10880,6 +10880,7 @@ _trmtdb_position_cache = {'at': 0.0, 'loaded': False, 'vessels': [], 'fetched_at
 _trmtdb_position_lock = threading.Lock()
 _trmtdb_position_refreshing = False
 _fleet_next_port_lock = threading.RLock()
+_fleet_eta_lock = threading.RLock()
 
 
 def _norm_port_text(s):
@@ -11142,6 +11143,97 @@ def _fleet_apply_manual_next_port_overrides(fleet, ensure_schema=True):
         v['route_legs'] = _fleet_route_to_destination(v, xy)
 
 
+# ── Fleet Map 수동 ETA 기입 (noon report ETA 누락 시 사람이 직접 입력) ──────────
+# next_port override와 달리 fallback-only: noon ETA가 있으면 항상 auto 우선(fresh),
+# 없을 때만 수동값 표시. lat/lng·snapshot 무효화 불필요(표시 문자열뿐)이라 단순.
+_ETA_MANUAL_RE = re.compile(r'^(\d{1,2})/(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?$')
+
+
+def _fleet_normalize_manual_eta(s):
+    """사용자 입력 ETA → 'MM/DD' 또는 'MM/DD HH:MM'(LT). (정규화값, None) 또는 (None, 에러)."""
+    if not isinstance(s, str):
+        return None, 'eta required'
+    s = s.strip()
+    if not s:
+        return None, 'eta required'
+    m = _ETA_MANUAL_RE.match(s)
+    if not m:
+        return None, 'format: MM/DD or MM/DD HH:MM'
+    mo, da, hh, mi = m.group(1), m.group(2), m.group(3), m.group(4)
+    mo_i, da_i = int(mo), int(da)
+    if not (1 <= mo_i <= 12 and 1 <= da_i <= 31):
+        return None, 'invalid date (MM 1-12, DD 1-31)'
+    if hh is not None:
+        hh_i, mi_i = int(hh), int(mi)
+        if not (0 <= hh_i <= 23 and 0 <= mi_i <= 59):
+            return None, 'invalid time (HH 0-23, MM 0-59)'
+        return f'{mo_i:02d}/{da_i:02d} {hh_i:02d}:{mi_i:02d}', None
+    return f'{mo_i:02d}/{da_i:02d}', None
+
+
+def _ensure_fleet_eta_override_table():
+    execute("""
+        CREATE TABLE IF NOT EXISTS fleet_eta_override (
+            vessel_key    TEXT PRIMARY KEY,
+            vessel_name   TEXT NOT NULL,
+            manual_eta    TEXT NOT NULL,
+            next_port_key TEXT,
+            created_by    TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_by    TEXT,
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    cols = {r['name'] for r in query("PRAGMA table_info(fleet_eta_override)")}
+    if 'next_port_key' not in cols:
+        execute("ALTER TABLE fleet_eta_override ADD COLUMN next_port_key TEXT")
+
+
+def _fleet_load_manual_eta_overrides(ensure_schema=True):
+    if ensure_schema:
+        _ensure_fleet_eta_override_table()
+    elif not query("SELECT name FROM sqlite_master WHERE type='table' AND name='fleet_eta_override'", one=True):
+        return {}
+    return {r['vessel_key']: dict(r)
+            for r in query("SELECT * FROM fleet_eta_override")}
+
+
+def _fleet_apply_manual_eta_overrides(fleet, ensure_schema=True):
+    overrides = _fleet_load_manual_eta_overrides(ensure_schema=ensure_schema)
+    if not overrides:
+        return
+    for v in fleet:
+        row = overrides.get(_vkey(v.get('name')))
+        if not row:
+            continue
+        # 목적지(next_port) 바뀌면 = voyage 변경 → 이전 voyage용 수동 ETA는 stale. 표시 안 함.
+        npk = row.get('next_port_key')
+        if npk and npk != _fleet_auto_next_port_identity(v):
+            continue
+        # 수동값 자체는 노출(패널 입력칸 prefill/Reset 렌더용). 실제 표시는 noon ETA 없을 때만(auto 우선).
+        v['eta_manual_value'] = row['manual_eta']
+        if not v.get('eta'):
+            v['eta'] = row['manual_eta']
+            v['eta_zd'] = None            # 사람 입력=목적지 LT, 숫자 offset 없음
+            v['eta_manual'] = True
+
+
+def _fleet_consume_eta_overrides_on_noon(fleet):
+    """Push 시 noon report ETA가 관측된 선박의 수동 ETA는 소비(삭제) — 진짜 갭필러(one-shot)로
+    만들어, 이후 noon ETA가 다시 누락돼도 과거 수동값이 stale하게 재노출되지 않게 한다."""
+    if not query("SELECT name FROM sqlite_master WHERE type='table' AND name='fleet_eta_override'", one=True):
+        return 0
+    have_noon = {_vkey(v.get('name')) for v in (fleet or []) if v.get('eta')}
+    if not have_noon:
+        return 0
+    with _fleet_eta_lock:
+        existing = {r['vessel_key'] for r in query("SELECT vessel_key FROM fleet_eta_override")}
+        targets = have_noon & existing
+        for k in targets:
+            execute("DELETE FROM fleet_eta_override WHERE vessel_key=?", (k,))
+    return len(targets)
+
+
 def _fleet_invalidate_next_port_overrides_from_push(fleet, actor='fleet-push'):
     """One-way invalidate active manual overrides whose automatic source changed/missing."""
     _ensure_fleet_next_port_override_table()
@@ -11382,9 +11474,11 @@ def api_ext_fleet_map_push():
             json.dump(d, f, ensure_ascii=False)
         os.replace(tmp, FLEET_MAP_FILE)
         invalidated = _fleet_invalidate_next_port_overrides_from_push(d['fleet'])
+        eta_consumed = _fleet_consume_eta_overrides_on_noon(d['fleet'])
     return jsonify({'ok': True, 'count': len(d.get('fleet') or []),
                     'generated_at': d.get('generated_at'),
-                    'next_port_overrides_invalidated': invalidated})
+                    'next_port_overrides_invalidated': invalidated,
+                    'eta_overrides_consumed': eta_consumed})
 
 
 FLEET_OVERRIDE_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_overrides.json')
@@ -11678,6 +11772,72 @@ def api_fleet_map_next_port_override_delete():
     return jsonify({'ok': True, 'vessel': vessel.strip()})
 
 
+@app.route('/api/fleet-map/eta-override', methods=['POST'])
+@login_required
+def api_fleet_map_eta_override_set():
+    """Dashboard write endpoint: noon ETA 누락 선박에 수동 ETA 기입."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'ok': False, 'error': 'invalid json'}), 400
+    if session.get('role') != 'admin' and not session.get('supervisor_id'):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    vessel = d.get('vessel')
+    if not isinstance(vessel, str) or not vessel.strip() or len(vessel) > 120:
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    norm, err = _fleet_normalize_manual_eta(d.get('eta'))
+    if err:
+        return jsonify({'ok': False, 'error': err}), 400
+    key = _vkey(vessel)
+    with _fleet_eta_lock:
+        # 선박 존재 + scope 검증(_fleet_visible_auto_vessels = 현재 사용자 담당선만).
+        v = next((x for x in _fleet_visible_auto_vessels() if _vkey(x.get('name')) == key), None)
+        if not v:
+            return jsonify({'ok': False, 'error': 'vessel not found'}), 400
+        # 요청 취지="ETA 기입 안되어있을 경우". noon report ETA가 이미 있으면 수동 기입 불필요 → 거부
+        # (auto 우선이므로 저장해도 shadow만 될 뿐, stale 재노출 소지 차단).
+        if v.get('eta'):
+            return jsonify({'ok': False, 'error': 'noon report ETA가 이미 있음 — 수동 기입 불필요'}), 400
+        # 목적지 identity 바인딩 → voyage 바뀌면 apply에서 자동 만료(stale 방지).
+        npk = _fleet_auto_next_port_identity(v)
+        user = session.get('username') or str(session.get('supervisor_id') or '')
+        _ensure_fleet_eta_override_table()
+        db = get_db()
+        db.execute("""
+            INSERT INTO fleet_eta_override
+                (vessel_key, vessel_name, manual_eta, next_port_key, created_by, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+            ON CONFLICT(vessel_key) DO UPDATE SET
+                vessel_name=excluded.vessel_name,
+                manual_eta=excluded.manual_eta,
+                next_port_key=excluded.next_port_key,
+                updated_by=excluded.updated_by,
+                updated_at=datetime('now','localtime')
+        """, (key, v.get('name') or vessel.strip(), norm, npk, user, user))
+        db.commit()
+    return jsonify({'ok': True, 'vessel': v.get('name') or vessel.strip(), 'eta': norm, 'manual': True})
+
+
+@app.route('/api/fleet-map/eta-override', methods=['DELETE'])
+@login_required
+def api_fleet_map_eta_override_delete():
+    """Dashboard write endpoint: 수동 ETA 기입 삭제(noon 자동값으로 복귀)."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'ok': False, 'error': 'invalid json'}), 400
+    if session.get('role') != 'admin' and not session.get('supervisor_id'):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    vessel = d.get('vessel')
+    if not isinstance(vessel, str) or not vessel.strip() or len(vessel) > 120:
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    key = _vkey(vessel)
+    if key not in {_vkey(v.get('name')) for v in _fleet_visible_auto_vessels()}:
+        return jsonify({'ok': False, 'error': 'vessel not found'}), 400
+    with _fleet_eta_lock:
+        _ensure_fleet_eta_override_table()
+        execute("DELETE FROM fleet_eta_override WHERE vessel_key=?", (key,))
+    return jsonify({'ok': True, 'vessel': vessel.strip()})
+
+
 @app.route('/api/fleet-map/data')
 @login_required
 def api_fleet_map_data():
@@ -11797,6 +11957,7 @@ def api_fleet_map_data():
             fleet = []
         data = {**data, 'fleet': fleet, 'scoped_to': sup_name}
     _fleet_apply_manual_next_port_overrides(fleet, ensure_schema=False)
+    _fleet_apply_manual_eta_overrides(fleet, ensure_schema=False)
     # ── 데이터 신선도 ALERT (사이트 내 표시) ─────────────────────────────
     # KST = UTC+9 (서버 TZ 무관하게 utcnow 기준). 6h 스케줄 → 파이프라인/선박별 누락 산출.
     now_k = datetime.utcnow() + timedelta(hours=9)

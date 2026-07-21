@@ -577,14 +577,37 @@
       ? '<div class="fm-np-state manual">Manual override'+(auto.name?' · auto: '+esc(auto.name):'')+'</div>'
       : '<div class="fm-np-state">Automatic source'+(np.cd?' · code '+esc(np.cd):'')+'</div>';
     const reset=manual?'<button type="button" class="fm-nextport-reset" data-vessel="'+esc(v.name)+'">Reset</button>':'';
+    // ETA 기입 영역: noon report ETA 없으면 수동 입력. 수동값 있으면 Reset로 삭제(noon 자동값 복귀).
+    const etaCur=etaDisp(v);
+    const etaManual=!!v.eta_manual;                              // 지금 화면에 뜨는 게 수동값
+    const etaStored=v.eta_manual_value;                          // 저장된 수동값(noon 있으면 shadow)
+    const etaShadow=!!(etaStored&&!etaManual);                   // 수동 저장돼 있으나 noon 우선중
+    const etaState=etaManual
+      ? '<div class="fm-np-state manual">수동 기입 ETA</div>'
+      : (etaShadow
+          ? '<div class="fm-np-state manual">수동값 '+esc(etaStored)+' 대기 · noon ETA 우선 표시중</div>'
+          : (v.eta
+              ? '<div class="fm-np-state">noon report ETA · 자동</div>'
+              : '<div class="fm-np-state">noon ETA 없음 — 수동 기입 가능</div>'));
+    const etaReset=etaStored?'<button type="button" class="fm-eta-reset" data-vessel="'+esc(v.name)+'">Reset</button>':'';
     return '<div class="fm-np">'+
       '<div class="fm-np-head"><span class="lk">Next Port</span><span class="lv">'+
-      esc(np.name||'—')+(etaDisp(v)?' <span class="fm-eta">ETA '+esc(etaDisp(v))+'</span>':'')+'</span></div>'+
+      esc(np.name||'—')+(etaCur?' <span class="fm-eta">ETA '+esc(etaCur)+'</span>':'')+'</span></div>'+
       state+
       '<div class="fm-np-form">'+
         '<input class="fm-nextport-input" data-vessel="'+esc(v.name)+'" type="text" maxlength="120" placeholder="Port name or UN/LOCODE" autocomplete="off"/>'+
         '<button type="button" class="fm-nextport-save primary" data-vessel="'+esc(v.name)+'">Save</button>'+
         reset+
+      '</div>'+
+      '<div class="fm-np-head" style="margin-top:8px"><span class="lk">ETA (LT)</span><span class="lv">'+(etaCur?esc(etaCur):'<span style="color:var(--text-tertiary)">미기입</span>')+'</span></div>'+
+      etaState+
+      // 수동 기입칸은 noon ETA 없을 때만(요청 취지 "기입 안되어있을 경우"). noon 있으면 Reset만.
+      '<div class="fm-np-form">'+
+        (v.eta&&!etaManual
+          ? '<span class="fm-np-state" style="margin-left:0">noon ETA 있음 — 수동 기입 불필요</span>'
+          : '<input class="fm-eta-input" data-vessel="'+esc(v.name)+'" type="text" maxlength="16" placeholder="MM/DD HH:MM" autocomplete="off" value="'+esc(etaStored||'')+'"/>'+
+            '<button type="button" class="fm-eta-save primary" data-vessel="'+esc(v.name)+'">ETA 저장</button>')+
+        etaReset+
       '</div>'+
     '</div>';
   }
@@ -636,6 +659,38 @@
     ev.preventDefault();
     const vessel=input.getAttribute('data-vessel')||'';
     const btn=document.querySelector('.fm-nextport-save[data-vessel="'+CSS.escape(vessel)+'"]');
+    if(btn) btn.click();
+  });
+  // 수동 ETA 기입/삭제 (noon report ETA 누락 선박)
+  document.addEventListener('click',function(ev){
+    const save=ev.target.closest&&ev.target.closest('.fm-eta-save');
+    const reset=ev.target.closest&&ev.target.closest('.fm-eta-reset');
+    if(!save&&!reset) return;
+    const vessel=(save||reset).getAttribute('data-vessel')||'';
+    if(save){
+      const input=document.querySelector('.fm-eta-input[data-vessel="'+CSS.escape(vessel)+'"]');
+      const eta=input?input.value.trim():'';
+      fetch('{{ url_for("api_fleet_map_eta_override_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({vessel:vessel,eta:eta})})
+        .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
+          if(!ok||!j.ok){alert('ETA 저장 실패: '+(j.error||''));return;}
+          refreshFleetPanel(vessel);
+        }).catch(()=>alert('ETA 저장 요청 실패'));
+    }else{
+      fetch('{{ url_for("api_fleet_map_eta_override_delete") }}',{method:'DELETE',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({vessel:vessel})})
+        .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
+          if(!ok||!j.ok){alert('ETA reset 실패: '+(j.error||''));return;}
+          refreshFleetPanel(vessel);
+        }).catch(()=>alert('ETA reset 요청 실패'));
+    }
+  });
+  document.addEventListener('keydown',function(ev){
+    const input=ev.target.closest&&ev.target.closest('.fm-eta-input');
+    if(!input||ev.key!=='Enter') return;
+    ev.preventDefault();
+    const vessel=input.getAttribute('data-vessel')||'';
+    const btn=document.querySelector('.fm-eta-save[data-vessel="'+CSS.escape(vessel)+'"]');
     if(btn) btn.click();
   });
   // slowspace 섹션: 최신 동정만(Notification 있을 때만). ETA/Next Port는 표시 안 함(손유석 지시).
