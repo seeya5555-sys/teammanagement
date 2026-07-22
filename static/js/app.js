@@ -3138,12 +3138,18 @@ function wireEvents() {
     atlanticsouth: 'Dmitry', atlanticgreen: 'Dmitry', atlanticnorth: 'Leonid',
   };
   const enNorm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // 선명 → 선종(S.vessels 조회). CNTR(컨테이너선)=M/V, 그 외(탱커 등)=M/T.
+  const enVType = (vn) => {
+    const hit = (S.vessels || []).find(v => enNorm(v.name) === enNorm(vn));
+    return String((hit && hit.vessel_type) || '').trim().toUpperCase();
+  };
+  const enPrefix = (vn) => enVType(vn) === 'CNTR' ? 'M/V' : 'M/T';
   const enMailDraft = (vn) => {
     const who = EN_CONTACT[enNorm(vn)] || 'Sir/Madam';
     return `Subject: [Important!] ${vn} – Open Technical Issues / Update Request\n\n`
       + `Dear ${who},\n\n`
       + `Good day.\n\n`
-      + `Please find attached the list of open technical issues for M/T ${vn} that have been raised to the Owners.\n\n`
+      + `Please find attached the list of open technical issues for ${enPrefix(vn)} ${vn} that have been raised to the Owners.\n\n`
       + `Kindly review the attached file and update the current progress status and repair plan for each item in the TSI comment column, and revert to us at your earliest convenience.\n\n`
       + `Also, if any issue has been closed, please change the status to closed for our reference.\n\n`
       + `Your prompt feedback would be highly appreciated.\n\n`
@@ -3151,7 +3157,7 @@ function wireEvents() {
       + `Best regards,`;
   };
   const enMailDraftMulti = (person, vnames) => {
-    const list = vnames.map(n => `- M/T ${n}`).join('\n');
+    const list = vnames.map(n => `- ${enPrefix(n)} ${n}`).join('\n');
     return `Subject: [Important!] Open Technical Issues / Update Request\n\n`
       + `Dear ${person},\n\n`
       + `Good day.\n\n`
