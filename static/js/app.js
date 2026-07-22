@@ -3130,7 +3130,8 @@ function wireEvents() {
 
   // 선박→담당자(영문 메일 인사말). 정규화 선명으로 매칭.
   const EN_CONTACT = {
-    indonesiaprosperity: 'Giorgos', southafricaprosperity: 'Giorgos',
+    indonesiaprosperity: 'Dimitris', southafricaprosperity: 'Giorgos',
+    ghanaprosperity: 'Charalampos',
     kuwaitprosperity: 'Sergiy', cyprusprosperity: 'Nitin',
     atlanticmerchant: 'Gerasimos', pacificmonaco: 'Gerasimos', atlanticbridge: 'Gerasimos',
     pacificbeijing: 'Methew', atlanticexpress: 'Methew', atlanticgeneva: 'Methew',
