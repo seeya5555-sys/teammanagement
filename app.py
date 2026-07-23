@@ -454,6 +454,56 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_aor_draft_status ON aor_draft(status)")
+        # aor_cd is the SVMS document identity. Older deployments only performed a
+        # SELECT-before-INSERT check, so overlapping prep runs could both insert an
+        # active row. Normalize legacy keys, keep the most advanced active row, and
+        # make the invariant database-enforced for future concurrent requests.
+        _aor_active = ("'pending','hold','approved','submitting','submitted',"
+                       "'rejecting','reject_submitting'")
+        conn.execute(f"""
+            UPDATE aor_draft AS loser
+               SET status='duplicate',
+                   submit_result=COALESCE(
+                     submit_result,
+                     '자동 중복 정리: 동일 SVMS AOR의 진행 상태가 더 높은 행을 보존함'
+                   )
+            WHERE loser.status IN ({_aor_active})
+              AND EXISTS (
+                SELECT 1 FROM aor_draft AS winner
+                WHERE upper(trim(winner.aor_cd)) = upper(trim(loser.aor_cd))
+                  AND winner.status IN ({_aor_active})
+                  AND (
+                    CASE winner.status
+                      WHEN 'submitted' THEN 70 WHEN 'submitting' THEN 60
+                      WHEN 'approved' THEN 50 WHEN 'reject_submitting' THEN 40
+                      WHEN 'rejecting' THEN 30 WHEN 'hold' THEN 20 ELSE 10 END
+                    >
+                    CASE loser.status
+                      WHEN 'submitted' THEN 70 WHEN 'submitting' THEN 60
+                      WHEN 'approved' THEN 50 WHEN 'reject_submitting' THEN 40
+                      WHEN 'rejecting' THEN 30 WHEN 'hold' THEN 20 ELSE 10 END
+                    OR (
+                      CASE winner.status
+                        WHEN 'submitted' THEN 70 WHEN 'submitting' THEN 60
+                        WHEN 'approved' THEN 50 WHEN 'reject_submitting' THEN 40
+                        WHEN 'rejecting' THEN 30 WHEN 'hold' THEN 20 ELSE 10 END
+                      =
+                      CASE loser.status
+                        WHEN 'submitted' THEN 70 WHEN 'submitting' THEN 60
+                        WHEN 'approved' THEN 50 WHEN 'reject_submitting' THEN 40
+                        WHEN 'rejecting' THEN 30 WHEN 'hold' THEN 20 ELSE 10 END
+                      AND winner.id > loser.id
+                    )
+                  )
+              )
+        """)
+        # Normalize only after conflicting active rows have been removed from the
+        # partial index. This ordering is safe even on a later boot where the
+        # case-sensitive unique index already exists and legacy mixed-case keys do too.
+        conn.execute("UPDATE aor_draft SET aor_cd=upper(trim(aor_cd)) "
+                     "WHERE aor_cd<>upper(trim(aor_cd))")
+        conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_aor_draft_active_cd "
+                     f"ON aor_draft(aor_cd) WHERE status IN ({_aor_active})")
 
         # 비용청구(Fund Request) 2단게이트 draft 큐 (review 엔진 ingest → 사람이 /fundreq 탭서 승인/리젝 결정 → 맥이 SVMS 상신/리젝+통보메일)
         conn.execute("""
@@ -7964,7 +8014,7 @@ def api_aor_list():
 def api_ext_aor_create():
     """prep 엔진 ingest: Submitted AOR 카드 적재. 같은 aor_cd 가 pending이면 갱신(중복 방지)."""
     d = request.get_json(silent=True) or {}
-    aor_cd = (d.get('aor_cd') or '').strip()
+    aor_cd = (d.get('aor_cd') or '').strip().upper()
     if not aor_cd:
         return jsonify({'error': 'aor_cd required'}), 400
     # dedup 조회에 hold/rejecting 포함 — 보류·리젝진행 중 prep 재적재가 동일 aor_cd 의
@@ -7994,13 +8044,33 @@ def api_ext_aor_create():
         return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
     if ex:   # approved/submitting/submitted — 진행중이므로 손대지 않음
         return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
-    did = execute(
-        "INSERT INTO aor_draft (aor_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, req_user_nm, "
-        "cost_proposed, cost_match, match_conf, email_subj, proposed_comment, "
-        "approval_app_no, approval_line, attach_files, raw_row) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (aor_cd, *cols.values()))
-    return jsonify({'id': did, 'status': 'pending'}), 201
+    try:
+        did = execute(
+            "INSERT INTO aor_draft (aor_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, req_user_nm, "
+            "cost_proposed, cost_match, match_conf, email_subj, proposed_comment, "
+            "approval_app_no, approval_line, attach_files, raw_row) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (aor_cd, *cols.values()))
+        return jsonify({'id': did, 'status': 'pending'}), 201
+    except sqlite3.IntegrityError as exc:
+        # A concurrent prep request inserted the same active SVMS document after
+        # our lookup. The partial UNIQUE index is the authority; return/update the
+        # winner instead of surfacing a 500 or creating a second approval card.
+        get_db().rollback()
+        if 'UNIQUE constraint failed: aor_draft.aor_cd' not in str(exc):
+            raise
+        ex = query("SELECT id, status FROM aor_draft WHERE aor_cd=? "
+                   "AND status IN ('pending','hold','approved','submitting','submitted',"
+                   "'rejecting','reject_submitting') "
+                   "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
+        if not ex:
+            raise
+        if ex['status'] == 'pending':
+            sets = ', '.join(f"{k}=?" for k in cols)
+            execute(f"UPDATE aor_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
+            return jsonify({'id': ex['id'], 'status': 'pending',
+                            'updated': True, 'dedup': True}), 200
+        return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
 
 
 def _queue_aor(task, user):
