@@ -61,16 +61,19 @@ class JeonjaPdfPreviewTests(unittest.TestCase):
             json={}, headers={"X-API-Key": "secret"},
         )
         self.assertEqual(200, done.status_code)
-        self.assertTrue(done.get_json()["deleted"])
-        self.assertFalse(self.client.get("/api/automation/jeonja/items").get_json()["items"][0]["has_pdf"])
+        self.assertTrue(done.get_json()["row_deleted"])
+        self.assertTrue(done.get_json()["pdf_deleted"])
+        self.assertEqual([], self.client.get("/api/automation/jeonja/items").get_json()["items"])
         self.assertEqual(404, self.client.get("/api/automation/jeonja/items/ATBGCO2607220001/pdf").status_code)
 
     def test_new_review_clears_stale_preview_and_already_rejects_upload(self):
-        self.assertEqual(200, self.review().status_code)
+        # SVMS current truth says already: even a previously held row is intentionally removed.
+        self.assertEqual(200, self.review(bucket="mismatch").status_code)
         self.assertEqual(200, self.upload().status_code)
         self.assertEqual(200, self.review(bucket="already").status_code)
-        self.assertFalse(self.client.get("/api/automation/jeonja/items").get_json()["items"][0]["has_pdf"])
-        self.assertEqual(409, self.upload().status_code)
+        self.assertEqual([], self.client.get("/api/automation/jeonja/items").get_json()["items"])
+        self.assertEqual(404, self.client.get("/api/automation/jeonja/items/ATBGCO2607220001/pdf").status_code)
+        self.assertEqual(404, self.upload().status_code)
 
     def test_preserves_case_variant_hold_and_fail_closes_invalid_ref(self):
         with appmod.app.app_context():
@@ -82,12 +85,20 @@ class JeonjaPdfPreviewTests(unittest.TestCase):
         self.assertEqual(1, item["excluded"])
 
         bad = self.client.post(
-            "/api/ext/jeonja/review", json={"run_id": "r2", "items": [{"ref": "BAD/REF", "bucket": "pass"}]},
+            "/api/ext/jeonja/review", json={"run_id": "r2", "items": [{"ref": "BAD/REF", "bucket": "already"}]},
             headers={"X-API-Key": "secret"})
         self.assertEqual(1, bad.get_json()["invalid_refs"])
         item = self.client.get("/api/automation/jeonja/items").get_json()["items"][0]
         self.assertEqual("flag", item["bucket"])
         self.assertEqual(1, item["excluded"])
+
+    def test_complete_refuses_held_row(self):
+        self.assertEqual(200, self.review(bucket="mismatch").status_code)
+        done = self.client.post(
+            "/api/ext/jeonja/review/ATBGCO2607220001/complete",
+            json={}, headers={"X-API-Key": "secret"})
+        self.assertEqual(409, done.status_code)
+        self.assertEqual(1, len(self.client.get("/api/automation/jeonja/items").get_json()["items"]))
 
     def test_rejects_non_pdf_and_unknown_ref(self):
         self.assertEqual(200, self.review().status_code)

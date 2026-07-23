@@ -10845,11 +10845,16 @@ def api_ext_jeonja_pdf_upload(ref):
 @app.route('/api/ext/jeonja/review/<ref>/complete', methods=['POST'])
 @api_key_required
 def api_ext_jeonja_pdf_complete(ref):
-    """Confirmed submission cleanup signal. Deletes TRMT cache only."""
+    """Confirmed submission cleanup. Held rows are never deletable through this path."""
     safe = _jeonja_ref(ref)
     if not safe:
         return jsonify({'error': 'invalid ref'}), 400
-    return jsonify({'ref': safe, 'deleted': _jeonja_pdf_delete(safe)})
+    row = query('SELECT excluded FROM jeonja_review_item WHERE ref=?', (safe,), one=True)
+    if row and row['excluded'] != 0:
+        return jsonify({'error': 'held item', 'ref': safe}), 409
+    row_deleted = bool(execute_rc('DELETE FROM jeonja_review_item WHERE ref=? AND excluded=0', (safe,)))
+    pdf_deleted = _jeonja_pdf_delete(safe) if (row_deleted or not row) else False
+    return jsonify({'ref': safe, 'row_deleted': row_deleted, 'pdf_deleted': pdf_deleted})
 
 
 @app.route('/api/ext/jeonja/review', methods=['POST'])
@@ -10882,6 +10887,9 @@ def api_ext_jeonja_review():
                 bucket = 'flag'
                 why = ('비정규 REF 형식 — 자동상신 보류: ' + raw_ref)[:500]
                 invalid += 1
+            elif bucket == 'already':
+                completed_refs.add(safe_ref)
+                continue
             excl = 1 if (not safe_ref or ref in prev_excluded or bucket in DEFAULT_HOLD) else 0
             db.execute("INSERT OR REPLACE INTO jeonja_review_item "
                        "(ref,vsl_cd,subj,fund,cost,dn,bucket,why,excluded,run_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
