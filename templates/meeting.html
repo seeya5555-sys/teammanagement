@@ -1,0 +1,152 @@
+<!-- 회의록 STT Phase 0a — templates/meeting.html 초안 (올마이트 리뷰 대상)
+     Phase 0a 범위: 녹음/업로드 → job 생성 → 상태 폴링 → transcript 표시.
+     화자분리·요약가공·Daily/Dock 버튼은 Phase 0b/1/2 (여기선 자리만, 비활성).
+     실제 배포 시 base.html {% extends %} + nav 추가로 감싼다. 여기선 standalone 골격. -->
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .mt-wrap{max-width:760px;margin:0 auto;padding:16px}
+  .mt-card{background:var(--surface,#fff);border:1px solid var(--border-subtle,#E5E4DD);
+    border-radius:14px;padding:16px;margin-bottom:14px}
+  .mt-card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--text-tertiary,#888);margin:0 0 10px;font-weight:700}
+  .mt-rec{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .mt-btn{border:none;border-radius:999px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer}
+  .mt-rec-btn{background:var(--coral,#D85A30);color:#fff}
+  .mt-rec-btn.recording{background:#b03a18}
+  .mt-up-btn{background:var(--surface-2,#F4F3EE);color:var(--text-primary,#222);
+    border:1px solid var(--border,#D3D1C7)}
+  .mt-hint{color:var(--text-tertiary,#888);font-size:12px;margin-top:8px}
+  .mt-job{display:flex;align-items:center;gap:12px;padding:11px 4px;
+    border-bottom:1px solid var(--border-subtle,#E5E4DD);cursor:pointer}
+  .mt-job .ttl{flex:1;font-weight:600;font-size:14.5px}
+  .mt-job .meta{color:var(--text-tertiary,#888);font-size:12px}
+  .mt-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .b-done{background:var(--teal-bg,#E1F5EE);color:var(--teal-text,#085041)}
+  .b-proc{background:var(--blue-bg,#E6F1FB);color:var(--blue-text,#0C447C)}
+  .b-pend{background:var(--surface-3,#EBEAE3);color:var(--text-secondary,#5F5E5A)}
+  .b-err{background:#FDECEC;color:#B42318}
+  .mt-tr{background:var(--surface-2,#F4F3EE);border-radius:10px;padding:12px 14px;
+    font-size:14px;white-space:pre-wrap;max-height:340px;overflow:auto}
+  .mt-empty{color:var(--text-tertiary,#888);font-size:13px;padding:8px 4px}
+</style>
+<div class="mt-wrap">
+  <h1 style="font-size:20px;font-weight:700;margin:14px 4px 2px">회의록</h1>
+  <div class="mt-hint" style="margin:0 4px 14px">음성 → 텍스트 (Phase 0a: 변환만 · 화자분리/요약은 다음 단계)</div>
+
+  <div class="mt-card">
+    <h2>새 회의록</h2>
+    <div class="mt-rec">
+      <button id="recBtn" class="mt-btn mt-rec-btn">● 녹음 시작</button>
+      <button id="upBtn" class="mt-btn mt-up-btn">⤒ 파일 업로드</button>
+      <input id="fileInput" type="file" accept="audio/*,.m4a,.wav,.mp3,.aac,.caf,.webm,.mp4" hidden>
+    </div>
+    <div id="recStatus" class="mt-hint">녹음 종료 시 자동 업로드 → Mac에서 변환(수십 초). 아래 목록에 표시됨.</div>
+  </div>
+
+  <div class="mt-card">
+    <h2>내 회의록</h2>
+    <div id="jobList"><div class="mt-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="mt-card" id="detailCard" style="display:none">
+    <h2>Transcript</h2>
+    <div id="trBox" class="mt-tr"></div>
+  </div>
+</div>
+
+<script>
+const API = '/api/stt/jobs';
+let mediaRecorder = null, chunks = [], selectedId = null, pollTimer = null;
+
+async function loadJobs(){
+  try{
+    const r = await fetch(API, {headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error('list '+r.status);
+    const jobs = await r.json();
+    const el = document.getElementById('jobList');
+    if(!jobs.length){ el.innerHTML = '<div class="mt-empty">아직 회의록이 없습니다.</div>'; return; }
+    const badge = s => s==='done'?'<span class="mt-badge b-done">완료</span>'
+      : s==='processing'?'<span class="mt-badge b-proc">변환중</span>'
+      : s==='error'?'<span class="mt-badge b-err">오류</span>'
+      : '<span class="mt-badge b-pend">대기</span>';
+    el.innerHTML = jobs.map(j=>`
+      <div class="mt-job" data-id="${j.id}">
+        <div class="ttl">${escapeHtml(j.title)}</div>
+        <div class="meta">${j.created_at||''}</div>
+        ${badge(j.status)}
+      </div>`).join('');
+    el.querySelectorAll('.mt-job').forEach(n=>n.onclick=()=>openJob(n.dataset.id));
+    // 처리중/대기 있으면 계속 폴링
+    if(jobs.some(j=>j.status==='pending'||j.status==='processing')) schedulePoll();
+  }catch(e){ console.error(e); }
+}
+
+async function openJob(id){
+  selectedId = id;
+  try{
+    const r = await fetch(`${API}/${id}`);
+    if(!r.ok) throw new Error('get '+r.status);
+    const j = await r.json();
+    document.getElementById('detailCard').style.display = j.transcript ? 'block':'none';
+    document.getElementById('trBox').textContent = j.transcript || '';
+  }catch(e){ console.error(e); }
+}
+
+function schedulePoll(){
+  if(pollTimer) return;
+  pollTimer = setTimeout(async ()=>{ pollTimer=null; await loadJobs(); if(selectedId) await openJob(selectedId); }, 5000);
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function upload(blob, filename, title){
+  const fd = new FormData();
+  fd.append('file', blob, filename);
+  if(title) fd.append('title', title);
+  document.getElementById('recStatus').textContent = '업로드 중…';
+  try{
+    const r = await fetch(API, {method:'POST', body:fd});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error||('upload '+r.status));
+    document.getElementById('recStatus').textContent = '업로드 완료 · 변환 대기중';
+    await loadJobs();
+  }catch(e){ document.getElementById('recStatus').textContent = '업로드 실패: '+e.message; }
+}
+
+// 파일 업로드
+document.getElementById('upBtn').onclick = ()=>document.getElementById('fileInput').click();
+document.getElementById('fileInput').onchange = e=>{
+  const f = e.target.files[0]; if(!f) return;
+  upload(f, f.name, f.name.replace(/\.[^.]+$/,''));
+  e.target.value='';
+};
+
+// 녹음 (MediaRecorder)
+document.getElementById('recBtn').onclick = async function(){
+  if(mediaRecorder && mediaRecorder.state==='recording'){
+    mediaRecorder.stop(); return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    mediaRecorder = new MediaRecorder(stream);
+    chunks = [];
+    mediaRecorder.ondataavailable = ev=>{ if(ev.data.size) chunks.push(ev.data); };
+    mediaRecorder.onstop = ()=>{
+      stream.getTracks().forEach(t=>t.stop());
+      const type = mediaRecorder.mimeType || 'audio/webm';
+      const ext = type.includes('mp4')?'mp4':type.includes('ogg')?'ogg':'webm';
+      const blob = new Blob(chunks, {type});
+      const ts = new Date().toLocaleString('ko-KR');
+      upload(blob, `recording.${ext}`, `회의록 ${ts}`);
+      this.classList.remove('recording'); this.textContent='● 녹음 시작';
+    };
+    mediaRecorder.start();
+    this.classList.add('recording'); this.textContent='■ 녹음 종료';
+    document.getElementById('recStatus').textContent='녹음 중…';
+  }catch(e){ document.getElementById('recStatus').textContent='마이크 접근 실패: '+e.message; }
+};
+
+loadJobs();
+</script>
+{% endblock %}

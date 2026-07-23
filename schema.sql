@@ -537,3 +537,24 @@ CREATE TABLE IF NOT EXISTS class_status_items (
     FOREIGN KEY (cs_id) REFERENCES class_status(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_class_status_items_cs ON class_status_items(cs_id, category, no);
+
+-- 회의록 STT job queue (Phase 0a) — 웹/앱 업로드 → Mac 워커 폴 변환 → 표시
+CREATE TABLE IF NOT EXISTS stt_job (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner         TEXT NOT NULL,                     -- 소유자(감독 username)
+    title         TEXT,
+    audio_name    TEXT,                              -- 원본 파일명(표시용)
+    stored_name   TEXT NOT NULL,                     -- instance/stt_audio/<uuid>.<ext>
+    status        TEXT NOT NULL DEFAULT 'pending',   -- pending|processing|done|error
+    duration_sec  REAL,
+    transcript    TEXT,
+    minutes_json  TEXT,                              -- 가공 결과(Phase 1~)
+    error         TEXT,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    claim_token   TEXT,                              -- 처리중 워커 클레임 토큰(CAS)
+    claimed_at    TEXT,                              -- processing 진입 시각(lease 만료 판정)
+    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_stt_job_owner ON stt_job(owner, id);
+CREATE INDEX IF NOT EXISTS idx_stt_job_status ON stt_job(status, id);

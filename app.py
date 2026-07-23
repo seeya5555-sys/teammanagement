@@ -40,11 +40,18 @@ UPLOAD_DIR   = os.path.join(BASE_DIR, 'static', 'uploads')
 INVOICE_PDF_DIR = os.path.join(INSTANCE_DIR, 'invoice_pdfs')  # 인보이스 미리보기 PDF(컨펌/리젝 시 자동삭제)
 JEONJA_PDF_DIR = os.path.join(INSTANCE_DIR, 'jeonja_pdfs')    # 전자결재 검토 invoice/DN 미리보기 cache
 AOR_PDF_DIR = os.path.join(INSTANCE_DIR, 'aor_pdfs')          # AOR 첨부 견적서 preview cache
+STT_AUDIO_DIR = os.path.join(INSTANCE_DIR, 'stt_audio')       # 회의록 STT 원본 오디오 cache
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR,   exist_ok=True)
 os.makedirs(INVOICE_PDF_DIR, exist_ok=True)
 os.makedirs(JEONJA_PDF_DIR, exist_ok=True)
 os.makedirs(AOR_PDF_DIR, exist_ok=True)
+os.makedirs(STT_AUDIO_DIR, exist_ok=True)
+# 회의록 STT Phase 0a 상수
+STT_AUDIO_EXT = {'m4a', 'wav', 'mp3', 'aac', 'caf', 'webm', 'ogg', 'mp4', 'aiff', 'flac'}
+STT_MAX_BYTES = 200 * 1024 * 1024   # 200MB 상한
+STT_LEASE_SEC = 1800                # processing lease 30분 — 초과 시 stale로 재큐(whisper turbo 실시간 10-30x)
+STT_MAX_ATTEMPTS = 5                # 재시도 상한 — 초과 시 error 확정
 
 DATABASE        = os.path.join(INSTANCE_DIR, 'trmt.db')
 SCHEMA_FILE     = os.path.join(BASE_DIR, 'schema.sql')
@@ -822,6 +829,29 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shipwiki_card_status ON shipwiki_card(card_status, tier)")
+
+        # 회의록 STT job queue (Phase 0a) — 웹/앱 업로드 → Mac 워커 폴 변환
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS stt_job (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner         TEXT NOT NULL,                     -- 소유자(감독 username)
+                title         TEXT,
+                audio_name    TEXT,                              -- 원본 파일명(표시용)
+                stored_name   TEXT NOT NULL,                     -- instance/stt_audio/<uuid>.<ext>
+                status        TEXT NOT NULL DEFAULT 'pending',   -- pending|processing|done|error
+                duration_sec  REAL,
+                transcript    TEXT,
+                minutes_json  TEXT,                              -- 가공 결과(Phase 1~)
+                error         TEXT,
+                attempts      INTEGER NOT NULL DEFAULT 0,
+                claim_token   TEXT,                              -- 처리중 워커 클레임 토큰(CAS)
+                claimed_at    TEXT,                              -- processing 진입 시각(lease 만료 판정)
+                created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_at    TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_stt_job_owner ON stt_job(owner, id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_stt_job_status ON stt_job(status, id)")
         # 위키 스레드 stable id (additive) — 메일↔위키↔Daily 연동 포인터
         sw_cols = [r[1] for r in conn.execute('PRAGMA table_info(shipwiki_card)').fetchall()]
         if sw_cols and 'wiki_thread_id' not in sw_cols:
@@ -6634,6 +6664,218 @@ def api_ext_key_regen():
     key = secrets.token_hex(24)
     execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)", (key,))
     return jsonify({'api_key': key})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  회의록 STT (Phase 0a) — 녹음/업로드 → job queue → Mac 워커 폴 변환 → 표시
+#  화자분리·요약가공·Daily/Dock 버튼은 Phase 0b/1/2. 올마이트 3R 검증(동시성/CAS confirmed).
+# ═════════════════════════════════════════════════════════════════
+def _stt_owner():
+    """세션 로그인(웹) 또는 Bearer 주입 공통 소유자 식별."""
+    return session.get('username') or ''
+
+
+def _stt_to_dict(r, include_body=True):
+    d = {
+        'id': r['id'], 'title': r['title'] or '(제목없음)',
+        'audio_name': r['audio_name'], 'status': r['status'],
+        'duration_sec': r['duration_sec'],
+        'created_at': r['created_at'], 'updated_at': r['updated_at'],
+        'error': r['error'],
+    }
+    if include_body:
+        d['transcript'] = r['transcript'] or ''
+        try:
+            d['minutes'] = json.loads(r['minutes_json']) if r['minutes_json'] else None
+        except Exception:
+            d['minutes'] = None
+    return d
+
+
+@app.route('/meeting')
+@login_required
+def meeting_page():
+    return render_template('meeting.html')
+
+
+@app.route('/api/stt/jobs', methods=['GET'])
+@login_required
+def api_stt_jobs_list():
+    rows = query("SELECT * FROM stt_job WHERE owner=? ORDER BY id DESC LIMIT 100",
+                 (_stt_owner(),))
+    return jsonify([_stt_to_dict(r, include_body=False) for r in rows])
+
+
+@app.route('/api/stt/jobs', methods=['POST'])
+@login_required
+def api_stt_jobs_create():
+    cl = request.content_length
+    if cl is not None and cl > STT_MAX_BYTES + (1 << 20):
+        return jsonify({'error': f'파일이 너무 큽니다(>{STT_MAX_BYTES} bytes).'}), 413
+    if 'file' not in request.files:
+        return jsonify({'error': '오디오 파일이 없습니다.'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': '파일명이 비어있습니다.'}), 400
+    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+    if ext not in STT_AUDIO_EXT:
+        return jsonify({'error': f'허용되지 않는 오디오 형식입니다. ({ext})'}), 400
+    stored = f'{uuid.uuid4().hex}.{ext}'
+    save_path = os.path.join(STT_AUDIO_DIR, stored)
+    try:
+        f.save(save_path)
+    except Exception:
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
+        raise
+    try:
+        size = os.path.getsize(save_path)
+    except OSError:
+        return jsonify({'error': '저장 확인 실패'}), 500
+    if size == 0 or size > STT_MAX_BYTES:
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
+        return jsonify({'error': f'오디오 크기 오류 ({size} bytes)'}), 400
+    title = (request.form.get('title') or '').strip()[:200] or None
+    try:
+        jid = execute("""
+            INSERT INTO stt_job (owner, title, audio_name, stored_name, status, updated_at)
+            VALUES (?, ?, ?, ?, 'pending', datetime('now','localtime'))
+        """, (_stt_owner(), title, secure_filename(f.filename), stored))
+    except Exception:
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
+        raise
+    return jsonify({'id': jid, 'status': 'pending'}), 201
+
+
+@app.route('/api/stt/jobs/<int:jid>', methods=['GET'])
+@login_required
+def api_stt_job_get(jid):
+    r = query("SELECT * FROM stt_job WHERE id=? AND owner=?", (jid, _stt_owner()), one=True)
+    if not r:
+        abort(404)
+    return jsonify(_stt_to_dict(r))
+
+
+@app.route('/api/stt/jobs/<int:jid>', methods=['PUT'])
+@login_required
+def api_stt_job_edit(jid):
+    r = query("SELECT * FROM stt_job WHERE id=? AND owner=?", (jid, _stt_owner()), one=True)
+    if not r:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    fields, params = [], []
+    if 'title' in d:
+        fields.append('title=?'); params.append((d.get('title') or '').strip()[:200] or None)
+    if 'transcript' in d:
+        fields.append('transcript=?'); params.append(d.get('transcript') or '')
+    if 'minutes' in d:
+        fields.append('minutes_json=?'); params.append(json.dumps(d.get('minutes'), ensure_ascii=False))
+    if not fields:
+        return jsonify({'error': '변경할 필드 없음'}), 400
+    fields.append("updated_at=datetime('now','localtime')")
+    params.extend([jid, _stt_owner()])
+    execute(f"UPDATE stt_job SET {', '.join(fields)} WHERE id=? AND owner=?", tuple(params))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/stt/jobs/<int:jid>', methods=['DELETE'])
+@login_required
+def api_stt_job_delete(jid):
+    r = query("SELECT * FROM stt_job WHERE id=? AND owner=?", (jid, _stt_owner()), one=True)
+    if not r:
+        abort(404)
+    rc = execute_rc("DELETE FROM stt_job WHERE id=? AND owner=? AND status<>'processing'",
+                    (jid, _stt_owner()))
+    if not rc:
+        still = query("SELECT status FROM stt_job WHERE id=? AND owner=?",
+                      (jid, _stt_owner()), one=True)
+        if not still:
+            abort(404)
+        return jsonify({'error': '변환 처리중입니다. 완료 후 삭제하세요.'}), 409
+    try:
+        os.remove(os.path.join(STT_AUDIO_DIR, r['stored_name']))
+    except OSError:
+        pass
+    return jsonify({'ok': True})
+
+
+@app.route('/api/ext/stt/jobs/pending', methods=['GET'])
+@api_key_required
+def api_ext_stt_pending():
+    row = query("""SELECT id, status, attempts, claim_token FROM stt_job
+                   WHERE status='pending'
+                      OR (status='processing'
+                          AND (claimed_at IS NULL
+                               OR claimed_at < datetime('now','localtime',?)))
+                   ORDER BY id ASC LIMIT 1""",
+                (f'-{STT_LEASE_SEC} seconds',), one=True)
+    if not row:
+        return jsonify({'job': None})
+    jid, prev_status, prev_token = row['id'], row['status'], row['claim_token']
+    if row['attempts'] >= STT_MAX_ATTEMPTS:
+        execute("""UPDATE stt_job SET status='error', error=?,
+                   updated_at=datetime('now','localtime')
+                   WHERE id=? AND status IN ('pending','processing')""",
+                (f'max attempts ({STT_MAX_ATTEMPTS}) exceeded', jid))
+        return jsonify({'job': None})
+    token = uuid.uuid4().hex
+    rc = execute_rc("""UPDATE stt_job SET status='processing', claim_token=?,
+                       claimed_at=datetime('now','localtime'), attempts=attempts+1,
+                       updated_at=datetime('now','localtime')
+                       WHERE id=? AND status=?
+                         AND ((claim_token IS ?) OR (claim_token = ?))""",
+                    (token, jid, prev_status, prev_token, prev_token))
+    if not rc:
+        return jsonify({'job': None})
+    r = query("SELECT * FROM stt_job WHERE id=?", (jid,), one=True)
+    return jsonify({'job': {'id': r['id'], 'stored_name': r['stored_name'],
+                            'audio_name': r['audio_name'], 'attempts': r['attempts'],
+                            'claim_token': token}})
+
+
+@app.route('/api/ext/stt/jobs/<int:jid>/audio', methods=['GET'])
+@api_key_required
+def api_ext_stt_audio(jid):
+    r = query("SELECT stored_name FROM stt_job WHERE id=?", (jid,), one=True)
+    if not r:
+        abort(404)
+    return send_from_directory(STT_AUDIO_DIR, r['stored_name'], as_attachment=True)
+
+
+@app.route('/api/ext/stt/jobs/<int:jid>/result', methods=['POST'])
+@api_key_required
+def api_ext_stt_result(jid):
+    d = request.get_json(silent=True) or {}
+    status = d.get('status')
+    if status not in ('done', 'error'):
+        return jsonify({'error': "status는 'done' 또는 'error'만 허용됩니다."}), 400
+    token = d.get('claim_token')
+    if not token:
+        return jsonify({'error': 'claim_token 누락'}), 400
+    if status == 'error':
+        rc = execute_rc("""UPDATE stt_job SET status='error', error=?,
+                           updated_at=datetime('now','localtime')
+                           WHERE id=? AND status='processing' AND claim_token=?""",
+                        (str(d.get('error') or 'unknown')[:1000], jid, token))
+    else:
+        transcript = d.get('transcript') or ''
+        minutes = d.get('minutes')
+        minutes_json = json.dumps(minutes, ensure_ascii=False) if minutes is not None else None
+        rc = execute_rc("""UPDATE stt_job SET status='done', transcript=?, minutes_json=?,
+                           duration_sec=?, error=NULL, updated_at=datetime('now','localtime')
+                           WHERE id=? AND status='processing' AND claim_token=?""",
+                        (transcript, minutes_json, d.get('duration_sec'), jid, token))
+    if not rc:
+        return jsonify({'ok': False, 'stale': True}), 409
+    return jsonify({'ok': True})
 
 
 # ═════════════════════════════════════════════════════════════════
