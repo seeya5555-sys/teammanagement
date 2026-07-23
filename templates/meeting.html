@@ -1,7 +1,6 @@
-<!-- 회의록 STT Phase 0a — templates/meeting.html 초안 (올마이트 리뷰 대상)
-     Phase 0a 범위: 녹음/업로드 → job 생성 → 상태 폴링 → transcript 표시.
-     화자분리·요약가공·Daily/Dock 버튼은 Phase 0b/1/2 (여기선 자리만, 비활성).
-     실제 배포 시 base.html {% extends %} + nav 추가로 감싼다. 여기선 standalone 골격. -->
+{# 회의록 STT Phase 0a — templates/meeting.html
+   범위: 녹음/업로드 → job 생성 → 상태 폴링 → transcript 표시.
+   화자분리·요약가공·Daily/Dock 버튼은 Phase 0b/1/2 (여기선 자리만, 비활성). #}
 {% extends "base.html" %}
 {% block content %}
 <style>
