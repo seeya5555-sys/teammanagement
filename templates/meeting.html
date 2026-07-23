@@ -104,14 +104,17 @@ async function openJob(id){
     const r = await fetch(`${API}/${id}`);
     if(!r.ok) throw new Error('get '+r.status);
     const j = await r.json();
-    const show = j.transcript || j.status==='error';
+    const show = j.transcript || j.status==='error' || j.status==='done';
     document.getElementById('detailCard').style.display = show ? 'block':'none';
     document.getElementById('trMeta').textContent = j.duration_sec ? '· '+fmtDur(j.duration_sec) : '';
     const errEl = document.getElementById('trErr');
     if(j.status==='error'){ errEl.style.display='block'; errEl.textContent='변환 오류: '+(j.error||'알 수 없음'); }
     else errEl.style.display='none';
-    document.getElementById('trBox').style.display = j.transcript ? 'block':'none';
-    document.getElementById('trBox').textContent = j.transcript || '';
+    const trBox = document.getElementById('trBox');
+    if(j.transcript){ trBox.style.display='block'; trBox.textContent = j.transcript; trBox.style.color=''; }
+    else if(j.status==='done'){ trBox.style.display='block'; trBox.style.color='var(--text-tertiary,#888)';
+      trBox.textContent = '(변환 결과 텍스트가 비어 있음 — 무음이거나 인식된 발화가 없습니다)'; }
+    else { trBox.style.display='none'; trBox.textContent=''; }
     // 삭제 버튼: 원본 음성 삭제(텍스트 보존) / 회의록 전체 삭제
     const delA = document.getElementById('delAudioBtn');
     const delJ = document.getElementById('delJobBtn');

@@ -26,6 +26,11 @@ cd "$APP_DIR"
 source venv/bin/activate
 # gunicorn 없으면 설치(venv 재구축/신규 서버 대비). 있으면 즉시 skip.
 python3 -c "import gunicorn" 2>/dev/null || pip install "gunicorn>=21,<24"
+# Werkzeug 3.1+ 보장: per-request request.max_content_length setter 필요
+# (STT 200MB 허용하되 그 외 라우트를 스트리밍 단계서 20MB로 조임 — 3.0은 setter 없어 fail-open).
+# 3.1+ 이면 즉시 skip, 미만일 때만 업그레이드(배포 시에만·미달 시에만 실행).
+python3 -c "import sys; from importlib.metadata import version; v=tuple(int(x) for x in version('werkzeug').split('.')[:2]); sys.exit(0 if v>=(3,1) else 1)" 2>/dev/null \
+  || pip install -U "Werkzeug>=3.1,<4.0"
 # 마이그레이션(gunicorn은 __main__을 안 타므로 init_db 자체migrate + _auto_migrate 둘 다).
 python3 -c "import app; app.init_db(drop=False); app._auto_migrate()"
 sudo systemctl restart trmt

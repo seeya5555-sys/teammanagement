@@ -6837,10 +6837,16 @@ def api_stt_job_delete(jid):
         if not still:
             abort(404)
         return jsonify({'error': '변환 처리중입니다. 완료 후 삭제하세요.'}), 409
-    try:
-        os.remove(os.path.join(STT_AUDIO_DIR, r['stored_name']))
-    except OSError:
-        pass
+    # row는 원자적 CAS(status<>'processing')로 이미 삭제됨 → processing 경합 방어 유지.
+    # 파일은 best-effort. 실패해도 참조하는 row가 없으니(전체삭제) 고아파일=디스크 낭비뿐이라
+    # 500 없이 진행하되, 조용히 삼키지 말고 로그로 남겨 수동 회수 가능하게(audio-only 삭제와 정합).
+    if r['stored_name']:
+        try:
+            os.remove(os.path.join(STT_AUDIO_DIR, r['stored_name']))
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            app.logger.warning('stt full-delete 고아 오디오 jid=%s %s: %s', jid, r['stored_name'], e)
     return jsonify({'ok': True})
 
 
