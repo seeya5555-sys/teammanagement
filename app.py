@@ -989,13 +989,15 @@ def _seed_issues(conn):
 @app.before_request
 def _bearer_auth():
     """/api/ 요청에서 Authorization: Bearer <token> 이면 세션에 유저를 투명 주입.
-    static·/login·돈경로/자동화 웹 라우트엔 훅 자체가 안 걸림. 세션쿠키 로그인 우선."""
+    static·/login·돈경로/자동화 웹 라우트엔 훅 자체가 안 걸림. 일반 API는
+    세션쿠키 로그인을 우선하되, Dock Manager mobile bridge만 Bearer를 강제 재검증한다."""
     if not request.path.startswith('/api/'):
         return                      # ← 범위 제한: /api/ 밖은 미접촉
     if request.path.startswith('/api/ext/'):
         return                      # ← 돈경로/워커 엔드포인트(@api_key_required) 완전 제외
-    if 'user_id' in session:
-        return                      # ← 세션쿠키 로그인이 이미 있으면 우선(브라우저=cookie, 앱=Bearer로 분리)
+    is_drydock_bridge = request.path == '/api/drydock/mobile-entry'
+    if 'user_id' in session and not is_drydock_bridge:
+        return                      # ← 브라우저=cookie, 일반 앱 API=Bearer로 분리
     hdr = request.headers.get('Authorization', '')
     parts = hdr.split(None, 1)
     if len(parts) != 2 or parts[0].lower() != 'bearer':
@@ -1006,7 +1008,7 @@ def _bearer_auth():
     try:
         data = _token_serializer.loads(tok, max_age=_TOKEN_MAXAGE)
     except BadData:
-        return                      # 무효/만료/위조 → login_required가 401 처리
+        return                      # 무효/만료/위조 → decorator/view가 401 처리
     if not isinstance(data, dict):
         return
     u = query('SELECT * FROM users WHERE id=? AND active=1', (data.get('uid'),), one=True)
@@ -1015,6 +1017,9 @@ def _bearer_auth():
     pv = data.get('pv')
     if not isinstance(pv, str) or not hmac.compare_digest(pv, _pw_fingerprint(u['password_hash'])):
         return                      # 비번 변경/위조 → 토큰 폐기
+    if is_drydock_bridge:
+        session.clear()             # WKWebView에 남은 이전 계정 cookie를 fresh Bearer identity로 교체
+        g._bearer_session_bridge = True  # admin/member 모두 stale cookie를 새 identity로 덮어씀
     session['user_id']       = u['id']
     session['username']      = u['username']
     session['display_name']  = u['display_name'] or u['username']
@@ -1024,10 +1029,8 @@ def _bearer_auth():
 
 @app.after_request
 def _suppress_bearer_session_cookie(response):
-    """Bearer 인증 요청은 세션쿠키를 발행하지 않음(stateless).
-    after_request가 save_session()보다 먼저 실행되므로 여기서 억제하면
-    view가 세션을 수정했더라도 Set-Cookie가 나가지 않음."""
-    if getattr(g, '_token_auth', False):
+    """Bearer API는 stateless로 유지하되, 명시적인 Dock Manager bridge만 session cookie를 발행."""
+    if getattr(g, '_token_auth', False) and not getattr(g, '_bearer_session_bridge', False):
         session.permanent = False
         session.modified  = False
     return response
@@ -1491,6 +1494,20 @@ def api_me():
         'role':          session.get('role'),
         'supervisor_id': session.get('supervisor_id'),
     })
+
+
+@app.route('/api/drydock/mobile-entry')
+@admin_required
+def api_drydock_mobile_entry():
+    """네이티브 앱 Bearer를 동일 도메인 Dock Manager browser session으로 1회 교환."""
+    if not getattr(g, '_token_auth', False):
+        return jsonify({'error': 'fresh_bearer_required'}), 401
+    g._bearer_session_bridge = True
+    session.permanent = False
+    session.modified = True
+    response = redirect('/drydock/', code=302)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 @app.route('/api/me/password', methods=['POST'])
 @login_required
