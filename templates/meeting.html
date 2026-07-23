@@ -49,14 +49,15 @@
   </div>
 
   <div class="mt-card" id="detailCard" style="display:none">
-    <h2>Transcript</h2>
+    <h2>Transcript <span id="trMeta" style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-tertiary,#888)"></span></h2>
+    <div id="trErr" class="mt-tr" style="display:none;background:#FDECEC;color:#B42318"></div>
     <div id="trBox" class="mt-tr"></div>
   </div>
 </div>
 
 <script>
 const API = '/api/stt/jobs';
-let mediaRecorder = null, chunks = [], selectedId = null, pollTimer = null;
+let mediaRecorder = null, chunks = [], selectedId = null, pollTimer = null, recTimer = null, recSec = 0;
 
 async function loadJobs(){
   try{
@@ -72,7 +73,7 @@ async function loadJobs(){
     el.innerHTML = jobs.map(j=>`
       <div class="mt-job" data-id="${j.id}">
         <div class="ttl">${escapeHtml(j.title)}</div>
-        <div class="meta">${j.created_at||''}</div>
+        <div class="meta">${j.created_at||''}${j.duration_sec?' · '+fmtDur(j.duration_sec):''}${j.status==='error'&&j.error?' · <span style="color:#B42318">'+escapeHtml(j.error)+'</span>':''}</div>
         ${badge(j.status)}
       </div>`).join('');
     el.querySelectorAll('.mt-job').forEach(n=>n.onclick=()=>openJob(n.dataset.id));
@@ -87,7 +88,13 @@ async function openJob(id){
     const r = await fetch(`${API}/${id}`);
     if(!r.ok) throw new Error('get '+r.status);
     const j = await r.json();
-    document.getElementById('detailCard').style.display = j.transcript ? 'block':'none';
+    const show = j.transcript || j.status==='error';
+    document.getElementById('detailCard').style.display = show ? 'block':'none';
+    document.getElementById('trMeta').textContent = j.duration_sec ? '· '+fmtDur(j.duration_sec) : '';
+    const errEl = document.getElementById('trErr');
+    if(j.status==='error'){ errEl.style.display='block'; errEl.textContent='변환 오류: '+(j.error||'알 수 없음'); }
+    else errEl.style.display='none';
+    document.getElementById('trBox').style.display = j.transcript ? 'block':'none';
     document.getElementById('trBox').textContent = j.transcript || '';
   }catch(e){ console.error(e); }
 }
@@ -98,6 +105,7 @@ function schedulePoll(){
 }
 
 function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtDur(sec){ sec=Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return m?`${m}분 ${s}초`:`${s}초`; }
 
 async function upload(blob, filename, title){
   const fd = new FormData();
@@ -133,16 +141,19 @@ document.getElementById('recBtn').onclick = async function(){
     mediaRecorder.ondataavailable = ev=>{ if(ev.data.size) chunks.push(ev.data); };
     mediaRecorder.onstop = ()=>{
       stream.getTracks().forEach(t=>t.stop());
+      if(recTimer){ clearInterval(recTimer); recTimer=null; }
       const type = mediaRecorder.mimeType || 'audio/webm';
       const ext = type.includes('mp4')?'mp4':type.includes('ogg')?'ogg':'webm';
       const blob = new Blob(chunks, {type});
       const ts = new Date().toLocaleString('ko-KR');
-      upload(blob, `recording.${ext}`, `회의록 ${ts}`);
+      upload(blob, `recording.${ext}`, `회의록 ${ts} (${fmtDur(recSec)})`);
       this.classList.remove('recording'); this.textContent='● 녹음 시작';
     };
     mediaRecorder.start();
     this.classList.add('recording'); this.textContent='■ 녹음 종료';
-    document.getElementById('recStatus').textContent='녹음 중…';
+    recSec = 0;
+    document.getElementById('recStatus').textContent='녹음 중… 0초';
+    recTimer = setInterval(()=>{ recSec++; document.getElementById('recStatus').textContent='녹음 중… '+fmtDur(recSec); }, 1000);
   }catch(e){ document.getElementById('recStatus').textContent='마이크 접근 실패: '+e.message; }
 };
 
