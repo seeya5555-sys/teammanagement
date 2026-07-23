@@ -28,6 +28,13 @@
   .mt-tr{background:var(--surface-2,#F4F3EE);border-radius:10px;padding:12px 14px;
     font-size:14px;white-space:pre-wrap;max-height:340px;overflow:auto}
   .mt-empty{color:var(--text-tertiary,#888);font-size:13px;padding:8px 4px}
+  .mt-sel{border:1px solid var(--border,#D3D1C7);border-radius:999px;padding:11px 14px;
+    font-size:14px;background:var(--surface,#fff);color:var(--text-primary,#222)}
+  .mt-actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+  .mt-act{border:1px solid var(--border,#D3D1C7);background:var(--surface,#fff);
+    border-radius:999px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer}
+  .mt-act.warn{color:#B42318;border-color:#F0C9C4}
+  .mt-act:disabled{opacity:.45;cursor:default}
 </style>
 <div class="mt-wrap">
   <h1 style="font-size:20px;font-weight:700;margin:14px 4px 2px">회의록</h1>
@@ -38,9 +45,14 @@
     <div class="mt-rec">
       <button id="recBtn" class="mt-btn mt-rec-btn">● 녹음 시작</button>
       <button id="upBtn" class="mt-btn mt-up-btn">⤒ 파일 업로드</button>
+      <select id="langSel" class="mt-sel" title="변환 언어">
+        <option value="auto">언어 자동</option>
+        <option value="ko">한국어</option>
+        <option value="en">English</option>
+      </select>
       <input id="fileInput" type="file" accept="audio/*,.m4a,.wav,.mp3,.aac,.caf,.webm,.mp4" hidden>
     </div>
-    <div id="recStatus" class="mt-hint">녹음 종료 시 자동 업로드 → Mac에서 변환(수십 초). 아래 목록에 표시됨.</div>
+    <div id="recStatus" class="mt-hint">녹음 종료 시 자동 업로드 → Mac에서 변환(수십 초). 아래 목록에 표시됨. · 최대 200MB</div>
   </div>
 
   <div class="mt-card">
@@ -52,6 +64,10 @@
     <h2>Transcript <span id="trMeta" style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-tertiary,#888)"></span></h2>
     <div id="trErr" class="mt-tr" style="display:none;background:#FDECEC;color:#B42318"></div>
     <div id="trBox" class="mt-tr"></div>
+    <div class="mt-actions">
+      <button id="delAudioBtn" class="mt-act">🗑 원본 음성 삭제 (텍스트 보존)</button>
+      <button id="delJobBtn" class="mt-act warn">회의록 전체 삭제</button>
+    </div>
   </div>
 </div>
 
@@ -96,7 +112,38 @@ async function openJob(id){
     else errEl.style.display='none';
     document.getElementById('trBox').style.display = j.transcript ? 'block':'none';
     document.getElementById('trBox').textContent = j.transcript || '';
+    // 삭제 버튼: 원본 음성 삭제(텍스트 보존) / 회의록 전체 삭제
+    const delA = document.getElementById('delAudioBtn');
+    const delJ = document.getElementById('delJobBtn');
+    if(j.audio_deleted){ delA.disabled = true; delA.textContent = '음성 삭제됨 (텍스트 보존)'; }
+    else { delA.disabled = false; delA.textContent = '🗑 원본 음성 삭제 (텍스트 보존)'; }
+    delA.onclick = ()=>delAudio(id);
+    delJ.onclick = ()=>delJob(id);
   }catch(e){ console.error(e); }
+}
+
+async function delAudio(id){
+  if(!confirm('원본 음성 파일만 서버에서 완전 삭제합니다. 변환된 텍스트는 보존됩니다. 계속할까요?')) return;
+  const btn = document.getElementById('delAudioBtn');
+  btn.disabled = true;
+  try{
+    const r = await fetch(`${API}/${id}/audio`, {method:'DELETE'});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||('delete '+r.status));
+    await openJob(id);
+  }catch(e){ alert('삭제 실패: '+e.message); btn.disabled=false; }
+}
+
+async function delJob(id){
+  if(!confirm('이 회의록을 텍스트·음성 모두 서버와 DB에서 완전 삭제합니다. 되돌릴 수 없습니다. 계속할까요?')) return;
+  try{
+    const r = await fetch(`${API}/${id}`, {method:'DELETE'});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||('delete '+r.status));
+    selectedId = null;
+    document.getElementById('detailCard').style.display = 'none';
+    await loadJobs();
+  }catch(e){ alert('삭제 실패: '+e.message); }
 }
 
 function schedulePoll(){
@@ -111,6 +158,7 @@ async function upload(blob, filename, title){
   const fd = new FormData();
   fd.append('file', blob, filename);
   if(title) fd.append('title', title);
+  fd.append('lang', document.getElementById('langSel').value || 'auto');
   document.getElementById('recStatus').textContent = '업로드 중…';
   try{
     const r = await fetch(API, {method:'POST', body:fd});

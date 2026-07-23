@@ -549,6 +549,8 @@ CREATE TABLE IF NOT EXISTS stt_job (
     duration_sec  REAL,
     transcript    TEXT,
     minutes_json  TEXT,                              -- 가공 결과(Phase 1~)
+    lang          TEXT NOT NULL DEFAULT 'auto',      -- 변환 언어(auto|ko|en) — auto=자동감지
+    audio_deleted INTEGER NOT NULL DEFAULT 0,        -- 원본 오디오 삭제됨(transcript는 보존)
     error         TEXT,
     attempts      INTEGER NOT NULL DEFAULT 0,
     claim_token   TEXT,                              -- 처리중 워커 클레임 토큰(CAS)

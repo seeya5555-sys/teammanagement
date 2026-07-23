@@ -77,12 +77,36 @@ app.config.update(
     SECRET_KEY=_load_or_create_secret_key(),
     DATABASE=DATABASE,
     UPLOAD_FOLDER=UPLOAD_DIR,
-    MAX_CONTENT_LENGTH=20 * 1024 * 1024,          # 핸드폰 사진 대비 20MB
+    MAX_CONTENT_LENGTH=STT_MAX_BYTES + (1 << 20),  # 상한=회의록 오디오 200MB. 그 외 업로드는 before_request서 20MB로 조임
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
     JSON_AS_ASCII=False,
     SESSION_COOKIE_SAMESITE='Lax',
     SEND_FILE_MAX_AGE_DEFAULT=0,                   # static(css/js) 매번 재검증 — 모바일 캐시 stale 방지
 )
+
+_NON_STT_UPLOAD_MAX = 20 * 1024 * 1024             # 회의록 외 업로드(사진·엑셀 등) 상한 20MB
+
+
+@app.before_request
+def _limit_non_stt_upload():
+    """회의록 오디오(장시간 회의)만 200MB 허용, 그 외 모든 업로드는 20MB로 조임.
+    전역 MAX_CONTENT_LENGTH를 200MB로 올렸으므로 나머지 경로를 여기서 되조인다.
+
+    구현: Werkzeug 3.1+ per-request setter에 의존하지 않고 Content-Length를 직접 검사
+    (버전 무관·fail-closed). declared length가 상한 초과면 즉시 413.
+    setter가 있는 버전에선 추가로 스트리밍 상한도 조여 chunked/누락 헤더도 방어."""
+    if request.method not in ('POST', 'PUT', 'PATCH'):
+        return
+    if request.path == '/api/stt/jobs':   # 회의록 업로드만 200MB 허용
+        return
+    cl = request.content_length
+    if cl is not None and cl > _NON_STT_UPLOAD_MAX:
+        abort(413)
+    # 있으면 스트리밍 상한도 조임(Content-Length 누락/chunked 방어). 없으면 전역 200MB로 폴백.
+    try:
+        request.max_content_length = _NON_STT_UPLOAD_MAX
+    except (AttributeError, TypeError):
+        pass
 
 # ── 네이티브 앱 Bearer 토큰 (스테이트리스, 세션쿠키와 병행) ──────────────
 _TOKEN_SALT   = 'trmt-mobile-bearer-v1'
@@ -842,6 +866,8 @@ def init_db(drop=False):
                 duration_sec  REAL,
                 transcript    TEXT,
                 minutes_json  TEXT,                              -- 가공 결과(Phase 1~)
+                lang          TEXT NOT NULL DEFAULT 'auto',      -- 변환 언어(auto|ko|en)
+                audio_deleted INTEGER NOT NULL DEFAULT 0,        -- 원본 오디오 삭제됨(transcript 보존)
                 error         TEXT,
                 attempts      INTEGER NOT NULL DEFAULT 0,
                 claim_token   TEXT,                              -- 처리중 워커 클레임 토큰(CAS)
@@ -852,6 +878,12 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_stt_job_owner ON stt_job(owner, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_stt_job_status ON stt_job(status, id)")
+        # stt_job additive 컬럼(기존 prod DB 마이그레이션): lang / audio_deleted
+        _stt_cols = [r[1] for r in conn.execute('PRAGMA table_info(stt_job)').fetchall()]
+        if _stt_cols and 'lang' not in _stt_cols:
+            conn.execute("ALTER TABLE stt_job ADD COLUMN lang TEXT NOT NULL DEFAULT 'auto'")
+        if _stt_cols and 'audio_deleted' not in _stt_cols:
+            conn.execute("ALTER TABLE stt_job ADD COLUMN audio_deleted INTEGER NOT NULL DEFAULT 0")
         # 위키 스레드 stable id (additive) — 메일↔위키↔Daily 연동 포인터
         sw_cols = [r[1] for r in conn.execute('PRAGMA table_info(shipwiki_card)').fetchall()]
         if sw_cols and 'wiki_thread_id' not in sw_cols:
@@ -6680,6 +6712,8 @@ def _stt_to_dict(r, include_body=True):
         'id': r['id'], 'title': r['title'] or '(제목없음)',
         'audio_name': r['audio_name'], 'status': r['status'],
         'duration_sec': r['duration_sec'],
+        'lang': (r['lang'] if 'lang' in r.keys() else 'auto'),
+        'audio_deleted': (r['audio_deleted'] if 'audio_deleted' in r.keys() else 0),
         'created_at': r['created_at'], 'updated_at': r['updated_at'],
         'error': r['error'],
     }
@@ -6741,11 +6775,14 @@ def api_stt_jobs_create():
             pass
         return jsonify({'error': f'오디오 크기 오류 ({size} bytes)'}), 400
     title = (request.form.get('title') or '').strip()[:200] or None
+    lang = (request.form.get('lang') or 'auto').strip().lower()
+    if lang not in ('auto', 'ko', 'en'):
+        lang = 'auto'
     try:
         jid = execute("""
-            INSERT INTO stt_job (owner, title, audio_name, stored_name, status, updated_at)
-            VALUES (?, ?, ?, ?, 'pending', datetime('now','localtime'))
-        """, (_stt_owner(), title, secure_filename(f.filename), stored))
+            INSERT INTO stt_job (owner, title, audio_name, stored_name, lang, status, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', datetime('now','localtime'))
+        """, (_stt_owner(), title, secure_filename(f.filename), stored, lang))
     except Exception:
         try:
             os.remove(save_path)
@@ -6807,6 +6844,35 @@ def api_stt_job_delete(jid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/stt/jobs/<int:jid>/audio', methods=['DELETE'])
+@login_required
+def api_stt_job_audio_delete(jid):
+    """원본 오디오만 서버서 완전삭제(용량 회수). transcript 텍스트·row는 보존.
+
+    terminal 상태(done/error)만 허용 — 이 둘은 재claim 대상이 아니므로 워커가 파일을
+    건드리지 않음(pending/processing 삭제 시 워커 claim과 경합 → 금지). idempotent.
+    파일 삭제가 ENOENT(이미 없음)면 정상 진행, 그 외 실패(권한 등)면 audio_deleted
+    마킹하지 않고 500 — DB만 '삭제됨'으로 표시되고 파일이 남는 불일치(용량·privacy) 방지."""
+    r = query("SELECT * FROM stt_job WHERE id=? AND owner=?", (jid, _stt_owner()), one=True)
+    if not r:
+        abort(404)
+    if r['status'] not in ('done', 'error'):
+        return jsonify({'error': '변환 완료(또는 오류)된 회의록만 음성 삭제가 가능합니다.'}), 409
+    if ('audio_deleted' in r.keys()) and r['audio_deleted']:
+        return jsonify({'ok': True, 'already': True})   # idempotent
+    if r['stored_name']:
+        try:
+            os.remove(os.path.join(STT_AUDIO_DIR, r['stored_name']))
+        except FileNotFoundError:
+            pass                                        # 이미 없음 — OK
+        except OSError as e:
+            app.logger.warning('stt audio delete 실패 jid=%s: %s', jid, e)
+            return jsonify({'error': '음성 파일 삭제에 실패했습니다. 잠시 후 다시 시도하세요.'}), 500
+    execute("""UPDATE stt_job SET audio_deleted=1, updated_at=datetime('now','localtime')
+               WHERE id=? AND owner=?""", (jid, _stt_owner()))
+    return jsonify({'ok': True})
+
+
 @app.route('/api/ext/stt/jobs/pending', methods=['GET'])
 @api_key_required
 def api_ext_stt_pending():
@@ -6838,6 +6904,7 @@ def api_ext_stt_pending():
     r = query("SELECT * FROM stt_job WHERE id=?", (jid,), one=True)
     return jsonify({'job': {'id': r['id'], 'stored_name': r['stored_name'],
                             'audio_name': r['audio_name'], 'attempts': r['attempts'],
+                            'lang': (r['lang'] if 'lang' in r.keys() else 'auto'),
                             'claim_token': token}})
 
 
@@ -13471,6 +13538,18 @@ def _auto_migrate():
                 print('[auto_migrate] vettings.valid CHECK 제약 갱신 완료')
         except Exception as e:
             print(f'[auto_migrate] vettings 재생성 건너뜀: {e}')
+
+        # stt_job additive 컬럼 (회의록): lang(auto|ko|en) / audio_deleted(원본삭제, transcript보존)
+        try:
+            _sc = [r[1] for r in conn.execute('PRAGMA table_info(stt_job)').fetchall()]
+            if _sc and 'lang' not in _sc:
+                conn.execute("ALTER TABLE stt_job ADD COLUMN lang TEXT NOT NULL DEFAULT 'auto'")
+                print('[auto_migrate] stt_job.lang 추가됨')
+            if _sc and 'audio_deleted' not in _sc:
+                conn.execute("ALTER TABLE stt_job ADD COLUMN audio_deleted INTEGER NOT NULL DEFAULT 0")
+                print('[auto_migrate] stt_job.audio_deleted 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] stt_job 컬럼 점검 건너뜀: {e}')
 
         conn.commit()
     finally:
