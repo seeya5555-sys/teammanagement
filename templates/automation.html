@@ -66,6 +66,12 @@
   .jl-chk{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11.5px;color:var(--text-secondary);white-space:nowrap;cursor:pointer;user-select:none}
   .jl-chk input{width:15px;height:15px;cursor:pointer;accent-color:var(--amber)}
   .jl-empty{font-size:12px;color:var(--text-tertiary);padding:6px 2px}
+  .jl-pdf{border:1px solid var(--blue-border);background:var(--blue-bg);color:var(--blue);border-radius:7px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .jpdf-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9000;align-items:center;justify-content:center;padding:24px}
+  .jpdf-modal.open{display:flex}.jpdf-box{background:#fff;border-radius:12px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden}
+  .jpdf-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+  .jpdf-bar b{flex:1}.jpdf-bar a,.jpdf-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:8px;padding:5px 10px;text-decoration:none;cursor:pointer}
+  .jpdf-frame{flex:1;border:0;width:100%}
   .au-allrow{background:var(--surface-2);border-style:dashed}
 </style>
 {% endblock %}
@@ -109,6 +115,10 @@
   <div class="au-sec">전자결재</div>
   <div id="au-jeonja"></div>
   <div id="au-jeonja-list" class="jl"></div>
+
+  <div class="jpdf-modal" id="jpdf-modal">
+    <div class="jpdf-box"><div class="jpdf-bar"><b id="jpdf-title">검토 인보이스</b><a id="jpdf-open" target="_blank" rel="noopener">새 탭</a><button id="jpdf-close" type="button">닫기 ✕</button></div><iframe class="jpdf-frame" id="jpdf-frame" title="전자결재 검토 인보이스 미리보기"></iframe></div>
+  </div>
 
   <div class="au-log">
     <div class="au-log-head" id="au-log-head">
@@ -217,6 +227,7 @@
       <span class="jl-ref">${esc(it.ref)}</span>
       <span class="jl-sub">${esc(it.subj||'')}</span>${jAmt(it)}
       ${it.why?`<span class="jl-why">${esc(it.why)}</span>`:''}
+      ${it.has_pdf?`<button type="button" class="jl-pdf" data-jpdf="${escA(it.ref)}">인보이스 미리보기</button>`:''}
       ${ex?'<span class="jl-hold">보류</span>':''}
       <label class="jl-chk"><input type="checkbox" ${ex?'checked':''} data-xref="${escA(it.ref)}"> 상신 제외</label>
     </div>`;
@@ -243,6 +254,7 @@
       `<div class="jl-body" ${JOPEN?'':'hidden'}>${body}</div>`;
     $('#jl-head').onclick=()=>{ JOPEN=!JOPEN; JSIG=''; renderJeonja(); };
     el.querySelectorAll('input[data-xref]').forEach(c=>c.onchange=()=>toggleExcl(c.dataset.xref,c.checked));
+    el.querySelectorAll('[data-jpdf]').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();openJpdf(b.dataset.jpdf);});
   }
   function renderSoa(){
     const el=$('#au-soa'); if(!el) return;
@@ -278,6 +290,15 @@
     await load();
     alert(`SOA 전체 ${lab}: ${ok}그룹 적재${busy_?` · ${busy_}그룹 이미대기/스위치off`:''}${fail?` · ${fail}그룹 실패`:''}\n(러너가 순차 실행 → 텔레그램 보고)`);
   }
+  function openJpdf(ref){
+    const url=`/api/automation/jeonja/items/${encodeURIComponent(ref)}/pdf`;
+    $('#jpdf-title').textContent=`${ref} · 검토 인보이스`;
+    $('#jpdf-frame').src=url; $('#jpdf-open').href=url; $('#jpdf-modal').classList.add('open');
+  }
+  function closeJpdf(){$('#jpdf-modal').classList.remove('open');$('#jpdf-frame').src='about:blank';}
+  $('#jpdf-close').onclick=closeJpdf;
+  $('#jpdf-modal').onclick=e=>{if(e.target.id==='jpdf-modal')closeJpdf();};
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeJpdf();});
   async function toggleExcl(ref,checked){
     JPENDING[ref]=checked?1:0;                // in-flight: 폴링 머지가 이 값을 덮어쓰지 않게
     const it=JLIST.find(x=>x.ref===ref); if(it) it.excluded=checked?1:0;

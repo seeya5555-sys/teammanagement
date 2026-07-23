@@ -38,9 +38,11 @@ BASE_DIR     = os.path.abspath(os.path.dirname(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, 'instance')
 UPLOAD_DIR   = os.path.join(BASE_DIR, 'static', 'uploads')
 INVOICE_PDF_DIR = os.path.join(INSTANCE_DIR, 'invoice_pdfs')  # 인보이스 미리보기 PDF(컨펌/리젝 시 자동삭제)
+JEONJA_PDF_DIR = os.path.join(INSTANCE_DIR, 'jeonja_pdfs')    # 전자결재 검토 invoice/DN 미리보기 cache
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR,   exist_ok=True)
 os.makedirs(INVOICE_PDF_DIR, exist_ok=True)
+os.makedirs(JEONJA_PDF_DIR, exist_ok=True)
 
 DATABASE        = os.path.join(INSTANCE_DIR, 'trmt.db')
 SCHEMA_FILE     = os.path.join(BASE_DIR, 'schema.sql')
@@ -10762,52 +10764,159 @@ def api_ext_automation_done(run_id):
 
 
 # ---- 전자결재(jeonja) 검증 결과 적재 / 자동상신 제외 체크 ----
+def _jeonja_ref(ref):
+    """Canonical safe document ref for preview cache/API."""
+    value = (ref or '').strip().upper()
+    return value if re.fullmatch(r'[A-Z0-9_-]{6,64}', value) else None
+
+
+def _jeonja_pdf_path(ref):
+    """Hash-backed cache path; raw business ref never becomes a filesystem path."""
+    safe = _jeonja_ref(ref)
+    if not safe:
+        raise ValueError('invalid ref')
+    key = hashlib.sha256(safe.encode('utf-8')).hexdigest()
+    return os.path.join(JEONJA_PDF_DIR, key + '.pdf')
+
+
+def _jeonja_pdf_delete(ref):
+    """Best-effort preview cache cleanup; never affects the SVMS/NAS original."""
+    try:
+        p = _jeonja_pdf_path(ref)
+        if os.path.exists(p):
+            os.remove(p)
+            return True
+    except Exception:
+        app.logger.exception('jeonja-pdf-delete')
+    return False
+
+
+@app.route('/api/automation/jeonja/items/<ref>/pdf')
+@admin_required
+def api_automation_jeonja_pdf(ref):
+    """Reviewed invoice/DN cache preview. Completed/removed items naturally 404."""
+    safe = _jeonja_ref(ref)
+    if not safe:
+        abort(404)
+    row = query('SELECT ref FROM jeonja_review_item WHERE ref=?', (safe,), one=True)
+    if not row:
+        abort(404)
+    p = _jeonja_pdf_path(safe)
+    if not os.path.exists(p):
+        abort(404)
+    return send_file(p, mimetype='application/pdf', as_attachment=False,
+                     download_name='jeonja_%s.pdf' % safe, conditional=True)
+
+
+@app.route('/api/ext/jeonja/review/<ref>/pdf', methods=['POST'])
+@api_key_required
+def api_ext_jeonja_pdf_upload(ref):
+    """Review runner uploads only the invoice/DN PDF actually used for judgment."""
+    MAX = 25 * 1024 * 1024
+    safe = _jeonja_ref(ref)
+    if not safe:
+        return jsonify({'error': 'invalid ref'}), 400
+    if request.content_length and request.content_length > MAX:
+        return jsonify({'error': 'too large'}), 413
+    row = query('SELECT bucket FROM jeonja_review_item WHERE ref=?', (safe,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['bucket'] == 'already':
+        return jsonify({'error': 'completed'}), 409
+    data = request.files['pdf'].read() if request.files.get('pdf') else request.get_data()
+    if not data:
+        return jsonify({'error': 'empty'}), 400
+    if len(data) > MAX:
+        return jsonify({'error': 'too large'}), 413
+    if data[:5] != b'%PDF-':
+        return jsonify({'error': 'not pdf'}), 400
+    final = _jeonja_pdf_path(safe)
+    tmp = final + '.' + uuid.uuid4().hex + '.tmp'
+    try:
+        with open(tmp, 'wb') as fh:
+            fh.write(data)
+        os.replace(tmp, final)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return jsonify({'ref': safe, 'stored': True, 'bytes': len(data)})
+
+
+@app.route('/api/ext/jeonja/review/<ref>/complete', methods=['POST'])
+@api_key_required
+def api_ext_jeonja_pdf_complete(ref):
+    """Confirmed submission cleanup signal. Deletes TRMT cache only."""
+    safe = _jeonja_ref(ref)
+    if not safe:
+        return jsonify({'error': 'invalid ref'}), 400
+    return jsonify({'ref': safe, 'deleted': _jeonja_pdf_delete(safe)})
+
+
 @app.route('/api/ext/jeonja/review', methods=['POST'])
 @api_key_required
 def api_ext_jeonja_review():
-    """맥 verify(jeonja_review --post) 가 현재 상신대기 전수 검토결과를 ref 단위로 적재.
-    기존 보류(excluded=1) 표시는 ref 기준 보존 — 재검증해도 사람이 건 보류 안 풀림."""
+    """Store current review set atomically and reset preview cache for fresh upload."""
     _ensure_api_table()
     d = request.get_json(silent=True) or {}
     items = d.get('items') or []
     run_id = (d.get('run_id') or '').strip()
-    # 단일 트랜잭션 — DELETE~INSERT 사이에 빈 결과가 노출되지 않게(보류 유실 윈도우 제거).
     db = get_db()
-    prev_excluded = {r['ref'] for r in db.execute(
-        "SELECT ref FROM jeonja_review_item WHERE excluded=1").fetchall()}
-    # 불일치(DN≠Cost)는 기본 보류(excluded=1) — 사람이 직접 체크 풀어야 상신(B안, 손유석 2026-06-16).
+    prev_rows = db.execute('SELECT ref, excluded FROM jeonja_review_item').fetchall()
+    canon = lambda value: _jeonja_ref(value) or (value or '').strip()
+    prev_refs = {canon(r['ref']) for r in prev_rows if canon(r['ref'])}
+    prev_excluded = {canon(r['ref']) for r in prev_rows if r['excluded'] == 1 and canon(r['ref'])}
     DEFAULT_HOLD = {'mismatch'}
-    n = 0
+    current_refs, completed_refs = set(), set()
+    n = invalid = 0
     try:
-        db.execute("DELETE FROM jeonja_review_item")
+        db.execute('DELETE FROM jeonja_review_item')
         for it in items:
-            ref = (it.get('ref') or '').strip()
-            if not ref:
+            raw_ref = (it.get('ref') or '').strip()
+            if not raw_ref:
                 continue
+            safe_ref = _jeonja_ref(raw_ref)
+            ref = safe_ref or raw_ref
             bucket = (it.get('bucket') or 'flag')
-            excl = 1 if (ref in prev_excluded or bucket in DEFAULT_HOLD) else 0
+            why = it.get('why')
+            if not safe_ref:
+                bucket = 'flag'
+                why = ('비정규 REF 형식 — 자동상신 보류: ' + raw_ref)[:500]
+                invalid += 1
+            excl = 1 if (not safe_ref or ref in prev_excluded or bucket in DEFAULT_HOLD) else 0
             db.execute("INSERT OR REPLACE INTO jeonja_review_item "
                        "(ref,vsl_cd,subj,fund,cost,dn,bucket,why,excluded,run_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
                        (ref, it.get('vsl_cd'), it.get('subj'), it.get('fund'), it.get('cost'),
-                        it.get('dn'), bucket, it.get('why'), excl, run_id))
+                        it.get('dn'), bucket, why, excl, run_id))
+            current_refs.add(ref)
+            if bucket == 'already': completed_refs.add(ref)
             n += 1
         db.commit()
     except Exception:
         db.rollback()
         raise
-    kept = len(prev_excluded & {(it.get('ref') or '').strip() for it in items})
-    return jsonify({'ok': True, 'count': n, 'kept_excluded': kept})
+    for ref in prev_refs | current_refs | completed_refs:
+        if _jeonja_ref(ref): _jeonja_pdf_delete(ref)
+    kept = len(prev_excluded & current_refs)
+    return jsonify({'ok': True, 'count': n, 'kept_excluded': kept, 'invalid_refs': invalid})
 
 
 @app.route('/api/automation/jeonja/items')
 @admin_required
 def api_automation_jeonja_items():
-    """허브 인라인 체크리스트용 — 검토결과 항목 + 보류상태. pass→costslip→mismatch→escalate→flag 순."""
+    """Review checklist plus read-only preview availability."""
     rows = query("SELECT ref,vsl_cd,subj,fund,cost,dn,bucket,why,excluded,reviewed_at "
                  "FROM jeonja_review_item ORDER BY CASE bucket "
                  "WHEN 'pass' THEN 0 WHEN 'costslip' THEN 1 WHEN 'mismatch' THEN 2 "
-                 "WHEN 'escalate' THEN 3 WHEN 'flag' THEN 4 WHEN 'already' THEN 5 ELSE 6 END, ref")
-    return jsonify({'items': [dict(r) for r in rows],
+                 "WHEN 'escalate' THEN 3 WHEN 'flag' THEN 4 WHEN 'already' THEN 5 ELSE 6 END, ref") or []
+    items = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item['has_pdf'] = os.path.exists(_jeonja_pdf_path(item['ref']))
+        except ValueError:
+            item['has_pdf'] = False
+        items.append(item)
+    return jsonify({'items': items,
                     'reviewed_at': rows[0]['reviewed_at'] if rows else None})
 
 
