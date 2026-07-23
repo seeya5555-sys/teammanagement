@@ -39,10 +39,12 @@ INSTANCE_DIR = os.path.join(BASE_DIR, 'instance')
 UPLOAD_DIR   = os.path.join(BASE_DIR, 'static', 'uploads')
 INVOICE_PDF_DIR = os.path.join(INSTANCE_DIR, 'invoice_pdfs')  # 인보이스 미리보기 PDF(컨펌/리젝 시 자동삭제)
 JEONJA_PDF_DIR = os.path.join(INSTANCE_DIR, 'jeonja_pdfs')    # 전자결재 검토 invoice/DN 미리보기 cache
+AOR_PDF_DIR = os.path.join(INSTANCE_DIR, 'aor_pdfs')          # AOR 첨부 견적서 preview cache
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR,   exist_ok=True)
 os.makedirs(INVOICE_PDF_DIR, exist_ok=True)
 os.makedirs(JEONJA_PDF_DIR, exist_ok=True)
+os.makedirs(AOR_PDF_DIR, exist_ok=True)
 
 DATABASE        = os.path.join(INSTANCE_DIR, 'trmt.db')
 SCHEMA_FILE     = os.path.join(BASE_DIR, 'schema.sql')
@@ -7984,6 +7986,67 @@ def api_ext_issue_set_email_key(iid):
 #   · approve 가 automation_run(aor_submit) 큐 적재 → 맥이 claim → SP_SET_AOR 상신
 #   · 완전자동 상신 금지 — 사람 승인 게이트 필수
 # ═════════════════════════════════════════════════════════════════
+def _aor_pdf_path(did, idx):
+    return os.path.join(AOR_PDF_DIR, '%d_%d.pdf' % (int(did), int(idx)))
+
+
+def _aor_pdf_indices(did):
+    prefix = '%d_' % int(did)
+    out = []
+    try:
+        for name in os.listdir(AOR_PDF_DIR):
+            if name.startswith(prefix) and name.endswith('.pdf'):
+                part = name[len(prefix):-4]
+                if part.isdigit(): out.append(int(part))
+    except OSError:
+        pass
+    return sorted(out)
+
+
+def _aor_pdf_delete(did):
+    deleted = 0
+    for idx in _aor_pdf_indices(did):
+        try:
+            os.remove(_aor_pdf_path(did, idx)); deleted += 1
+        except OSError:
+            app.logger.exception('aor-pdf-delete')
+    return deleted
+
+
+@app.route('/api/aor/drafts/<int:did>/attachments/<int:idx>')
+@admin_required
+def api_aor_attachment_pdf(did, idx):
+    if idx < 0 or idx > 49 or not query('SELECT id FROM aor_draft WHERE id=?', (did,), one=True):
+        abort(404)
+    p = _aor_pdf_path(did, idx)
+    if not os.path.exists(p): abort(404)
+    return send_file(p, mimetype='application/pdf', as_attachment=False,
+                     download_name='aor_%d_%d.pdf' % (did, idx), conditional=True)
+
+
+@app.route('/api/ext/aor/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
+@api_key_required
+def api_ext_aor_attachment_upload(did, idx):
+    MAX = 25 * 1024 * 1024
+    if idx < 0 or idx > 49: return jsonify({'error': 'invalid index'}), 400
+    if request.content_length and request.content_length > MAX: return jsonify({'error': 'too large'}), 413
+    row = query('SELECT status FROM aor_draft WHERE id=?', (did,), one=True)
+    if not row: return jsonify({'error': 'not found'}), 404
+    if row['status'] not in ('pending', 'hold'):
+        return jsonify({'error': 'not accepting', 'status': row['status']}), 409
+    data = request.get_data()
+    if not data: return jsonify({'error': 'empty'}), 400
+    if len(data) > MAX: return jsonify({'error': 'too large'}), 413
+    if data[:5] != b'%PDF-': return jsonify({'error': 'not pdf'}), 400
+    final = _aor_pdf_path(did, idx); tmp = final + '.' + uuid.uuid4().hex + '.tmp'
+    try:
+        with open(tmp, 'wb') as fh: fh.write(data)
+        os.replace(tmp, final)
+    finally:
+        if os.path.exists(tmp): os.remove(tmp)
+    return jsonify({'id': did, 'index': idx, 'stored': True, 'bytes': len(data)})
+
+
 @app.route('/aor')
 @admin_required
 def aor_page():
@@ -8004,11 +8067,12 @@ def api_aor_list():
     _ensure_api_table()
     crew = query("SELECT v FROM api_settings WHERE k='aor_crew_submitted'", one=True)
     at = query("SELECT v FROM api_settings WHERE k='aor_stats_at'", one=True)
-    drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
+    drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])
+    for draft in drafts:
+        draft['attachment_preview_indices'] = _aor_pdf_indices(draft['id'])
     return jsonify({'count': len(rows), 'pending': pending['c'],
                     'crew_submitted': (int(crew['v']) if crew and str(crew['v']).isdigit() else None),
-                    'crew_at': (at['v'] if at else None),
-                    'drafts': drafts})
+                    'crew_at': (at['v'] if at else None), 'drafts': drafts})
 
 
 @app.route('/api/ext/aor/drafts', methods=['POST'])
@@ -8043,6 +8107,7 @@ def api_ext_aor_create():
     if ex and ex['status'] == 'pending':
         sets = ', '.join(f"{k}=?" for k in cols)
         execute(f"UPDATE aor_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
+        _aor_pdf_delete(ex['id'])  # fresh ingest re-uploads current attachment set; stale extras removed
         return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
     if ex:   # approved/submitting/submitted — 진행중이므로 손대지 않음
         return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
@@ -8177,6 +8242,7 @@ def api_aor_delete(did):
     if not query('SELECT id FROM aor_draft WHERE id=?', (did,), one=True):
         return jsonify({'error': 'not found'}), 404
     execute('DELETE FROM aor_draft WHERE id=?', (did,))
+    _aor_pdf_delete(did)
     return jsonify({'id': did, 'deleted': True})
 
 
@@ -8238,13 +8304,13 @@ def api_ext_aor_approved():
 @app.route('/api/ext/aor/drafts/<int:did>/result', methods=['POST'])
 @api_key_required
 def api_ext_aor_result(did):
-    """맥 러너의 상신 결과 보고: ok=True → submitted, else failed(사람 재검토)."""
+    """Submission result; successful completion removes TRMT preview cache only."""
     d = request.get_json(silent=True) or {}
-    ok = bool(d.get('ok'))
-    result = (d.get('result') or '')[:2000]
-    new = 'submitted' if ok else 'failed'
+    ok = bool(d.get('ok')); result = (d.get('result') or '')[:2000]
     rc = execute_rc("UPDATE aor_draft SET status=?, submitted_at=datetime('now','localtime'), "
-                    "submit_result=? WHERE id=? AND status='submitting'", (new, result, did))
+                    "submit_result=? WHERE id=? AND status='submitting'",
+                    ('submitted' if ok else 'failed', result, did))
+    if rc and ok: _aor_pdf_delete(did)
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
@@ -8285,18 +8351,12 @@ def api_ext_aor_rejecting():
 @app.route('/api/ext/aor/drafts/<int:did>/reject-result', methods=['POST'])
 @api_key_required
 def api_ext_aor_reject_result(did):
-    """맥 러너의 리젝 결과: ok=True → rejected(완료), else reject_failed(사람 재검토)."""
     d = request.get_json(silent=True) or {}
-    ok = bool(d.get('ok'))
-    result = (d.get('result') or '')[:2000]
-    new = 'rejected' if ok else 'reject_failed'
-    # reject_submitting = 조건부 claim 후 상태. 'rejecting' 도 계속 허용 — ① 배포 순간
-    # 구코드(claim 없이 진행)의 in-flight 잔류분 하위호환, ② stale 회수로 rejecting 에
-    # 되돌아간 건의 뒤늦은 결과 수용(기록 안 하면 재claim→중복 SVMS 리젝). 두 상태 모두
-    # 러너 경로에서만 도달하므로 상태머신 우회 아님.
+    ok = bool(d.get('ok')); result = (d.get('result') or '')[:2000]
     rc = execute_rc("UPDATE aor_draft SET status=?, submitted_at=datetime('now','localtime'), "
                     "submit_result=? WHERE id=? AND status IN ('reject_submitting','rejecting')",
-                    (new, result, did))
+                    ('rejected' if ok else 'reject_failed', result, did))
+    if rc and ok: _aor_pdf_delete(did)
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
