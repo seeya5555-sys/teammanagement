@@ -18,8 +18,12 @@
   .mt-hint{color:var(--text-tertiary,#888);font-size:12px;margin-top:8px}
   .mt-job{display:flex;align-items:center;gap:12px;padding:11px 4px;
     border-bottom:1px solid var(--border-subtle,#E5E4DD);cursor:pointer}
-  .mt-job .ttl{flex:1;font-weight:600;font-size:14.5px}
+  .mt-job-main{flex:1;min-width:0}
+  .mt-job .ttl{font-weight:600;font-size:14.5px}
   .mt-job .meta{color:var(--text-tertiary,#888);font-size:12px}
+  .mt-row-del{flex:none;background:none;border:none;cursor:pointer;font-size:17px;
+    padding:6px;line-height:1;border-radius:8px;opacity:.55}
+  .mt-row-del:hover{opacity:1;background:var(--border-subtle,#EEE)}
   .mt-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
   .b-done{background:var(--teal-bg,#E1F5EE);color:var(--teal-text,#085041)}
   .b-proc{background:var(--blue-bg,#E6F1FB);color:var(--blue-text,#0C447C)}
@@ -88,11 +92,15 @@ async function loadJobs(){
       : '<span class="mt-badge b-pend">대기</span>';
     el.innerHTML = jobs.map(j=>`
       <div class="mt-job" data-id="${j.id}">
-        <div class="ttl">${escapeHtml(j.title)}</div>
-        <div class="meta">${j.created_at||''}${j.duration_sec?' · '+fmtDur(j.duration_sec):''}${j.status==='error'&&j.error?' · <span style="color:#B42318">'+escapeHtml(j.error)+'</span>':''}</div>
+        <div class="mt-job-main">
+          <div class="ttl">${escapeHtml(j.title)}</div>
+          <div class="meta">${j.created_at||''}${j.duration_sec?' · '+fmtDur(j.duration_sec):''}${j.status==='error'&&j.error?' · <span style="color:#B42318">'+escapeHtml(j.error)+'</span>':''}</div>
+        </div>
         ${badge(j.status)}
+        <button class="mt-row-del" data-del="${j.id}" title="삭제" aria-label="삭제">🗑</button>
       </div>`).join('');
     el.querySelectorAll('.mt-job').forEach(n=>n.onclick=()=>openJob(n.dataset.id));
+    el.querySelectorAll('.mt-row-del').forEach(b=>b.onclick=e=>{ e.stopPropagation(); delJob(b.dataset.del); });
     // 처리중/대기 있으면 계속 폴링
     if(jobs.some(j=>j.status==='pending'||j.status==='processing')) schedulePoll();
   }catch(e){ console.error(e); }
