@@ -878,12 +878,21 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_stt_job_owner ON stt_job(owner, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_stt_job_status ON stt_job(status, id)")
-        # stt_job additive 컬럼(기존 prod DB 마이그레이션): lang / audio_deleted
+        # stt_job additive 컬럼(기존 prod DB 마이그레이션): lang / audio_deleted / 요약(우라라카)
         _stt_cols = [r[1] for r in conn.execute('PRAGMA table_info(stt_job)').fetchall()]
         if _stt_cols and 'lang' not in _stt_cols:
             conn.execute("ALTER TABLE stt_job ADD COLUMN lang TEXT NOT NULL DEFAULT 'auto'")
         if _stt_cols and 'audio_deleted' not in _stt_cols:
             conn.execute("ALTER TABLE stt_job ADD COLUMN audio_deleted INTEGER NOT NULL DEFAULT 0")
+        # 요약(우라라카) 라이프사이클: summary_status null|pending|processing|done|error + CAS
+        if _stt_cols and 'summary_status' not in _stt_cols:
+            conn.execute("ALTER TABLE stt_job ADD COLUMN summary_status TEXT")
+        if _stt_cols and 'summary_token' not in _stt_cols:
+            conn.execute("ALTER TABLE stt_job ADD COLUMN summary_token TEXT")
+        if _stt_cols and 'summary_claimed_at' not in _stt_cols:
+            conn.execute("ALTER TABLE stt_job ADD COLUMN summary_claimed_at TEXT")
+        if _stt_cols and 'summary_error' not in _stt_cols:
+            conn.execute("ALTER TABLE stt_job ADD COLUMN summary_error TEXT")
         # 위키 스레드 stable id (additive) — 메일↔위키↔Daily 연동 포인터
         sw_cols = [r[1] for r in conn.execute('PRAGMA table_info(shipwiki_card)').fetchall()]
         if sw_cols and 'wiki_thread_id' not in sw_cols:
@@ -6714,6 +6723,7 @@ def _stt_to_dict(r, include_body=True):
         'duration_sec': r['duration_sec'],
         'lang': (r['lang'] if 'lang' in r.keys() else 'auto'),
         'audio_deleted': (r['audio_deleted'] if 'audio_deleted' in r.keys() else 0),
+        'summary_status': (r['summary_status'] if 'summary_status' in r.keys() else None),
         'created_at': r['created_at'], 'updated_at': r['updated_at'],
         'error': r['error'],
     }
@@ -6876,6 +6886,96 @@ def api_stt_job_audio_delete(jid):
             return jsonify({'error': '음성 파일 삭제에 실패했습니다. 잠시 후 다시 시도하세요.'}), 500
     execute("""UPDATE stt_job SET audio_deleted=1, updated_at=datetime('now','localtime')
                WHERE id=? AND owner=?""", (jid, _stt_owner()))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/stt/jobs/<int:jid>/summarize', methods=['POST'])
+@login_required
+def api_stt_job_summarize(jid):
+    """요약(우라라카) 요청 — 요청 시에만 큐잉(GPT 토큰 절감). transcript 있는 done job만.
+    summary_status를 'pending'으로 세팅 → Mac 워커가 폴해서 우라라카(GPT terra)로 처리.
+    이미 pending/processing이면 중복 방지(409). done이어도 재요청은 허용(재생성)."""
+    r = query("SELECT * FROM stt_job WHERE id=? AND owner=?", (jid, _stt_owner()), one=True)
+    if not r:
+        abort(404)
+    if r['status'] != 'done' or not (r['transcript'] or '').strip():
+        return jsonify({'error': '변환 완료된(transcript 있는) 회의록만 요약할 수 있습니다.'}), 409
+    cur = r['summary_status'] if 'summary_status' in r.keys() else None
+    if cur in ('pending', 'processing'):
+        return jsonify({'ok': True, 'summary_status': cur, 'already': True})
+    # 원자적 CAS: SELECT~UPDATE 사이 worker claim(→processing)이나 타요청(→pending)이
+    # 끼면 rc=0 → 큐 상태를 덮지 않음(lease/중복 GPT호출 방지).
+    rc = execute_rc("""UPDATE stt_job SET summary_status='pending', summary_token=NULL,
+               summary_claimed_at=NULL, summary_error=NULL,
+               updated_at=datetime('now','localtime')
+               WHERE id=? AND owner=?
+                 AND (summary_status IS NULL OR summary_status IN ('done','error'))""",
+                    (jid, _stt_owner()))
+    if not rc:
+        # 경합 발생 — 실제 현재 상태를 재조회해 정확히 반환(row 삭제됐으면 404)
+        r2 = query("SELECT summary_status FROM stt_job WHERE id=? AND owner=?",
+                   (jid, _stt_owner()), one=True)
+        if not r2:
+            abort(404)
+        return jsonify({'ok': True, 'summary_status': r2['summary_status'], 'already': True})
+    return jsonify({'ok': True, 'summary_status': 'pending'})
+
+
+@app.route('/api/ext/stt/jobs/summary_pending', methods=['GET'])
+@api_key_required
+def api_ext_stt_summary_pending():
+    """워커: 요약 대기(또는 lease 만료된 processing) 1건 claim → transcript 반환."""
+    row = query("""SELECT id, summary_status, summary_token FROM stt_job
+                   WHERE summary_status='pending'
+                      OR (summary_status='processing'
+                          AND (summary_claimed_at IS NULL
+                               OR summary_claimed_at < datetime('now','localtime',?)))
+                   ORDER BY id ASC LIMIT 1""",
+                (f'-{STT_LEASE_SEC} seconds',), one=True)
+    if not row:
+        return jsonify({'job': None})
+    jid, prev_status, prev_token = row['id'], row['summary_status'], row['summary_token']
+    token = uuid.uuid4().hex
+    rc = execute_rc("""UPDATE stt_job SET summary_status='processing', summary_token=?,
+                       summary_claimed_at=datetime('now','localtime'),
+                       updated_at=datetime('now','localtime')
+                       WHERE id=? AND summary_status=?
+                         AND ((summary_token IS ?) OR (summary_token = ?))""",
+                    (token, jid, prev_status, prev_token, prev_token))
+    if not rc:
+        return jsonify({'job': None})
+    r = query("SELECT id, transcript FROM stt_job WHERE id=?", (jid,), one=True)
+    return jsonify({'job': {'id': r['id'], 'transcript': r['transcript'] or '',
+                            'claim_token': token}})
+
+
+@app.route('/api/ext/stt/jobs/<int:jid>/summary_result', methods=['POST'])
+@api_key_required
+def api_ext_stt_summary_result(jid):
+    """워커: 요약 결과 반영. status done → minutes_json 저장, error → summary_error."""
+    d = request.get_json(silent=True) or {}
+    status = d.get('status')
+    if status not in ('done', 'error'):
+        return jsonify({'error': "status는 'done' 또는 'error'만 허용됩니다."}), 400
+    token = d.get('claim_token')
+    if not token:
+        return jsonify({'error': 'claim_token 누락'}), 400
+    if status == 'error':
+        rc = execute_rc("""UPDATE stt_job SET summary_status='error', summary_error=?,
+                           updated_at=datetime('now','localtime')
+                           WHERE id=? AND summary_status='processing' AND summary_token=?""",
+                        (str(d.get('error') or 'unknown')[:1000], jid, token))
+    else:
+        minutes = d.get('minutes')
+        if not isinstance(minutes, dict):
+            return jsonify({'error': 'minutes는 JSON object여야 합니다.'}), 400
+        minutes_json = json.dumps(minutes, ensure_ascii=False)
+        rc = execute_rc("""UPDATE stt_job SET summary_status='done', minutes_json=?,
+                           summary_error=NULL, updated_at=datetime('now','localtime')
+                           WHERE id=? AND summary_status='processing' AND summary_token=?""",
+                        (minutes_json, jid, token))
+    if not rc:
+        return jsonify({'ok': False, 'stale': True}), 409
     return jsonify({'ok': True})
 
 
@@ -13554,6 +13654,12 @@ def _auto_migrate():
             if _sc and 'audio_deleted' not in _sc:
                 conn.execute("ALTER TABLE stt_job ADD COLUMN audio_deleted INTEGER NOT NULL DEFAULT 0")
                 print('[auto_migrate] stt_job.audio_deleted 추가됨')
+            # 요약(우라라카) 컬럼
+            for _col, _ddl in (('summary_status', 'TEXT'), ('summary_token', 'TEXT'),
+                               ('summary_claimed_at', 'TEXT'), ('summary_error', 'TEXT')):
+                if _sc and _col not in _sc:
+                    conn.execute(f"ALTER TABLE stt_job ADD COLUMN {_col} {_ddl}")
+                    print(f'[auto_migrate] stt_job.{_col} 추가됨')
         except Exception as e:
             print(f'[auto_migrate] stt_job 컬럼 점검 건너뜀: {e}')
 

@@ -38,7 +38,21 @@
   .mt-act{border:1px solid var(--border,#D3D1C7);background:var(--surface,#fff);
     border-radius:999px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer}
   .mt-act.warn{color:#B42318;border-color:#F0C9C4}
+  .mt-act.primary{background:var(--coral,#D85A30);color:#fff;border-color:var(--coral,#D85A30)}
   .mt-act:disabled{opacity:.45;cursor:default}
+  .mt-sum{margin-top:14px}
+  .mt-sum h3{font-size:12px;text-transform:uppercase;letter-spacing:.05em;
+    color:var(--text-tertiary,#888);margin:14px 0 6px;font-weight:700}
+  .mt-sum h3:first-child{margin-top:0}
+  .mt-sum .lead{font-size:14.5px;line-height:1.55;white-space:pre-wrap}
+  .mt-sum ul{margin:0;padding-left:18px}
+  .mt-sum li{font-size:14px;line-height:1.5;margin:3px 0}
+  .mt-sum .ai-who{font-weight:600;color:var(--coral,#D85A30)}
+  .mt-sum .ai-due{color:var(--text-tertiary,#888);font-size:12.5px}
+  .mt-sum .kw{display:inline-block;background:var(--surface-3,#EBEAE3);
+    color:var(--text-secondary,#5F5E5A);border-radius:999px;padding:2px 10px;
+    font-size:12px;margin:3px 4px 0 0}
+  .mt-sum-status{font-size:13px;color:var(--text-tertiary,#888);padding:6px 2px}
 </style>
 <div class="mt-wrap">
   <h1 style="font-size:20px;font-weight:700;margin:14px 4px 2px">회의록</h1>
@@ -68,7 +82,10 @@
     <h2>Transcript <span id="trMeta" style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-tertiary,#888)"></span></h2>
     <div id="trErr" class="mt-tr" style="display:none;background:#FDECEC;color:#B42318"></div>
     <div id="trBox" class="mt-tr"></div>
+    <div id="sumStatus" class="mt-sum-status" style="display:none"></div>
+    <div id="sumBox" class="mt-sum" style="display:none"></div>
     <div class="mt-actions">
+      <button id="sumBtn" class="mt-act primary" style="display:none"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg><span id="sumBtnTxt">요약 생성 (우라라카)</span></button>
       <button id="delAudioBtn" class="mt-act"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>원본 음성 삭제 (텍스트 보존)</button>
       <button id="delJobBtn" class="mt-act warn"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>회의록 전체 삭제</button>
     </div>
@@ -130,7 +147,69 @@ async function openJob(id){
     else { delA.disabled = false; delA.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>원본 음성 삭제 (텍스트 보존)'; }
     delA.onclick = ()=>delAudio(id);
     delJ.onclick = ()=>delJob(id);
+    renderSummary(j);
   }catch(e){ console.error(e); }
+}
+
+function renderSummary(j){
+  const btn = document.getElementById('sumBtn');
+  const btnTxt = document.getElementById('sumBtnTxt');
+  const box = document.getElementById('sumBox');
+  const stat = document.getElementById('sumStatus');
+  const canSummarize = j.status==='done' && j.transcript;
+  // 버튼: transcript 있는 완료건만 노출
+  btn.style.display = canSummarize ? '' : 'none';
+  btn.onclick = ()=>requestSummary(j.id);
+  const st = j.summary_status;
+  if(st==='pending' || st==='processing'){
+    btn.disabled = true; btnTxt.textContent = '요약 생성 중…';
+    stat.style.display='block'; stat.textContent = '우라라카가 요약 중입니다… (수십 초)';
+    box.style.display='none';
+    schedulePoll();
+  } else {
+    btn.disabled = false;
+    btnTxt.textContent = j.minutes ? '요약 다시 생성' : '요약 생성 (우라라카)';
+    if(st==='error'){ stat.style.display='block'; stat.textContent = '요약 실패 — 다시 시도해 주세요.'; }
+    else stat.style.display='none';
+    if(j.minutes){ box.style.display='block'; box.innerHTML = minutesHtml(j.minutes); }
+    else { box.style.display='none'; box.innerHTML=''; }
+  }
+}
+
+function minutesHtml(m){
+  m = m || {};
+  const esc = escapeHtml;
+  let h = '';
+  if(m.summary){ h += `<h3>요약</h3><div class="lead">${esc(m.summary)}</div>`; }
+  if(Array.isArray(m.decisions) && m.decisions.length){
+    h += '<h3>결정사항</h3><ul>' + m.decisions.map(d=>`<li>${esc(d)}</li>`).join('') + '</ul>';
+  }
+  if(Array.isArray(m.action_items) && m.action_items.length){
+    h += '<h3>액션 아이템</h3><ul>' + m.action_items.map(a=>{
+      const who = a.who?`<span class="ai-who">${esc(a.who)}</span> · `:'';
+      const due = a.due?` <span class="ai-due">(${esc(a.due)})</span>`:'';
+      return `<li>${who}${esc(a.what||'')}${due}</li>`;
+    }).join('') + '</ul>';
+  }
+  if(Array.isArray(m.open_issues) && m.open_issues.length){
+    h += '<h3>미결/후속</h3><ul>' + m.open_issues.map(d=>`<li>${esc(d)}</li>`).join('') + '</ul>';
+  }
+  if(Array.isArray(m.keywords) && m.keywords.length){
+    h += '<h3>키워드</h3><div>' + m.keywords.map(k=>`<span class="kw">${esc(k)}</span>`).join('') + '</div>';
+  }
+  return h || '<div class="mt-sum-status">요약 내용이 비어 있습니다.</div>';
+}
+
+async function requestSummary(id){
+  const btn = document.getElementById('sumBtn');
+  const btnTxt = document.getElementById('sumBtnTxt');
+  btn.disabled = true; btnTxt.textContent = '요청 중…';
+  try{
+    const r = await fetch(`${API}/${id}/summarize`, {method:'POST'});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||('summarize '+r.status));
+    await openJob(id);   // summary_status=pending 반영 → 폴링 시작
+  }catch(e){ alert('요약 요청 실패: '+e.message); btn.disabled=false; btnTxt.textContent='요약 생성 (우라라카)'; }
 }
 
 async function delAudio(id){
