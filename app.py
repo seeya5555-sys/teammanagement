@@ -893,6 +893,9 @@ def init_db(drop=False):
             conn.execute("ALTER TABLE stt_job ADD COLUMN summary_claimed_at TEXT")
         if _stt_cols and 'summary_error' not in _stt_cols:
             conn.execute("ALTER TABLE stt_job ADD COLUMN summary_error TEXT")
+        # 화자분리(pyannote) 결과: [{start,end,text,speaker}] JSON (없으면 plain transcript)
+        if _stt_cols and 'segments_json' not in _stt_cols:
+            conn.execute("ALTER TABLE stt_job ADD COLUMN segments_json TEXT")
         # 위키 스레드 stable id (additive) — 메일↔위키↔Daily 연동 포인터
         sw_cols = [r[1] for r in conn.execute('PRAGMA table_info(shipwiki_card)').fetchall()]
         if sw_cols and 'wiki_thread_id' not in sw_cols:
@@ -6716,6 +6719,48 @@ def _stt_owner():
     return session.get('username') or ''
 
 
+def _sanitize_stt_segments(raw_segs):
+    """워커가 보낸 화자분리 segments를 서버에서 재검증/정규화 → JSON str 또는 None.
+    segment 하나가 잘못돼도 예외 없이 skip(enhancement 실패가 result 500 되면 안 됨).
+    반환 None = 화자분리 없음(평문 fallback)."""
+    if not isinstance(raw_segs, list) or not raw_segs:
+        return None
+
+    def _fin(v):  # 유한 float만 허용(bool/문자열/None/NaN/Inf/초대형 → None)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError, OverflowError):  # 초대형 int → OverflowError 방어
+            return None
+        return f if math.isfinite(f) else None
+
+    clean = []
+    for s in raw_segs[:5000]:  # 상한: 폭주 방어
+        if not isinstance(s, dict):
+            continue
+        st, en = _fin(s.get('start')), _fin(s.get('end'))
+        if st is None or st < 0:  # 결측/음수 시작 → 0
+            st = 0.0
+        if en is None or en < st:  # 역전/결측 끝 → start
+            en = st
+        spk = s.get('speaker')
+        # bool 제외. 정수형(또는 정수값 float)이며 1..999 범위만 유효 화자번호(초대형 int 방어).
+        spk_val = None
+        if not isinstance(spk, bool) and isinstance(spk, int) and 1 <= spk <= 999:
+            spk_val = spk
+        elif (isinstance(spk, float) and math.isfinite(spk)
+              and 1 <= spk <= 999 and spk == int(spk)):
+            spk_val = int(spk)
+        clean.append({
+            'start': round(st, 2), 'end': round(en, 2),
+            'text': str(s.get('text') or '')[:2000], 'speaker': spk_val,
+        })
+    if not clean:
+        return None
+    return json.dumps(clean, ensure_ascii=False)
+
+
 def _stt_to_dict(r, include_body=True):
     d = {
         'id': r['id'], 'title': r['title'] or '(제목없음)',
@@ -6733,6 +6778,13 @@ def _stt_to_dict(r, include_body=True):
             d['minutes'] = json.loads(r['minutes_json']) if r['minutes_json'] else None
         except Exception:
             d['minutes'] = None
+        # 화자분리 segments(있으면) — [{start,end,text,speaker}]
+        d['segments'] = None
+        if 'segments_json' in r.keys() and r['segments_json']:
+            try:
+                d['segments'] = json.loads(r['segments_json'])
+            except Exception:
+                d['segments'] = None
     return d
 
 
@@ -7059,10 +7111,15 @@ def api_ext_stt_result(jid):
         transcript = d.get('transcript') or ''
         minutes = d.get('minutes')
         minutes_json = json.dumps(minutes, ensure_ascii=False) if minutes is not None else None
+        # 화자분리 segments 정규화(신뢰경계: 워커 입력을 서버에서 재검증).
+        # segment 하나가 잘못돼도 result 500 금지(enhancement 실패가 job 재처리로 번지면 안 됨).
+        segments_json = _sanitize_stt_segments(d.get('segments'))
         rc = execute_rc("""UPDATE stt_job SET status='done', transcript=?, minutes_json=?,
-                           duration_sec=?, error=NULL, updated_at=datetime('now','localtime')
+                           segments_json=?, duration_sec=?, error=NULL,
+                           updated_at=datetime('now','localtime')
                            WHERE id=? AND status='processing' AND claim_token=?""",
-                        (transcript, minutes_json, d.get('duration_sec'), jid, token))
+                        (transcript, minutes_json, segments_json, d.get('duration_sec'),
+                         jid, token))
     if not rc:
         return jsonify({'ok': False, 'stale': True}), 409
     return jsonify({'ok': True})

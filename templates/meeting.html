@@ -31,6 +31,18 @@
   .b-err{background:#FDECEC;color:#B42318}
   .mt-tr{background:var(--surface-2,#F4F3EE);border-radius:10px;padding:12px 14px;
     font-size:14px;white-space:pre-wrap;max-height:340px;overflow:auto}
+  /* 화자분리 발화 블록 */
+  .mt-utt{margin-bottom:12px}
+  .mt-utt:last-child{margin-bottom:0}
+  .mt-utt-h{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+  .mt-utt-t{white-space:pre-wrap;line-height:1.5}
+  .mt-spk{font-weight:700;font-size:12px;padding:2px 9px;border-radius:999px;color:#fff}
+  .mt-ts{border:none;background:none;color:var(--text-tertiary,#888);font-size:12px;
+    cursor:pointer;padding:0;font-variant-numeric:tabular-nums;text-decoration:underline dotted}
+  .mt-ts:hover{color:var(--coral,#D85A30)}
+  .mt-spk-1{background:#D85A30} .mt-spk-2{background:#2E7DAF} .mt-spk-3{background:#3B9C6E}
+  .mt-spk-4{background:#8A5CD1} .mt-spk-5{background:#C0392B} .mt-spk-6{background:#B08900}
+  .mt-spk-x{background:#9AA0A6}
   .mt-empty{color:var(--text-tertiary,#888);font-size:13px;padding:8px 4px}
   .mt-sel{border:1px solid var(--border,#D3D1C7);border-radius:999px;padding:11px 14px;
     font-size:14px;background:var(--surface,#fff);color:var(--text-primary,#222)}
@@ -151,6 +163,42 @@ function resetPlayer(){
   document.getElementById('playerErr').style.display='none';
 }
 
+// transcript 렌더: 화자분리 segments가 있고 화자 2명 이상이면 화자별 블록, 아니면 평문.
+// (transcript 텍스트는 신뢰경계 밖 — textContent로만 넣어 XSS 차단)
+function renderTranscript(box, j){
+  box.innerHTML = '';
+  const segs = Array.isArray(j.segments) ? j.segments : null;
+  const spkSet = segs ? new Set(segs.map(s=>s.speaker)
+    .filter(v=>typeof v==='number' && isFinite(v) && v>=1)) : new Set();
+  if(!segs || spkSet.size < 2){                 // 화자 1명/없음 → 평문(기존 동작)
+    box.textContent = j.transcript; return;
+  }
+  // 연속 동일화자 segment 묶기(텍스트 있는 것만)
+  const groups = []; let cur = null;
+  for(const s of segs){
+    const txt = (s.text||'').trim(); if(!txt) continue;
+    const spk = (typeof s.speaker==='number' && isFinite(s.speaker) && s.speaker>=1) ? s.speaker : null;
+    if(cur && cur.speaker === spk){ cur.text += ' ' + txt; cur.end = s.end; }
+    else { cur = {speaker:spk, text:txt, start:s.start, end:s.end}; groups.push(cur); }
+  }
+  if(!groups.length){ box.textContent = j.transcript; return; }   // 빈 그룹 → 평문 fallback
+  const audioEl = document.getElementById('audioEl');
+  for(const g of groups){
+    const row = document.createElement('div'); row.className = 'mt-utt';
+    const lab = document.createElement('span');
+    if(g.speaker!=null){ lab.className='mt-spk mt-spk-'+(((g.speaker-1)%6)+1); lab.textContent='화자 '+g.speaker; }
+    else { lab.className='mt-spk mt-spk-x'; lab.textContent='화자 ?'; }   // 미상 화자
+    const ts = document.createElement('button');
+    ts.type='button'; ts.className='mt-ts'; ts.textContent = fmtDur(g.start);
+    ts.title = '이 시점부터 재생';
+    ts.onclick = ()=>{ try{ if(audioEl && audioEl.getAttribute('src')){ audioEl.currentTime = g.start; audioEl.play(); } }catch(_){} };
+    const head = document.createElement('div'); head.className='mt-utt-h';
+    head.appendChild(lab); head.appendChild(ts);
+    const body = document.createElement('div'); body.className='mt-utt-t'; body.textContent = g.text;
+    row.appendChild(head); row.appendChild(body); box.appendChild(row);
+  }
+}
+
 async function loadJobs(){
   try{
     const r = await fetch(API, {headers:{'Accept':'application/json'}});
@@ -217,7 +265,7 @@ async function openJob(id){
     if(j.status==='error'){ errEl.style.display='block'; errEl.textContent='변환 오류: '+(j.error||'알 수 없음'); }
     else errEl.style.display='none';
     const trBox = document.getElementById('trBox');
-    if(j.transcript){ trBox.style.display='block'; trBox.textContent = j.transcript; trBox.style.color=''; }
+    if(j.transcript){ trBox.style.display='block'; trBox.style.color=''; renderTranscript(trBox, j); }
     else if(j.status==='done'){ trBox.style.display='block'; trBox.style.color='var(--text-tertiary,#888)';
       trBox.textContent = '(변환 결과 텍스트가 비어 있음 — 무음이거나 인식된 발화가 없습니다)'; }
     else { trBox.style.display='none'; trBox.textContent=''; }
