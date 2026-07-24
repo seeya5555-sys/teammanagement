@@ -1,6 +1,7 @@
-{# 회의록 STT Phase 0a — templates/meeting.html
-   범위: 녹음/업로드 → job 생성 → 상태 폴링 → transcript 표시.
-   화자분리·요약가공·Daily/Dock 버튼은 Phase 0b/1/2 (여기선 자리만, 비활성). #}
+{# 회의록 STT — templates/meeting.html
+   범위: 녹음/업로드 → job 생성 → 상태 폴링 → transcript/요약 표시.
+   UI: 회의록별 아코디언(다중 펼침·기본 접힘) · 날짜 그룹핑 · 제목 인라인 수정 · 음성 다운로드.
+   폴링 재렌더 시 DOM 노드 재사용(detach/reattach) → 재생중 오디오·펼침·수정 상태 보존. #}
 {% extends "base.html" %}
 {% block content %}
 <style>
@@ -16,15 +17,39 @@
   .mt-up-btn{background:var(--surface-2,#F4F3EE);color:var(--text-primary,#222);
     border:1px solid var(--border,#D3D1C7)}
   .mt-hint{color:var(--text-tertiary,#888);font-size:12px;margin-top:8px}
-  .mt-job{display:flex;align-items:center;gap:12px;padding:11px 4px;
-    border-bottom:1px solid var(--border-subtle,#E5E4DD);cursor:pointer}
-  .mt-job-main{flex:1;min-width:0}
-  .mt-job .ttl{font-weight:600;font-size:14.5px}
-  .mt-job .meta{color:var(--text-tertiary,#888);font-size:12px}
-  .mt-row-del{flex:none;background:none;border:none;cursor:pointer;font-size:16px;
-    padding:6px;line-height:1;border-radius:8px;color:var(--text-tertiary,#888);display:flex;align-items:center}
-  .mt-row-del:hover{color:var(--red,#c0392b);background:var(--border-subtle,#EEE)}
-  .mt-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .mt-sel{border:1px solid var(--border,#D3D1C7);border-radius:999px;padding:11px 14px;
+    font-size:14px;background:var(--surface,#fff);color:var(--text-primary,#222)}
+  .mt-empty{color:var(--text-tertiary,#888);font-size:13px;padding:8px 4px}
+  /* 날짜 그룹 헤더 */
+  .mt-date{font-size:12px;font-weight:700;color:var(--text-tertiary,#888);
+    letter-spacing:.04em;margin:14px 2px 6px}
+  .mt-date:first-child{margin-top:2px}
+  /* 회의록 아코디언 카드 */
+  .mt-mtg{border:1px solid var(--border-subtle,#E5E4DD);border-radius:12px;margin-bottom:8px;
+    background:var(--surface,#fff);overflow:hidden}
+  .mt-mtg.open{border-color:var(--border,#D3D1C7)}
+  .mt-mtg-head{display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer}
+  .mt-mtg-head:hover{background:var(--surface-2,#F7F6F1)}
+  .mt-mtg-chev{width:16px;height:16px;flex:none;transition:transform .18s;color:var(--text-tertiary,#888)}
+  .mt-mtg.open .mt-mtg-chev{transform:rotate(0deg)}
+  .mt-mtg:not(.open) .mt-mtg-chev{transform:rotate(-90deg)}
+  .mt-mtg-main{flex:1;min-width:0}
+  .mt-mtg-ttl{font-weight:600;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mt-mtg-meta{color:var(--text-tertiary,#888);font-size:12px;margin-top:1px}
+  .mt-mtg-edit,.mt-mtg-del{flex:none;background:none;border:none;cursor:pointer;padding:6px;
+    line-height:1;border-radius:8px;color:var(--text-tertiary,#888);display:flex;align-items:center}
+  .mt-mtg-edit:hover{color:var(--coral,#D85A30);background:var(--border-subtle,#EEE)}
+  .mt-mtg-del:hover{color:var(--red,#c0392b);background:var(--border-subtle,#EEE)}
+  .mt-mtg-body{padding:4px 14px 14px;border-top:1px solid var(--border-subtle,#EEE)}
+  /* 제목 인라인 수정 */
+  .mt-edit-row{display:flex;gap:6px;align-items:center;flex:1;min-width:0}
+  .mt-edit-in{flex:1;min-width:0;border:1px solid var(--coral,#D85A30);border-radius:8px;
+    padding:6px 9px;font-size:14.5px;background:var(--surface,#fff);color:var(--text-primary,#222)}
+  .mt-edit-ok,.mt-edit-no{flex:none;border:none;border-radius:8px;padding:6px 10px;font-size:13px;
+    font-weight:600;cursor:pointer}
+  .mt-edit-ok{background:var(--coral,#D85A30);color:#fff}
+  .mt-edit-no{background:var(--surface-3,#EBEAE3);color:var(--text-secondary,#5F5E5A)}
+  .mt-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;flex:none}
   .b-done{background:var(--teal-bg,#E1F5EE);color:var(--teal-text,#085041)}
   .b-proc{background:var(--blue-bg,#E6F1FB);color:var(--blue-text,#0C447C)}
   .b-pend{background:var(--surface-3,#EBEAE3);color:var(--text-secondary,#5F5E5A)}
@@ -43,16 +68,13 @@
   .mt-spk-1{background:#D85A30} .mt-spk-2{background:#2E7DAF} .mt-spk-3{background:#3B9C6E}
   .mt-spk-4{background:#8A5CD1} .mt-spk-5{background:#C0392B} .mt-spk-6{background:#B08900}
   .mt-spk-x{background:#9AA0A6}
-  .mt-empty{color:var(--text-tertiary,#888);font-size:13px;padding:8px 4px}
-  .mt-sel{border:1px solid var(--border,#D3D1C7);border-radius:999px;padding:11px 14px;
-    font-size:14px;background:var(--surface,#fff);color:var(--text-primary,#222)}
   .mt-actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
   .mt-act{border:1px solid var(--border,#D3D1C7);background:var(--surface,#fff);
-    border-radius:999px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer}
+    border-radius:999px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--text-primary,#222)}
   .mt-act.warn{color:#B42318;border-color:#F0C9C4}
   .mt-act.primary{background:var(--coral,#D85A30);color:#fff;border-color:var(--coral,#D85A30)}
   .mt-act:disabled{opacity:.45;cursor:default}
-  .mt-sum{margin-top:14px}
   .mt-sum h3{font-size:12px;text-transform:uppercase;letter-spacing:.05em;
     color:var(--text-tertiary,#888);margin:14px 0 6px;font-weight:700}
   .mt-sum h3:first-child{margin-top:0}
@@ -66,7 +88,7 @@
     font-size:12px;margin:3px 4px 0 0}
   .mt-sum-status{font-size:13px;color:var(--text-tertiary,#888);padding:6px 2px}
   /* 미디어 플레이어 */
-  .mt-player{margin-bottom:14px}
+  .mt-player{margin-bottom:6px}
   .mt-player audio{width:100%;height:38px}
   .mt-speed{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
   .mt-speed-lbl{font-size:12px;color:var(--text-tertiary,#888);margin-right:2px}
@@ -74,7 +96,10 @@
     color:var(--text-secondary,#5F5E5A);border-radius:999px;padding:4px 12px;
     font-size:12.5px;font-weight:600;cursor:pointer}
   .mt-spd.active{background:var(--coral,#D85A30);color:#fff;border-color:var(--coral,#D85A30)}
-  /* 접기/펼치기 섹션 */
+  .mt-dl{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--coral,#D85A30);
+    text-decoration:none;display:inline-flex;align-items:center;gap:4px}
+  .mt-dl:hover{text-decoration:underline}
+  /* 상세 내부 섹션 접기/펼치기 */
   .mt-sec{margin-bottom:6px}
   .mt-sec-h{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;
     cursor:pointer;padding:8px 2px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;
@@ -86,7 +111,7 @@
 </style>
 <div class="mt-wrap">
   <h1 style="font-size:20px;font-weight:700;margin:14px 4px 2px">회의록</h1>
-  <div class="mt-hint" style="margin:0 4px 14px">음성 → 텍스트 (Phase 0a: 변환만 · 화자분리/요약은 다음 단계)</div>
+  <div class="mt-hint" style="margin:0 4px 14px">음성 → 텍스트 · 화자분리 · 우라라카 요약</div>
 
   <div class="mt-card">
     <h2>새 회의록</h2>
@@ -107,73 +132,63 @@
     <h2>내 회의록</h2>
     <div id="jobList"><div class="mt-empty">불러오는 중…</div></div>
   </div>
-
-  <div class="mt-card" id="detailCard" style="display:none">
-    <!-- 미디어 플레이어(원본 재생) — seek·배속. 원본 삭제 시 숨김 -->
-    <div id="playerWrap" class="mt-player" style="display:none">
-      <audio id="audioEl" controls preload="none"></audio>
-      <div class="mt-speed">
-        <span class="mt-speed-lbl">배속</span>
-        <button type="button" class="mt-spd" data-spd="1">1x</button>
-        <button type="button" class="mt-spd" data-spd="1.25">1.25x</button>
-        <button type="button" class="mt-spd" data-spd="1.5">1.5x</button>
-        <button type="button" class="mt-spd" data-spd="2">2x</button>
-      </div>
-      <div id="playerErr" class="mt-sum-status" style="display:none;color:#B42318">음성 파일을 재생할 수 없습니다 (파일 없음 또는 오류).</div>
-    </div>
-
-    <div class="mt-sec" id="secTr">
-      <button type="button" class="mt-sec-h" data-sec="secTr"><svg class="chev ic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>Transcript <span id="trMeta" class="h-extra"></span></button>
-      <div class="mt-sec-body">
-        <div id="trErr" class="mt-tr" style="display:none;background:#FDECEC;color:#B42318"></div>
-        <div id="trBox" class="mt-tr"></div>
-      </div>
-    </div>
-
-    <div class="mt-sec collapsed" id="secSum" style="display:none">
-      <button type="button" class="mt-sec-h" data-sec="secSum"><svg class="chev ic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>요약</button>
-      <div class="mt-sec-body">
-        <div id="sumStatus" class="mt-sum-status" style="display:none"></div>
-        <div id="sumBox" class="mt-sum" style="display:none"></div>
-      </div>
-    </div>
-
-    <div class="mt-actions">
-      <button id="sumBtn" class="mt-act primary" style="display:none"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg><span id="sumBtnTxt">요약 생성 (우라라카)</span></button>
-      <button id="delAudioBtn" class="mt-act"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>원본 음성 삭제 (텍스트 보존)</button>
-      <button id="delJobBtn" class="mt-act warn"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>회의록 전체 삭제</button>
-    </div>
-  </div>
 </div>
 
 <script>
 const API = '/api/stt/jobs';
-let mediaRecorder = null, chunks = [], selectedId = null, pollTimer = null, recTimer = null, recSec = 0;
-let openedId = null;   // 현재 상세카드에 그려진 job(폴링 refresh vs job 전환 구분)
-let openReq = 0;       // openJob 세대 토큰 — 늦게 온 이전 응답이 최신 UI 덮어쓰는 것 차단
-let lastHasMin = false;   // 현재 job의 직전 요약 유무(false→true 완료 전이 시 1회만 auto-expand)
+let mediaRecorder = null, chunks = [], recTimer = null, recSec = 0;
+let pollTimer = null;
 
-// 플레이어 정리: pause + src 제거(이전 오디오 재생/src 잔존 방지)
-function resetPlayer(){
-  const a = document.getElementById('audioEl');
-  try{ a.pause(); }catch(_){}
-  a.removeAttribute('src'); try{ a.load(); }catch(_){}
-  delete a.dataset.jid;
-  document.getElementById('playerWrap').style.display='none';
-  document.getElementById('playerErr').style.display='none';
+// ── 상태 ──
+let listData = [];                 // 목록 메타(GET /jobs) — id DESC. status·summary_status·updated_at 포함
+const detailCache = {};            // id -> 상세(GET /jobs/:id)
+const expanded = new Set();        // 펼쳐진 job id (문자열)
+const speedById = {};              // id -> 재생배속(재렌더 넘어 보존)
+const inFlight = {};               // id -> 상세 GET 진행중 가드(중복 fetch 방지)
+const refetchWanted = {};          // id -> GET 진행중 재요청 요망(action 후 stale 방지)
+const secState = {};               // id -> {tr,sum} 섹션 접힘상태(재렌더 넘어 보존; undefined면 기본값)
+const actionBusy = {};             // id -> 액션(요약/삭제) 재진입 가드
+let editingId = null;              // 제목 수정중 job id
+let loadGen = 0;                   // loadJobs 세대토큰(늦은 응답이 최신 덮는 race 방지)
+const cardEls = {};                // id -> 카드 DOM 노드(재사용 → 구조변경시 노드이동, 아니면 제자리 갱신)
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtDur(sec){ sec=Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return m?`${m}분 ${s}초`:`${s}초`; }
+function badgeHtml(s){
+  return s==='done'?'<span class="mt-badge b-done">완료</span>'
+    : s==='processing'?'<span class="mt-badge b-proc">변환중</span>'
+    : s==='error'?'<span class="mt-badge b-err">오류</span>'
+    : '<span class="mt-badge b-pend">대기</span>';
 }
 
-// transcript 렌더: 화자분리 segments가 있고 화자 2명 이상이면 화자별 블록, 아니면 평문.
-// (transcript 텍스트는 신뢰경계 밖 — textContent로만 넣어 XSS 차단)
-function renderTranscript(box, j){
+// created_at("YYYY-MM-DD HH:MM:SS") → 날짜키/라벨
+function dateKey(s){ return (s||'').slice(0,10); }
+function dateLabel(key){
+  if(!key) return '날짜 미상';
+  const now = new Date();
+  const pad = n=>String(n).padStart(2,'0');
+  const today = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+  const y = new Date(now.getTime()-86400000);
+  const yday = `${y.getFullYear()}-${pad(y.getMonth()+1)}-${pad(y.getDate())}`;
+  if(key===today) return '오늘';
+  if(key===yday) return '어제';
+  const p = key.split('-');
+  if(p.length===3){
+    const wd = ['일','월','화','수','목','금','토'];
+    const d = new Date(+p[0], +p[1]-1, +p[2]);
+    const w = isFinite(d.getTime()) ? ` (${wd[d.getDay()]})` : '';
+    return `${p[0]}. ${+p[1]}. ${+p[2]}.${w}`;
+  }
+  return key;
+}
+
+// ── transcript 렌더(화자분리 or 평문). 텍스트는 신뢰경계 밖 → textContent만. ──
+function renderTranscript(box, j, audioEl){
   box.innerHTML = '';
   const segs = Array.isArray(j.segments) ? j.segments : null;
   const spkSet = segs ? new Set(segs.map(s=>s.speaker)
     .filter(v=>typeof v==='number' && isFinite(v) && v>=1)) : new Set();
-  if(!segs || spkSet.size < 2){                 // 화자 1명/없음 → 평문(기존 동작)
-    box.textContent = j.transcript; return;
-  }
-  // 연속 동일화자 segment 묶기(텍스트 있는 것만)
+  if(!segs || spkSet.size < 2){ box.textContent = j.transcript; return; }
   const groups = []; let cur = null;
   for(const s of segs){
     const txt = (s.text||'').trim(); if(!txt) continue;
@@ -181,16 +196,14 @@ function renderTranscript(box, j){
     if(cur && cur.speaker === spk){ cur.text += ' ' + txt; cur.end = s.end; }
     else { cur = {speaker:spk, text:txt, start:s.start, end:s.end}; groups.push(cur); }
   }
-  if(!groups.length){ box.textContent = j.transcript; return; }   // 빈 그룹 → 평문 fallback
-  const audioEl = document.getElementById('audioEl');
+  if(!groups.length){ box.textContent = j.transcript; return; }
   for(const g of groups){
     const row = document.createElement('div'); row.className = 'mt-utt';
     const lab = document.createElement('span');
     if(g.speaker!=null){ lab.className='mt-spk mt-spk-'+(((g.speaker-1)%6)+1); lab.textContent='화자 '+g.speaker; }
-    else { lab.className='mt-spk mt-spk-x'; lab.textContent='화자 ?'; }   // 미상 화자
+    else { lab.className='mt-spk mt-spk-x'; lab.textContent='화자 ?'; }
     const ts = document.createElement('button');
-    ts.type='button'; ts.className='mt-ts'; ts.textContent = fmtDur(g.start);
-    ts.title = '이 시점부터 재생';
+    ts.type='button'; ts.className='mt-ts'; ts.textContent = fmtDur(g.start); ts.title = '이 시점부터 재생';
     ts.onclick = ()=>{ try{ if(audioEl && audioEl.getAttribute('src')){ audioEl.currentTime = g.start; audioEl.play(); } }catch(_){} };
     const head = document.createElement('div'); head.className='mt-utt-h';
     head.appendChild(lab); head.appendChild(ts);
@@ -199,128 +212,8 @@ function renderTranscript(box, j){
   }
 }
 
-async function loadJobs(){
-  try{
-    const r = await fetch(API, {headers:{'Accept':'application/json'}});
-    if(!r.ok) throw new Error('list '+r.status);
-    const jobs = await r.json();
-    const el = document.getElementById('jobList');
-    if(!jobs.length){ el.innerHTML = '<div class="mt-empty">아직 회의록이 없습니다.</div>'; return; }
-    const badge = s => s==='done'?'<span class="mt-badge b-done">완료</span>'
-      : s==='processing'?'<span class="mt-badge b-proc">변환중</span>'
-      : s==='error'?'<span class="mt-badge b-err">오류</span>'
-      : '<span class="mt-badge b-pend">대기</span>';
-    el.innerHTML = jobs.map(j=>`
-      <div class="mt-job" data-id="${j.id}">
-        <div class="mt-job-main">
-          <div class="ttl">${escapeHtml(j.title)}</div>
-          <div class="meta">${j.created_at||''}${j.duration_sec?' · '+fmtDur(j.duration_sec):''}${j.status==='error'&&j.error?' · <span style="color:#B42318">'+escapeHtml(j.error)+'</span>':''}</div>
-        </div>
-        ${badge(j.status)}
-        <button class="mt-row-del" data-del="${j.id}" title="삭제" aria-label="삭제"><svg class="ic-svg ic-svg--solo" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>
-      </div>`).join('');
-    el.querySelectorAll('.mt-job').forEach(n=>n.onclick=()=>openJob(n.dataset.id));
-    el.querySelectorAll('.mt-row-del').forEach(b=>b.onclick=e=>{ e.stopPropagation(); delJob(b.dataset.del); });
-    // 처리중/대기 있으면 계속 폴링
-    if(jobs.some(j=>j.status==='pending'||j.status==='processing')) schedulePoll();
-  }catch(e){ console.error(e); }
-}
-
-async function openJob(id){
-  selectedId = id;
-  const isNew = String(id) !== String(openedId);
-  const myReq = ++openReq;   // 이 호출의 세대
-  if(isNew){
-    // job 전환: fetch 응답 전에 즉시 뷰 상태 리셋(느린/실패 요청에도 이전 job content·오디오·펼침 누수 방지)
-    document.getElementById('detailCard').style.display='none';       // 성공 응답 전까지 이전 job 내용 숨김
-    resetPlayer();
-    lastHasMin = false;
-    document.getElementById('secTr').classList.remove('collapsed');   // Transcript 기본 펼침
-    document.getElementById('secSum').classList.add('collapsed');     // 요약 기본 접힘
-  }
-  try{
-    const r = await fetch(`${API}/${id}`);
-    if(myReq !== openReq) return;   // 더 최신 openJob이 시작됨 → 이 stale 응답 폐기
-    if(!r.ok) throw new Error('get '+r.status);
-    const j = await r.json();
-    if(myReq !== openReq) return;   // json 파싱 사이 전환됐을 수도 → 재확인
-    openedId = id;
-    const show = j.transcript || j.status==='error' || j.status==='done';
-    document.getElementById('detailCard').style.display = show ? 'block':'none';
-    document.getElementById('trMeta').textContent = j.duration_sec ? '· '+fmtDur(j.duration_sec) : '';
-    // 미디어 플레이어: done + 음성 미삭제일 때만 노출(seek/배속은 <audio controls>+playbackRate)
-    const playerWrap = document.getElementById('playerWrap');
-    const audioEl = document.getElementById('audioEl');
-    if(j.status==='done' && !j.audio_deleted){
-      playerWrap.style.display='block';
-      if(audioEl.dataset.jid !== String(id)){   // job 전환/재개 시에만 src 설정(재로딩 방지)
-        document.getElementById('playerErr').style.display='none';
-        audioEl.src = `${API}/${id}/audio`; audioEl.dataset.jid = String(id);
-        setSpeed(audioEl, 1);   // 새 오디오 로드 시에만 배속 1x로 리셋(폴링 중 재생속도 보존)
-      }
-    } else {
-      resetPlayer();
-    }
-    const errEl = document.getElementById('trErr');
-    if(j.status==='error'){ errEl.style.display='block'; errEl.textContent='변환 오류: '+(j.error||'알 수 없음'); }
-    else errEl.style.display='none';
-    const trBox = document.getElementById('trBox');
-    if(j.transcript){ trBox.style.display='block'; trBox.style.color=''; renderTranscript(trBox, j); }
-    else if(j.status==='done'){ trBox.style.display='block'; trBox.style.color='var(--text-tertiary,#888)';
-      trBox.textContent = '(변환 결과 텍스트가 비어 있음 — 무음이거나 인식된 발화가 없습니다)'; }
-    else { trBox.style.display='none'; trBox.textContent=''; }
-    // 삭제 버튼: 원본 음성 삭제(텍스트 보존) / 회의록 전체 삭제
-    const delA = document.getElementById('delAudioBtn');
-    const delJ = document.getElementById('delJobBtn');
-    if(j.audio_deleted){ delA.disabled = true; delA.textContent = '음성 삭제됨 (텍스트 보존)'; }
-    else { delA.disabled = false; delA.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>원본 음성 삭제 (텍스트 보존)'; }
-    delA.onclick = ()=>delAudio(id);
-    delJ.onclick = ()=>delJob(id);
-    renderSummary(j);
-    // 요약 섹션 auto-expand: 요약 없음→있음(완료) 전이 시 1회만. pending→processing 재펼침·사용자 수동접힘 무시 안 함.
-    // (요약생성 클릭 시점의 펼침은 requestSummary가 직접 처리)
-    const hasMin = !!j.minutes;
-    if(isNew){
-      if(hasMin) document.getElementById('secSum').classList.remove('collapsed');  // 요약 있는 job 열면 펼침
-    } else if(hasMin && !lastHasMin){
-      document.getElementById('secSum').classList.remove('collapsed');             // 요약 완료(신규 도착) 1회 펼침
-    }
-    lastHasMin = hasMin;
-  }catch(e){ console.error(e); }
-}
-
-function renderSummary(j){
-  const btn = document.getElementById('sumBtn');
-  const btnTxt = document.getElementById('sumBtnTxt');
-  const box = document.getElementById('sumBox');
-  const stat = document.getElementById('sumStatus');
-  const canSummarize = j.status==='done' && j.transcript;
-  // 버튼: transcript 있는 완료건만 노출
-  btn.style.display = canSummarize ? '' : 'none';
-  btn.onclick = ()=>requestSummary(j.id);
-  const st = j.summary_status;
-  // 요약 섹션 노출만 담당(접힘/펼침 결정은 openJob이 전이 기반으로 처리 — poll마다 재펼침 방지)
-  const secSum = document.getElementById('secSum');
-  secSum.style.display = canSummarize ? 'block' : 'none';
-  if(st==='pending' || st==='processing'){
-    btn.disabled = true; btnTxt.textContent = '요약 생성 중…';
-    stat.style.display='block'; stat.textContent = '우라라카가 요약 중입니다… (수십 초)';
-    box.style.display='none';
-    schedulePoll();
-  } else {
-    btn.disabled = false;
-    btnTxt.textContent = j.minutes ? '요약 다시 생성' : '요약 생성 (우라라카)';
-    if(st==='error'){ stat.style.display='block'; stat.textContent = '요약 실패 — 다시 시도해 주세요.'; }
-    else stat.style.display='none';
-    if(j.minutes){ box.style.display='block'; box.innerHTML = minutesHtml(j.minutes); }
-    else { box.style.display='none'; box.innerHTML=''; }
-  }
-}
-
 function minutesHtml(m){
-  m = m || {};
-  const esc = escapeHtml;
-  let h = '';
+  m = m || {}; const esc = escapeHtml; let h = '';
   if(m.summary){ h += `<h3>요약</h3><div class="lead">${esc(m.summary)}</div>`; }
   if(Array.isArray(m.decisions) && m.decisions.length){
     h += '<h3>결정사항</h3><ul>' + m.decisions.map(d=>`<li>${esc(d)}</li>`).join('') + '</ul>';
@@ -341,81 +234,375 @@ function minutesHtml(m){
   return h || '<div class="mt-sum-status">요약 내용이 비어 있습니다.</div>';
 }
 
+// ── 카드 헤더 갱신(제목/메타/뱃지/수정입력) — 오디오·body 무영향(텍스트만) ──
+function updateHead(card, j){
+  const head = card.querySelector('.mt-mtg-head');
+  const main = head.querySelector('.mt-mtg-main');
+  const badgeSlot = head.querySelector('.mt-mtg-badge');
+  badgeSlot.innerHTML = badgeHtml(j.status);
+  const editing = String(editingId) === String(j.id);
+  if(editing){
+    if(!main.querySelector('.mt-edit-in')){
+      main.innerHTML = '';
+      const row = document.createElement('div'); row.className='mt-edit-row';
+      const inp = document.createElement('input'); inp.className='mt-edit-in'; inp.type='text';
+      inp.value = (j.title==='(제목없음)'?'':j.title)||''; inp.maxLength = 200;
+      const ok = document.createElement('button'); ok.className='mt-edit-ok'; ok.textContent='저장';
+      const no = document.createElement('button'); no.className='mt-edit-no'; no.textContent='취소';
+      row.appendChild(inp); row.appendChild(ok); row.appendChild(no); main.appendChild(row);
+      const stop = e=>e.stopPropagation();
+      row.addEventListener('click', stop);
+      ok.onclick = e=>{ stop(e); saveTitle(j.id, inp.value); };
+      no.onclick = e=>{ stop(e); editingId=null; render(); };
+      inp.onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); saveTitle(j.id, inp.value); }
+        else if(e.key==='Escape'){ editingId=null; render(); } };
+      setTimeout(()=>{ try{ inp.focus(); inp.select(); }catch(_){} }, 0);
+    }
+  } else {
+    const ttl = escapeHtml(j.title);
+    const meta = `${j.created_at? j.created_at.slice(11,16):''}${j.duration_sec?' · '+fmtDur(j.duration_sec):''}`
+      + (j.status==='error'&&j.error?' · <span style="color:#B42318">'+escapeHtml(j.error)+'</span>':'');
+    main.innerHTML = `<div class="mt-mtg-ttl">${ttl}</div><div class="mt-mtg-meta">${meta}</div>`;
+  }
+}
+
+// ── 카드 body 렌더(펼침 시) ──
+// 구조: body = [player-container(1회 생성·불변, 오디오 노드 유지)] + [dynamic-container(변경시만 재렌더)].
+// 플레이어를 dynamic과 분리해, 요약완료/제목수정 등으로 dynamic이 재렌더돼도 재생중 오디오가 안 끊김.
+function renderBody(card, id){
+  const j = detailCache[id];
+  const body = card.querySelector('.mt-mtg-body');
+  if(!j){
+    if(body.dataset.built !== '1') body.innerHTML = '<div class="mt-sum-status">불러오는 중…</div>';
+    fetchDetail(id); return;
+  }
+  if(body.dataset.built !== '1'){
+    body.innerHTML = '';
+    const pc = document.createElement('div'); pc.className='mt-body-player';
+    const dc = document.createElement('div'); dc.className='mt-body-dyn';
+    body.appendChild(pc); body.appendChild(dc);
+    body.dataset.built = '1'; body.dataset.playerSig = ''; body.dataset.dynSig = '';
+  }
+  const pc = body.querySelector('.mt-body-player');
+  const dc = body.querySelector('.mt-body-dyn');
+
+  // 플레이어: canAudio 상태가 바뀔 때만 재구성(재생 중엔 절대 안 건드림)
+  const canAudio = j.status==='done' && !j.audio_deleted;
+  const playerSig = canAudio ? ('audio:'+id) : 'none';
+  if(body.dataset.playerSig !== playerSig){
+    body.dataset.playerSig = playerSig;
+    teardownAudio(pc);          // 삭제/상태변경으로 플레이어 제거 시 재생 확실히 중단(detached 재생 방지)
+    pc.innerHTML = '';
+    if(canAudio) buildPlayer(pc, id);
+  }
+  const audioEl = pc.querySelector('audio') || null;
+
+  // dynamic: transcript/요약/액션. updated_at(서버 변경 canonical 마커) 포함 → 내용변경 누락 방지.
+  const dynSig = [j.status, j.summary_status, j.audio_deleted?1:0, j.updated_at||'',
+                  (j.transcript||'').length, j.minutes?1:0].join('|');
+  if(body.dataset.dynSig !== dynSig){
+    body.dataset.dynSig = dynSig;
+    renderDynamic(dc, j, id, audioEl);
+  }
+}
+
+// 오디오 확실 정지(제거/삭제 전) — pause → src 제거 → load 로 네트워크/디코딩 중단
+function teardownAudio(container){
+  if(!container) return;
+  container.querySelectorAll('audio').forEach(au=>{
+    try{ au.pause(); au.removeAttribute('src'); au.load(); }catch(_){}
+  });
+}
+
+// 플레이어 + 배속 + 다운로드(1회 생성 → 이후 유지)
+function buildPlayer(pc, id){
+  const pw = document.createElement('div'); pw.className='mt-player';
+  const au = document.createElement('audio'); au.controls = true; au.preload='none';
+  au.src = `${API}/${id}/audio`;
+  const perr = document.createElement('div'); perr.className='mt-sum-status';
+  perr.style.cssText='display:none;color:#B42318'; perr.textContent='음성 파일을 재생할 수 없습니다 (파일 없음 또는 오류).';
+  au.onerror = ()=>{ if(au.getAttribute('src') && au.error) perr.style.display='block'; };
+  au.oncanplay = ()=>{ perr.style.display='none'; };
+  pw.appendChild(au);
+  const spd = document.createElement('div'); spd.className='mt-speed';
+  spd.innerHTML = '<span class="mt-speed-lbl">배속</span>';
+  [1,1.25,1.5,2].forEach(v=>{
+    const b = document.createElement('button'); b.type='button'; b.className='mt-spd'; b.textContent=v+'x';
+    b.onclick = ()=>{ try{ au.playbackRate=v; speedById[id]=v; }catch(_){}
+      spd.querySelectorAll('.mt-spd').forEach(x=>x.classList.toggle('active', parseFloat(x.textContent)===v)); };
+    spd.appendChild(b);
+  });
+  const dl = document.createElement('a'); dl.className='mt-dl'; dl.href = `${API}/${id}/audio?dl=1`;
+  dl.setAttribute('download',''); dl.textContent='⤓ 음성 다운로드';
+  spd.appendChild(dl);
+  pw.appendChild(spd); pw.appendChild(perr);
+  pc.appendChild(pw);
+  const sp = speedById[id] || 1;
+  try{ au.playbackRate = sp; }catch(_){}
+  spd.querySelectorAll('.mt-spd').forEach(x=>x.classList.toggle('active', parseFloat(x.textContent)===sp));
+}
+
+// transcript/요약/액션(변경 시 재렌더) — 플레이어와 분리돼 오디오에 무영향
+function renderDynamic(dc, j, id, audioEl){
+  dc.innerHTML = '';
+  const st = secState[id] || {};   // 사용자 접힘 토글 보존(재렌더 넘어)
+
+  // 오류
+  if(j.status==='error'){
+    const e = document.createElement('div'); e.className='mt-tr'; e.style.cssText='background:#FDECEC;color:#B42318';
+    e.textContent = '변환 오류: '+(j.error||'알 수 없음'); dc.appendChild(e);
+  }
+
+  // Transcript 섹션(기본 펼침, 사용자 토글 우선)
+  const trCollapsed = (st.tr !== undefined) ? st.tr : false;
+  const secTr = document.createElement('div'); secTr.className='mt-sec' + (trCollapsed?' collapsed':'');
+  secTr.innerHTML = `<button type="button" class="mt-sec-h"><svg class="chev ic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>Transcript <span class="h-extra">${j.duration_sec?'· '+fmtDur(j.duration_sec):''}</span></button><div class="mt-sec-body"></div>`;
+  const trBody = secTr.querySelector('.mt-sec-body');
+  const trBox = document.createElement('div'); trBox.className='mt-tr';
+  if(j.transcript){ renderTranscript(trBox, j, audioEl); }
+  else if(j.status==='done'){ trBox.style.color='var(--text-tertiary,#888)';
+    trBox.textContent='(변환 결과 텍스트가 비어 있음 — 무음이거나 인식된 발화가 없습니다)'; }
+  else { trBox.textContent = j.status==='error' ? '' : '변환 대기/진행 중…'; trBox.style.color='var(--text-tertiary,#888)'; }
+  trBody.appendChild(trBox);
+  secTr.querySelector('.mt-sec-h').onclick = ()=>{ secTr.classList.toggle('collapsed');
+    (secState[id]=secState[id]||{}).tr = secTr.classList.contains('collapsed'); };
+  dc.appendChild(secTr);
+
+  // 요약 섹션 — transcript 있는 완료건만 노출. 기본: 요약있음/진행중이면 펼침, 없으면 접힘(사용자 토글 우선)
+  const canSum = j.status==='done' && j.transcript;
+  if(canSum){
+    const sumActive = (j.summary_status==='pending' || j.summary_status==='processing');
+    const sumCollapsed = (st.sum !== undefined) ? st.sum : !(j.minutes || sumActive);
+    const secSum = document.createElement('div'); secSum.className='mt-sec' + (sumCollapsed?' collapsed':'');
+    secSum.innerHTML = `<button type="button" class="mt-sec-h"><svg class="chev ic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>요약</button><div class="mt-sec-body"></div>`;
+    const sBody = secSum.querySelector('.mt-sec-body');
+    if(sumActive){
+      const s = document.createElement('div'); s.className='mt-sum-status'; s.textContent='우라라카가 요약 중입니다… (수십 초)';
+      sBody.appendChild(s);
+    } else if(j.minutes){
+      const s = document.createElement('div'); s.className='mt-sum'; s.innerHTML = minutesHtml(j.minutes);
+      sBody.appendChild(s);
+    } else {
+      const s = document.createElement('div'); s.className='mt-sum-status';
+      s.textContent = j.summary_status==='error' ? '요약 실패 — 다시 시도해 주세요.' : '아직 요약이 없습니다. 아래 버튼으로 생성하세요.';
+      sBody.appendChild(s);
+    }
+    secSum.querySelector('.mt-sec-h').onclick = ()=>{ secSum.classList.toggle('collapsed');
+      (secState[id]=secState[id]||{}).sum = secSum.classList.contains('collapsed'); };
+    dc.appendChild(secSum);
+  }
+
+  // 액션
+  const acts = document.createElement('div'); acts.className='mt-actions';
+  if(canSum){
+    const sumBtn = document.createElement('button'); sumBtn.className='mt-act primary';
+    const proc = (j.summary_status==='pending'||j.summary_status==='processing');
+    sumBtn.disabled = proc;
+    sumBtn.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>'
+      + (proc ? '요약 생성 중…' : (j.minutes ? '요약 다시 생성' : '요약 생성 (우라라카)'));
+    sumBtn.onclick = ()=>requestSummary(id);
+    acts.appendChild(sumBtn);
+  }
+  const delA = document.createElement('button'); delA.className='mt-act';
+  if(j.audio_deleted){ delA.disabled = true; delA.textContent='음성 삭제됨 (텍스트 보존)'; }
+  else {
+    delA.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>원본 음성 삭제 (텍스트 보존)';
+    delA.onclick = ()=>delAudio(id);
+  }
+  acts.appendChild(delA);
+  const delJ = document.createElement('button'); delJ.className='mt-act warn';
+  delJ.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>회의록 전체 삭제';
+  delJ.onclick = ()=>delJob(id);
+  acts.appendChild(delJ);
+  dc.appendChild(acts);
+}
+
+// ── 카드 노드 생성(1회) ──
+function makeCard(id){
+  const card = document.createElement('div'); card.className='mt-mtg'; card.dataset.id = id;
+  const head = document.createElement('div'); head.className='mt-mtg-head';
+  head.innerHTML =
+    '<svg class="mt-mtg-chev ic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>'
+    + '<div class="mt-mtg-main"></div>'
+    + '<span class="mt-mtg-badge"></span>'
+    + '<button class="mt-mtg-edit" title="제목 수정" aria-label="제목 수정"><svg class="ic-svg ic-svg--solo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>'
+    + '<button class="mt-mtg-del" title="삭제" aria-label="삭제"><svg class="ic-svg ic-svg--solo" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>';
+  const body = document.createElement('div'); body.className='mt-mtg-body'; body.style.display='none';
+  card.appendChild(head); card.appendChild(body);
+  head.addEventListener('click', e=>{
+    if(e.target.closest('.mt-mtg-edit') || e.target.closest('.mt-mtg-del') || e.target.closest('.mt-edit-row')) return;
+    toggle(id);
+  });
+  head.querySelector('.mt-mtg-edit').onclick = e=>{ e.stopPropagation(); editingId = id; render(); };
+  head.querySelector('.mt-mtg-del').onclick = e=>{ e.stopPropagation(); delJob(id); };
+  return card;
+}
+
+// ── 렌더 ──
+// 구조(id 집합·순서·날짜그룹·수정상태)가 그대로면 노드 이동 없이 제자리 갱신(재생중 오디오 보존).
+// 구조가 바뀔 때만(추가/삭제/재정렬) 카드 노드를 재사용해 재배치.
+function paintCardOpen(card, id){
+  const isOpen = expanded.has(id);
+  card.classList.toggle('open', isOpen);
+  const body = card.querySelector('.mt-mtg-body');
+  if(isOpen){ body.style.display='block'; renderBody(card, id); }
+  else { body.style.display='none'; }   // 접어도 built/player 유지 → 재열기 시 재생위치 보존
+}
+function render(){
+  const list = document.getElementById('jobList');
+  if(!listData.length){
+    for(const id in cardEls) teardownAudio(cardEls[id]);
+    for(const k in cardEls) delete cardEls[k];
+    for(const k in detailCache) delete detailCache[k];
+    expanded.clear();
+    list.innerHTML = '<div class="mt-empty">아직 회의록이 없습니다.</div>'; list.dataset.structSig=''; return;
+  }
+  // editingId는 structSig에서 제외 — 수정 진입/이탈은 in-place(updateHead가 입력 렌더)로 노드이동 없이 처리
+  const structSig = listData.map(j=>String(j.id)+':'+dateKey(j.created_at)).join(',');
+  if(list.dataset.structSig === structSig){
+    for(const j of listData){ const id=String(j.id); const card=cardEls[id]; if(!card) continue; updateHead(card,j); paintCardOpen(card,id); }
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  let lastKey = null;
+  for(const j of listData){
+    const id = String(j.id);
+    const key = dateKey(j.created_at);
+    if(key !== lastKey){
+      const dh = document.createElement('div'); dh.className='mt-date'; dh.textContent = dateLabel(key);
+      frag.appendChild(dh); lastKey = key;
+    }
+    let card = cardEls[id];
+    if(!card){ card = makeCard(id); cardEls[id] = card; }
+    updateHead(card, j); paintCardOpen(card, id);
+    frag.appendChild(card);
+  }
+  const alive = new Set(listData.map(j=>String(j.id)));
+  for(const id in cardEls){ if(!alive.has(id)){ delete cardEls[id]; delete detailCache[id]; expanded.delete(id); } }
+  list.innerHTML = ''; list.appendChild(frag);
+  list.dataset.structSig = structSig;
+}
+
+function toggle(id){
+  id = String(id);
+  if(expanded.has(id)){ expanded.delete(id); }
+  else { expanded.add(id); if(!detailCache[id]) fetchDetail(id); }
+  render();
+}
+
+async function fetchDetail(id){
+  id = String(id);
+  if(inFlight[id]){ refetchWanted[id] = true; return; }   // 진행중이면 폐기 대신 재요청 예약(action 후 stale 방지)
+  inFlight[id] = true;
+  try{
+    const r = await fetch(`${API}/${id}`);
+    if(!r.ok) throw new Error('get '+r.status);
+    const j = await r.json();
+    detailCache[id] = j;
+    if(expanded.has(id)){
+      const card = cardEls[id];
+      if(card) renderBody(card, id);   // dynSig(updated_at 포함) 비교로 변경시만 재렌더 → 오디오 보존
+    }
+    maybePoll();
+  }catch(e){ console.error(e); }
+  finally{
+    inFlight[id] = false;
+    if(refetchWanted[id]){ refetchWanted[id] = false; fetchDetail(id); }   // 예약된 최신 refresh 수행
+  }
+}
+
+async function loadJobs(){
+  const gen = ++loadGen;               // 세대토큰 — 늦게 온 응답이 최신 listData 덮는 것 방지
+  try{
+    const r = await fetch(API, {headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error('list '+r.status);
+    const data = await r.json();
+    if(gen !== loadGen) return;        // 더 최신 loadJobs가 이미 처리됨 → stale 응답 폐기
+    listData = data;
+    if(editingId === null) render();   // 제목 수정중이면 재렌더 보류(입력 보존) — 폴링 자체는 계속됨
+    // 펼쳐진 job: list 메타가 캐시된 detail보다 최신이면 강제 refetch(stale 방지)
+    for(const j of listData){
+      const id = String(j.id);
+      if(!expanded.has(id)) continue;
+      const d = detailCache[id];
+      if(!d){ fetchDetail(id); continue; }
+      if(d.status !== j.status || d.summary_status !== j.summary_status || (d.updated_at||'') !== (j.updated_at||''))
+        fetchDetail(id);
+    }
+    maybePoll();
+  }catch(e){ console.error(e); schedulePoll(); }   // 일시 네트워크 오류에도 폴링 유지(영구중단 방지)
+}
+
+// 폴링 판단은 listData 기준(전 job의 status·summary_status 보유) → 카드를 닫아도 진행상태 추적됨
+function maybePoll(){
+  const busy = listData.some(j =>
+    j.status==='pending' || j.status==='processing' ||
+    j.summary_status==='pending' || j.summary_status==='processing');
+  if(busy) schedulePoll();
+}
+function schedulePoll(){
+  if(pollTimer) return;
+  pollTimer = setTimeout(async ()=>{ pollTimer=null; await loadJobs(); }, 5000);
+}
+
+async function saveTitle(id, val){
+  const title = (val||'').trim().slice(0,200);
+  try{
+    const r = await fetch(`${API}/${id}`, {method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({title})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||('save '+r.status));
+    editingId = null;
+    await loadJobs();                  // 서버 canonical title 재조회(요청값 낙관반영 안 함)
+    if(expanded.has(String(id))) fetchDetail(id);
+  }catch(e){ alert('제목 저장 실패: '+e.message); }
+}
+
 async function requestSummary(id){
-  const btn = document.getElementById('sumBtn');
-  const btnTxt = document.getElementById('sumBtnTxt');
-  btn.disabled = true; btnTxt.textContent = '요청 중…';
+  id = String(id);
+  if(actionBusy[id]) return;              // 중복 클릭 가드
+  actionBusy[id] = true;
   try{
     const r = await fetch(`${API}/${id}/summarize`, {method:'POST'});
     const d = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.error||('summarize '+r.status));
-    document.getElementById('secSum').classList.remove('collapsed');   // 사용자 요청 = 진행상황 보이게 펼침
-    await openJob(id);   // summary_status=pending 반영 → 폴링 시작
-  }catch(e){ alert('요약 요청 실패: '+e.message); btn.disabled=false; btnTxt.textContent='요약 생성 (우라라카)'; }
+    await fetchDetail(id);   // summary_status=pending 반영 → 폴링 시작
+  }catch(e){ alert('요약 요청 실패: '+e.message); }
+  finally{ actionBusy[id] = false; }
 }
 
 async function delAudio(id){
+  id = String(id);
+  if(actionBusy[id]) return;
   if(!confirm('원본 음성 파일만 서버에서 완전 삭제합니다. 변환된 텍스트는 보존됩니다. 계속할까요?')) return;
-  const btn = document.getElementById('delAudioBtn');
-  btn.disabled = true;
+  actionBusy[id] = true;
   try{
     const r = await fetch(`${API}/${id}/audio`, {method:'DELETE'});
     const d = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.error||('delete '+r.status));
-    await openJob(id);
-  }catch(e){ alert('삭제 실패: '+e.message); btn.disabled=false; }
+    await fetchDetail(id);   // renderBody가 playerSig 'none'→teardownAudio로 재생 중단
+  }catch(e){ alert('삭제 실패: '+e.message); }
+  finally{ actionBusy[id] = false; }
 }
 
 async function delJob(id){
+  id = String(id);
+  if(actionBusy[id]) return;
   if(!confirm('이 회의록을 텍스트·음성 모두 서버와 DB에서 완전 삭제합니다. 되돌릴 수 없습니다. 계속할까요?')) return;
+  actionBusy[id] = true;
   try{
     const r = await fetch(`${API}/${id}`, {method:'DELETE'});
     const d = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.error||('delete '+r.status));
-    selectedId = null;
-    document.getElementById('detailCard').style.display = 'none';
+    if(String(editingId) === String(id)) editingId = null;   // 수정중 대상 삭제 시 잔존 방지
+    if(cardEls[id]) teardownAudio(cardEls[id]);              // 카드 제거 전 재생 확실 중단
+    expanded.delete(id); delete detailCache[id]; delete cardEls[id]; delete secState[id];
     await loadJobs();
   }catch(e){ alert('삭제 실패: '+e.message); }
+  finally{ actionBusy[id] = false; }
 }
 
-function schedulePoll(){
-  if(pollTimer) return;
-  pollTimer = setTimeout(async ()=>{ pollTimer=null; await loadJobs(); if(selectedId) await openJob(selectedId); }, 5000);
-}
-
-function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function fmtDur(sec){ sec=Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return m?`${m}분 ${s}초`:`${s}초`; }
-
-// 배속 설정 + 버튼 active 동기화
-function setSpeed(audioEl, spd){
-  try{ audioEl.playbackRate = spd; }catch(_){}
-  document.querySelectorAll('.mt-spd').forEach(b=>{
-    b.classList.toggle('active', parseFloat(b.dataset.spd) === spd);
-  });
-}
-
-// 섹션 접기/펼치기 (Transcript / 요약) — 헤더 클릭 위임
-document.getElementById('detailCard').addEventListener('click', e=>{
-  const h = e.target.closest('.mt-sec-h');
-  if(!h) return;
-  const sec = h.closest('.mt-sec');
-  if(sec) sec.classList.toggle('collapsed');
-});
-// 배속 버튼
-document.querySelectorAll('.mt-spd').forEach(b=>{
-  b.onclick = ()=> setSpeed(document.getElementById('audioEl'), parseFloat(b.dataset.spd));
-});
-// 오디오 로드/재생 오류(파일 부재·서버 404 등) → 안내 노출. src 없는 리셋 상태는 무시.
-document.getElementById('audioEl').addEventListener('error', function(){
-  if(!this.getAttribute('src')) return;   // removeAttribute 후 load()의 빈-src 이벤트 무시
-  if(!this.error) return;                 // abort(src 재설정으로 로드 중단) 등 실제 MediaError 아니면 무시
-  document.getElementById('playerErr').style.display='block';
-});
-// 로드 성공(canplay) → 지연 error 오탐 정리
-document.getElementById('audioEl').addEventListener('canplay', function(){
-  document.getElementById('playerErr').style.display='none';
-});
-
+// ── 업로드/녹음 ──
 async function upload(blob, filename, title){
   const fd = new FormData();
   fd.append('file', blob, filename);
@@ -431,7 +618,6 @@ async function upload(blob, filename, title){
   }catch(e){ document.getElementById('recStatus').textContent = '업로드 실패: '+e.message; }
 }
 
-// 파일 업로드
 document.getElementById('upBtn').onclick = ()=>document.getElementById('fileInput').click();
 document.getElementById('fileInput').onchange = e=>{
   const f = e.target.files[0]; if(!f) return;
@@ -439,11 +625,8 @@ document.getElementById('fileInput').onchange = e=>{
   e.target.value='';
 };
 
-// 녹음 (MediaRecorder)
 document.getElementById('recBtn').onclick = async function(){
-  if(mediaRecorder && mediaRecorder.state==='recording'){
-    mediaRecorder.stop(); return;
-  }
+  if(mediaRecorder && mediaRecorder.state==='recording'){ mediaRecorder.stop(); return; }
   try{
     const stream = await navigator.mediaDevices.getUserMedia({audio:true});
     mediaRecorder = new MediaRecorder(stream);

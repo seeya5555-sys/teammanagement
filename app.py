@@ -6917,7 +6917,7 @@ def api_stt_job_delete(jid):
 def api_stt_job_audio_get(jid):
     """웹 미디어 플레이어용 오디오 서빙 — owner-scoped. send_from_directory는
     conditional/Range 지원 → seek·배속 재생 가능. 원본 삭제(audio_deleted)면 404."""
-    r = query("SELECT stored_name, audio_deleted FROM stt_job WHERE id=? AND owner=?",
+    r = query("SELECT stored_name, audio_name, audio_deleted FROM stt_job WHERE id=? AND owner=?",
               (jid, _stt_owner()), one=True)
     if not r:
         abort(404)
@@ -6926,6 +6926,13 @@ def api_stt_job_audio_get(jid):
     path = os.path.join(STT_AUDIO_DIR, r['stored_name'])
     if not os.path.isfile(path):   # 디렉토리/부재/비정상 경로 방어(심링크는 파일이면 통과, 업로드는 서버생성명만)
         abort(404)
+    # ?dl=1 → Content-Disposition: attachment 로 강제 다운로드.
+    # 모바일 웹(iOS Safari/Android Chrome)은 <audio> 컨트롤에 다운로드 메뉴가 없어
+    # 명시 첨부 응답이 유일한 신뢰 다운로드 경로임(데스크톱은 컨트롤 메뉴로도 되나 동일하게 동작).
+    if request.args.get('dl') in ('1', 'true', 'yes'):
+        dn = r['audio_name'] or r['stored_name']   # 원본 파일명(secure_filename 처리됨) 우선
+        return send_from_directory(STT_AUDIO_DIR, r['stored_name'], conditional=True,
+                                   as_attachment=True, download_name=dn)
     return send_from_directory(STT_AUDIO_DIR, r['stored_name'], conditional=True)
 
 
