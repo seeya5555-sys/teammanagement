@@ -21,9 +21,9 @@
   .mt-job-main{flex:1;min-width:0}
   .mt-job .ttl{font-weight:600;font-size:14.5px}
   .mt-job .meta{color:var(--text-tertiary,#888);font-size:12px}
-  .mt-row-del{flex:none;background:none;border:none;cursor:pointer;font-size:17px;
-    padding:6px;line-height:1;border-radius:8px;opacity:.55}
-  .mt-row-del:hover{opacity:1;background:var(--border-subtle,#EEE)}
+  .mt-row-del{flex:none;background:none;border:none;cursor:pointer;font-size:16px;
+    padding:6px;line-height:1;border-radius:8px;color:var(--text-tertiary,#888);display:flex;align-items:center}
+  .mt-row-del:hover{color:var(--red,#c0392b);background:var(--border-subtle,#EEE)}
   .mt-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
   .b-done{background:var(--teal-bg,#E1F5EE);color:var(--teal-text,#085041)}
   .b-proc{background:var(--blue-bg,#E6F1FB);color:var(--blue-text,#0C447C)}
@@ -69,8 +69,8 @@
     <div id="trErr" class="mt-tr" style="display:none;background:#FDECEC;color:#B42318"></div>
     <div id="trBox" class="mt-tr"></div>
     <div class="mt-actions">
-      <button id="delAudioBtn" class="mt-act">🗑 원본 음성 삭제 (텍스트 보존)</button>
-      <button id="delJobBtn" class="mt-act warn">회의록 전체 삭제</button>
+      <button id="delAudioBtn" class="mt-act"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>원본 음성 삭제 (텍스트 보존)</button>
+      <button id="delJobBtn" class="mt-act warn"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>회의록 전체 삭제</button>
     </div>
   </div>
 </div>
@@ -97,7 +97,7 @@ async function loadJobs(){
           <div class="meta">${j.created_at||''}${j.duration_sec?' · '+fmtDur(j.duration_sec):''}${j.status==='error'&&j.error?' · <span style="color:#B42318">'+escapeHtml(j.error)+'</span>':''}</div>
         </div>
         ${badge(j.status)}
-        <button class="mt-row-del" data-del="${j.id}" title="삭제" aria-label="삭제">🗑</button>
+        <button class="mt-row-del" data-del="${j.id}" title="삭제" aria-label="삭제"><svg class="ic-svg ic-svg--solo" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>
       </div>`).join('');
     el.querySelectorAll('.mt-job').forEach(n=>n.onclick=()=>openJob(n.dataset.id));
     el.querySelectorAll('.mt-row-del').forEach(b=>b.onclick=e=>{ e.stopPropagation(); delJob(b.dataset.del); });
@@ -127,7 +127,7 @@ async function openJob(id){
     const delA = document.getElementById('delAudioBtn');
     const delJ = document.getElementById('delJobBtn');
     if(j.audio_deleted){ delA.disabled = true; delA.textContent = '음성 삭제됨 (텍스트 보존)'; }
-    else { delA.disabled = false; delA.textContent = '🗑 원본 음성 삭제 (텍스트 보존)'; }
+    else { delA.disabled = false; delA.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>원본 음성 삭제 (텍스트 보존)'; }
     delA.onclick = ()=>delAudio(id);
     delJ.onclick = ()=>delJob(id);
   }catch(e){ console.error(e); }
