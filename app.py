@@ -6860,6 +6860,23 @@ def api_stt_job_delete(jid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/stt/jobs/<int:jid>/audio', methods=['GET'])
+@login_required
+def api_stt_job_audio_get(jid):
+    """웹 미디어 플레이어용 오디오 서빙 — owner-scoped. send_from_directory는
+    conditional/Range 지원 → seek·배속 재생 가능. 원본 삭제(audio_deleted)면 404."""
+    r = query("SELECT stored_name, audio_deleted FROM stt_job WHERE id=? AND owner=?",
+              (jid, _stt_owner()), one=True)
+    if not r:
+        abort(404)
+    if ('audio_deleted' in r.keys() and r['audio_deleted']) or not r['stored_name']:
+        abort(404)
+    path = os.path.join(STT_AUDIO_DIR, r['stored_name'])
+    if not os.path.isfile(path):   # 디렉토리/부재/비정상 경로 방어(심링크는 파일이면 통과, 업로드는 서버생성명만)
+        abort(404)
+    return send_from_directory(STT_AUDIO_DIR, r['stored_name'], conditional=True)
+
+
 @app.route('/api/stt/jobs/<int:jid>/audio', methods=['DELETE'])
 @login_required
 def api_stt_job_audio_delete(jid):

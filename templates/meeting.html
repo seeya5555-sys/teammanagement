@@ -53,6 +53,24 @@
     color:var(--text-secondary,#5F5E5A);border-radius:999px;padding:2px 10px;
     font-size:12px;margin:3px 4px 0 0}
   .mt-sum-status{font-size:13px;color:var(--text-tertiary,#888);padding:6px 2px}
+  /* 미디어 플레이어 */
+  .mt-player{margin-bottom:14px}
+  .mt-player audio{width:100%;height:38px}
+  .mt-speed{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .mt-speed-lbl{font-size:12px;color:var(--text-tertiary,#888);margin-right:2px}
+  .mt-spd{border:1px solid var(--border,#D3D1C7);background:var(--surface,#fff);
+    color:var(--text-secondary,#5F5E5A);border-radius:999px;padding:4px 12px;
+    font-size:12.5px;font-weight:600;cursor:pointer}
+  .mt-spd.active{background:var(--coral,#D85A30);color:#fff;border-color:var(--coral,#D85A30)}
+  /* 접기/펼치기 섹션 */
+  .mt-sec{margin-bottom:6px}
+  .mt-sec-h{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;
+    cursor:pointer;padding:8px 2px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--text-tertiary,#888);font-weight:700;text-align:left}
+  .mt-sec-h .chev{width:14px;height:14px;transition:transform .18s;flex:none}
+  .mt-sec.collapsed .chev{transform:rotate(-90deg)}
+  .mt-sec.collapsed .mt-sec-body{display:none}
+  .mt-sec-h .h-extra{text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-tertiary,#888)}
 </style>
 <div class="mt-wrap">
   <h1 style="font-size:20px;font-weight:700;margin:14px 4px 2px">회의록</h1>
@@ -79,11 +97,35 @@
   </div>
 
   <div class="mt-card" id="detailCard" style="display:none">
-    <h2>Transcript <span id="trMeta" style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-tertiary,#888)"></span></h2>
-    <div id="trErr" class="mt-tr" style="display:none;background:#FDECEC;color:#B42318"></div>
-    <div id="trBox" class="mt-tr"></div>
-    <div id="sumStatus" class="mt-sum-status" style="display:none"></div>
-    <div id="sumBox" class="mt-sum" style="display:none"></div>
+    <!-- 미디어 플레이어(원본 재생) — seek·배속. 원본 삭제 시 숨김 -->
+    <div id="playerWrap" class="mt-player" style="display:none">
+      <audio id="audioEl" controls preload="none"></audio>
+      <div class="mt-speed">
+        <span class="mt-speed-lbl">배속</span>
+        <button type="button" class="mt-spd" data-spd="1">1x</button>
+        <button type="button" class="mt-spd" data-spd="1.25">1.25x</button>
+        <button type="button" class="mt-spd" data-spd="1.5">1.5x</button>
+        <button type="button" class="mt-spd" data-spd="2">2x</button>
+      </div>
+      <div id="playerErr" class="mt-sum-status" style="display:none;color:#B42318">음성 파일을 재생할 수 없습니다 (파일 없음 또는 오류).</div>
+    </div>
+
+    <div class="mt-sec" id="secTr">
+      <button type="button" class="mt-sec-h" data-sec="secTr"><svg class="chev ic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>Transcript <span id="trMeta" class="h-extra"></span></button>
+      <div class="mt-sec-body">
+        <div id="trErr" class="mt-tr" style="display:none;background:#FDECEC;color:#B42318"></div>
+        <div id="trBox" class="mt-tr"></div>
+      </div>
+    </div>
+
+    <div class="mt-sec collapsed" id="secSum" style="display:none">
+      <button type="button" class="mt-sec-h" data-sec="secSum"><svg class="chev ic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>요약</button>
+      <div class="mt-sec-body">
+        <div id="sumStatus" class="mt-sum-status" style="display:none"></div>
+        <div id="sumBox" class="mt-sum" style="display:none"></div>
+      </div>
+    </div>
+
     <div class="mt-actions">
       <button id="sumBtn" class="mt-act primary" style="display:none"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg><span id="sumBtnTxt">요약 생성 (우라라카)</span></button>
       <button id="delAudioBtn" class="mt-act"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>원본 음성 삭제 (텍스트 보존)</button>
@@ -95,6 +137,19 @@
 <script>
 const API = '/api/stt/jobs';
 let mediaRecorder = null, chunks = [], selectedId = null, pollTimer = null, recTimer = null, recSec = 0;
+let openedId = null;   // 현재 상세카드에 그려진 job(폴링 refresh vs job 전환 구분)
+let openReq = 0;       // openJob 세대 토큰 — 늦게 온 이전 응답이 최신 UI 덮어쓰는 것 차단
+let lastHasMin = false;   // 현재 job의 직전 요약 유무(false→true 완료 전이 시 1회만 auto-expand)
+
+// 플레이어 정리: pause + src 제거(이전 오디오 재생/src 잔존 방지)
+function resetPlayer(){
+  const a = document.getElementById('audioEl');
+  try{ a.pause(); }catch(_){}
+  a.removeAttribute('src'); try{ a.load(); }catch(_){}
+  delete a.dataset.jid;
+  document.getElementById('playerWrap').style.display='none';
+  document.getElementById('playerErr').style.display='none';
+}
 
 async function loadJobs(){
   try{
@@ -125,13 +180,39 @@ async function loadJobs(){
 
 async function openJob(id){
   selectedId = id;
+  const isNew = String(id) !== String(openedId);
+  const myReq = ++openReq;   // 이 호출의 세대
+  if(isNew){
+    // job 전환: fetch 응답 전에 즉시 뷰 상태 리셋(느린/실패 요청에도 이전 job content·오디오·펼침 누수 방지)
+    document.getElementById('detailCard').style.display='none';       // 성공 응답 전까지 이전 job 내용 숨김
+    resetPlayer();
+    lastHasMin = false;
+    document.getElementById('secTr').classList.remove('collapsed');   // Transcript 기본 펼침
+    document.getElementById('secSum').classList.add('collapsed');     // 요약 기본 접힘
+  }
   try{
     const r = await fetch(`${API}/${id}`);
+    if(myReq !== openReq) return;   // 더 최신 openJob이 시작됨 → 이 stale 응답 폐기
     if(!r.ok) throw new Error('get '+r.status);
     const j = await r.json();
+    if(myReq !== openReq) return;   // json 파싱 사이 전환됐을 수도 → 재확인
+    openedId = id;
     const show = j.transcript || j.status==='error' || j.status==='done';
     document.getElementById('detailCard').style.display = show ? 'block':'none';
     document.getElementById('trMeta').textContent = j.duration_sec ? '· '+fmtDur(j.duration_sec) : '';
+    // 미디어 플레이어: done + 음성 미삭제일 때만 노출(seek/배속은 <audio controls>+playbackRate)
+    const playerWrap = document.getElementById('playerWrap');
+    const audioEl = document.getElementById('audioEl');
+    if(j.status==='done' && !j.audio_deleted){
+      playerWrap.style.display='block';
+      if(audioEl.dataset.jid !== String(id)){   // job 전환/재개 시에만 src 설정(재로딩 방지)
+        document.getElementById('playerErr').style.display='none';
+        audioEl.src = `${API}/${id}/audio`; audioEl.dataset.jid = String(id);
+        setSpeed(audioEl, 1);   // 새 오디오 로드 시에만 배속 1x로 리셋(폴링 중 재생속도 보존)
+      }
+    } else {
+      resetPlayer();
+    }
     const errEl = document.getElementById('trErr');
     if(j.status==='error'){ errEl.style.display='block'; errEl.textContent='변환 오류: '+(j.error||'알 수 없음'); }
     else errEl.style.display='none';
@@ -148,6 +229,15 @@ async function openJob(id){
     delA.onclick = ()=>delAudio(id);
     delJ.onclick = ()=>delJob(id);
     renderSummary(j);
+    // 요약 섹션 auto-expand: 요약 없음→있음(완료) 전이 시 1회만. pending→processing 재펼침·사용자 수동접힘 무시 안 함.
+    // (요약생성 클릭 시점의 펼침은 requestSummary가 직접 처리)
+    const hasMin = !!j.minutes;
+    if(isNew){
+      if(hasMin) document.getElementById('secSum').classList.remove('collapsed');  // 요약 있는 job 열면 펼침
+    } else if(hasMin && !lastHasMin){
+      document.getElementById('secSum').classList.remove('collapsed');             // 요약 완료(신규 도착) 1회 펼침
+    }
+    lastHasMin = hasMin;
   }catch(e){ console.error(e); }
 }
 
@@ -161,6 +251,9 @@ function renderSummary(j){
   btn.style.display = canSummarize ? '' : 'none';
   btn.onclick = ()=>requestSummary(j.id);
   const st = j.summary_status;
+  // 요약 섹션 노출만 담당(접힘/펼침 결정은 openJob이 전이 기반으로 처리 — poll마다 재펼침 방지)
+  const secSum = document.getElementById('secSum');
+  secSum.style.display = canSummarize ? 'block' : 'none';
   if(st==='pending' || st==='processing'){
     btn.disabled = true; btnTxt.textContent = '요약 생성 중…';
     stat.style.display='block'; stat.textContent = '우라라카가 요약 중입니다… (수십 초)';
@@ -208,6 +301,7 @@ async function requestSummary(id){
     const r = await fetch(`${API}/${id}/summarize`, {method:'POST'});
     const d = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.error||('summarize '+r.status));
+    document.getElementById('secSum').classList.remove('collapsed');   // 사용자 요청 = 진행상황 보이게 펼침
     await openJob(id);   // summary_status=pending 반영 → 폴링 시작
   }catch(e){ alert('요약 요청 실패: '+e.message); btn.disabled=false; btnTxt.textContent='요약 생성 (우라라카)'; }
 }
@@ -243,6 +337,36 @@ function schedulePoll(){
 
 function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmtDur(sec){ sec=Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return m?`${m}분 ${s}초`:`${s}초`; }
+
+// 배속 설정 + 버튼 active 동기화
+function setSpeed(audioEl, spd){
+  try{ audioEl.playbackRate = spd; }catch(_){}
+  document.querySelectorAll('.mt-spd').forEach(b=>{
+    b.classList.toggle('active', parseFloat(b.dataset.spd) === spd);
+  });
+}
+
+// 섹션 접기/펼치기 (Transcript / 요약) — 헤더 클릭 위임
+document.getElementById('detailCard').addEventListener('click', e=>{
+  const h = e.target.closest('.mt-sec-h');
+  if(!h) return;
+  const sec = h.closest('.mt-sec');
+  if(sec) sec.classList.toggle('collapsed');
+});
+// 배속 버튼
+document.querySelectorAll('.mt-spd').forEach(b=>{
+  b.onclick = ()=> setSpeed(document.getElementById('audioEl'), parseFloat(b.dataset.spd));
+});
+// 오디오 로드/재생 오류(파일 부재·서버 404 등) → 안내 노출. src 없는 리셋 상태는 무시.
+document.getElementById('audioEl').addEventListener('error', function(){
+  if(!this.getAttribute('src')) return;   // removeAttribute 후 load()의 빈-src 이벤트 무시
+  if(!this.error) return;                 // abort(src 재설정으로 로드 중단) 등 실제 MediaError 아니면 무시
+  document.getElementById('playerErr').style.display='block';
+});
+// 로드 성공(canplay) → 지연 error 오탐 정리
+document.getElementById('audioEl').addEventListener('canplay', function(){
+  document.getElementById('playerErr').style.display='none';
+});
 
 async function upload(blob, filename, title){
   const fd = new FormData();
