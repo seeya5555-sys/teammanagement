@@ -6762,6 +6762,26 @@ def api_ext_key_get():
                     'base_url': request.host_url.rstrip('/')})
 
 
+# 배포 확인용 — 맥에서 push 한 커밋이 실제로 서버에 올라갔는지 SSH 없이 확인한다.
+# autodeploy.sh 가 배포 성공 시 APP_DIR/.deployed_sha 에 SHA 를 남김. 읽기 전용, api_key 게이트.
+@app.route('/api/ext/version', methods=['GET'])
+@api_key_required
+def api_ext_version():
+    here = os.path.dirname(os.path.abspath(__file__))
+    sha, deployed_at = '', ''
+    try:
+        with open(os.path.join(here, '.deployed_sha')) as f:
+            sha = f.read().strip()
+    except Exception:
+        pass
+    try:
+        deployed_at = datetime.fromtimestamp(
+            os.path.getmtime(os.path.join(here, 'app.py'))).strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'sha': sha, 'deployed_at': deployed_at})
+
+
 @app.route('/api/ext/key/regenerate', methods=['POST'])
 @admin_required
 def api_ext_key_regen():
