@@ -64,10 +64,10 @@ python app.py --init-db
 zip -r trmt.zip trmt -x "trmt/instance/*" "trmt/static/uploads/*" "trmt/venv/*"
 
 # 2) 서버로 복사
-scp trmt.zip opc@152.67.202.26:~/
+scp trmt.zip trmt:~/            # ssh alias trmt = opc@168.107.9.169 (A1)
 
 # 3) 서버에서
-ssh opc@152.67.202.26
+ssh trmt
 unzip -o trmt.zip
 cd trmt
 pip install --user -r requirements.txt
