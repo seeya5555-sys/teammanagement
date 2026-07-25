@@ -180,6 +180,74 @@ g2 = next(g for g in c.get('/api/automation/soa/groups').get_json()['groups'] if
 chk(r.status_code == 200 and g2['updated_by'] == 'smoke', '수정자 기록', g2.get('updated_by'))
 chk(bool(g2.get('updated_at')), '수정시각 기록', g2.get('updated_at'))
 
+# 15) 삭제(비활성화와 별개) — 없는 key·실행중 차단·orphans 계산·task/ext 에서 제거
+r = c.delete('/api/automation/soa/groups/NOPE')
+chk(r.status_code == 422 and '찾을 수 없음' in r.get_json()['error'], '없는 그룹 삭제 422',
+    r.get_data(as_text=True)[:140])
+
+# 10)에서 soa_g4 를 queued 로 적재해 뒀음 → 삭제도 비활성화와 같은 게이트로 막혀야 함
+v_blocked = c.get('/api/automation/soa/groups').get_json()['config_version']
+n_blocked = A.query('SELECT COUNT(*) n FROM soa_group_vessel', one=True)['n']
+r = c.delete('/api/automation/soa/groups/G4')
+chk(r.status_code == 422 and '대기/진행중' in r.get_json()['error'], '실행 대기중 그룹 삭제 금지',
+    r.get_data(as_text=True)[:140])
+chk(any(g['key'] == 'G4' for g in c.get('/api/automation/soa/groups').get_json()['groups']),
+    '차단된 삭제는 그룹 보존')
+chk(c.get('/api/automation/soa/groups').get_json()['config_version'] == v_blocked,
+    '차단된 삭제는 version 불변')
+chk(A.query('SELECT COUNT(*) n FROM soa_group_vessel', one=True)['n'] == n_blocked,
+    '차단된 삭제는 멤버십 불변')
+
+# running 상태도 같은 게이트로 막히는지(러너가 이미 집어든 그룹)
+r = c.post('/api/automation/soa/groups', json={'key': 'G8', 'label': '삭제 테스트2', 'category': 'silver',
+           'mode': 'explicit', 'vessels': 'ATBG', 'sort_order': 96, 'active': False})
+chk(r.get_json().get('ok') is True, 'G8(비활성) 생성', r.get_data(as_text=True)[:140])
+A.execute("INSERT INTO automation_run (run_id,task,mode,status) VALUES ('t-run','soa_g8','verify','running')")
+r = c.delete('/api/automation/soa/groups/G8')
+chk(r.status_code == 422 and '대기/진행중' in r.get_json()['error'], 'running 그룹 삭제 금지',
+    r.get_data(as_text=True)[:140])
+A.execute("UPDATE automation_run SET status='done' WHERE run_id='t-run'")
+# 비활성 그룹 삭제 = 이미 실행 대상이 아니었으므로 orphans 는 빈 리스트여야 함(false positive 금지)
+r = c.delete('/api/automation/soa/groups/G8')
+j = r.get_json()
+chk(r.status_code == 200 and j['orphans'] == [], '비활성 그룹 삭제는 orphans 없음', j.get('orphans'))
+
+# ATMT 를 G1 에서 빼 G9 로 옮긴 뒤 G9 삭제 → ATMT 가 어느 그룹에도 없어짐(orphans)
+c.put('/api/automation/soa/groups/G1', json={'label': 'SOA 실버 G1', 'mode': 'explicit',
+      'vessels': 'ATBG ATGR ATGV', 'sort_order': 10, 'active': True})
+r = c.post('/api/automation/soa/groups', json={'key': 'G9', 'label': '삭제 테스트', 'category': 'silver',
+           'mode': 'explicit', 'vessels': 'ATMT', 'sort_order': 95})
+chk(r.get_json().get('ok') is True, 'G9 생성', r.get_data(as_text=True)[:140])
+chk('soa_g9' in A.automation_tasks(), '삭제 전 task 존재')
+# version 대조는 반드시 삭제 *직전* 값으로(앞선 PUT/POST bump 로 가짜 통과하지 않게 — 올마이트 R2)
+v_before = c.get('/api/automation/soa/groups').get_json()['config_version']
+r = c.delete('/api/automation/soa/groups/G9')
+j = r.get_json()
+chk(r.status_code == 200 and j['ok'] and j['deleted'] == 'G9', 'G9 삭제 200', r.get_data(as_text=True)[:140])
+chk(j['orphans'] == ['ATMT'], '커버 잃는 선박 orphans 로 통보', j.get('orphans'))
+chk(j['config_version'] == v_before + 1, '삭제도 config_version bump(직전 대비 +1)',
+    (v_before, j.get('config_version')))
+gj = c.get('/api/automation/soa/groups').get_json()
+chk(all(g['key'] != 'G9' for g in gj['groups']), '목록에서 제거(비활성 아님)',
+    [g['key'] for g in gj['groups']])
+chk('soa_g9' not in A.automation_tasks(), '파생 task 제거')
+chk(A.query("SELECT COUNT(*) n FROM soa_group_vessel WHERE group_id NOT IN "
+            "(SELECT id FROM soa_group)", one=True)['n'] == 0, '멤버십 고아행 없음')
+r = c.get('/api/ext/soa/groups', headers={'X-API-Key': apikey})
+chk(r.status_code == 200 and all(g['key'] != 'G9' for g in r.get_json()['groups']),
+    'ext 스냅샷에서도 제거', r.get_data(as_text=True)[:140])
+# owner 불일치 선박만 가진 활성 그룹 삭제 → 실행 대상이 아니었으므로 orphans 없음
+r = c.post('/api/automation/soa/groups', json={'key': 'G7', 'label': 'owner 불일치', 'category': 'silver',
+           'mode': 'explicit', 'vessels': 'ZZZZ', 'sort_order': 97})
+chk(r.get_json().get('ok') is True, 'G7 생성', r.get_data(as_text=True)[:140])
+r = c.delete('/api/automation/soa/groups/G7')
+chk(r.status_code == 200 and r.get_json()['orphans'] == [], 'owner 불일치 선박은 orphans 아님',
+    r.get_data(as_text=True)[:140])
+
+# 원복 — 이후 fail-closed 테스트가 정상 설정에서 출발하도록
+c.put('/api/automation/soa/groups/G1', json={'label': 'SOA 실버 G1', 'mode': 'explicit',
+      'vessels': 'ATBG ATGR ATGV ATMT', 'sort_order': 10, 'active': True})
+
 # 12) 깨진 설정이면 ext 는 500(fail-closed) — 러너가 스냅샷 유지
 db = A.sqlite3.connect(DB)
 db.execute("UPDATE soa_group SET active=1 WHERE key='SKRT2'")

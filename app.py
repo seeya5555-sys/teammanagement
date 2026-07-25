@@ -8211,6 +8211,66 @@ def api_automation_soa_group_update(group_key):
     return jsonify({'ok': True, 'config_version': _soa_groups_version()})
 
 
+@app.route('/api/automation/soa/groups/<group_key>', methods=['DELETE'])
+@admin_required
+def api_automation_soa_group_delete(group_key):
+    """그룹 완전 삭제(비활성화와 별개). 실행 이력(automation_run)은 task 문자열이라 그대로 남음.
+
+    삭제된 그룹의 선박은 어느 배치에도 안 들어가므로 검토에서 빠진다 —
+    조용한 누락을 막으려고 응답에 orphans(커버 잃는 선박)를 실어 UI 가 보여주게 한다.
+    """
+    key = str(group_key or '').strip().upper()
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT id,key,label,category,mode,active FROM soa_group WHERE key=?',
+                         (key,)).fetchone()
+        if not row:
+            raise ValueError('그룹을 찾을 수 없음')
+        # 대기/진행중이면 삭제 금지 — 러너가 집어든 task 가 스냅샷에서 사라지면 unknown task 로
+        # 실패한다. 비활성화와 같은 게이트.
+        if db.execute("SELECT 1 FROM automation_run WHERE task=? AND status IN ('queued','running') "
+                      "LIMIT 1", (soa_task_key(key),)).fetchone():
+            raise ValueError('이 그룹 작업이 대기/진행중 — 끝난 뒤 삭제하세요')
+        vessels = [x['vsl_cd'] for x in db.execute(
+            'SELECT vsl_cd FROM soa_group_vessel WHERE group_id=? ORDER BY vsl_cd',
+            (row['id'],)).fetchall()]
+        db.execute('DELETE FROM soa_group_vessel WHERE group_id=?', (row['id'],))
+        db.execute('DELETE FROM soa_group WHERE id=?', (row['id'],))
+        _soa_assert_active_invariants(db)
+        _soa_bump_version(db)
+        # orphans 는 반드시 같은 트랜잭션 스냅샷에서 계산한다(올마이트 R1). commit 뒤에 따로 조회하면
+        # 동시 변경에 따라 응답이 실제 삭제 시점과 어긋나고, 실패 시 "삭제는 됐는데 500" 이 됨.
+        # 비활성 그룹은 애초에 실행 대상이 아니었으므로 커버 손실 없음 → orphans 는 빈 리스트.
+        orphans = []
+        if row['active']:
+            om = {r['vsl_cd']: r['owner_comp_id']
+                  for r in db.execute('SELECT vsl_cd, owner_comp_id FROM soa_vessel_owner').fetchall()}
+            survivors = set()
+            for g in db.execute('SELECT id,category,mode FROM soa_group WHERE active=1 AND category=?',
+                                (row['category'],)).fetchall():
+                gv = [x['vsl_cd'] for x in db.execute(
+                    'SELECT vsl_cd FROM soa_group_vessel WHERE group_id=?', (g['id'],)).fetchall()]
+                survivors.update(_soa_group_members(
+                    {'category': g['category'], 'mode': g['mode'], 'vessels': sorted(gv)}, om))
+            gone = {'category': row['category'], 'mode': row['mode'], 'vessels': vessels}
+            orphans = sorted(set(_soa_group_members(gone, om)) - survivors)
+        vrow = db.execute("SELECT v FROM api_settings WHERE k='soa_groups_version'").fetchone()
+        version = int(vrow['v']) if vrow else 0
+        db.commit()
+    except (ValueError, sqlite3.Error) as e:
+        # sqlite3.Error 도 422 로 내리는 건 PUT/POST 와 맞춘 것(형에게는 "저장 안 됨"으로 동일).
+        try: db.rollback()
+        except Exception: pass
+        return jsonify({'ok': False, 'error': str(e)}), 422
+    # 삭제는 되돌릴 수 없으니 무엇이 사라졌는지 로그에 남긴다(현재 감사수단 = 앱 로그).
+    app.logger.warning('SOA group deleted: key=%s label=%s category=%s mode=%s vessels=%s by=%s',
+                       row['key'], row['label'], row['category'], row['mode'],
+                       ','.join(vessels) or '-', session.get('username') or '?')
+    return jsonify({'ok': True, 'config_version': version,
+                    'deleted': row['key'], 'orphans': orphans})
+
+
 def _imo_check(imo):
     """IMO 번호 유효성 — 7자리 숫자 + 체크섬(마지막 자리 = 앞 6자리 가중합 %10).
     가중치 7,6,5,4,3,2. 유효하면 정규화 문자열 반환, 아니면 None."""
