@@ -560,3 +560,29 @@ CREATE TABLE IF NOT EXISTS stt_job (
 );
 CREATE INDEX IF NOT EXISTS idx_stt_job_owner ON stt_job(owner, id);
 CREATE INDEX IF NOT EXISTS idx_stt_job_status ON stt_job(status, id);
+
+-- SOA automation group SSOT (user-editable scheduling partition; category→owner is code-side constant)
+CREATE TABLE IF NOT EXISTS soa_group (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    key        TEXT NOT NULL UNIQUE
+               CHECK (length(key) BETWEEN 1 AND 8 AND key NOT GLOB '*[^A-Z0-9]*'),
+    label      TEXT NOT NULL,
+    category   TEXT NOT NULL CHECK (category IN ('silver','skrt')),
+    mode       TEXT NOT NULL DEFAULT 'explicit' CHECK (mode IN ('explicit','dynamic_owner')),
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_by TEXT
+);
+CREATE TABLE IF NOT EXISTS soa_group_vessel (
+    group_id INTEGER NOT NULL REFERENCES soa_group(id),
+    vsl_cd   TEXT NOT NULL CHECK (vsl_cd GLOB '[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]'),
+    PRIMARY KEY (group_id, vsl_cd)
+);
+CREATE INDEX IF NOT EXISTS idx_soa_group_vessel_cd ON soa_group_vessel(vsl_cd);
+CREATE TABLE IF NOT EXISTS soa_vessel_owner (
+    vsl_cd        TEXT PRIMARY KEY CHECK (vsl_cd GLOB '[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]'),
+    owner_comp_id TEXT NOT NULL,
+    updated_at    TEXT DEFAULT (datetime('now','localtime'))
+);

@@ -920,6 +920,67 @@ def init_db(drop=False):
             if 'aliases' not in ves_cols:
                 conn.execute('ALTER TABLE vessels ADD COLUMN aliases TEXT')
                 print('  - vessels.aliases column added')
+
+        # ── SOA 자동화 그룹 SSOT (P0) ─────────────────────────────────
+        #  그룹 = "어느 배치로 언제 검토할지"의 스케줄링 파티션일 뿐.
+        #  돈 분기(장금 출금상신 Slip·검증강도·Crew 스킵)는 전부 SVMS owner(OW_COMP_ID)
+        #  기반이라 category→owner_comp_id 매핑은 코드 상수(SOA_CATEGORY_OWNER)로만 존재.
+        #  DB·UI 어디서도 편집 불가 = 사용자 편집이 돈 분기를 못 건드림.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS soa_group (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                key        TEXT NOT NULL UNIQUE
+                           CHECK (length(key) BETWEEN 1 AND 8
+                                  AND key NOT GLOB '*[^A-Z0-9]*'),
+                label      TEXT NOT NULL,
+                category   TEXT NOT NULL CHECK (category IN ('silver','skrt')),
+                mode       TEXT NOT NULL DEFAULT 'explicit'
+                           CHECK (mode IN ('explicit','dynamic_owner')),
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                updated_at TEXT DEFAULT (datetime('now','localtime')),
+                updated_by TEXT            -- 누가 마지막으로 손댔나(감사 흔적)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS soa_group_vessel (
+                group_id INTEGER NOT NULL REFERENCES soa_group(id),
+                -- 4자 고정·대문자. 숫자 허용(SVMS 코드에 숫자가 섞일 여지 — SQLite CHECK 는
+                -- 나중에 못 바꿔서 지나치게 좁히면 영구 거부가 됨).
+                vsl_cd   TEXT NOT NULL CHECK (vsl_cd GLOB '[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]'),
+                PRIMARY KEY (group_id, vsl_cd)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_soa_group_vessel_cd ON soa_group_vessel(vsl_cd)")
+        # SVMS My Vessel owner 스냅샷 — 맥 러너가 push. dynamic_owner 그룹의
+        # "현재 편입 선박"을 UI에 보여주기 위한 표시용(러너 판정은 항상 SVMS 실시간 조회 기준).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS soa_vessel_owner (
+                vsl_cd        TEXT PRIMARY KEY
+                              CHECK (vsl_cd GLOB '[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]'),
+                owner_comp_id TEXT NOT NULL,
+                updated_at    TEXT DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        # 시드 = 현행 하드코딩값 그대로(전환 직후 동작 동일). 이미 있으면 무시(멱등).
+        if not conn.execute('SELECT 1 FROM soa_group LIMIT 1').fetchone():
+            _soa_seed = [
+                ('G1',   'SOA 실버 G1', 'silver', 'explicit',      10, ['ATBG', 'ATGR', 'ATGV', 'ATMT']),
+                ('G2',   'SOA 실버 G2', 'silver', 'explicit',      20, ['ATNH', 'ATSH', 'ATSL', 'JATX']),
+                ('G3',   'SOA 실버 G3', 'silver', 'explicit',      30, ['PCBJ', 'PCBS', 'PCGV', 'PCMC']),
+                ('SKRT', 'SOA 장금',    'skrt',   'dynamic_owner', 40, []),
+            ]
+            for k, lab, cat, mode, so, vs in _soa_seed:
+                gid = conn.execute(
+                    'INSERT INTO soa_group (key,label,category,mode,sort_order,active) '
+                    'VALUES (?,?,?,?,?,1)', (k, lab, cat, mode, so)).lastrowid
+                for v in vs:
+                    conn.execute('INSERT INTO soa_group_vessel (group_id,vsl_cd) VALUES (?,?)', (gid, v))
+            # api_settings 는 지연생성(_ensure_api_table)이라 fresh DB 에서는 아직 없을 수 있음
+            conn.execute('CREATE TABLE IF NOT EXISTS api_settings (k TEXT PRIMARY KEY, v TEXT)')
+            conn.execute("INSERT OR REPLACE INTO api_settings (k,v) VALUES ('soa_groups_version','1')")
+            print('  - soa_group seeded (G1/G2/G3/SKRT = 현행 하드코딩 동일)')
         conn.commit()
 
         if fresh and os.path.exists(SEED_FILE):
@@ -7826,6 +7887,304 @@ def api_ext_roster():
     })
 
 
+# ═════════════════════════════════════════════════════════════════
+#  SOA 자동화 그룹 SSOT — 읽기 API (P0). 소비자는 맥 러너 sync 잡.
+# ═════════════════════════════════════════════════════════════════
+SOA_GROUPS_SCHEMA = 1
+# category → SVMS OW_COMP_ID. 돈 분기(Slip 출금상신·검증강도)의 근거라
+# 코드 상수로 격리 — DB·UI 어디서도 편집 불가.
+SOA_CATEGORY_OWNER = {'silver': '037', 'skrt': '001'}
+_SOA_KEY_RE = re.compile(r'^[A-Z0-9]{1,8}$')
+_SOA_VSL_RE = re.compile(r'^[A-Z0-9]{4}$')
+
+
+def _soa_groups_version():
+    r = query("SELECT v FROM api_settings WHERE k='soa_groups_version'", one=True)
+    try:
+        return int(r['v']) if r else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _soa_groups_load(active_only=True):
+    """soa_group + membership → dict 리스트. vessels 는 항상 sorted."""
+    where = 'WHERE active=1' if active_only else ''
+    rows = query(f'SELECT id,key,label,category,mode,sort_order,active FROM soa_group '
+                 f'{where} ORDER BY sort_order, key')
+    out = []
+    for r in rows:
+        vs = [x['vsl_cd'] for x in query(
+            'SELECT vsl_cd FROM soa_group_vessel WHERE group_id=? ORDER BY vsl_cd', (r['id'],))]
+        out.append({
+            'key': r['key'], 'label': r['label'], 'category': r['category'],
+            'owner_comp_id': SOA_CATEGORY_OWNER.get(r['category']),
+            'mode': r['mode'], 'sort_order': r['sort_order'], 'active': r['active'],
+            'vessels': sorted(vs),
+        })
+    return out
+
+
+def _soa_owner_map():
+    """SVMS My Vessel owner 스냅샷(러너가 push). 표시 전용 — 실행 대상 판정 근거 아님."""
+    return {r['vsl_cd']: r['owner_comp_id']
+            for r in query('SELECT vsl_cd, owner_comp_id FROM soa_vessel_owner')}
+
+
+def _soa_group_members(g, owner_map=None):
+    """이 그룹에 지금 리스트업된 선박. explicit=명시 선박 ∩ owner, dynamic=owner 전체.
+    owner 스냅샷이 없으면 explicit 은 명시 선박 그대로, dynamic 은 빈 리스트."""
+    if owner_map is None:
+        owner_map = _soa_owner_map()
+    oc = SOA_CATEGORY_OWNER.get(g['category'])
+    pool = {v for v, o in owner_map.items() if o == oc}
+    if g['mode'] == 'dynamic_owner':
+        return sorted(pool)
+    if not pool:
+        return sorted(g['vessels'])
+    return sorted(v for v in g['vessels'] if v in pool)
+
+
+def _soa_groups_invariants(groups):
+    """활성 그룹 집합의 불변식 검사 → 위반 사유 리스트(빈 리스트 = 정상).
+
+    쓰기(P2 CRUD)에서 422 판정에 쓰고, 읽기 API 에서도 재검증해
+    깨진 설정이 러너로 흘러가지 않게 fail-closed.
+    """
+    bad = []
+    dyn = {}          # owner → [key]
+    exp = {}          # owner → [key]
+    assigned = {}     # (owner, vsl) → key
+    for g in groups:
+        k = g['key']
+        if not _SOA_KEY_RE.match(k or ''):
+            bad.append(f'{k}: key 형식 위반(^[A-Z0-9]{{1,8}}$)')
+        if g['category'] not in SOA_CATEGORY_OWNER:
+            bad.append(f'{k}: 알 수 없는 category={g["category"]}')
+            continue
+        oc = SOA_CATEGORY_OWNER[g['category']]
+        if g['mode'] == 'dynamic_owner':
+            dyn.setdefault(oc, []).append(k)
+            if g['vessels']:
+                bad.append(f'{k}: dynamic_owner 인데 명시 선박이 배정됨')
+        elif g['mode'] == 'explicit':
+            exp.setdefault(oc, []).append(k)
+            for v in g['vessels']:
+                if not _SOA_VSL_RE.match(v or ''):
+                    bad.append(f'{k}: vsl_cd 형식 위반({v})')
+                    continue
+                prev = assigned.get((oc, v))
+                if prev:
+                    bad.append(f'{v}: {prev} 와 {k} 에 중복 배정(owner {oc})')
+                else:
+                    assigned[(oc, v)] = k
+        else:
+            bad.append(f'{k}: 알 수 없는 mode={g["mode"]}')
+    for oc, ks in dyn.items():
+        if len(ks) > 1:
+            bad.append(f'owner {oc}: dynamic_owner 그룹이 {len(ks)}개({",".join(ks)}) — 최대 1개')
+        if oc in exp:
+            bad.append(f'owner {oc}: dynamic_owner({",".join(ks)}) 와 '
+                       f'explicit({",".join(exp[oc])}) 혼재 — 택1')
+    return bad
+
+
+@app.route('/api/ext/soa/groups')
+@api_key_required
+def api_ext_soa_groups():
+    """SOA 그룹 설정 pull (맥 러너 sync 잡용).
+
+    불변식 위반이면 200 대신 500 + ok:false → 러너는 로컬 스냅샷 유지(fail-closed).
+    """
+    from datetime import datetime as _dt
+    groups = _soa_groups_load(active_only=True)
+    bad = _soa_groups_invariants(groups)
+    if bad:
+        return jsonify({'ok': False, 'error': 'invariant_violation', 'violations': bad}), 500
+    return jsonify({
+        'ok': True,
+        'schema': SOA_GROUPS_SCHEMA,
+        'config_version': _soa_groups_version(),
+        'generated_at': _dt.now().isoformat(timespec='seconds'),
+        'groups': [{k: g[k] for k in
+                    ('key', 'label', 'category', 'owner_comp_id', 'mode', 'sort_order', 'vessels')}
+                   for g in groups],
+    })
+
+
+@app.route('/api/ext/soa/vessel-owners', methods=['GET', 'POST'])
+@api_key_required
+def api_ext_soa_vessel_owners():
+    """SVMS My Vessel owner 맵 스냅샷 — 표시 전용.
+
+    POST {"owners": {"CPPS":"001", ...}} → 전량 교체(빈 맵은 거부: SVMS 조회 실패로
+    화면이 텅 비는 걸 막음). dynamic_owner 그룹의 "현재 편입 선박"을 UI 에 보여주는 용도.
+    러너의 실제 대상 판정은 언제나 SVMS 실시간 조회 기준이지 이 스냅샷이 아님.
+    """
+    if request.method == 'GET':
+        rows = query('SELECT vsl_cd, owner_comp_id, updated_at FROM soa_vessel_owner ORDER BY vsl_cd')
+        return jsonify({'ok': True,
+                        'owners': {r['vsl_cd']: r['owner_comp_id'] for r in rows},
+                        'updated_at': (rows[0]['updated_at'] if rows else None)})
+    body = request.get_json(silent=True) or {}
+    owners = body.get('owners')
+    if not isinstance(owners, dict) or not owners:
+        return jsonify({'ok': False, 'error': 'owners 맵이 비었거나 형식 오류'}), 400
+    clean = {}
+    for v, oc in owners.items():
+        v = str(v or '').strip().upper()
+        oc = str(oc or '').strip()
+        if not _SOA_VSL_RE.match(v) or not re.match(r'^[A-Z0-9]{1,10}$', oc):
+            return jsonify({'ok': False, 'error': f'형식 위반: {v}={oc}'}), 400
+        clean[v] = oc
+    db = get_db()
+    with db:
+        db.execute('DELETE FROM soa_vessel_owner')
+        db.executemany('INSERT INTO soa_vessel_owner (vsl_cd,owner_comp_id) VALUES (?,?)',
+                       sorted(clean.items()))
+    return jsonify({'ok': True, 'count': len(clean)})
+
+
+
+def _soa_editor_groups():
+    """관리 UI용 그룹 목록. configured/current members와 owner 불일치를 함께 표면화."""
+    owner_map = _soa_owner_map()
+    rows = _soa_groups_load(active_only=False)
+    audit = {r['key']: r for r in query('SELECT key,updated_at,updated_by FROM soa_group')}
+    for g in rows:
+        a = audit.get(g['key']) or {}
+        g['updated_at'] = a['updated_at'] if 'updated_at' in a.keys() else None
+        g['updated_by'] = a['updated_by'] if 'updated_by' in a.keys() else None
+        g['current_members'] = _soa_group_members(g, owner_map)
+        g['owner_mismatch'] = (sorted(set(g['vessels']) - set(g['current_members']))
+                               if g['mode'] == 'explicit' else [])
+    return rows
+
+
+def _soa_edit_values(body, *, creating=False):
+    """관리 UI 입력 정규화. category/owner 매핑은 create 때만 선택, 이후 불변."""
+    if not isinstance(body, dict):
+        raise ValueError('JSON body 필요')
+    label = str(body.get('label') or '').strip()
+    if not label or len(label) > 80:
+        raise ValueError('그룹명은 1~80자로 입력')
+    mode = str(body.get('mode') or '').strip()
+    if mode not in ('explicit', 'dynamic_owner'):
+        raise ValueError('mode는 explicit 또는 dynamic_owner')
+    try:
+        sort_order = int(body.get('sort_order', 0))
+    except (TypeError, ValueError):
+        raise ValueError('순서는 정수')
+    active = 1 if body.get('active', True) else 0
+    raw_vessels = body.get('vessels', [])
+    if isinstance(raw_vessels, str):
+        raw_vessels = re.split(r'[\s,;/]+', raw_vessels.strip()) if raw_vessels.strip() else []
+    if not isinstance(raw_vessels, list):
+        raise ValueError('선박 목록 형식 오류')
+    vessels = sorted({str(v or '').strip().upper() for v in raw_vessels if str(v or '').strip()})
+    if any(not _SOA_VSL_RE.match(v) for v in vessels):
+        raise ValueError('선박코드는 4자 영문/숫자만 가능')
+    if mode == 'dynamic_owner' and vessels:
+        raise ValueError('자동편입 그룹에는 명시 선박을 넣을 수 없음')
+    out = {'label': label, 'mode': mode, 'sort_order': sort_order,
+           'active': active, 'vessels': vessels}
+    if creating:
+        key = str(body.get('key') or '').strip().upper()
+        category = str(body.get('category') or '').strip()
+        if not _SOA_KEY_RE.match(key):
+            raise ValueError('그룹 key는 1~8자 영문 대문자/숫자만 가능')
+        # 파생 task 키(soa_<key>)가 기존 정적 task 를 가리면 그 그룹은 영영 실행 불가한
+        # 유령이 됨(정적 task 가 우선). 조용한 유령 대신 생성 자체를 거부.
+        if soa_task_key(key) in AUTOMATION_TASKS_BASE:
+            raise ValueError(f'예약된 key — soa_{key.lower()} 는 기존 자동화가 쓰는 이름')
+        if category not in SOA_CATEGORY_OWNER:
+            raise ValueError('category는 silver 또는 skrt')
+        out.update({'key': key, 'category': category})
+    return out
+
+
+def _soa_bump_version(db):
+    cur = _soa_groups_version()
+    db.execute("INSERT OR REPLACE INTO api_settings (k,v) VALUES ('soa_groups_version',?)",
+               (str(cur + 1),))
+
+
+def _soa_assert_active_invariants(db):
+    rows = db.execute('SELECT id,key,label,category,mode,sort_order,active FROM soa_group '
+                      'WHERE active=1 ORDER BY sort_order,key').fetchall()
+    groups = []
+    for r in rows:
+        groups.append({'key': r['key'], 'label': r['label'], 'category': r['category'],
+                       'mode': r['mode'], 'sort_order': r['sort_order'], 'active': r['active'],
+                       'vessels': [x['vsl_cd'] for x in db.execute(
+                           'SELECT vsl_cd FROM soa_group_vessel WHERE group_id=? ORDER BY vsl_cd',
+                           (r['id'],)).fetchall()]})
+    bad = _soa_groups_invariants(groups)
+    if bad:
+        raise ValueError(' / '.join(bad[:5]))
+
+
+@app.route('/api/automation/soa/groups', methods=['GET', 'POST'])
+@admin_required
+def api_automation_soa_groups():
+    if request.method == 'GET':
+        return jsonify({'ok': True, 'config_version': _soa_groups_version(),
+                        'groups': _soa_editor_groups(), 'owners': _soa_owner_map()})
+    try:
+        d = _soa_edit_values(request.get_json(silent=True), creating=True)
+        db = get_db()
+        db.execute('BEGIN IMMEDIATE')
+        if db.execute('SELECT 1 FROM soa_group WHERE key=?', (d['key'],)).fetchone():
+            raise ValueError('이미 사용 중인 그룹 key')
+        gid = db.execute('INSERT INTO soa_group (key,label,category,mode,sort_order,active,updated_by) '
+                         'VALUES (?,?,?,?,?,?,?)',
+                         (d['key'], d['label'], d['category'], d['mode'], d['sort_order'],
+                          d['active'], session.get('username') or '?')).lastrowid
+        db.executemany('INSERT INTO soa_group_vessel (group_id,vsl_cd) VALUES (?,?)',
+                       [(gid, v) for v in d['vessels']])
+        _soa_assert_active_invariants(db)
+        _soa_bump_version(db)
+        db.commit()
+    except (ValueError, sqlite3.Error) as e:
+        try: db.rollback()
+        except Exception: pass
+        return jsonify({'ok': False, 'error': str(e)}), 422
+    return jsonify({'ok': True, 'config_version': _soa_groups_version()}), 201
+
+
+@app.route('/api/automation/soa/groups/<group_key>', methods=['PUT'])
+@admin_required
+def api_automation_soa_group_update(group_key):
+    key = str(group_key or '').strip().upper()
+    try:
+        d = _soa_edit_values(request.get_json(silent=True))
+        db = get_db()
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT id,category,active FROM soa_group WHERE key=?', (key,)).fetchone()
+        if not row:
+            raise ValueError('그룹을 찾을 수 없음')
+        # 실행 대기/진행중인 그룹은 비활성화 금지 — 러너가 스냅샷에서 사라진 그룹을
+        # 집어들면 unknown task 로 실패함(조용한 누락 방지).
+        if row['active'] and not d['active'] and db.execute(
+                "SELECT 1 FROM automation_run WHERE task=? AND status IN ('queued','running') LIMIT 1",
+                (soa_task_key(key),)).fetchone():
+            raise ValueError('이 그룹 작업이 대기/진행중 — 끝난 뒤 비활성화하세요')
+        db.execute('UPDATE soa_group SET label=?,mode=?,sort_order=?,active=?,'
+                   'updated_at=datetime(\'now\',\'localtime\'),updated_by=? WHERE id=?',
+                   (d['label'], d['mode'], d['sort_order'], d['active'],
+                    session.get('username') or '?', row['id']))
+        db.execute('DELETE FROM soa_group_vessel WHERE group_id=?', (row['id'],))
+        db.executemany('INSERT INTO soa_group_vessel (group_id,vsl_cd) VALUES (?,?)',
+                       [(row['id'], v) for v in d['vessels']])
+        _soa_assert_active_invariants(db)
+        _soa_bump_version(db)
+        db.commit()
+    except (ValueError, sqlite3.Error) as e:
+        try: db.rollback()
+        except Exception: pass
+        return jsonify({'ok': False, 'error': str(e)}), 422
+    return jsonify({'ok': True, 'config_version': _soa_groups_version()})
+
+
 def _imo_check(imo):
     """IMO 번호 유효성 — 7자리 숫자 + 체크섬(마지막 자리 = 앞 6자리 가중합 %10).
     가중치 7,6,5,4,3,2. 유효하면 정규화 문자열 반환, 아니면 None."""
@@ -10015,11 +10374,7 @@ def api_ext_reqgen_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
-AUTOMATION_TASKS = {
-    'soa_g1':   'SOA 실버 G1 (ATBG·ATGR·ATGV·ATMT)',
-    'soa_g2':   'SOA 실버 G2 (ATNH·ATSH·ATSL·JATX)',
-    'soa_g3':   'SOA 실버 G3 (PCBJ·PCBS·PCGV·PCMC)',
-    'soa_skrt': 'SOA 장금 (장금마리타임 SKRT 전체·신규선 자동편입) +출금상신',
+AUTOMATION_TASKS_BASE = {
     'jeonja':   '전자결재 자동상신',
     'fundreq':  '비용청구(Fund Request) 자동상신 — 장금·Technical·Submitted',
     'invoice_confirm': '인보이스 자동컨펌 — PIC/SUP/Remit 교정 + SVMS 컨펌 (승인 건만 처리)',
@@ -10033,6 +10388,35 @@ AUTOMATION_TASKS = {
 }
 # verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일 / remark_cleanup=컨펌된 라인 잔존 RJT_RMK 삭제(SVMS UI버그 보정)
 AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit', 'remark_cleanup')
+
+
+def soa_task_key(group_key):
+    """그룹키(G1/SKRT) → 자동화 task 키(soa_g1/soa_skrt). 러너도 같은 규칙으로 역변환."""
+    return 'soa_' + str(group_key).lower()
+
+
+def _soa_task_label(g, owner_map=None):
+    """허브 버튼에 뜰 문구. dynamic_owner 는 owner 스냅샷 기준 현재 편입 선박을 노출."""
+    if g['mode'] == 'dynamic_owner':
+        mem = _soa_group_members(g, owner_map)
+        body = ('·'.join(mem) + ' · 신규선 자동편입') if mem else '전체·신규선 자동편입(현재 편입 미확인)'
+    else:
+        body = '·'.join(g['vessels']) if g['vessels'] else '선박 미지정'
+    tail = ' +출금상신' if g['category'] == 'skrt' else ''
+    return f"{g['label']} ({body}){tail}"
+
+
+def automation_tasks():
+    """정적 task + DB soa_group 파생 task 병합(SOA 그룹이 앞). 화면·검증 공용 SSOT."""
+    out = {}
+    try:
+        owner_map = _soa_owner_map()
+        for g in _soa_groups_load(active_only=True):
+            out[soa_task_key(g['key'])] = _soa_task_label(g, owner_map)
+    except sqlite3.Error:
+        pass          # DB 미초기화 등 → 정적 task 만. 그룹 버튼은 안 뜨고, 실행도 거부(fail-closed)
+    out.update(AUTOMATION_TASKS_BASE)
+    return out
 
 
 def _automation_enabled():
@@ -11167,7 +11551,7 @@ def api_automation_run():
     if not isinstance(task, str) or not isinstance(mode, str):   # non-str 방어(500 회피, 올마이트)
         return jsonify({'error': 'bad task/mode'}), 400
     task, mode = task.strip(), mode.strip()
-    if task not in AUTOMATION_TASKS or mode not in AUTOMATION_MODES:
+    if task not in automation_tasks() or mode not in AUTOMATION_MODES:
         return jsonify({'error': 'bad task/mode'}), 400
     # 선박별 SOA 검증: params(vsl_cd/vsl_cds 필수, 기간·부서·검증모델 옵션) 검증.
     # live=실기입(체크박스+리젝리마크). 순수 DRY는 카나리/CLI용으로만 유지.
@@ -11228,7 +11612,7 @@ def api_automation_runs():
         pass
     return jsonify({
         'enabled': _automation_enabled(),
-        'tasks': AUTOMATION_TASKS,
+        'tasks': automation_tasks(),
         'runs': [dict(r) for r in rows],
         'total': total,
         'cleared': cleared,
@@ -11268,7 +11652,7 @@ def api_ext_automation_enqueue():
     d = request.get_json(silent=True) or {}
     task = (d.get('task') or '').strip()
     mode = (d.get('mode') or 'verify').strip()
-    if task not in AUTOMATION_TASKS:
+    if task not in automation_tasks():
         return jsonify({'error': 'bad task'}), 400
     if mode != 'verify':
         return jsonify({'error': 'ext enqueue 는 verify 만 허용(무인 상신 차단)'}), 403
@@ -13595,6 +13979,36 @@ def _auto_migrate():
                 conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
         except Exception as e:
             print(f'[auto_migrate] schema 재적용 건너뜀: {e}')
+        # SOA 그룹은 기존 prod DB에도 schema 재적용만으로 테이블이 생긴다. 최초 전환 시
+        # 현행 G1/G2/G3/SKRT 값을 seed해야 runner가 빈 설정으로 fail-closed 되지 않는다.
+        try:
+            conn.execute('CREATE TABLE IF NOT EXISTS api_settings (k TEXT PRIMARY KEY, v TEXT)')
+            if not conn.execute('SELECT 1 FROM soa_group LIMIT 1').fetchone():
+                seed = [
+                    ('G1', 'SOA 실버 G1', 'silver', 'explicit', 10, ['ATBG','ATGR','ATGV','ATMT']),
+                    ('G2', 'SOA 실버 G2', 'silver', 'explicit', 20, ['ATNH','ATSH','ATSL','JATX']),
+                    ('G3', 'SOA 실버 G3', 'silver', 'explicit', 30, ['PCBJ','PCBS','PCGV','PCMC']),
+                    ('SKRT', 'SOA 장금', 'skrt', 'dynamic_owner', 40, []),
+                ]
+                for key, label, category, mode, sort_order, vessels in seed:
+                    gid = conn.execute('INSERT INTO soa_group (key,label,category,mode,sort_order,active) '
+                                       'VALUES (?,?,?,?,?,1)',
+                                       (key, label, category, mode, sort_order)).lastrowid
+                    conn.executemany('INSERT INTO soa_group_vessel (group_id,vsl_cd) VALUES (?,?)',
+                                     [(gid, vessel) for vessel in vessels])
+                conn.execute("INSERT OR REPLACE INTO api_settings (k,v) VALUES ('soa_groups_version','1')")
+                conn.commit()
+                print('[auto_migrate] SOA 그룹 현행값 seed 완료')
+        except Exception as e:
+            print(f'[auto_migrate] SOA 그룹 seed 건너뜀: {e}')
+        try:    # 감사 흔적 컬럼(먼저 만들어진 DB 보강). 이미 있으면 조용히 통과.
+            cols = {r[1] for r in conn.execute('PRAGMA table_info(soa_group)')}
+            if cols and 'updated_by' not in cols:
+                conn.execute('ALTER TABLE soa_group ADD COLUMN updated_by TEXT')
+                conn.commit()
+                print('[auto_migrate] soa_group.updated_by 추가')
+        except Exception as e:
+            print(f'[auto_migrate] soa_group.updated_by 건너뜀: {e}')
         try:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS fleet_next_port_override (

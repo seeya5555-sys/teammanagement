@@ -73,6 +73,7 @@
   .jpdf-bar b{flex:1}.jpdf-bar a,.jpdf-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:8px;padding:5px 10px;text-decoration:none;cursor:pointer}
   .jpdf-frame{flex:1;border:0;width:100%}
   .au-allrow{background:var(--surface-2);border-style:dashed}
+  .soa-groups{margin:8px 0 20px}.soa-groups-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);font-size:13px;font-weight:700;color:var(--text-secondary)}.soa-groups-head button{margin-left:auto}.soa-group-card{border:1px solid var(--border-subtle);border-radius:9px;background:#fff;padding:10px 12px;margin:7px 0;font-size:12.5px}.soa-group-meta{display:flex;gap:7px;flex-wrap:wrap;color:var(--text-secondary);font-size:11.5px;margin-top:5px}.soa-group-members{margin-top:7px;color:var(--text-primary);word-break:break-word}.soa-group-note{color:var(--text-tertiary);font-size:11.5px;margin-top:4px}.soa-edit{margin-left:auto;border:1px solid var(--border);background:#fff;border-radius:7px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer}
 </style>
 {% endblock %}
 {% block content %}
@@ -89,6 +90,7 @@
   </div>
 
   <div id="au-soa" class="jl"></div>
+  <div id="soa-groups" class="soa-groups"></div>
 
   <div class="au-sec">선박별 SOA 검증 (온디맨드)</div>
   <div id="au-vessel" style="max-width:920px">
@@ -135,8 +137,17 @@
 {% block scripts %}
 <script>
 (function(){
-  const SOA=['soa_g1','soa_g2','soa_g3','soa_skrt'];
-  let TASKS={}, ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
+  const SOA_SKIP=new Set(['soa_resend','soa_vessel']);
+  let TASKS={}, GROUPS=[], ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
+  let GOPEN=false;
+  const soaTasks=()=>Object.keys(TASKS).filter(t=>/^soa_[a-z0-9]+$/.test(t)&&!SOA_SKIP.has(t));
+  // "N그룹·M척" — 하드코딩 금지(그룹 편집으로 매번 바뀜). 척수는 활성 그룹의 실제 대상 합.
+  function soaScope(){
+    const act=GROUPS.filter(g=>g.active);
+    const n=act.length||soaTasks().length;
+    const v=new Set(); act.forEach(g=>(g.mode==='dynamic_owner'?(g.current_members||[]):(g.vessels||[])).forEach(x=>v.add(x)));
+    return v.size?`${n}그룹·${v.size}척`:`${n}그룹`;
+  }
   let LOG_SCROLLS={}, LOG_SIG=null;
   let JLIST=[], JREV=null, JSIG='', JPENDING={}, JOPEN=false;   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게) / JOPEN: 리스트 펼침(기본 접힘)
   let SOPEN=false;   // SOA 섹션 펼침(기본 접힘)
@@ -199,6 +210,7 @@
     m.className='au-master'+(ENABLED?'':' off');
     $('#au-master-sub').textContent=ENABLED?'— 전체 자동화 ON. 버튼이 작동합니다.':'— 킬스위치 ON. 모든 자동화 정지중.';
     renderSoa();
+    renderGroups();
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
     renderJeonja();
     renderLog();
@@ -256,12 +268,55 @@
     el.querySelectorAll('input[data-xref]').forEach(c=>c.onchange=()=>toggleExcl(c.dataset.xref,c.checked));
     el.querySelectorAll('[data-jpdf]').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();openJpdf(b.dataset.jpdf);});
   }
+  function groupPayload(g,creating){
+    const label=prompt('그룹 표시명',g?.label||''); if(label===null)return null;
+    const category=creating?prompt('카테고리: silver (실버) 또는 skrt (장금)','silver'):g.category;
+    if(category===null)return null;
+    const mode=prompt('모드: explicit (명시 선박) 또는 dynamic_owner (해당 owner 신규선 자동편입)',g?.mode||'explicit'); if(mode===null)return null;
+    const vessels=mode==='dynamic_owner'?'':prompt('선박코드 목록 (공백/쉼표 구분)',(g?.vessels||[]).join(', ')); if(vessels===null)return null;
+    const sort=prompt('표시·실행 순서 (정수)',String(g?.sort_order??0)); if(sort===null)return null;
+    const active=confirm('이 그룹을 활성화할까요?\n취소 = 비활성화(삭제 아님)');
+    return {label,category,mode,vessels,sort_order:sort,active};
+  }
+  async function saveGroup(g){
+    const p=groupPayload(g,false); if(!p)return;
+    if(!confirm(`[${g.key}] 그룹 설정을 저장할까요?\n저장 뒤 러너 동기화 전까지는 기존 스냅샷으로 실행됩니다.`))return;
+    const {ok,j}=await api('PUT',`/api/automation/soa/groups/${encodeURIComponent(g.key)}`,p);
+    if(!ok){alert((j&&j.error)||'저장 실패');return;}
+    alert(`저장됨 (설정 v${j.config_version})\n다음 sync 후 자동화 버튼/러너에 반영됩니다.`); await load();
+  }
+  async function createGroup(){
+    const key=prompt('새 그룹 key (예: G4, SKRT2 — 생성 후 변경 불가)',''); if(key===null)return;
+    const p=groupPayload(null,true); if(!p)return; p.key=key;
+    if(!confirm(`[${key.toUpperCase()}] 새 그룹을 만들까요?\n활성 그룹 불변식(중복 배정·자동편입 혼재)을 통과해야 저장됩니다.`))return;
+    const {ok,j}=await api('POST','/api/automation/soa/groups',p);
+    if(!ok){alert((j&&j.error)||'생성 실패');return;}
+    alert(`생성됨 (설정 v${j.config_version})\n다음 sync 후 자동화 버튼/러너에 반영됩니다.`); await load();
+  }
+  function renderGroups(){
+    const el=$('#soa-groups'); if(!el)return;
+    const active=GROUPS.filter(g=>g.active), inactive=GROUPS.filter(g=>!g.active);
+    const card=g=>{const auto=g.mode==='dynamic_owner'; const members=auto?(g.current_members||[]):(g.vessels||[]);
+      const mismatch=(g.owner_mismatch||[]);
+      return `<div class="soa-group-card"><div style="display:flex;align-items:center;gap:7px"><b>${esc(g.label)}</b><span class="au-status ${g.active?'st-done':'st-failed'}">${g.active?'활성':'비활성'}</span><button class="soa-edit" data-sg="${escA(g.key)}">편집</button></div>`+
+        `<div class="soa-group-meta"><span>key ${esc(g.key)} (고정)</span><span>${g.category==='skrt'?'장금마리타임 · owner 001':'실버마리타임 · owner 037'}</span><span>${auto?'신규선 자동편입':'명시 배정'}</span><span>순서 ${esc(g.sort_order)}</span>${g.updated_by?`<span>최종 편집 ${esc(g.updated_by)} · ${esc(g.updated_at||'')}</span>`:''}</div>`+
+        `<div class="soa-group-members"><b>${auto?'현재 자동편입 선박':'배정 선박'}:</b> ${members.length?members.map(esc).join(' · '):'없음'}</div>`+
+        `${auto?'<div class="soa-group-note">SVMS My Vessel owner 스냅샷 기준 표시. 실제 실행은 매 run의 SVMS 조회 기준.</div>':''}`+
+        `${mismatch.length?`<div class="soa-group-note" style="color:var(--red)">현재 owner와 불일치하여 실행에서 제외: ${mismatch.map(esc).join(' · ')}</div>`:''}</div>`;};
+    el.innerHTML=`<div class="soa-groups-head" id="soa-groups-head">SOA 그룹 편집 <span class="jl-headmeta">활성 ${active.length} · 비활성 ${inactive.length}</span><button class="au-b verify" id="soa-group-new" type="button">+ 그룹 추가</button></div>`+
+      `<div ${GOPEN?'':'hidden'}><div class="au-note">카테고리 owner 매핑은 고정됨. 자동편입 그룹은 해당 category의 신규 My Vessel을 모두 포함. 삭제 대신 비활성화.</div>${active.map(card).join('')||'<div class="jl-empty">활성 그룹 없음</div>'}`+
+      `${inactive.length?`<div class="jl-grp">비활성 그룹</div>${inactive.map(card).join('')}`:''}</div>`;
+    $('#soa-groups-head').onclick=e=>{if(e.target.closest('#soa-group-new'))return;GOPEN=!GOPEN;renderGroups();};
+    $('#soa-group-new').onclick=createGroup;
+    el.querySelectorAll('[data-sg]').forEach(b=>b.onclick=e=>{e.stopPropagation();const g=GROUPS.find(x=>x.key===b.dataset.sg);if(g)saveGroup(g);});
+  }
   function renderSoa(){
     const el=$('#au-soa'); if(!el) return;
+    const SOA=soaTasks();
     const anyBusy=SOA.some(busy);
     const dEn=(!ENABLED)?'disabled':'';                 // 검증은 ENABLED만 보면 됨
     const dAll=(!ENABLED||anyBusy)?'disabled':'';        // 실행계열은 진행중이면도 막음
-    const allRow=`<div class="au-row au-allrow"><div class="au-name"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> SOA 전체 한방에<span class="au-desc">4그룹·16척 일괄 적재 → 러너가 순차 실행</span></div>`+
+    const allRow=`<div class="au-row au-allrow"><div class="au-name"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> SOA 전체 한방에<span class="au-desc">${soaScope()} 일괄 적재 → 러너가 순차 실행</span></div>`+
       `<div class="au-btns">`+
       `<button class="au-b verify" data-all="verify" ${dEn}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증 전체</button>`+
       `<button class="au-b live" data-all="live" ${dAll}> 자동승인 전체</button>`+
@@ -269,7 +324,7 @@
       `<button class="au-b rjt2" data-all="reject_submit" ${dAll}><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 리젝제출+메일 전체</button>`+
       `</div></div>`;
     const body=allRow+SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
-    el.innerHTML=`<div class="jl-head${SOPEN?' open':''}" id="soa-head"><span class="jl-caret">▸</span>SOA 정기검토 · 자동승인<span class="jl-headmeta">4그룹·16척</span></div>`+
+    el.innerHTML=`<div class="jl-head${SOPEN?' open':''}" id="soa-head"><span class="jl-caret">▸</span>SOA 정기검토 · 자동승인<span class="jl-headmeta">${soaScope()}</span></div>`+
       `<div class="jl-body" ${SOPEN?'':'hidden'}>${body}</div>`;
     $('#soa-head').onclick=()=>{ SOPEN=!SOPEN; renderSoa(); };
     el.querySelectorAll('.au-b').forEach(b=>b.onclick=onRun);   // toggle 단독 재호출 시도 동작하게
@@ -277,11 +332,12 @@
   async function runAllSoa(mode){
     const lab={verify:'검증',live:'자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
     const msg={
-      live:`[SOA 전체 4그룹·16척]\n자동승인을 지금 실행할까요?\n(clean 건만 자동 처리, 예외 미처리·텔레그램 보고 / 그룹별 순차 실행)`,
-      reject_mark:`[SOA 전체 4그룹·16척]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
-      reject_submit:`[SOA 전체 4그룹·16척]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
+      live:`[SOA 전체 ${soaScope()}]\n자동승인을 지금 실행할까요?\n(clean 건만 자동 처리, 예외 미처리·텔레그램 보고 / 그룹별 순차 실행)`,
+      reject_mark:`[SOA 전체 ${soaScope()}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
+      reject_submit:`[SOA 전체 ${soaScope()}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
     }[mode];
     if(msg && !confirm(msg)) return;
+    const SOA=soaTasks();
     let ok=0,busy_=0,fail=0;
     for(const t of SOA){
       const {ok:o,j}=await api('POST','/api/automation/run',{task:t,mode});
@@ -379,7 +435,10 @@
       JLIST=ji.j.items||[]; JREV=ji.j.reviewed_at||null;
       for(const it of JLIST){ if(it.ref in JPENDING) it.excluded=JPENDING[it.ref]; }  // in-flight 토글 보존
     }
+    const sg=await api('GET','/api/automation/soa/groups');
+    if(sg.ok) GROUPS=sg.j.groups||[];
     render();
+    renderGroups();
   }
   async function clearLog(){
     if(!confirm('완료/실패 실행 로그를 비웁니다.\n(진행중 작업은 보존됩니다)\n진행할까요?'))return;
