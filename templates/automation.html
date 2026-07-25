@@ -74,6 +74,36 @@
   .jpdf-frame{flex:1;border:0;width:100%}
   .au-allrow{background:var(--surface-2);border-style:dashed}
   .soa-groups{margin:8px 0 20px}.soa-groups-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);font-size:13px;font-weight:700;color:var(--text-secondary)}.soa-groups-head button{margin-left:auto}.soa-group-card{border:1px solid var(--border-subtle);border-radius:9px;background:#fff;padding:10px 12px;margin:7px 0;font-size:12.5px}.soa-group-meta{display:flex;gap:7px;flex-wrap:wrap;color:var(--text-secondary);font-size:11.5px;margin-top:5px}.soa-group-members{margin-top:7px;color:var(--text-primary);word-break:break-word}.soa-group-note{color:var(--text-tertiary);font-size:11.5px;margin-top:4px}.soa-edit{margin-left:auto;border:1px solid var(--border);background:#fff;border-radius:7px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer}
+  /* 그룹 편집 모달 — prompt() 연쇄 대신 한 화면에서 전부 편집 */
+  .sgm{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9100;align-items:center;justify-content:center;padding:20px}
+  .sgm.open{display:flex}
+  .sgm-box{background:#fff;border-radius:12px;width:min(680px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden}
+  .sgm-bar{display:flex;align-items:center;gap:10px;padding:11px 15px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+  .sgm-bar b{flex:1;font-size:14px}
+  .sgm-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:8px;padding:5px 10px;cursor:pointer}
+  .sgm-body{padding:14px 15px;overflow:auto;font-size:12.5px}
+  .sgm-f{margin-bottom:13px}
+  .sgm-f>label{display:block;font-weight:700;font-size:11.5px;color:var(--text-secondary);margin-bottom:5px}
+  .sgm-f input[type=text],.sgm-f input[type=number],.sgm-f select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;color:var(--text-primary)}
+  .sgm-f input:disabled,.sgm-f select:disabled{background:var(--surface-2);color:var(--text-tertiary)}
+  .sgm-row{display:flex;gap:10px}.sgm-row>div{flex:1}
+  .sgm-radio{display:flex;gap:8px;flex-wrap:wrap}
+  .sgm-radio label{flex:1;min-width:200px;display:flex;gap:7px;align-items:flex-start;border:1px solid var(--border);border-radius:9px;padding:8px 10px;cursor:pointer;font-size:12px;background:#fff}
+  .sgm-radio label.on{border-color:var(--blue);background:var(--blue-bg)}
+  .sgm-radio input{margin-top:2px}
+  .sgm-radio i{display:block;font-style:normal;color:var(--text-tertiary);font-size:11px;margin-top:2px}
+  .sgm-chips{display:flex;flex-wrap:wrap;gap:6px;border:1px solid var(--border);border-radius:9px;padding:9px;max-height:190px;overflow:auto;background:var(--surface-2)}
+  .sgm-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:#fff;border-radius:20px;padding:4px 10px;font-size:12px;cursor:pointer;user-select:none}
+  .sgm-chip.on{border-color:var(--blue);background:var(--blue-bg);color:var(--blue);font-weight:700}
+  .sgm-chip.taken{opacity:.55}
+  .sgm-chip.off-pool{border-style:dashed;border-color:var(--red);color:var(--red)}
+  .sgm-chip input{display:none}
+  .sgm-hint{color:var(--text-tertiary);font-size:11.5px;margin-top:5px;line-height:1.5}
+  .sgm-warn{color:var(--red);font-size:11.5px;margin-top:6px;line-height:1.5;white-space:pre-line}
+  .sgm-foot{display:flex;align-items:center;gap:10px;padding:11px 15px;border-top:1px solid var(--border);background:var(--surface-2)}
+  .sgm-err{flex:1;color:var(--red);font-size:11.5px;white-space:pre-line}
+  .sgm-save{border:1px solid var(--blue);background:var(--blue);color:#fff;border-radius:8px;padding:7px 16px;font-size:12.5px;font-weight:700;cursor:pointer}
+  .sgm-save:disabled{opacity:.5;cursor:default}
 </style>
 {% endblock %}
 {% block content %}
@@ -122,6 +152,14 @@
     <div class="jpdf-box"><div class="jpdf-bar"><b id="jpdf-title">검토 인보이스</b><a id="jpdf-open" target="_blank" rel="noopener">새 탭</a><button id="jpdf-close" type="button">닫기 ✕</button></div><iframe class="jpdf-frame" id="jpdf-frame" title="전자결재 검토 인보이스 미리보기"></iframe></div>
   </div>
 
+  <div class="sgm" id="sg-modal">
+    <div class="sgm-box">
+      <div class="sgm-bar"><b id="sg-title">그룹 편집</b><button id="sg-close" type="button">닫기 ✕</button></div>
+      <div class="sgm-body" id="sg-body"></div>
+      <div class="sgm-foot"><span class="sgm-err" id="sg-err"></span><button class="sgm-save" id="sg-save" type="button">저장</button></div>
+    </div>
+  </div>
+
   <div class="au-log">
     <div class="au-log-head" id="au-log-head">
       <span class="au-log-caret" id="au-log-caret">▸</span>
@@ -140,6 +178,9 @@
   const SOA_SKIP=new Set(['soa_resend','soa_vessel']);
   let TASKS={}, GROUPS=[], ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
   let GOPEN=false;
+  // 그룹 편집 모달 상태. CATOWNER/RESERVED 는 서버가 내려주는 값으로 덮어씀(코드 상수 단일출처).
+  let OWNERS={}, CATOWNER={}, RESERVED=[], SGE=null;
+  const CATNAME={silver:'실버마리타임',skrt:'장금마리타임'};
   const soaTasks=()=>Object.keys(TASKS).filter(t=>/^soa_[a-z0-9]+$/.test(t)&&!SOA_SKIP.has(t));
   // "N그룹·M척" — 하드코딩 금지(그룹 편집으로 매번 바뀜). 척수는 활성 그룹의 실제 대상 합.
   function soaScope(){
@@ -268,31 +309,143 @@
     el.querySelectorAll('input[data-xref]').forEach(c=>c.onchange=()=>toggleExcl(c.dataset.xref,c.checked));
     el.querySelectorAll('[data-jpdf]').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();openJpdf(b.dataset.jpdf);});
   }
-  function groupPayload(g,creating){
-    const label=prompt('그룹 표시명',g?.label||''); if(label===null)return null;
-    const category=creating?prompt('카테고리: silver (실버) 또는 skrt (장금)','silver'):g.category;
-    if(category===null)return null;
-    const mode=prompt('모드: explicit (명시 선박) 또는 dynamic_owner (해당 owner 신규선 자동편입)',g?.mode||'explicit'); if(mode===null)return null;
-    const vessels=mode==='dynamic_owner'?'':prompt('선박코드 목록 (공백/쉼표 구분)',(g?.vessels||[]).join(', ')); if(vessels===null)return null;
-    const sort=prompt('표시·실행 순서 (정수)',String(g?.sort_order??0)); if(sort===null)return null;
-    const active=confirm('이 그룹을 활성화할까요?\n취소 = 비활성화(삭제 아님)');
-    return {label,category,mode,vessels,sort_order:sort,active};
+  // ── 그룹 편집 모달 ────────────────────────────────────────────────
+  // 서버 불변식(중복배정·dynamic 혼재·예약key)을 UI 에서 **미리** 보여주기만 함.
+  // 최종 판정은 언제나 서버(422) — 여기 경고는 저장을 막지 않는 안내.
+  function poolOf(cat){
+    const oc=CATOWNER[cat];
+    return oc?Object.keys(OWNERS).filter(v=>OWNERS[v]===oc).sort():[];
   }
-  async function saveGroup(g){
-    const p=groupPayload(g,false); if(!p)return;
-    if(!confirm(`[${g.key}] 그룹 설정을 저장할까요?\n저장 뒤 러너 동기화 전까지는 기존 스냅샷으로 실행됩니다.`))return;
-    const {ok,j}=await api('PUT',`/api/automation/soa/groups/${encodeURIComponent(g.key)}`,p);
-    if(!ok){alert((j&&j.error)||'저장 실패');return;}
-    alert(`저장됨 (설정 v${j.config_version})\n다음 sync 후 자동화 버튼/러너에 반영됩니다.`); await load();
+  function takenBy(cat,key){   // 같은 category 의 다른 활성 explicit 그룹이 이미 쓰는 선박
+    const m={};
+    GROUPS.forEach(g=>{ if(g.active&&g.category===cat&&g.key!==key&&g.mode==='explicit')
+      (g.vessels||[]).forEach(v=>{m[v]=g.label||g.key;}); });
+    return m;
   }
-  async function createGroup(){
-    const key=prompt('새 그룹 key (예: G4, SKRT2 — 생성 후 변경 불가)',''); if(key===null)return;
-    const p=groupPayload(null,true); if(!p)return; p.key=key;
-    if(!confirm(`[${key.toUpperCase()}] 새 그룹을 만들까요?\n활성 그룹 불변식(중복 배정·자동편입 혼재)을 통과해야 저장됩니다.`))return;
-    const {ok,j}=await api('POST','/api/automation/soa/groups',p);
-    if(!ok){alert((j&&j.error)||'생성 실패');return;}
-    alert(`생성됨 (설정 v${j.config_version})\n다음 sync 후 자동화 버튼/러너에 반영됩니다.`); await load();
+  function sgWarnings(){
+    const w=[]; const cat=SGE.category;
+    if(SGE.creating){
+      if(!/^[A-Z0-9]{1,8}$/.test(SGE.key)) w.push('key 는 영문 대문자/숫자 1~8자');
+      else if(RESERVED.includes(SGE.key)) w.push(`key ${SGE.key} 는 기존 자동화가 쓰는 예약어 — 다른 이름 필요`);
+      else if(GROUPS.some(g=>g.key===SGE.key)) w.push(`key ${SGE.key} 는 이미 있음`);
+    }
+    if(SGE.active){
+      const others=GROUPS.filter(g=>g.active&&g.category===cat&&g.key!==SGE.key);
+      if(SGE.mode==='dynamic_owner'){
+        if(others.some(g=>g.mode==='dynamic_owner')) w.push(`${CATNAME[cat]}에 자동편입 그룹이 이미 있음 — owner 당 1개만 가능`);
+        if(others.some(g=>g.mode==='explicit')) w.push(`${CATNAME[cat]}에 명시 배정 그룹이 있어 자동편입과 혼재 불가`);
+      }else{
+        if(others.some(g=>g.mode==='dynamic_owner')) w.push(`${CATNAME[cat]}는 자동편입 그룹이 잡고 있어 명시 배정과 혼재 불가`);
+        if(!SGE.vessels.size) w.push('활성 그룹인데 선박이 0척 — 실행돼도 검토 대상이 없음');
+        const t=takenBy(cat,SGE.key), dup=[...SGE.vessels].filter(v=>t[v]);
+        if(dup.length) w.push(`다른 그룹과 중복 배정: ${dup.map(v=>`${v}(${t[v]})`).join(', ')}`);
+      }
+    }
+    return w;
   }
+  function paintWarn(){   // 텍스트 입력(key/label)에도 경고가 따라오게 — 재렌더 없이 경고칸만 갱신
+    const box=$('#sg-warnbox'); if(!box||!SGE)return;
+    const w=sgWarnings();
+    box.textContent=w.map(x=>'• '+x).join('\n');
+    box.style.display=w.length?'':'none';
+  }
+  function renderSg(){
+    const cat=SGE.category, pool=poolOf(cat), taken=takenBy(cat,SGE.key);
+    const extra=[...SGE.vessels].filter(v=>!pool.includes(v)).sort();   // owner 스냅샷 밖 선박(보존)
+    const chip=(v,off)=>{const on=SGE.vessels.has(v);
+      return `<label class="sgm-chip${on?' on':''}${taken[v]?' taken':''}${off?' off-pool':''}" title="${off?'현재 owner 스냅샷에 없음 — 실행 시 제외될 수 있음':(taken[v]?`다른 그룹(${escA(taken[v])})이 이미 배정`:'')}">`+
+        `<input type="checkbox" data-vsl="${escA(v)}"${on?' checked':''}>${esc(v)}${taken[v]?' ⚠':''}${off?' ✕':''}</label>`;};
+    const modeCard=(val,t,d)=>`<label class="${SGE.mode===val?'on':''}"><input type="radio" name="sg-mode" value="${val}"${SGE.mode===val?' checked':''}><span><b>${t}</b><i>${d}</i></span></label>`;
+    const w=sgWarnings();
+    $('#sg-title').textContent=SGE.creating?'새 SOA 그룹':`그룹 편집 — ${SGE.key}`;
+    $('#sg-body').innerHTML=
+      `<div class="sgm-row">`+
+        `<div class="sgm-f"><label>그룹 key ${SGE.creating?'(생성 후 변경 불가)':'(고정)'}</label>`+
+          (SGE.creating?`<input type="text" id="sg-key" maxlength="8" placeholder="예: G4" value="${escA(SGE.key)}">`
+                       :`<input type="text" value="${escA(SGE.key)}" disabled>`)+`</div>`+
+        `<div class="sgm-f"><label>카테고리 ${SGE.creating?'':'(고정)'}</label>`+
+          (SGE.creating?`<select id="sg-cat">${Object.keys(CATOWNER).map(c=>`<option value="${c}"${c===cat?' selected':''}>${CATNAME[c]||c} · owner ${CATOWNER[c]}</option>`).join('')}</select>`
+                       :`<input type="text" value="${escA((CATNAME[cat]||cat)+' · owner '+(CATOWNER[cat]||'?'))}" disabled>`)+`</div>`+
+      `</div>`+
+      `<div class="sgm-f"><label>표시명</label><input type="text" id="sg-label" maxlength="80" placeholder="예: 실버 G4" value="${escA(SGE.label)}"></div>`+
+      `<div class="sgm-f"><label>선박 편입 방식</label><div class="sgm-radio">`+
+        modeCard('explicit','명시 배정','아래에서 고른 선박만 이 그룹으로 검토')+
+        modeCard('dynamic_owner','신규선 자동편입',`${CATNAME[cat]||cat} My Vessel 전체 — 새 배 들어오면 자동 포함`)+
+      `</div></div>`+
+      (SGE.mode==='explicit'
+        ? `<div class="sgm-f"><label>선박 (${SGE.vessels.size}척 선택 · ${CATNAME[cat]||cat} owner ${CATOWNER[cat]||'?'} pool ${pool.length}척)</label>`+
+          `<div class="sgm-chips" id="sg-chips">${pool.map(v=>chip(v,false)).join('')}${extra.map(v=>chip(v,true)).join('')}`+
+          `${(!pool.length&&!extra.length)?'<span class="sgm-hint">owner 스냅샷이 비어 있음 — 아래에서 직접 입력</span>':''}</div>`+
+          `<div class="sgm-hint">⚠ = 다른 그룹이 이미 배정 · ✕ = 현재 owner 스냅샷 밖(실행 시 제외될 수 있음)</div>`+
+          `<div class="sgm-row" style="margin-top:7px"><div><input type="text" id="sg-add" value="${escA(SGE.manual||'')}" placeholder="목록에 없는 선박코드 직접 추가 (4자, 공백/쉼표 구분)"></div></div></div>`
+        : `<div class="sgm-f"><label>현재 자동편입 선박 (${pool.length}척)</label>`+
+          `<div class="sgm-chips">${pool.length?pool.map(v=>`<span class="sgm-chip on">${esc(v)}</span>`).join(''):'<span class="sgm-hint">owner 스냅샷 없음</span>'}</div>`+
+          `<div class="sgm-hint">SVMS My Vessel owner 스냅샷 기준 표시. 실제 실행 대상은 매 run 의 SVMS 조회 기준.</div></div>`)+
+      `<div class="sgm-row">`+
+        `<div class="sgm-f"><label>표시·실행 순서</label><input type="number" id="sg-sort" value="${Number(SGE.sort_order)||0}"></div>`+
+        `<div class="sgm-f"><label>상태</label><select id="sg-active"><option value="1"${SGE.active?' selected':''}>활성</option><option value="0"${SGE.active?'':' selected'}>비활성 (삭제 아님)</option></select></div>`+
+      `</div>`+
+      `<div class="sgm-warn" id="sg-warnbox" style="display:${w.length?'':'none'}">${esc(w.map(x=>'• '+x).join('\n'))}</div>`;
+    // 바인딩 — 텍스트는 상태만 갱신(재렌더 X, 포커스 보존), 구조 바뀌는 것만 재렌더.
+    //           단 경고칸은 paintWarn() 으로 따로 갱신해 stale 경고가 남지 않게 함.
+    const b=(id,fn)=>{const e=$(id); if(e) e.oninput=fn;};
+    b('#sg-key',e=>{SGE.key=e.target.value.trim().toUpperCase(); paintWarn();});
+    b('#sg-label',e=>{SGE.label=e.target.value;});
+    b('#sg-sort',e=>{SGE.sort_order=e.target.value;});
+    b('#sg-add',e=>{SGE.manual=e.target.value;});   // 재렌더에도 미제출 입력 보존
+    const cs=$('#sg-cat'); if(cs) cs.onchange=e=>{SGE.category=e.target.value;SGE.vessels=new Set();renderSg();};
+    const ac=$('#sg-active'); if(ac) ac.onchange=e=>{SGE.active=e.target.value==='1';renderSg();};
+    // mode 전환은 선택 선박을 지우지 않음(되돌리면 그대로 복구). dynamic 이면 저장 payload 에서만 제외.
+    $('#sg-body').querySelectorAll('input[name=sg-mode]').forEach(r=>r.onchange=()=>{
+      SGE.mode=r.value; renderSg();});
+    $('#sg-body').querySelectorAll('input[data-vsl]').forEach(c=>c.onchange=()=>{
+      c.checked?SGE.vessels.add(c.dataset.vsl):SGE.vessels.delete(c.dataset.vsl); renderSg();});
+    const add=$('#sg-add');
+    if(add) add.onkeydown=e=>{
+      if(e.key!=='Enter')return; e.preventDefault();
+      const bad=[];
+      (add.value||'').toUpperCase().split(/[\s,;/]+/).filter(Boolean).forEach(v=>{
+        /^[A-Z0-9]{4}$/.test(v)?SGE.vessels.add(v):bad.push(v);});
+      SGE.manual=bad.join(' '); $('#sg-err').textContent=bad.length?`선박코드 4자 아님: ${bad.join(', ')}`:'';
+      renderSg(); const a2=$('#sg-add'); if(a2){a2.focus();a2.select();}
+    };
+  }
+  function openSg(g){
+    SGE=g?{creating:false,key:g.key,category:g.category,label:g.label||'',mode:g.mode,
+           vessels:new Set(g.vessels||[]),sort_order:g.sort_order??0,active:!!g.active,manual:'',saving:false}
+          :{creating:true,key:'',category:Object.keys(CATOWNER)[0]||'silver',label:'',mode:'explicit',
+            vessels:new Set(),sort_order:(GROUPS.reduce((m,x)=>Math.max(m,Number(x.sort_order)||0),0)+10),
+            active:true,manual:'',saving:false};
+    $('#sg-err').textContent=''; $('#sg-save').disabled=false;
+    renderSg(); $('#sg-modal').classList.add('open');
+    setTimeout(()=>{const f=$(SGE.creating?'#sg-key':'#sg-label'); if(f)f.focus();},30);
+  }
+  // 저장 중에는 닫히지 않는다 — 닫고 다른 그룹을 열면 이전 응답이 새 모달 상태를 덮어쓰는 race 가 생김.
+  function closeSg(){ if(SGE&&SGE.saving)return; SGE=null; $('#sg-modal').classList.remove('open'); $('#sg-body').innerHTML=''; }
+  async function saveSg(){
+    if(!SGE||SGE.saving)return;
+    // 활성 → 비활성 전환만 한 번 되묻는다(실행 목록에서 사라지는 변화라서). 나머지는 모달 자체가 확인.
+    const was=GROUPS.find(g=>g.key===SGE.key);
+    if(was&&was.active&&!SGE.active&&!confirm(`[${SGE.key}] 을 비활성화합니다.\n자동화 목록에서 사라지고 실행되지 않습니다. (삭제 아님 — 언제든 다시 활성화 가능)\n진행할까요?`))return;
+    // dynamic_owner 는 선박 목록을 보내지 않는다(모달 안에서는 선택을 보존해 되돌리기 가능).
+    const p={label:SGE.label,mode:SGE.mode,vessels:SGE.mode==='dynamic_owner'?[]:[...SGE.vessels],
+             sort_order:SGE.sort_order,active:SGE.active};
+    let r;
+    const cur=SGE;
+    cur.saving=true; $('#sg-save').disabled=true; $('#sg-err').textContent='저장 중…';
+    if(cur.creating){ p.key=cur.key; p.category=cur.category;
+      r=await api('POST','/api/automation/soa/groups',p); }
+    else r=await api('PUT',`/api/automation/soa/groups/${encodeURIComponent(cur.key)}`,p);
+    cur.saving=false; $('#sg-save').disabled=false;
+    if(SGE!==cur)return;                       // 모달이 이미 교체됐으면 응답 무시
+    if(!r.ok){ $('#sg-err').textContent=(r.j&&r.j.error)||'저장 실패'; return; }
+    const v=r.j&&r.j.config_version; closeSg(); await load();
+    alert(`저장됨 (설정 v${v})\n다음 자동화 실행 직전 sync 에서 러너에 반영됩니다.`);
+  }
+  $('#sg-close').onclick=closeSg;
+  $('#sg-save').onclick=saveSg;
+  $('#sg-modal').onclick=e=>{if(e.target.id==='sg-modal')closeSg();};
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&SGE&&!SGE.saving)closeSg();});
   function renderGroups(){
     const el=$('#soa-groups'); if(!el)return;
     const active=GROUPS.filter(g=>g.active), inactive=GROUPS.filter(g=>!g.active);
@@ -307,8 +460,8 @@
       `<div ${GOPEN?'':'hidden'}><div class="au-note">카테고리 owner 매핑은 고정됨. 자동편입 그룹은 해당 category의 신규 My Vessel을 모두 포함. 삭제 대신 비활성화.</div>${active.map(card).join('')||'<div class="jl-empty">활성 그룹 없음</div>'}`+
       `${inactive.length?`<div class="jl-grp">비활성 그룹</div>${inactive.map(card).join('')}`:''}</div>`;
     $('#soa-groups-head').onclick=e=>{if(e.target.closest('#soa-group-new'))return;GOPEN=!GOPEN;renderGroups();};
-    $('#soa-group-new').onclick=createGroup;
-    el.querySelectorAll('[data-sg]').forEach(b=>b.onclick=e=>{e.stopPropagation();const g=GROUPS.find(x=>x.key===b.dataset.sg);if(g)saveGroup(g);});
+    $('#soa-group-new').onclick=()=>openSg(null);
+    el.querySelectorAll('[data-sg]').forEach(b=>b.onclick=e=>{e.stopPropagation();const g=GROUPS.find(x=>x.key===b.dataset.sg);if(g)openSg(g);});
   }
   function renderSoa(){
     const el=$('#au-soa'); if(!el) return;
@@ -436,9 +589,15 @@
       for(const it of JLIST){ if(it.ref in JPENDING) it.excluded=JPENDING[it.ref]; }  // in-flight 토글 보존
     }
     const sg=await api('GET','/api/automation/soa/groups');
-    if(sg.ok) GROUPS=sg.j.groups||[];
+    if(sg.ok){
+      GROUPS=sg.j.groups||[]; OWNERS=sg.j.owners||{};
+      if(sg.j.category_owner) CATOWNER=sg.j.category_owner;
+      RESERVED=sg.j.reserved_keys||[];
+    }
     render();
     renderGroups();
+    // ⚠️ 모달이 열려 있으면 재렌더 안 함 — 7초 폴링이 입력 포커스/커서를 날려버림.
+    //    경고는 열 때 기준으로 표시되고, 최종 판정은 저장 시 서버(422)가 함.
   }
   async function clearLog(){
     if(!confirm('완료/실패 실행 로그를 비웁니다.\n(진행중 작업은 보존됩니다)\n진행할까요?'))return;

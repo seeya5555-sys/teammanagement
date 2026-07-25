@@ -8127,8 +8127,14 @@ def _soa_assert_active_invariants(db):
 @admin_required
 def api_automation_soa_groups():
     if request.method == 'GET':
+        # category_owner 는 편집 UI 가 선박 pool 을 고르는 데만 씀(표시용).
+        # 실행 판정은 러너가 SVMS 에서 직접 읽는 owner 라 여기 값과 무관.
         return jsonify({'ok': True, 'config_version': _soa_groups_version(),
-                        'groups': _soa_editor_groups(), 'owners': _soa_owner_map()})
+                        'groups': _soa_editor_groups(), 'owners': _soa_owner_map(),
+                        'category_owner': dict(SOA_CATEGORY_OWNER),
+                        'reserved_keys': sorted(
+                            k[4:].upper() for k in AUTOMATION_TASKS_BASE
+                            if k.startswith('soa_') and _SOA_KEY_RE.match(k[4:].upper()))})
     try:
         d = _soa_edit_values(request.get_json(silent=True), creating=True)
         db = get_db()

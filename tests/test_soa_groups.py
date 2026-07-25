@@ -39,6 +39,13 @@ chk(keys == ['G1', 'G2', 'G3', 'SKRT'], '시드 그룹 4개', keys)
 g1 = next(g for g in j['groups'] if g['key'] == 'G1')
 chk(g1['vessels'] == ['ATBG', 'ATGR', 'ATGV', 'ATMT'], 'G1 시드 선박', g1['vessels'])
 chk(j['config_version'] == 1, 'config_version=1', j['config_version'])
+# 편집 모달이 pool·예약키를 서버에서 받아 쓴다(프론트 하드코딩 금지)
+chk(j.get('category_owner') == A.SOA_CATEGORY_OWNER, 'category_owner 내려줌', j.get('category_owner'))
+chk('VESSEL' in (j.get('reserved_keys') or []) and 'RESEND' in j['reserved_keys'],
+    'reserved_keys 내려줌', j.get('reserved_keys'))
+chk(all(k not in (j.get('reserved_keys') or []) for k in ('G1', 'SKRT')),
+    'reserved_keys 에 실제 그룹 key 는 없음', j.get('reserved_keys'))
+chk(isinstance(j.get('owners'), dict), 'owners 맵 내려줌')
 
 # 2) task 목록이 그룹에서 파생되는지
 tasks = A.automation_tasks()
