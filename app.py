@@ -9076,10 +9076,58 @@ def _soa_review_case_gate(case_row, lines=None):
     }
 
 
+def _soa_review_truthy(v):
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    return str(v or '').strip().lower() in ('true', 'y', 'yes', '1')
+
+
+def _soa_review_action_failed(result):
+    """마지막 액션이 실패/부분성공이면 True — 사람이 다시 봐야 하므로 검토함에 남긴다.
+    판정은 보수적: 명시적 성공(done/ok)만 성공으로 보고, 해석 못 하는 값은 실패로 본다."""
+    if not result:
+        return False
+    s = str(result).strip()
+    try:
+        d = json.loads(s)
+    except Exception:
+        d = None
+    if isinstance(d, dict):
+        status = str(d.get('status') or '').strip().lower()
+        return _soa_review_truthy(d.get('reconcile_required')) or status not in ('done', 'ok')
+    return s.lower() not in ('done', 'ok')
+
+
 def _soa_review_case_payload(case_row, *, detail=False):
     c = dict(case_row)
     lines = _soa_review_case_lines(c['id'])
     gate = _soa_review_case_gate(c, lines)
+    # 예외 라인 중 아직 Confirm/Reject 결론이 안 난 것만 '열린 예외'.
+    # 리젝으로 결론내고 SVMS에 반영된 라인은 사람 할 일이 끝났으므로 검토함에서 빠져야 한다.
+    open_exception_count = sum(1 for ln in lines
+                               if ln.get('exception') and ln.get('cfm_yn') != 'Y' and ln.get('rjt_yn') != 'Y')
+    pending_count = sum(1 for ln in lines if ln.get('cfm_yn') != 'Y' and ln.get('rjt_yn') != 'Y')
+    rejected_count = sum(1 for ln in lines if ln.get('rjt_yn') == 'Y')
+    action_failed = _soa_review_action_failed(c.get('last_action_result'))
+    # 전 라인 Confirm인데 아직 승인 전이면 남은 할 일 = 승인. can_approve는 fresh(15분)를 요구하므로
+    # 목록 노출 판정에는 fresh를 빼고 본다(스냅샷이 낡았으면 refresh 후 승인하면 됨).
+    approval_pending = bool((c.get('status') or '').strip().upper() == 'S'
+                            and not gate['read_only'] and not gate['locked']
+                            and gate['all_confirmed'] and not bool(c.get('draft_dirty')))
+    # 실패/부분성공(reconcile)과 처리중 잠금은 C/T(read_only)여도 사람이 봐야 하므로 숨기지 않는다.
+    needs_review = bool(
+        action_failed or gate['locked']
+        or (not gate['read_only']
+            and (open_exception_count > 0 or pending_count > 0 or bool(c.get('draft_dirty'))
+                 or gate['can_approve'] or approval_pending))
+    )
+    # 목록 분류는 서버가 확정한다(클라가 추론하지 않음).
+    #   attention = 사람 할 일 남음 / reject_waiting = 리젝 반영 끝, SM 회신 대기 / closed = 종결
+    review_bucket = ('attention' if needs_review
+                     else 'reject_waiting' if (rejected_count > 0 and not gate['read_only'])
+                     else 'closed')
     payload = {
         'id': c['id'],
         'snapshot_id': c.get('snapshot_id'),
@@ -9107,8 +9155,13 @@ def _soa_review_case_payload(case_row, *, detail=False):
         **gate,
         'line_count': len(lines),
         'exception_count': sum(1 for ln in lines if ln.get('exception')),
-        'pending_count': sum(1 for ln in lines if ln.get('cfm_yn') != 'Y' and ln.get('rjt_yn') != 'Y'),
-        'rejected_count': sum(1 for ln in lines if ln.get('rjt_yn') == 'Y'),
+        'open_exception_count': open_exception_count,
+        'pending_count': pending_count,
+        'rejected_count': rejected_count,
+        'action_failed': action_failed,
+        'approval_pending': approval_pending,
+        'needs_review': needs_review,
+        'review_bucket': review_bucket,
     }
     if detail:
         att_rows = query('SELECT * FROM soa_review_attachment WHERE case_id=? ORDER BY line_id, slot, id',

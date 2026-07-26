@@ -2,7 +2,7 @@
 import base64, hashlib, json, os, sys, tempfile
 from datetime import datetime, timedelta
 
-os.chdir(os.path.expanduser('~/projects/teammanagement'))
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.getcwd())
 DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
@@ -93,6 +93,70 @@ case=c.get('/api/automation/soa/reviews/'+SX).get_json()['case']
 chk(case['status']=='C' and case['read_only'] and not case['can_push'] and not case['can_approve'],'C readonly',case)
 A.execute("UPDATE soa_review_attachment SET expires_at='2000-01-01 00:00:00' WHERE id=?", (aid,))
 chk(c.get(f'/api/automation/soa/reviews/attachments/{aid}/pdf').status_code==404, 'expired PDF denied')
+
+# ── needs_review: 리젝 결론 + SVMS 반영 끝난 건은 검토함에서 빠져야 함 ──────────────
+SX2='ATGVCX2607240001'
+def rline(seq, cfm='Y', rjt='N', rmk=None):
+    d=line(seq, cfm); d['SX_CD']=SX2; d['RJT_YN']=rjt; d['RJT_RMK']=rmk
+    d['machine_state']='rejected' if rjt=='Y' else ('confirmed' if cfm=='Y' else 'pending')
+    d['exception']=(rjt=='Y' or cfm!='Y')
+    return d
+snap2={'sx_cd':SX2,'header_status':'S','vessel':'ATGV','owner_comp_id':'037',
+       'lines':[rline('0001'),rline('0002',cfm='N',rjt='Y',rmk='Wrong cost (Invoice : 1,500usd)')]}
+r=c.post('/api/ext/soa/reviews/snapshot',json=snap2,headers=H)
+chk(r.status_code==200,'reject-case snapshot ingest',r.get_data(as_text=True))
+case2=c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']
+chk(case2['rejected_count']==1 and case2['exception_count']==1 and case2['open_exception_count']==0
+    and case2['pending_count']==0,'rejected line counts as resolved exception',case2)
+chk(case2['needs_review'] is False and not case2['can_approve'],'reject+pushed case leaves review inbox',case2)
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",('failed: runner blew up',SX2))
+chk(c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']['needs_review'] is True,
+    'failed action keeps case in inbox')
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",
+          (json.dumps({'action':'push','status':'done','reconcile_required':False}),SX2))
+chk(c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']['needs_review'] is False,
+    'successful push result does not pin case')
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",
+          (json.dumps({'action':'push','status':'done','reconcile_required':True}),SX2))
+chk(c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']['needs_review'] is True,
+    'reconcile_required keeps case in inbox')
+for bad in ('{"status":"done","reconcile_required":"true"}', '{"status":"done_with_error"}', '{"action":"push"}',
+            '"done"', '["done"]', '{oops', 'failed', 'partial: 3 of 5'):
+    A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",(bad,SX2))
+    got=c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']
+    chk(got['action_failed'] is True and got['review_bucket']=='attention','불명확한 액션결과는 실패로 봄: '+bad,got['review_bucket'])
+for good in ('done','OK','{"status":"ok","reconcile_required":false}','{"status":"done","reconcile_required":0}'):
+    A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",(good,SX2))
+    chk(c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']['action_failed'] is False,
+        '명시적 성공만 성공으로 봄: '+good)
+# read_only(C/T)여도 실패·잠금은 숨기지 않음
+A.execute("UPDATE soa_review_case SET status='C',last_action_result=? WHERE sx_cd=?",
+          (json.dumps({'action':'push','status':'done','reconcile_required':True}),SX2))
+got=c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']
+chk(got['read_only'] and got['needs_review'] is True and got['review_bucket']=='attention',
+    'C 상태여도 reconcile 실패는 검토함에 노출',got)
+A.execute("UPDATE soa_review_case SET last_action_result=NULL,queued_action='push',queued_run_id='rid-x' WHERE sx_cd=?",(SX2,))
+got=c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']
+chk(got['locked'] and got['needs_review'] is True,'C 상태여도 처리중 잠금은 노출',got)
+A.execute("UPDATE soa_review_case SET queued_action=NULL,queued_run_id=NULL WHERE sx_cd=?",(SX2,))
+got=c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']
+chk(got['needs_review'] is False and got['review_bucket']=='closed' and got['approval_pending'] is False,
+    'C 종결 건은 완료 섹션에도 안 뜸',got)
+A.execute("UPDATE soa_review_case SET status='S' WHERE sx_cd=?",(SX2,))
+chk(c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']['review_bucket']=='reject_waiting',
+    'S+리젝 반영완료 = reject_waiting 버킷')
+A.execute("UPDATE soa_review_case SET last_action_result=NULL WHERE sx_cd=?",(SX2,))
+r=c.post('/api/ext/soa/reviews/snapshot',
+         json=snap2|{'lines':[rline('0001'),rline('0002',cfm='N',rjt='N')]},headers=H)
+chk(r.status_code==200 and c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']['needs_review'] is True,
+    'SM 회신으로 리젝 해제되면 다시 검토 대상',r.get_data(as_text=True))
+chk(len(c.get('/api/automation/soa/reviews').get_json()['cases'])==2,'list still returns every case')
+# 전 라인 Confirm·미승인인데 스냅샷이 낡은(stale) 승인대기 건은 목록에서 사라지면 안 됨
+r=c.post('/api/ext/soa/reviews/snapshot',json=snap2|{'lines':[rline('0001'),rline('0002')]},headers=H)
+A.execute("UPDATE soa_review_case SET fresh_until='2000-01-01 00:00:00' WHERE sx_cd=?",(SX2,))
+got=c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']
+chk(r.status_code==200 and got['all_confirmed'] and not got['fresh'] and not got['can_approve']
+    and got['approval_pending'] is True and got['needs_review'] is True,'stale 승인대기 건 목록 유지',got)
 
 try: os.unlink(DB)
 except OSError: pass
