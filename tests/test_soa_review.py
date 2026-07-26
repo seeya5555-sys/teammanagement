@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64, hashlib, json, os, sys, tempfile
+from datetime import datetime, timedelta
 
 os.chdir(os.path.expanduser('~/projects/teammanagement'))
 sys.path.insert(0, os.getcwd())
@@ -55,9 +56,11 @@ r=c.post(f'/api/ext/automation/{refresh_run}/done',json={'status':'failed','exit
 chk(r.status_code==200 and not c.get('/api/automation/soa/reviews/'+SX).get_json()['case']['locked'],
     'automation done fail-safe unlock')
 
+A.execute("UPDATE soa_review_case SET fresh_until='2000-01-01 00:00:00' WHERE sx_cd=?", (SX,))
+chk(c.get('/api/automation/soa/reviews/'+SX).get_json()['case']['fresh'] is False, 'stale fixture')
 r=c.put('/api/automation/soa/reviews/'+SX+'/draft',json={'draft_version':dv,'lines':[{'sx_seq':'0010','decision':'confirm','remark':''}]})
-chk(r.status_code==200,'draft save',r.get_data(as_text=True)); case=r.get_json()['case']; dv=case['draft_version']
-chk(case['can_push'] and not case['can_approve'],'push gate after draft',case)
+chk(r.status_code==200,'stale snapshot draft save',r.get_data(as_text=True)); case=r.get_json()['case']; dv=case['draft_version']
+chk(case['can_push'] and not case['can_approve'],'stale draft enables CAS-protected push',case)
 chk(c.put('/api/automation/soa/reviews/'+SX+'/draft',json={'draft_version':dv-1,'lines':[]}).status_code==409,'draft CAS conflict')
 
 r=c.post('/api/automation/soa/reviews/'+SX+'/action',json={'action':'push','snapshot_version':sv,'draft_version':dv})
@@ -75,7 +78,13 @@ r=c.post('/api/ext/soa/reviews/'+SX+'/result',json={'action':'push','status':'do
 chk(r.status_code==200,'push result unlock',r.get_data(as_text=True))
 case=c.get('/api/automation/soa/reviews/'+SX).get_json()['case']
 chk(case['can_approve'] and not case['locked'],'all-confirm approval gate',case)
-
+A.execute("UPDATE soa_review_case SET fresh_until='2000-01-01 00:00:00' WHERE sx_cd=?", (SX,))
+case=c.get('/api/automation/soa/reviews/'+SX).get_json()['case']
+chk(not case['can_approve'] and
+    c.post('/api/automation/soa/reviews/'+SX+'/action',json={'action':'approve','snapshot_version':sv2,'draft_version':dv2}).status_code==409,
+    'stale approval remains blocked')
+A.execute("UPDATE soa_review_case SET fresh_until=? WHERE sx_cd=?",
+          ((datetime.now() + timedelta(minutes=15)).strftime('%Y-%m-%d %H:%M:%S'), SX))
 r=c.post('/api/automation/soa/reviews/'+SX+'/action',json={'action':'approve','snapshot_version':sv2,'draft_version':dv2})
 chk(r.status_code==200,'queue approve',r.get_data(as_text=True)); approve_run=r.get_json()['run_id']
 r=c.post('/api/ext/soa/reviews/'+SX+'/result',json={'action':'approve','status':'done','run_id':approve_run,'soa_status':'C'},headers=H)

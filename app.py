@@ -9070,7 +9070,7 @@ def _soa_review_case_gate(case_row, lines=None):
         'locked': locked,
         'fresh': fresh,
         'all_confirmed': all_confirmed,
-        'can_push': (editable and fresh and bool(case_row['draft_dirty'])),
+        'can_push': (editable and bool(case_row['draft_dirty'])),
         'can_approve': (status == 'S' and editable and fresh and all_confirmed
                         and not bool(case_row['draft_dirty'])),
     }
@@ -9344,8 +9344,8 @@ def api_soa_review_draft(sx_cd):
         if int(d.get('draft_version', -1)) != case['draft_version']:
             db.rollback(); return jsonify({'error': 'draft version conflict', 'draft_version': case['draft_version']}), 409
         gate = _soa_review_case_gate(case)
-        if not gate['editable'] or not gate['fresh']:
-            db.rollback(); return jsonify({'error': 'case locked/read-only/stale'}), 409
+        if not gate['editable']:
+            db.rollback(); return jsonify({'error': 'case locked/read-only'}), 409
         known = {r['sx_seq']: r for r in db.execute('SELECT * FROM soa_review_line WHERE case_id=?', (case['id'],)).fetchall()}
         seen = set()
         for item in d['lines']:
