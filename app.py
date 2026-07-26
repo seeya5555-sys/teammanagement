@@ -40,12 +40,14 @@ UPLOAD_DIR   = os.path.join(BASE_DIR, 'static', 'uploads')
 INVOICE_PDF_DIR = os.path.join(INSTANCE_DIR, 'invoice_pdfs')  # 인보이스 미리보기 PDF(컨펌/리젝 시 자동삭제)
 JEONJA_PDF_DIR = os.path.join(INSTANCE_DIR, 'jeonja_pdfs')    # 전자결재 검토 invoice/DN 미리보기 cache
 AOR_PDF_DIR = os.path.join(INSTANCE_DIR, 'aor_pdfs')          # AOR 첨부 견적서 preview cache
+SOA_REVIEW_PDF_DIR = os.path.join(INSTANCE_DIR, 'soa_review_pdfs')  # SOA 수동검토 첨부 PDF cache
 STT_AUDIO_DIR = os.path.join(INSTANCE_DIR, 'stt_audio')       # 회의록 STT 원본 오디오 cache
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR,   exist_ok=True)
 os.makedirs(INVOICE_PDF_DIR, exist_ok=True)
 os.makedirs(JEONJA_PDF_DIR, exist_ok=True)
 os.makedirs(AOR_PDF_DIR, exist_ok=True)
+os.makedirs(SOA_REVIEW_PDF_DIR, exist_ok=True)
 os.makedirs(STT_AUDIO_DIR, exist_ok=True)
 # 회의록 STT Phase 0a 상수
 STT_AUDIO_EXT = {'m4a', 'wav', 'mp3', 'aac', 'caf', 'webm', 'ogg', 'mp4', 'aiff', 'flac'}
@@ -85,6 +87,7 @@ app.config.update(
 )
 
 _NON_STT_UPLOAD_MAX = 20 * 1024 * 1024             # 회의록 외 업로드(사진·엑셀 등) 상한 20MB
+_SOA_REVIEW_SNAPSHOT_MAX = 100 * 1024 * 1024        # API-key Mac runner가 예외 인보이스 PDF 묶음을 동기화
 
 
 @app.before_request
@@ -98,6 +101,15 @@ def _limit_non_stt_upload():
     if request.method not in ('POST', 'PUT', 'PATCH'):
         return
     if request.path == '/api/stt/jobs':   # 회의록 업로드만 200MB 허용
+        return
+    if request.path == '/api/ext/soa/reviews/snapshot':
+        cl = request.content_length
+        if cl is not None and cl > _SOA_REVIEW_SNAPSHOT_MAX:
+            abort(413)
+        try:
+            request.max_content_length = _SOA_REVIEW_SNAPSHOT_MAX
+        except (AttributeError, TypeError):
+            pass
         return
     cl = request.content_length
     if cl is not None and cl > _NON_STT_UPLOAD_MAX:
@@ -8938,6 +8950,565 @@ def api_ext_issue_set_email_key(iid):
 
 
 # ═════════════════════════════════════════════════════════════════
+#  SOA 수동 검토 Inbox (snapshot/case/line/attachment/audit)
+#   · refresh: 맥 러너가 SVMS 최신 snapshot 을 POST /api/ext/soa/review/snapshot
+#   · draft: 사람이 /soa-review 에서 라인별 confirm/reject/remark 초안 편집(version CAS)
+#   · push/approve: automation_run 큐 적재 → 맥 러너가 ext draft fetch 후 SVMS 반영
+#   · attachment: 비공개 PDF cache (admin download / ext upload, MIME+magic+size+TTL 가드)
+# ═════════════════════════════════════════════════════════════════
+SOA_REVIEW_ATTACHMENT_MAX = 25 * 1024 * 1024
+SOA_REVIEW_ATTACHMENT_TTL_SEC = 72 * 60 * 60
+_SOA_REVIEW_UPLOAD_KEY_RE = re.compile(r'^[A-Za-z0-9._:-]{1,120}$')
+
+
+def _soa_review_now():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _soa_review_parse_dt(value):
+    if not value:
+        return None
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S'):
+        try:
+            return datetime.strptime(str(value)[:19], fmt)
+        except ValueError:
+            pass
+    return None
+
+
+def _soa_review_is_fresh(fresh_until):
+    dt = _soa_review_parse_dt(fresh_until)
+    return bool(dt and dt >= datetime.now())
+
+
+def _soa_review_status_read_only(status):
+    return (status or '').strip().upper() in ('C', 'T')
+
+
+def _soa_review_status_editable(status):
+    return (status or '').strip().upper() in ('D', 'S')
+
+
+def _soa_review_upload_key(value):
+    v = (value or '').strip()
+    return v if _SOA_REVIEW_UPLOAD_KEY_RE.fullmatch(v) else None
+
+
+def _soa_review_attachment_path(stored_name):
+    if not stored_name:
+        return None
+    return os.path.join(SOA_REVIEW_PDF_DIR, os.path.basename(stored_name))
+
+
+def _soa_review_attachment_expired(row):
+    if not row:
+        return False
+    d = dict(row)
+    return bool(d.get('expires_at') and not _soa_review_is_fresh(d.get('expires_at')))
+
+
+def _soa_review_attachment_delete_row(row):
+    try:
+        p = _soa_review_attachment_path((row or {}).get('stored_name'))
+        if p and os.path.exists(p):
+            os.remove(p)
+    except Exception:
+        app.logger.exception('soa-review-attachment-delete')
+
+
+def _soa_review_attachment_meta(row):
+    d = dict(row)
+    dt = _soa_review_parse_dt(d.get('expires_at'))
+    ttl = None
+    if dt:
+        ttl = max(0, int((dt - datetime.now()).total_seconds()))
+    p = _soa_review_attachment_path(d.get('stored_name'))
+    d['has_pdf'] = bool(p and os.path.exists(p) and not _soa_review_attachment_expired(d))
+    d['ttl_seconds_left'] = ttl
+    return d
+
+
+def _soa_review_log(action, *, case_id=None, snapshot_id=None, actor=None, run_id=None, ok=None, detail=None):
+    execute(
+        'INSERT INTO soa_review_audit (case_id,snapshot_id,action,actor,run_id,ok,detail_json) '
+        'VALUES (?,?,?,?,?,?,?)',
+        (case_id, snapshot_id, action, actor, run_id,
+         (None if ok is None else (1 if ok else 0)),
+         (json.dumps(detail, ensure_ascii=False) if detail is not None else None)),
+    )
+
+
+def _soa_review_effective_line(row):
+    d = dict(row)
+    for k in ('subj', 'rmk', 'cfm_yn', 'rjt_yn', 'rjt_rmk'):
+        dk = 'draft_' + k
+        sk = 'source_' + k
+        dv = d.get(dk)
+        d[k] = dv if dv is not None else d.get(sk)
+    d['decision'] = ('reject' if d.get('rjt_yn') == 'Y'
+                     else 'confirm' if d.get('cfm_yn') == 'Y'
+                     else 'keep')
+    return d
+
+
+def _soa_review_case_lines(case_id):
+    rows = query('SELECT * FROM soa_review_line WHERE case_id=? ORDER BY line_no, id', (case_id,))
+    return [_soa_review_effective_line(r) for r in rows]
+
+
+def _soa_review_case_gate(case_row, lines=None):
+    if lines is None:
+        lines = _soa_review_case_lines(case_row['id'])
+    status = (case_row['status'] or '').strip().upper()
+    locked = bool(case_row['queued_run_id'])
+    editable = _soa_review_status_editable(status) and not locked
+    fresh = _soa_review_is_fresh(case_row['fresh_until'])
+    all_confirmed = bool(lines) and all((ln.get('cfm_yn') == 'Y' and ln.get('rjt_yn') != 'Y') for ln in lines)
+    return {
+        'read_only': _soa_review_status_read_only(status),
+        'editable': editable,
+        'locked': locked,
+        'fresh': fresh,
+        'all_confirmed': all_confirmed,
+        'can_push': (editable and fresh and bool(case_row['draft_dirty'])),
+        'can_approve': (status == 'S' and editable and fresh and all_confirmed
+                        and not bool(case_row['draft_dirty'])),
+    }
+
+
+def _soa_review_case_payload(case_row, *, detail=False):
+    c = dict(case_row)
+    lines = _soa_review_case_lines(c['id'])
+    gate = _soa_review_case_gate(c, lines)
+    payload = {
+        'id': c['id'],
+        'snapshot_id': c.get('snapshot_id'),
+        'sx_cd': c['sx_cd'],
+        'status': c['status'],
+        'sl_tp': c.get('sl_tp'),
+        'dept_nm': c.get('dept_nm'),
+        'owner_comp_id': c.get('owner_comp_id'),
+        'owner_label': c.get('owner_label'),
+        'vsl_cd': c.get('vsl_cd'),
+        'vsl_nm': c.get('vsl_nm'),
+        'sl_dm': c.get('sl_dm'),
+        'subj': c.get('subj'),
+        'amt': c.get('amt'),
+        'cur_cd': c.get('cur_cd'),
+        'draft_version': c.get('draft_version'),
+        'draft_dirty': bool(c.get('draft_dirty')),
+        'queued_action': c.get('queued_action'),
+        'queued_run_id': c.get('queued_run_id'),
+        'queued_at': c.get('queued_at'),
+        'fresh_until': c.get('fresh_until'),
+        'last_action_at': c.get('last_action_at'),
+        'last_action_result': c.get('last_action_result'),
+        'source_all_confirmed': bool(c.get('source_all_confirmed')),
+        **gate,
+        'line_count': len(lines),
+        'exception_count': sum(1 for ln in lines if ln.get('exception')),
+        'pending_count': sum(1 for ln in lines if ln.get('cfm_yn') != 'Y' and ln.get('rjt_yn') != 'Y'),
+        'rejected_count': sum(1 for ln in lines if ln.get('rjt_yn') == 'Y'),
+    }
+    if detail:
+        att_rows = query('SELECT * FROM soa_review_attachment WHERE case_id=? ORDER BY line_id, slot, id',
+                         (c['id'],))
+        att_by_line = {}
+        for att in att_rows:
+            att_m = _soa_review_attachment_meta(att)
+            att_by_line.setdefault(att['line_id'], []).append({
+                'id': att_m['id'],
+                'slot': att_m['slot'],
+                'file_name': att_m['file_name'],
+                'mime_type': att_m['mime_type'],
+                'byte_size': att_m['byte_size'],
+                'expires_at': att_m['expires_at'],
+                'ttl_seconds_left': att_m['ttl_seconds_left'],
+                'has_pdf': att_m['has_pdf'],
+                'download_url': (url_for('api_soa_review_attachment_pdf', aid=att_m['id'])
+                                 if att_m['has_pdf'] else None),
+            })
+        payload['lines'] = []
+        for ln in lines:
+            payload['lines'].append({
+                'id': ln['id'],
+                'sx_seq': ln.get('sx_seq'),
+                'line_no': ln.get('line_no'),
+                'soa_tp': ln.get('soa_tp'),
+                'soa_opex_tp': ln.get('soa_opex_tp'),
+                'exp_cd': ln.get('exp_cd'),
+                'exp_nm': ln.get('exp_nm'),
+                'cur_cd': ln.get('cur_cd'),
+                'soa_amt': ln.get('soa_amt'),
+                'amt_usd': ln.get('amt_usd'),
+                'inv_no': ln.get('inv_no'),
+                'file_ref_no': ln.get('file_ref_no'),
+                'ref_no': ln.get('ref_no'),
+                'vendor_nm': ln.get('vendor_nm'),
+                'source_hash': ln.get('source_hash'),
+                'machine_state': ln.get('machine_state'),
+                'machine_reason': ln.get('machine_reason'),
+                'exception': bool(ln.get('exception')),
+                'subj': ln.get('subj'),
+                'rmk': ln.get('rmk'),
+                'cfm_yn': ln.get('cfm_yn'),
+                'rjt_yn': ln.get('rjt_yn'),
+                'rjt_rmk': ln.get('rjt_rmk'),
+                'decision': ln.get('decision'),
+                'source_subj': ln.get('source_subj'),
+                'source_rmk': ln.get('source_rmk'),
+                'source_cfm_yn': ln.get('source_cfm_yn'),
+                'source_rjt_yn': ln.get('source_rjt_yn'),
+                'source_rjt_rmk': ln.get('source_rjt_rmk'),
+                'source_status2': ln.get('source_status2'),
+                'source_status_rmk2': ln.get('source_status_rmk2'),
+                'attachments': att_by_line.get(ln['id'], []),
+            })
+        payload['audit'] = [
+            {
+                'id': r['id'], 'action': r['action'], 'actor': r['actor'], 'run_id': r['run_id'],
+                'ok': (None if r['ok'] is None else bool(r['ok'])), 'created_at': r['created_at'],
+                'detail': (json.loads(r['detail_json']) if r['detail_json'] else None),
+            }
+            for r in query('SELECT * FROM soa_review_audit WHERE case_id=? ORDER BY id DESC LIMIT 40', (c['id'],))
+        ]
+    return payload
+
+
+def _soa_review_case_unlock(run_id, *, result=None):
+    rows = query('SELECT id FROM soa_review_case WHERE queued_run_id=?', (run_id,))
+    for r in rows:
+        execute(
+            "UPDATE soa_review_case SET queued_action=NULL, queued_run_id=NULL, queued_at=NULL, "
+            "last_action_at=datetime('now','localtime'), last_action_result=?, updated_at=datetime('now','localtime') "
+            "WHERE id=? AND queued_run_id=?",
+            (result, r['id'], run_id),
+        )
+
+
+def _soa_review_ingest_snapshot(d):
+    """Mac runner snapshot ingest. Writes files first, then swaps DB rows atomically."""
+    import base64
+    sx = str(d.get('sx_cd') or '').strip().upper()
+    status = str(d.get('header_status') or '').strip().upper()
+    lines = d.get('lines')
+    if not re.fullmatch(r'[A-Z0-9]{16}', sx) or status not in ('C', 'T', 'D', 'S'):
+        raise ValueError('bad sx_cd/header_status')
+    if not isinstance(lines, list) or not lines:
+        raise ValueError('lines required')
+    seqs = [str(x.get('SX_SEQ') or x.get('sx_seq') or '').strip() for x in lines if isinstance(x, dict)]
+    if len(seqs) != len(lines) or any(not x for x in seqs) or len(set(seqs)) != len(seqs):
+        raise ValueError('invalid/duplicate sx_seq')
+    raw_case = {k: v for k, v in d.items() if k not in ('lines', 'attachments')}
+    existing = query('SELECT * FROM soa_review_case WHERE sx_cd=?', (sx,), one=True)
+    if existing and existing['queued_run_id']:
+        incoming_run = str(d.get('run_id') or '')
+        if not incoming_run or not hmac.compare_digest(incoming_run, str(existing['queued_run_id'])):
+            raise RuntimeError('case locked by another run')
+    if existing and existing['draft_dirty'] and existing['queued_action'] not in ('refresh', 'push'):
+        raise RuntimeError('draft exists — refresh/discard required')
+
+    prepared = []
+    for i, att in enumerate(d.get('attachments') or []):
+        if not isinstance(att, dict):
+            raise ValueError('bad attachment')
+        seq = str(att.get('sx_seq') or '').strip()
+        if seq not in seqs:
+            raise ValueError('attachment line missing')
+        try:
+            raw = base64.b64decode(att.get('data_base64') or '', validate=True)
+        except Exception as e:
+            raise ValueError('attachment base64 invalid') from e
+        if not raw.startswith(b'%PDF-') or len(raw) <= 5 or len(raw) > SOA_REVIEW_ATTACHMENT_MAX:
+            raise ValueError('attachment must be PDF within size limit')
+        digest = hashlib.sha256(raw).hexdigest()
+        if att.get('sha256') and not hmac.compare_digest(str(att['sha256']).lower(), digest):
+            raise ValueError('attachment sha256 mismatch')
+        stored = uuid.uuid4().hex + '.pdf'
+        path = _soa_review_attachment_path(stored)
+        tmp = path + '.part'
+        with open(tmp, 'wb') as f:
+            f.write(raw)
+        os.replace(tmp, path)
+        prepared.append((seq, i, str(att.get('filename') or 'invoice.pdf')[:180], digest, stored, len(raw)))
+
+    db = get_db()
+    old_atts = []
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        # Authoritative lock/draft check must be inside the write transaction. The pre-check above
+        # is only a fast rejection; this closes the save/queue vs snapshot TOCTOU window.
+        existing = db.execute('SELECT * FROM soa_review_case WHERE sx_cd=?', (sx,)).fetchone()
+        if existing and existing['queued_run_id']:
+            incoming_run = str(d.get('run_id') or '')
+            if not incoming_run or not hmac.compare_digest(incoming_run, str(existing['queued_run_id'])):
+                raise RuntimeError('case locked by another run')
+        if existing and existing['draft_dirty'] and existing['queued_action'] not in ('refresh', 'push'):
+            raise RuntimeError('draft exists — refresh/discard required')
+        snap_cur = db.execute(
+            'INSERT INTO soa_review_snapshot (run_id,source,scope_json,expires_at,case_count,line_count,attachment_count,summary_json) '
+            'VALUES (?,?,?,?,1,?,?,?)',
+            (d.get('run_id'), 'soa_manual_review', json.dumps({'sx_cd': sx}),
+             (datetime.now() + timedelta(hours=72)).strftime('%Y-%m-%d %H:%M:%S'),
+             len(lines), len(prepared), json.dumps({'header_status': status}, ensure_ascii=False)))
+        snapshot_id = snap_cur.lastrowid
+        fresh_until = (datetime.now() + timedelta(minutes=15)).strftime('%Y-%m-%d %H:%M:%S')
+        all_confirmed = int(all(x.get('CFM_YN') == 'Y' and x.get('RJT_YN') != 'Y' for x in lines))
+        owner = d.get('owner_comp_id')
+        if existing:
+            case_id = existing['id']
+            old_atts = [dict(x) for x in db.execute(
+                'SELECT stored_name FROM soa_review_attachment WHERE case_id=?', (case_id,)).fetchall()]
+            db.execute('DELETE FROM soa_review_line WHERE case_id=?', (case_id,))
+            db.execute(
+                "UPDATE soa_review_case SET snapshot_id=?,status=?,owner_comp_id=?,vsl_cd=?,vsl_nm=?,sl_tp=?,dept_nm=?,"
+                "source_all_confirmed=?,fresh_until=?,draft_version=draft_version+1,draft_dirty=0,last_action_result=NULL,"
+                "raw_case=?,updated_at=datetime('now','localtime') WHERE id=?",
+                (snapshot_id, status, owner, d.get('vessel') or sx[:4], d.get('vsl_nm'), d.get('sl_tp'),
+                 d.get('dept_nm'), all_confirmed, fresh_until, json.dumps(raw_case, ensure_ascii=False), case_id))
+        else:
+            cur = db.execute(
+                'INSERT INTO soa_review_case (snapshot_id,sx_cd,status,sl_tp,dept_nm,owner_comp_id,vsl_cd,vsl_nm,'
+                'source_all_confirmed,fresh_until,raw_case) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                (snapshot_id, sx, status, d.get('sl_tp'), d.get('dept_nm'), owner,
+                 d.get('vessel') or sx[:4], d.get('vsl_nm'), all_confirmed, fresh_until,
+                 json.dumps(raw_case, ensure_ascii=False)))
+            case_id = cur.lastrowid
+        line_ids = {}
+        for pos, line in enumerate(lines):
+            seq = str(line.get('SX_SEQ') or line.get('sx_seq')).strip()
+            cur = db.execute(
+                'INSERT INTO soa_review_line (case_id,sx_seq,line_no,soa_tp,soa_opex_tp,exp_cd,exp_nm,cur_cd,soa_amt,amt_usd,'
+                'inv_no,file_ref_no,ref_no,vendor_nm,source_hash,immutable_hash,machine_state,machine_reason,exception,'
+                'source_subj,source_rmk,source_cfm_yn,source_rjt_yn,source_rjt_rmk,source_status2,source_status_rmk2,raw_line) '
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (case_id, seq, pos + 1, line.get('SOA_TP'), line.get('SOA_OPEX_TP'), line.get('EXP_CD'),
+                 line.get('EXP_NM'), line.get('SOA_CUR_CD'), line.get('SOA_AMT'), line.get('AMT_USD'),
+                 line.get('INV_NO'), line.get('FILE_REF_NO'), line.get('REF_NO'), line.get('SOA_VNDR_NM'),
+                 line.get('source_hash'), line.get('immutable_hash'), line.get('machine_state'),
+                 line.get('machine_reason'), int(bool(line.get('exception'))), line.get('SUBJ'), line.get('RMK'),
+                 line.get('CFM_YN') or 'N', line.get('RJT_YN') or 'N', line.get('RJT_RMK'),
+                 line.get('STATUS2'), line.get('STATUS_RMK2'), json.dumps(line, ensure_ascii=False)))
+            line_ids[seq] = cur.lastrowid
+        expires_at = (datetime.now() + timedelta(seconds=SOA_REVIEW_ATTACHMENT_TTL_SEC)).strftime('%Y-%m-%d %H:%M:%S')
+        for seq, slot, filename, digest, stored, size in prepared:
+            db.execute(
+                'INSERT INTO soa_review_attachment (case_id,line_id,upload_key,slot,file_name,mime_type,byte_size,sha256,'
+                'stored_name,file_ref_no,expires_at,uploaded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime(\'now\',\'localtime\'))',
+                (case_id, line_ids[seq], f'{sx}:{seq}:{digest}', slot, filename, 'application/pdf', size,
+                 digest, stored, None, expires_at))
+        db.execute('UPDATE soa_review_snapshot SET case_count=1 WHERE id=?', (snapshot_id,))
+        db.execute('INSERT INTO soa_review_audit (case_id,snapshot_id,action,actor,ok,detail_json) VALUES (?,?,?,?,1,?)',
+                   (case_id, snapshot_id, 'snapshot_ingest', 'mac-runner', json.dumps({'status': status, 'lines': len(lines)})))
+        db.commit()
+    except Exception:
+        db.rollback()
+        for _, _, _, _, stored, _ in prepared:
+            try: os.remove(_soa_review_attachment_path(stored))
+            except OSError: pass
+        raise
+    for row in old_atts:
+        _soa_review_attachment_delete_row(row)
+    return {'case_id': case_id, 'snapshot_version': snapshot_id,
+            'draft_version': query('SELECT draft_version FROM soa_review_case WHERE id=?', (case_id,), one=True)['draft_version']}
+
+
+@app.route('/api/automation/soa/reviews')
+@admin_required
+def api_soa_review_list():
+    rows = query("SELECT * FROM soa_review_case ORDER BY CASE status WHEN 'S' THEN 0 WHEN 'D' THEN 1 ELSE 2 END, updated_at DESC")
+    return jsonify({'ok': True, 'cases': [_soa_review_case_payload(r) for r in rows]})
+
+
+@app.route('/api/automation/soa/reviews/<sx_cd>')
+@admin_required
+def api_soa_review_detail(sx_cd):
+    row = query('SELECT * FROM soa_review_case WHERE sx_cd=?', (str(sx_cd).upper(),), one=True)
+    if not row:
+        return jsonify({'error': 'SOA review case not found'}), 404
+    return jsonify({'ok': True, 'case': _soa_review_case_payload(row, detail=True)})
+
+
+@app.route('/api/automation/soa/reviews/<sx_cd>/draft', methods=['PUT'])
+@admin_required
+def api_soa_review_draft(sx_cd):
+    d = request.get_json(silent=True) or {}
+    if not isinstance(d, dict) or not isinstance(d.get('lines'), list):
+        return jsonify({'error': 'bad body'}), 400
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        case = db.execute('SELECT * FROM soa_review_case WHERE sx_cd=?', (str(sx_cd).upper(),)).fetchone()
+        if not case:
+            db.rollback(); return jsonify({'error': 'not found'}), 404
+        if int(d.get('draft_version', -1)) != case['draft_version']:
+            db.rollback(); return jsonify({'error': 'draft version conflict', 'draft_version': case['draft_version']}), 409
+        gate = _soa_review_case_gate(case)
+        if not gate['editable'] or not gate['fresh']:
+            db.rollback(); return jsonify({'error': 'case locked/read-only/stale'}), 409
+        known = {r['sx_seq']: r for r in db.execute('SELECT * FROM soa_review_line WHERE case_id=?', (case['id'],)).fetchall()}
+        seen = set()
+        for item in d['lines']:
+            if not isinstance(item, dict): raise ValueError('bad line')
+            seq = str(item.get('sx_seq') or '')
+            if seq not in known or seq in seen: raise ValueError('unknown/duplicate sx_seq')
+            seen.add(seq)
+            decision = item.get('decision')
+            remark = item.get('remark')
+            if decision == 'confirm':
+                vals = ('Y', 'N', None)
+            elif decision == 'reject':
+                remark = str(remark or '').strip()
+                if not remark: raise ValueError(f'reject remark required: {seq}')
+                vals = ('N', 'Y', remark[:240])
+            elif decision == 'keep':
+                vals = (None, None, None)
+            else:
+                raise ValueError(f'bad decision: {seq}')
+            db.execute("UPDATE soa_review_line SET draft_cfm_yn=?,draft_rjt_yn=?,draft_rjt_rmk=?,updated_at=datetime('now','localtime') WHERE id=?",
+                       (*vals, known[seq]['id']))
+        cur = db.execute("UPDATE soa_review_case SET draft_version=draft_version+1,draft_dirty=1,updated_at=datetime('now','localtime') "
+                         "WHERE id=? AND draft_version=? AND queued_run_id IS NULL", (case['id'], case['draft_version']))
+        if cur.rowcount != 1:
+            db.rollback(); return jsonify({'error': 'draft version conflict'}), 409
+        newver = case['draft_version'] + 1
+        db.execute('INSERT INTO soa_review_audit (case_id,snapshot_id,action,actor,ok,detail_json) VALUES (?,?,?,?,1,?)',
+                   (case['id'], case['snapshot_id'], 'draft_save', session.get('username'), json.dumps({'draft_version': newver})))
+        db.commit()
+        row = query('SELECT * FROM soa_review_case WHERE id=?', (case['id'],), one=True)
+        return jsonify({'ok': True, 'case': _soa_review_case_payload(row, detail=True)})
+    except (ValueError, TypeError) as e:
+        db.rollback(); return jsonify({'error': str(e)}), 400
+    except Exception:
+        db.rollback(); raise
+
+
+@app.route('/api/automation/soa/reviews/<sx_cd>/action', methods=['POST'])
+@admin_required
+def api_soa_review_action(sx_cd):
+    d = request.get_json(silent=True) or {}
+    action = d.get('action')
+    if action not in ('refresh', 'push', 'approve'):
+        return jsonify({'error': 'bad action'}), 400
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        case = db.execute('SELECT * FROM soa_review_case WHERE sx_cd=?', (str(sx_cd).upper(),)).fetchone()
+        if not case:
+            db.rollback(); return jsonify({'error': 'not found'}), 404
+        if case['queued_run_id']:
+            db.rollback(); return jsonify({'error': 'already queued/running'}), 409
+        if int(d.get('snapshot_version', -1)) != int(case['snapshot_id'] or -1) or int(d.get('draft_version', -1)) != case['draft_version']:
+            db.rollback(); return jsonify({'error': 'snapshot/draft version conflict'}), 409
+        gate = _soa_review_case_gate(case)
+        if action == 'refresh':
+            if case['draft_dirty'] and d.get('discard_draft') is not True:
+                db.rollback(); return jsonify({'error': 'draft exists — discard confirmation required'}), 409
+        elif action == 'push' and not gate['can_push']:
+            db.rollback(); return jsonify({'error': 'push gate failed'}), 409
+        elif action == 'approve' and not gate['can_approve']:
+            db.rollback(); return jsonify({'error': 'approval gate failed'}), 409
+        rid = uuid.uuid4().hex[:12]
+        task = 'soa_review_' + action
+        mode = 'verify' if action == 'refresh' else 'live'
+        params = {'sx_cd': case['sx_cd'], 'case_id': case['id'], 'snapshot_version': case['snapshot_id'],
+                  'draft_version': case['draft_version']}
+        db.execute("INSERT INTO automation_run (run_id,task,mode,status,requested_by,params) VALUES (?,?,?,'queued',?,?)",
+                   (rid, task, mode, session.get('username', ''), json.dumps(params, ensure_ascii=False)))
+        cur = db.execute("UPDATE soa_review_case SET queued_action=?,queued_run_id=?,queued_at=datetime('now','localtime') "
+                         "WHERE id=? AND queued_run_id IS NULL AND draft_version=?",
+                         (action, rid, case['id'], case['draft_version']))
+        if cur.rowcount != 1:
+            db.rollback(); return jsonify({'error': 'queue race'}), 409
+        db.execute('INSERT INTO soa_review_audit (case_id,snapshot_id,action,actor,run_id,ok,detail_json) VALUES (?,?,?,?,?,NULL,?)',
+                   (case['id'], case['snapshot_id'], 'queue_' + action, session.get('username'), rid,
+                    json.dumps({'draft_version': case['draft_version']})))
+        db.commit()
+        return jsonify({'ok': True, 'run_id': rid, 'action': action})
+    except Exception:
+        db.rollback(); raise
+
+
+@app.route('/api/automation/soa/reviews/attachments/<int:aid>/pdf')
+@admin_required
+def api_soa_review_attachment_pdf(aid):
+    row = query('SELECT * FROM soa_review_attachment WHERE id=?', (aid,), one=True)
+    if not row or _soa_review_attachment_expired(row):
+        return jsonify({'error': 'PDF expired/not found'}), 404
+    path = _soa_review_attachment_path(row['stored_name'])
+    if not path or not os.path.exists(path):
+        return jsonify({'error': 'PDF not found'}), 404
+    resp = make_response(send_file(path, mimetype='application/pdf', download_name=row['file_name'], as_attachment=False))
+    resp.headers['Cache-Control'] = 'private, no-store'
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
+
+
+@app.route('/api/ext/soa/reviews/snapshot', methods=['POST'])
+@api_key_required
+def api_ext_soa_review_snapshot():
+    d = request.get_json(silent=True) or {}
+    try:
+        out = _soa_review_ingest_snapshot(d)
+        return jsonify({'ok': True, **out})
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 409
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/ext/soa/reviews/<sx_cd>/command')
+@api_key_required
+def api_ext_soa_review_command(sx_cd):
+    action = request.args.get('action')
+    row = query('SELECT * FROM soa_review_case WHERE sx_cd=?', (str(sx_cd).upper(),), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    try:
+        sv = int(request.args.get('snapshot_version', -1)); dv = int(request.args.get('draft_version', -1))
+    except ValueError:
+        return jsonify({'error': 'bad versions'}), 400
+    if action not in ('push', 'approve') or row['queued_action'] != action or not row['queued_run_id']:
+        return jsonify({'error': 'command not locked/queued'}), 409
+    if sv != int(row['snapshot_id'] or -1) or dv != row['draft_version']:
+        return jsonify({'error': 'version conflict'}), 409
+    lines = query('SELECT * FROM soa_review_line WHERE case_id=? ORDER BY line_no,id', (row['id'],))
+    source = [{'sx_seq': str(x['sx_seq']), 'source_hash': x['source_hash']} for x in lines]
+    drafts = []
+    for x in lines:
+        if x['draft_cfm_yn'] is None and x['draft_rjt_yn'] is None and x['draft_rjt_rmk'] is None:
+            continue
+        decision = 'reject' if x['draft_rjt_yn'] == 'Y' else 'confirm' if x['draft_cfm_yn'] == 'Y' else 'keep'
+        drafts.append({'sx_seq': str(x['sx_seq']), 'decision': decision, 'remark': x['draft_rjt_rmk']})
+    return jsonify({'ok': True, 'locked': True, 'case_id': row['id'], 'sx_cd': row['sx_cd'],
+                    'snapshot_version': row['snapshot_id'], 'draft_version': row['draft_version'],
+                    'owner_comp_id': row['owner_comp_id'], 'source_lines': source, 'draft_lines': drafts})
+
+
+@app.route('/api/ext/soa/reviews/<sx_cd>/result', methods=['POST'])
+@api_key_required
+def api_ext_soa_review_result(sx_cd):
+    d = request.get_json(silent=True) or {}
+    action = d.get('action'); status = d.get('status')
+    row = query('SELECT * FROM soa_review_case WHERE sx_cd=?', (str(sx_cd).upper(),), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if action not in ('refresh', 'push', 'approve') or row['queued_action'] != action:
+        return jsonify({'error': 'result action mismatch'}), 409
+    incoming_run = str(d.get('run_id') or '')
+    if not incoming_run or not hmac.compare_digest(incoming_run, str(row['queued_run_id'] or '')):
+        return jsonify({'error': 'result run_id mismatch'}), 409
+    if d.get('soa_status') == 'C':
+        execute("UPDATE soa_review_case SET status='C',source_all_confirmed=1,draft_dirty=0 WHERE id=?", (row['id'],))
+    summary = json.dumps({k: v for k, v in d.items() if k != 'snapshot'}, ensure_ascii=False)[:4000]
+    _soa_review_log('result_' + action, case_id=row['id'], snapshot_id=row['snapshot_id'],
+                    actor='mac-runner', run_id=row['queued_run_id'], ok=(status == 'done'), detail=d)
+    _soa_review_case_unlock(row['queued_run_id'], result=summary)
+    return jsonify({'ok': True})
+
+
+
+# ═════════════════════════════════════════════════════════════════
 #  AOR(Technical) — 검토→상신 draft 승인 큐
 #   · prep 엔진(맥)이 Submitted Tech AOR + 이메일매칭 카드를 POST /api/ext/aor/drafts
 #   · 사람이 /aor 탭서 cost·comment·결재라인 확인/수정 → 승인 → status='approved'
@@ -11803,6 +12374,10 @@ def api_ext_automation_done(run_id):
     execute("UPDATE automation_run SET status=?, finished_at=datetime('now','localtime'), "
             "exit_code=?, summary=? WHERE run_id=?",
             (status, d.get('exit_code'), summary, run_id))
+    # Fail-safe: review scripts normally POST their structured result first. If they crash before that,
+    # never leave the case permanently locked; the run summary remains visible for manual reconcile.
+    if query('SELECT 1 FROM soa_review_case WHERE queued_run_id=?', (run_id,), one=True):
+        _soa_review_case_unlock(run_id, result=f'{status}: {summary[:500]}')
     return jsonify({'ok': True})
 
 

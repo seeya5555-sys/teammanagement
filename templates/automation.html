@@ -104,6 +104,8 @@
   .sgm-err{flex:1;color:var(--red);font-size:11.5px;white-space:pre-line}
   .sgm-save{border:1px solid var(--blue);background:var(--blue);color:#fff;border-radius:8px;padding:7px 16px;font-size:12.5px;font-weight:700;cursor:pointer}
   .sgm-save:disabled{opacity:.5;cursor:default}
+  /* SOA 비용 수동 검토함 — 기존 자동화 카드/모달 토큰 그대로 */
+  .sr{max-width:920px;margin:8px 0 18px}.sr-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 12px;border:1px solid var(--amber-border);border-radius:10px;background:var(--amber-bg);font-size:13px;font-weight:700;color:var(--amber)}.sr-headmeta{margin-left:auto;font-size:11.5px;font-weight:500;color:var(--text-secondary)}.sr-body{margin-top:7px}.sr-case{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border-subtle);border-radius:9px;background:#fff;margin-bottom:6px;cursor:pointer;font-size:12.5px;flex-wrap:wrap}.sr-case:hover{background:var(--surface-2)}.sr-case b{white-space:nowrap}.sr-sub{flex:1;min-width:120px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sr-badge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px}.sr-red{background:var(--red-bg);color:var(--red)}.sr-amber{background:var(--amber-bg);color:var(--amber)}.sr-green{background:var(--green-bg);color:var(--green)}.sr-blue{background:var(--blue-bg);color:var(--blue)}.sr-empty{padding:9px 2px;color:var(--text-tertiary);font-size:12px}.srm{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9200;align-items:center;justify-content:center;padding:18px}.srm.open{display:flex}.srm-box{width:min(860px,97vw);max-height:94vh;background:#fff;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}.srm-bar{display:flex;align-items:center;gap:8px;padding:11px 15px;border-bottom:1px solid var(--border);background:var(--surface-2)}.srm-bar b{flex:1}.srm-bar button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:5px 9px;cursor:pointer}.srm-body{padding:13px 15px;overflow:auto}.srm-gate{padding:8px 10px;border-radius:8px;background:var(--amber-bg);color:var(--amber);font-size:11.5px;margin-bottom:9px}.srm-gate.ok{background:var(--green-bg);color:var(--green)}.srm-line{border:1px solid var(--border-subtle);border-radius:9px;padding:10px 11px;margin-bottom:8px}.srm-lh{display:flex;gap:8px;align-items:flex-start}.srm-lh b{font-size:12.5px}.srm-amt{margin-left:auto;font-weight:700;white-space:nowrap}.srm-reason{margin:7px 0;padding:6px 8px;border-radius:7px;background:var(--amber-bg);color:var(--amber);font-size:11.5px}.srm-facts{font-size:11.5px;color:var(--text-secondary);margin:6px 0}.srm-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.srm-btn{border:1px solid var(--border);background:#fff;border-radius:7px;padding:5px 8px;font-size:11.5px;font-weight:700;cursor:pointer}.srm-btn.on-confirm{background:var(--green);color:#fff;border-color:var(--green)}.srm-btn.on-reject{background:var(--red);color:#fff;border-color:var(--red)}.srm-rmk{flex:1;min-width:190px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:11.5px}.srm-foot{display:flex;align-items:center;gap:7px;padding:10px 15px;border-top:1px solid var(--border);background:var(--surface-2)}.srm-msg{flex:1;font-size:11.5px;color:var(--red)}.srm-foot button{border-radius:8px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer}.srm-save{border:1px solid var(--blue);background:var(--blue);color:#fff}.srm-push{border:1px solid var(--amber);background:var(--amber);color:#fff}.srm-approve{border:1px solid var(--green);background:var(--green);color:#fff}.srm-foot button:disabled{opacity:.4;cursor:not-allowed}@media(max-width:680px){.srm{padding:6px}.srm-box{max-height:98vh}.srm-lh{display:block}.srm-amt{display:block;margin:4px 0}.srm-rmk{flex-basis:100%}.srm-foot{flex-wrap:wrap}.srm-msg{flex-basis:100%}}
 </style>
 {% endblock %}
 {% block content %}
@@ -120,6 +122,7 @@
   </div>
 
   <div id="au-soa" class="jl"></div>
+  <div id="soa-review" class="sr"></div>
   <div id="soa-groups" class="soa-groups"></div>
 
   <div class="au-sec">선박별 SOA 검증 (온디맨드)</div>
@@ -152,6 +155,14 @@
     <div class="jpdf-box"><div class="jpdf-bar"><b id="jpdf-title">검토 인보이스</b><a id="jpdf-open" target="_blank" rel="noopener">새 탭</a><button id="jpdf-close" type="button">닫기 ✕</button></div><iframe class="jpdf-frame" id="jpdf-frame" title="전자결재 검토 인보이스 미리보기"></iframe></div>
   </div>
 
+  <div class="srm" id="sr-modal">
+    <div class="srm-box">
+      <div class="srm-bar"><b id="sr-title">SOA 비용 검토</b><span id="sr-state"></span><button id="sr-close" type="button">닫기 ✕</button></div>
+      <div class="srm-body" id="sr-detail"></div>
+      <div class="srm-foot"><span class="srm-msg" id="sr-msg"></span><button id="sr-refresh" type="button">최신 SVMS 조회</button><button class="srm-save" id="sr-save" type="button">초안 저장</button><button class="srm-push" id="sr-push" type="button">SVMS 반영</button><button class="srm-approve" id="sr-approve" type="button">SOA 승인</button></div>
+    </div>
+  </div>
+
   <div class="sgm" id="sg-modal">
     <div class="sgm-box">
       <div class="sgm-bar"><b id="sg-title">그룹 편집</b><button id="sg-close" type="button">닫기 ✕</button></div>
@@ -175,7 +186,7 @@
 {% block scripts %}
 <script>
 (function(){
-  const SOA_SKIP=new Set(['soa_resend','soa_vessel']);
+  const SOA_SKIP=new Set(['soa_resend','soa_vessel','soa_review','soa_review_refresh','soa_review_push','soa_review_approve']);
   let TASKS={}, GROUPS=[], ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
   let GOPEN=false;
   // 그룹 편집 모달 상태. CATOWNER/RESERVED 는 서버가 내려주는 값으로 덮어씀(코드 상수 단일출처).
@@ -192,10 +203,62 @@
   let LOG_SCROLLS={}, LOG_SIG=null;
   let JLIST=[], JREV=null, JSIG='', JPENDING={}, JOPEN=false;   // JPENDING: POST in-flight ref→excluded(폴링이 덮어쓰지 않게) / JOPEN: 리스트 펼침(기본 접힘)
   let SOPEN=false;   // SOA 섹션 펼침(기본 접힘)
+  let SRLIST=[], SROPEN=true, SRC=null, SRD={};
   const JBKT={pass:'통과',costslip:'CostSlip',mismatch:'DN≠Cost',escalate:'차액≥$1k',flag:'사람확인',already:'이미결재'};
   const escA=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
   const $=s=>document.querySelector(s);
   const esc=s=>String(s).replace(/</g,'&lt;');
+  function renderSoaReview(){
+    const el=$('#soa-review'); if(!el)return;
+    const need=SRLIST.filter(c=>c.exception_count>0||c.draft_dirty||c.last_action_result);
+    const red=need.reduce((n,c)=>n+(c.rejected_count||0),0), pending=need.reduce((n,c)=>n+(c.pending_count||0),0);
+    const rows=need.map(c=>`<div class="sr-case" data-sx="${escA(c.sx_cd)}"><b>${esc(c.sx_cd)}</b><span class="sr-badge ${c.status==='S'?'sr-blue':'sr-amber'}">Status ${esc(c.status)}</span><span class="sr-sub">${esc(c.vsl_nm||c.vsl_cd||'')} · ${esc(c.dept_nm||c.sl_tp||'')}</span>${c.rejected_count?`<span class="sr-badge sr-red">리젝 ${c.rejected_count}</span>`:''}${c.pending_count?`<span class="sr-badge sr-amber">미검증 ${c.pending_count}</span>`:''}${c.draft_dirty?'<span class="sr-badge sr-blue">초안</span>':''}${c.locked?`<span class="sr-badge sr-blue">${esc(c.queued_action||'처리')}중</span>`:''}</div>`).join('');
+    el.innerHTML=`<div class="sr-head" id="sr-head"><span>${SROPEN?'▾':'▸'}</span>SOA 비용 검토함${red?` <span class="sr-badge sr-red">리젝 ${red}</span>`:''}${pending?` <span class="sr-badge sr-amber">미검증 ${pending}</span>`:''}<span class="sr-headmeta">사람 검토 필요 ${need.length}건</span></div><div class="sr-body" ${SROPEN?'':'hidden'}>${rows||'<div class="sr-empty">검토 대기 없음 — SOA 검증 실행 후 불일치·미검증 항목이 여기에 표시됩니다.</div>'}</div>`;
+    $('#sr-head').onclick=()=>{SROPEN=!SROPEN;renderSoaReview();};
+    el.querySelectorAll('[data-sx]').forEach(x=>x.onclick=()=>openSr(x.dataset.sx));
+  }
+  async function openSr(sx){
+    const {ok,j}=await api('GET',`/api/automation/soa/reviews/${encodeURIComponent(sx)}`);
+    if(!ok){alert((j&&j.error)||'SOA 검토 상세 조회 실패');return;}
+    SRC=j.case; SRD={}; (SRC.lines||[]).filter(l=>l.exception||l.decision!=='confirm').forEach(l=>SRD[l.sx_seq]={decision:l.decision||'keep',remark:l.rjt_rmk||''});
+    renderSr(); $('#sr-modal').classList.add('open');
+  }
+  function renderSr(){
+    if(!SRC)return;
+    $('#sr-title').textContent=`${SRC.sx_cd} · ${SRC.vsl_nm||SRC.vsl_cd||''}`;
+    $('#sr-state').innerHTML=`<span class="sr-badge ${SRC.status==='S'?'sr-blue':'sr-amber'}">Status ${esc(SRC.status)}</span>`;
+    let why=SRC.can_approve?'전 라인 Confirm · 최신 SVMS 동기화 완료 — 승인 가능':SRC.read_only?'승인완료/전이 상태라 조회만 가능':SRC.locked?`${SRC.queued_action||'작업'} 처리중 — 편집 잠금`:'예외라인 검토 후 초안 저장 → SVMS 반영 필요';
+    const lines=(SRC.lines||[]).filter(l=>l.exception||l.decision!=='confirm').map(l=>{const d=SRD[l.sx_seq]||{decision:l.decision||'keep',remark:l.rjt_rmk||''};const at=(l.attachments||[]).find(a=>a.has_pdf);return `<div class="srm-line"><div class="srm-lh"><b>Line ${esc(l.sx_seq)} · ${esc(l.exp_nm||l.exp_cd||'')}</b><span class="srm-amt">${esc(l.cur_cd||'USD')} ${esc(l.soa_amt??l.amt_usd??'')}</span></div>${l.machine_reason?`<div class="srm-reason">${esc(l.machine_state||'검토')} · ${esc(l.machine_reason)}</div>`:''}<div class="srm-facts">Invoice ${esc(l.inv_no||'미확인')} · USD ${esc(l.amt_usd??'-')} · ${esc(l.vendor_nm||'')}</div><div class="srm-actions">${at?`<a class="srm-btn" target="_blank" rel="noopener" href="${escA(at.download_url)}">인보이스 열기</a>`:'<span class="sr-badge sr-amber">첨부 없음/만료</span>'}<button class="srm-btn ${d.decision==='confirm'?'on-confirm':''}" data-srseq="${escA(l.sx_seq)}" data-srdec="confirm">✓ Confirm</button><button class="srm-btn ${d.decision==='reject'?'on-reject':''}" data-srseq="${escA(l.sx_seq)}" data-srdec="reject">Reject</button><input class="srm-rmk" data-srrmk="${escA(l.sx_seq)}" value="${escA(d.remark||'')}" placeholder="Reject remark 수정/삭제" ${d.decision==='reject'?'':'disabled'}></div></div>`}).join('');
+    $('#sr-detail').innerHTML=`<div class="srm-gate ${SRC.can_approve?'ok':''}">${esc(why)}</div>${lines||'<div class="sr-empty">라인 없음</div>'}`;
+    $('#sr-msg').textContent=SRC.last_action_result||'';
+    $('#sr-save').disabled=!SRC.editable; $('#sr-push').disabled=!SRC.can_push; $('#sr-approve').disabled=!SRC.can_approve; $('#sr-refresh').disabled=SRC.locked;
+    $('#sr-detail').querySelectorAll('[data-srdec]').forEach(b=>b.onclick=()=>{const x=SRD[b.dataset.srseq];x.decision=b.dataset.srdec;if(x.decision==='confirm')x.remark='';renderSr();});
+    $('#sr-detail').querySelectorAll('[data-srrmk]').forEach(i=>i.oninput=()=>{SRD[i.dataset.srrmk].remark=i.value;});
+  }
+  async function saveSr(){
+    if(!SRC||!SRC.editable)return;
+    const lines=Object.keys(SRD).map(s=>({sx_seq:s,decision:SRD[s].decision,remark:SRD[s].remark}));
+    const {ok,j}=await api('PUT',`/api/automation/soa/reviews/${encodeURIComponent(SRC.sx_cd)}/draft`,{draft_version:SRC.draft_version,lines});
+    if(!ok){$('#sr-msg').textContent=(j&&j.error)||'초안 저장 실패';return;}
+    SRC=j.case; SRD={};(SRC.lines||[]).filter(l=>l.exception||l.decision!=='confirm').forEach(l=>SRD[l.sx_seq]={decision:l.decision||'keep',remark:l.rjt_rmk||''});renderSr();await loadSoaReview();
+  }
+  async function srAction(action){
+    if(!SRC)return;
+    if(action==='refresh'&&SRC.draft_dirty&&!confirm('저장된 초안을 버리고 최신 SVMS 상태로 새로고침할까요?'))return;
+    if(action==='push'){
+      if(!confirm(`[${SRC.sx_cd}] 저장한 Confirm/Reject/Remark를 SVMS에 반영할까요?`))return;
+      if(!confirm('⚠️ 금전 검토 상태를 실제 SVMS에 씁니다. 원본 변경 시 자동 중단됩니다. 정말 반영할까요?'))return;
+    }
+    if(action==='approve'){
+      if(!confirm(`[${SRC.sx_cd}] 전 라인이 Confirm입니다. SOA 승인을 진행할까요?`))return;
+      if(!confirm('⚠️ 승인 후 Status C로 잠기며 장금은 출금 Slip 상신까지 이어집니다. 정말 실행할까요?'))return;
+    }
+    const body={action,snapshot_version:SRC.snapshot_id,draft_version:SRC.draft_version};if(action==='refresh'&&SRC.draft_dirty)body.discard_draft=true;
+    const {ok,j}=await api('POST',`/api/automation/soa/reviews/${encodeURIComponent(SRC.sx_cd)}/action`,body);
+    if(!ok){$('#sr-msg').textContent=(j&&j.error)||'큐 적재 실패';return;}
+    $('#sr-msg').textContent=`${action} 대기중…`;SRC.locked=true;SRC.queued_action=action;renderSr();await loadSoaReview();
+  }
+  async function loadSoaReview(){const r=await api('GET','/api/automation/soa/reviews');if(r.ok){SRLIST=r.j.cases||[];renderSoaReview();}}
   async function api(method,url,body){
     const o={method,headers:{}};
     if(body){o.headers['Content-type']='application/json';o.body=JSON.stringify(body);}
@@ -251,6 +314,7 @@
     m.className='au-master'+(ENABLED?'':' off');
     $('#au-master-sub').textContent=ENABLED?'— 전체 자동화 ON. 버튼이 작동합니다.':'— 킬스위치 ON. 모든 자동화 정지중.';
     renderSoa();
+    renderSoaReview();
     renderGroups();
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
     renderJeonja();
@@ -623,6 +687,7 @@
       JLIST=ji.j.items||[]; JREV=ji.j.reviewed_at||null;
       for(const it of JLIST){ if(it.ref in JPENDING) it.excluded=JPENDING[it.ref]; }  // in-flight 토글 보존
     }
+    await loadSoaReview();
     const sg=await api('GET','/api/automation/soa/groups');
     if(sg.ok){
       GROUPS=sg.j.groups||[]; OWNERS=sg.j.owners||{};
@@ -664,6 +729,9 @@
     if(j.count>1){ alert(`선박별 SOA 검증 ${j.count}건을 큐에 넣었습니다.`); }
     await load();
   }
+  $('#sr-close').onclick=()=>{$('#sr-modal').classList.remove('open');SRC=null;};
+  $('#sr-modal').onclick=e=>{if(e.target.id==='sr-modal'){$('#sr-modal').classList.remove('open');SRC=null;}};
+  $('#sr-save').onclick=saveSr; $('#sr-refresh').onclick=()=>srAction('refresh'); $('#sr-push').onclick=()=>srAction('push'); $('#sr-approve').onclick=()=>srAction('approve');
   $('#sv-live').onclick=()=>runVessel('live');
   $('#sv-remark').onclick=()=>runVessel('remark_cleanup');
   $('#au-ks').onclick=toggleKs;

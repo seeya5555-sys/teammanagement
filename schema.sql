@@ -586,3 +586,122 @@ CREATE TABLE IF NOT EXISTS soa_vessel_owner (
     owner_comp_id TEXT NOT NULL,
     updated_at    TEXT DEFAULT (datetime('now','localtime'))
 );
+
+-- SOA manual review inbox (snapshot/case/line/attachment/audit)
+CREATE TABLE IF NOT EXISTS soa_review_snapshot (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id           TEXT,
+    source           TEXT NOT NULL DEFAULT 'soa_manual_review',
+    scope_json       TEXT,
+    captured_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    expires_at       TEXT,
+    case_count       INTEGER NOT NULL DEFAULT 0,
+    line_count       INTEGER NOT NULL DEFAULT 0,
+    attachment_count INTEGER NOT NULL DEFAULT 0,
+    summary_json     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_soa_review_snapshot_captured ON soa_review_snapshot(captured_at DESC);
+
+CREATE TABLE IF NOT EXISTS soa_review_case (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id        INTEGER REFERENCES soa_review_snapshot(id) ON DELETE SET NULL,
+    sx_cd              TEXT NOT NULL UNIQUE,
+    status             TEXT NOT NULL CHECK (status IN ('C','T','D','S')),
+    sl_tp              TEXT,
+    dept_nm            TEXT,
+    owner_comp_id      TEXT,
+    owner_label        TEXT,
+    vsl_cd             TEXT,
+    vsl_nm             TEXT,
+    sl_dm              TEXT,
+    subj               TEXT,
+    amt                REAL,
+    cur_cd             TEXT,
+    source_all_confirmed INTEGER NOT NULL DEFAULT 0,
+    fresh_until        TEXT,
+    draft_version      INTEGER NOT NULL DEFAULT 1,
+    draft_dirty        INTEGER NOT NULL DEFAULT 0,
+    queued_action      TEXT,
+    queued_run_id      TEXT,
+    queued_at          TEXT,
+    last_action_at     TEXT,
+    last_action_result TEXT,
+    raw_case           TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_soa_review_case_status ON soa_review_case(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_soa_review_case_snapshot ON soa_review_case(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_soa_review_case_queue ON soa_review_case(queued_run_id);
+
+CREATE TABLE IF NOT EXISTS soa_review_line (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id             INTEGER NOT NULL REFERENCES soa_review_case(id) ON DELETE CASCADE,
+    sx_seq              TEXT,
+    line_no             INTEGER NOT NULL DEFAULT 0,
+    soa_tp              TEXT,
+    soa_opex_tp         TEXT,
+    exp_cd              TEXT,
+    exp_nm              TEXT,
+    cur_cd              TEXT,
+    soa_amt             REAL,
+    amt_usd             REAL,
+    inv_no              TEXT,
+    file_ref_no         TEXT,
+    ref_no              TEXT,
+    vendor_nm           TEXT,
+    source_hash         TEXT NOT NULL,
+    immutable_hash      TEXT,
+    machine_state       TEXT,
+    machine_reason      TEXT,
+    exception           INTEGER NOT NULL DEFAULT 0,
+    source_subj         TEXT,
+    source_rmk          TEXT,
+    source_cfm_yn       TEXT NOT NULL DEFAULT 'N',
+    source_rjt_yn       TEXT NOT NULL DEFAULT 'N',
+    source_rjt_rmk      TEXT,
+    source_status2      TEXT,
+    source_status_rmk2  TEXT,
+    draft_subj          TEXT,
+    draft_rmk           TEXT,
+    draft_cfm_yn        TEXT,
+    draft_rjt_yn        TEXT,
+    draft_rjt_rmk       TEXT,
+    raw_line            TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE(case_id, sx_seq)
+);
+CREATE INDEX IF NOT EXISTS idx_soa_review_line_case ON soa_review_line(case_id, line_no, id);
+
+CREATE TABLE IF NOT EXISTS soa_review_attachment (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id      INTEGER NOT NULL REFERENCES soa_review_case(id) ON DELETE CASCADE,
+    line_id      INTEGER REFERENCES soa_review_line(id) ON DELETE CASCADE,
+    upload_key   TEXT UNIQUE,
+    slot         INTEGER NOT NULL DEFAULT 0,
+    file_name    TEXT NOT NULL,
+    mime_type    TEXT,
+    byte_size    INTEGER,
+    sha256       TEXT,
+    stored_name  TEXT,
+    file_ref_no  TEXT,
+    expires_at   TEXT,
+    uploaded_at  TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_soa_review_attachment_case ON soa_review_attachment(case_id, line_id, slot);
+
+CREATE TABLE IF NOT EXISTS soa_review_audit (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id     INTEGER REFERENCES soa_review_case(id) ON DELETE CASCADE,
+    snapshot_id INTEGER REFERENCES soa_review_snapshot(id) ON DELETE SET NULL,
+    action      TEXT NOT NULL,
+    actor       TEXT,
+    run_id      TEXT,
+    ok          INTEGER,
+    detail_json TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_soa_review_audit_case ON soa_review_audit(case_id, created_at DESC);
