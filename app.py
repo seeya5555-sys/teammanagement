@@ -9942,6 +9942,161 @@ def api_ext_aor_reject_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
+#: 재적재(POST /api/ext/aor/drafts)가 **완전 no-op** 인 상태들 — 서버가 dedup 만 하고 DB 도
+#: 첨부 preview 도 건드리지 않는다. prep 러너의 skip 판정은 이 목록을 넘지 못한다(서버가 정본).
+#: ⛔ 'pending' 은 갱신 대상이라 제외. ⛔ 'hold' 도 제외 — dedup 이라 DB 는 안 바뀌지만
+#:    러너가 hold 에는 첨부 preview 를 재업로드하므로 no-op 이 아니다.
+AOR_REINGEST_NOOP_STATUSES = ('approved', 'submitting', 'submitted',
+                              'rejecting', 'reject_submitting')
+
+#: `uq_aor_draft_active_cd` predicate 와 같은 상태군(= 동시에 하나만 존재할 수 있는 "활성" 상태).
+_AOR_ACTIVE_STATUSES = ('pending', 'hold', 'approved', 'submitting', 'submitted',
+                        'rejecting', 'reject_submitting')
+
+
+#: 안전한 index 의 **정확한** 형태. 느슨하게 보면 안 된다(올마이트 R8):
+#:   · UNIQUE 가 아니면 active 행 유일성이 없음
+#:   · 대상 table/컬럼이 다르면 무의미
+#:   · predicate 뒤에 `AND x=1` 이 붙으면 일부 active 행만 보호됨
+#: 그래서 "status IN (...)" **하나로 끝나는** 형태만 통과시킨다.
+_AOR_IDX_RE = re.compile(
+    r'^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?'
+    r'[`"\[]?uq_aor_draft_active_cd[`"\]]?\s+ON\s+[`"\[]?aor_draft[`"\]]?\s*'
+    r'\(\s*[`"\[]?aor_cd[`"\]]?\s*\)\s*'
+    r'WHERE\s+status\s+IN\s*\(([^()]*)\)\s*;?\s*$',
+    re.S | re.I)
+
+
+def _sql_literal_value(tok):
+    """SQL 문자열 리터럴 하나를 **의미대로** 해독. 문자열 리터럴이 아니면 None.
+
+    ⛔ `strip("'\\"")` 로 따옴표를 뭉개면 안 된다(올마이트 R9). `'''approved'''` 는 SQL 상
+       값이 `'approved'`(따옴표 포함)인데 뭉개면 `approved` 로 보인다 → 실제로는 approved 를
+       못 덮는 predicate 를 "덮는다"고 오판 → false-positive → false-skip.
+    identifier(`"status"`), 숫자, 함수호출, `x'ab'` 같은 건 전부 거부한다(= index 불신).
+    """
+    tok = tok.strip()
+    if len(tok) < 2 or tok[0] != "'" or tok[-1] != "'":
+        return None
+    body, out, i = tok[1:-1], [], 0
+    while i < len(body):
+        if body[i] == "'":
+            # 리터럴 내부의 홑따옴표는 반드시 `''` 쌍으로만 등장한다. 아니면 해독 불가.
+            if i + 1 < len(body) and body[i + 1] == "'":
+                out.append("'")
+                i += 2
+                continue
+            return None
+        out.append(body[i])
+        i += 1
+    return ''.join(out)
+
+
+def _aor_index_predicate_covers_noop():
+    """실제 DB 의 partial unique index 가 skip 안전성 전제를 **온전히** 충족하는지 확인.
+
+    `CREATE UNIQUE INDEX IF NOT EXISTS` 라 predicate 를 소스에서 바꿔도 이미 존재하는
+    index 는 갱신되지 않는다 — 즉 소스만 보고 믿으면 안 되고 sqlite_master 를 봐야 한다.
+    predicate 문자열만 훑지 않고 UNIQUE 여부·대상 table/컬럼·후행조건 부재까지 본다(올마이트 R8).
+    """
+    try:
+        row = query("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                    ('uq_aor_draft_active_cd',), one=True)
+        if not row or not row['sql']:
+            return False
+        m = _AOR_IDX_RE.match(row['sql'])
+        if not m:
+            app.logger.error('aor-index: 예상 밖 index 형태 — skip 비활성: %s', row['sql'])
+            return False
+        # sqlite 가 실제로 UNIQUE 로 취급하는지, 인덱스 컬럼이 aor_cd 하나인지 교차확인
+        info = query("PRAGMA index_list('aor_draft')")
+        rec = next((r for r in info if r['name'] == 'uq_aor_draft_active_cd'), None)
+        if not rec or not rec['unique']:
+            return False
+        cols = query("PRAGMA index_info('uq_aor_draft_active_cd')")
+        if [c['name'] for c in cols] != ['aor_cd']:
+            return False
+        # SQL literal은 반드시 의미대로 해독한다. 단순 strip은 `'''approved'''`를
+        # `approved`로 오인해 false-skip을 만들 수 있다.
+        pred_values = [_sql_literal_value(token) for token in m.group(1).split(',')]
+        if any(value is None for value in pred_values):
+            app.logger.error('aor-index: predicate literal 해독 실패 — skip 비활성: %s', row['sql'])
+            return False
+        pred = set(pred_values)
+        return not (set(AOR_REINGEST_NOOP_STATUSES) | {'pending', 'hold'}) - pred
+    except Exception:
+        app.logger.exception('aor-index-predicate-check')
+        return False
+
+
+@app.route('/api/ext/aor/reingest-statuses')
+@api_key_required
+def api_ext_aor_reingest_statuses():
+    """prep 엔진 skip 판정용 읽기전용 (aor_cd, status) 목록.
+
+    ⚠️ /api/ext/aor/approved 와 달리 **락도 상태변경도 없다** — 순수 조회.
+    2026-07-27 발견: prep 이 skip 목록을 `/api/aor/drafts?status=all` 에서 가져갔는데
+    그 라우트는 @admin_required(세션쿠키 전용)라 X-API-Key 로는 항상 401 →
+    클라이언트가 비-200 을 set() 으로 삼켜 skip 최적화가 처음부터 죽어 있었음.
+    판정 기준은 클라이언트가 정하도록 상태를 그대로 넘긴다(서버-클라 결합 최소화).
+
+    **aor_cd 당 정확히 1행**만 반환한다(`MAX(id)`). active 상태군에는 이미 partial unique index
+    `uq_aor_draft_active_cd` 가 걸려 있어 활성행은 원래 1개뿐이지만, 종료행(duplicate/failed/
+    rejected)은 같은 aor_cd 로 여러 개 남을 수 있다 — 그 잔재가 skip 판정을 오염시키지 않도록
+    최신행만 넘긴다.
+
+    🔒 **안전 불변식을 런타임에 자가검증한다**(올마이트 R7). skip 이 안전한 근거는
+    "skip 상태 행이 최신이면 그게 유일한 active 행"이고, 그건 두 전제 위에서만 참이다:
+      (a) index predicate 가 skip 상태 전부 + pending/hold 를 덮는다
+      (b) 같은 canonical key 로 active 행이 둘 이상이 아니다
+    둘 다 **배포 시점의 사실**이지 영구 보장이 아니다(`CREATE UNIQUE INDEX IF NOT EXISTS` 라
+    predicate 를 바꿔도 기존 index 가 남을 수 있고, legacy 변형행이 있을 수도 있다).
+    그래서 여기서 매 호출 확인하고, 깨져 있으면 **`noop_statuses` 를 아예 빼서** 응답한다 →
+    클라는 그걸 "판정 근거 없음"으로 보고 skip 을 전부 포기한다(이미 그렇게 구현·테스트됨).
+    즉 불변식이 깨지면 최적화만 꺼지고 정합성은 유지된다.
+    """
+    rows = query("SELECT aor_cd, status FROM aor_draft "
+                 "WHERE id IN (SELECT MAX(id) FROM aor_draft GROUP BY aor_cd) "
+                 "ORDER BY id DESC")
+    drafts = [dict(r) for r in rows]
+
+    # (b) **비정규 표기 행은 통째로 제외한다.**
+    #     ingest 는 `upper(trim())` 한 키로 exact-match 조회하므로, DB 에 'abc' 만 있고
+    #     러너가 'ABC' 를 보내면 dedup 이 안 되고 **새 행이 INSERT 된다** = no-op 이 아니다.
+    #     그런데 클라는 'abc' 를 'ABC' 로 정규화해 비교하므로 그대로 두면 skip 해버린다(false-skip).
+    #     충돌(2건 이상)뿐 아니라 **단독 비정규 행** 하나로도 성립하는 경로다(올마이트 R8).
+    noncanon = [d for d in drafts
+                if (d.get('aor_cd') or '') != (d.get('aor_cd') or '').strip().upper()]
+    if noncanon:
+        app.logger.warning('aor-reingest-statuses: 비정규 aor_cd %s — skip 대상에서 제외',
+                           [d.get('aor_cd') for d in noncanon])
+        bad_keys = {(d.get('aor_cd') or '').strip().upper() for d in noncanon}
+        drafts = [d for d in drafts
+                  if d.get('aor_cd') not in {x.get('aor_cd') for x in noncanon}
+                  and (d.get('aor_cd') or '').strip().upper() not in bad_keys]
+
+    # (c) canonical key 충돌: 변형 표기로 active 행이 갈라져 있으면 그 key 는 skip 대상에서 제외한다.
+    #     (b) 가 대부분 걸러내지만, 방어를 겹쳐 둔다.
+    dup = query("SELECT upper(trim(aor_cd)) k FROM aor_draft "
+                "WHERE status IN (%s) GROUP BY k HAVING COUNT(*) > 1"
+                % ','.join('?' * len(_AOR_ACTIVE_STATUSES)), _AOR_ACTIVE_STATUSES)
+    if dup:
+        bad = {r['k'] for r in dup}
+        app.logger.warning('aor-reingest-statuses: canonical key 충돌 %s — skip 대상에서 제외', sorted(bad))
+        drafts = [d for d in drafts if (d.get('aor_cd') or '').strip().upper() not in bad]
+
+    out = {'count': len(drafts), 'drafts': drafts}
+    # (a) predicate 커버리지 확인. 통과할 때만 정본 목록을 실어보낸다.
+    if _aor_index_predicate_covers_noop():
+        # skip 해도 되는 상태의 **정본은 서버**. 클라가 자기 상수를 이것과 대조해
+        # drift 를 런타임에 잡는다(테스트 복제로는 cross-repo drift 를 못 잡는다).
+        out['noop_statuses'] = list(AOR_REINGEST_NOOP_STATUSES)
+    else:
+        app.logger.error('aor-reingest-statuses: partial unique index predicate 가 '
+                         'skip 상태를 못 덮음 — noop_statuses 생략(클라 skip 비활성)')
+    return jsonify(out)
+
+
 @app.route('/api/ext/aor/stats', methods=['POST'])
 @api_key_required
 def api_ext_aor_stats():
