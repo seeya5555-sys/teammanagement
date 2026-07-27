@@ -71,7 +71,8 @@ class AORDedupTests(unittest.TestCase):
         def force_stale_precheck(sql, params=(), one=False):
             nonlocal skipped_precheck
             if (not skipped_precheck
-                    and sql.startswith("SELECT id, status FROM aor_draft WHERE aor_cd=?")):
+                    and sql.startswith(
+                        "SELECT id, status FROM aor_draft WHERE upper(trim(aor_cd))=?")):
                 skipped_precheck = True
                 return None
             return real_query(sql, params, one)
@@ -97,8 +98,14 @@ class AORDedupTests(unittest.TestCase):
     def test_init_migration_collapses_active_duplicates_by_status_priority(self):
         db_path = appmod.app.config["DATABASE"]
         with sqlite3.connect(db_path) as db:
-            # Keep the already-created case-sensitive partial UNIQUE index. Mixed
-            # case values can coexist, reproducing the later-boot migration hazard.
+            # 2026-07-27 이전 배포의 raw-컬럼 index 를 재현한다. 지금의 표현식 index
+            # (`upper(trim(aor_cd))`)는 이 혼재 자체를 막으므로, 그걸 깔아둔 채로는
+            # "부팅 시 legacy 중복을 정리한다"는 이 마이그레이션 경로를 검사할 수 없다.
+            db.execute("DROP INDEX IF EXISTS uq_aor_draft_active_cd")
+            db.execute(
+                "CREATE UNIQUE INDEX uq_aor_draft_active_cd ON aor_draft(aor_cd) "
+                "WHERE status IN ('pending','hold','approved','submitting','submitted',"
+                "'rejecting','reject_submitting')")
             db.execute(
                 "INSERT INTO aor_draft (aor_cd, status) VALUES (?, ?)",
                 (" atgrca2607220003 ", "pending"),

@@ -505,8 +505,9 @@ def init_db(drop=False):
         # SELECT-before-INSERT check, so overlapping prep runs could both insert an
         # active row. Normalize legacy keys, keep the most advanced active row, and
         # make the invariant database-enforced for future concurrent requests.
-        _aor_active = ("'pending','hold','approved','submitting','submitted',"
-                       "'rejecting','reject_submitting'")
+        # 상태군의 정본은 `_AOR_ACTIVE_STATUSES` 하나뿐이다. 예전엔 여기 리터럴을 따로 적어둬서
+        # 둘이 어긋나면 index predicate 와 dedup 정리 범위가 조용히 갈라질 수 있었다.
+        _aor_active = _aor_status_list_sql(_AOR_ACTIVE_STATUSES)
         conn.execute(f"""
             UPDATE aor_draft AS loser
                SET status='duplicate',
@@ -549,8 +550,10 @@ def init_db(drop=False):
         # case-sensitive unique index already exists and legacy mixed-case keys do too.
         conn.execute("UPDATE aor_draft SET aor_cd=upper(trim(aor_cd)) "
                      "WHERE aor_cd<>upper(trim(aor_cd))")
-        conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_aor_draft_active_cd "
-                     f"ON aor_draft(aor_cd) WHERE status IN ({_aor_active})")
+        # 유일성은 **canonical key 기준**으로 DB 가 강제한다(위 정규화는 관례일 뿐이라
+        # 정규화를 잊은 writer 가 하나만 생겨도 뚫린다). 바로 위 dedup 정리가 끝난 직후라
+        # canonical 중복 활성행은 없다 — 교체가 실패할 수 없는 유일한 지점이다.
+        _aor_active_index_install(conn)
         # absorbing 상태 이탈 금지 — 러너 skip 안전성의 근거를 DB 층에 고정한다.
         # (정의·검증은 _aor_absorbing_trigger_sql / _aor_absorbing_trigger_ok)
         _aor_absorbing_trigger_install(conn)
@@ -996,7 +999,15 @@ def init_db(drop=False):
             conn.execute('CREATE TABLE IF NOT EXISTS api_settings (k TEXT PRIMARY KEY, v TEXT)')
             conn.execute("INSERT OR REPLACE INTO api_settings (k,v) VALUES ('soa_groups_version','1')")
             print('  - soa_group seeded (G1/G2/G3/SKRT = 현행 하드코딩 동일)')
+        # api_settings 는 위 seed 블록 안에서만 만들어져 왔다(= seeding 안 도는 DB 에는 없을 수
+        # 있었다). `_ensure_api_table()` 이 요청마다 만들어주던 걸 캐시로 바꿨으니, 생성 책임을
+        # 여기로 옮겨 **무조건** 보장한다. 캐시는 같은 경로의 DB 가 새로 만들어졌을 수 있으므로 비운다.
+        conn.execute('CREATE TABLE IF NOT EXISTS api_settings (k TEXT PRIMARY KEY, v TEXT)')
         conn.commit()
+        # init 직후에는 테이블 존재가 실측됐으므로 첫 API 인증 요청까지 DDL을 다시 할 이유가 없다.
+        _API_TABLE_READY.clear()
+        st = os.stat(DATABASE)
+        _API_TABLE_READY[DATABASE] = (st.st_dev, st.st_ino)
 
         if fresh and os.path.exists(SEED_FILE):
             with open(SEED_FILE, encoding='utf-8') as f:
@@ -6722,9 +6733,34 @@ def _not_found(e):
 #  외부 연동용 데이터 API (읽기 전용, API 키 보호)
 #  · 출장 경비(biz_*) 제외 — 그 외 전체 탭 공개
 # ═════════════════════════════════════════════════════════════════
+#: `_ensure_api_table()` 를 이미 끝낸 DB 파일 경로들(프로세스 로컬 캐시).
+#: 경로를 키로 쓰는 이유는 테스트가 `app.config['DATABASE']` 를 임시 파일로 바꿔치기해서다
+#: — 단순 bool 플래그면 새 임시 DB 에서 테이블 없이 진행해 조용히 깨진다.
+_API_TABLE_READY = {}  # path -> (device, inode): DB 파일 교체 감지(정상 DB 쓰기는 cache 무효화 안 함)
+_API_TABLE_LOCK = threading.Lock()
+
+
 def _ensure_api_table():
-    execute("""CREATE TABLE IF NOT EXISTS api_settings (
-                 k TEXT PRIMARY KEY, v TEXT )""")
+    """`api_settings` 존재 보장 — **프로세스당 DB 경로별 1회만**.
+
+    예전엔 API 키가 붙은 **모든 요청**마다 `CREATE TABLE IF NOT EXISTS` + `commit()` 이 돌았다
+    (`_check_api_key` → `_get_api_key` → 여기). no-op DDL 이라도 `execute()` 가 커밋을 하므로
+    요청마다 쓰기 트랜잭션이 열렸다 — 순수 낭비이고, 읽기전용 API 가 writer lock 을 잡는
+    부작용까지 있었다. 테이블 자체는 `init_db()` 가 이미 만든다(위 api_settings 블록).
+    """
+    path = app.config.get('DATABASE', DATABASE)
+    with _API_TABLE_LOCK:
+        try:
+            st = os.stat(path)
+            sig = (st.st_dev, st.st_ino)
+        except OSError:
+            sig = None
+        if _API_TABLE_READY.get(path) == sig and sig is not None:
+            return
+        execute("""CREATE TABLE IF NOT EXISTS api_settings (
+                     k TEXT PRIMARY KEY, v TEXT )""")
+        st = os.stat(path)
+        _API_TABLE_READY[path] = (st.st_dev, st.st_ino)
 
 
 def _get_api_key(create=True):
@@ -8984,12 +9020,22 @@ def _soa_review_is_fresh(fresh_until):
     return bool(dt and dt >= datetime.now())
 
 
+SOA_REVIEW_STATUS_EDITABLE = ('D', 'S')   # 감독이 라인 상태를 쓸 수 있는 단계
+SOA_REVIEW_STATUS_FINAL = ('C', 'T')      # SVMS에서 종결 — 검토함에서 내려도 되는 단계
+SOA_REVIEW_SCHEMA_DEGRADED = True         # 부팅 probe 성공 전에는 R 상태 ingest fail-closed
+
+
 def _soa_review_status_read_only(status):
-    return (status or '').strip().upper() in ('C', 'T')
+    # 편집 가능 단계(D/S)가 아니면 전부 read-only. R(SM 반려)·미지 상태는 fail-closed로 쓰기 금지.
+    return (status or '').strip().upper() not in SOA_REVIEW_STATUS_EDITABLE
 
 
 def _soa_review_status_editable(status):
-    return (status or '').strip().upper() in ('D', 'S')
+    return (status or '').strip().upper() in SOA_REVIEW_STATUS_EDITABLE
+
+
+def _soa_review_status_final(status):
+    return (status or '').strip().upper() in SOA_REVIEW_STATUS_FINAL
 
 
 def _soa_review_upload_key(value):
@@ -9103,6 +9149,37 @@ def _soa_review_action_failed(result):
     return s.lower() not in ('done', 'ok')
 
 
+def _soa_review_result_dict(result):
+    if not result:
+        return None
+    try:
+        d = json.loads(str(result).strip())
+    except Exception:
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def _soa_review_action_reconcile(result):
+    """부분 성공(일부만 SVMS에 써진 상태) 표시. JSON 결과에만 담기며, 표시되면 절대 숨기지 않는다."""
+    d = _soa_review_result_dict(result)
+    return bool(d and _soa_review_truthy(d.get('reconcile_required')))
+
+
+def _soa_review_action_pre_write(result):
+    """runner가 'SVMS에 한 글자도 쓰기 전에' 게이트에서 멈췄다고 스스로 보고한 결과만 True.
+    평문 실패(크래시·타임아웃 fail-safe)는 쓰기 여부를 알 수 없으므로 절대 여기 해당하지 않는다."""
+    d = _soa_review_result_dict(result)
+    if not d:
+        return False
+    seqs = d.get('applied_seqs')
+    if seqs is not None and not isinstance(seqs, list):
+        return False                     # 모르는 형태면 쓰기 있었을 수 있다 — fail-closed
+    return bool(str(d.get('action') or '').strip().lower() == 'approve'
+                and str(d.get('status') or '').strip().lower() == 'stale'
+                and not _soa_review_truthy(d.get('reconcile_required'))
+                and not seqs)
+
+
 def _soa_review_case_payload(case_row, *, detail=False):
     c = dict(case_row)
     lines = _soa_review_case_lines(c['id'])
@@ -9114,22 +9191,37 @@ def _soa_review_case_payload(case_row, *, detail=False):
     pending_count = sum(1 for ln in lines if ln.get('cfm_yn') != 'Y' and ln.get('rjt_yn') != 'Y')
     rejected_count = sum(1 for ln in lines if ln.get('rjt_yn') == 'Y')
     action_failed = _soa_review_action_failed(c.get('last_action_result'))
+    reconcile_required = _soa_review_action_reconcile(c.get('last_action_result'))
+    # 실패 기록을 내리는 조건은 '추론'이 아니라 runner가 구조화해 보고한 사실에만 근거한다:
+    #   ① runner가 쓰기 전에 멈췄다고 보고(status=stale, reconcile 없음, applied 0건) +
+    #   ② SVMS가 이미 종결(C/T) + ③ 전 라인 Confirm.
+    # 예: 다른 경로로 이미 승인된 SOA에 승인 시도 → 'not approvable STATUS=C'로 무해하게 실패.
+    # 평문 실패(크래시/타임아웃 fail-safe)는 쓰기 여부를 알 수 없으므로 항상 사람에게 노출한다.
+    unresolved_failure = bool(action_failed and not (_soa_review_action_pre_write(c.get('last_action_result'))
+                                                     and _soa_review_status_final(c.get('status'))
+                                                     and gate['all_confirmed']
+                                                     and not reconcile_required))
     # 전 라인 Confirm인데 아직 승인 전이면 남은 할 일 = 승인. can_approve는 fresh(15분)를 요구하므로
     # 목록 노출 판정에는 fresh를 빼고 본다(스냅샷이 낡았으면 refresh 후 승인하면 됨).
     approval_pending = bool((c.get('status') or '').strip().upper() == 'S'
                             and not gate['read_only'] and not gate['locked']
                             and gate['all_confirmed'] and not bool(c.get('draft_dirty')))
+    # 아는 SVMS 코드가 아니면(스키마 변경·오타·신규 단계) 조용히 종결시키지 않고 사람에게 보여준다.
+    unknown_status = (c.get('status') or '').strip().upper() not in ('C', 'T', 'D', 'S', 'R')
     # 실패/부분성공(reconcile)과 처리중 잠금은 C/T(read_only)여도 사람이 봐야 하므로 숨기지 않는다.
     needs_review = bool(
-        action_failed or gate['locked']
+        unresolved_failure or reconcile_required or gate['locked'] or unknown_status
         or (not gate['read_only']
             and (open_exception_count > 0 or pending_count > 0 or bool(c.get('draft_dirty'))
                  or gate['can_approve'] or approval_pending))
     )
     # 목록 분류는 서버가 확정한다(클라가 추론하지 않음).
-    #   attention = 사람 할 일 남음 / reject_waiting = 리젝 반영 끝, SM 회신 대기 / closed = 종결
+    #   attention = 사람 할 일 남음 / reject_waiting = 리젝 반영 끝, SM 회신 대기 / closed = 종결(C/T)
+    # SVMS header가 R(SM에게 반려됨)이면 라인 플래그와 무관하게 회신 대기다.
+    status_up = (c.get('status') or '').strip().upper()
     review_bucket = ('attention' if needs_review
-                     else 'reject_waiting' if (rejected_count > 0 and not gate['read_only'])
+                     else 'reject_waiting' if (not _soa_review_status_final(status_up)
+                                               and (rejected_count > 0 or status_up == 'R'))
                      else 'closed')
     payload = {
         'id': c['id'],
@@ -9162,6 +9254,7 @@ def _soa_review_case_payload(case_row, *, detail=False):
         'pending_count': pending_count,
         'rejected_count': rejected_count,
         'action_failed': action_failed,
+        'reconcile_required': reconcile_required,
         'approval_pending': approval_pending,
         'needs_review': needs_review,
         'review_bucket': review_bucket,
@@ -9248,8 +9341,14 @@ def _soa_review_ingest_snapshot(d):
     sx = str(d.get('sx_cd') or '').strip().upper()
     status = str(d.get('header_status') or '').strip().upper()
     lines = d.get('lines')
-    if not re.fullmatch(r'[A-Z0-9]{16}', sx) or status not in ('C', 'T', 'D', 'S'):
+    # STATUS 화이트리스트를 좁게 잡으면 SVMS가 R(반려) 같은 다른 코드로 가 있을 때 snapshot ingest가
+    # 영구 실패해서 로컬 상태가 낡은 채로 굳는다(승인 끝난 건이 '승인대기'로 남는 사고). 형식만 검증하고
+    # 권한 판정은 editable(D/S) 화이트리스트가 담당한다 — 모르는 코드는 read-only로 fail-closed.
+    if not re.fullmatch(r'[A-Z0-9]{16}', sx) or not re.fullmatch(r'[A-Z]{1,2}', status):
         raise ValueError('bad sx_cd/header_status')
+    if SOA_REVIEW_SCHEMA_DEGRADED and status not in ('C', 'T', 'D', 'S'):
+        # 좁은 CHECK가 남은 DB — 아래 INSERT가 IntegrityError로 죽는다. 원인을 명시해서 실패시킨다.
+        raise ValueError('schema_degraded: soa_review_case.status CHECK 미완화 — status %s 저장 불가(관리자 조치 필요)' % status)
     if not isinstance(lines, list) or not lines:
         raise ValueError('lines required')
     seqs = [str(x.get('SX_SEQ') or x.get('sx_seq') or '').strip() for x in lines if isinstance(x, dict)]
@@ -9316,12 +9415,17 @@ def _soa_review_ingest_snapshot(d):
             old_atts = [dict(x) for x in db.execute(
                 'SELECT stored_name FROM soa_review_attachment WHERE case_id=?', (case_id,)).fetchall()]
             db.execute('DELETE FROM soa_review_line WHERE case_id=?', (case_id,))
+            # 부분성공(reconcile_required) 기록은 새 스냅샷이 들어와도 지우지 않는다 —
+            # 사람이 실제로 정리했는지는 SVMS 상태만 봐서는 알 수 없고, 다음 액션 결과로만 덮인다.
+            keep_result = (existing['last_action_result']
+                           if _soa_review_action_reconcile(existing['last_action_result']) else None)
             db.execute(
                 "UPDATE soa_review_case SET snapshot_id=?,status=?,owner_comp_id=?,vsl_cd=?,vsl_nm=?,sl_tp=?,dept_nm=?,"
-                "source_all_confirmed=?,fresh_until=?,draft_version=draft_version+1,draft_dirty=0,last_action_result=NULL,"
+                "source_all_confirmed=?,fresh_until=?,draft_version=draft_version+1,draft_dirty=0,last_action_result=?,"
                 "raw_case=?,updated_at=datetime('now','localtime') WHERE id=?",
                 (snapshot_id, status, owner, d.get('vessel') or sx[:4], d.get('vsl_nm'), d.get('sl_tp'),
-                 d.get('dept_nm'), all_confirmed, fresh_until, json.dumps(raw_case, ensure_ascii=False), case_id))
+                 d.get('dept_nm'), all_confirmed, fresh_until, keep_result,
+                 json.dumps(raw_case, ensure_ascii=False), case_id))
         else:
             cur = db.execute(
                 'INSERT INTO soa_review_case (snapshot_id,sx_cd,status,sl_tp,dept_nm,owner_comp_id,vsl_cd,vsl_nm,'
@@ -9373,7 +9477,8 @@ def _soa_review_ingest_snapshot(d):
 @admin_required
 def api_soa_review_list():
     rows = query("SELECT * FROM soa_review_case ORDER BY CASE status WHEN 'S' THEN 0 WHEN 'D' THEN 1 ELSE 2 END, updated_at DESC")
-    return jsonify({'ok': True, 'cases': [_soa_review_case_payload(r) for r in rows]})
+    return jsonify({'ok': True, 'cases': [_soa_review_case_payload(r) for r in rows],
+                    'schema_degraded': SOA_REVIEW_SCHEMA_DEGRADED})
 
 
 @app.route('/api/automation/soa/reviews/<sx_cd>')
@@ -9670,7 +9775,9 @@ def api_ext_aor_create():
         return jsonify({'error': 'aor_cd required'}), 400
     # dedup 조회에 hold/rejecting 포함 — 보류·리젝진행 중 prep 재적재가 동일 aor_cd 의
     # 신규 pending 을 만들면(양쪽 승인시) 이중 SVMS 상신 위험.
-    ex = query("SELECT id, status FROM aor_draft WHERE aor_cd=? "
+    # DB unique index도 canonical key를 쓴다. 조회가 raw aor_cd 비교면 legacy 공백/대소문자
+    # 행을 못 찾아 INSERT가 expression-index IntegrityError(500)로 끝난다.
+    ex = query("SELECT id, status FROM aor_draft WHERE upper(trim(aor_cd))=? "
                "AND status IN ('pending','hold','approved','submitting','submitted',"
                "'rejecting','reject_submitting') "
                "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
@@ -9709,9 +9816,13 @@ def api_ext_aor_create():
         # our lookup. The partial UNIQUE index is the authority; return/update the
         # winner instead of surfacing a 500 or creating a second approval card.
         get_db().rollback()
-        if 'UNIQUE constraint failed: aor_draft.aor_cd' not in str(exc):
+        # raw-column 구 index와 canonical expression index 모두 같은 race를 표면화한다.
+        # index 이름은 SQLite 버전/표현식에 따라 메시지가 다르므로, aor_draft 관련 UNIQUE만
+        # recovery 대상으로 삼고 canonical key로 승자를 다시 찾는다.
+        msg = str(exc)
+        if 'UNIQUE constraint failed:' not in msg or 'uq_aor_draft_active_cd' not in msg and 'aor_draft.aor_cd' not in msg:
             raise
-        ex = query("SELECT id, status FROM aor_draft WHERE aor_cd=? "
+        ex = query("SELECT id, status FROM aor_draft WHERE upper(trim(aor_cd))=? "
                    "AND status IN ('pending','hold','approved','submitting','submitted',"
                    "'rejecting','reject_submitting') "
                    "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
@@ -9971,6 +10082,11 @@ AOR_REINGEST_NOOP_STATUSES = ('approved', 'submitting', 'submitted',
 AOR_REINGEST_TERMINAL_STATUSES = ('submitted',)
 
 
+def _aor_status_list_sql(statuses):
+    """상태 튜플 → `'a','b'` SQL 리터럴 목록. 상태값을 SQL 에 박는 유일한 경로."""
+    return ','.join("'%s'" % s.replace("'", "''") for s in statuses)
+
+
 def _aor_absorbing_trigger_sql():
     """absorbing 상태에서 **나가는 UPDATE 자체를 DB 가 거부**하게 하는 trigger 문.
 
@@ -9980,7 +10096,7 @@ def _aor_absorbing_trigger_sql():
     ⚠️ `IF NOT EXISTS` 라 상수를 나중에 넓혀도 기존 trigger 는 안 바뀐다 — 그래서
        `_aor_absorbing_trigger_ok()` 가 런타임에 실물과 대조하고, 어긋나면 skip 을 끈다.
     """
-    lst = ','.join("'%s'" % s.replace("'", "''") for s in AOR_REINGEST_TERMINAL_STATUSES)
+    lst = _aor_status_list_sql(AOR_REINGEST_TERMINAL_STATUSES)
     # 불변식의 단위는 **행이 아니라 canonical aor_cd** 다 — 러너 skip 집합의 key 가 aor_cd 이기 때문.
     # 그래서 같은 key 를 대표하는 다른 terminal 행이 남는 경우(= init_db 의 중복정리에서 loser 를
     # 'duplicate' 로 강등하는 경우)는 허용한다. 그 key 는 여전히 terminal 로 보이므로 false-skip 이
@@ -10032,15 +10148,66 @@ _AOR_ACTIVE_STATUSES = ('pending', 'hold', 'approved', 'submitting', 'submitted'
                         'rejecting', 'reject_submitting')
 
 
+def _aor_active_index_sql(name='uq_aor_draft_active_cd'):
+    """활성행 유일성 index 문 — key 는 **canonical(`upper(trim(aor_cd))`)**.
+
+    예전엔 raw 컬럼 `aor_draft(aor_cd)` 에 걸려 있었다. 실제로 중복이 안 생긴 건 모든 writer 가
+    미리 `strip().upper()` 를 하기 때문인데, 그건 **관례**라 정규화를 빠뜨린 writer 가 하나만
+    생겨도 `'ABC'` 와 `' abc '` 가 동시에 활성으로 앉는다. 그러면 러너 skip 의 key 인 canonical
+    aor_cd 당 활성행이 2개가 되어 skip 판정 근거가 무너진다(런타임 가드가 그걸 잡아 skip 을 통째로
+    끄므로 결과는 안전하지만 최적화가 죽는다). 표현식 index 로 바꾸면 그 가정을 DB 가 강제한다.
+    """
+    return ("CREATE UNIQUE INDEX IF NOT EXISTS %s ON aor_draft(upper(trim(aor_cd))) "
+            "WHERE status IN (%s)" % (name, _aor_status_list_sql(_AOR_ACTIVE_STATUSES)))
+
+
+def _aor_active_index_install(conn):
+    """index 를 **항상 현재 정의와 일치하게** 심는다(raw 컬럼 구버전 포함 교체).
+
+    `IF NOT EXISTS` 만으로는 기존 배포에 남은 옛 raw-컬럼 index 가 영영 안 바뀐다.
+    ⚠️ DROP 을 먼저 하면 CREATE 가 실패했을 때 **index 가 아예 없는 상태**로 남는다 — 그건
+       지금보다 나쁘다. 그래서 교체를 깨뜨릴 유일한 원인(canonical 중복 활성행)을 **먼저**
+       확인하고, 있으면 손대지 않고 예외로 올린다(호출부가 판단).
+    """
+    want = ' '.join(_aor_active_index_sql().replace('IF NOT EXISTS ', '').split())
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                       ('uq_aor_draft_active_cd',)).fetchone()
+    got = ' '.join((row[0] or '').split()) if row and row[0] else None
+    if got == want:
+        return False
+    # 중복 점검·DROP·CREATE는 하나의 savepoint로 묶는다. CREATE 실패/동시 writer가
+    # 있어도 ROLLBACK TO로 기존 index를 보존한다.
+    conn.execute('SAVEPOINT aor_active_index_upgrade')
+    try:
+        dup = conn.execute(
+            "SELECT upper(trim(aor_cd)) k, COUNT(*) n FROM aor_draft "
+            "WHERE status IN (%s) GROUP BY k HAVING n > 1 LIMIT 1"
+            % _aor_status_list_sql(_AOR_ACTIVE_STATUSES)).fetchone()
+        if dup:
+            raise RuntimeError(
+                'aor_draft: canonical key %r 활성행이 %d 개 — 중복 정리 전에는 '
+                'uq_aor_draft_active_cd 를 교체할 수 없음' % (dup[0], dup[1]))
+        conn.execute("DROP INDEX IF EXISTS uq_aor_draft_active_cd")
+        conn.execute(_aor_active_index_sql())
+    except Exception:
+        conn.execute('ROLLBACK TO aor_active_index_upgrade')
+        conn.execute('RELEASE aor_active_index_upgrade')
+        raise
+    conn.execute('RELEASE aor_active_index_upgrade')
+    return True
+
+
 #: 안전한 index 의 **정확한** 형태. 느슨하게 보면 안 된다(올마이트 R8):
 #:   · UNIQUE 가 아니면 active 행 유일성이 없음
 #:   · 대상 table/컬럼이 다르면 무의미
 #:   · predicate 뒤에 `AND x=1` 이 붙으면 일부 active 행만 보호됨
 #: 그래서 "status IN (...)" **하나로 끝나는** 형태만 통과시킨다.
+#: key 는 raw 컬럼이 아니라 `upper(trim(aor_cd))` 여야 한다 — 옛 raw-컬럼 index 가 남아 있는
+#: 배포는 여기서 걸러져 skip 이 꺼진다(fail-closed). `_aor_active_index_install()` 이 교체한다.
 _AOR_IDX_RE = re.compile(
     r'^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?'
     r'[`"\[]?uq_aor_draft_active_cd[`"\]]?\s+ON\s+[`"\[]?aor_draft[`"\]]?\s*'
-    r'\(\s*[`"\[]?aor_cd[`"\]]?\s*\)\s*'
+    r'\(\s*upper\s*\(\s*trim\s*\(\s*[`"\[]?aor_cd[`"\]]?\s*\)\s*\)\s*\)\s*'
     r'WHERE\s+status\s+IN\s*\(([^()]*)\)\s*;?\s*$',
     re.S | re.I)
 
@@ -10091,8 +10258,15 @@ def _aor_index_predicate_covers_noop():
         rec = next((r for r in info if r['name'] == 'uq_aor_draft_active_cd'), None)
         if not rec or not rec['unique']:
             return False
-        cols = query("PRAGMA index_info('uq_aor_draft_active_cd')")
-        if [c['name'] for c in cols] != ['aor_cd']:
+        # 표현식 index 는 `index_info` 에서 컬럼명이 안 나온다 — cid=-2(=expression), name=NULL.
+        # 그러니 "key 가 1개이고 그게 표현식"까지만 PRAGMA 로 보고, 그 표현식이 정확히
+        # `upper(trim(aor_cd))` 인지는 위 `_AOR_IDX_RE` 가 sqlite_master.sql 로 확인한다.
+        # (raw 컬럼이면 여기서 `(0,'aor_cd')` 가 나와 걸린다 — 이중 방어)
+        # `index_info` 는 SQLite 버전에 따라 expression을 cid=0으로 보고한다.
+        # `index_xinfo`의 key=1 항목만이 실제 index key를 일관되게 cid=-2로 표기한다.
+        cols = query("PRAGMA index_xinfo('uq_aor_draft_active_cd')")
+        key_cols = [(c['cid'], c['name']) for c in cols if c['key']]
+        if key_cols != [(-2, None)]:
             return False
         # SQL literal은 반드시 의미대로 해독한다. 단순 strip은 `'''approved'''`를
         # `approved`로 오인해 false-skip을 만들 수 있다.
@@ -14995,6 +15169,14 @@ def _auto_migrate():
             _aor_absorbing_trigger_install(conn)
         except Exception as e:
             print(f'[auto_migrate] aor_draft absorbing trigger 생성 실패: {e}')
+        # 활성행 유일성 index 도 같은 이유로 여기서 한 번 더 맞춘다(옛 raw-컬럼 → canonical 표현식).
+        # ⚠️ init_db 와 달리 여기엔 앞선 중복 정리가 없다 — 중복이 남아 있으면 install 이 교체를
+        #    거부하고 예외를 던진다. 옛 index 는 그대로라 안전하고, 로그로 드러난다.
+        try:
+            if _aor_active_index_install(conn):
+                print('[auto_migrate] uq_aor_draft_active_cd → canonical 표현식 index 로 교체')
+        except Exception as e:
+            print(f'[auto_migrate] aor_draft 활성행 index 교체 실패: {e}')
         try:
             with open(SCHEMA_FILE, encoding='utf-8') as fh:
                 conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
@@ -15030,6 +15212,103 @@ def _auto_migrate():
                 print('[auto_migrate] soa_group.updated_by 추가')
         except Exception as e:
             print(f'[auto_migrate] soa_group.updated_by 건너뜀: {e}')
+        # soa_review_case.status CHECK 완화(C/T/D/S → 대문자 1~2자).
+        # SVMS가 R(SM 반려) 등 다른 코드로 전이하면 기존 CHECK 때문에 snapshot ingest가 영구 실패해
+        # 로컬 상태가 'S'로 굳었다(승인 끝난 건이 '승인대기'로 남아 중복 승인 시도 유발).
+        # 쓰기 권한은 앱의 editable(D/S) 화이트리스트가 계속 담당한다.
+        fk_prev = None
+        began = False
+        try:
+            row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='soa_review_case'").fetchone()
+            old_sql = (row[0] if row else '') or ''
+            # 공백·줄바꿈 변형에 강하게: 정규화 후 status의 좁은 IN 목록을 찾아 원문 그대로 치환한다.
+            narrow = re.search(r"CHECK\s*\(\s*status\s+IN\s*\([^)]*\)\s*\)", old_sql, re.I)
+            if narrow and re.fullmatch(r"'[CTDS]'(,'[CTDS]')*",
+                                       re.sub(r'\s+', '', narrow.group(0))[len('CHECK(statusIN('):-2]):
+                cols = [r[1] for r in conn.execute('PRAGMA table_info(soa_review_case)').fetchall()]
+                col_list = ','.join('"%s"' % x for x in cols)
+                # 이 테이블에 딸린 index/trigger DDL은 DROP과 함께 사라지므로 그대로 재생성한다.
+                extras = [r[0] for r in conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE tbl_name='soa_review_case' AND type IN ('index','trigger') "
+                    "AND sql IS NOT NULL").fetchall()]
+                new_sql = (old_sql
+                           .replace(narrow.group(0),
+                                    "CHECK (status GLOB '[A-Z]' OR status GLOB '[A-Z][A-Z]')")
+                           .replace('soa_review_case', 'soa_review_case__new', 1))
+                if 'soa_review_case__new' not in new_sql or narrow.group(0) in new_sql:
+                    raise RuntimeError('unexpected soa_review_case DDL — 수동 확인 필요')
+                conn.commit()                               # 열린 transaction이 있으면 PRAGMA가 무시된다
+                fk_prev = conn.execute('PRAGMA foreign_keys').fetchone()[0]
+                conn.execute('PRAGMA foreign_keys=OFF')      # 자식 테이블 CASCADE 삭제 방지
+                if conn.execute('PRAGMA foreign_keys').fetchone()[0] != 0:
+                    raise RuntimeError('foreign_keys OFF 실패 — 마이그레이션 중단(자식행 손실 위험)')
+                conn.execute('BEGIN IMMEDIATE')
+                began = True
+                conn.execute('DROP TABLE IF EXISTS soa_review_case__new')
+                conn.execute(new_sql)
+                conn.execute('INSERT INTO soa_review_case__new (%s) SELECT %s FROM soa_review_case'
+                             % (col_list, col_list))
+                moved = conn.execute('SELECT COUNT(*) FROM soa_review_case__new').fetchone()[0]
+                before = conn.execute('SELECT COUNT(*) FROM soa_review_case').fetchone()[0]
+                if moved != before:
+                    raise RuntimeError('행 수 불일치 %s != %s' % (moved, before))
+                conn.execute('DROP TABLE soa_review_case')
+                conn.execute('ALTER TABLE soa_review_case__new RENAME TO soa_review_case')
+                for ddl in extras:
+                    conn.execute(ddl)
+                bad = conn.execute('PRAGMA foreign_key_check').fetchall()
+                if bad:
+                    raise RuntimeError('FK 무결성 실패: %s' % bad[:3])
+                conn.execute('COMMIT')
+                began = False
+                print('[auto_migrate] soa_review_case.status CHECK 완화 완료 (rows=%d)' % moved)
+        except Exception as e:
+            if began:                    # 내가 연 transaction일 때만 되돌린다(앞선 마이그레이션 보호)
+                try:
+                    conn.execute('ROLLBACK')
+                except Exception:
+                    pass
+            print(f'[auto_migrate] soa_review_case.status CHECK 완화 건너뜀: {e}')
+        finally:
+            if fk_prev is not None:      # 어떤 경로로 끝나든 FK 강제 복구 + 복구됐는지 재확인
+                broken = None
+                try:
+                    conn.execute('PRAGMA foreign_keys=%d' % (1 if fk_prev else 0))
+                    now_fk = conn.execute('PRAGMA foreign_keys').fetchone()[0]
+                    if bool(now_fk) != bool(fk_prev):
+                        broken = 'PRAGMA 재조회 %s != %s' % (now_fk, fk_prev)
+                except Exception as e:
+                    broken = str(e)
+                if broken:
+                    # FK OFF인 채로 남은 connection으로 계속 쓰면 무결성이 깨진다 — 폐기하고 새로 연다.
+                    print(f'[auto_migrate] ⚠ foreign_keys 복구 실패({broken}) — connection 폐기 후 재연결')
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = sqlite3.connect(DATABASE)
+                    conn.execute('PRAGMA foreign_keys=%d' % (1 if fk_prev else 0))
+                    if bool(conn.execute('PRAGMA foreign_keys').fetchone()[0]) != bool(fk_prev):
+                        raise RuntimeError('재연결 후 foreign_keys 복구 실패')
+        # 마이그레이션 후에도 R을 저장할 수 없으면 '승인 끝난 건이 승인대기로 남는' 사고가 재발한다.
+        # DDL 문자열 대신 실제로 넣어보고 되돌리는 실측으로 판정한다(형식 변형에 영향받지 않음).
+        # probe 자체가 예외면 마지막 알려진 False를 유지하면 fail-open이다. 성공할 때만 False로 내린다.
+        globals()['SOA_REVIEW_SCHEMA_DEGRADED'] = True
+        try:
+            conn.execute('SAVEPOINT soa_chk_probe')
+            try:
+                conn.execute("INSERT INTO soa_review_case (sx_cd,status) VALUES ('__PROBE__ZZZZZZZZ','R')")
+                degraded = False
+            except Exception:
+                degraded = True
+            finally:
+                conn.execute('ROLLBACK TO soa_chk_probe')
+                conn.execute('RELEASE soa_chk_probe')
+            globals()['SOA_REVIEW_SCHEMA_DEGRADED'] = degraded
+            if degraded:
+                print('[auto_migrate] ⚠ soa_review_case.status가 R을 거부함 — 상태 동기화 불가(수동 조치 필요)')
+        except Exception as e:
+            print(f'[auto_migrate] soa_review_case CHECK 확인 실패: {e}')
         try:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS fleet_next_port_override (

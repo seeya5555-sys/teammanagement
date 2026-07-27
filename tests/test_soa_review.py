@@ -158,6 +158,148 @@ got=c.get('/api/automation/soa/reviews/'+SX2).get_json()['case']
 chk(r.status_code==200 and got['all_confirmed'] and not got['fresh'] and not got['can_approve']
     and got['approval_pending'] is True and got['needs_review'] is True,'stale 승인대기 건 목록 유지',got)
 
+# ── SVMS header STATUS 드리프트: R(SM 반려)·미지 코드도 동기화돼야 로컬이 안 굳음 ──────────
+SX3='GYPSCX2606230002'
+def gline(seq, cfm='Y', rjt='N', rmk=None):
+    d=line(seq, cfm); d['SX_CD']=SX3; d['RJT_YN']=rjt; d['RJT_RMK']=rmk
+    d['machine_state']='rejected' if rjt=='Y' else ('confirmed' if cfm=='Y' else 'pending')
+    d['exception']=(rjt=='Y' or cfm!='Y')
+    return d
+def gsnap(status, lines_):
+    return {'sx_cd':SX3,'header_status':status,'vessel':'GYPS','owner_comp_id':'037','lines':lines_}
+r=c.post('/api/ext/soa/reviews/snapshot',json=gsnap('S',[gline('0001'),gline('0002',cfm='N',rjt='Y',rmk='Wrong cost')]),headers=H)
+chk(r.status_code==200,'R 케이스 시드 ingest',r.get_data(as_text=True))
+r=c.post('/api/ext/soa/reviews/snapshot',json=gsnap('R',[gline('0001'),gline('0002',cfm='N',rjt='Y',rmk='Wrong cost')]),headers=H)
+chk(r.status_code==200,'SVMS R(반려) 상태 snapshot ingest 허용',r.get_data(as_text=True))
+got=c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']
+chk(got['status']=='R' and got['read_only'] and not got['editable'] and not got['can_push']
+    and not got['can_approve'] and got['approval_pending'] is False,'R은 read-only fail-closed',got)
+chk(got['needs_review'] is False and got['review_bucket']=='reject_waiting','R = SM 회신 대기 버킷',got)
+r=c.post('/api/ext/soa/reviews/snapshot',json=gsnap('R',[gline('0001'),gline('0002')]),headers=H)
+got=c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']
+chk(r.status_code==200 and got['rejected_count']==0 and got['review_bucket']=='reject_waiting',
+    '라인 리젝 0이어도 header R이면 회신 대기',got)
+r=c.post('/api/ext/soa/reviews/snapshot',json=gsnap('X',[gline('0001'),gline('0002')]),headers=H)
+got=c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']
+chk(r.status_code==200 and got['status']=='X' and got['read_only'] and not got['can_approve'],
+    '미지 상태 코드도 동기화하되 쓰기 금지',got)
+chk(got['needs_review'] is True and got['review_bucket']=='attention',
+    '미지 상태 코드는 조용히 종결시키지 않고 노출',got)
+for bad_status in ('', '   ', 'ABC', '1S', 's;', 'R R'):
+    rr=c.post('/api/ext/soa/reviews/snapshot',json=gsnap(bad_status,[gline('0001')]),headers=H)
+    chk(rr.status_code==400,'형식 불량 STATUS 거부: '+repr(bad_status),rr.status_code)
+rr=c.post('/api/ext/soa/reviews/snapshot',json=gsnap(' r ',[gline('0001'),gline('0002')]),headers=H)
+chk(rr.status_code==200 and c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']['status']=='R',
+    'STATUS는 trim+대문자 정규화 후 저장',rr.get_data(as_text=True))
+# 이미 SVMS에서 종결(C)된 뒤의 '쓰기 전 중단' 실패 기록만 무의미 — 그 외 실패는 계속 붙잡는다
+STALE_PRE=json.dumps({'action':'approve','status':'stale','applied_seqs':[],'reconcile_required':False,
+                      'error':'not approvable STATUS=C lines=29'})
+r=c.post('/api/ext/soa/reviews/snapshot',json=gsnap('C',[gline('0001'),gline('0002')]),headers=H)
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",(STALE_PRE,SX3))
+got=c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']
+chk(r.status_code==200 and got['action_failed'] is True and got['reconcile_required'] is False
+    and got['needs_review'] is False and got['review_bucket']=='closed',
+    'C 종결+전라인 Confirm+pre-write 중단이면 잔존하지 않음',got)
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",
+          ('failed: SOA review approve failed: RuntimeError: not approvable STATUS=C lines=29',SX3))
+got=c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']
+chk(got['needs_review'] is True and got['review_bucket']=='attention',
+    '평문 실패(크래시 fail-safe)는 C여도 절대 안 숨김 — 쓰기 여부 불명',got)
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",
+          (json.dumps({'action':'approve','status':'stale','applied_seqs':['0001'],'reconcile_required':False}),SX3))
+chk(c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']['needs_review'] is True,
+    'stale이어도 applied_seqs 있으면 노출')
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",
+          (json.dumps({'action':'approve','status':'failed','reconcile_required':True}),SX3))
+got=c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']
+chk(got['reconcile_required'] is True and got['needs_review'] is True,'C여도 부분성공(reconcile)은 계속 노출',got)
+r=c.post('/api/ext/soa/reviews/snapshot',json=gsnap('C',[gline('0001'),gline('0002')]),headers=H)
+got=c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']
+chk(r.status_code==200 and got['reconcile_required'] is True and got['needs_review'] is True,
+    'reconcile 기록은 이후 snapshot ingest에도 살아남음',got)
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",(STALE_PRE,SX3))
+r=c.post('/api/ext/soa/reviews/snapshot',json=gsnap('C',[gline('0001'),gline('0002',cfm='N')]),headers=H)
+A.execute("UPDATE soa_review_case SET last_action_result=? WHERE sx_cd=?",(STALE_PRE,SX3))
+got=c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']
+chk(r.status_code==200 and got['all_confirmed'] is False and got['needs_review'] is True,
+    'C+pre-write 실패인데 미검증 라인 남으면 계속 노출',got)
+chk(c.post('/api/ext/soa/reviews/snapshot',json=gsnap('C',[gline('0001'),gline('0002')]),headers=H).status_code==200
+    and c.get('/api/automation/soa/reviews/'+SX3).get_json()['case']['last_action_result'] is None,
+    'reconcile 아닌 낡은 실패기록은 snapshot ingest가 정리함')
+
+# ── pre-write 판정은 형식이 조금이라도 어긋나면 fail-closed ─────────────────
+_PW=A._soa_review_action_pre_write
+chk(_PW('{"action":"approve","status":"stale","applied_seqs":[]}'),'정상 pre-write 결과만 True')
+chk(not _PW('{"status":"stale","applied_seqs":[]}'),'action 누락이면 pre-write 아님')
+chk(not _PW('{"action":"push","status":"stale","applied_seqs":[]}'),'다른 action이면 pre-write 아님')
+chk(not _PW('{"action":"approve","status":"stale","applied_seqs":"0001"}'),
+    'applied_seqs 형식이 다르면 fail-closed')
+chk(not _PW('{"action":"approve","status":"stale","applied_seqs":{"0001":1}}'),
+    'applied_seqs dict도 fail-closed')
+chk(not _PW('{"action":"approve","status":"stale","applied_seqs":[],"reconcile_required":true}'),
+    'reconcile면 pre-write 아님')
+chk(not _PW('failed: timeout'),'평문 실패는 절대 pre-write 아님')
+
+# ── 기존 prod DB(좁은 CHECK) 자동 마이그레이션 ─────────────────────────────
+import sqlite3 as _sq
+OLD_DB = tempfile.mktemp(suffix='.db')
+_old_schema = open(A.SCHEMA_FILE, encoding='utf-8').read().replace(
+    "CHECK (status GLOB '[A-Z]' OR status GLOB '[A-Z][A-Z]')", "CHECK (status IN ('C','T','D','S'))")
+chk("IN ('C','T','D','S')" in _old_schema, '구 스키마 fixture 생성')
+_con=_sq.connect(OLD_DB); _con.executescript(_old_schema)
+_cid=_con.execute("INSERT INTO soa_review_case (sx_cd,status,draft_version,last_action_result) "
+                  "VALUES ('MIGRCX2600000001','S',3,'keep-me')").lastrowid
+_con.execute("INSERT INTO soa_review_line (case_id,sx_seq,line_no,source_hash) VALUES (?,'0001',0,'h1')",(_cid,))
+_con.execute("INSERT INTO soa_review_audit (case_id,action) VALUES (?,'seed')",(_cid,))
+_con.execute("CREATE TRIGGER trg_migr_probe AFTER UPDATE OF status ON soa_review_case "
+             "BEGIN INSERT INTO soa_review_audit (case_id,action) VALUES (NEW.id,'trg'); END")
+_con.execute("CREATE INDEX ix_migr_partial ON soa_review_case (sx_cd) WHERE draft_version>0")
+# 마이그레이션 중간 실패 유도: 이름이 겹치는 view는 DROP TABLE로 안 지워져 CREATE 단계에서 죽는다.
+_con.execute("CREATE VIEW soa_review_case__new AS SELECT 1 AS x")
+_con.commit(); _con.close()
+_saved_db=A.DATABASE
+try:
+    A.DATABASE=OLD_DB; A._auto_migrate()          # 실패 경로
+finally:
+    A.DATABASE=_saved_db
+_con=_sq.connect(OLD_DB)
+chk(_con.execute("SELECT status,last_action_result FROM soa_review_case").fetchone()==('S','keep-me')
+    and _con.execute('SELECT COUNT(*) FROM soa_review_line').fetchone()[0]==1
+    and "IN ('C','T','D','S')" in _con.execute(
+        "SELECT sql FROM sqlite_master WHERE name='soa_review_case'").fetchone()[0],
+    '마이그레이션 중간 실패 시 원본 테이블·자식행 그대로 롤백')
+chk(A.SOA_REVIEW_SCHEMA_DEGRADED is True,'마이그레이션 실패하면 degraded 플래그로 드러남')
+_con.execute('DROP VIEW soa_review_case__new'); _con.commit(); _con.close()
+_saved_db=A.DATABASE
+try:
+    A.DATABASE=OLD_DB; A._auto_migrate(); A._auto_migrate()   # idempotent
+finally:
+    A.DATABASE=_saved_db
+chk(A.SOA_REVIEW_SCHEMA_DEGRADED is False,'마이그레이션 성공하면 degraded 해제')
+_con=_sq.connect(OLD_DB); _con.execute('PRAGMA foreign_keys=ON')
+chk(_con.execute("SELECT status,draft_version,last_action_result FROM soa_review_case "
+                 "WHERE sx_cd='MIGRCX2600000001'").fetchone()==('S',3,'keep-me'),'마이그레이션 후 기존 case 보존')
+chk(_con.execute('SELECT COUNT(*) FROM soa_review_line').fetchone()[0]==1
+    and _con.execute('SELECT COUNT(*) FROM soa_review_audit').fetchone()[0]==1
+    and not _con.execute('PRAGMA foreign_key_check').fetchall(),'자식 행 보존 · FK 무결')
+_ixs={r[1] for r in _con.execute('PRAGMA index_list(soa_review_case)').fetchall()}
+chk(len(_ixs)>=4 and 'ix_migr_partial' in _ixs,'인덱스 재생성(partial index 포함)')
+chk(_con.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='trg_migr_probe'")
+    .fetchone()[0]==1,'트리거 DDL 보존')
+chk(not _con.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='soa_review_case__new' "
+                     "AND type='table'").fetchone()[0],'임시 테이블 잔재 없음')
+_con.execute("UPDATE soa_review_case SET status='R'"); _con.commit()
+chk(_con.execute('SELECT status FROM soa_review_case').fetchone()[0]=='R','마이그레이션 후 R 저장 가능')
+chk(_con.execute("SELECT COUNT(*) FROM soa_review_audit WHERE action='trg'").fetchone()[0]==1,
+    '보존된 트리거가 실제로 동작')
+try:
+    _con.execute("UPDATE soa_review_case SET status='oops'"); _con.commit(); _bad=False
+except Exception: _bad=True; _con.rollback()
+chk(_bad,'형식 불량 status는 DB CHECK가 계속 거부')
+_con.close()
+try: os.unlink(OLD_DB)
+except OSError: pass
+
 try: os.unlink(DB)
 except OSError: pass
 if fails:

@@ -606,7 +606,10 @@ CREATE TABLE IF NOT EXISTS soa_review_case (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id        INTEGER REFERENCES soa_review_snapshot(id) ON DELETE SET NULL,
     sx_cd              TEXT NOT NULL UNIQUE,
-    status             TEXT NOT NULL CHECK (status IN ('C','T','D','S')),
+    -- SVMS header STATUS 원본을 그대로 보관한다(R=SM 반려 등). 좁은 화이트리스트로 막으면
+    -- 상태가 바뀐 SOA의 snapshot ingest가 영구 실패해 로컬이 낡은 채 굳는다.
+    -- 쓰기 권한 판정은 앱의 editable(D/S) 화이트리스트가 담당(fail-closed).
+    status             TEXT NOT NULL CHECK (status GLOB '[A-Z]' OR status GLOB '[A-Z][A-Z]'),
     sl_tp              TEXT,
     dept_nm            TEXT,
     owner_comp_id      TEXT,

@@ -60,6 +60,12 @@ class AORStatusesTests(unittest.TestCase):
             db.commit()
             return cur.lastrowid
 
+    def _drop_index(self):
+        """표현식 unique index 를 내려 **legacy(=index 이전) DB** 상태를 재현한다."""
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            db.execute("DROP INDEX IF EXISTS uq_aor_draft_active_cd")
+            db.commit()
+
     def _get(self, key="secret"):
         headers = {"X-API-Key": key} if key is not None else {}
         with appmod.app.test_client() as client:
@@ -211,8 +217,9 @@ class AORStatusesTests(unittest.TestCase):
     def test_ingest_canonicalizes_aor_cd_so_variants_cannot_split(self):
         """대소문자·공백 변형이 별개 active 행으로 갈라지면 skip 증명이 깨진다(올마이트 R6).
 
-        unique index 는 exact match 라 DB 스스로는 변형을 막지 못한다. 막아주는 건
-        **API 경계의 `strip().upper()`** 이므로, 그 canonicalization 을 여기서 고정한다.
+        방어는 2겹이다 — **API 경계의 `strip().upper()`** 와 **표현식 unique index**.
+        여기서는 앞엣것(경계 canonicalization)을 고정한다. 이게 깨지면 index 가 IntegrityError
+        로 막아주긴 하지만, 그건 카드 유실(500)이지 dedup 이 아니다.
         """
         self._insert("ATGRCA2607220003", "approved")
         for variant in ("  atgrca2607220003  ", "AtGrCa2607220003", "atgrca2607220003\t"):
@@ -359,7 +366,8 @@ class AORStatusesTests(unittest.TestCase):
         with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
             db.execute("DROP INDEX uq_aor_draft_active_cd")
             # 'approved' 를 뺀 구버전 predicate — 이러면 approved + pending 공존이 가능해진다
-            db.execute("CREATE UNIQUE INDEX uq_aor_draft_active_cd ON aor_draft(aor_cd) "
+            db.execute("CREATE UNIQUE INDEX uq_aor_draft_active_cd "
+                       "ON aor_draft(upper(trim(aor_cd))) "
                        "WHERE status IN ('pending','hold')")
             db.commit()
 
@@ -378,11 +386,13 @@ class AORStatusesTests(unittest.TestCase):
     def test_canonical_key_collision_is_excluded_from_skip(self):
         """legacy 변형행으로 active 행이 갈라져 있으면 그 key 는 아예 목록에서 뺀다.
 
-        unique index 는 exact match 라 'ABC' 와 'abc' 를 둘 다 허용한다. 그대로 두면
-        approved 행이 pending 행을 가려 **false-skip** 이 난다 — 그래서 제외해 재처리시킨다.
+        지금은 표현식 index(`upper(trim(aor_cd))`)가 이 상황을 DB 층에서 막지만, 그 index 가
+        생기기 전에 들어온 legacy 행은 그대로 남아 있을 수 있다. 그 상태를 재현하려고 index 를
+        잠깐 내리고 넣는다 — 런타임 가드는 index 가 없어도 독립적으로 동작해야 한다.
         """
+        self._drop_index()
         self._insert("ATGRCA2607220003", "approved")
-        self._insert("atgrca2607220003", "pending")   # 변형 — index 가 못 막음
+        self._insert("atgrca2607220003", "pending")   # legacy 변형행
         drafts = self._get().get_json()["drafts"]
         self.assertEqual([], drafts,
                          f"충돌 key 가 목록에 남음 — false-skip 가능: {drafts}")
@@ -397,16 +407,18 @@ class AORStatusesTests(unittest.TestCase):
         self._insert("atgrca2607220003", "approved")
         self.assertEqual([], self._get().get_json()["drafts"])
 
-        # 실제로 no-op 이 아님을 증명: 정규형으로 재적재하면 dedup 이 아니라 신규 생성(201)
+        # canonical expression index 도입 후에는 정규형 재적재가 legacy 행을 찾아 dedup해야 한다.
+        # 500이면 방어 index가 오히려 카드 적재를 막는 회귀다.
         with appmod.app.test_client() as client:
             r = client.post("/api/ext/aor/drafts",
                             json={"aor_cd": "ATGRCA2607220003", "proposed_comment": "신규"},
                             headers={"X-API-Key": "secret"})
-        self.assertEqual(201, r.status_code,
-                         "비정규 행이 dedup 을 막지 못하는데도 skip 됐다면 카드 유실")
+        self.assertEqual(200, r.status_code, r.get_data(as_text=True))
+        self.assertTrue(r.get_json().get("dedup"), r.get_json())
 
     def test_non_canonical_row_does_not_hide_canonical_sibling(self):
         """같은 canonical key 의 정규 행이 따로 있어도, 변형 행이 있으면 그 key 는 제외한다."""
+        self._drop_index()          # legacy 재현(지금은 표현식 index 가 애초에 막는다)
         self._insert("ATGRCA2607220003", "approved")
         self._insert(" atgrca2607220003 ", "pending")
         self.assertEqual([], self._get().get_json()["drafts"])
@@ -417,7 +429,8 @@ class AORStatusesTests(unittest.TestCase):
         with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
             db.execute("DROP INDEX uq_aor_draft_active_cd")
             db.execute(
-                "CREATE UNIQUE INDEX uq_aor_draft_active_cd ON aor_draft(aor_cd) "
+                "CREATE UNIQUE INDEX uq_aor_draft_active_cd "
+                "ON aor_draft(upper(trim(aor_cd))) "
                 "WHERE status IN ('pending','hold','approved','submitting','submitted',"
                 "'rejecting','reject_submitting') AND amt IS NOT NULL")
             db.commit()
@@ -428,7 +441,8 @@ class AORStatusesTests(unittest.TestCase):
         with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
             db.execute("DROP INDEX uq_aor_draft_active_cd")
             db.execute(
-                "CREATE INDEX uq_aor_draft_active_cd ON aor_draft(aor_cd) "
+                "CREATE INDEX uq_aor_draft_active_cd "
+                "ON aor_draft(upper(trim(aor_cd))) "
                 "WHERE status IN ('pending','hold','approved','submitting','submitted',"
                 "'rejecting','reject_submitting')")
             db.commit()
@@ -445,7 +459,8 @@ class AORStatusesTests(unittest.TestCase):
             db.commit()
         self.assertNotIn("noop_statuses", self._get().get_json())
 
-    def _replace_index(self, predicate_items, unique=True, table="aor_draft", col="aor_cd"):
+    def _replace_index(self, predicate_items, unique=True, table="aor_draft",
+                       col="upper(trim(aor_cd))"):
         with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
             db.execute("DROP INDEX IF EXISTS uq_aor_draft_active_cd")
             db.execute("CREATE %s INDEX uq_aor_draft_active_cd ON %s(%s) "
@@ -505,6 +520,7 @@ class AORStatusesTests(unittest.TestCase):
     #  덮어써서 앞 테스트가 조용히 사라지므로 하나만 남긴다 — 올마이트 R10.)
 
     def test_collision_on_unrelated_key_does_not_hide_others(self):
+        self._drop_index()          # legacy 재현(지금은 표현식 index 가 애초에 막는다)
         self._insert("ATGRCA2607220003", "approved")
         self._insert("atgrca2607220003", "pending")
         self._insert("BGBBCA2607230002", "approved")
@@ -515,10 +531,11 @@ class AORStatusesTests(unittest.TestCase):
     def test_existing_transaction_disables_skip(self):
         """이미 transaction 중이면 스냅샷 출처를 모른다 → 보수적으로 noop_statuses 생략.
 
-        ⚠️ 실제 HTTP 경로에서 이 분기는 **도달 불가**다(2026-07-27 실측): `api_key_required`
-        → `_check_api_key` → `_get_api_key` → `_ensure_api_table` 이 `execute()`(=`commit()`)
-        를 때리므로 뷰 진입 시점엔 항상 autocommit 상태다. 그래서 여기선 인증을 우회해
-        분기 자체만 검증한다 — 도달 불가라도 방어는 남겨둔다(인증 경로가 바뀔 수 있음).
+        ⚠️ 실제 HTTP 경로에서 이 분기는 **도달 불가**다: 요청마다 `g.db` 가 새로 열리고
+        인증 경로(`_check_api_key` → `_get_api_key`)는 SELECT 만 하므로 뷰 진입 시점엔 항상
+        autocommit 이다. (예전엔 `_ensure_api_table` 의 매요청 `commit()` 이 근거였는데,
+        그 DDL 을 경로별 1회로 캐시하면서 근거가 "DML 자체가 없음"으로 바뀌었다.)
+        그래서 여기선 인증을 우회해 분기 자체만 검증한다 — 도달 불가라도 방어는 남겨둔다.
         """
         self._insert("ATGRCA2607220003", "approved")
         real_check = appmod._check_api_key
@@ -538,19 +555,20 @@ class AORStatusesTests(unittest.TestCase):
         # 목록 자체는 정상 반환 — 최적화만 끄고 기능은 유지
         self.assertEqual(1, body["count"])
 
-    def test_auth_path_always_leaves_autocommit(self):
-        """위 분기가 '도달 불가'라는 근거를 회귀로 고정한다.
+    def test_auth_path_does_not_commit_a_caller_transaction(self):
+        """DDL 캐시 후 인증은 읽기뿐이다 — 선행 transaction을 몰래 commit하면 안 된다.
 
-        인증 경로가 나중에 commit 을 안 하도록 바뀌면 이 테스트가 깨지고,
-        그때는 in_transaction 분기가 실제 경로가 되므로 재검토해야 한다.
+        실제 HTTP GET은 새 connection이라 autocommit으로 시작한다. 이 인위적 BEGIN 경로는
+        endpoint가 fail-open으로 skip만 끄는 별도 테스트가 담당한다.
         """
         with appmod.app.test_request_context(headers={"X-API-Key": "secret"}):
             db = appmod.get_db()
             db.execute("BEGIN")
             self.assertTrue(db.in_transaction)
             self.assertTrue(appmod._check_api_key())
-            self.assertFalse(db.in_transaction,
-                             "인증 경로가 더는 commit 하지 않음 — in_transaction 분기 재검토 필요")
+            self.assertTrue(db.in_transaction,
+                            "인증 경로가 caller transaction을 commit하면 안 됨")
+            db.rollback()
 
     def test_begin_failure_disables_skip_instead_of_500(self):
         """BEGIN 이 실패해도 500 이 아니라 'skip off' 로 수렴해야 한다."""
@@ -601,6 +619,139 @@ class AORStatusesTests(unittest.TestCase):
         body = self._get().get_json()
         self.assertEqual(0, body["count"])
         self.assertEqual([], body["drafts"])
+
+
+    # ---- canonical 표현식 index (2026-07-27) ----
+    _LEGACY_IDX = ("CREATE UNIQUE INDEX uq_aor_draft_active_cd ON aor_draft(aor_cd) "
+                   "WHERE status IN ('pending','hold','approved','submitting','submitted',"
+                   "'rejecting','reject_submitting')")
+
+    def _install_legacy_index(self):
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            db.execute("DROP INDEX IF EXISTS uq_aor_draft_active_cd")
+            db.execute(self._LEGACY_IDX)
+            db.commit()
+
+    def test_active_index_is_keyed_on_the_canonical_expression(self):
+        """실물 index 가 raw 컬럼이 아니라 `upper(trim(aor_cd))` 에 걸려 있는지."""
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            sql = db.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                             ("uq_aor_draft_active_cd",)).fetchone()[0]
+            cols = list(db.execute("PRAGMA index_xinfo('uq_aor_draft_active_cd')"))
+        self.assertIn("upper(trim(aor_cd))", " ".join(sql.split()).lower())
+        # index_info는 SQLite 버전에 따라 expression을 cid=0으로 보기도 한다.
+        # index_xinfo의 key=1 항목은 expression을 일관되게 cid=-2/name=NULL로 표시한다.
+        self.assertEqual([(-2, None)], [(c[1], c[2]) for c in cols if c[5]], sql)
+
+    def test_expression_index_blocks_case_and_space_variants(self):
+        """관례(경계 canonicalization)가 아니라 **DB** 가 변형 활성행을 막는지.
+
+        예전 raw-컬럼 index 는 'ABC' 와 ' abc ' 를 서로 다른 key 로 봐서 둘 다 통과시켰다.
+        그 순간 canonical key 당 활성행이 2개가 되어 러너 skip 판정 근거가 무너진다.
+        """
+        self._insert("ATGRCA2607220003", "approved")
+        for variant in (" atgrca2607220003 ", "AtGrCa2607220003"):
+            with self.assertRaises(sqlite3.IntegrityError, msg=variant):
+                self._insert(variant, "pending")
+        # 종료행은 여전히 공존 가능해야 한다(predicate 가 active 상태군만 덮으므로)
+        self._insert(" atgrca2607220003 ", "rejected")
+
+    def test_index_check_rejects_legacy_plain_column_index(self):
+        """옛 raw-컬럼 index 가 남아 있으면 skip 을 **꺼야** 한다(fail-closed).
+
+        그 형태는 canonical 유일성을 보장하지 않으므로, 통과시키면 false-skip 근거가 된다.
+        """
+        self._insert("ATGRCA2607220003", "approved")
+        self.assertIn("noop_statuses", self._get().get_json())   # 정상 상태 확인
+        self._install_legacy_index()
+        body = self._get().get_json()
+        self.assertNotIn("noop_statuses", body)
+        self.assertNotIn("terminal_statuses", body)
+        self.assertEqual(200, self._get().status_code)           # 조회는 계속 동작(fail-open)
+
+    def test_index_install_upgrades_legacy_index_in_place(self):
+        """`_aor_active_index_install()` 이 옛 index 를 실제로 교체하는지 + 멱등한지."""
+        self._insert("ATGRCA2607220003", "approved")
+        self._install_legacy_index()
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            self.assertTrue(appmod._aor_active_index_install(db), "교체가 안 일어남")
+            db.commit()
+            self.assertFalse(appmod._aor_active_index_install(db), "이미 최신인데 또 교체함")
+        self.assertIn("noop_statuses", self._get().get_json())
+
+    def test_index_install_refuses_instead_of_leaving_no_index(self):
+        """중복 활성행이 있으면 DROP 하지 않고 예외 — index 없는 상태로 남기면 지금보다 나쁘다."""
+        self._install_legacy_index()
+        self._insert("ATGRCA2607220003", "approved")
+        self._insert("atgrca2607220003", "pending")   # canonical 중복(옛 index 는 허용)
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            with self.assertRaises(RuntimeError):
+                appmod._aor_active_index_install(db)
+            still = db.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                               ("uq_aor_draft_active_cd",)).fetchone()
+        self.assertIsNotNone(still, "교체 실패인데 옛 index 까지 사라짐 — 유일성 보호가 통째로 증발")
+
+    def test_init_db_cleans_duplicates_then_upgrades_the_index(self):
+        """실제 마이그레이션 경로: legacy index + canonical 중복 → init_db 한 번으로 정리·교체."""
+        self._install_legacy_index()
+        self._insert("ATGRCA2607220003", "submitted")
+        self._insert("atgrca2607220003", "pending")
+        with appmod.app.app_context():
+            appmod.init_db(drop=False)
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            sql = db.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                             ("uq_aor_draft_active_cd",)).fetchone()[0]
+            rows = dict(db.execute("SELECT aor_cd, status FROM aor_draft ORDER BY id"))
+        self.assertIn("upper(trim(aor_cd))", " ".join(sql.split()).lower())
+        # 진행이 더 앞선 submitted 가 승자, 변형 pending 은 duplicate 로 강등되고 key 는 정규화됨
+        self.assertEqual({"ATGRCA2607220003": "duplicate"}, rows)
+
+    def test_active_status_list_has_a_single_source_of_truth(self):
+        """index predicate 와 dedup 정리 범위가 같은 상수에서 나오는지(리터럴 복제 금지)."""
+        pred = self._index_predicate()
+        self.assertEqual(set(appmod._AOR_ACTIVE_STATUSES), pred)
+        self.assertIn(appmod._aor_status_list_sql(appmod._AOR_ACTIVE_STATUSES),
+                      appmod._aor_active_index_sql())
+
+    # ---- api_settings DDL 캐시 (2026-07-27) ----
+    def test_api_settings_exists_without_calling_ensure(self):
+        """init_db 가 무조건 만들어야 한다 — `_ensure_api_table()` 이 더는 매요청 안 돌기 때문."""
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            got = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                             ("api_settings",)).fetchone()
+        self.assertIsNotNone(got)
+
+    def test_ensure_api_table_is_not_repeated_per_request(self):
+        """API 키 요청마다 DDL+commit 을 때리던 낭비가 사라졌는지 — 호출 횟수로 고정한다."""
+        calls = []
+        real = appmod.execute
+
+        def spy(sql, params=()):
+            calls.append(" ".join(sql.split()))
+            return real(sql, params)
+
+        appmod.execute = spy
+        try:
+            for _ in range(3):
+                self.assertEqual(200, self._get().status_code)
+        finally:
+            appmod.execute = real
+        ddl = [c for c in calls if "CREATE TABLE IF NOT EXISTS api_settings" in c]
+        self.assertEqual([], ddl, f"읽기전용 요청이 아직 DDL 을 침: {ddl}")
+
+    def test_ensure_api_table_still_creates_for_a_new_database_path(self):
+        """캐시가 경로별인지 — bool 플래그였으면 새 임시 DB 에서 테이블 없이 진행해 깨진다."""
+        other = os.path.join(self.tmp.name, "other.db")
+        old = appmod.app.config["DATABASE"]
+        appmod.app.config["DATABASE"] = other
+        try:
+            with appmod.app.app_context():
+                appmod._ensure_api_table()
+        finally:
+            appmod.app.config["DATABASE"] = old
+        with sqlite3.connect(other) as db:
+            self.assertIsNotNone(
+                db.execute("SELECT name FROM sqlite_master WHERE name='api_settings'").fetchone())
 
 
 class AbsorbingStatusInvariantTests(unittest.TestCase):
