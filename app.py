@@ -551,6 +551,9 @@ def init_db(drop=False):
                      "WHERE aor_cd<>upper(trim(aor_cd))")
         conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_aor_draft_active_cd "
                      f"ON aor_draft(aor_cd) WHERE status IN ({_aor_active})")
+        # absorbing 상태 이탈 금지 — 러너 skip 안전성의 근거를 DB 층에 고정한다.
+        # (정의·검증은 _aor_absorbing_trigger_sql / _aor_absorbing_trigger_ok)
+        _aor_absorbing_trigger_install(conn)
 
         # 비용청구(Fund Request) 2단게이트 draft 큐 (review 엔진 ingest → 사람이 /fundreq 탭서 승인/리젝 결정 → 맥이 SVMS 상신/리젝+통보메일)
         conn.execute("""
@@ -9949,6 +9952,81 @@ def api_ext_aor_reject_result(did):
 AOR_REINGEST_NOOP_STATUSES = ('approved', 'submitting', 'submitted',
                               'rejecting', 'reject_submitting')
 
+#: 그 중에서도 **absorbing**(한 번 들어오면 다시 나갈 수 없는) 상태. 러너가 실제로 skip 해도
+#: 되는 건 이것뿐이다(올마이트 R16 blocker).
+#:
+#: 왜 no-op 전부로는 부족한가:
+#:   no-op skip 은 "다시 필요해지면 다음 run 입력에 또 온다"를 전제로 한 **지연**이다. 그런데
+#:   `approved`/`submitting` 은 상신 실패·6h stale 로 `failed` 가 되고
+#:   `rejecting`/`reject_submitting` 도 `reject_failed` 가 될 수 있다. 그 순간 재적재는 no-op 이
+#:   아니라 **해야 할 일**이 되는데, 러너 입력(SP_GET_AOR, 오늘-120d 창)에서 이미 빠져 있으면
+#:   지연이 아니라 **영구 누락**이다. 창 경계 grace 로 막는 건 미래 중단 길이를 과거로 추정하는
+#:   heuristic 이라 임의 길이 중단을 못 덮는다 → 전제를 없애고 absorbing 만 skip 한다.
+#:
+#: `submitted` 가 absorbing 인 근거: 이 상태에서 나가는 `UPDATE aor_draft SET status=` 가 없다.
+#: 유일한 이탈은 purge(`DELETE ... WHERE status IN ('submitted',...)`)인데, 삭제되면 이 응답의
+#: `drafts` 에서도 함께 사라져 러너가 다시 적재하므로 false-skip 이 생기지 않는다.
+#: ⚠️ 여기에 상태를 추가하려면 **그 상태에서 나가는 전이가 하나도 없음**을 먼저 증명할 것.
+#:    회귀 가드 = tests/test_aor_statuses.py 의 absorbing 전이 소스 스캔.
+AOR_REINGEST_TERMINAL_STATUSES = ('submitted',)
+
+
+def _aor_absorbing_trigger_sql():
+    """absorbing 상태에서 **나가는 UPDATE 자체를 DB 가 거부**하게 하는 trigger 문.
+
+    소스 정적 스캔만으로는 부족하다(올마이트 R17): f-string SQL·소문자·`OR` 섞인 WHERE·
+    다른 모듈·마이그레이션·수동 SQL 을 못 잡는다. 러너 skip 의 안전성이 통째로 이 불변식에
+    기대고 있으므로, 경로가 몇 개든 **DB 층에서 한 번** 막는다.
+    ⚠️ `IF NOT EXISTS` 라 상수를 나중에 넓혀도 기존 trigger 는 안 바뀐다 — 그래서
+       `_aor_absorbing_trigger_ok()` 가 런타임에 실물과 대조하고, 어긋나면 skip 을 끈다.
+    """
+    lst = ','.join("'%s'" % s.replace("'", "''") for s in AOR_REINGEST_TERMINAL_STATUSES)
+    # 불변식의 단위는 **행이 아니라 canonical aor_cd** 다 — 러너 skip 집합의 key 가 aor_cd 이기 때문.
+    # 그래서 같은 key 를 대표하는 다른 terminal 행이 남는 경우(= init_db 의 중복정리에서 loser 를
+    # 'duplicate' 로 강등하는 경우)는 허용한다. 그 key 는 여전히 terminal 로 보이므로 false-skip 이
+    # 생기지 않고, 막아버리면 부팅 중 init_db 가 ABORT 나 서비스가 안 뜬다.
+    # `aor_cd` 도 감시 대상이다(올마이트 R18 blocker): terminal 행의 canonical key 를 바꾸면
+    # status 는 그대로여도 **원래 key 가 terminal 을 잃어** false-skip 이 난다.
+    # 비교는 raw 가 아니라 canonical 로 — init_db 의 `SET aor_cd=upper(trim(aor_cd))` 정규화는
+    # key 를 안 바꾸므로 막으면 안 된다.
+    # `IS NOT` 사용: `<>` 는 한쪽이 NULL 이면 NULL 로 평가돼 trigger 가 안 뜬다(status 는 NOT NULL
+    # 이라 어차피 거부되지만, 방어를 제약 하나에 의존시키지 않는다).
+    return ("CREATE TRIGGER IF NOT EXISTS trg_aor_draft_absorbing "
+            "BEFORE UPDATE OF status, aor_cd ON aor_draft FOR EACH ROW "
+            "WHEN OLD.status IN ({lst}) "
+            "AND (NEW.status IS NOT OLD.status "
+            "OR upper(trim(NEW.aor_cd)) IS NOT upper(trim(OLD.aor_cd))) "
+            "AND NOT EXISTS (SELECT 1 FROM aor_draft w WHERE w.id <> OLD.id "
+            "AND upper(trim(w.aor_cd)) = upper(trim(OLD.aor_cd)) AND w.status IN ({lst})) "
+            "BEGIN SELECT RAISE(ABORT, 'aor_draft: absorbing status transition denied'); "
+            "END".format(lst=lst))
+
+
+def _aor_absorbing_trigger_install(conn):
+    """trigger 를 **항상 현재 상수와 일치하게** 심는다.
+
+    `CREATE TRIGGER IF NOT EXISTS` 만 쓰면 정의를 바꿔도 옛 trigger 가 그대로 남고,
+    `_aor_absorbing_trigger_ok()` 가 불일치로 판단해 skip 이 영구 비활성된다
+    (안전하지만 최적화가 조용히 죽는다 — 올마이트 R19). DROP 후 재생성해 그 표류를 없앤다.
+    """
+    conn.execute("DROP TRIGGER IF EXISTS trg_aor_draft_absorbing")
+    conn.execute(_aor_absorbing_trigger_sql())
+
+
+def _aor_absorbing_trigger_ok():
+    """실물 trigger 가 현재 상수와 정확히 일치하는지. 아니면 skip 근거를 안 내보낸다."""
+    try:
+        row = query("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+                    ('trg_aor_draft_absorbing',), one=True)
+        if not row or not row['sql']:
+            return False
+        want = ' '.join(_aor_absorbing_trigger_sql().replace('IF NOT EXISTS ', '').split())
+        got = ' '.join(row['sql'].split())
+        return got == want
+    except Exception:
+        app.logger.exception('aor-absorbing-trigger: 확인 실패 — skip 비활성')
+        return False
+
 #: `uq_aor_draft_active_cd` predicate 와 같은 상태군(= 동시에 하나만 존재할 수 있는 "활성" 상태).
 _AOR_ACTIVE_STATUSES = ('pending', 'hold', 'approved', 'submitting', 'submitted',
                         'rejecting', 'reject_submitting')
@@ -10051,9 +10129,70 @@ def api_ext_aor_reingest_statuses():
       (b) 같은 canonical key 로 active 행이 둘 이상이 아니다
     둘 다 **배포 시점의 사실**이지 영구 보장이 아니다(`CREATE UNIQUE INDEX IF NOT EXISTS` 라
     predicate 를 바꿔도 기존 index 가 남을 수 있고, legacy 변형행이 있을 수도 있다).
-    그래서 여기서 매 호출 확인하고, 깨져 있으면 **`noop_statuses` 를 아예 빼서** 응답한다 →
-    클라는 그걸 "판정 근거 없음"으로 보고 skip 을 전부 포기한다(이미 그렇게 구현·테스트됨).
-    즉 불변식이 깨지면 최적화만 꺼지고 정합성은 유지된다.
+    깨졌을 때의 대응은 **두 단계이고 범위가 다르다**(올마이트 R11 — 계약과 구현을 일치시킴):
+      · (a) index predicate 가 부족하다 = 어느 key 가 위험한지 특정할 수 없다
+        → **전역 비활성**: `noop_statuses` 를 아예 빼서 응답 → 클라는 skip 전부 포기.
+      · (b)(c) 비정규 표기·canonical 충돌 = 위험한 key 를 정확히 특정할 수 있다
+        → **해당 key 만 `drafts` 에서 제외**. 클라는 그 key 를 아예 못 보므로 절대 skip 하지
+          않고 재처리한다. 나머지 key 의 안전성은 이 결함과 독립이라 전역으로 끌 이유가 없다.
+    어느 쪽이든 결과는 "최적화만 꺼지고 카드는 안 빠진다"로 수렴한다.
+
+    🧲 **skip 대상은 no-op 전체가 아니라 absorbing 부분집합뿐이다**(올마이트 R16 blocker).
+    `noop_statuses` 는 "재적재해도 서버가 무시한다"는 사실일 뿐이고, skip 이 안전하려면
+    "다시 필요해질 수 없다"까지 참이어야 한다. 둘은 다르다 — `submitting` 은 상신 실패로
+    `failed` 가 될 수 있고, 그러면 카드가 다시 필요하다. "다음 run 에 또 오니 지연일 뿐"이라는
+    구제책은 러너 입력이 SVMS 120일 조회창이라 **창 밖으로 밀려나면 영구 누락**이 된다
+    (올마이트 R12). 창 경계 grace 로 막는 안(R12~R15)은 과거 공백으로 미래 중단 길이를 추정하는
+    heuristic 이라 폐기했다. 대신 **전제 자체를 없앤다** — 나갈 수 없는 상태만 skip 한다.
+
+    그래서 `terminal_statuses`(= `AOR_REINGEST_TERMINAL_STATUSES`)를 따로 내보내고,
+    그 absorbing 성질을 문서가 아니라 **DB trigger 로 강제**한다
+    (`_aor_absorbing_trigger_sql`). trigger 가 없거나 상수와 어긋나면 두 키를 **함께** 뺀다 —
+    `noop_statuses` 만 남기면 terminal 을 모르는 클라가 no-op 전체를 skip 하던 옛(영구 누락 가능)
+    동작으로 조용히 되돌아간다(올마이트 R17).
+    불변식의 단위는 행이 아니라 **canonical aor_cd** 다(러너 skip 집합의 key 가 그것이라서).
+    같은 key 의 다른 terminal 행이 남는 강등(init_db 중복정리)은 그래서 허용한다.
+
+    ⚠️ 잔여 리스크(수용): trigger 는 UPDATE 만 막는다. 응답 생성 후 러너의 skip 루프 전에
+    사람이 **DELETE 경로**(카드 개별 삭제 또는 종료건 purge)를 타면 그 run 은 해당 카드를 안 만든다.
+    (`INSERT OR REPLACE INTO aor_draft` 경로는 없음 — 확인함.)
+    다음 run 에 복구되지만, 그 사이 120일 창 밖으로 나가면 누락이 된다. 발생 조건이
+    "수동 삭제 + 19.5h 안에 창 이탈"로 좁고, 결과도 이미 상신된 AOR 의 카드라 수용한다.
+
+    📦 응답 크기: `aor_draft` 전체를 `GROUP BY aor_cd` 해서 돌려준다. 운영 실측 64행이라
+    지금은 무시할 수준이고, 러너가 하루 2회만 치므로 상한을 두지 않았다. 수천 행대로 커지면
+    `status IN (...)` 로 active 만 추리거나 페이지네이션이 필요하다(올마이트 R13 지적).
+    """
+    # 세 번의 읽기(목록·충돌·index)가 서로 다른 스냅샷이면 "자가검증"이 반쪽이 된다(올마이트 R9).
+    # 명시적 read transaction 으로 한 스냅샷에 묶는다. 쓰기가 없으므로 항상 rollback.
+    db = get_db()
+    if db.in_transaction:
+        # 이 GET 경로엔 선행 쓰기가 없어야 정상. 도달했다는 건 스냅샷 출처를 우리가 모른다는 뜻이라
+        # **보수적으로 skip 을 끈다**(noop_statuses 생략 → 클라는 전건 재처리). 올마이트 R10·R11.
+        app.logger.warning('aor-reingest-statuses: 이미 transaction 중 — 단일 스냅샷 보장 없어 skip 비활성')
+        return _aor_reingest_statuses_body(allow_noop=False)
+    try:
+        db.execute('BEGIN')
+    except Exception:
+        # BEGIN 자체가 실패하면 스냅샷 보장이 없다. 500 으로 죽이지 말고(러너가 굳이 실패할 이유 없음)
+        # skip 만 끄고 정상 응답한다 — 이 엔드포인트의 실패는 언제나 "최적화 off" 로 수렴해야 한다.
+        app.logger.exception('aor-reingest-statuses: BEGIN 실패 — skip 비활성')
+        return _aor_reingest_statuses_body(allow_noop=False)
+    try:
+        return _aor_reingest_statuses_body()
+    finally:
+        try:
+            db.rollback()
+        except Exception:
+            # 읽기 전용이라 rollback 실패가 데이터에 영향 없다. 여기서 예외를 올리면
+            # 정상 응답을 500 으로 바꿔버리므로 삼키고 기록만 한다(올마이트 R10).
+            app.logger.exception('aor-reingest-statuses: rollback 실패(읽기전용이라 무해)')
+
+
+def _aor_reingest_statuses_body(allow_noop=True):
+    """`api_ext_aor_reingest_statuses` 본문 — 단일 read transaction 안에서만 호출된다.
+
+    allow_noop=False 면 predicate 가 멀쩡해도 `noop_statuses` 를 싣지 않는다(스냅샷 보장 실패 시).
     """
     rows = query("SELECT aor_cd, status FROM aor_draft "
                  "WHERE id IN (SELECT MAX(id) FROM aor_draft GROUP BY aor_cd) "
@@ -10087,13 +10226,18 @@ def api_ext_aor_reingest_statuses():
 
     out = {'count': len(drafts), 'drafts': drafts}
     # (a) predicate 커버리지 확인. 통과할 때만 정본 목록을 실어보낸다.
-    if _aor_index_predicate_covers_noop():
+    if allow_noop and _aor_index_predicate_covers_noop() and _aor_absorbing_trigger_ok():
         # skip 해도 되는 상태의 **정본은 서버**. 클라가 자기 상수를 이것과 대조해
         # drift 를 런타임에 잡는다(테스트 복제로는 cross-repo drift 를 못 잡는다).
         out['noop_statuses'] = list(AOR_REINGEST_NOOP_STATUSES)
-    else:
-        app.logger.error('aor-reingest-statuses: partial unique index predicate 가 '
-                         'skip 상태를 못 덮음 — noop_statuses 생략(클라 skip 비활성)')
+        # 러너가 실제로 skip 해도 되는 absorbing 부분집합. **둘은 항상 같이 나가거나 같이 빠진다** —
+        # noop 만 남기면, terminal 을 모르는 클라가 no-op 전체를 skip 하던 옛(=영구 누락 가능)
+        # 동작으로 조용히 되돌아간다(올마이트 R17).
+        out['terminal_statuses'] = list(AOR_REINGEST_TERMINAL_STATUSES)
+    elif allow_noop:
+        # allow_noop=False 인 경우는 호출부가 이미 사유를 로그로 남겼다 — 중복 경보 금지.
+        app.logger.error('aor-reingest-statuses: partial unique index predicate 가 skip 상태를 '
+                         '못 덮거나 absorbing trigger 가 없음/불일치 — 목록 생략(클라 skip 비활성)')
     return jsonify(out)
 
 
@@ -14843,6 +14987,14 @@ def _auto_migrate():
         return
     conn = sqlite3.connect(DATABASE)
     try:
+        # absorbing 상태 이탈 금지 trigger — init_db 를 안 타는 기존 DB 에도 반드시 걸려야 한다.
+        # 없으면 /api/ext/aor/reingest-statuses 가 skip 근거를 안 내보내 러너가 매 run 전건
+        # 재처리한다(안전하지만 낭비). 즉 누락은 위험이 아니라 성능 저하로만 나타나므로
+        # 조용히 지나가지 않게 로그를 남긴다.
+        try:
+            _aor_absorbing_trigger_install(conn)
+        except Exception as e:
+            print(f'[auto_migrate] aor_draft absorbing trigger 생성 실패: {e}')
         try:
             with open(SCHEMA_FILE, encoding='utf-8') as fh:
                 conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
