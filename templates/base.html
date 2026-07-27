@@ -144,29 +144,30 @@
       </button>
 
       <div class="user-menu">
-        <button class="manual-trigger" id="btn-page-manual" type="button" title="현재 탭 설명서">
+        {# 헤더 우측 도구 버튼: 아이콘만 노출하고 한글 설명은 hover tooltip(data-tip)으로만 제공. #}
+        <button class="manual-trigger icon-only" id="btn-page-manual" type="button"
+                data-tip="현재 탭 설명서" aria-label="현재 탭 설명서">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/>
             <path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>
           </svg>
-          <span class="trig-label">설명서</span>
         </button>
         {% if session.role == 'admin' %}
-        <button class="admin-trigger" id="btn-open-api" title="외부 연동용 데이터 API" style="margin-right:6px">
+        <button class="admin-trigger icon-only" id="btn-open-api"
+                data-tip="API 연동 (외부 연동용 데이터 API)" aria-label="API 연동" style="margin-right:6px">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
             <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
           </svg>
-          <span class="trig-label">API 연동</span>
         </button>
         {% endif %}
         {% if session.role == 'admin' %}
-        <button class="admin-trigger" id="btn-open-admin" title="감독/선박/사용자 관리">
+        <button class="admin-trigger icon-only" id="btn-open-admin"
+                data-tip="관리 (감독/선박/사용자)" aria-label="관리">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
           </svg>
-          <span class="trig-label">관리</span>
         </button>
         {% endif %}
         <button class="user-menu-trigger" id="user-menu-trigger">

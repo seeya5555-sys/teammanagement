@@ -6809,8 +6809,22 @@ def api_key_required(fn):
 @app.route('/api/ext/key', methods=['GET'])
 @admin_required
 def api_ext_key_get():
-    return jsonify({'api_key': _get_api_key(),
-                    'base_url': request.host_url.rstrip('/')})
+    response = jsonify({'api_key': _get_api_key(),
+                        'base_url': request.host_url.rstrip('/')})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+# 네이티브 앱용 조회 전용 별칭. _bearer_auth 훅이 /api/ext/ 를 통째로 제외하므로
+# 앱(Bearer)에서는 위 /api/ext/key 를 부를 수 없다 → /api/ 스코프에 admin 전용 read 창구를 둔다.
+# 재발급(POST)은 기존 자동화 키를 즉시 무효화하는 파괴적 동작이라 웹에만 남기고 앱에는 열지 않는다.
+@app.route('/api/admin/ext-key', methods=['GET'])
+@admin_required
+def api_admin_ext_key_get():
+    response = jsonify({'api_key': _get_api_key(),
+                        'base_url': request.host_url.rstrip('/')})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 # 배포 확인용 — 맥에서 push 한 커밋이 실제로 서버에 올라갔는지 SSH 없이 확인한다.

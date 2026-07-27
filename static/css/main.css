@@ -981,6 +981,50 @@ col.c-edit   { width: 156px; }
   background: var(--surface-2);
   color: var(--text-primary);
 }
+
+/* ───── 헤더 도구 버튼: 아이콘만 노출 + hover tooltip (rev.7) ─────
+   라벨 텍스트를 지우고 정사각 아이콘 버튼으로 통일. 한글 설명은 data-tip 으로만 보여준다. */
+.manual-trigger.icon-only,
+.admin-trigger.icon-only {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  position: relative;
+}
+/* tooltip 본체 — 버튼 아래 중앙. 헤더 위로 확실히 올리기 위해 z-index 를 모달(1100) 아래로 둔다. */
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 1000;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--text-primary);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-3px);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+  pointer-events: none;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+/* 터치 기기에서는 hover 가 sticky 라 tooltip 이 남는다 — 아예 끈다. */
+@media (hover: none) {
+  /* 터치에서는 hover tooltip을 숨기되, 키보드 focus 설명은 유지한다. */
+  [data-tip]:not(:focus-visible)::after { display: none; }
+}
 .page-manual-modal { z-index: 1100; }
 .page-manual-box { width: min(620px, 94vw); }
 .page-manual-body {
@@ -1946,9 +1990,7 @@ col.c-edit   { width: 156px; }
   .admin-form-grid { grid-template-columns: 1fr; }
   .admin-tabs { padding: 0 14px; }
   .admin-tab { padding: 9px 10px; font-size: 12px; }
-  .admin-trigger span.trig-label { display: none; }
-  .manual-trigger span.trig-label { display: none; }
-  .manual-trigger { padding: 0 8px; }
+  /* 헤더 도구 버튼은 데스크톱에서도 아이콘 전용이라 모바일 전용 라벨 숨김 규칙이 필요 없음. */
 }
 
 /* ───── Inline textarea 편집 — 저장/취소 버튼 (rev.6) ───── */
