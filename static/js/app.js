@@ -2517,11 +2517,48 @@ async function addVessel() {
   } catch (err) { alert('추가 실패: ' + err.message); }
   finally { if (btn) btn.disabled = false; }
 }
+// 삭제 확인창에 쓸 한글 라벨. 없는 키는 테이블명 그대로 노출한다.
+const VESSEL_PURGE_LABELS = {
+  issues: '현안', attachments: '현안 첨부', cs_surveys: 'Class 서베이',
+  cs_findings: '서베이 지적사항', cs_attachments: '서베이 첨부',
+  vettings: '베팅', vt_findings: '베팅 지적사항', vt_attachments: '베팅 첨부',
+  dock_reports: 'Dock Report', boarding_reports: '승선 보고서',
+  class_status: 'Class Status', calendar_events: '일정',
+  supervisor_vessels: '담당 감독 연결', aor_draft: 'AOR draft',
+  invoice_draft: 'Invoice draft', fundreq_draft: 'Fund Request draft',
+  reqgen_draft: '청구서 draft', jeonja_review_item: '전자결재 검토항목',
+  soa_group_vessel: 'SOA 그룹 연결', soa_vessel_owner: 'SOA 선주 매핑',
+  soa_review_case: 'SOA 검토 건', soa_review_line: 'SOA 검토 라인',
+  soa_review_attachment: 'SOA 첨부', dock_procure: 'Dock 구매 라인',
+  dock_procure_vessel: 'Dock 구매 선박', fleet_eta_override: 'ETA override',
+  fleet_next_port_override: '다음 항구 override', mail_card: '메일 카드',
+  shipwiki_card: 'Ship Wiki 카드',
+};
 async function deleteVessel(id, name) {
-  if (!confirm(`선박 "${name}"을(를) 삭제하시겠습니까?\n(이슈가 있으면 비활성 처리됩니다)`)) return;
+  let impact = null;
   try {
-    await api('/api/vessels/' + id, { method: 'DELETE' });
+    impact = await api(`/api/vessels/${id}/delete-impact`);
+  } catch (err) {
+    alert('삭제 영향 조회에 실패했습니다. 데이터 보호를 위해 삭제하지 않았습니다.\n' + err.message);
+    return;
+  }
+
+  let msg = `선박 "${name}" 을(를) 삭제할까요?\n관련 데이터가 모두 함께 삭제되며 되돌릴 수 없습니다.\n`;
+  if (impact) {
+    const lines = Object.entries(impact.counts || {})
+      .map(([k, n]) => `  · ${VESSEL_PURGE_LABELS[k] || k} ${n}건`);
+    msg += lines.length
+      ? `\n[함께 삭제되는 데이터 ${impact.total}건]\n${lines.join('\n')}\n`
+      : '\n연결된 데이터는 없습니다.\n';
+    if (impact.files) msg += `  · 첨부파일 ${impact.files}개\n`;
+  }
+  if (!confirm(msg)) return;
+
+  try {
+    const r = await api('/api/vessels/' + id, { method: 'DELETE' });
     await loadAdminVessels();
+    if (r && r.unassigned_only) alert('본인 담당에서만 해제했습니다.');
+    else if (r && r.purged) alert(`삭제 완료 — 관련 데이터 ${r.rows}건, 첨부 ${r.files_removed}개 삭제됨.`);
   } catch (err) { alert('삭제 실패: ' + err.message); }
 }
 

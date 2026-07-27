@@ -221,7 +221,10 @@ def query(sql, params=(), one=False):
 def execute(sql, params=()):
     db = get_db()
     cur = db.execute(sql, params)
-    db.commit()
+    # 선박 purge는 여러 DELETE를 하나의 명시 transaction으로 묶는다.
+    # 그 밖의 기존 호출은 기존처럼 즉시 commit한다.
+    if not getattr(g, '_vessel_purge_transaction', False):
+        db.commit()
     last_id = cur.lastrowid
     cur.close()
     return last_id
@@ -2736,16 +2739,220 @@ def api_vessel_update(vid):
     return jsonify({'id': vid})
 
 
+# ───── 선박 완전 삭제(purge) ─────────────────────────────────────
+# 선박을 지우면 그 선박에 매달린 데이터를 전부 함께 지운다(2026-07-27 운영자 지시).
+# soft delete(active=0) 폴백은 폐기 — 잔재가 남아 관리 목록이 지저분해지는 문제 때문.
+# 되돌릴 수 없으므로 삭제 직전 전 대상 행을 JSON 으로 덤프해 둔다.
+VESSEL_PURGE_BACKUP_DIR = os.path.join(INSTANCE_DIR, 'backups', 'vessel_purge')
+
+# 형이 확정한 2계층 감사/결재 데이터만 명시적으로 purge 한다.
+# 스키마 전체에서 vsl_cd 컬럼을 훑으면 의미가 다른 미래 테이블까지 삭제할 수 있어 금지한다.
+# soa_review_case는 자식(line/attachment) 백업·삭제 순서 때문에 별도로 처리한다.
+_PURGE_VSL_CD_TABLES = (
+    'aor_draft', 'invoice_draft', 'fundreq_draft', 'reqgen_draft',
+    'jeonja_review_item', 'soa_group_vessel', 'dock_procure',
+    # dock_procure의 선박 헤더와 SOA 선주 매핑도 같은 vsl_cd 소유 데이터다.
+    'dock_procure_vessel', 'soa_vessel_owner',
+)
+
+
+def _purge_vsl_cd_tables():
+    """배포 중인 구스키마와의 호환을 위해 존재하는 manifest 테이블만 반환한다."""
+    existing = {r['name'] for r in query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    )}
+    return [t for t in _PURGE_VSL_CD_TABLES if t in existing]
+
+
+def _purge_file_allowed(path):
+    """DB 값이 손상돼도 허용된 첨부 디렉터리 밖 파일은 절대 건드리지 않게 한다."""
+    if not path:
+        return False
+    real = os.path.realpath(path)
+    for root in (UPLOAD_DIR, SOA_REVIEW_PDF_DIR):
+        r = os.path.realpath(root)
+        if real == r or real.startswith(r + os.sep):
+            return True
+    return False
+
+
+def _vessel_own_tokens(v):
+    """선박 하나가 주장하는 코드/이름 토큰."""
+    codes, names = set(), set()
+    # 2계층 결재 데이터는 형이 지정한 대로 vsl_cd로만 연결한다.
+    # short_name을 대체 키로 쓰면 선박 별칭과 우연히 겹쳐 다른 선박 감사기록을 지울 수 있다.
+    val = ((v['vsl_cd'] if 'vsl_cd' in v.keys() else None) or '').strip()
+    if val:
+        codes.add(val)
+    nm = (v['name'] or '').strip()
+    if nm:
+        names.add(nm)
+    try:
+        for a in json.loads((v['aliases'] if 'aliases' in v.keys() else None) or '[]'):
+            if isinstance(a, str) and a.strip():
+                names.add(a.strip())
+    except Exception:
+        pass
+    return codes, names
+
+
+def _vessel_purge_codes(v):
+    """
+    이 선박만 가리키는 코드/이름. 다른 선박도 쓰는 토큰은 제외한다.
+
+    2계층은 vsl_cd만 허용한다. 같은 코드 또는 같은 선명/별칭을 다른 선박도 쓰면
+    해당 토큰을 제외해 다른 선박 데이터를 지우지 않는다.
+    """
+    codes, names = _vessel_own_tokens(v)
+    others_c, others_n = set(), set()
+    for o in query('SELECT * FROM vessels WHERE id<>?', (v['id'],)):
+        oc, on = _vessel_own_tokens(o)
+        others_c |= oc
+        others_n |= on
+    shared = sorted((codes & others_c) | (names & others_n))
+    return sorted(codes - others_c), sorted(names - others_n), shared
+
+
+def _vessel_purge_scan(vid):
+    """삭제 대상을 훑어 (건수, 백업용 행, 지울 파일경로) 를 만든다. 쓰기는 하지 않는다."""
+    v = query('SELECT * FROM vessels WHERE id=?', (vid,), one=True)
+    if not v:
+        return None
+    codes, names, shared = _vessel_purge_codes(v)
+    cph = ','.join('?' * len(codes)) if codes else None
+    nph = ','.join('?' * len(names)) if names else None
+
+    counts, backup, files = {}, {'vessel': dict(v)}, []
+
+    def grab(key, sql, params=()):
+        rows = [dict(r) for r in query(sql, params)]
+        if rows:
+            # 같은 키로 두 번 담기면 덮어쓰지 않고 합친다(건수 누락 방지).
+            counts[key] = counts.get(key, 0) + len(rows)
+            backup.setdefault(key, []).extend(rows)
+        return rows
+
+    def grab_children(key, table, fk, parent_ids):
+        """CASCADE 로 조용히 사라질 자식까지 백업에 담는다."""
+        if not parent_ids:
+            return []
+        ph = ','.join('?' * len(parent_ids))
+        return grab(key, f'SELECT * FROM "{table}" WHERE {fk} IN ({ph})', parent_ids)
+
+    # 1) vessel_id 로 직접 엮인 운영 데이터 + 첨부파일
+    issues = grab('issues', 'SELECT * FROM issues WHERE vessel_id=?', (vid,))
+    if issues:
+        iph = ','.join('?' * len(issues))
+        iids = [r['id'] for r in issues]
+        for a in grab('attachments',
+                      f'SELECT * FROM attachments WHERE issue_id IN ({iph})', iids):
+            files.append(os.path.join(UPLOAD_DIR, a['stored_name']))
+
+    surveys = grab('cs_surveys', 'SELECT * FROM cs_surveys WHERE vessel_id=?', (vid,))
+    if surveys:
+        sph = ','.join('?' * len(surveys))
+        sids = [r['id'] for r in surveys]
+        grab('cs_findings', f'SELECT * FROM cs_findings WHERE survey_id IN ({sph})', sids)
+        for a in grab('cs_attachments',
+                      f'SELECT * FROM cs_attachments WHERE survey_id IN ({sph})', sids):
+            files.append(os.path.join(UPLOAD_DIR, a['stored_name']))
+
+    vets = grab('vettings', 'SELECT * FROM vettings WHERE vessel_id=?', (vid,))
+    if vets:
+        vph = ','.join('?' * len(vets))
+        vids = [r['id'] for r in vets]
+        grab('vt_findings', f'SELECT * FROM vt_findings WHERE vetting_id IN ({vph})', vids)
+        for a in grab('vt_attachments',
+                      f'SELECT * FROM vt_attachments WHERE vetting_id IN ({vph})', vids):
+            files.append(os.path.join(UPLOAD_DIR, a['stored_name']))
+
+    # Dock/Boarding Report 본문 이미지는 'dock-<report_id>-*' / 'brep-<report_id>-*' 규칙
+    for key, sql, prefix, sub in (
+        ('dock_reports', 'SELECT * FROM dock_reports WHERE vessel_id=?', 'dock', 'dock'),
+        ('boarding_reports', 'SELECT * FROM boarding_reports WHERE vessel_id=?', 'brep', 'boarding'),
+    ):
+        reports = grab(key, sql, (vid,))
+        for r in reports:
+            d = os.path.join(UPLOAD_DIR, sub)
+            if os.path.isdir(d):
+                files += [os.path.join(d, f) for f in os.listdir(d)
+                          if f.startswith(f'{prefix}-{r["id"]}-')]
+        base = key[:-1]  # dock_reports -> dock_report
+        secs = grab_children(f'{base}_sections', f'{base}_sections', 'report_id',
+                             [r['id'] for r in reports])
+        grab_children(f'{base}_blocks', f'{base}_blocks', 'section_id',
+                      [s['id'] for s in secs])
+
+    cstat = grab('class_status', 'SELECT * FROM class_status WHERE vessel_id=?', (vid,))
+    grab_children('class_status_items', 'class_status_items', 'cs_id', [r['id'] for r in cstat])
+    grab('calendar_events', 'SELECT * FROM calendar_events WHERE vessel_id=?', (vid,))
+    grab('supervisor_vessels', 'SELECT * FROM supervisor_vessels WHERE vessel_id=?', (vid,))
+
+    # 2) vsl_cd 로 엮인 결재·정산·구매 데이터
+    if cph:
+        for t in _purge_vsl_cd_tables():
+            grab(t, f'SELECT * FROM "{t}" WHERE vsl_cd IN ({cph})', codes)
+        cases = grab('soa_review_case', f'SELECT * FROM soa_review_case WHERE vsl_cd IN ({cph})', codes)
+        if cases:
+            xph = ','.join('?' * len(cases))
+            xids = [r['id'] for r in cases]
+            grab('soa_review_line', f'SELECT * FROM soa_review_line WHERE case_id IN ({xph})', xids)
+            for a in grab('soa_review_attachment',
+                          f'SELECT * FROM soa_review_attachment WHERE case_id IN ({xph})', xids):
+                p = _soa_review_attachment_path(a.get('stored_name'))
+                if p:
+                    files.append(p)
+
+    # 3) 이름/키로 엮인 캐시성 데이터
+    vkey = _vkey(v['name'])
+    for t in ('fleet_eta_override', 'fleet_next_port_override'):
+        grab(t, f'SELECT * FROM {t} WHERE vessel_key=?', (vkey,))
+    if nph:
+        grab('mail_card', f'SELECT * FROM mail_card WHERE issue_vessel IN ({nph})', names)
+        grab('shipwiki_card', f'SELECT * FROM shipwiki_card WHERE ship_nm IN ({nph})', names)
+
+    # 4) 사용자별 선박 정렬 순서 — 지우진 않고 항목만 빼지만, 되돌리려면 원본이 필요하다.
+    order_rows = [dict(r) for r in query('SELECT * FROM user_vessel_order')]
+    touched = []
+    for row in order_rows:
+        try:
+            order = json.loads(row.get('order_json') or '[]')
+        except Exception:
+            continue
+        if any(str(x) == str(vid) for x in order):
+            touched.append(row)
+    if touched:
+        backup['user_vessel_order'] = touched
+
+    return {'vessel': v, 'codes': codes, 'names': names, 'shared': shared, 'vkey': vkey,
+            'counts': counts, 'backup': backup,
+            # DB 값이 손상되었거나 symlink여도 허용 첨부 디렉터리 밖 파일은 삭제 대상에서 제외한다.
+            'files': sorted({f for f in files if _purge_file_allowed(f)})}
+
+
+@app.route('/api/vessels/<int:vid>/delete-impact')
+@admin_required
+def api_vessel_delete_impact(vid):
+    """삭제 확인창에 보여줄 '함께 지워질 데이터' 건수."""
+    plan = _vessel_purge_scan(vid)
+    if not plan:
+        abort(404)
+    return jsonify({
+        'vessel': {'id': plan['vessel']['id'], 'name': plan['vessel']['name']},
+        'counts': plan['counts'],
+        'files': len(plan['files']),
+        'total': sum(plan['counts'].values()),
+    })
+
+
 @app.route('/api/vessels/<int:vid>', methods=['DELETE'])
 @login_required
 def api_vessel_delete(vid):
-    if not query('SELECT id FROM vessels WHERE id=?', (vid,), one=True):
+    v = query('SELECT id FROM vessels WHERE id=?', (vid,), one=True)
+    if not v:
         abort(404)
 
-    # 일반 사용자(member) 권한 제약:
-    #   - 본인 담당 선박만 삭제 가능
-    #   - 다른 감독에게도 공유된 선박 → 본인 담당만 제거 (선박 자체는 유지)
-    #   - 본인만 담당 → 아래 공통 로직으로 진행 (이슈 있으면 soft, 없으면 hard)
+    # 일반 사용자(member): 담당 해제만 가능. 관련 데이터를 통째로 지우는 purge 는 admin 전용.
     if session.get('role') != 'admin':
         my_sup = session.get('supervisor_id')
         if not my_sup:
@@ -2756,26 +2963,94 @@ def api_vessel_delete(vid):
         )
         if not owned:
             return jsonify({'error': '본인 담당 선박만 삭제할 수 있습니다.'}), 403
-        # 다른 감독도 담당하는지?
-        other = query(
-            'SELECT COUNT(*) AS n FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id<>?',
-            (vid, my_sup), one=True,
-        )
-        if other['n'] > 0:
-            # 본인 담당만 해제하고 종료
-            execute('DELETE FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id=?',
-                    (vid, my_sup))
-            return jsonify({'ok': True, 'unassigned_only': True})
+        execute('DELETE FROM supervisor_vessels WHERE vessel_id=? AND supervisor_id=?',
+                (vid, my_sup))
+        return jsonify({'ok': True, 'unassigned_only': True})
 
-    # 이슈가 있으면 soft delete
-    n = query('SELECT COUNT(*) AS n FROM issues WHERE vessel_id=?',
-              (vid,), one=True)['n']
-    if n > 0:
-        execute('UPDATE vessels SET active=0 WHERE id=?', (vid,))
-        return jsonify({'ok': True, 'soft_delete': True, 'issues': n})
+    # 조회·백업·모든 DELETE를 같은 SQLite snapshot으로 묶어 중간 실패 시 전부 rollback한다.
+    db = get_db()
+    db.execute('BEGIN IMMEDIATE')
+    g._vessel_purge_transaction = True
+    plan = _vessel_purge_scan(vid)
+    if not plan:
+        db.rollback()
+        g.pop('_vessel_purge_transaction', None)
+        abort(404)
+
+    # 되돌릴 수 있게 삭제 직전 스냅샷을 남긴다. 덤프 실패 시 삭제하지 않는다.
+    backup_path = None
+    try:
+        os.makedirs(VESSEL_PURGE_BACKUP_DIR, exist_ok=True)
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        safe = re.sub(r'[^A-Za-z0-9_-]+', '_', plan['vessel']['name'] or str(vid))[:40]
+        backup_path = os.path.join(VESSEL_PURGE_BACKUP_DIR, f'{stamp}-{vid}-{safe}.json')
+        with open(backup_path, 'w', encoding='utf-8') as fp:
+            json.dump({'deleted_at': stamp, 'deleted_by': session.get('username'),
+                       'codes': plan['codes'], 'names': plan['names'],
+                       'counts': plan['counts'], 'files': plan['files'],
+                       'rows': plan['backup']}, fp, ensure_ascii=False, default=str)
+    except Exception as e:
+        db.rollback()
+        g.pop('_vessel_purge_transaction', None)
+        app.logger.exception('vessel purge 백업 실패 vid=%s', vid)
+        return jsonify({'error': f'삭제 전 백업에 실패해 중단했습니다: {e}'}), 500
+
+    codes, names, vkey = plan['codes'], plan['names'], plan['vkey']
+    cph = ','.join('?' * len(codes)) if codes else None
+    nph = ','.join('?' * len(names)) if names else None
+
+    # 자식 → 부모 순서로 지운다. CASCADE 가 걸린 자식은 부모 삭제로 함께 정리된다.
+    execute('DELETE FROM issues WHERE vessel_id=?', (vid,))            # attachments CASCADE
+    execute('DELETE FROM cs_surveys WHERE vessel_id=?', (vid,))        # findings/attach CASCADE
+    execute('DELETE FROM vettings WHERE vessel_id=?', (vid,))          # findings/attach CASCADE
+    execute('DELETE FROM dock_reports WHERE vessel_id=?', (vid,))      # sections/blocks CASCADE
+    execute('DELETE FROM boarding_reports WHERE vessel_id=?', (vid,))  # sections/blocks CASCADE
+    execute('DELETE FROM class_status WHERE vessel_id=?', (vid,))      # items CASCADE
+    execute('DELETE FROM calendar_events WHERE vessel_id=?', (vid,))
     execute('DELETE FROM supervisor_vessels WHERE vessel_id=?', (vid,))
+    if cph:
+        for t in _purge_vsl_cd_tables():
+            execute(f'DELETE FROM "{t}" WHERE vsl_cd IN ({cph})', codes)
+        execute(f'DELETE FROM soa_review_case WHERE vsl_cd IN ({cph})', codes)  # line/attach CASCADE
+    for t in ('fleet_eta_override', 'fleet_next_port_override'):
+        execute(f'DELETE FROM {t} WHERE vessel_key=?', (vkey,))
+    if nph:
+        execute(f'DELETE FROM mail_card WHERE issue_vessel IN ({nph})', names)
+        execute(f'DELETE FROM shipwiki_card WHERE ship_nm IN ({nph})', names)
     execute('DELETE FROM vessels WHERE id=?', (vid,))
-    return jsonify({'ok': True})
+
+    # 사용자별 선박 정렬 순서에서도 제거
+    for row in query('SELECT user_id, order_json FROM user_vessel_order'):
+        try:
+            order = json.loads(row['order_json'] or '[]')
+        except Exception:
+            continue
+        pruned = [x for x in order if str(x) != str(vid)]
+        if len(pruned) != len(order):
+            execute('UPDATE user_vessel_order SET order_json=?, '
+                    'updated_at=datetime("now","localtime") WHERE user_id=?',
+                    (json.dumps(pruned), row['user_id']))
+
+    # 이 지점까지의 모든 SQL을 한 번에 확정한다. 그 전 예외는 teardown rollback으로 남는 행이 없다.
+    db.commit()
+    g.pop('_vessel_purge_transaction', None)
+
+    # DB 정리가 끝난 뒤 파일 삭제 — 파일 실패가 트랜잭션을 되돌리지 않게.
+    removed = 0
+    for p in plan['files']:
+        try:
+            if p and os.path.exists(p):
+                os.remove(p)
+                removed += 1
+        except OSError:
+            app.logger.warning('vessel purge 파일 삭제 실패 vid=%s %s', vid, p)
+
+    app.logger.info('vessel purge vid=%s name=%s rows=%s files=%s backup=%s',
+                    vid, plan['vessel']['name'], sum(plan['counts'].values()),
+                    removed, backup_path)
+    return jsonify({'ok': True, 'purged': True, 'counts': plan['counts'],
+                    'rows': sum(plan['counts'].values()), 'files_removed': removed,
+                    'backup': os.path.basename(backup_path) if backup_path else None})
 
 
 # ----- 사용자 (admin 전용 CRUD) -----
