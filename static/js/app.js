@@ -2530,7 +2530,8 @@ const VESSEL_PURGE_LABELS = {
   soa_group_vessel: 'SOA 그룹 연결', soa_vessel_owner: 'SOA 선주 매핑',
   soa_review_case: 'SOA 검토 건', soa_review_line: 'SOA 검토 라인',
   soa_review_attachment: 'SOA 첨부', dock_procure: 'Dock 구매 라인',
-  dock_procure_vessel: 'Dock 구매 선박', fleet_eta_override: 'ETA override',
+  dock_procure_vessel: 'Dock 구매 선박', dock_yard: '조선소 견적',
+  fleet_eta_override: 'ETA override',
   fleet_next_port_override: '다음 항구 override', mail_card: '메일 카드',
   shipwiki_card: 'Ship Wiki 카드',
 };

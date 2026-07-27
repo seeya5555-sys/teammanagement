@@ -2753,6 +2753,9 @@ _PURGE_VSL_CD_TABLES = (
     'jeonja_review_item', 'soa_group_vessel', 'dock_procure',
     # dock_procure의 선박 헤더와 SOA 선주 매핑도 같은 vsl_cd 소유 데이터다.
     'dock_procure_vessel', 'soa_vessel_owner',
+    # 조선소 견적 7카테고리. dock_procure와 한 세트라 빠지면 라인만 사라지고
+    # 견적 금액이 남는다(UNIQUE(vsl_nm,category) 때문에 동명 선박 재등록 시 stale 값 상속).
+    'dock_yard',
 )
 
 
