@@ -473,8 +473,9 @@ function bindEvents() {
 document.addEventListener('DOMContentLoaded', init);
 
 // ════════════════════════════════════════════════════════════════
-//  영수증 수동 크롭 + 원근보정 (Adobe 스캔 방식, 라이브러리 없음)
-//  · 기본 사각형(가장자리 6% 안쪽) 제시 → 사용자가 네 모서리 조정
+//  영수증 자동 인식 + 수동 크롭/원근보정 (Adobe 스캔 방식, 라이브러리 없음)
+//  · 밝은 영수증 영역의 가장 큰 연결 성분을 자동 탐색 → 실패 시 안전한 기본 사각형
+//  · 사용자가 네 모서리 조정
 //  · "적용" 시 4점→사각형 호모그래피로 반듯하게 펴서 JPEG Blob 반환
 // ════════════════════════════════════════════════════════════════
 const CROP = {
@@ -485,6 +486,65 @@ const CROP = {
   WORK_MAX: 1800,  // 작업 캔버스 최대 장변
   OUT_MAX: 1500,   // 출력 최대 장변
 };
+
+const DEFAULT_CROP = [
+  { fx: 0.06, fy: 0.06 }, { fx: 0.94, fy: 0.06 },
+  { fx: 0.94, fy: 0.94 }, { fx: 0.06, fy: 0.94 },
+];
+function defaultCrop() { return DEFAULT_CROP.map(p => ({ ...p })); }
+
+// 밝은 영수증이 어두운/색상 배경에 놓인 일반 촬영을 빠르게 감지한다.
+// 큰 밝은 연결 성분만 대상으로 해 영수증의 글자·로고에는 반응하지 않는다.
+// 흰 테이블 위처럼 대비가 부족한 사진은 null을 반환해 수동 조절로 안전하게 폴백한다.
+function detectReceiptCorners(canvas) {
+  const maxSide = 420;
+  const ratio = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
+  const w = Math.max(1, Math.round(canvas.width * ratio));
+  const h = Math.max(1, Math.round(canvas.height * ratio));
+  const probe = document.createElement('canvas'); probe.width = w; probe.height = h;
+  const pctx = probe.getContext('2d', { willReadFrequently: true });
+  pctx.drawImage(canvas, 0, 0, w, h);
+  const pixels = pctx.getImageData(0, 0, w, h).data;
+  const lum = new Uint8Array(w * h), samples = [];
+  for (let i = 0, j = 0; i < pixels.length; i += 4, j++) {
+    lum[j] = Math.round(pixels[i] * 0.2126 + pixels[i + 1] * 0.7152 + pixels[i + 2] * 0.0722);
+    if ((j % 7) === 0) samples.push(lum[j]);
+  }
+  samples.sort((a, b) => a - b);
+  const median = samples[Math.floor(samples.length * 0.5)];
+  const bright = samples[Math.floor(samples.length * 0.82)];
+  if (bright - median < 18) return null;
+  const threshold = Math.max(135, Math.min(245, Math.round((median + bright) / 2)));
+  const seen = new Uint8Array(w * h);
+  let best = null;
+  const minArea = w * h * 0.04;
+  for (let start = 0; start < lum.length; start++) {
+    if (seen[start] || lum[start] < threshold) continue;
+    const queue = [start]; seen[start] = 1;
+    let count = 0, minX = w, minY = h, maxX = 0, maxY = 0;
+    for (let at = 0; at < queue.length; at++) {
+      const n = queue[at], x = n % w, y = (n / w) | 0;
+      count++; minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+      const ns = [n - 1, n + 1, n - w, n + w];
+      for (const next of ns) {
+        if (next < 0 || next >= lum.length || seen[next]) continue;
+        const nx = next % w;
+        if ((next === n - 1 || next === n + 1) && Math.abs(nx - x) !== 1) continue;
+        if (lum[next] >= threshold) { seen[next] = 1; queue.push(next); }
+      }
+    }
+    const bw = maxX - minX + 1, bh = maxY - minY + 1, boxArea = bw * bh;
+    if (count < minArea || boxArea < minArea || count / boxArea < 0.42 || bw < w * 0.18 || bh < h * 0.18) continue;
+    if (minX === 0 && minY === 0 && maxX === w - 1 && maxY === h - 1) continue;
+    const score = count * (count / boxArea);
+    if (!best || score > best.score) best = { score, minX, minY, maxX, maxY };
+  }
+  if (!best) return null;
+  const pad = Math.max(2, Math.round(Math.min(w, h) * 0.01));
+  const x1 = Math.max(0, best.minX - pad) / w, y1 = Math.max(0, best.minY - pad) / h;
+  const x2 = Math.min(w - 1, best.maxX + pad) / w, y2 = Math.min(h - 1, best.maxY + pad) / h;
+  return [{ fx: x1, fy: y1 }, { fx: x2, fy: y1 }, { fx: x2, fy: y2 }, { fx: x1, fy: y2 }];
+}
 
 function openCrop(file) {
   return new Promise((resolve) => {
@@ -503,10 +563,11 @@ function openCrop(file) {
       ctx.drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(img.src);
 
-      CROP.handles = [
-        { fx: 0.06, fy: 0.06 }, { fx: 0.94, fy: 0.06 },
-        { fx: 0.94, fy: 0.94 }, { fx: 0.06, fy: 0.94 },
-      ];
+      // Canvas 접근이 브라우저 메모리/디코더 문제로 실패해도 업로드 흐름은 멈추지 않는다.
+      let detected = null;
+      try { detected = detectReceiptCorners(canvas); } catch (err) { console.warn('receipt auto-detect unavailable', err); }
+      CROP.handles = detected || defaultCrop();
+      $('#expd-crop-auto').hidden = !detected;
       modal.hidden = false;
       document.body.classList.add('modal-open');
       buildHandles();
@@ -643,10 +704,8 @@ function bindCropEvents() {
   $('#expd-crop-orig').addEventListener('click', () => finishCrop(CROP.file));   // 원본 사용
   $('#expd-crop-cancel').addEventListener('click', () => finishCrop(null));      // 취소(건너뜀)
   $('#expd-crop-reset').addEventListener('click', () => {
-    CROP.handles = [
-      { fx: 0.06, fy: 0.06 }, { fx: 0.94, fy: 0.06 },
-      { fx: 0.94, fy: 0.94 }, { fx: 0.06, fy: 0.94 },
-    ];
+    CROP.handles = defaultCrop();
+    $('#expd-crop-auto').hidden = true;
     renderQuad();
   });
   window.addEventListener('resize', () => { if (!$('#expd-crop').hidden) renderQuad(); });
