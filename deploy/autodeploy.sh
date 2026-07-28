@@ -26,6 +26,8 @@ cd "$APP_DIR"
 source venv/bin/activate
 # gunicorn 없으면 설치(venv 재구축/신규 서버 대비). 있으면 즉시 skip.
 python3 -c "import gunicorn" 2>/dev/null || pip install "gunicorn>=21,<24"
+# Outlook .msg 미리보기 파서: 필요한 새 의존성만 배포 시 설치(기존 배포는 즉시 skip).
+python3 -c "import extract_msg" 2>/dev/null || pip install "extract-msg>=0.55,<0.56"
 # Werkzeug 3.1+ 보장: per-request request.max_content_length setter 필요
 # (STT 200MB 허용하되 그 외 라우트를 스트리밍 단계서 20MB로 조임 — 3.0은 setter 없어 fail-open).
 # 3.1+ 이면 즉시 skip, 미만일 때만 업그레이드(배포 시에만·미달 시에만 실행).

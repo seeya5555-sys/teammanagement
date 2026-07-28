@@ -19,6 +19,8 @@ import time
 import http.client
 import urllib.error
 import urllib.request
+import mimetypes
+from io import BytesIO
 from functools import wraps
 from datetime import timedelta, date, datetime
 
@@ -28,6 +30,7 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 import hmac, hashlib
 from itsdangerous import URLSafeTimedSerializer, BadData
 
@@ -62,7 +65,7 @@ SECRET_KEY_FILE = os.path.join(INSTANCE_DIR, '.secret_key')
 
 ALLOWED_EXT = {
     'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp',
-    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv'
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'msg'
 }
 
 def _load_or_create_secret_key():
@@ -6519,6 +6522,142 @@ def api_attachment_download(aid):
         as_attachment=not inline,
         download_name=a['filename'],
     )
+
+
+# Outlook .msg는 iOS QuickLook이 직접 렌더하지 못하므로, 서버가 읽기전용 헤더/본문/안전한 내부첨부 목록을 제공한다.
+# 원본 .msg와 내부첨부는 모두 기존 issue scope 인증을 다시 거친다.
+_MSG_PREVIEW_EXT = {'pdf', 'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp'}
+_MSG_PREVIEW_MAX_ATTACHMENTS = 40
+_MSG_PREVIEW_MAX_BODY_CHARS = 120_000
+
+
+def _msg_preview_attachment_name(att, index):
+    """extract-msg 버전별 파일명 API 차이를 흡수하고, 화면/Content-Disposition용 이름을 살균한다."""
+    name = None
+    getter = getattr(att, 'getFilename', None)
+    if callable(getter):
+        try:
+            name = getter()
+        except Exception:
+            name = None
+    for attr in ('longFilename', 'shortFilename', 'name'):
+        if not name:
+            value = getattr(att, attr, None)
+            if value:
+                name = value
+    # 표시/다운로드명은 실제 경로에 쓰지 않는다. 한글 파일명을 보존하되 제어문자·경로분리자만 제거한다.
+    name = os.path.basename(str(name or '').replace('\\', '/')).replace('\x00', '')
+    name = ''.join(ch for ch in name if ch.isprintable()).strip()[:240]
+    return name or 'attachment-%d.bin' % index
+
+
+def _open_msg_attachment(a):
+    if not (a['filename'] or '').lower().endswith('.msg'):
+        abort(404)
+    path = os.path.join(UPLOAD_DIR, a['stored_name'])
+    # DB stored_name은 upload 생성 UUID지만, 경로 containment를 한 번 더 강제한다.
+    if (not os.path.isfile(path)
+            or os.path.realpath(path).startswith(os.path.realpath(UPLOAD_DIR) + os.sep) is False):
+        abort(404)
+    if os.path.getsize(path) > _NON_STT_UPLOAD_MAX:
+        return None, jsonify({'error': 'MSG file too large'}), 413
+    try:
+        import extract_msg
+        msg = extract_msg.openMsg(path)
+    except Exception:
+        app.logger.exception('msg-preview-open aid=%s', a['id'])
+        return None, jsonify({'error': 'Outlook MSG 파일을 읽을 수 없습니다.'}), 422
+    return msg, None, None
+
+
+def _msg_preview_data(a):
+    msg, error, status = _open_msg_attachment(a)
+    if error:
+        return None, error, status
+    try:
+        def text(value, limit=2000):
+            return str(value or '').strip()[:limit]
+        items = []
+        for index, att in enumerate(msg.attachments):
+            if len(items) >= _MSG_PREVIEW_MAX_ATTACHMENTS:
+                break
+            name = _msg_preview_attachment_name(att, index)
+            ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
+            # PDF/이미지만 공개한다. 불허 유형은 data를 읽지 않아 대형 Office/embedded MSG를 메모리에 올리지 않는다.
+            if ext not in _MSG_PREVIEW_EXT:
+                continue
+            try:
+                raw = att.data
+            except Exception:
+                app.logger.warning('msg-preview attachment unreadable aid=%s index=%s', a['id'], index)
+                continue
+            if not isinstance(raw, bytes) or len(raw) > _NON_STT_UPLOAD_MAX:
+                continue
+            items.append({'index': index, 'filename': name, 'size': len(raw),
+                          'mime_type': mimetypes.guess_type(name)[0] or 'application/octet-stream'})
+        return {
+            'subject': text(getattr(msg, 'subject', None)),
+            'sender': text(getattr(msg, 'sender', None)),
+            'to': text(getattr(msg, 'to', None)),
+            'cc': text(getattr(msg, 'cc', None)),
+            'date': text(getattr(msg, 'date', None)),
+            'body': text(getattr(msg, 'body', None), _MSG_PREVIEW_MAX_BODY_CHARS),
+            'attachments': items,
+        }, None, None
+    finally:
+        try:
+            msg.close()
+        except Exception:
+            pass
+
+
+@app.route('/api/attachments/<int:aid>/msg-preview')
+@login_required
+def api_attachment_msg_preview(aid):
+    a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
+    if not a:
+        abort(404)
+    _issue_write_scope(a['issue_id'])
+    data, error, status = _msg_preview_data(a)
+    if error:
+        return error, status
+    return jsonify({'ok': True, 'message': data})
+
+
+@app.route('/api/attachments/<int:aid>/msg-preview/attachments/<int:index>')
+@login_required
+def api_attachment_msg_preview_file(aid, index):
+    a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
+    if not a:
+        abort(404)
+    _issue_write_scope(a['issue_id'])
+    if index < 0:
+        abort(404)
+    msg, error, status = _open_msg_attachment(a)
+    if error:
+        return error, status
+    try:
+        attachments = msg.attachments
+        if index >= len(attachments):
+            abort(404)
+        att = attachments[index]
+        name = _msg_preview_attachment_name(att, index)
+        ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
+        raw = att.data
+        if ext not in _MSG_PREVIEW_EXT or not isinstance(raw, bytes) or len(raw) > _NON_STT_UPLOAD_MAX:
+            abort(404)
+        return send_file(BytesIO(raw), mimetype=mimetypes.guess_type(name)[0] or 'application/octet-stream',
+                         as_attachment=False, download_name=name, max_age=0)
+    except HTTPException:
+        raise
+    except Exception:
+        app.logger.exception('msg-preview-file aid=%s index=%s', aid, index)
+        abort(422)
+    finally:
+        try:
+            msg.close()
+        except Exception:
+            pass
 
 
 @app.route('/api/attachments/<int:aid>', methods=['DELETE'])
