@@ -145,11 +145,15 @@
           +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b></span>`
           +`<span>INV_DT <b>${esc(d.inv_dt||'-')}</b></span>`;
     // 대조결과
-    const pdfEl=d.match_src
-      ? (d.has_pdf
-          ? ` · <a class="pdf-lnk" data-pdf="${d.id}" data-nm="${esc(d.match_src)}"><svg class="ic-svg" viewBox="0 0 24 24" style="width:13px;height:13px;vertical-align:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg> ${esc(d.match_src)}</a>`
-          : ` <span class="mun">· ${esc(d.match_src)}</span>`)
-      : '';
+    // 원본 PDF 링크는 has_pdf(서버에 실제 파일 있음) 기준 — match_src 기준이면 대조 실패건에서
+    // 첨부가 있어도 링크가 안 떠서, 정작 사람이 봐야 할 HOLD 건을 못 열었다(2026-07-28 수정).
+    const _rc=jparse(d.raw_card)||{};
+    const _atts=jparse(d.attachments)||[];
+    const _a0=Array.isArray(_atts)?_atts[0]:null;   // 첨부는 FILE_NM 문자열 배열 — object면 무시
+    const pdfNm=d.match_src||_rc.preview_src||(typeof _a0==='string'?_a0:null)||'원본 PDF';
+    const pdfEl=d.has_pdf
+      ? ` · <a class="pdf-lnk" data-pdf="${d.id}" data-nm="${esc(pdfNm)}"><svg class="ic-svg" viewBox="0 0 24 24" style="width:13px;height:13px;vertical-align:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg> ${esc(pdfNm)}</a>${d.match_src?'':` <span class="mun">(대조 미일치 원본)</span>`}`
+      : (d.match_src?` <span class="mun">· ${esc(d.match_src)}</span>`:'');
     const matchLine=`<div class="fr-sect"><div class="fr-sect-t">PDF 대조</div>`
       +`${mark(d.inv_no_match,'INV_NO')} &nbsp; ${mark(d.amt_match,'금액')} &nbsp; ${mark(d.date_match,'날짜')}`
       +`${pdfEl}</div>`;
