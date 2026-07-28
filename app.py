@@ -43,6 +43,7 @@ UPLOAD_DIR   = os.path.join(BASE_DIR, 'static', 'uploads')
 INVOICE_PDF_DIR = os.path.join(INSTANCE_DIR, 'invoice_pdfs')  # 인보이스 미리보기 PDF(컨펌/리젝 시 자동삭제)
 JEONJA_PDF_DIR = os.path.join(INSTANCE_DIR, 'jeonja_pdfs')    # 전자결재 검토 invoice/DN 미리보기 cache
 AOR_PDF_DIR = os.path.join(INSTANCE_DIR, 'aor_pdfs')          # AOR 첨부 견적서 preview cache
+FUNDREQ_FILE_DIR = os.path.join(INSTANCE_DIR, 'fundreq_files')  # 비용청구 SVMS 첨부(인보이스·증빙) preview cache
 SOA_REVIEW_PDF_DIR = os.path.join(INSTANCE_DIR, 'soa_review_pdfs')  # SOA 수동검토 첨부 PDF cache
 STT_AUDIO_DIR = os.path.join(INSTANCE_DIR, 'stt_audio')       # 회의록 STT 원본 오디오 cache
 os.makedirs(INSTANCE_DIR, exist_ok=True)
@@ -50,6 +51,7 @@ os.makedirs(UPLOAD_DIR,   exist_ok=True)
 os.makedirs(INVOICE_PDF_DIR, exist_ok=True)
 os.makedirs(JEONJA_PDF_DIR, exist_ok=True)
 os.makedirs(AOR_PDF_DIR, exist_ok=True)
+os.makedirs(FUNDREQ_FILE_DIR, exist_ok=True)
 os.makedirs(SOA_REVIEW_PDF_DIR, exist_ok=True)
 os.makedirs(STT_AUDIO_DIR, exist_ok=True)
 # 회의록 STT Phase 0a 상수
@@ -581,6 +583,7 @@ def init_db(drop=False):
                 diff          REAL,                                -- AOR차액(cost-ref_amt)
                 verdict       TEXT,                                -- 검토결과 pass/escalate/mismatch/flag
                 why           TEXT,                                -- 미상신 사유(검토)
+                attach_files  TEXT,                                -- SVMS 첨부(인보이스·증빙) 파일명 JSON 배열
                 raw_row       TEXT,                                -- SP_GET_OPEX 행 전체 JSON(상신/리젝때 재조회 키만 사용)
                 status        TEXT NOT NULL DEFAULT 'pending',     -- pending/approved/submitting/submitted/rejecting/rejected/failed/reject_failed
                 reject_reason TEXT,
@@ -592,6 +595,10 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_fundreq_draft_status ON fundreq_draft(status)")
+        # 기존 DB 마이그레이션 — SVMS 첨부 파일명 목록(preview 인덱스는 디스크가 정본)
+        _fr_cols = [r[1] for r in conn.execute('PRAGMA table_info(fundreq_draft)').fetchall()]
+        if 'attach_files' not in _fr_cols:
+            conn.execute('ALTER TABLE fundreq_draft ADD COLUMN attach_files TEXT')
 
         # 인보이스 자동컨펌(SVMS Invoice Confirm) 2단게이트 draft 큐 (prep 엔진 ingest → 사람이 /invoice 탭서 opt-out 승인/리젝 결정 → 맥 invoice_confirm 러너가 SVMS 교정·컨펌)
         conn.execute("""
@@ -10871,6 +10878,178 @@ def api_ext_aor_stats():
 #   · review 엔진(맥)이 장금 Technical Submitted 검토결과를 POST /api/ext/fundreq/drafts (카드 적재, [검증] 버튼)
 #   · 사람이 /fundreq 탭서 카드마다 승인(approved) / 리젝(rejecting, 사유) 결정
 #   · [자동상신] 버튼 → 맥 fundreq_exec 가 approved=SP_SET_OPEX 상신(STATUS=U) / rejecting=STATUS=R+통보메일
+# ---- SVMS 첨부(인보이스·증빙) 미리보기 cache ----
+#   맥 fundreq_review 가 SP_GET_FILE 로 받은 첨부를 카드 적재 직후 idx 순서대로 업로드.
+#   idx = attach_files JSON 배열의 위치(=웹/앱 목록 순서)라 이름·순서가 항상 1:1 로 맞는다.
+#   읽기는 admin 세션(웹)·Bearer(앱) 전용. 파일명은 did/idx/확장자만으로 만들어 경로주입 불가.
+_FUNDREQ_ATT_MIME = {
+    'pdf':  'application/pdf',
+    'jpg':  'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif',
+    'heic': 'image/heic', 'heif': 'image/heif', 'webp': 'image/webp', 'bmp': 'image/bmp',
+    'tif':  'image/tiff', 'tiff': 'image/tiff',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'xls':  'application/vnd.ms-excel',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'doc':  'application/msword',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'ppt':  'application/vnd.ms-powerpoint',
+}
+# 브라우저가 렌더할 수 있는 것만 inline. Office 는 어차피 못 그리니 다운로드로 넘긴다
+# (앱 QuickLook 은 Content-Disposition 과 무관하게 바이트만 받아 확장자로 판별).
+_FUNDREQ_ATT_INLINE = {'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}
+_FUNDREQ_ATT_MAX = _NON_STT_UPLOAD_MAX   # before_request 가 비-STT 업로드를 조이는 값과 일치(초과분은 거기서 413)
+_FUNDREQ_ATT_MAX_IDX = 49
+
+
+def _fundreq_att_ext(name):
+    """확장자 정규화 — 허용목록에 없으면 None(= 업로드/서빙 거부)."""
+    ext = str(name or '').rsplit('.', 1)[-1].strip().lower()
+    return ext if ext in _FUNDREQ_ATT_MIME else None
+
+
+def _fundreq_att_names(raw):
+    """첨부 파일명 목록 정규화 — JSON 문자열/리스트 모두 받고, 이상 입력은 빈 목록.
+    (문자열·dict 가 그대로 저장되면 웹 카드의 files.map() 이 터져 목록 전체가 안 그려진다.)"""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [str(x) for x in raw if str(x or '').strip()][:_FUNDREQ_ATT_MAX_IDX + 1]
+
+
+def _fundreq_att_sniff_ok(ext, data):
+    """확장자와 실제 바이트가 같은 계열인지 확인 — 위장 업로드로 inline 서빙 되는 걸 막는다."""
+    if ext == 'pdf':
+        return data[:5] == b'%PDF-'
+    if ext in ('jpg', 'jpeg'):
+        return data[:3] == b'\xff\xd8\xff'
+    if ext == 'png':
+        return data[:8] == b'\x89PNG\r\n\x1a\n'
+    if ext == 'gif':
+        return data[:6] in (b'GIF87a', b'GIF89a')
+    if ext == 'bmp':
+        return data[:2] == b'BM'
+    if ext == 'webp':
+        return data[:4] == b'RIFF' and data[8:12] == b'WEBP'
+    if ext in ('heic', 'heif'):
+        return data[4:8] == b'ftyp'
+    if ext in ('tif', 'tiff'):
+        return data[:4] in (b'II*\x00', b'MM\x00*')
+    if ext in ('xlsx', 'docx', 'pptx'):
+        return data[:4] == b'PK\x03\x04'          # OOXML = zip
+    if ext in ('xls', 'doc', 'ppt'):
+        return data[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'   # 레거시 OLE
+    return False
+
+
+def _fundreq_att_path(did, idx, ext):
+    return os.path.join(FUNDREQ_FILE_DIR, '%d_%d.%s' % (int(did), int(idx), ext))
+
+
+def _fundreq_att_find(did, idx):
+    """(경로, 확장자) — 없으면 (None, None). 확장자는 허용목록 안에서만 탐색."""
+    for ext in _FUNDREQ_ATT_MIME:
+        p = _fundreq_att_path(did, idx, ext)
+        if os.path.exists(p):
+            return p, ext
+    return None, None
+
+
+def _fundreq_att_indices(did):
+    """미리보기 가능한 idx 목록(디스크가 정본)."""
+    prefix = '%d_' % int(did)
+    out = set()
+    try:
+        for name in os.listdir(FUNDREQ_FILE_DIR):
+            if not name.startswith(prefix) or '.' not in name:
+                continue
+            stem, _, ext = name[len(prefix):].rpartition('.')
+            if stem.isdigit() and ext.lower() in _FUNDREQ_ATT_MIME:
+                out.add(int(stem))
+    except OSError:
+        pass
+    return sorted(out)
+
+
+def _fundreq_att_delete(did, only_idx=None, keep_ext=None):
+    """draft 의 첨부 cache 삭제. only_idx 지정 시 그 idx 의 모든 확장자만.
+    keep_ext 는 방금 새로 쓴 파일을 남기고 옛 확장자 잔재만 치울 때 쓴다."""
+    deleted = 0
+    targets = [only_idx] if only_idx is not None else _fundreq_att_indices(did)
+    for idx in targets:
+        for ext in _FUNDREQ_ATT_MIME:
+            if keep_ext and ext == keep_ext:
+                continue
+            p = _fundreq_att_path(did, idx, ext)
+            if not os.path.exists(p):
+                continue
+            try:
+                os.remove(p); deleted += 1
+            except OSError:
+                app.logger.exception('fundreq-att-delete')
+    return deleted
+
+
+@app.route('/api/fundreq/drafts/<int:did>/attachments/<int:idx>')
+@admin_required
+def api_fundreq_attachment(did, idx):
+    """SVMS 첨부 원본 미리보기(읽기전용). 금전효과 없음."""
+    if idx < 0 or idx > _FUNDREQ_ATT_MAX_IDX:
+        abort(404)
+    if not query('SELECT id FROM fundreq_draft WHERE id=?', (did,), one=True):
+        abort(404)
+    p, ext = _fundreq_att_find(did, idx)
+    if not p:
+        abort(404)
+    resp = send_file(p, mimetype=_FUNDREQ_ATT_MIME[ext],
+                     as_attachment=(ext not in _FUNDREQ_ATT_INLINE),
+                     download_name='fundreq_%d_%d.%s' % (did, idx, ext), conditional=True)
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
+
+
+@app.route('/api/ext/fundreq/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
+@api_key_required
+def api_ext_fundreq_attachment_upload(did, idx):
+    """맥 러너가 SVMS 첨부 원본을 preview cache 로 적재. ?ext= 없으면 ?name= 확장자, 둘 다 없으면 pdf."""
+    if idx < 0 or idx > _FUNDREQ_ATT_MAX_IDX:
+        return jsonify({'error': 'invalid index'}), 400
+    if request.content_length and request.content_length > _FUNDREQ_ATT_MAX:
+        return jsonify({'error': 'too large'}), 413
+    row = query('SELECT status, attach_files FROM fundreq_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if row['status'] != 'pending':      # 결정·진행중 카드의 첨부는 바꾸지 않는다
+        return jsonify({'error': 'not accepting', 'status': row['status']}), 409
+    names = _fundreq_att_names(row['attach_files'])
+    if idx >= len(names):               # 이름 목록에 없는 idx = 이름·미리보기 어긋남 → 받지 않는다
+        return jsonify({'error': 'attachment index out of range', 'count': len(names)}), 404
+    ext = (_fundreq_att_ext('x.' + (request.args.get('ext') or ''))
+           or _fundreq_att_ext(request.args.get('name')) or 'pdf')
+    data = request.get_data()
+    if not data:
+        return jsonify({'error': 'empty'}), 400
+    if len(data) > _FUNDREQ_ATT_MAX:
+        return jsonify({'error': 'too large'}), 413
+    if not _fundreq_att_sniff_ok(ext, data):
+        return jsonify({'error': 'content does not match ext', 'ext': ext}), 400
+    final = _fundreq_att_path(did, idx, ext)
+    tmp = final + '.' + uuid.uuid4().hex + '.tmp'
+    try:
+        with open(tmp, 'wb') as fh:
+            fh.write(data)
+        os.replace(tmp, final)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    # 새 파일을 안착시킨 뒤에 같은 idx 의 옛 확장자만 정리 — 쓰기 실패 시 기존 preview 를 잃지 않는다.
+    _fundreq_att_delete(did, only_idx=idx, keep_ext=ext)
+    return jsonify({'id': did, 'index': idx, 'ext': ext, 'stored': True, 'bytes': len(data)})
+
+
 @app.route('/fundreq')
 @admin_required
 def fundreq_page():
@@ -10888,6 +11067,8 @@ def api_fundreq_list():
                      "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
     pending = query("SELECT COUNT(*) c FROM fundreq_draft WHERE status='pending'", one=True)
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
+    for draft in drafts:
+        draft['attachment_preview_indices'] = _fundreq_att_indices(draft['id'])
     return jsonify({'drafts': drafts, 'pending': pending['c'],
                     'enabled': _automation_enabled()})
 
@@ -10909,17 +11090,21 @@ def api_ext_fundreq_create():
         amt=d.get('amt'), cur_cd=d.get('cur_cd'), tp=d.get('tp'),
         ref_no=d.get('ref_no'), ref_amt=d.get('ref_amt'), dn=d.get('dn'),
         diff=d.get('diff'), verdict=d.get('verdict'), why=d.get('why'),
+        attach_files=(json.dumps(_fundreq_att_names(d.get('attach_files')), ensure_ascii=False)
+                      if d.get('attach_files') is not None else None),
         raw_row=(json.dumps(d.get('raw_row'), ensure_ascii=False) if d.get('raw_row') is not None else None),
     )
     if ex and ex['status'] == 'pending':
         sets = ', '.join(f"{k}=?" for k in cols)
         execute(f"UPDATE fundreq_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
+        # 재적재는 현재 첨부 집합을 다시 올린다 — 이름 목록과 idx 가 어긋나지 않게 옛 파일 먼저 정리.
+        _fundreq_att_delete(ex['id'])
         return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
     if ex:   # 이미 결정/진행중 — 손대지 않음
         return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
     did = execute(
         "INSERT INTO fundreq_draft (opex_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, tp, ref_no, "
-        "ref_amt, dn, diff, verdict, why, raw_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "ref_amt, dn, diff, verdict, why, attach_files, raw_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (opex_cd, *cols.values()))
     return jsonify({'id': did, 'status': 'pending'}), 201
 
@@ -10984,6 +11169,7 @@ def api_fundreq_delete(did):
     if not query('SELECT id FROM fundreq_draft WHERE id=?', (did,), one=True):
         return jsonify({'error': 'not found'}), 404
     execute('DELETE FROM fundreq_draft WHERE id=?', (did,))
+    _fundreq_att_delete(did)   # 행이 사라지면 첨부 cache 도 고아 — 같이 정리
     return jsonify({'id': did, 'deleted': True})
 
 
@@ -10991,7 +11177,11 @@ def api_fundreq_delete(did):
 @admin_required
 def api_fundreq_clear_decided():
     """처리완료 일괄 삭제 — 대기(pending)·결정대기(approved/rejecting)·진행중(submitting)은 보존."""
+    doomed = [r['id'] for r in query(
+        "SELECT id FROM fundreq_draft WHERE status IN ('submitted','rejected','failed','reject_failed')") or []]
     n = execute_rc("DELETE FROM fundreq_draft WHERE status IN ('submitted','rejected','failed','reject_failed')")
+    for i in doomed:
+        _fundreq_att_delete(i)
     return jsonify({'ok': True, 'deleted': n})
 
 

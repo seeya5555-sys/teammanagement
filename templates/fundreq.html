@@ -32,6 +32,10 @@
   .fr-kv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:6px}
   .fr-kv b{color:var(--text-primary)}
   .fr-why{color:var(--red);font-size:12px}
+  .fr-att{font-size:12px;color:#5F5E5A;margin-top:2px;word-break:break-all}
+  .fr-att.none{color:var(--red)}
+  .fr-att-a{color:#1F5FA9;text-decoration:underline;cursor:pointer}
+  .fr-att-x{color:#8A8880}
   .fr-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;align-items:center}
   .fr-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
   .fr-b.ap{background:var(--green);color:#fff}
@@ -81,6 +85,16 @@
     const r=await fetch(url,o);let j={};try{j=await r.json();}catch(e){}
     return {ok:r.ok,j};
   }
+  // SVMS 첨부(인보이스·증빙) — 내려받힌 것만 새 탭 미리보기, 나머지는 이름만.
+  function attBox(d){
+    let files=[]; try{files=JSON.parse(d.attach_files||'[]')||[];}catch(e){files=[];}
+    if(!files.length) return '<div class="fr-att none">SVMS 첨부 없음 — 근거 직접 확인 필요</div>';
+    const prev=new Set(d.attachment_preview_indices||[]);
+    const links=files.map((f,i)=>prev.has(i)
+      ? `<a class="fr-att-a" href="/api/fundreq/drafts/${d.id}/attachments/${i}" target="_blank" rel="noopener">${esc(f)}</a>`
+      : `<span class="fr-att-x" title="미리보기 없음(내려받기 실패 또는 미지원 형식)">${esc(f)}</span>`).join(', ');
+    return `<div class="fr-att">첨부 ${files.length}개: ${links}</div>`;
+  }
   function card(d){
     const dec=['approved','rejecting','reject_submitting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
     const isAor=(d.tp==='A'||d.tp==='P');
@@ -108,7 +122,7 @@
         <div class="fr-meta">${esc(d.opex_cd)}</div></div>
         <div class="fr-badges"><span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
       </div>
-      <div class="fr-body"><div class="fr-kv">${kv}</div>${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}</div>
+      <div class="fr-body"><div class="fr-kv">${kv}</div>${attBox(d)}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}</div>
       <div class="fr-acts">${acts}</div>
     </div>`;
   }
