@@ -11073,6 +11073,25 @@ def api_fundreq_list():
                     'enabled': _automation_enabled()})
 
 
+@app.route('/api/ext/fundreq/drafts/pending-attachments')
+@api_key_required
+def api_ext_fundreq_pending_attachments():
+    """러너 self-heal용: pending 카드 중 아직 캐시되지 않은 첨부 index만 반환.
+    읽기전용이며 승인·상신 상태는 전혀 바꾸지 않는다."""
+    out = []
+    for row in query("SELECT id, opex_cd, attach_files FROM fundreq_draft WHERE status='pending' ORDER BY id"):
+        names = _fundreq_att_names(row['attach_files'])
+        if not names:
+            continue
+        have = set(_fundreq_att_indices(row['id']))
+        missing = [i for i, name in enumerate(names)
+                   if i not in have and _fundreq_att_ext(name)]
+        if missing:
+            out.append({'id': row['id'], 'opex_cd': row['opex_cd'],
+                        'attach_files': names, 'missing_indices': missing})
+    return jsonify({'drafts': out, 'count': len(out)})
+
+
 @app.route('/api/ext/fundreq/drafts', methods=['POST'])
 @api_key_required
 def api_ext_fundreq_create():
