@@ -56,6 +56,7 @@
   .fr-edit input{border:1px solid var(--border-strong);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text-primary)}
   .fr-subj-in{min-width:240px;flex:1}
   .fr-exp-in{min-width:150px}
+  .fr-date-in{width:110px}
   .fr-exp-nm{font-size:12px}
   .fr-b.ed{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)}
   .fr-top{cursor:pointer}
@@ -169,6 +170,7 @@
         +`<div class="fr-edit">`
         +`<label>적요 <input class="fr-subj-in" value="${esc(d.subject||'')}" placeholder="적요(라인 내용)"></label>`
         +`<label>EXP <input class="fr-exp-in" list="expcodes" value="${esc(d.exp_cd||'')}" placeholder="코드/명칭 검색"></label>`
+        +`<label>INV_DT <input class="fr-date-in" inputmode="numeric" maxlength="8" value="${esc(d.inv_dt||'')}" placeholder="YYYYMMDD"></label>`
         +`<button class="fr-b ed" data-act="edit"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>수정저장</button>`
         +`<span class="fr-exp-nm mun">${d.exp_nm?esc(d.exp_nm):''}${d.exp_conf!=null?` (conf ${esc(d.exp_conf)})`:''}</span>`
         +`</div>`
@@ -198,7 +200,7 @@
       acts=`<span class="fr-decided">${esc(d.status)}${d.result?(' — '+esc(d.result)):''}</span>`;
     }
     const dcoll=true;   // 탭 진입 시 전 카드 기본 접힘(스캔 편하게). 펼침은 사용자가 클릭, 8s 새로고침엔 스냅샷으로 유지
-    return `<div class="fr-card${dcoll?' collapsed':''}" data-id="${d.id}" data-status="${esc(d.status)}" data-gate="${esc(gate)}">
+    return `<div class="fr-card${dcoll?' collapsed':''}" data-id="${d.id}" data-status="${esc(d.status)}" data-gate="${esc(gate)}" data-inv-dt="${esc(d.inv_dt||'')}">
       <div class="fr-top">
         <span class="fr-caret"><svg class="ic-svg"><use href="#i-chevron-down"/></svg></span>
         <div style="flex:1"><div class="fr-subj">${esc(d.vndr_nm||d.vndr_cd||d.inv_cd)}</div>
@@ -214,8 +216,8 @@
     // 자동 새로고침(8s) 때 사용자 입력 날아가는 버그 방지 — 체크/편집 상태 스냅샷 후 복원
     const snap={};
     document.querySelectorAll('.fr-card').forEach(el=>{
-      const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in');
-      snap[el.dataset.id]={chk:cb?cb.checked:null, sj:sj?sj.value:null, ex:ex?ex.value:null, coll:el.classList.contains('collapsed')};
+      const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in'), dt=el.querySelector('.fr-date-in');
+      snap[el.dataset.id]={chk:cb?cb.checked:null, sj:sj?sj.value:null, ex:ex?ex.value:null, dt:dt?dt.value:null, coll:el.classList.contains('collapsed')};
     });
     const {ok,j}=await api('GET','/api/invoice/drafts');
     if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
@@ -225,10 +227,11 @@
     document.querySelectorAll('.fr-card').forEach(el=>{
       const s=snap[el.dataset.id];
       if(s){
-        const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in');
+        const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in'), dt=el.querySelector('.fr-date-in');
         if(cb&&s.chk!=null)cb.checked=s.chk;
         if(sj&&s.sj!=null)sj.value=s.sj;
         if(ex&&s.ex!=null)ex.value=s.ex;
+        if(dt&&s.dt!=null)dt.value=s.dt;
         el.classList.toggle('collapsed', !!s.coll);   // 접힘 상태 유지(8s 새로고침 대비)
       }
       el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
@@ -255,12 +258,16 @@
   }
   async function act(el,a){
     const id=el.dataset.id;
-    if(a==='edit'){   // 적요·EXP 교정 저장 (입력값=`코드 명칭` → 코드만 파싱)
+    if(a==='edit'){   // 적요·EXP·INV_DT 교정 저장 (입력값=`코드 명칭` → 코드만 파싱)
       const sj=el.querySelector('.fr-subj-in').value.trim();
       const exRaw=el.querySelector('.fr-exp-in').value.trim();
+      const invDt=el.querySelector('.fr-date-in').value.trim();
       const exp_cd=exRaw.split(/\s+/)[0].replace(/[^0-9A-Za-z]/g,'');
+      const body={subject:sj,exp_cd:exp_cd};
+      const curInvDt=(el.dataset.invDt||'').trim();
+      if(invDt && invDt!==curInvDt) body.inv_dt=invDt;
       el.classList.add('is-busy');
-      const {ok,j}=await api('POST',`/api/invoice/drafts/${id}/edit`,{subject:sj,exp_cd:exp_cd});
+      const {ok,j}=await api('POST',`/api/invoice/drafts/${id}/edit`,body);
       el.classList.remove('is-busy');
       if(!ok){alert('수정 실패: '+(j.error||''));return;}
       load();return;

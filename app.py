@@ -11433,6 +11433,60 @@ def _invoice_pdf_delete(did):
         app.logger.exception('invoice-pdf-delete')
 
 
+def _invoice_raw_card_obj(raw_card):
+    """invoice raw_card JSON 안전 파싱. 실패/비dict = {}."""
+    if isinstance(raw_card, dict):
+        return dict(raw_card)
+    try:
+        obj = json.loads(raw_card or '{}')
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _invoice_manual_inv_dt_override(raw_card):
+    """raw_card 안 수동 INV_DT override audit 추출. 유효한 override(원본≠override)만 반환."""
+    rc = _invoice_raw_card_obj(raw_card)
+    original = str(rc.get('original_inv_dt') or '').strip()
+    override = str(rc.get('inv_dt_override') or '').strip()
+    if not (re.fullmatch(r'\d{8}', original) and re.fullmatch(r'\d{8}', override)):
+        return None
+    if original == override:
+        return None
+    return {
+        'original_inv_dt': original,
+        'inv_dt_override': override,
+        'inv_dt_override_by': rc.get('inv_dt_override_by'),
+        'inv_dt_override_at': rc.get('inv_dt_override_at'),
+        'date_match': rc.get('date_match'),
+    }
+
+
+def _invoice_merge_pending_manual_inv_dt(existing_row, cols):
+    """pending 재적재 시 사람이 준 INV_DT override audit 보존.
+
+    verify 재실행이 pending 행을 덮어써도 manual override 기록/표시값이 사라지지 않게 한다.
+    금전판정(gate)은 자동 승격하지 않고 기존 상태를 유지한다.
+    """
+    audit = _invoice_manual_inv_dt_override(existing_row['raw_card'])
+    if not audit:
+        return cols
+    rc = _invoice_raw_card_obj(cols.get('raw_card'))
+    rc['original_inv_dt'] = audit['original_inv_dt']
+    rc['inv_dt_override'] = audit['inv_dt_override']
+    rc['inv_dt_override_by'] = audit.get('inv_dt_override_by')
+    rc['inv_dt_override_at'] = audit.get('inv_dt_override_at')
+    rc['inv_dt'] = audit['inv_dt_override']
+    rc['date_match'] = bool(audit['date_match']) if audit.get('date_match') is not None else rc.get('date_match')
+    cols['inv_dt'] = audit['inv_dt_override']
+    if audit.get('date_match') is not None:
+        cols['date_match'] = 1 if audit.get('date_match') else 0
+    # 새 prep 판정이 HOLD면 반드시 강등한다. 기존 PASS가 재검증 HOLD를 덮지 못하게 한다.
+    cols['gate'] = 'HOLD' if cols.get('gate') == 'HOLD' else (existing_row['gate'] or cols.get('gate'))
+    cols['raw_card'] = json.dumps(rc, ensure_ascii=False)
+    return cols
+
+
 @app.route('/api/invoice/drafts')
 @admin_required
 def api_invoice_list():
@@ -11469,7 +11523,7 @@ def api_ext_invoice_create():
     inv_cd = (d.get('inv_cd') or '').strip()
     if not inv_cd:
         return jsonify({'error': 'inv_cd required'}), 400
-    ex = query("SELECT id, status FROM invoice_draft WHERE inv_cd=? "
+    ex = query("SELECT id, status, raw_card, gate FROM invoice_draft WHERE inv_cd=? "
                "AND status IN ('pending','approved','submitting','submitted',"
                "'rejecting','reject_submitting','rejected') "
                "ORDER BY id DESC LIMIT 1", (inv_cd,), one=True)
@@ -11491,6 +11545,7 @@ def api_ext_invoice_create():
         raw_card=(json.dumps(d.get('raw_card'), ensure_ascii=False) if d.get('raw_card') is not None else None),
     )
     if ex and ex['status'] == 'pending':
+        cols = _invoice_merge_pending_manual_inv_dt(ex, cols)
         sets = ', '.join(f"{k}=?" for k in cols)
         execute(f"UPDATE invoice_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
         return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
@@ -11634,19 +11689,15 @@ def api_ext_invoice_expense_codes():
 @app.route('/api/invoice/drafts/<int:did>/edit', methods=['POST'])
 @admin_required
 def api_invoice_edit(did):
-    """적요(subject)·expense(exp_cd/exp_nm) 사람 교정 — prep 오선택 방지. raw_card도 동기화(confirm.py가 사용).
+    """적요(subject)·expense(exp_cd/exp_nm)·INV_DT 사람 교정 — prep 오선택/날짜오입력 방지.
     payload 에 있는 필드만 갱신(없는 필드 NULL 덮어쓰기 방지) + pending 조건부 갱신(TOCTOU 가드)."""
     d = request.get_json(silent=True) or {}
-    row = query('SELECT raw_card, status FROM invoice_draft WHERE id=?', (did,), one=True)
+    row = query('SELECT raw_card, status, inv_dt, gate FROM invoice_draft WHERE id=?', (did,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
     if row['status'] != 'pending':
         return jsonify({'error': '대기(pending) 카드만 편집 가능 — 현재 %s' % row['status']}), 409
-    try:
-        rc = json.loads(row['raw_card'] or '{}')
-    except Exception:
-        app.logger.exception('invoice-edit')
-        rc = {}
+    rc = _invoice_raw_card_obj(row['raw_card'])
     sets, vals = [], []
     if 'subject' in d:                             # payload 에 온 필드만 반영
         subject = d.get('subject')
@@ -11666,8 +11717,30 @@ def api_invoice_edit(did):
             sets.append('exp_nm=?'); vals.append(exp_nm)
             rc['exp_nm'] = exp_nm
         rc['exp_edited'] = True
+    if 'inv_dt' in d:
+        inv_dt = str(d.get('inv_dt') or '').strip()
+        if not re.fullmatch(r'\d{8}', inv_dt):
+            return jsonify({'error': 'INV_DT 는 YYYYMMDD 8자리 숫자여야 합니다', 'field': 'inv_dt'}), 400
+        try:
+            datetime.strptime(inv_dt, '%Y%m%d')
+        except ValueError:
+            return jsonify({'error': 'INV_DT 가 실제 날짜가 아닙니다', 'field': 'inv_dt'}), 400
+        current_inv_dt = str(rc.get('inv_dt') or row['inv_dt'] or '').strip()
+        if inv_dt != current_inv_dt:
+            original_inv_dt = rc.get('original_inv_dt') or row['inv_dt'] or rc.get('inv_dt')
+            override_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            override_by = session.get('username') or 'web'
+            sets += ['inv_dt=?', 'date_match=?']; vals += [inv_dt, 1]
+            rc['inv_dt'] = inv_dt
+            rc['date_match'] = True
+            rc['original_inv_dt'] = original_inv_dt
+            rc['inv_dt_override'] = inv_dt
+            rc['inv_dt_override_by'] = override_by
+            rc['inv_dt_override_at'] = override_at
     if not sets:
-        return jsonify({'error': '수정할 필드 없음(subject/exp_cd/exp_nm)'}), 400
+        return jsonify({'id': did, 'subject': rc.get('subject'), 'inv_dt': rc.get('inv_dt') or row['inv_dt'],
+                        'date_match': rc.get('date_match'), 'gate': row['gate'],
+                        'exp_cd': rc.get('exp_cd'), 'exp_nm': rc.get('exp_nm'), 'noop': True})
     sets.append('raw_card=?'); vals.append(json.dumps(rc, ensure_ascii=False))
     # 조건부 claim — 위 SELECT 후 승인/리젝으로 상태가 바뀌었으면(race) 덮어쓰지 않음
     n = execute_rc(f"UPDATE invoice_draft SET {', '.join(sets)} WHERE id=? AND status='pending'",
@@ -11676,7 +11749,8 @@ def api_invoice_edit(did):
         cur = query('SELECT status FROM invoice_draft WHERE id=?', (did,), one=True)
         return jsonify({'error': '대기(pending) 카드만 편집 가능 — 현재 %s'
                         % (cur['status'] if cur else '?')}), 409
-    return jsonify({'id': did, 'subject': rc.get('subject'),
+    return jsonify({'id': did, 'subject': rc.get('subject'), 'inv_dt': rc.get('inv_dt'),
+                    'date_match': rc.get('date_match'), 'gate': row['gate'],
                     'exp_cd': rc.get('exp_cd'), 'exp_nm': rc.get('exp_nm')})
 
 
