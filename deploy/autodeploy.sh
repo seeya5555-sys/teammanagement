@@ -17,10 +17,15 @@ LOCAL=$(cat "$SHA_FILE" 2>/dev/null || echo none)
 [ "$LOCAL" = "$REMOTE" ] && exit 0   # 변경 없음 → 종료
 
 echo "$(date '+%F %T') new commit ${REMOTE:0:7}, deploying..."
-curl -sL "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.zip" -o /tmp/trmt_u.zip
-cd /tmp && rm -rf "teammanagement-${BRANCH}" && unzip -oq trmt_u.zip
-cp -rf "teammanagement-${BRANCH}/." "$APP_DIR/"     # 코드 갱신, instance/ 와 기존 uploads 는 보존
-rm -rf "teammanagement-${BRANCH}" trmt_u.zip
+# ⚠️ 반드시 커밋 SHA 고정 URL. archive/refs/heads/main.zip 은 codeload 캐시 alias 라서
+#    직전 커밋의 zip 이 돌아올 수 있음. 그러면 내용은 구버전인데 .deployed_sha 는 최신으로
+#    기록되고, 17행 조기종료 때문에 그 상태가 영구 고정됨(2026-07-29 build 101 OTA 사고:
+#    web SHA 는 380ccf1 인데 IPA·manifest 는 build 100 이 계속 서빙됨).
+#    SHA 고정 archive 는 immutable 이라 캐시 히트도 항상 정확함.
+curl -fsSL "https://github.com/${REPO}/archive/${REMOTE}.zip" -o /tmp/trmt_u.zip
+cd /tmp && rm -rf "teammanagement-${REMOTE}" && unzip -oq trmt_u.zip
+cp -rf "teammanagement-${REMOTE}/." "$APP_DIR/"     # 코드 갱신, instance/ 와 기존 uploads 는 보존
+rm -rf "teammanagement-${REMOTE}" trmt_u.zip
 cd "$APP_DIR"
 
 source venv/bin/activate
