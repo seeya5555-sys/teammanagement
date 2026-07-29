@@ -1962,6 +1962,57 @@ def api_widget_fleet():
     return jsonify({'fleet': fleet})
 
 
+@app.route('/api/widget/vetting')
+@login_required
+def api_widget_vetting():
+    """위젯 SIRE 현황용. **선박당 1행**, 지적 본문은 싣지 않는다.
+
+    🔴 `/api/vettings` 를 쓰지 않는 이유 = 그 응답은 vt_findings 전 컬럼(description·remark·
+       user_remark)을 모든 vetting 에 중첩해 실측 약 33KB 이고, 그 중 약 70%가 위젯이 안 그리는
+       지적 본문이다. 위젯은 다음 수검일과 건수만 그리므로 본문을 통째로 뺀다.
+    🔴 스코프와 상단선정 규칙은 Vetting 탭과 **공유**한다(VETTING_TYPES + supervisor_vessels,
+       `_vetting_pick`) — 숫자가 앱/웹과 어긋나면 형이 못 믿는다.
+    ⚠️ `_vetting_with_counts()` 의 vetting 당 2쿼리(N+1)를 단일 GROUP BY 로 바꾸지 않았다 —
+       manual override(manual_open_count 등)까지 그대로 타야 탭과 숫자가 일치하고, 대상이
+       담당선 규모(수십 건)라 실측 부담이 없다. 정합성 > 미세최적화.
+    """
+    is_admin = session.get('role') == 'admin'
+    sup_id = session.get('supervisor_id')
+    if not is_admin and not sup_id:
+        return jsonify({'vetting': []})     # 감독 미연결 member → 빈 배열(widget/issues 와 동일)
+
+    ph = ','.join('?' * len(VETTING_TYPES))
+    sql = (f'SELECT v.id, v.name FROM vessels v '
+           f'WHERE v.active=1 AND v.vessel_type IN ({ph})')
+    params = list(VETTING_TYPES)
+    if not is_admin:
+        sql += (' AND EXISTS (SELECT 1 FROM supervisor_vessels sv '
+                'WHERE sv.vessel_id=v.id AND sv.supervisor_id=?)')
+        params.append(sup_id)
+    sql += ' ORDER BY v.name'
+
+    out = []
+    for ve in query(sql, tuple(params)):
+        latest, obs_src, _enr = _vetting_pick(ve['id'])
+        if not latest:
+            continue                        # 수검 이력이 아예 없는 선박은 그릴 게 없다
+        out.append({
+            'vessel': ve['name'],
+            'status': latest.get('valid') or '',                 # 'Next Plan' / 'Last Result' / ''
+            'oil_major': latest.get('inspection_company') or '',
+            'date': latest.get('inspection_date') or '',         # Next Plan 은 미입력일 수 있음
+            'port': latest.get('port') or '',
+            'obs_total': obs_src.get('observation_count') or 0,
+            'obs_open': obs_src.get('open_count') or 0,
+            # Open 수치는 obs_src(Next Plan 이면 직전 Report) 기준이므로,
+            # 행의 보조 메타도 같은 수검 건에서만 가져온다. 상단 계획의
+            # 오일메이저·날짜를 섞으면 Open 지적의 출처가 틀어져 보인다.
+            'obs_oil_major': obs_src.get('inspection_company') or '',
+            'obs_date': obs_src.get('inspection_date') or '',
+        })
+    return jsonify({'vetting': out})
+
+
 # ─────────────────────────────────────────────────────────────────
 #  Daily 업무관리 — Excel 추출 (정형 템플릿)
 #   · 화면 구조 그대로 재현: 감독 시트 → 제목 → 컬럼 헤더 →
@@ -4151,6 +4202,30 @@ def _vetting_with_counts(v):
                (vid,), one=True)
     d['attach_count'] = ar['n'] if ar else 0
     return d
+
+
+def _vetting_pick(vessel_id):
+    """선박 1척의 vetting 중 (상단표시 기준, OBS 수치 출처, 전체) 를 고른다.
+
+    🔴 이 선정 규칙은 **정본이 1곳이어야 한다** — 웹 프론트 `vt.js vettingDigest`,
+       `/api/ext/vetting-digests`, 위젯이 서로 다른 숫자를 보여주면 형이 못 믿는다.
+       ① 'Next Plan'(계획된 다음 검사)이 있으면 검사일 미입력이어도 그것을 상단으로.
+          여러 개면 새로 만든 것(id 최신) 우선.
+       ② 상단이 Next Plan 이면 OBS 수치는 그 이전(Next Plan 아닌 최신) Report 에서 가져온다
+          — 계획 행에는 지적이 아직 없어서 0/0 으로 보이면 오판을 부른다.
+    반환: (latest, obs_src, enr). vetting 이 없으면 (None, None, []).
+    """
+    vts = query("SELECT * FROM vettings WHERE vessel_id=? "
+                "ORDER BY inspection_date DESC, id DESC", (vessel_id,))
+    if not vts:
+        return None, None, []
+    enr = [_vetting_with_counts(v) for v in vts]
+    next_plans = [v for v in enr if (v.get('valid') or '') == 'Next Plan']
+    latest = max(next_plans, key=lambda v: v.get('id') or 0) if next_plans else enr[0]
+    obs_src = latest
+    if (latest.get('valid') or '') == 'Next Plan':
+        obs_src = next((v for v in enr if (v.get('valid') or '') != 'Next Plan'), latest)
+    return latest, obs_src, enr
 
 
 # ----- Vettings (vessel별 그룹) -----
@@ -8331,19 +8406,10 @@ def _ext_vetting_digests():
     """선박 단위 SIRE 요약(자동 집계) — Vetting 탭 펼침 요약 패널과 동일 내용."""
     out = []
     for ve in query("SELECT id, name, imo FROM vessels ORDER BY name"):
-        vts = query("SELECT * FROM vettings WHERE vessel_id=? "
-                    "ORDER BY inspection_date DESC, id DESC", (ve['id'],))
-        if not vts:
+        # 선정 규칙은 `_vetting_pick()` 이 정본(위젯 엔드포인트와 공유 — 숫자 불일치 차단).
+        latest, obs_src, enr = _vetting_pick(ve['id'])
+        if not latest:
             continue
-        enr = [_vetting_with_counts(v) for v in vts]
-        # 상단(요약) 기준: 'Next Plan'(계획된 다음 검사)이 있으면 Date 미입력이어도 우선.
-        # 여러 Next Plan이면 새로 만든 것(id 최신) 우선. 프론트 vt.js vettingDigest 와 동일 규칙.
-        next_plans = [v for v in enr if (v.get('valid') or '') == 'Next Plan']
-        latest = max(next_plans, key=lambda v: v.get('id') or 0) if next_plans else enr[0]
-        # OBS: 최신이 'Next Plan'이면 그 이전(Next Plan 아닌 최신) Report 수치 사용
-        obs_src = latest
-        if (latest.get('valid') or '') == 'Next Plan':
-            obs_src = next((v for v in enr if (v.get('valid') or '') != 'Next Plan'), latest)
         detail = '\n\n'.join(
             (v.get('overall_remark') or '').strip()
             for v in enr
