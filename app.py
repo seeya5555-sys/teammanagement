@@ -11220,9 +11220,11 @@ def api_ext_fundreq_approved():
             "WHERE status='submitting' AND done_at IS NOT NULL "
             "AND done_at < datetime('now','localtime','-6 hours')")
     out = []
-    for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='approved' ORDER BY id ASC"):
+    for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='approved' "
+                   "AND decided_at IS NOT NULL AND COALESCE(decided_by,'')<>'' ORDER BY id ASC"):
         if execute_rc("UPDATE fundreq_draft SET status='submitting', done_at=datetime('now','localtime') "
-                      "WHERE id=? AND status='approved'", (r['id'],)):
+                      "WHERE id=? AND status='approved' AND decided_at IS NOT NULL "
+                      "AND COALESCE(decided_by,'')<>''", (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
 
@@ -11248,10 +11250,14 @@ def api_ext_fundreq_rejecting():
             "WHERE status='reject_submitting' AND done_at IS NOT NULL "
             "AND done_at < datetime('now','localtime','-6 hours')")
     out = []
-    for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='rejecting' ORDER BY id ASC"):
+    for r in query(f"SELECT {cols} FROM fundreq_draft WHERE status='rejecting' "
+                   "AND decided_at IS NOT NULL AND COALESCE(decided_by,'')<>'' "
+                   "AND TRIM(COALESCE(reject_reason,''))<>'' ORDER BY id ASC"):
         if execute_rc("UPDATE fundreq_draft SET status='reject_submitting', "
                       "done_at=datetime('now','localtime') "
-                      "WHERE id=? AND status='rejecting'", (r['id'],)):
+                      "WHERE id=? AND status='rejecting' AND decided_at IS NOT NULL "
+                      "AND COALESCE(decided_by,'')<>'' "
+                      "AND TRIM(COALESCE(reject_reason,''))<>''", (r['id'],)):
             out.append(dict(r))
     return jsonify({'count': len(out), 'drafts': out})
 
