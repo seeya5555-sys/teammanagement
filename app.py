@@ -2004,6 +2004,7 @@ def api_widget_vetting():
             'port': latest.get('port') or '',
             'obs_total': obs_src.get('observation_count') or 0,
             'obs_open': obs_src.get('open_count') or 0,
+            'obs_closed': obs_src.get('close_count') or 0,
             # Open 수치는 obs_src(Next Plan 이면 직전 Report) 기준이므로,
             # 행의 보조 메타도 같은 수검 건에서만 가져온다. 상단 계획의
             # 오일메이저·날짜를 섞으면 Open 지적의 출처가 틀어져 보인다.
