@@ -1910,6 +1910,59 @@ def api_mobile_issue_list():
 
 
 # ─────────────────────────────────────────────────────────────────
+#  위젯 전용 축약 엔드포인트
+#   iOS 위젯 익스텐션은 메모리 30MB·타임라인 생성시간 예산이 매우 짧다. 범용 API 를 그대로
+#   쓰면 안 쓰는 필드까지 받아 디코드하느라 예산을 태우고, 그 사이 페이지 전환 탭이 씹힌다.
+#   실측 2026-07-29: /api/issues 279KB(전건·i.* 통짜) · /api/fleet-map/data 24KB + 콜드 4초.
+#   → 위젯이 **실제로 그리는 필드만** 내보낸다. 집계는 위젯이 그대로 하므로(계약 불변)
+#     서버·클라 양쪽에 집계 로직이 이중화되지 않는다.
+#   🔴 스코프는 기존 화면과 **같은 규칙**을 쓴다 — 숫자가 웹/앱과 어긋나면 형이 못 믿는다.
+# ─────────────────────────────────────────────────────────────────
+@app.route('/api/widget/issues')
+@login_required
+def api_widget_issues():
+    """위젯 Daily 현안 페이지용. 미완 이슈의 5개 필드만(스코프 = /api/mobile/issues 와 동일)."""
+    is_admin = session.get('role') == 'admin'
+    sup_id = session.get('supervisor_id')
+    if not is_admin and not sup_id:
+        return jsonify([])
+    # COALESCE — 위젯 계약은 `status ?? "" != "Closed"` 라 status 결측을 **미완으로** 센다.
+    # `i.status != 'Closed'` 만 쓰면 NULL 행이 SQL 3값논리로 조용히 빠져 숫자가 어긋난다
+    # (현재 데이터에 NULL 은 0건이지만 계약을 코드로 못박아 둔다 — 올마이트 지적).
+    where = ["COALESCE(i.status, '') != 'Closed'"]
+    params = []
+    if not is_admin:
+        where.append('i.supervisor_id = ?')
+        params.append(sup_id)
+    rows = query(f'''
+        SELECT v.name AS vessel, i.item_topic, i.priority, i.status, i.due_date
+          FROM issues i
+          JOIN vessels v ON v.id = i.vessel_id
+         WHERE {' AND '.join(where)}
+    ''', tuple(params))
+    return jsonify([dict(r) for r in rows])
+
+
+# 위젯 선대/선급 페이지가 읽는 필드 — fleet_map.json 이 이미 갖고 있는 값들이다.
+WIDGET_FLEET_FIELDS = ('name', 'color', 'cls', 'cls_due_date', 'cls_due_days',
+                       'coc', 'urgent', 'issues_open')
+
+
+@app.route('/api/widget/fleet')
+@login_required
+def api_widget_fleet():
+    """위젯 선대 현황 · 선급 만기 페이지용.
+
+    🔴 `/api/fleet-map/data` 를 쓰지 않는 이유 = 그 경로는 선위 overlay 를 위해 upstream
+       ship-position(33.5MB)에 의존한다. 위젯은 **좌표를 그리지 않으므로** 그 의존을 통째로 뺀다.
+       스코프는 `_fleet_visible_auto_vessels()` 를 공유해 Fleet Map 화면과 동일하게 유지한다.
+    """
+    fleet = [{k: v.get(k) for k in WIDGET_FLEET_FIELDS}
+             for v in _fleet_visible_auto_vessels()]
+    return jsonify({'fleet': fleet})
+
+
+# ─────────────────────────────────────────────────────────────────
 #  Daily 업무관리 — Excel 추출 (정형 템플릿)
 #   · 화면 구조 그대로 재현: 감독 시트 → 제목 → 컬럼 헤더 →
 #     월 그룹 헤더 → 일 그룹 헤더 → 데이터 행
@@ -13941,7 +13994,13 @@ TRMTDB_SHIP_POSITION_URL = os.getenv(
     'TRMTDB_SHIP_POSITION_URL',
     'https://trmtdb.duckdns.org/api/ship-position?platform=ALL',
 )
-TRMTDB_POSITION_CACHE_TTL = 45
+# upstream(`?platform=ALL`)은 실측 33.5MB·3.4~3.8초인데, `latest_event_at`이 **정시 단위 배치**로만
+# 갱신된다(2026-07-29 실측: 13:00에 172척 / 08:00에 138척). 45초 TTL은 신선도 이득 없이 하루 약
+# 1,900회 × 33.5MB 를 왕복하던 순수 낭비여서 10분으로 올렸다.
+TRMTDB_POSITION_CACHE_TTL = 600
+# 실패한 시도까지 10분 묶어두면 upstream 일시 장애가 10분짜리 빈 화면이 된다(올마이트 지적).
+# 실패 뒤에는 짧게 다시 시도한다.
+TRMTDB_POSITION_ERROR_TTL = 60
 _trmtdb_position_cache = {'at': 0.0, 'loaded': False, 'vessels': [], 'fetched_at': None, 'error': None}
 _trmtdb_position_lock = threading.Lock()
 _trmtdb_position_refreshing = False
@@ -14371,44 +14430,74 @@ def _fleet_visible_auto_vessels():
     return fleet
 
 
-def _trmtdb_positions():
-    """TRMT DB 위치 API를 서버에서만 조회한다. upstream 장애 시 마지막 정상본/SVMS fallback."""
+def _trmtdb_positions_refresh(api_key):
+    """upstream 1회 갱신 — **백그라운드 스레드 전용**. 예외는 캐시 error 로만 남긴다
+    (스레드에서 raise 하면 아무도 못 받고 삼켜지므로 여기서 끝낸다)."""
     global _trmtdb_position_refreshing
-    now = time.monotonic()
-    with _trmtdb_position_lock:
-        cached = _trmtdb_position_cache
-        if (cached['loaded'] or cached['error']) and now - cached['at'] < TRMTDB_POSITION_CACHE_TTL:
-            return cached['vessels'], cached['fetched_at'], cached['error'], True
-        api_key = os.getenv('TRMTDB_API_KEY')
-        if not api_key:
-            return cached['vessels'], cached['fetched_at'], 'TRMT DB API key not configured', cached['loaded']
-        # slow upstream는 lock 밖에서 호출한다. 동시 요청은 마지막 정상 cache/SVMS를 즉시 받는다.
-        if _trmtdb_position_refreshing:
-            return cached['vessels'], cached['fetched_at'], cached['error'], cached['loaded']
-        _trmtdb_position_refreshing = True
     try:
-            req = urllib.request.Request(
-                TRMTDB_SHIP_POSITION_URL,
-                headers={'x-api-key': api_key, 'Accept': 'application/json'},
-            )
-            with urllib.request.urlopen(req, timeout=20) as res:
-                payload = json.loads(res.read().decode('utf-8'))
-            vessels = payload.get('vessels') if isinstance(payload, dict) else None
-            if not isinstance(vessels, list):
-                raise ValueError('TRMT DB ship-position payload missing vessels[]')
-            with _trmtdb_position_lock:
-                cached.update({'at': time.monotonic(), 'loaded': True, 'vessels': vessels,
-                               'fetched_at': datetime.utcnow().isoformat(timespec='seconds'), 'error': None})
-            return vessels, cached['fetched_at'], None, False
+        req = urllib.request.Request(
+            TRMTDB_SHIP_POSITION_URL,
+            headers={'x-api-key': api_key, 'Accept': 'application/json'},
+        )
+        with urllib.request.urlopen(req, timeout=20) as res:
+            payload = json.loads(res.read().decode('utf-8'))
+        vessels = payload.get('vessels') if isinstance(payload, dict) else None
+        if not isinstance(vessels, list):
+            raise ValueError('TRMT DB ship-position payload missing vessels[]')
+        with _trmtdb_position_lock:
+            _trmtdb_position_cache.update(
+                {'at': time.monotonic(), 'loaded': True, 'vessels': vessels,
+                 'fetched_at': datetime.utcnow().isoformat(timespec='seconds'), 'error': None})
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
             http.client.HTTPException, ValueError, json.JSONDecodeError) as exc:
         # 오류 문자열은 사용자 API 응답에 내보내지 않는다(상세 upstream 정보/키 누출 방지).
         with _trmtdb_position_lock:
-            cached.update({'at': time.monotonic(), 'error': type(exc).__name__})
-            return cached['vessels'], cached['fetched_at'], cached['error'], cached['loaded']
+            _trmtdb_position_cache.update({'at': time.monotonic(), 'error': type(exc).__name__})
     finally:
         with _trmtdb_position_lock:
             _trmtdb_position_refreshing = False
+
+
+def _trmtdb_positions():
+    """TRMT DB 위치 API를 서버에서만 조회한다. upstream 장애 시 마지막 정상본/SVMS fallback.
+
+    🔴 **요청 경로에서 upstream 을 기다리지 않는다(stale-while-revalidate).**
+    실측 2026-07-29: `?platform=ALL` 응답이 33.5MB·3.4~3.8초다(선박 316척 × history·by_platform
+    각 26KB — overlay 는 선박당 `latest` 431B 만 쓴다). 옛 구조는 TTL 만료 뒤 첫 요청이 이 왕복+파싱을
+    통째로 뒤집어써서 `/api/fleet-map/data` 가 콜드 4초였고, gunicorn `-w 1` 이라 그 사이 다른 요청까지
+    밀렸다(위젯 페이지 전환이 안 넘어가 보인 원인 중 하나).
+    → 만료되면 **마지막 정상본을 즉시 반환**하고 갱신은 백그라운드 스레드가 한다.
+    ⚠️ upstream 파라미터로 이력을 줄이는 길은 없었다(history=0·latest_only·include=latest 전부 무시,
+       응답 33,484,019 bytes 동일 / gzip 요청도 무압축). 그건 upstream 쪽 과제로 남김.
+    """
+    global _trmtdb_position_refreshing
+    now = time.monotonic()
+    api_key = os.getenv('TRMTDB_API_KEY')
+    start = False
+    with _trmtdb_position_lock:
+        cached = _trmtdb_position_cache
+        # 마지막 시도가 실패였으면 짧은 TTL 로 곧 재시도한다.
+        ttl = TRMTDB_POSITION_ERROR_TTL if cached['error'] else TRMTDB_POSITION_CACHE_TTL
+        fresh = (cached['loaded'] or cached['error']) and now - cached['at'] < ttl
+        if not fresh and api_key and not _trmtdb_position_refreshing:
+            _trmtdb_position_refreshing = True
+            start = True
+        vessels, fetched_at = cached['vessels'], cached['fetched_at']
+        error, loaded = cached['error'], cached['loaded']
+    if start:
+        # daemon = 워커 종료를 막지 않는다. 실패해도 다음 요청이 다시 건다.
+        try:
+            threading.Thread(target=_trmtdb_positions_refresh, args=(api_key,),
+                             name='trmtdb-pos-refresh', daemon=True).start()
+        except RuntimeError:
+            # 스레드 생성 실패 시 플래그를 되돌린다 — 안 그러면 True 로 굳어 갱신이 영구히 멈춘다
+            # (올마이트 지적). 다음 요청이 다시 시도하게 둔다.
+            with _trmtdb_position_lock:
+                _trmtdb_position_refreshing = False
+    if not api_key:
+        error = 'TRMT DB API key not configured'
+    # 4번째 값 = "캐시본을 내줬는가". 이제 요청 경로는 **항상** 캐시본을 내주므로 적재 여부와 같다.
+    return vessels, fetched_at, error, loaded
 
 
 def _trmtdb_track_points(row):

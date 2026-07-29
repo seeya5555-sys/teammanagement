@@ -484,7 +484,8 @@
 
   function loadFleet(){
   return fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
-    // 서버 45초 TTL과 30초 polling으로 upstream 부하를 제한하며 최신 위치를 반영한다.
+    // 서버는 upstream(33.5MB)을 요청 경로에서 기다리지 않고 10분 TTL 캐시본을 즉시 준다
+    // (stale-while-revalidate). upstream 자체가 정시 단위 배치라 30초 polling 은 그대로 둔다.
     markers.forEach(o=>{map.removeLayer(o.m);map.removeLayer(o.tt);}); markers=[];
     document.querySelectorAll('.fm-empty').forEach(el=>el.remove());
 
