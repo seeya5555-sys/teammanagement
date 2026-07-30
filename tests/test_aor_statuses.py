@@ -694,17 +694,39 @@ class AORStatusesTests(unittest.TestCase):
     def test_init_db_cleans_duplicates_then_upgrades_the_index(self):
         """실제 마이그레이션 경로: legacy index + canonical 중복 → init_db 한 번으로 정리·교체."""
         self._install_legacy_index()
-        self._insert("ATGRCA2607220003", "submitted")
+        self._insert("ATGRCA2607220003", "approved")
         self._insert("atgrca2607220003", "pending")
         with appmod.app.app_context():
             appmod.init_db(drop=False)
         with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
             sql = db.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
                              ("uq_aor_draft_active_cd",)).fetchone()[0]
-            rows = dict(db.execute("SELECT aor_cd, status FROM aor_draft ORDER BY id"))
+            rows = db.execute("SELECT aor_cd, status FROM aor_draft ORDER BY id").fetchall()
         self.assertIn("upper(trim(aor_cd))", " ".join(sql.split()).lower())
-        # 진행이 더 앞선 submitted 가 승자, 변형 pending 은 duplicate 로 강등되고 key 는 정규화됨
-        self.assertEqual({"ATGRCA2607220003": "duplicate"}, rows)
+        # 진행이 더 앞선 approved 가 승자, 변형 pending 은 duplicate 로 강등되고 key 는 정규화됨
+        self.assertEqual([("ATGRCA2607220003", "approved"),
+                          ("ATGRCA2607220003", "duplicate")], rows)
+
+    def test_init_db_migrates_submitted_history_beside_a_new_active_row(self):
+        """'submitted' 이력행 + 대소문자만 다른 새 활성행이 있는 legacy DB 에서도 부팅이 살아야 한다.
+
+        2026-07-30: 'submitted' 가 활성군에서 빠지자 이 쌍은 **정상 상태**가 됐다(이력 1 + 활성 1).
+        dedup 정리가 안 걷어내므로, 정규화를 옛 raw-컬럼 index 보다 먼저 하면 그 index 를 때려
+        `init_db` 가 IntegrityError 로 죽는다 = 배포 전체가 부팅 불가. 그 순서 회귀 가드.
+        """
+        self._install_legacy_index()
+        self._insert("ATGRCA2607220003", "submitted")
+        self._insert("atgrca2607220003", "pending")
+        with appmod.app.app_context():
+            appmod.init_db(drop=False)          # ← 여기서 죽지 않는 것이 본 테스트의 핵심
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            sql = db.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                             ("uq_aor_draft_active_cd",)).fetchone()[0]
+            rows = db.execute("SELECT aor_cd, status FROM aor_draft ORDER BY id").fetchall()
+        self.assertIn("upper(trim(aor_cd))", " ".join(sql.split()).lower())
+        # 이력은 이력대로 남고, 새 활성행은 살아서 key 만 정규화된다(강등 없음)
+        self.assertEqual([("ATGRCA2607220003", "submitted"),
+                          ("ATGRCA2607220003", "pending")], rows)
 
     def test_active_status_list_has_a_single_source_of_truth(self):
         """index predicate 와 dedup 정리 범위가 같은 상수에서 나오는지(리터럴 복제 금지)."""
@@ -755,12 +777,13 @@ class AORStatusesTests(unittest.TestCase):
 
 
 class AbsorbingStatusInvariantTests(unittest.TestCase):
-    """`AOR_REINGEST_TERMINAL_STATUSES` 가 정말 absorbing 인지 **두 겹**으로 강제한다.
+    """`AOR_ROW_ABSORBING_STATUSES` 가 정말 absorbing 인지 **두 겹**으로 강제한다.
 
-    러너의 skip 안전성은 전적으로 이 불변식에 기댄다(올마이트 R16):
-      "skip 대상 상태에서는 어떤 전이로도 빠져나갈 수 없다."
-    깨지면 skip 된 건이 나중에 재적재가 필요해지는데, 그때는 이미 SVMS 조회창(오늘-120d)
-    밖이라 입력조차 안 와서 **영구 누락**이 된다.
+    불변식: "상신 이력행(submitted)의 status·aor_cd 는 어떤 경로로도 바뀌지 않는다."
+    새 SVMS 사이클(리젝→재상신)은 이 행을 고치지 않고 **새 행 INSERT** 로 표현한다.
+    ⚠️ 2026-07-30 이전엔 이 상수가 러너 skip 계약(`AOR_REINGEST_TERMINAL_STATUSES`)과 같은
+       하나였는데, 행 absorbing 을 aor_cd 재적재 no-op 으로 잘못 확대해석해 리젝→재상신 건이
+       영구 누락됐다(실측 ATGRCA2607220002). 지금은 두 상수가 분리되어 있고 skip 계약은 비어 있다.
 
     1차 = DB trigger(`trg_aor_draft_absorbing`). 어떤 경로로 오든 DB 가 UPDATE 를 거부한다.
     2차 = 아래 소스 스캔. trigger 가 있어도 "왜 이런 코드가 생겼나" 를 개발 시점에 잡는다.
@@ -829,10 +852,10 @@ class AbsorbingStatusInvariantTests(unittest.TestCase):
             "`cols` 가 소스 리터럴 dict 이고 거기에 status 키가 없다 — 즉 status 를 아예 "
             "건드리지 않는다. 그 사실은 test_ingest_update_never_sets_status 가 AST 로 못박는다.",
         "UPDATE aor_draft AS loser":
-            "init_db 중복정리. 같은 canonical aor_cd 의 winner 가 active 로 남을 때만 loser 를 "
-            "'duplicate' 로 강등한다. loser 가 terminal(rank 최대)이면 winner 도 같은 terminal 이라 "
-            "**그 aor_cd 는 계속 terminal 로 보인다** — skip 집합의 key 는 행이 아니라 aor_cd 이므로 "
-            "false-skip 이 생기지 않는다. trigger 도 같은 조건(NOT EXISTS 절)으로 이 경우만 허용한다.",
+            "init_db 중복정리. `WHERE loser.status IN (_AOR_ACTIVE_STATUSES)` 로 제한되고, "
+            "2026-07-30 이후 활성 상태군에는 absorbing 상태('submitted')가 **없다** — 즉 이 UPDATE 는 "
+            "absorbing 행을 애초에 건드릴 수 없다. trigger 쪽 NOT EXISTS 예외도 같은 날 제거해서 "
+            "(행 단위 absorbing) 이 근거가 trigger 예외에 기대지 않는다.",
     }
 
     def test_justified_exceptions_are_not_stale(self):
@@ -964,7 +987,10 @@ class AbsorbingStatusInvariantTests(unittest.TestCase):
                                                    "WHERE status='submitting'"))
 
     def test_no_transition_leaves_a_terminal_status(self):
-        term = set(appmod.AOR_REINGEST_TERMINAL_STATUSES)
+        # 기준은 **행 단위** absorbing 상수다. 러너 skip 계약(`AOR_REINGEST_TERMINAL_STATUSES`)은
+        # 2026-07-30 에 비워졌지만(SVMS 가 같은 aor_cd 를 다시 결재대기로 되돌리므로),
+        # "상신 이력행을 사후 편집하지 않는다"는 불변식은 그대로 지킨다.
+        term = set(appmod.AOR_ROW_ABSORBING_STATUSES)
         for path, lineno, sql, analyzable in self._scan():
             where = f"{os.path.relpath(path)}:{lineno}"
             # allowlist 는 **정적분석 가능한 .py 소스에만** 적용한다. .sql 파일은 파일 전체가
@@ -1012,7 +1038,8 @@ class AbsorbingTriggerTests(unittest.TestCase):
         self.assertIsNotNone(row, "init_db 가 absorbing trigger 를 안 만듦")
 
     def test_leaving_a_terminal_status_is_rejected_by_the_db(self):
-        for term in appmod.AOR_REINGEST_TERMINAL_STATUSES:
+        self.assertTrue(appmod.AOR_ROW_ABSORBING_STATUSES, "행 absorbing 목록이 비어 있음")
+        for term in appmod.AOR_ROW_ABSORBING_STATUSES:
             with self.subTest(status=term):
                 with sqlite3.connect(self.path) as db:
                     db.execute("DELETE FROM aor_draft")
@@ -1043,14 +1070,15 @@ class AbsorbingTriggerTests(unittest.TestCase):
             self.assertEqual(0, db.execute("SELECT COUNT(*) FROM aor_draft").fetchone()[0])
 
     def test_duplicate_cleanup_is_not_blocked_by_the_trigger(self):
-        """같은 aor_cd 의 submitted 2행이 있어도 init_db 중복정리가 ABORT 되면 안 된다.
+        """같은 aor_cd 의 submitted 2행이 있어도 init_db 가 ABORT 되면 안 된다.
 
         막히면 부팅(ExecStartPre 의 init_db)이 죽어 서비스가 아예 안 뜬다.
+        2026-07-30 이후 'submitted' 는 **활성행이 아니라 이력행**이므로 중복정리 대상도 아니고
+        (강등 UPDATE 가 아예 안 일어나 trigger 와 부딪힐 일이 없다) 활성 index 도 안 건드린다
+        — 두 행 모두 그대로 남아야 한다.
         """
         with sqlite3.connect(self.path) as db:
             db.execute("DELETE FROM aor_draft")
-            # 중복 active 행은 partial unique index 가 막는다. 정리 대상은 애초에 그 인덱스가
-            # 없던 레거시 DB 이므로 그 상태를 재현한다(init_db 가 다시 만든다).
             db.execute("DROP INDEX IF EXISTS uq_aor_draft_active_cd")
             db.execute("INSERT INTO aor_draft (id, aor_cd, status) VALUES (1,'ATGRCA1','submitted')")
             db.execute("INSERT INTO aor_draft (id, aor_cd, status) VALUES (2,'ATGRCA1','submitted')")
@@ -1059,7 +1087,76 @@ class AbsorbingTriggerTests(unittest.TestCase):
             appmod.init_db(drop=False)          # 여기서 IntegrityError 나면 실패
         with sqlite3.connect(self.path) as db:
             got = dict(db.execute("SELECT id, status FROM aor_draft").fetchall())
-        self.assertEqual({1: 'duplicate', 2: 'submitted'}, got)
+        self.assertEqual({1: 'submitted', 2: 'submitted'}, got)
+
+    def test_each_of_several_history_rows_stays_locked(self):
+        """같은 aor_cd 의 'submitted' 이력행이 여러 개일 때 **각 행이 따로** 잠겨야 한다.
+
+        2026-07-30 이전 trigger 에는 "같은 canonical key 에 다른 absorbing 행이 남아 있으면
+        허용" 하는 NOT EXISTS 예외가 있었다. 사이클 2회짜리 문서는 이력행이 2개인 게 정상이므로,
+        그 예외가 남아 있으면 두 행 다 자유롭게 편집 가능해져 불변식이 통째로 무력화된다
+        (= 이력을 pending 으로 되살려 SVMS 이중상신). 예외 제거 회귀 가드.
+        """
+        with sqlite3.connect(self.path) as db:
+            db.execute("DELETE FROM aor_draft")
+            db.execute("INSERT INTO aor_draft (id, aor_cd, status) VALUES (1,'ATGRCA1','submitted')")
+            db.execute("INSERT INTO aor_draft (id, aor_cd, status) VALUES (2,'ATGRCA1','submitted')")
+            db.commit()
+            for rid in (1, 2):
+                with self.subTest(id=rid, col='status'):
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        db.execute("UPDATE aor_draft SET status='pending' WHERE id=?", (rid,))
+                with self.subTest(id=rid, col='aor_cd'):
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        db.execute("UPDATE aor_draft SET aor_cd='OTHER1' WHERE id=?", (rid,))
+
+    def test_key_normalization_of_a_history_row_is_not_blocked(self):
+        """비정규 key 를 가진 'submitted' 이력행이 있어도 init_db 의 정규화가 통과해야 한다.
+
+        trigger 비교가 canonical 기준(`upper(trim(...))`)이라 정규화는 key 를 바꾸지 않는다.
+        raw 비교로 바꾸면 여기서 부팅이 ABORT 된다(= 서비스 안 뜸).
+        """
+        with sqlite3.connect(self.path) as db:
+            db.execute("DELETE FROM aor_draft")
+            db.execute("INSERT INTO aor_draft (id, aor_cd, status) VALUES (1,'  atgrca1 ','submitted')")
+            db.commit()
+        with appmod.app.app_context():
+            appmod.init_db(drop=False)          # 여기서 IntegrityError 나면 실패
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(('ATGRCA1', 'submitted'),
+                             db.execute("SELECT aor_cd, status FROM aor_draft").fetchone())
+
+    def test_submitted_history_does_not_block_a_new_svms_cycle(self):
+        """🔴 형 신고 버그(2026-07-30) 회귀 가드 — 실측 ATGRCA2607220002.
+
+        SVMS 가 리젝→수정→재상신으로 같은 aor_cd 를 다시 결재대기로 돌려보내면, TRMT 에
+        상신 이력행(submitted)이 있어도 **새 pending 카드**가 생겨야 한다. 예전엔 이력행이
+        활성으로 잡혀 dedup 되고, 러너도 skip 해서 영구히 큐에 안 들어왔다.
+        """
+        self._seed('submitted')
+        with appmod.app.test_client() as c:
+            r = c.post("/api/ext/aor/drafts",
+                       json={"aor_cd": "ATGRCA1", "vsl_nm": "ATLANTIC GREEN",
+                             "subj": "LT Cooler Gaskets(제목 수정 후 재상신)",
+                             "amt": 1886, "raw_row": {"AOR_CD": "ATGRCA1"}},
+                       headers={"X-API-Key": "secret"})
+        self.assertEqual(201, r.status_code, r.get_data(as_text=True))
+        self.assertEqual('pending', r.get_json()['status'])
+        self.assertNotIn('dedup', r.get_json())
+        with sqlite3.connect(self.path) as db:
+            rows = db.execute("SELECT status FROM aor_draft WHERE aor_cd='ATGRCA1' "
+                              "ORDER BY id").fetchall()
+        self.assertEqual([('submitted',), ('pending',)], rows,
+                         "이력행은 그대로 두고 새 카드만 추가돼야 한다")
+
+    def test_a_second_active_card_is_still_blocked(self):
+        """이중상신 방어는 남아 있어야 한다 — 활성행(pending)은 여전히 aor_cd 당 1장."""
+        self._seed('submitted')
+        with sqlite3.connect(self.path) as db:
+            db.execute("INSERT INTO aor_draft (aor_cd, status) VALUES ('ATGRCA1','pending')")
+            db.commit()
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("INSERT INTO aor_draft (aor_cd, status) VALUES ('ATGRCA1','pending')")
 
     def test_terminal_row_cannot_change_its_canonical_key(self):
         """status 를 안 건드려도 aor_cd 를 바꾸면 **원래 key 가 terminal 을 잃는다**(R18 blocker)."""
@@ -1135,12 +1232,12 @@ class AbsorbingTriggerTests(unittest.TestCase):
     def test_stale_trigger_definition_disables_skip(self):
         """상수를 넓혀도 `IF NOT EXISTS` 라 기존 trigger 는 안 바뀐다 → 불일치면 꺼야 한다."""
         self._seed('submitted')
-        orig = appmod.AOR_REINGEST_TERMINAL_STATUSES
+        orig = appmod.AOR_ROW_ABSORBING_STATUSES
         try:
-            appmod.AOR_REINGEST_TERMINAL_STATUSES = orig + ('rejected',)
+            appmod.AOR_ROW_ABSORBING_STATUSES = orig + ('rejected',)
             self.assertNotIn('terminal_statuses', self._body())
         finally:
-            appmod.AOR_REINGEST_TERMINAL_STATUSES = orig
+            appmod.AOR_ROW_ABSORBING_STATUSES = orig
 
 
 class TestSuiteIntegrityTests(unittest.TestCase):

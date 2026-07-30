@@ -553,15 +553,18 @@ def init_db(drop=False):
                   )
               )
         """)
-        # Normalize only after conflicting active rows have been removed from the
-        # partial index. This ordering is safe even on a later boot where the
-        # case-sensitive unique index already exists and legacy mixed-case keys do too.
-        conn.execute("UPDATE aor_draft SET aor_cd=upper(trim(aor_cd)) "
-                     "WHERE aor_cd<>upper(trim(aor_cd))")
-        # 유일성은 **canonical key 기준**으로 DB 가 강제한다(위 정규화는 관례일 뿐이라
+        # 유일성은 **canonical key 기준**으로 DB 가 강제한다(아래 정규화는 관례일 뿐이라
         # 정규화를 잊은 writer 가 하나만 생겨도 뚫린다). 바로 위 dedup 정리가 끝난 직후라
         # canonical 중복 활성행은 없다 — 교체가 실패할 수 없는 유일한 지점이다.
+        # 🔴 index 교체를 **정규화보다 먼저** 한다(2026-07-30). 옛 raw-컬럼 index 가 남은 DB 에서
+        #    먼저 정규화하면, 대소문자만 다르던 두 행의 raw key 가 같아지면서 그 옛 index 를
+        #    때린다(UNIQUE constraint failed: aor_draft.aor_cd → 부팅 자체가 죽음).
+        #    'submitted' 가 활성군에서 빠진 뒤로는 위 dedup 정리가 그런 쌍을 더는 안 걷어내므로
+        #    (이력행 + 새 활성행은 정상 상태다) 실제로 재현되는 경로가 됐다.
+        #    표현식 index 를 먼저 깔면 정규화는 canonical key 를 바꾸지 않아 충돌이 불가능하다.
         _aor_active_index_install(conn)
+        conn.execute("UPDATE aor_draft SET aor_cd=upper(trim(aor_cd)) "
+                     "WHERE aor_cd<>upper(trim(aor_cd))")
         # absorbing 상태 이탈 금지 — 러너 skip 안전성의 근거를 DB 층에 고정한다.
         # (정의·검증은 _aor_absorbing_trigger_sql / _aor_absorbing_trigger_ok)
         _aor_absorbing_trigger_install(conn)
@@ -10360,9 +10363,12 @@ def api_ext_aor_create():
     # 신규 pending 을 만들면(양쪽 승인시) 이중 SVMS 상신 위험.
     # DB unique index도 canonical key를 쓴다. 조회가 raw aor_cd 비교면 legacy 공백/대소문자
     # 행을 못 찾아 INSERT가 expression-index IntegrityError(500)로 끝난다.
+    # ⚠️ 상태군 정본은 `_AOR_ACTIVE_STATUSES` 하나다 — 리터럴을 여기 복제해두면 index predicate
+    #    와 조용히 갈라진다(그러면 INSERT 가 index 위반 500 이 되거나, 반대로 막아야 할 중복을
+    #    통과시킨다). 'submitted' 이력행은 이제 활성이 아니라 여기서 걸리지 않는다 → SVMS
+    #    리젝→재상신 사이클이 새 카드로 적재된다(2026-07-30 버그 수정).
     ex = query("SELECT id, status FROM aor_draft WHERE upper(trim(aor_cd))=? "
-               "AND status IN ('pending','hold','approved','submitting','submitted',"
-               "'rejecting','reject_submitting') "
+               f"AND status IN ({_aor_status_list_sql(_AOR_ACTIVE_STATUSES)}) "
                "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
     cm = d.get('cost_match')
     cols = dict(
@@ -10406,8 +10412,7 @@ def api_ext_aor_create():
         if 'UNIQUE constraint failed:' not in msg or 'uq_aor_draft_active_cd' not in msg and 'aor_draft.aor_cd' not in msg:
             raise
         ex = query("SELECT id, status FROM aor_draft WHERE upper(trim(aor_cd))=? "
-                   "AND status IN ('pending','hold','approved','submitting','submitted',"
-                   "'rejecting','reject_submitting') "
+                   f"AND status IN ({_aor_status_list_sql(_AOR_ACTIVE_STATUSES)}) "
                    "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
         if not ex:
             raise
@@ -10643,26 +10648,49 @@ def api_ext_aor_reject_result(did):
 #: 첨부 preview 도 건드리지 않는다. prep 러너의 skip 판정은 이 목록을 넘지 못한다(서버가 정본).
 #: ⛔ 'pending' 은 갱신 대상이라 제외. ⛔ 'hold' 도 제외 — dedup 이라 DB 는 안 바뀌지만
 #:    러너가 hold 에는 첨부 preview 를 재업로드하므로 no-op 이 아니다.
-AOR_REINGEST_NOOP_STATUSES = ('approved', 'submitting', 'submitted',
+#: ⛔ 'submitted' 도 제외(2026-07-30) — 상신 이력행은 더는 활성행이 아니라서 재적재가 **새 카드를
+#:    만든다**(= no-op 이 아니다). 사유는 바로 아래 `AOR_REINGEST_TERMINAL_STATUSES` 참조.
+AOR_REINGEST_NOOP_STATUSES = ('approved', 'submitting',
                               'rejecting', 'reject_submitting')
 
-#: 그 중에서도 **absorbing**(한 번 들어오면 다시 나갈 수 없는) 상태. 러너가 실제로 skip 해도
-#: 되는 건 이것뿐이다(올마이트 R16 blocker).
+#: 러너가 **실제로 skip 해도 되는** 상태 = "재적재가 no-op 이고, 다시 필요해질 수도 없는" 상태.
+#: 지금은 **하나도 없다**(빈 튜플). 러너 skip 최적화는 사실상 은퇴 상태다.
 #:
-#: 왜 no-op 전부로는 부족한가:
+#: 왜 no-op 전부로는 부족한가(원래 사유, 유효):
 #:   no-op skip 은 "다시 필요해지면 다음 run 입력에 또 온다"를 전제로 한 **지연**이다. 그런데
 #:   `approved`/`submitting` 은 상신 실패·6h stale 로 `failed` 가 되고
 #:   `rejecting`/`reject_submitting` 도 `reject_failed` 가 될 수 있다. 그 순간 재적재는 no-op 이
 #:   아니라 **해야 할 일**이 되는데, 러너 입력(SP_GET_AOR, 오늘-120d 창)에서 이미 빠져 있으면
-#:   지연이 아니라 **영구 누락**이다. 창 경계 grace 로 막는 건 미래 중단 길이를 과거로 추정하는
-#:   heuristic 이라 임의 길이 중단을 못 덮는다 → 전제를 없애고 absorbing 만 skip 한다.
+#:   지연이 아니라 **영구 누락**이다.
 #:
-#: `submitted` 가 absorbing 인 근거: 이 상태에서 나가는 `UPDATE aor_draft SET status=` 가 없다.
-#: 유일한 이탈은 purge(`DELETE ... WHERE status IN ('submitted',...)`)인데, 삭제되면 이 응답의
-#: `drafts` 에서도 함께 사라져 러너가 다시 적재하므로 false-skip 이 생기지 않는다.
+#: 🔴 왜 `submitted` 마저 빠졌나 (2026-07-30 실측 버그):
+#:   `submitted` 는 **TRMT 행 단위로는** absorbing 이다(이 상태에서 나가는 UPDATE 가 없다).
+#:   하지만 skip 의 key 는 행이 아니라 **aor_cd = SVMS 문서 ID** 이고, SVMS 문서는 리젝→수정→
+#:   재상신으로 **같은 aor_cd 가 다시 STATUS='S'(결재대기)로 돌아온다**. 그러면 러너 입력에는
+#:   또 오는데 TRMT 는 그 aor_cd 를 "이미 상신함"으로 보고 영구 skip 한다.
+#:   실측: ATGRCA2607220002(ATLANTIC GREEN) — TRMT 가 2026-07-23 상신(submitted) → SVMS 상위에서
+#:   "Wrong subject" 리젝 → 관리사가 제목 수정(LO→LT Cooler Gaskets) 후 재상신 → SVMS STATUS='S'
+#:   인데 큐 적재 버튼이 영구 no-op. 즉 "aor_cd 하나당 카드 라이프사이클 1회"라는 전제가 틀렸다.
+#:   → 그래서 `submitted` 는 **활성행이 아닌 이력행**으로 강등하고(`_AOR_ACTIVE_STATUSES`),
+#:     skip 대상에서도 뺀다. 이중상신 방어는 그대로 남는다:
+#:       ① 활성행 유일성 index(pending~reject_submitting)로 카드는 동시에 1장뿐
+#:       ② 상신 러너(aor_submit.py)가 상신 직전 SVMS 를 재조회해 STATUS='U' 면 skip, 'S' 가
+#:          아니면 보류 — SVMS 가 정본이라 옛 카드로 두 번 상신될 수 없다
+#:   ⚠️ 여기에 상태를 되넣으려면 "SVMS 가 그 aor_cd 를 다시 STATUS='S' 로 되돌릴 수 없음"을
+#:      먼저 증명해야 한다. 행 단위 absorbing 증명만으로는 부족하다(이 버그의 정체).
+#:   ⚠️ 수용한 잔여 리스크(올마이트 2026-07-30 지적): 이미 상신된 문서에 대한 **지연·재전송 POST**
+#:      가 오면 유령 pending 카드가 한 장 생길 수 있다(정상 경로에선 안 생긴다 — 러너 입력이
+#:      SVMS STATUS='S' 뿐이고 상신된 문서는 'U' 라 애초에 안 들어온다). 생겨도 무해한 이유:
+#:      사람이 그 카드를 승인해도 ②의 SVMS 재조회가 STATUS='U' 를 보고 멱등 skip 한다.
+#:      즉 최악이 "탭에 카드 한 장 헛게 뜸"이고, 반대편(영구 누락)보다 훨씬 싸다.
+AOR_REINGEST_TERMINAL_STATUSES = ()
+
+#: **행 단위** absorbing — 이 상태의 행은 status/aor_cd 를 바꿀 수 없다(DB trigger 로 강제).
+#: 러너 skip 근거는 아니지만(위 참조), "상신 이력을 사후 편집하지 않는다"는 불변식 자체는 유효해
+#: 그대로 유지한다. 새 SVMS 사이클은 이 행을 고치지 않고 **새 행을 INSERT** 해서 표현한다.
 #: ⚠️ 여기에 상태를 추가하려면 **그 상태에서 나가는 전이가 하나도 없음**을 먼저 증명할 것.
 #:    회귀 가드 = tests/test_aor_statuses.py 의 absorbing 전이 소스 스캔.
-AOR_REINGEST_TERMINAL_STATUSES = ('submitted',)
+AOR_ROW_ABSORBING_STATUSES = ('submitted',)
 
 
 def _aor_status_list_sql(statuses):
@@ -10674,20 +10702,30 @@ def _aor_absorbing_trigger_sql():
     """absorbing 상태에서 **나가는 UPDATE 자체를 DB 가 거부**하게 하는 trigger 문.
 
     소스 정적 스캔만으로는 부족하다(올마이트 R17): f-string SQL·소문자·`OR` 섞인 WHERE·
-    다른 모듈·마이그레이션·수동 SQL 을 못 잡는다. 러너 skip 의 안전성이 통째로 이 불변식에
-    기대고 있으므로, 경로가 몇 개든 **DB 층에서 한 번** 막는다.
+    다른 모듈·마이그레이션·수동 SQL 을 못 잡는다. 상신 완료 이력을 되살려 재상신하는 경로가
+    생기면 SVMS 이중상신 위험이므로, 경로가 몇 개든 **DB 층에서 한 번** 막는다.
     ⚠️ `IF NOT EXISTS` 라 상수를 나중에 넓혀도 기존 trigger 는 안 바뀐다 — 그래서
-       `_aor_absorbing_trigger_ok()` 가 런타임에 실물과 대조하고, 어긋나면 skip 을 끈다.
+       `_aor_absorbing_trigger_install()` 이 매 부팅 DROP 후 재생성하고,
+       `_aor_absorbing_trigger_ok()` 가 런타임에 실물과 대조한다.
+    ⚠️ 기준 상수는 `AOR_ROW_ABSORBING_STATUSES`(행 단위 불변식)다 —
+       `AOR_REINGEST_TERMINAL_STATUSES`(러너 skip 계약)와 갈라졌다(2026-07-30).
     """
-    lst = _aor_status_list_sql(AOR_REINGEST_TERMINAL_STATUSES)
-    # 불변식의 단위는 **행이 아니라 canonical aor_cd** 다 — 러너 skip 집합의 key 가 aor_cd 이기 때문.
-    # 그래서 같은 key 를 대표하는 다른 terminal 행이 남는 경우(= init_db 의 중복정리에서 loser 를
-    # 'duplicate' 로 강등하는 경우)는 허용한다. 그 key 는 여전히 terminal 로 보이므로 false-skip 이
-    # 생기지 않고, 막아버리면 부팅 중 init_db 가 ABORT 나 서비스가 안 뜬다.
-    # `aor_cd` 도 감시 대상이다(올마이트 R18 blocker): terminal 행의 canonical key 를 바꾸면
-    # status 는 그대로여도 **원래 key 가 terminal 을 잃어** false-skip 이 난다.
-    # 비교는 raw 가 아니라 canonical 로 — init_db 의 `SET aor_cd=upper(trim(aor_cd))` 정규화는
-    # key 를 안 바꾸므로 막으면 안 된다.
+    lst = _aor_status_list_sql(AOR_ROW_ABSORBING_STATUSES)
+    # 🔴 불변식의 단위는 **행**이다(2026-07-30 올마이트 지적으로 교정). 예전엔 "같은 canonical
+    #    key 를 대표하는 다른 absorbing 행이 남아 있으면 허용"하는 `NOT EXISTS` 예외가 있었다.
+    #    그건 불변식의 단위가 key 였을 때(= 러너 skip 집합의 key 가 aor_cd 였을 때) 성립하던
+    #    타협이고, init_db 중복정리가 'submitted' loser 를 'duplicate' 로 강등할 수 있게 하려고
+    #    뚫어둔 구멍이었다. 지금은 둘 다 사라졌다:
+    #      · skip 최적화 철회(`AOR_REINGEST_TERMINAL_STATUSES = ()`) → key 단위로 볼 이유 없음
+    #      · 'submitted' 가 활성군에서 빠져 중복정리 UPDATE 가 애초에 그 행을 건드리지 않음
+    #    반면 같은 aor_cd 의 'submitted' 이력행이 2개 이상 쌓이는 건 이제 **정상**(SVMS 리젝→
+    #    재상신 사이클 2회)이라, 예외를 남겨두면 그 순간 두 행 다 자유롭게 변경 가능해져
+    #    불변식이 통째로 무력화된다. 그래서 예외를 제거했다.
+    # ⚠️ init_db 의 `SET aor_cd=upper(trim(aor_cd))` 정규화는 canonical key 를 바꾸지 않으므로
+    #    아래 WHEN 조건에 걸리지 않는다(= 부팅이 ABORT 되지 않는다). 비교를 raw 가 아니라
+    #    canonical 로 하는 이유가 그것.
+    # `aor_cd` 도 감시 대상이다(올마이트 R18 blocker): absorbing 행의 canonical key 를 바꿔
+    # 다른 문서번호의 이력으로 이식하는 것도 막는다.
     # `IS NOT` 사용: `<>` 는 한쪽이 NULL 이면 NULL 로 평가돼 trigger 가 안 뜬다(status 는 NOT NULL
     # 이라 어차피 거부되지만, 방어를 제약 하나에 의존시키지 않는다).
     return ("CREATE TRIGGER IF NOT EXISTS trg_aor_draft_absorbing "
@@ -10695,8 +10733,6 @@ def _aor_absorbing_trigger_sql():
             "WHEN OLD.status IN ({lst}) "
             "AND (NEW.status IS NOT OLD.status "
             "OR upper(trim(NEW.aor_cd)) IS NOT upper(trim(OLD.aor_cd))) "
-            "AND NOT EXISTS (SELECT 1 FROM aor_draft w WHERE w.id <> OLD.id "
-            "AND upper(trim(w.aor_cd)) = upper(trim(OLD.aor_cd)) AND w.status IN ({lst})) "
             "BEGIN SELECT RAISE(ABORT, 'aor_draft: absorbing status transition denied'); "
             "END".format(lst=lst))
 
@@ -10727,7 +10763,13 @@ def _aor_absorbing_trigger_ok():
         return False
 
 #: `uq_aor_draft_active_cd` predicate 와 같은 상태군(= 동시에 하나만 존재할 수 있는 "활성" 상태).
-_AOR_ACTIVE_STATUSES = ('pending', 'hold', 'approved', 'submitting', 'submitted',
+#: = "아직 처리가 끝나지 않아 사람/러너의 다음 액션을 기다리는" 카드. 이 안에서만 aor_cd 유일.
+#: ⛔ 'submitted' 는 활성이 아니다(2026-07-30) — SVMS 로 상신을 끝낸 **이력행**이다. SVMS 는
+#:    리젝→수정→재상신으로 같은 aor_cd 를 다시 결재대기(STATUS='S')로 되돌리므로, 이력행이
+#:    활성으로 남아 있으면 새 사이클의 카드 적재를 영구히 막는다(실측 ATGRCA2607220002 —
+#:    사유·이중상신 방어 근거는 `AOR_REINGEST_TERMINAL_STATUSES` 주석 참조).
+#: ⛔ 'rejected'/'failed'/'reject_failed'/'duplicate' 도 같은 이유로 활성이 아니다(원래부터).
+_AOR_ACTIVE_STATUSES = ('pending', 'hold', 'approved', 'submitting',
                         'rejecting', 'reject_submitting')
 
 
@@ -10907,14 +10949,13 @@ def api_ext_aor_reingest_statuses():
     (`_aor_absorbing_trigger_sql`). trigger 가 없거나 상수와 어긋나면 두 키를 **함께** 뺀다 —
     `noop_statuses` 만 남기면 terminal 을 모르는 클라가 no-op 전체를 skip 하던 옛(영구 누락 가능)
     동작으로 조용히 되돌아간다(올마이트 R17).
-    불변식의 단위는 행이 아니라 **canonical aor_cd** 다(러너 skip 집합의 key 가 그것이라서).
-    같은 key 의 다른 terminal 행이 남는 강등(init_db 중복정리)은 그래서 허용한다.
 
-    ⚠️ 잔여 리스크(수용): trigger 는 UPDATE 만 막는다. 응답 생성 후 러너의 skip 루프 전에
-    사람이 **DELETE 경로**(카드 개별 삭제 또는 종료건 purge)를 타면 그 run 은 해당 카드를 안 만든다.
-    (`INSERT OR REPLACE INTO aor_draft` 경로는 없음 — 확인함.)
-    다음 run 에 복구되지만, 그 사이 120일 창 밖으로 나가면 누락이 된다. 발생 조건이
-    "수동 삭제 + 19.5h 안에 창 이탈"로 좁고, 결과도 이미 상신된 AOR 의 카드라 수용한다.
+    🔴 **2026-07-30: `AOR_REINGEST_TERMINAL_STATUSES` 가 비었다 = 이 응답으로 skip 되는 건 없다.**
+    'submitted' 를 terminal 로 광고했더니 SVMS 리젝→수정→재상신 문서(같은 aor_cd 가 다시
+    STATUS='S' 로 돌아온다)가 영구 누락됐다(실측 ATGRCA2607220002). 지금 이 엔드포인트는
+    사실상 **진단용**이고, 러너도 호출하지 않는다(`aor_prep._SKIP_STATUSES = ()`).
+    구버전 러너 호환은 fail-open 으로 수렴한다 — `terminal_statuses=[]` 를 받으면 아무것도
+    안 걸러 전부 POST 하고, 중복은 서버 dedup 이 잡는다. 계약은 `terminal ⊆ noop` 유지.
 
     📦 응답 크기: `aor_draft` 전체를 `GROUP BY aor_cd` 해서 돌려준다. 운영 실측 64행이라
     지금은 무시할 수준이고, 러너가 하루 2회만 치므로 상한을 두지 않았다. 수천 행대로 커지면

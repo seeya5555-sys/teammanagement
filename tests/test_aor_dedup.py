@@ -157,6 +157,28 @@ class AORDedupTests(unittest.TestCase):
                 ).fetchone()[0],
             )
 
+    def test_submitted_history_allows_new_active_draft(self):
+        """SVMS 리젝→수정→재상신 = 같은 aor_cd 의 새 결재대기. 이력행이 막으면 영구 누락.
+
+        2026-07-30 실측 버그(ATGRCA2607220002 / ATLANTIC GREEN) 회귀 가드.
+        """
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            db.execute(
+                "INSERT INTO aor_draft (aor_cd, status) VALUES (?, ?)",
+                ("ATGRCA2607220003", "submitted"),
+            )
+            db.commit()
+
+        response = self._post()
+        self.assertEqual(201, response.status_code, response.get_data(as_text=True))
+        self.assertEqual("pending", response.get_json()["status"])
+        with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
+            statuses = db.execute(
+                "SELECT status FROM aor_draft WHERE aor_cd=? ORDER BY id",
+                ("ATGRCA2607220003",),
+            ).fetchall()
+        self.assertEqual([("submitted",), ("pending",)], statuses)
+
     def test_rejected_history_allows_new_active_draft(self):
         with sqlite3.connect(appmod.app.config["DATABASE"]) as db:
             db.execute(
