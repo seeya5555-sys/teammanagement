@@ -45,6 +45,10 @@ chk(c.get('/api/automation/soa/reviews').status_code in (302,401,403), 'review a
 with c.session_transaction() as s: s.update(saved)
 r=c.post('/api/ext/soa/reviews/snapshot',json=snap(),headers=H); j=r.get_json()
 chk(r.status_code==200 and j['ok'],'snapshot ingest',r.get_data(as_text=True)); sv=j['snapshot_version']; dv=j['draft_version']
+chk(c.get('/api/ext/soa/reviews/open').status_code in (401,403), 'open-case API key required')
+r=c.get('/api/ext/soa/reviews/open',headers=H)
+chk(r.status_code==200 and r.get_json()['cases']==[{'sx_cd':SX,'status':'S'}],
+    'open-case API returns non-final review case',r.get_data(as_text=True))
 r=c.get('/api/automation/soa/reviews'); chk(r.status_code==200 and len(r.get_json()['cases'])==1,'admin list')
 r=c.get('/api/automation/soa/reviews/'+SX); case=r.get_json()['case']
 chk(case['line_count']==2 and len(case['lines'][0]['attachments'])==1,'detail lines+pdf',case)
@@ -91,6 +95,13 @@ r=c.post('/api/ext/soa/reviews/'+SX+'/result',json={'action':'approve','status':
 chk(r.status_code==200,'approve result',r.get_data(as_text=True))
 case=c.get('/api/automation/soa/reviews/'+SX).get_json()['case']
 chk(case['status']=='C' and case['read_only'] and not case['can_push'] and not case['can_approve'],'C readonly',case)
+r=c.get('/api/ext/soa/reviews/open',headers=H)
+chk(r.status_code==200 and all(x['sx_cd'] != SX for x in r.get_json()['cases']),
+    'open-case API excludes final C case',r.get_data(as_text=True))
+A.execute("UPDATE soa_review_case SET status='T' WHERE sx_cd=?", (SX,))
+r=c.get('/api/ext/soa/reviews/open',headers=H)
+chk(r.status_code==200 and all(x['sx_cd'] != SX for x in r.get_json()['cases']),
+    'open-case API excludes final T case',r.get_data(as_text=True))
 A.execute("UPDATE soa_review_attachment SET expires_at='2000-01-01 00:00:00' WHERE id=?", (aid,))
 chk(c.get(f'/api/automation/soa/reviews/attachments/{aid}/pdf').status_code==404, 'expired PDF denied')
 

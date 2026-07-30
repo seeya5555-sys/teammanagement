@@ -10163,6 +10163,16 @@ def api_soa_review_attachment_pdf(aid):
     return resp
 
 
+@app.route('/api/ext/soa/reviews/open')
+@api_key_required
+def api_ext_soa_review_open():
+    """Mac runner reconcile 대상: SVMS 종결 여부를 다시 확인할 비종결 case 목록."""
+    rows = query(
+        "SELECT sx_cd, status FROM soa_review_case "
+        "WHERE status NOT IN ('C','T') ORDER BY updated_at DESC"
+    ) or []
+    return jsonify({'ok': True, 'cases': [dict(r) for r in rows]})
+
 @app.route('/api/ext/soa/reviews/snapshot', methods=['POST'])
 @api_key_required
 def api_ext_soa_review_snapshot():
