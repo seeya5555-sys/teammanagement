@@ -9958,6 +9958,21 @@ def _soa_review_ingest_snapshot(d):
                 raise RuntimeError('case locked by another run')
         if existing and existing['draft_dirty'] and existing['queued_action'] not in ('refresh', 'push'):
             raise RuntimeError('draft exists — refresh/discard required')
+        # 동일 SVMS source의 반복 snapshot은 첨부/freshness만 갱신한다. source가 그대로인데
+        # draft_version까지 올리면 열린 웹/iOS 편집 화면이 가짜 CAS conflict로 저장 실패한다.
+        source_unchanged = False
+        if existing:
+            current_hashes = {
+                str(r['sx_seq']): r['source_hash']
+                for r in db.execute('SELECT sx_seq,source_hash FROM soa_review_line WHERE case_id=?',
+                                    (existing['id'],)).fetchall()
+            }
+            # seqs는 함수 시작부에서 nonblank/unique로 검증된 authoritative key 목록이다.
+            incoming_hashes = {seq: line.get('source_hash') for seq, line in zip(seqs, lines)}
+            source_unchanged = bool(
+                incoming_hashes and all(incoming_hashes.values())
+                and status == existing['status'] and incoming_hashes == current_hashes
+            )
         snap_cur = db.execute(
             'INSERT INTO soa_review_snapshot (run_id,source,scope_json,expires_at,case_count,line_count,attachment_count,summary_json) '
             'VALUES (?,?,?,?,1,?,?,?)',
@@ -9979,10 +9994,10 @@ def _soa_review_ingest_snapshot(d):
                            if _soa_review_action_reconcile(existing['last_action_result']) else None)
             db.execute(
                 "UPDATE soa_review_case SET snapshot_id=?,status=?,owner_comp_id=?,vsl_cd=?,vsl_nm=?,sl_tp=?,dept_nm=?,"
-                "source_all_confirmed=?,fresh_until=?,draft_version=draft_version+1,draft_dirty=0,last_action_result=?,"
+                "source_all_confirmed=?,fresh_until=?,draft_version=draft_version+?,draft_dirty=0,last_action_result=?,"
                 "raw_case=?,updated_at=datetime('now','localtime') WHERE id=?",
                 (snapshot_id, status, owner, d.get('vessel') or sx[:4], d.get('vsl_nm'), d.get('sl_tp'),
-                 d.get('dept_nm'), all_confirmed, fresh_until, keep_result,
+                 d.get('dept_nm'), all_confirmed, fresh_until, 0 if source_unchanged else 1, keep_result,
                  json.dumps(raw_case, ensure_ascii=False), case_id))
         else:
             cur = db.execute(

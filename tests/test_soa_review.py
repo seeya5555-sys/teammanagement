@@ -49,6 +49,19 @@ chk(c.get('/api/ext/soa/reviews/open').status_code in (401,403), 'open-case API 
 r=c.get('/api/ext/soa/reviews/open',headers=H)
 chk(r.status_code==200 and r.get_json()['cases']==[{'sx_cd':SX,'status':'S'}],
     'open-case API returns non-final review case',r.get_data(as_text=True))
+# 같은 SVMS source의 반복 ingest는 snapshot/첨부 freshness만 갱신하고 draft CAS는 유지해야 한다.
+r=c.post('/api/ext/soa/reviews/snapshot',json=snap(),headers=H); same=r.get_json()
+chk(r.status_code==200 and same['snapshot_version'] != sv and same['draft_version'] == dv,
+    'identical snapshot keeps draft_version',r.get_data(as_text=True))
+sv=same['snapshot_version']
+# status가 바뀌면 line hash가 같아도 실제 source drift이므로 version을 올린다.
+r=c.post('/api/ext/soa/reviews/snapshot',json={**snap(),'header_status':'D'},headers=H); changed=r.get_json()
+chk(r.status_code==200 and changed['draft_version']==dv+1,
+    'status change increments draft_version',r.get_data(as_text=True))
+r=c.post('/api/ext/soa/reviews/snapshot',json=snap(),headers=H); restored=r.get_json()
+chk(r.status_code==200 and restored['draft_version']==dv+2,
+    'status restore increments draft_version',r.get_data(as_text=True))
+sv=restored['snapshot_version']; dv=restored['draft_version']
 r=c.get('/api/automation/soa/reviews'); chk(r.status_code==200 and len(r.get_json()['cases'])==1,'admin list')
 r=c.get('/api/automation/soa/reviews/'+SX); case=r.get_json()['case']
 chk(case['line_count']==2 and len(case['lines'][0]['attachments'])==1,'detail lines+pdf',case)
@@ -65,6 +78,13 @@ chk(c.get('/api/automation/soa/reviews/'+SX).get_json()['case']['fresh'] is Fals
 r=c.put('/api/automation/soa/reviews/'+SX+'/draft',json={'draft_version':dv,'lines':[{'sx_seq':'0010','decision':'confirm','remark':''}]})
 chk(r.status_code==200,'stale snapshot draft save',r.get_data(as_text=True)); case=r.get_json()['case']; dv=case['draft_version']
 chk(case['can_push'] and not case['can_approve'],'stale draft enables CAS-protected push',case)
+# 저장된 dirty draft가 있으면 identical ingest도 409로 막고 draft/version을 그대로 보존한다.
+r=c.post('/api/ext/soa/reviews/snapshot',json=snap(),headers=H)
+preserved=c.get('/api/automation/soa/reviews/'+SX).get_json()['case']
+preserved_line=next(x for x in preserved['lines'] if x['sx_seq']=='0010')
+chk(r.status_code==409 and preserved['draft_version']==dv and preserved['draft_dirty']
+    and preserved_line['decision']=='confirm',
+    'dirty draft survives identical snapshot attempt',r.get_data(as_text=True))
 chk(c.put('/api/automation/soa/reviews/'+SX+'/draft',json={'draft_version':dv-1,'lines':[]}).status_code==409,'draft CAS conflict')
 
 r=c.post('/api/automation/soa/reviews/'+SX+'/action',json={'action':'push','snapshot_version':sv,'draft_version':dv})
