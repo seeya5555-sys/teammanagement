@@ -13605,6 +13605,7 @@ def api_ext_dockproc_sync():
         rank = _dockproc_status_rank(status)
         if rank == 0:                                    # 매핑 없는 상태(초안 등) skip
             continue
+        evidence = it.get('ordered_evidence')            # True/False/None(=근거 미확정) — 행 매칭 후 rank 게이트에 씀
         inq = (it.get('inq_no') or '').strip() or None
         inq_alt = (it.get('inq_alt') or '').strip() or None   # 구매 INQ_NO(REQ_NO와 별개) — 둘 다 매칭키
         subj = it.get('subject') or ''
@@ -13626,6 +13627,13 @@ def api_ext_dockproc_sync():
             if len(misses) < 20:
                 misses.append({'inq': inq, 'subject': subj[:70]})
             continue
+        # 🔴 발주완료 fail-closed 게이트(2026-07-31): 헤더 상태 allowlist 만으로 rank3 을 켜지 않는다.
+        #   근거(evidence) = 수리 `VNDR_STATS=='Ordered'` 또는 `ODR_YN=='Y'` / 구매 발주서번호 `ODR_NO` 존재.
+        #   False = 근거 없음 → 벤더제출로 강등.
+        #   None  = 근거 미확정(SVMS 상세조회 실패·구버전 폴러) → **이미 발주완료인 행만 유지**하고
+        #           신규 승격은 막는다. 이렇게 안 하면 조회 한 번 실패했을 때 근거 없이 발주완료가 켜짐(올마이트 지적).
+        if rank >= 3 and (evidence is False or (evidence is None and not row['stg_order'])):
+            rank = 2
         prev = plan.get(row['id'])
         if not prev or rank > prev[0]:                   # 같은 행 여러건이면 최고 rank만(취소 제외 후)
             _amt = it.get('amt')
