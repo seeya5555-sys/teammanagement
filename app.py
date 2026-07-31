@@ -12609,8 +12609,13 @@ _DOCKPROC_STATUS_RANK = {
     # 1=견적작성 / 2=벤더제출 / 3=발주완료 (누적). HQ Canceled·미등재=무시(rank0).
     'HQ CONFIRMED': 1,          # 견적작성 (수리·구매 공통)
     'QUOTATION INQUIRY': 2,     # 벤더제출(견적의뢰)
-    'SUBMIT': 3,                # 발주완료 (수리)
-    'HQ ORDERED': 3,            # 발주완료 (수리)
+    # 'Submit'은 발주가 아니라 **벤더 견적 제출** 단계 — 2026-07-31 SVMS 실측으로 3→2 강등(형 A안 결재).
+    # 근거: BELGIUM B R19/R26(헤더 Submit) 상세 = P_RS_D_VNDR.VNDR_STATS='Submitted',
+    # P_RS_D_ODR.ODR_YN='N'(발주서 미발행) → 발주금액(VNDR_ODR_AMT of 'Ordered')이 존재하지 않음.
+    # 반면 실발주건(SAPS)은 헤더 'HQ Ordered' + 벤더 'Ordered' + ODR_YN='Y'.
+    # 3으로 두면 "발주완료인데 금액 —" 이 구조적으로 발생함(dock_sync._repair_order 는 'Ordered'만 읽음).
+    'SUBMIT': 2,                # 벤더제출 (수리 — 벤더 견적 제출)
+    'HQ ORDERED': 3,            # 발주완료 (수리 — 실발주)
     'ORDERED': 3,               # 발주완료 (구매 발주)
     'VENDOR CONFIRMED': 3,      # 발주완료 (구매 — 업체확정)
     'APPROVAL(PROCSSING)': 3,   # 발주완료 (구매 — 발주승인 진행)
