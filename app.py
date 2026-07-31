@@ -12956,6 +12956,22 @@ def dockproc_tmpl_blank():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+@app.route('/api/dock_procure/template/<kind>')
+@login_required
+def api_dockproc_tmpl(kind):
+    """iOS 앱용 alias.
+
+    위 두 라우트는 `/api/` 밖이라 `_bearer_auth` before_request 의 Bearer→세션 투명주입이 걸리지 않아
+    앱에서 호출하면 로그인 페이지로 튄다. 파일 생성 로직은 웹 라우트를 그대로 호출해 재사용한다
+    (템플릿 생성 코드를 복제하면 두 경로가 갈라짐).
+    """
+    if kind == 'example':
+        return dockproc_tmpl_example()
+    if kind == 'blank':
+        return dockproc_tmpl_blank()
+    return jsonify({'error': 'kind must be example or blank'}), 404
+
+
 @app.route('/api/dock_procure/<int:lid>/stage', methods=['POST'])
 @login_required
 def api_dockproc_stage(lid):
