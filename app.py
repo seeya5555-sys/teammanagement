@@ -4208,6 +4208,25 @@ def _vetting_with_counts(v):
     return d
 
 
+def _vetting_display_order(rows):
+    """선박 1척의 vetting 행 표시 순서 정본 (맨 앞 = 상단표시 기준 행).
+
+    🔴 검사일 내림차순만 쓰면 **날짜 미입력 행이 항상 맨 밑**으로 밀린다. 새 Vetting 을
+       추가해 'Next Plan'(계획된 다음 검사)으로 지정해도 검사일을 아직 모르면 목록 끝에
+       숨어버려서, 정작 제일 먼저 봐야 할 계획을 못 본다(손유석 지시 2026-07-31).
+       그래서 상태를 1순위로 두고 날짜는 그 안에서만 본다:
+       ① 'Next Plan' 을 항상 위. 여러 개면 새로 만든 것(id 최신) 우선
+          — `_vetting_pick` 의 latest 선정과 같은 규칙이라 rows[0] == latest 가 성립한다.
+       ② 나머지(Report)는 기존대로 검사일 내림차순, 같은 날짜면 id 내림차순.
+    """
+    nexts  = [r for r in rows if (r.get('valid') or '') == 'Next Plan']
+    others = [r for r in rows if (r.get('valid') or '') != 'Next Plan']
+    nexts.sort(key=lambda r: r.get('id') or 0, reverse=True)
+    others.sort(key=lambda r: ((r.get('inspection_date') or ''), r.get('id') or 0),
+                reverse=True)
+    return nexts + others
+
+
 def _vetting_pick(vessel_id):
     """선박 1척의 vetting 중 (상단표시 기준, OBS 수치 출처, 전체) 를 고른다.
 
@@ -4223,9 +4242,8 @@ def _vetting_pick(vessel_id):
                 "ORDER BY inspection_date DESC, id DESC", (vessel_id,))
     if not vts:
         return None, None, []
-    enr = [_vetting_with_counts(v) for v in vts]
-    next_plans = [v for v in enr if (v.get('valid') or '') == 'Next Plan']
-    latest = max(next_plans, key=lambda v: v.get('id') or 0) if next_plans else enr[0]
+    enr = _vetting_display_order([_vetting_with_counts(v) for v in vts])
+    latest = enr[0]
     obs_src = latest
     if (latest.get('valid') or '') == 'Next Plan':
         obs_src = next((v for v in enr if (v.get('valid') or '') != 'Next Plan'), latest)
@@ -4284,9 +4302,10 @@ def api_vettings_list():
         d['findings'] = findings_by_vid.get(v['id'], [])
         by_vessel.setdefault(v['vessel_id'], []).append(d)
 
-    # 검사일 내림차순 정렬 (최신이 위)
+    # 표시 순서 = _vetting_display_order 정본 ('Next Plan' 먼저, 그 다음 검사일 내림차순).
+    # 웹 상세 테이블 행 순서와 iOS 앱의 대표행(vettings.first) 이 모두 이 순서를 그대로 쓴다.
     for vid in by_vessel:
-        by_vessel[vid].sort(key=lambda x: (x.get('inspection_date') or ''), reverse=True)
+        by_vessel[vid] = _vetting_display_order(by_vessel[vid])
 
     # 선박별 담당 감독 ID 매핑 (Daily 이슈 등록 시 필요)
     sv_map = {}

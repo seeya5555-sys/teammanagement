@@ -362,11 +362,18 @@ function vesselSummary(item) {
     wrap.append(el('span', { class: 'cs-vessel-summary-empty' }, '검사 없음'));
     return wrap;
   }
-  const latest = vts[0];
-  const dateLabel = latest.inspection_date || '날짜 미정';
-  const compLabel = latest.inspection_company || '미정';
-  wrap.append(el('span', { class: 'vt-summary-last' },
-    `Last: ${dateLabel} · ${compLabel}`));
+  // 'Last:' 는 말 그대로 **실제로 받은 마지막 Report** 다. 서버 정렬이 'Next Plan'(아직
+  // 안 받은 계획)을 맨 앞에 두므로 vts[0] 을 그대로 쓰면 계획이 Last 로 찍힌다.
+  // 계획밖에 없는 선박은 Last 를 지어내지 않고 '이력 없음' 으로 둔다.
+  const lastReport = vts.find(v => (v.valid || '') !== 'Next Plan');
+  if (lastReport) {
+    const dateLabel = lastReport.inspection_date || '날짜 미정';
+    const compLabel = lastReport.inspection_company || '미정';
+    wrap.append(el('span', { class: 'vt-summary-last' },
+      `Last: ${dateLabel} · ${compLabel}`));
+  } else {
+    wrap.append(el('span', { class: 'vt-summary-last' }, 'Last: 이력 없음 · 계획만'));
+  }
   const totalOpen = vts.reduce((sum, v) => sum + (v.open_count || 0), 0);
   if (totalOpen > 0) {
     const anyOverdue = vts.some(vtObsOverdue);
