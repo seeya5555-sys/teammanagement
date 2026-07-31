@@ -167,6 +167,14 @@ sync('R32', 'HQ Ordered', evidence=True, amt=100.0, cur='USD')
 j2 = sync('R32', 'HQ Ordered', evidence=True, amt=100.0, cur='USD')
 chk(j2['updated'] == 0, '두 번째 동기화는 updated=0', j2['updated'])
 
+print("# 13) 구매 'Approval(Procssing)' = 발주 미승인 → 발주완료 아님 (2026-07-31 BGBB S10 실측)")
+mkrow('S90')
+sync('S90', 'Approval(Procssing)', evidence=True, amt=None)
+r = A.query("SELECT stg_quote,stg_vendor,stg_order,quote_amt FROM dock_procure "
+            "WHERE req_no='S90' AND vsl_nm='TEST VESSEL'", one=True)
+chk((r['stg_quote'], r['stg_vendor'], r['stg_order']) == (1, 1, 0),
+    "승인 전이라 rank2 — '발주완료인데 금액 —' 재발 차단", dict(r))
+
 print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')

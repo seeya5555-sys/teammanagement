@@ -12621,7 +12621,13 @@ _DOCKPROC_STATUS_RANK = {
     'HQ ORDERED': 3,            # 발주완료 (수리 — 실발주)
     'ORDERED': 3,               # 발주완료 (구매 발주)
     'VENDOR CONFIRMED': 3,      # 발주완료 (구매 — 업체확정)
-    'APPROVAL(PROCSSING)': 3,   # 발주완료 (구매 — 발주승인 진행)
+    # 'Approval(Procssing)' 도 발주완료가 아니다 — 2026-07-31 실측으로 3→2 강등(Submit 강등과 동일 부류).
+    # 근거: BELGIUM B S10(BGBBES2607B11) PC_PRO 행이 스스로 밝힘 —
+    #   ODR_STEP = "[Order] Order is Progressing (Not Approved)" · ODR_STATUS_CD='A'
+    #   ODR_NO 는 이미 발급('BGBBES2607B11A')인데 SP_GET_ODR_LIST(BGBB)=0행 → 금액 소스에 아직 없음.
+    # 3으로 두면 "발주완료인데 금액 —"이 또 구조적으로 발생함(실제로 이 행 1건이 그렇게 떴다).
+    # ⚠️ODR_NO 존재만으로는 구매 발주근거가 약하다는 반례이기도 함(승인 전에도 번호가 붙음).
+    'APPROVAL(PROCSSING)': 2,   # 벤더제출 (구매 — 발주 승인 진행 중, 아직 미승인)
 }
 
 
