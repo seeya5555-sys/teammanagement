@@ -102,6 +102,9 @@
   .dy-head h3{font-size:15px;font-weight:700;margin:0}
   .dy-up{display:flex;gap:8px;align-items:center}
   .dy-up select{font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:#fff}
+  /* 조선소 벤더 45곳+ → select 스크롤로는 못 찾아서 검색 필터를 앞에 둠 */
+  .dy-up input#dy-syq{font-size:12px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;background:#fff;width:140px}
+  .dy-syn{font-size:11px;color:var(--text-secondary);white-space:nowrap}
   .dy-btn{font-size:12px;padding:5px 10px;background:var(--blue-bg,#eaf1fb);color:var(--blue-text,#2a5a9a);border-radius:6px;cursor:pointer;font-weight:600}
   .dy-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
   .dy-tbl th{text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font-size:11px;color:var(--text-secondary)}
@@ -195,6 +198,9 @@
     <div class="dy-head">
       <h3 style="display:flex;align-items:center;gap:6px"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/></svg>조선소 (SVMS Yard Repair)</h3>
       <div class="dy-up">
+        <input id="dy-syq" type="search" placeholder="조선소 검색" autocomplete="off"
+               title="조선소명(영문·국문)·VNDR_CD 검색 — 공백으로 여러 단어를 넣으면 모두 포함하는 것만 남음">
+        <span class="dy-syn" id="dy-syn"></span>
         <select id="dy-shipyard" title="SVMS 조선소 벤더마스터 — 선택 시 봉투 조선소(VNDR_CD) 확정. [프로파일]=결정적 파싱 프로파일 보유, 없으면 AI 파싱(비결정, 금액 확인 필요)"></select>
         <label class="dy-btn"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>견적서 업로드<input type="file" id="dy-file" accept=".xlsx,.xlsm" hidden></label>
       </div>
@@ -253,7 +259,7 @@
 
   // ===== 조선소(Yard) 견적 → SVMS Yard Repair 7카테고리 =====
   const YCATS = ['General','Paint','Steel','Deck','Engine','Electric','Discount'];
-  let SHIPYARDS=[], SY_SYNCED=false;
+  let SHIPYARDS=[], SY_SYNCED=false, SY_Q='';
   async function loadShipyards(){
     try{
       const r = await fetch('/api/dock_yard/shipyards'); const j = await r.json();
@@ -261,12 +267,40 @@
       renderShipyardSel();
     }catch(e){}
   }
+  // 조선소 검색 필터 — 영문명·국문명·VNDR_CD 를 훑고, 공백으로 끊은 토큰을 전부 포함해야 매치.
+  function syFiltered(){
+    const toks=(SY_Q||'').toLowerCase().split(/\s+/).filter(Boolean);
+    if(!toks.length) return SHIPYARDS;
+    return SHIPYARDS.filter(s=>{
+      const hay=((s.vndr_nm_eng||'')+' '+(s.vndr_nm||'')+' '+(s.vndr_cd||'')).toLowerCase();
+      return toks.every(t=>hay.includes(t));
+    });
+  }
   function renderShipyardSel(){
     const sel=$('#dy-shipyard'); if(!sel) return;
-    if(!SY_SYNCED){ sel.innerHTML='<option value="">(조선소 마스터 미동기화)</option>'; return; }
+    const cnt=$('#dy-syn');
+    if(!SY_SYNCED){ sel.innerHTML='<option value="">(조선소 마스터 미동기화)</option>'; if(cnt)cnt.textContent=''; return; }
     const cur=(DATA.vessels.find(v=>v.vsl_nm===DATA.current)||{}).shipyard_vndr_cd||'';
-    sel.innerHTML = '<option value="">조선소 선택…</option>' +
-      SHIPYARDS.map(s=>`<option value="${esc(s.vndr_cd)}"${s.vndr_cd===cur?' selected':''}>${esc(s.vndr_nm_eng||s.vndr_nm)}${s.has_profile?' [프로파일]':''}</option>`).join('');
+    const list=syFiltered();
+    const hits=list.length;                          // 검색 건수는 강제로 끼운 '현재 선택'을 빼고 센다
+    // 현재 선택이 필터에서 빠져도(또는 마스터에서 사라졌어도) 목록에 남긴다 —
+    // 안 그러면 select 가 '조선소 선택…' 으로 보여 해제된 것처럼 오해됨.
+    let head='';
+    if(cur && !list.some(s=>s.vndr_cd===cur)){
+      const c=SHIPYARDS.find(s=>s.vndr_cd===cur);
+      head = c
+        ? `<option value="${esc(c.vndr_cd)}" selected>${esc(c.vndr_nm_eng||c.vndr_nm)} — 현재 선택</option>`
+        : `<option value="${esc(cur)}" selected>현재 선택: ${esc(cur)} (마스터에 없음)</option>`;
+    }
+    sel.innerHTML = '<option value="">조선소 선택…</option>' + head +
+      list.map(s=>`<option value="${esc(s.vndr_cd)}"${s.vndr_cd===cur?' selected':''}>${esc(s.vndr_nm_eng||s.vndr_nm)}${s.has_profile?' [프로파일]':''}</option>`).join('');
+    if(cnt) cnt.textContent = (SY_Q||'').trim()
+      ? `${hits}/${SHIPYARDS.length}곳`
+      : (SHIPYARDS.length?`${SHIPYARDS.length}곳`:'');
+  }
+  function bindShipyardQuery(){
+    const q=$('#dy-syq'); if(!q) return;
+    q.oninput=()=>{ SY_Q=q.value; renderShipyardSel(); };
   }
   async function loadYard(vsl){
     renderShipyardSel();                 // 현재 선박의 조선소 선택 반영
@@ -651,6 +685,7 @@
   load();
   loadShipyards();
   bindShipyardSel();
+  bindShipyardQuery();
   bindYardFile();
   bindSyncBtn();
   bindPushBtn();
