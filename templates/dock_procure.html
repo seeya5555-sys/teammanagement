@@ -77,6 +77,7 @@
   .dp-stg.on .sl{color:var(--green)}
   .dp-stg.subhi{background:var(--red-bg);border-radius:7px;box-shadow:0 0 0 1.5px var(--red-border);padding:2px 0}
   .dp-sub{font-size:9px;font-weight:800;color:var(--red);margin-top:1px;line-height:1}
+  .dp-sub.q{color:var(--text-secondary);font-weight:700;letter-spacing:-.2px;cursor:help}  /* 벤더 제출견적액(발주금액 아님) */
   .dp-status{font-size:11px;font-weight:700;padding:3px 10px;border-radius:14px;white-space:nowrap}
   .st-wait{background:var(--surface-3);color:var(--text-secondary)} .st-quote{background:var(--blue-bg);color:var(--blue-text)}
   .st-sent{background:var(--amber-bg);color:var(--amber)} .st-done{background:var(--green-bg);color:var(--green)}
@@ -228,6 +229,12 @@
   const CATNM = {R:'SHORE REPAIR',S:'SPARE',ST:'STORE',P:'PAINT',SY:'SHIPYARD'};
   const CURS = ['USD','KRW','EUR','CNY','JPY','SGD','AED','HKD','GBP'];  // 발주 통화(나라별)
   const fmtAmt = n => (n==null||n==='')?'':Number(String(n).replace(/,/g,'')).toLocaleString('en-US',{maximumFractionDigits:2});
+  // 벤더 제출견적 스냅샷(sub_quotes) — 서버가 JSON 문자열로 준다. 깨진 값이 화면 전체를 죽이지 않게 방어.
+  const quotesOf = l => { try{ const a=JSON.parse(l.sub_quotes||'[]');
+    return Array.isArray(a)?a.filter(q=>q&&typeof q==='object'):[] }catch(e){ return [] } };
+  const quoteTip = q => `${q.nm||'업체'} · ${q.amt!=null?fmtAmt(q.amt)+' '+(q.cur||''):'금액 미제출'}`
+                      + ((q.usd!=null && (q.cur||'USD')!=='USD')?` (≈USD ${fmtAmt(q.usd)})`:'')
+                      + (q.att?` · 첨부 ${q.att}`:'') + ((q.st||'').toLowerCase()==='ordered'?' · 발주':'');
   const STATUSES = [
     {code:'wait',  nm:'대기',     color:'var(--gray-dot)'},
     {code:'quote', nm:'견적작성', color:'var(--blue-dot)'},
@@ -471,10 +478,25 @@
     const on = l[key]?'on':'';
     const st = key==='stg_quote'?'quote':key==='stg_vendor'?'vendor':'order';
     let extra='', cls='';
-    if(key==='stg_vendor' && l.svms_submit){            // 견적 제출수/의뢰수 표시 + 1건↑이면 하이라이트
-      const n = parseInt((String(l.svms_submit).split('/')[0]||'0'),10)||0;
-      extra = `<div class="dp-sub">${esc(l.svms_submit)}</div>`;
-      if(n>=1 && statusOf(l)[0]==='sent') cls=' subhi';
+    if(key==='stg_vendor'){
+      if(l.svms_submit){                                // 견적 제출수/의뢰수 표시 + 1건↑이면 하이라이트
+        const n = parseInt((String(l.svms_submit).split('/')[0]||'0'),10)||0;
+        extra = `<div class="dp-sub">${esc(l.svms_submit)}</div>`;
+        if(n>=1 && statusOf(l)[0]==='sent') cls=' subhi';
+      }
+      // 벤더가 제출한 견적액(SVMS VNDR_QUO_AMT). 발주금액 칸과 별개 — 여기 숫자는 아직 발주 아님.
+      const qs = quotesOf(l), priced = qs.filter(q=>q.amt!=null);
+      if(priced.length){
+        // 어느 견적이 '최저'인지는 서버가 정한다(best 플래그) — 통화 혼재 비교 규칙을 테스트되는
+        // 파이썬 층에 두기 위함. best 가 없으면 = 비교 불가(통화 섞였고 환산액 없음) → 건수만 보여준다.
+        const tip = qs.map(quoteTip).join('\n');
+        const best = qs.find(q=>q.best);
+        const body = best
+          ? `${esc(fmtAmt(best.amt))} ${esc(best.cur||'')}`
+            + (priced.length>1?` <span style="font-weight:400">최저·${priced.length}</span>`:'')
+          : `제출 ${priced.length}건 <span style="font-weight:400">통화상이</span>`;
+        extra += `<div class="dp-sub q" title="제출견적 (발주금액 아님)&#10;${esc(tip)}">${body}</div>`;
+      }
     }
     return `<div class="dp-stg ${on}${cls}" data-id="${l.id}" data-stage="${st}" data-val="${l[key]?0:1}">
       <div class="dp-cbx"><svg class="ic-svg" viewBox="0 0 24 24" style="stroke-width:3"><path d="M20 6 9 17l-5-5"/></svg></div><div class="sl">${label}</div>${extra}</div>`;

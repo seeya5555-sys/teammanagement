@@ -783,6 +783,7 @@ def init_db(drop=False):
                 quote_cur    TEXT DEFAULT 'USD',              -- 견적 통화
                 quote_src    TEXT DEFAULT 'auto',             -- auto=SVMS 발주금액 자동입력 / manual=사용자수정 잠금(폴러 안 덮음)
                 vendor       TEXT,                            -- 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
+                sub_quotes   TEXT,                            -- 벤더 '제출견적' 스냅샷 JSON [{nm,amt,cur,att,st}] — 표시전용(발주금액 quote_amt 과 별개)
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 UNIQUE(vsl_nm, req_no)
@@ -832,6 +833,8 @@ def init_db(drop=False):
                 conn.execute("UPDATE dock_procure SET quote_src='manual' WHERE quote_amt IS NOT NULL")
             if 'vendor' not in _dpc:
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN vendor TEXT")   # 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
+            if 'sub_quotes' not in _dpc:                      # 벤더 제출견적 스냅샷(표시전용) — 발주금액과 혼동 금지
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN sub_quotes TEXT")
             _dpv = [r[1] for r in conn.execute("PRAGMA table_info(dock_procure_vessel)").fetchall()]
             if 'shipyard_vndr_cd' not in _dpv:                # 선택된 조선소 벤더(SVMS) → dock 봉투 DR_CD/VNDR_CD
                 conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN shipyard_vndr_cd TEXT")
@@ -12626,6 +12629,63 @@ def _dockproc_status_rank(status):
     return _DOCKPROC_STATUS_RANK.get((status or '').strip().upper(), 0)
 
 
+_DOCKPROC_QUOTE_MAX = 20            # 한 건에 붙는 벤더 수 상한(표시전용 스냅샷이라 넉넉하되 무한 아님)
+
+
+def _dockproc_norm_quotes(raw):
+    """폴러가 보낸 **벤더 제출견적** 목록 → canonical JSON 문자열(쓸 값이 없으면 None).
+    발주금액(quote_amt)과 다른 값이다 — 제출견적은 아직 발주가 아니므로 절대 섞지 않는다.
+    표시전용이라 값 신뢰보다 형태 방어가 우선: 개수 캡·타입 강제·통화 3글자 검증.
+
+    canonical 두 겹(멱등 목적):
+      · 원소 키 정렬(sort_keys) + 고정 separators — dict 순서·공백 흔들림 흡수
+      · **리스트 자체를 정렬** — 벤더 배열 순서는 의미가 없는데 SVMS 가 순서를 바꿔 주면 같은 견적
+        집합이 '변경'으로 잡혀 매 폴링마다 UPDATE 가 돈다(올마이트 지적).
+
+    '최저' 판정도 여기서 한다(`best:1` 플래그). 프런트에서 하면 JS 테스트 target 이 없어 검증 공백이
+    생기고 통화 혼재 비교 버그가 조용히 살아난다 — 그래서 테스트되는 층으로 끌어내렸다.
+    비교 규칙: 금액 있는 견적 **전원이 usd 를 가질 때만** usd 로 비교. 하나라도 없으면 통화가 전부
+      같을 때만 원표시금액으로 비교하고, 통화가 섞였으면 비교를 포기한다(best 없음 → 화면에 '최저' 안 씀).
+      부분집합만 비교하면 usd 없는 견적이 조용히 후보에서 빠져 오답이 된다."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    def _num(v):
+        try:
+            n = None if v in (None, '') else float(str(v).replace(',', ''))
+        except (TypeError, ValueError):
+            return None
+        return n if (n is None or math.isfinite(n)) else None   # inf/nan 은 JSON 직렬화도 못 함
+
+    for q in raw[:_DOCKPROC_QUOTE_MAX]:
+        if not isinstance(q, dict):
+            continue
+        try:
+            att = int(q.get('att') or 0)
+        except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError (올마이트 지적)
+            att = 0
+        cur = str(q.get('cur') or '').strip().upper()
+        out.append({'nm': str(q.get('nm') or '').strip()[:120],
+                    'amt': _num(q.get('amt')),
+                    'usd': _num(q.get('usd')),           # 달러환산액 — 통화 혼재 시 '최저' 비교는 이걸로만
+                    'cur': cur if re.fullmatch(r'[A-Z]{3}', cur) else None,
+                    'att': max(0, min(99, att)),
+                    'st': str(q.get('st') or '').strip()[:20]})
+    if not out:
+        return None
+    out.sort(key=lambda q: (q['nm'], q['cur'] or '', q['amt'] is None, q['amt'] or 0.0, q['st']))
+    priced = [q for q in out if q['amt'] is not None]
+    best = None
+    if priced:
+        if all(q['usd'] is not None for q in priced):
+            best = min(priced, key=lambda q: q['usd'])
+        elif len({q['cur'] for q in priced}) == 1:
+            best = min(priced, key=lambda q: q['amt'])
+    if best is not None:
+        best['best'] = 1
+    return json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
 def _dockproc_hash(equipment, subject):
     import hashlib as _hl
     s = f"{(equipment or '').strip().upper()}|{(subject or '').strip().upper()}"
@@ -13587,7 +13647,8 @@ def api_ext_dockproc_links():
 @api_key_required
 def api_ext_dockproc_sync():
     """Phase 2 역동기화 — 맥 폴러가 SVMS 수리/구매 목록을 보내면 Status→체크박스 자동전진 + 발주완료시 Vendor→Remark.
-    매칭: ① 저장된 svms_req_no(=Inq No) ② Subject 태그 [VSL_CD REQ_NO]. HQ Canceled 무시. dry=true면 미리보기."""
+    매칭: ① 저장된 svms_req_no(=Inq No) ② Subject 태그 [VSL_CD REQ_NO]. HQ Canceled 무시. dry=true면 미리보기.
+    item 옵션 `quotes`=벤더 제출견적 스냅샷(표시전용, 발주금액과 별개) — 키 미전송 시 기존값 유지."""
     import re as _re
     d = request.get_json(silent=True) or {}
     items = d.get('items') or []
@@ -13641,11 +13702,22 @@ def api_ext_dockproc_sync():
                 _amt = None if _amt in (None, '') else float(str(_amt).replace(',', ''))
             except (TypeError, ValueError):
                 _amt = None                              # 파싱 실패=자동입력 안 함(0 저장 방지)
+            # 제출견적 스냅샷 3상태 — 값이 조회실패로 사라지는 경로를 전부 막는다(올마이트 지적).
+            #   키 없음/리스트 아님   → False = 미전송 → 기존 유지
+            #   빈 리스트             → None  = '제출 0건' 확정 → clear
+            #   내용 있지만 전부 쓰레기 → False = 계약 위반 패킷으로 보고 기존 유지(clear 아님)
+            _raw_q = it.get('quotes')
+            if not isinstance(_raw_q, list):
+                _quotes = False
+            elif not _raw_q:
+                _quotes = None
+            else:
+                _quotes = _dockproc_norm_quotes(_raw_q) or False
             plan[row['id']] = (rank, status, (it.get('vendor') or '').strip() or None,
                                inq, row, (it.get('submit') or '').strip() or None,
-                               _amt, (it.get('cur') or '').strip().upper() or None)
+                               _amt, (it.get('cur') or '').strip().upper() or None, _quotes)
     changes = []
-    for rid, (rank, status, vendor, inq, row, submit, amt, cur) in plan.items():
+    for rid, (rank, status, vendor, inq, row, submit, amt, cur, quotes) in plan.items():
         q, v, o = (1 if rank >= 1 else 0), (1 if rank >= 2 else 0), (1 if rank >= 3 else 0)
         new_remark = row['remark']
         # 옵션 b: 발주완료 시 Vendor명을 Remark에 기입. 단 신규완료/빈Remark일 때만(매폴 수동메모 덮어쓰기 방지)
@@ -13657,22 +13729,25 @@ def api_ext_dockproc_sync():
         new_qcur = ((cur if (cur and _re.fullmatch(r'[A-Z]{3}', cur)) else 'USD')
                     if set_q else row['quote_cur'])      # SVMS CUR_CD 이상값 방어
         new_qsrc = 'auto' if set_q else (row['quote_src'] or 'auto')
+        new_subq = row['sub_quotes'] if quotes is False else quotes
         before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'],
-                  row['svms_req_no'], row['svms_submit'], row['quote_amt'], row['quote_cur'], row['quote_src'])
+                  row['svms_req_no'], row['svms_submit'], row['quote_amt'], row['quote_cur'], row['quote_src'],
+                  row['sub_quotes'])
         after = (q, v, o, new_remark, row['svms_req_no'] or inq, submit,
-                 new_qamt, new_qcur, new_qsrc)   # COALESCE(기존,신규)=멱등
+                 new_qamt, new_qcur, new_qsrc, new_subq)   # COALESCE(기존,신규)=멱등
         if before != after:
             changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
                             'status': status, 'stages': [q, v, o],
                             'remark': new_remark, 'inq_no': inq, 'submit': submit,
-                            'quote_amt': new_qamt, 'quote_cur': new_qcur, 'quote_src': new_qsrc})
+                            'quote_amt': new_qamt, 'quote_cur': new_qcur, 'quote_src': new_qsrc,
+                            'sub_quotes': new_subq})
             if not dry:
                 execute(
                     "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, remark=?, "
                     "svms_req_no=COALESCE(svms_req_no,?), svms_status=?, svms_submit=?, "
-                    "quote_amt=?, quote_cur=?, quote_src=?, "
+                    "quote_amt=?, quote_cur=?, quote_src=?, sub_quotes=?, "
                     "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?",
-                    (q, v, o, new_remark, inq, status, submit, new_qamt, new_qcur, new_qsrc, rid))
+                    (q, v, o, new_remark, inq, status, submit, new_qamt, new_qcur, new_qsrc, new_subq, rid))
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses})
