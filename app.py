@@ -45,6 +45,7 @@ JEONJA_PDF_DIR = os.path.join(INSTANCE_DIR, 'jeonja_pdfs')    # 전자결재 검
 AOR_PDF_DIR = os.path.join(INSTANCE_DIR, 'aor_pdfs')          # AOR 첨부 견적서 preview cache
 FUNDREQ_FILE_DIR = os.path.join(INSTANCE_DIR, 'fundreq_files')  # 비용청구 SVMS 첨부(인보이스·증빙) preview cache
 SOA_REVIEW_PDF_DIR = os.path.join(INSTANCE_DIR, 'soa_review_pdfs')  # SOA 수동검토 첨부 PDF cache
+DOCKATT_FILE_DIR = os.path.join(INSTANCE_DIR, 'dockproc_files')  # Dock 발주현황 벤더 견적서(SVMS MAOE) preview cache
 STT_AUDIO_DIR = os.path.join(INSTANCE_DIR, 'stt_audio')       # 회의록 STT 원본 오디오 cache
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR,   exist_ok=True)
@@ -53,6 +54,7 @@ os.makedirs(JEONJA_PDF_DIR, exist_ok=True)
 os.makedirs(AOR_PDF_DIR, exist_ok=True)
 os.makedirs(FUNDREQ_FILE_DIR, exist_ok=True)
 os.makedirs(SOA_REVIEW_PDF_DIR, exist_ok=True)
+os.makedirs(DOCKATT_FILE_DIR, exist_ok=True)
 os.makedirs(STT_AUDIO_DIR, exist_ok=True)
 # 회의록 STT Phase 0a 상수
 STT_AUDIO_EXT = {'m4a', 'wav', 'mp3', 'aac', 'caf', 'webm', 'ogg', 'mp4', 'aiff', 'flac'}
@@ -784,6 +786,7 @@ def init_db(drop=False):
                 quote_src    TEXT DEFAULT 'auto',             -- auto=SVMS 발주금액 자동입력 / manual=사용자수정 잠금(폴러 안 덮음)
                 vendor       TEXT,                            -- 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
                 sub_quotes   TEXT,                            -- 벤더 '제출견적' 스냅샷 JSON [{nm,amt,cur,att,st}] — 표시전용(발주금액 quote_amt 과 별개)
+                att_files    TEXT,                            -- 벤더 견적서 첨부 목록 JSON [{nm,kb,vndr,vnm,dt}] — 배열 위치(idx)가 preview cache 파일명
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 UNIQUE(vsl_nm, req_no)
@@ -835,6 +838,8 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN vendor TEXT")   # 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
             if 'sub_quotes' not in _dpc:                      # 벤더 제출견적 스냅샷(표시전용) — 발주금액과 혼동 금지
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN sub_quotes TEXT")
+            if 'att_files' not in _dpc:                       # 벤더 견적서 첨부 목록(파일명/KB/업체) — 파일 자체는 preview cache
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN att_files TEXT")
             _dpv = [r[1] for r in conn.execute("PRAGMA table_info(dock_procure_vessel)").fetchall()]
             if 'shipyard_vndr_cd' not in _dpv:                # 선택된 조선소 벤더(SVMS) → dock 봉투 DR_CD/VNDR_CD
                 conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN shipyard_vndr_cd TEXT")
@@ -12692,6 +12697,131 @@ def _dockproc_norm_quotes(raw):
     return json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
 
 
+_DOCKPROC_ATT_MAX = 20              # 한 건에 붙는 견적서 파일 수 상한(실측 BGBB 최대 2 — 넉넉하되 무한 아님)
+
+
+def _dockproc_norm_files(raw):
+    """폴러가 보낸 **벤더 견적서 첨부 목록** → canonical JSON 문자열(쓸 값이 없으면 None).
+    원소 = {nm 파일명, kb 크기, vndr 업체코드, vnm 업체명, dt 업로드일, sv SVMS 저장명}.
+
+    ⚠️`kb` 는 SVMS `FILE_SIZE` 원값이고 **단위가 KB 지 bytes 가 아니다**(실측: 362 → 실제
+      370,998 bytes). bytes 로 읽어서 화면에 쓰면 371KB 파일이 '362B' 로 보인다.
+
+    **배열 위치(idx)가 preview cache 파일명**이 되므로 정렬을 서버가 못박는다 — SVMS 응답 순서가
+    흔들리면 같은 파일이 다른 idx 로 옮겨가 캐시된 PDF 와 목록의 이름이 어긋난다(= 형이 A업체
+    견적서를 열었는데 B업체 파일이 뜨는 사고). 정렬키 1순위는 SVMS 저장명(`sv`)으로, 이름이
+    같은 두 파일도 구분된다.
+    canonical JSON(키 정렬·고정 separators)은 sub_quotes 와 같은 이유 — 멱등 비교용."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for f in raw[:_DOCKPROC_ATT_MAX]:
+        if not isinstance(f, dict):
+            continue
+        nm = str(f.get('nm') or '').strip()[:160]
+        if not nm:
+            continue                                     # 이름 없는 첨부는 열 수도 표시할 수도 없다
+        try:
+            kb = int(float(str(f.get('kb') or 0).replace(',', '')))
+        except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError
+            kb = 0
+        out.append({'nm': nm,
+                    'kb': max(0, min(99_999_999, kb)),
+                    'vndr': str(f.get('vndr') or '').strip()[:20],
+                    'vnm': str(f.get('vnm') or '').strip()[:120],
+                    'dt': str(f.get('dt') or '').strip()[:20],
+                    'sv': str(f.get('sv') or '').strip()[:160]})
+    if not out:
+        return None
+    out.sort(key=lambda f: (f['sv'], f['nm'], f['vndr']))
+    return json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def _dockproc_files_of(raw):
+    """저장된 att_files JSON → 리스트(깨진 값은 빈 목록). 서버 내부 비교·검증용."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [f for f in raw if isinstance(f, dict)][:_DOCKPROC_ATT_MAX]
+
+
+# ---- 벤더 견적서 preview cache (fundreq 첨부 cache 와 같은 규약: 확장자 allowlist + magic-byte) ----
+#   경로는 row id/idx/지문/확장자만으로 만들어 경로주입 불가. 읽기는 세션(웹)·Bearer(앱).
+#
+# 🔴 왜 캐시 파일명에 **지문**을 박는가 (올마이트 2026-07-31 지적 반영):
+#   처음엔 `{rid}_{idx}.{ext}` 였다. 그런데 idx 는 '목록의 몇 번째'일 뿐이라서, 목록이 바뀌면
+#   (앞 첨부가 SVMS 에서 삭제되면 뒤가 앞으로 밀린다) **같은 idx 가 다른 파일을 가리킨다.**
+#   그 상태에서 옛 캐시가 남아 있거나(무효화 실패·프로세스 중단), 폴러가 pending 을 받은 뒤 목록이
+#   바뀐 다음 업로드하면 → 형이 A업체 견적서 자리에서 **B업체 파일**을 열게 된다.
+#   경로에 지문이 있으면 현재 목록과 안 맞는 파일은 **애초에 찾아지지 않는다**(fail-closed).
+#   덕분에 무효화(GC)는 '정확성'이 아니라 '용량'만 담당하게 되어, 실패해도 오열람이 없다.
+def _dockatt_fp(f):
+    """첨부 신원 지문 = (SVMS 저장명, 파일명, 크기). 서버가 이 공식의 **단일 정본**이다 —
+    폴러는 pending 으로 받은 지문을 그대로 되돌려주기만 한다(공식 중복구현 금지).
+    크기를 넣는 이유: SVMS 가 같은 저장명으로 내용을 바꿔치면 지문이 달라져 다시 받는다."""
+    import hashlib as _hl
+    s = '%s|%s|%s' % (f.get('sv') or '', f.get('nm') or '', f.get('kb') or 0)
+    return _hl.sha1(s.encode('utf-8')).hexdigest()[:12]
+
+
+def _dockatt_path(rid, idx, fp, ext):
+    return os.path.join(DOCKATT_FILE_DIR, '%d_%d_%s.%s' % (int(rid), int(idx), str(fp)[:12], ext))
+
+
+def _dockatt_find(rid, idx, fp):
+    """(경로, 확장자) — 지문까지 일치하는 캐시만. 없으면 (None, None)."""
+    for ext in _FUNDREQ_ATT_MIME:
+        p = _dockatt_path(rid, idx, fp, ext)
+        if os.path.exists(p):
+            return p, ext
+    return None, None
+
+
+def _dockatt_disk_map():
+    """디스크 1회 스캔 → {row_id: {(idx, fp): ext}}.
+    행마다 listdir 하면 목록 API 가 O(행수) 로 느려진다."""
+    out = {}
+    try:
+        names = os.listdir(DOCKATT_FILE_DIR)
+    except OSError:
+        return out
+    for name in names:
+        stem, _, ext = name.rpartition('.')
+        if ext.lower() not in _FUNDREQ_ATT_MIME:
+            continue
+        parts = stem.split('_')
+        if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        out.setdefault(int(parts[0]), {})[(int(parts[1]), parts[2])] = ext.lower()
+    return out
+
+
+def _dockatt_cached_idx(files, disk_row):
+    """현재 목록 기준으로 **실제로 열 수 있는** idx 목록(지문 일치분만)."""
+    return [i for i, f in enumerate(files) if (i, _dockatt_fp(f)) in (disk_row or {})]
+
+
+def _dockatt_gc(rid, files, disk_row=None):
+    """현재 목록이 참조하지 않는 캐시 파일 정리. **용량 회수용이고 정확성 담보가 아니다** —
+    실패하거나 아예 안 돌아도 서빙은 지문 불일치로 이미 막힌다(그래서 예외를 삼켜도 안전)."""
+    if disk_row is None:
+        disk_row = _dockatt_disk_map().get(int(rid), {})
+    live = {(i, _dockatt_fp(f)) for i, f in enumerate(files)}
+    dropped = 0
+    for (idx, fp), ext in list(disk_row.items()):
+        if (idx, fp) in live:
+            continue
+        try:
+            os.remove(_dockatt_path(rid, idx, fp, ext)); dropped += 1
+        except OSError:
+            app.logger.exception('dockatt-gc')     # 남아도 오열람 없음 — 다음 GC 에서 다시 시도
+    return dropped
+
+
 def _dockproc_hash(equipment, subject):
     import hashlib as _hl
     s = f"{(equipment or '').strip().upper()}|{(subject or '').strip().upper()}"
@@ -12816,8 +12946,12 @@ def api_dockproc_lines():
         ves = next((v for v in vessels if v['vsl_nm'] == vsl), None)
         prefix = _reqgen_vsl_prefix((ves or {}).get('vtype'))
         vcode = (ves or {}).get('vsl_cd')
+        disk = _dockatt_disk_map()                       # 디스크 1회 스캔 — 행마다 listdir 하면 목록이 느려진다
         # 각 R/S/ST 행에 SVMS 정규 제목(수동작성 시 복사용 = reqgen 자동건과 동일 포맷) 생성
         for r in rows:
+            # 실제로 열 수 있는 견적서 idx = 디스크에 **지문까지 일치하는** 캐시가 있는 자리만
+            r['att_cached'] = (_dockatt_cached_idx(_dockproc_files_of(r['att_files']), disk.get(r['id']))
+                               if r['att_files'] else [])
             vc = r.get('vsl_cd') or vcode
             if r.get('cat_code') in ('R', 'S', 'ST') and vc:
                 r['svms_subj'] = _reqgen_build_subj(vc, r['req_no'], r['vsl_nm'], prefix, r.get('subject'))
@@ -13719,11 +13853,19 @@ def api_ext_dockproc_sync():
                 _quotes = None
             else:
                 _quotes = _dockproc_norm_quotes(_raw_q) or False
+            # 견적서 첨부 목록도 같은 3상태 계약(키 없음=기존 유지 / [] =첨부 0건 확정 / 내용=교체).
+            _raw_f = it.get('files')
+            if not isinstance(_raw_f, list):
+                _files = False
+            elif not _raw_f:
+                _files = None
+            else:
+                _files = _dockproc_norm_files(_raw_f) or False
             plan[row['id']] = (rank, status, (it.get('vendor') or '').strip() or None,
                                inq, row, (it.get('submit') or '').strip() or None,
-                               _amt, (it.get('cur') or '').strip().upper() or None, _quotes)
+                               _amt, (it.get('cur') or '').strip().upper() or None, _quotes, _files)
     changes = []
-    for rid, (rank, status, vendor, inq, row, submit, amt, cur, quotes) in plan.items():
+    for rid, (rank, status, vendor, inq, row, submit, amt, cur, quotes, files) in plan.items():
         q, v, o = (1 if rank >= 1 else 0), (1 if rank >= 2 else 0), (1 if rank >= 3 else 0)
         new_remark = row['remark']
         # 옵션 b: 발주완료 시 Vendor명을 Remark에 기입. 단 신규완료/빈Remark일 때만(매폴 수동메모 덮어쓰기 방지)
@@ -13736,27 +13878,149 @@ def api_ext_dockproc_sync():
                     if set_q else row['quote_cur'])      # SVMS CUR_CD 이상값 방어
         new_qsrc = 'auto' if set_q else (row['quote_src'] or 'auto')
         new_subq = row['sub_quotes'] if quotes is False else quotes
+        new_att = row['att_files'] if files is False else files
         before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'],
                   row['svms_req_no'], row['svms_submit'], row['quote_amt'], row['quote_cur'], row['quote_src'],
-                  row['sub_quotes'])
+                  row['sub_quotes'], row['att_files'])
         after = (q, v, o, new_remark, row['svms_req_no'] or inq, submit,
-                 new_qamt, new_qcur, new_qsrc, new_subq)   # COALESCE(기존,신규)=멱등
+                 new_qamt, new_qcur, new_qsrc, new_subq, new_att)   # COALESCE(기존,신규)=멱등
         if before != after:
             changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
                             'status': status, 'stages': [q, v, o],
                             'remark': new_remark, 'inq_no': inq, 'submit': submit,
                             'quote_amt': new_qamt, 'quote_cur': new_qcur, 'quote_src': new_qsrc,
-                            'sub_quotes': new_subq})
+                            'sub_quotes': new_subq, 'att_files': new_att})
             if not dry:
                 execute(
                     "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, remark=?, "
                     "svms_req_no=COALESCE(svms_req_no,?), svms_status=?, svms_submit=?, "
-                    "quote_amt=?, quote_cur=?, quote_src=?, sub_quotes=?, "
+                    "quote_amt=?, quote_cur=?, quote_src=?, sub_quotes=?, att_files=?, "
                     "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?",
-                    (q, v, o, new_remark, inq, status, submit, new_qamt, new_qcur, new_qsrc, new_subq, rid))
+                    (q, v, o, new_remark, inq, status, submit, new_qamt, new_qcur, new_qsrc,
+                     new_subq, new_att, rid))
+                if row['att_files'] != new_att:           # 목록이 바뀌면 안 쓰는 캐시 정리(용량 회수)
+                    _dockatt_gc(rid, _dockproc_files_of(new_att))
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses})
+
+
+# ---- 벤더 견적서(SVMS MAOE 첨부) 원본 확인 ----
+#   흐름: 폴러 sync 가 목록(att_files)을 적재 → 폴러가 pending 을 물어 **없는 파일만** NAS 에서 받아
+#   업로드 → 웹/앱이 조회 라우트로 열어본다. 읽기전용이고 금전효과 없음(SVMS 로 나가는 write 아님).
+_DOCKATT_MAX_IDX = _DOCKPROC_ATT_MAX - 1
+
+
+@app.route('/api/ext/dock_procure/attachments/pending')
+@api_key_required
+def api_ext_dockproc_att_pending():
+    """폴러용 — 목록에는 있는데 preview cache 에 없는 견적서. 이미 받은 건 다시 안 받는다(콜·용량 절약).
+    `svms_req_no` 가 있어야 폴러가 SVMS 에서 그 건을 다시 찾을 수 있으므로 그 행만 준다."""
+    try:
+        limit = max(1, min(500, int(request.args.get('limit') or 60)))
+    except (TypeError, ValueError):
+        limit = 60
+    vc = (request.args.get('vsl_cd') or '').strip().upper()
+    rows = query(
+        "SELECT id, vsl_nm, vsl_cd, req_no, svms_req_no, att_files FROM dock_procure "
+        "WHERE att_files IS NOT NULL AND att_files<>'' AND svms_req_no IS NOT NULL AND svms_req_no<>'' "
+        + ("AND (UPPER(vsl_cd)=? OR vsl_nm IN (SELECT vsl_nm FROM dock_procure_vessel WHERE UPPER(vsl_cd)=?)) " if vc else "")
+        + "ORDER BY id",
+        ((vc, vc) if vc else ()))
+    disk = _dockatt_disk_map()
+    out = []
+    for r in rows:
+        have = disk.get(r['id']) or {}
+        for idx, f in enumerate(_dockproc_files_of(r['att_files'])):
+            fp = _dockatt_fp(f)
+            if (idx, fp) in have or idx > _DOCKATT_MAX_IDX:
+                continue
+            # `fp` 는 폴러가 업로드할 때 그대로 되돌려줘야 하는 토큰이다. 그 사이 목록이 바뀌면
+            # 지문이 달라져 서버가 409 로 거절한다 → 옛 파일이 새 첨부 자리에 저장되는 race 차단.
+            out.append({'id': r['id'], 'vsl_nm': r['vsl_nm'], 'vsl_cd': r['vsl_cd'],
+                        'req_no': r['req_no'], 'svms_req_no': r['svms_req_no'], 'idx': idx,
+                        'fp': fp, 'nm': f.get('nm'), 'sv': f.get('sv'), 'kb': f.get('kb')})
+            if len(out) >= limit:
+                return jsonify({'pending': out, 'truncated': True})
+    return jsonify({'pending': out, 'truncated': False})
+
+
+@app.route('/api/ext/dock_procure/<int:rid>/attachments/<int:idx>', methods=['POST'])
+@api_key_required
+def api_ext_dockproc_att_upload(rid, idx):
+    """맥 폴러가 NAS 에서 받은 견적서 원본을 preview cache 로 적재. body = 파일 바이트 그대로.
+    확장자는 ?ext= → 저장된 파일명 순으로 정한다(allowlist 밖이면 거부).
+
+    🔴 `?fp=` 필수 = pending 이 준 **그 첨부**가 맞는지 대조(올마이트 지적 반영). 폴러가 pending 을
+      받아 NAS 에서 받아오는 동안 sync 로 목록이 바뀌면 같은 idx 가 다른 파일을 가리키게 되는데,
+      그때 지문이 어긋나 409 로 거절된다 → 다음 폴에서 새 지문으로 다시 받아간다.
+      (예전엔 'idx 가 목록 범위 안인지'만 봐서, 옛 파일이 새 첨부 자리에 저장될 수 있었다.)"""
+    if idx < 0 or idx > _DOCKATT_MAX_IDX:
+        abort(404)
+    if request.content_length and request.content_length > _FUNDREQ_ATT_MAX:
+        return jsonify({'error': 'too large'}), 413
+    row = query("SELECT id, att_files FROM dock_procure WHERE id=?", (rid,), one=True)
+    if not row:
+        abort(404)
+    files = _dockproc_files_of(row['att_files'])
+    if idx >= len(files):                                # 목록에 없는 자리에 파일을 꽂으면 이름↔내용이 어긋난다
+        return jsonify({'error': 'idx out of list'}), 409
+    fp = _dockatt_fp(files[idx])
+    if (request.args.get('fp') or '').strip() != fp:     # fail-closed — 지문 없거나 다르면 저장 안 함
+        return jsonify({'error': 'fingerprint mismatch', 'expect': fp}), 409
+    ext = _fundreq_att_ext(request.args.get('ext')) or _fundreq_att_ext(files[idx].get('nm'))
+    if not ext:
+        return jsonify({'error': 'unsupported type'}), 400
+    data = request.get_data()
+    if not data:
+        return jsonify({'error': 'empty'}), 400
+    if len(data) > _FUNDREQ_ATT_MAX:
+        return jsonify({'error': 'too large'}), 413
+    if not _fundreq_att_sniff_ok(ext, data):             # 확장자 위장 방지(inline 서빙되는 경로라 필수)
+        return jsonify({'error': 'content/ext mismatch'}), 400
+    final = _dockatt_path(rid, idx, fp, ext)
+    tmp = final + '.' + uuid.uuid4().hex + '.tmp'
+    try:
+        with open(tmp, 'wb') as fh:
+            fh.write(data)
+        os.replace(tmp, final)                           # 원자적 교체 — 반쯤 쓰인 파일이 노출되지 않게
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        app.logger.exception('dockatt-upload')
+        return jsonify({'error': 'write failed'}), 500
+    _dockatt_gc(rid, files)                              # 새 파일이 안착한 뒤 안 쓰는 잔재만 정리(용량)
+    return jsonify({'id': rid, 'index': idx, 'fp': fp, 'ext': ext, 'stored': True, 'bytes': len(data)})
+
+
+@app.route('/api/dock_procure/<int:rid>/attachments/<int:idx>')
+@login_required
+def api_dockproc_att(rid, idx):
+    """견적서 원본 미리보기(읽기전용). `/api/` 경로라 앱 Bearer 도 세션 투명주입으로 그대로 열린다.
+    권한은 이 기능의 다른 dock_procure API 와 동일한 `@login_required` (탭 전체가 같은 정책).
+
+    🔴 **현재 목록에 있는 자리 + 지문 일치**일 때만 연다(올마이트 지적 반영). 목록이 비워졌거나
+      바뀐 뒤 GC 가 실패해 옛 파일이 남아 있어도, URL 을 직접 쳐서 열 수 없다."""
+    if idx < 0 or idx > _DOCKATT_MAX_IDX:
+        abort(404)
+    row = query("SELECT id, att_files FROM dock_procure WHERE id=?", (rid,), one=True)
+    if not row:
+        abort(404)
+    files = _dockproc_files_of(row['att_files'])
+    if idx >= len(files):                                # 목록에서 사라진 첨부는 캐시가 남아도 서빙 안 함
+        abort(404)
+    p, ext = _dockatt_find(rid, idx, _dockatt_fp(files[idx]))
+    if not p:
+        abort(404)
+    nm = files[idx].get('nm') or 'quotation_%d_%d.%s' % (rid, idx, ext)
+    nm = os.path.basename(str(nm).replace('\\', '/'))[:160] or 'quotation.%s' % ext
+    resp = send_file(p, mimetype=_FUNDREQ_ATT_MIME[ext],
+                     as_attachment=(ext not in _FUNDREQ_ATT_INLINE),
+                     download_name=nm, conditional=True)
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
 
 
 @app.route('/automation')

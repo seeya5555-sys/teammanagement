@@ -78,6 +78,13 @@
   .dp-stg.subhi{background:var(--red-bg);border-radius:7px;box-shadow:0 0 0 1.5px var(--red-border);padding:2px 0}
   .dp-sub{font-size:9px;font-weight:800;color:var(--red);margin-top:1px;line-height:1}
   .dp-sub.q{color:var(--text-secondary);font-weight:700;letter-spacing:-.2px;cursor:help}  /* 벤더 제출견적액(발주금액 아님) */
+  /* 벤더 견적서 원본(SVMS MAOE 첨부) — 클릭하면 새 탭에 PDF */
+  .dp-atts{display:flex;flex-wrap:wrap;gap:2px;justify-content:center;margin-top:2px}
+  .dp-att{font-size:8px;font-weight:700;line-height:1.5;padding:0 3px;border-radius:3px;
+          border:1px solid var(--border);color:var(--text-secondary);text-decoration:none;max-width:74px;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dp-att:not(.off):hover{border-color:var(--blue-dot);color:var(--blue-dot)}
+  .dp-att.off{opacity:.45;cursor:help}
   .dp-status{font-size:11px;font-weight:700;padding:3px 10px;border-radius:14px;white-space:nowrap}
   .st-wait{background:var(--surface-3);color:var(--text-secondary)} .st-quote{background:var(--blue-bg);color:var(--blue-text)}
   .st-sent{background:var(--amber-bg);color:var(--amber)} .st-done{background:var(--green-bg);color:var(--green)}
@@ -235,6 +242,11 @@
   const quoteTip = q => `${q.nm||'업체'} · ${q.amt!=null?fmtAmt(q.amt)+' '+(q.cur||''):'금액 미제출'}`
                       + ((q.usd!=null && (q.cur||'USD')!=='USD')?` (≈USD ${fmtAmt(q.usd)})`:'')
                       + (q.att?` · 첨부 ${q.att}`:'') + ((q.st||'').toLowerCase()==='ordered'?' · 발주':'');
+  // 견적서 첨부 목록(att_files) — 배열 위치가 서버 preview cache 의 idx 다(서버가 정렬을 못박음).
+  const filesOf = l => { try{ const a=JSON.parse(l.att_files||'[]');
+    return Array.isArray(a)?a.filter(f=>f&&typeof f==='object'):[] }catch(e){ return [] } };
+  const attNm = f => { const n=String(f.nm||'파일'); return n.length>16?(n.slice(0,13)+'…'):n; };
+  const attTip = f => `${f.nm||''}${f.kb?` · ${fmtAmt(f.kb)}KB`:''}${f.vnm?`\n${f.vnm}`:''}${f.dt?`\n${f.dt}`:''}`;
   const STATUSES = [
     {code:'wait',  nm:'대기',     color:'var(--gray-dot)'},
     {code:'quote', nm:'견적작성', color:'var(--blue-dot)'},
@@ -497,6 +509,16 @@
           : `제출 ${priced.length}건 <span style="font-weight:400">통화상이</span>`;
         extra += `<div class="dp-sub q" title="제출견적 (발주금액 아님)&#10;${esc(tip)}">${body}</div>`;
       }
+      // 벤더가 올린 견적서 원본. 서버 캐시에 실제로 있는 것만 링크로 — 없는 건 '수집 대기'로 구분해서
+      // 보여준다(링크가 404 나는 것보다 낫고, 형이 다음 동기화를 기다리면 된다는 걸 알 수 있음).
+      const fs = filesOf(l);
+      if(fs.length){
+        const have = new Set(l.att_cached||[]);
+        extra += `<div class="dp-atts">` + fs.map((f,i)=> have.has(i)
+          ? `<a class="dp-att" href="/api/dock_procure/${l.id}/attachments/${i}" target="_blank" rel="noopener" title="견적서 열기&#10;${esc(attTip(f))}">${esc(attNm(f))}</a>`
+          : `<span class="dp-att off" title="아직 서버에 안 받아옴 — 다음 동기화에서 수집됨&#10;${esc(attTip(f))}">${esc(attNm(f))}</span>`
+        ).join('') + `</div>`;
+      }
     }
     return `<div class="dp-stg ${on}${cls}" data-id="${l.id}" data-stage="${st}" data-val="${l[key]?0:1}">
       <div class="dp-cbx"><svg class="ic-svg" viewBox="0 0 24 24" style="stroke-width:3"><path d="M20 6 9 17l-5-5"/></svg></div><div class="sl">${label}</div>${extra}</div>`;
@@ -525,6 +547,8 @@
       const l=DATA.lines.find(x=>x.id==id); if(l){l.prepared_by=j.prepared_by;l.source=j.source;}
       render();
     });
+    // 견적서 링크는 단계 토글 안으로 들어가 있다 — 전파를 끊어야 PDF 열면서 체크가 바뀌지 않는다.
+    document.querySelectorAll('.dp-att').forEach(a=>a.onclick=e=>e.stopPropagation());
     document.querySelectorAll('.dp-stg').forEach(s=>s.onclick=async()=>{
       const id=s.dataset.id, stage=s.dataset.stage, value=+s.dataset.val;
       const r=await fetch(`/api/dock_procure/${id}/stage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage,value})});
