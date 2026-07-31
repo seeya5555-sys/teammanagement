@@ -265,6 +265,28 @@ r = c.get('/api/dock_procure/%d/attachments/0' % rid8)
 chk(r.status_code == 404, '  옛 내용은 서빙되지 않음', r.status_code)
 r.close()
 
+print('# sv 대조 — 화면이 낡은 사이 목록이 바뀌어도 "칩 이름과 다른 파일"이 열리지 않음')
+#   지문 검증은 '서버의 현재 목록'과만 맞춘다. 앱/웹 화면이 옛 목록을 들고 있는 동안 그 자리가
+#   다른 업체 파일로 교체되고 캐시까지 채워지면, 지문은 맞으므로 200 이 나간다 → 호출자가 자기가
+#   본 신원(sv)을 같이 보내면 서버가 그것까지 확인한다.
+ridA = mkrow('R11', att_files=json.dumps([F1], sort_keys=True, separators=(',', ':')),
+             svms_req_no='TSTVME26073111')
+upload(ridA, 0, PDF, 'pdf')
+r = c.get('/api/dock_procure/%d/attachments/0?sv=%s' % (ridA, F1['sv']))
+chk(r.status_code == 200, '내가 본 첨부와 같은 신원이면 정상 200', r.status_code)
+r.close()
+r = c.get('/api/dock_procure/%d/attachments/0?sv=%s' % (ridA, F2['sv']))
+chk(r.status_code == 404, '옛 화면의 신원과 어긋나면 404 (B업체 파일이 A업체 자리에 안 뜸)', r.status_code)
+r.close()
+sync('R11', files=[F2])                                    # 목록 교체 후 새 파일을 그 자리에 채움
+upload(ridA, 0, PDF, 'pdf')
+r = c.get('/api/dock_procure/%d/attachments/0?sv=%s' % (ridA, F1['sv']))
+chk(r.status_code == 404, '교체 뒤 옛 sv 로 열면 404 — 지문만으로는 못 막던 창을 닫음', r.status_code)
+r.close()
+r = c.get('/api/dock_procure/%d/attachments/0' % ridA)
+chk(r.status_code == 200, 'sv 미지정(웹 기존 링크)은 종전대로 동작 — 하위호환', r.status_code)
+r.close()
+
 print('# GC 는 용량만 담당 — 현재 목록이 참조하는 파일은 남긴다')
 rid9 = mkrow('R9', att_files=json.dumps([F1, F2], sort_keys=True, separators=(',', ':')),
              svms_req_no='TSTVME26073109')

@@ -515,7 +515,9 @@
       if(fs.length){
         const have = new Set(l.att_cached||[]);
         extra += `<div class="dp-atts">` + fs.map((f,i)=> have.has(i)
-          ? `<a class="dp-att" href="/api/dock_procure/${l.id}/attachments/${i}" target="_blank" rel="noopener" title="견적서 열기&#10;${esc(attTip(f))}">${esc(attNm(f))}</a>`
+          // sv = 이 화면이 보고 있는 첨부의 신원. 서버가 현재 목록과 대조해 어긋나면 404 —
+          // 탭을 오래 열어둔 사이 목록이 바뀌어도 '이름은 A인데 열리는 건 B' 가 되지 않는다.
+          ? `<a class="dp-att" href="/api/dock_procure/${l.id}/attachments/${i}?sv=${encodeURIComponent(f.sv || '')}" target="_blank" rel="noopener" title="견적서 열기&#10;${esc(attTip(f))}">${esc(attNm(f))}</a>`
           : `<span class="dp-att off" title="아직 서버에 안 받아옴 — 다음 동기화에서 수집됨&#10;${esc(attTip(f))}">${esc(attNm(f))}</span>`
         ).join('') + `</div>`;
       }

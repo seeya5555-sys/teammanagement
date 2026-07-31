@@ -14011,6 +14011,13 @@ def api_dockproc_att(rid, idx):
     files = _dockproc_files_of(row['att_files'])
     if idx >= len(files):                                # 목록에서 사라진 첨부는 캐시가 남아도 서빙 안 함
         abort(404)
+    # 🔴 호출자가 '자기가 보고 있던 첨부의 신원'을 같이 보내면 그것까지 확인한다(올마이트 2026-07-31 지적).
+    #   지문 검증만으로는 **서버 기준 현재 목록**과의 일치만 보장한다 — 화면이 열린 채 목록이 바뀌고
+    #   캐시까지 새 파일로 채워지면, 같은 idx 가 이제 다른 업체 파일이라 '칩 이름은 A, 열리는 건 B' 가 된다.
+    #   `sv`(SVMS 저장명, 정렬 1순위 키)를 되돌려받아 대조하면 그 창이 닫힌다. 안 보내면 기존 동작 유지.
+    want_sv = (request.args.get('sv') or '').strip()
+    if want_sv and want_sv != (files[idx].get('sv') or ''):
+        abort(404)
     p, ext = _dockatt_find(rid, idx, _dockatt_fp(files[idx]))
     if not p:
         abort(404)
