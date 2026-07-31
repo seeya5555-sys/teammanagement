@@ -7848,7 +7848,6 @@ AUTOMATION_LABELS = {
     'fleet-map':       ('선박 위치지도 갱신',      False),
     'fleet-map-crawl': ('선위 AIS 수집',          False),
     'cls-push':        ('선급 검사현황 동기화',    False),
-    'mail-brief':      ('아침 메일 브리핑',        False),
     'shipwiki-ingest': ('선박 위키 수집',          False),
     'trmt-summary':    ('현안 요약 생성',          False),
     'money-watch':     ('돈경로 감시견',          False),
@@ -7856,6 +7855,12 @@ AUTOMATION_LABELS = {
     'jeonja-verify':   ('전자결재 검증',          False),
     'wfmail':          ('메일→현안 카드 수집',     False),
     'logrotate':       ('로그 정리',              False),
+}
+# 은퇴한 러너 — 보드에서 숨긴다. 맥측 health_push 에서 빼도 automation_health 에 남은
+# 과거 행 때문에 카드가 계속 보이므로(그리고 갱신이 끊겨 unknown/fail 로 굳으므로) 여기서 차단한다.
+# 운영 DB 를 손으로 지우는 대신 코드 필터로 처리 — prune 규약(러너당 30행)상 잔존 행은 무해하다.
+RETIRED_RUNNER_KEYS = {
+    'mail-brief',   # 아침 메일 브리핑, 2026-07-31 폐기(형 지시)
 }
 # status 정렬 우선순위(fail 먼저, 그다음 warn, ok, unknown)
 _HEALTH_ORDER = {'fail': 0, 'warn': 1, 'ok': 2, 'unknown': 3}
@@ -7868,6 +7873,8 @@ def _automation_health_summary():
                  "FROM automation_health ORDER BY runner_key, reported_at, id")
     by_key = {}
     for r in rows:
+        if r['runner_key'] in RETIRED_RUNNER_KEYS:
+            continue
         by_key.setdefault(r['runner_key'], []).append(r)
 
     runners = []
@@ -7905,7 +7912,7 @@ def api_ext_automation_health():
     touched = set()
     for it in runners:
         key = (it.get('key') or '').strip()
-        if not key:
+        if not key or key in RETIRED_RUNNER_KEYS:
             continue
         status = (it.get('status') or 'unknown').strip()
         if status not in _HEALTH_ORDER:
