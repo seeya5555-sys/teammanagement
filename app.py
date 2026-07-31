@@ -785,7 +785,7 @@ def init_db(drop=False):
                 quote_cur    TEXT DEFAULT 'USD',              -- 견적 통화
                 quote_src    TEXT DEFAULT 'auto',             -- auto=SVMS 발주금액 자동입력 / manual=사용자수정 잠금(폴러 안 덮음)
                 vendor       TEXT,                            -- 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
-                sub_quotes   TEXT,                            -- 벤더 '제출견적' 스냅샷 JSON [{nm,amt,cur,att,st}] — 표시전용(발주금액 quote_amt 과 별개)
+                sub_quotes   TEXT,                            -- 벤더 '제출견적' 스냅샷 JSON [{cd,nm,amt,usd,cur,att,st,best}] — 표시전용(발주금액 quote_amt 과 별개). cd=VNDR_CD(Phase③ 상신 SELETED_VDR 소스)
                 att_files    TEXT,                            -- 벤더 견적서 첨부 목록 JSON [{nm,kb,vndr,vnm,dt}] — 배열 위치(idx)가 preview cache 파일명
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
@@ -815,6 +815,49 @@ def init_db(drop=False):
                 vndr_cd     TEXT PRIMARY KEY,                   -- PKG_CM_VNDR VNDR_CD (dock 봉투 DR_CD/VNDR_CD 소스)
                 vndr_nm     TEXT,                               -- 국문명
                 vndr_nm_eng TEXT,                               -- 영문명
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        # ===== Phase ③ 수리 견적 상신 큐 (fundreq_draft 패턴 복제) =====
+        #  🔴 이 큐의 1행 = **실제 SVMS 발주벤더 확정 + 결재상신**을 맥 워커에 지시하는 것이다.
+        #     생성 경로는 세션 로그인한 사람이 누르는 버튼 **하나뿐**이고(ext 생성 라우트 없음),
+        #     `pending` 단계가 없는 이유도 그것 — 초안을 사람이 만들므로 곧바로 approved 로 들어온다.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dock_submit_draft (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                rid           INTEGER NOT NULL,                 -- dock_procure.id
+                vsl_nm        TEXT,
+                vsl_cd        TEXT,
+                req_no        TEXT,                             -- INDEX 요청번호(표시용)
+                rep_cd        TEXT NOT NULL,                    -- SVMS REP_CD (= dock_procure.svms_req_no)
+                vndr_cd       TEXT NOT NULL,                    -- 봉투 SELETED_VDR = sub_quotes[].cd
+                vndr_nm       TEXT,
+                amt           REAL,                             -- 승인 시점 제출견적액(감사용 스냅샷)
+                cur           TEXT,
+                app_no        TEXT NOT NULL,                    -- 결재라인 프리셋(SP_GET_USER_APP APP_NO)
+                app_nm        TEXT,
+                envelope_json TEXT,                             -- 모달에 보여준 초안 스냅샷(사람이 승인한 내용 그대로)
+                status        TEXT NOT NULL DEFAULT 'approved',  -- approved/submitting/submitted/failed/canceled
+                decided_at    TEXT,
+                decided_by    TEXT,                             -- 버튼 누른 사람(세션) — 비면 워커가 claim 안 함
+                done_at       TEXT,                             -- claim 시각 → 결과 시각으로 덮임(fundreq 관행)
+                result        TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_submit_status ON dock_submit_draft(status)")
+        # 같은 수리건을 두 번 큐잉하면 이중 상신 — 부분 유니크로 DB 층에 못박는다(앱 검사와 이중방어).
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_dock_submit_active "
+                     "ON dock_submit_draft(rep_cd) WHERE status IN ('approved','submitting')")
+        # 결재라인 캐시 — 서버는 SVMS 에 못 붙으므로 맥이 밀어준다. **드롭다운 표시 전용**이고
+        # 상신 봉투의 `CURSOR.P_IC_APP` 는 워커가 그 시점에 SP_GET_USER_APP_D 를 다시 읽어서 만든다
+        # (캐시가 stale 하면 옛 결재자로 상신될 수 있으므로 캐시를 봉투 소스로 쓰지 않는다).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS svms_app_line (
+                app_no      TEXT PRIMARY KEY,                   -- SP_GET_USER_APP APP_NO ('0002' 등)
+                app_nm      TEXT,                               -- 라인 이름
+                user_id     TEXT,                               -- 소유 계정(SS0094)
+                approvers   TEXT,                               -- 표시용 요약 JSON [{seq,id,nm}]
                 updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
             )
         """)
@@ -14035,6 +14078,287 @@ def api_dockproc_att(rid, idx):
                      download_name=nm, conditional=True)
     resp.headers['X-Content-Type-Options'] = 'nosniff'
     return resp
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Phase ③ — 수리 견적 상신 큐 (웹/앱 컨펌 → 맥 워커가 SVMS write 2회)
+# ═════════════════════════════════════════════════════════════════
+#  🔴 이 블록이 다루는 것은 **돈이 나가는 경로**다. 설계 정본 = docs/svms/phase3-submit-design.md,
+#     봉투 실측 = docs/svms/repair-submit-envelope.md(§최종 조립 규격).
+#  안전 원칙 4개 — 코드로 강제되며 편의를 위해 완화하지 않는다:
+#   ① **생성은 세션 로그인 admin 버튼 하나뿐.** ext(api_key) 생성 라우트를 만들지 않는다
+#      — 만들면 맥/스크립트가 사람 없이 상신을 큐잉할 수 있다(app.py `ext enqueue` 403 선례와 같은 취지).
+#   ② **클라이언트는 rep_cd·금액을 못 보낸다.** 서버가 rid 로 DB 에서 읽어 채운다 — 안 그러면
+#      화면에 A 를 띄우고 봉투엔 B 를 넣는 조작이 가능하다.
+#   ③ 벤더는 그 건의 `sub_quotes` 에 **`cd` 로 실재하고 제출상태**여야 한다(구버전 폴러가 실은
+#      cd 없는 견적은 자동 제외 = fail-closed).
+#   ④ 이미 발주완료(stg_order)거나 이미 큐에 있으면 거부(부분 유니크 인덱스와 이중방어).
+_DOCK_SUBMIT_APP_NO_RE = re.compile(r'^[0-9A-Z]{1,10}$')
+_DOCK_SUBMIT_ACTIVE = ('approved', 'submitting')
+_DOCK_SUBMIT_DONE = ('submitted', 'failed', 'canceled')
+
+
+def _dock_submit_quote_pick(row, vndr_cd):
+    """그 수리건의 제출견적 중 `cd` 가 일치하는 1건을 고른다. (없으면 None, 이유 문자열 반환)"""
+    try:
+        quotes = json.loads(row['sub_quotes'] or '[]')
+    except (TypeError, ValueError):
+        return None, '제출견적 스냅샷 손상 — 폴러 재동기화 필요'
+    if not isinstance(quotes, list) or not quotes:
+        return None, '제출견적 없음 — 벤더 제출 후 다시 시도'
+    hit = [q for q in quotes if isinstance(q, dict) and (q.get('cd') or '') == vndr_cd]
+    if not hit:
+        # cd 가 하나도 없으면 구버전 폴러가 적재한 스냅샷 — 코드 없이는 SELETED_VDR 를 만들 수 없다.
+        if not any((q.get('cd') if isinstance(q, dict) else None) for q in quotes):
+            return None, '업체코드(VNDR_CD) 미적재 — 폴러 재동기화 후 다시 시도'
+        return None, '선택한 업체가 이 건의 제출견적에 없음'
+    q = hit[0]
+    st = str(q.get('st') or '')
+    if 'submit' not in st.lower():
+        # SVMS 는 견적을 낸(Submitted) 업체만 발주 대상으로 삼는다. 미제출 업체로 상신하면
+        # 금액 없는 발주가 되므로 여기서 막고, 실제 반례가 관측되면 근거를 보고 완화한다.
+        return None, "제출상태가 아님(st=%s) — 발주 대상 아님" % (st or '없음')
+    return q, None
+
+
+def _dock_submit_row_json(r):
+    d = dict(r)
+    d.pop('envelope_json', None)                          # 목록엔 스냅샷 원문 안 실음(길다)
+    return d
+
+
+@app.route('/api/dock_submit/app_lines')
+@login_required
+def api_dock_submit_app_lines():
+    """결재라인 드롭다운 소스 — 맥이 밀어준 캐시. 표시 전용(봉투는 워커가 재조회해 만든다)."""
+    rows = query('SELECT app_no, app_nm, user_id, approvers, updated_at FROM svms_app_line ORDER BY app_no')
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['approvers'] = json.loads(d.get('approvers') or '[]')
+        except (TypeError, ValueError):
+            d['approvers'] = []
+        out.append(d)
+    return jsonify({'lines': out})
+
+
+@app.route('/api/ext/svms/app_lines', methods=['POST'])
+@api_key_required
+def api_ext_svms_app_lines():
+    """맥이 SP_GET_USER_APP(+_D) 를 읽어 캐시를 올린다. 읽기 결과 적재라 SVMS write 0.
+    전량 교체(delete+insert)로 SVMS 에서 삭제된 라인이 드롭다운에 남지 않게 한다."""
+    d = request.get_json(silent=True) or {}
+    lines = d.get('lines')
+    if not isinstance(lines, list):
+        return jsonify({'error': 'lines 배열 필요'}), 400
+    keep = []
+    for ln in lines[:50]:
+        if not isinstance(ln, dict):
+            continue
+        app_no = str(ln.get('app_no') or '').strip().upper()
+        if not _DOCK_SUBMIT_APP_NO_RE.match(app_no):
+            continue
+        appr = []
+        for a in (ln.get('approvers') or [])[:20]:
+            if isinstance(a, dict):
+                appr.append({'seq': a.get('seq'),
+                             'id': str(a.get('id') or '')[:20],
+                             'nm': str(a.get('nm') or '')[:60]})
+        keep.append((app_no, str(ln.get('app_nm') or '')[:80],
+                     str(ln.get('user_id') or '')[:20],
+                     json.dumps(appr, ensure_ascii=False, sort_keys=True, separators=(',', ':'))))
+    if not keep:
+        return jsonify({'error': '유효한 라인 0건 — 캐시 유지'}), 400   # 빈 푸시로 드롭다운을 비우지 않음
+    execute('DELETE FROM svms_app_line')
+    for k in keep:
+        execute("INSERT INTO svms_app_line (app_no, app_nm, user_id, approvers, updated_at) "
+                "VALUES (?,?,?,?,datetime('now','localtime'))", k)
+    return jsonify({'ok': True, 'count': len(keep)})
+
+
+@app.route('/api/dock_submit/drafts')
+@login_required
+def api_dock_submit_list():
+    rid = request.args.get('rid')
+    if rid:
+        try:
+            rows = query('SELECT * FROM dock_submit_draft WHERE rid=? ORDER BY id DESC', (int(rid),))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'bad rid'}), 400
+    else:
+        rows = query('SELECT * FROM dock_submit_draft ORDER BY id DESC LIMIT 200')
+    return jsonify({'drafts': [_dock_submit_row_json(r) for r in rows]})
+
+
+@app.route('/api/dock_submit/preview')
+@login_required
+def api_dock_submit_preview():
+    """컨펌 모달용 초안 요약 — 이 건에 상신 가능한 벤더 후보 + 결재라인. **write 0.**
+    여기서 거절 사유를 미리 보여줘서, 형이 버튼을 누른 뒤에야 실패하는 일을 줄인다."""
+    try:
+        rid = int(request.args.get('rid') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'bad rid'}), 400
+    row = query('SELECT * FROM dock_procure WHERE id=?', (rid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    try:
+        quotes = json.loads(row['sub_quotes'] or '[]')
+    except (TypeError, ValueError):
+        quotes = []
+    cands = []
+    for q in (quotes if isinstance(quotes, list) else []):
+        if not isinstance(q, dict):
+            continue
+        why = None
+        if not q.get('cd'):
+            why = '업체코드 미적재'
+        elif 'submit' not in str(q.get('st') or '').lower():
+            why = '제출상태 아님'
+        cands.append({'cd': q.get('cd'), 'nm': q.get('nm'), 'amt': q.get('amt'),
+                      'cur': q.get('cur'), 'usd': q.get('usd'), 'st': q.get('st'),
+                      'att': q.get('att'), 'best': q.get('best'), 'ok': why is None, 'why': why})
+    blocked = None
+    if (row['cat_code'] or '') != 'R':
+        blocked = '수리(R) 건만 상신 가능'
+    elif not (row['svms_req_no'] or '').strip():
+        blocked = 'SVMS 문서번호(Inq No) 연결 안 됨'
+    elif row['stg_order']:
+        blocked = '이미 발주완료'
+    else:
+        act = query("SELECT id, status FROM dock_submit_draft WHERE rep_cd=? AND status IN (?,?)",
+                    ((row['svms_req_no'] or '').strip(), *_DOCK_SUBMIT_ACTIVE), one=True)
+        if act:
+            blocked = '이미 상신 큐에 있음(#%d %s)' % (act['id'], act['status'])
+    return jsonify({'rid': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
+                    'rep_cd': (row['svms_req_no'] or '').strip() or None,
+                    'subject': row['subject'], 'blocked': blocked, 'candidates': cands})
+
+
+@app.route('/api/dock_submit/drafts', methods=['POST'])
+@admin_required
+def api_dock_submit_create():
+    """🔴 형이 컨펌 버튼을 누르는 자리 = Phase ③ 의 **유일한 승인 게이트.**
+    여기서 만들어진 approved 1행이 맥 워커의 SVMS write 2회(SP_SET_ODR_INFO → SP_SET_SBM)를 부른다.
+    받는 값은 `rid`/`vndr_cd`/`app_no` **3개뿐** — 문서번호·금액은 서버가 DB 에서 읽는다(위 원칙 ②)."""
+    d = request.get_json(silent=True) or {}
+    try:
+        rid = int(d.get('rid') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'bad rid'}), 400
+    vndr_cd = str(d.get('vndr_cd') or '').strip().upper()
+    app_no = str(d.get('app_no') or '').strip().upper()
+    if not re.fullmatch(r'[A-Z0-9]{1,20}', vndr_cd):
+        return jsonify({'error': '업체코드(vndr_cd) 형식 오류', 'field': 'vndr_cd'}), 400
+    if not _DOCK_SUBMIT_APP_NO_RE.match(app_no):
+        return jsonify({'error': '결재라인(app_no) 형식 오류', 'field': 'app_no'}), 400
+    row = query('SELECT * FROM dock_procure WHERE id=?', (rid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    if (row['cat_code'] or '') != 'R':
+        return jsonify({'error': '수리(R) 건만 상신 가능 — 이 행은 %s' % (row['cat_code'] or '?')}), 400
+    rep_cd = (row['svms_req_no'] or '').strip()
+    if not rep_cd:
+        return jsonify({'error': 'SVMS 문서번호(Inq No) 연결 안 됨 — 먼저 연결하세요'}), 400
+    if row['stg_order']:
+        return jsonify({'error': '이미 발주완료된 건'}), 409
+    q, why = _dock_submit_quote_pick(row, vndr_cd)
+    if not q:
+        return jsonify({'error': why, 'field': 'vndr_cd'}), 400
+    line = query('SELECT * FROM svms_app_line WHERE app_no=?', (app_no,), one=True)
+    if not line:
+        return jsonify({'error': '결재라인 캐시에 없음 — 맥 워커 동기화 필요', 'field': 'app_no'}), 400
+    try:
+        approvers = json.loads(line['approvers'] or '[]')
+    except (TypeError, ValueError):
+        approvers = []
+    # 사람이 화면에서 본 내용 그대로를 스냅샷으로 남긴다(사후 감사·분쟁 대비).
+    # ⚠️ 이건 기록이고 봉투가 아니다 — 실제 봉투는 워커가 상신 시점에 SVMS 를 다시 읽어 만든다.
+    envelope = {'rep_cd': rep_cd, 'vsl_cd': row['vsl_cd'], 'req_no': row['req_no'],
+                'subject': row['subject'], 'vndr_cd': vndr_cd, 'vndr_nm': q.get('nm'),
+                'amt': q.get('amt'), 'cur': q.get('cur'), 'usd': q.get('usd'), 'st': q.get('st'),
+                'app_no': app_no, 'app_nm': line['app_nm'], 'approvers': approvers}
+    who = session.get('username') or 'web'
+    try:
+        did = execute(
+            "INSERT INTO dock_submit_draft (rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_cd, vndr_nm, "
+            "amt, cur, app_no, app_nm, envelope_json, status, decided_at, decided_by) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'approved',datetime('now','localtime'),?)",
+            (rid, row['vsl_nm'], row['vsl_cd'], row['req_no'], rep_cd, vndr_cd, q.get('nm'),
+             q.get('amt'), q.get('cur'), app_no, line['app_nm'],
+             json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(',', ':')), who))
+    except sqlite3.IntegrityError:                         # 부분 유니크 = 같은 건 이중 큐잉
+        act = query("SELECT id, status FROM dock_submit_draft WHERE rep_cd=? AND status IN (?,?)",
+                    (rep_cd, *_DOCK_SUBMIT_ACTIVE), one=True)
+        return jsonify({'error': '이미 상신 큐에 있음', 'id': act['id'] if act else None,
+                        'status': act['status'] if act else None}), 409
+    return jsonify({'id': did, 'status': 'approved', 'rep_cd': rep_cd,
+                    'vndr_cd': vndr_cd, 'app_no': app_no}), 201
+
+
+@app.route('/api/dock_submit/drafts/<int:did>/cancel', methods=['POST'])
+@admin_required
+def api_dock_submit_cancel(did):
+    """워커가 집어가기 전(approved)만 취소. submitting 이후는 SVMS 에 이미 나갔을 수 있어 못 되돌린다."""
+    rc = execute_rc("UPDATE dock_submit_draft SET status='canceled', done_at=datetime('now','localtime'), "
+                    "result=COALESCE(result,'')||' [canceled by '||?||']' "
+                    "WHERE id=? AND status='approved'", (session.get('username') or 'web', did))
+    if not rc:
+        cur = query('SELECT status FROM dock_submit_draft WHERE id=?', (did,), one=True)
+        if not cur:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify({'error': '대기(approved) 상태만 취소 가능', 'status': cur['status']}), 409
+    return jsonify({'id': did, 'status': 'canceled'})
+
+
+@app.route('/api/dock_submit/drafts/decided', methods=['DELETE'])
+@admin_required
+def api_dock_submit_clear_decided():
+    """처리완료 정리 — 진행중(approved/submitting)은 보존."""
+    n = execute_rc("DELETE FROM dock_submit_draft WHERE status IN (?,?,?)", _DOCK_SUBMIT_DONE)
+    return jsonify({'ok': True, 'deleted': n})
+
+
+# ---- ext (맥 submit_watch) ----
+@app.route('/api/ext/dock_submit/approved')
+@api_key_required
+def api_ext_dock_submit_approved():
+    """맥 워커가 상신할 approved 건 → CAS claim 으로 submitting 락.
+    fundreq `/approved` 규약 준용:
+      · 이번 호출에서 **새로 claim 성공한 행만** 반환(기존 submitting 재서빙 안 함 = 중복 상신 방지)
+      · `submitting` 6h 초과 → `failed`. **자동 재큐 안 함** — 절반 성공한 상신의 이중 실행이 최악이다.
+      · `?peek=1` = 락 없이 조회(DRY 검증용)
+      · `decided_by` 가 빈 행은 claim 대상이 아니다(사람 승인 흔적 없는 행 = 상신 금지)"""
+    cols = "id, rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_cd, vndr_nm, amt, cur, app_no, app_nm, envelope_json"
+    if request.args.get('peek'):
+        rows = query(f"SELECT {cols} FROM dock_submit_draft WHERE status='approved' ORDER BY id ASC")
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    execute("UPDATE dock_submit_draft SET status='failed', "
+            "result=COALESCE(result,'')||' [auto:6h+ submitting→failed, 사람 재검토]' "
+            "WHERE status='submitting' AND done_at IS NOT NULL "
+            "AND done_at < datetime('now','localtime','-6 hours')")
+    out = []
+    for r in query(f"SELECT {cols} FROM dock_submit_draft WHERE status='approved' "
+                   "AND decided_at IS NOT NULL AND COALESCE(decided_by,'')<>'' ORDER BY id ASC"):
+        if execute_rc("UPDATE dock_submit_draft SET status='submitting', done_at=datetime('now','localtime') "
+                      "WHERE id=? AND status='approved' AND decided_at IS NOT NULL "
+                      "AND COALESCE(decided_by,'')<>''", (r['id'],)):
+            out.append(dict(r))
+    return jsonify({'count': len(out), 'drafts': out})
+
+
+@app.route('/api/ext/dock_submit/drafts/<int:did>/result', methods=['POST'])
+@api_key_required
+def api_ext_dock_submit_result(did):
+    """상신 결과 — ok=True → submitted, else failed. **판정 근거는 워커의 readback**
+    (`SP_GET_REP_INFO` 재조회로 상태 전이 확인). 응답 성공키를 몰라도 되는 이유가 이것."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    rc = execute_rc("UPDATE dock_submit_draft SET status=?, done_at=datetime('now','localtime'), result=? "
+                    "WHERE id=? AND status='submitting'",
+                    ('submitted' if ok else 'failed', (d.get('result') or '')[:2000], did))
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
 @app.route('/automation')
