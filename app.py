@@ -12646,6 +12646,8 @@ _DOCKPROC_QUOTE_MAX = 20            # 한 건에 붙는 벤더 수 상한(표시
 def _dockproc_norm_quotes(raw):
     """폴러가 보낸 **벤더 제출견적** 목록 → canonical JSON 문자열(쓸 값이 없으면 None).
     발주금액(quote_amt)과 다른 값이다 — 제출견적은 아직 발주가 아니므로 절대 섞지 않는다.
+    `cd`(SVMS VNDR_CD)는 Phase ③ 상신에서 `SELETED_VDR` 로 쓰는 업체코드다. 표시용 `nm` 과 달리
+      **정본 식별자**이므로 형식검증(대문자·숫자 1~20)을 통과하지 못하면 None 으로 떨군다.
     표시전용이라 값 신뢰보다 형태 방어가 우선: 개수 캡·타입 강제·통화 3글자 검증.
 
     canonical 두 겹(멱등 목적):
@@ -12676,7 +12678,11 @@ def _dockproc_norm_quotes(raw):
         except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError (올마이트 지적)
             att = 0
         cur = str(q.get('cur') or '').strip().upper()
+        cd = str(q.get('cd') or '').strip().upper()[:20]
         out.append({'nm': str(q.get('nm') or '').strip()[:120],
+                    # cd = SVMS VNDR_CD. Phase ③ 상신 봉투의 SELETED_VDR 가 이 값이다.
+                    # 구버전 폴러는 안 보내므로 None 가능 — 그 경우 상신 대상에서 제외(fail-closed).
+                    'cd': cd if re.fullmatch(r'[A-Z0-9]{1,20}', cd) else None,
                     'amt': _num(q.get('amt')),
                     'usd': _num(q.get('usd')),           # 달러환산액 — 통화 혼재 시 '최저' 비교는 이걸로만
                     'cur': cur if re.fullmatch(r'[A-Z]{3}', cur) else None,
@@ -12684,7 +12690,8 @@ def _dockproc_norm_quotes(raw):
                     'st': str(q.get('st') or '').strip()[:20]})
     if not out:
         return None
-    out.sort(key=lambda q: (q['nm'], q['cur'] or '', q['amt'] is None, q['amt'] or 0.0, q['st']))
+    out.sort(key=lambda q: (q['nm'], q['cd'] or '', q['cur'] or '',
+                            q['amt'] is None, q['amt'] or 0.0, q['st']))
     priced = [q for q in out if q['amt'] is not None]
     best = None
     if priced:

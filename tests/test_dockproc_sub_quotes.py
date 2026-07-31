@@ -81,13 +81,24 @@ chk(A._dockproc_norm_quotes('x') is None, '문자열이면 None')
 chk(A._dockproc_norm_quotes([]) is None, '빈 리스트면 None')
 chk(A._dockproc_norm_quotes(['x', 3, None]) is None, 'dict 아닌 원소만 있으면 None')
 one = json.loads(A._dockproc_norm_quotes(
-    [{'nm': 'A CO', 'amt': '15,800', 'usd': 15800, 'cur': 'usd', 'att': '2', 'st': 'Submitted'}]))
-chk(one == [{'nm': 'A CO', 'amt': 15800.0, 'usd': 15800.0, 'cur': 'USD', 'att': 2,
+    [{'nm': 'A CO', 'cd': 'a1jfj', 'amt': '15,800', 'usd': 15800, 'cur': 'usd',
+      'att': '2', 'st': 'Submitted'}]))
+chk(one == [{'nm': 'A CO', 'cd': 'A1JFJ', 'amt': 15800.0, 'usd': 15800.0, 'cur': 'USD', 'att': 2,
              'st': 'Submitted', 'best': 1}],
-    '쉼표금액·소문자통화·문자열첨부수 정규화(+단독이면 best)', one)
+    '쉼표금액·소문자통화·문자열첨부수·업체코드 정규화(+단독이면 best)', one)
 bad = json.loads(A._dockproc_norm_quotes([{'nm': 'B', 'amt': 'abc', 'cur': 'kr', 'att': 'x', 'st': ''}]))
-chk(bad == [{'nm': 'B', 'amt': None, 'usd': None, 'cur': None, 'att': 0, 'st': ''}],
-    '파싱불가 → amt/usd None·cur None·att 0', bad)
+chk(bad == [{'nm': 'B', 'cd': None, 'amt': None, 'usd': None, 'cur': None, 'att': 0, 'st': ''}],
+    '파싱불가 → amt/usd None·cur None·att 0·cd None', bad)
+
+print('# 1b) cd = SVMS VNDR_CD (Phase 3 SELETED_VDR 의 정본 식별자)')
+def _cd(v):
+    return json.loads(A._dockproc_norm_quotes([{'nm': 'X', 'cd': v}]))[0]['cd']
+chk(_cd(None) is None, 'cd 미전송(구버전 폴러) → None (상신 대상에서 제외됨)')
+chk(_cd('') is None, 'cd 빈문자 → None')
+chk(_cd('  a1jfj ') == 'A1JFJ', '공백 제거 + 대문자화', _cd('  a1jfj '))
+chk(_cd('A1-JF') is None, "형식 위반(하이픈) → None — 봉투에 쓰레기 코드가 안 들어감", _cd('A1-JF'))
+chk(_cd('한글업체') is None, '비ASCII → None', _cd('한글업체'))
+chk(_cd('A' * 30) == 'A' * 20, '길이 캡 20 (잘린 값이 형식검증을 통과)', _cd('A' * 30))
 inf = json.loads(A._dockproc_norm_quotes([{'nm': 'C', 'amt': float('inf'), 'usd': float('nan')}]))
 chk(inf[0]['amt'] is None and inf[0]['usd'] is None, 'inf/nan 은 None(JSON 직렬화 불가 방지)', inf)
 mix = json.loads(A._dockproc_norm_quotes(
