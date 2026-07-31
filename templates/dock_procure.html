@@ -127,6 +127,35 @@
   .dy-foot{margin-top:8px;font-size:11px;color:var(--text-tertiary)}
   .dy-lock{cursor:pointer;font-size:11px}
   .dp-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--nav-bg);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:2000;box-shadow:0 4px 16px rgba(0,0,0,.2);display:none}
+  /* ── 견적 상신 컨펌 모달 (Phase ③) ──
+     이건 돈 나가는 버튼이다. window.confirm 으로 처리하지 않는 이유 = 무엇이 SVMS 로 나가는지
+     (업체·금액·결재라인) 눌리기 전에 눈으로 다 보여야 하기 때문. */
+  .dp-sbm{cursor:pointer;font-size:13px;border:none;background:none;margin-right:2px;opacity:.75;color:var(--blue)}
+  .dp-sbm:hover{opacity:1}
+  .dp-sbm.queued{color:var(--amber,#b8860b)}
+  .dp-ov{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:2400;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+  .dp-ov.on{display:flex}
+  .dp-mod{background:#fff;border-radius:14px;width:100%;max-width:560px;box-shadow:0 18px 48px rgba(0,0,0,.24);overflow:hidden}
+  .dp-mod h3{margin:0;font-size:15px;font-weight:750;display:flex;align-items:center;gap:7px}
+  .dp-mh{padding:15px 18px;border-bottom:1px solid var(--border-subtle);background:var(--surface-2)}
+  .dp-mh .sub{font-size:11.5px;color:var(--text-secondary);margin-top:4px}
+  .dp-mb{padding:15px 18px;max-height:56vh;overflow:auto}
+  .dp-mf{padding:12px 18px;border-top:1px solid var(--border-subtle);display:flex;gap:8px;align-items:center;background:var(--surface-2)}
+  .dp-mlbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-tertiary);margin:14px 0 6px}
+  .dp-mlbl:first-child{margin-top:0}
+  .dp-vopt{display:flex;gap:9px;align-items:flex-start;padding:9px 11px;border:1px solid var(--border);border-radius:9px;margin-bottom:6px;cursor:pointer;font-size:12.5px}
+  .dp-vopt:hover{border-color:var(--border-strong)}
+  .dp-vopt.sel{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-border) inset;background:var(--blue-bg)}
+  .dp-vopt.dis{opacity:.55;cursor:not-allowed;background:var(--surface-3)}
+  .dp-vopt .nm{font-weight:700}
+  .dp-vopt .mt{font-size:11px;color:var(--text-secondary);margin-top:2px}
+  .dp-vopt .amt{margin-left:auto;text-align:right;font-family:ui-monospace,Menlo,monospace;font-weight:700;white-space:nowrap}
+  .dp-mod select{width:100%;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#fff}
+  .dp-warn{background:var(--red-bg,#fdecec);border:1px solid var(--red-border,#f4c7c7);border-radius:9px;padding:10px 12px;font-size:12px;color:var(--red,#b3261e);margin-top:14px;line-height:1.55}
+  .dp-warn b{font-weight:750}
+  .dp-ack{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin-top:12px;cursor:pointer;line-height:1.5}
+  .dp-blk{background:var(--surface-3);border:1px solid var(--border);border-radius:9px;padding:11px 13px;font-size:12.5px;color:var(--text-secondary)}
+  .dp-qst{font-size:11.5px;padding:2px 8px;border-radius:20px;font-weight:700;border:1px solid var(--border)}
 </style>
 {% endblock %}
 
@@ -221,6 +250,27 @@
   </div>
 </div>
 <div class="dp-toast" id="dp-toast"></div>
+
+{% if session.role == 'admin' %}
+<!-- 견적 상신 컨펌 (Phase ③) — 이 모달의 [상신 큐에 올리기] 가 유일한 승인 게이트다.
+     누르면 맥 워커가 SVMS 에 발주벤더 확정(Save) + 결재상신(Submit) 을 실제로 보낸다. -->
+<div class="dp-ov" id="sb-ov">
+  <div class="dp-mod" role="dialog" aria-modal="true" aria-labelledby="sb-ttl">
+    <div class="dp-mh">
+      <h3 id="sb-ttl"><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>견적 상신 — SVMS 발주벤더 확정 + 결재</h3>
+      <div class="sub" id="sb-sub">—</div>
+    </div>
+    <div class="dp-mb" id="sb-body"></div>
+    <div class="dp-mf">
+      <button class="dp-btn" id="sb-close">닫기</button>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="dp-btn" id="sb-cancel" style="display:none;color:var(--red);border-color:var(--red-border,#f4c7c7)">상신 취소</button>
+        <button class="dp-btn primary" id="sb-go" disabled>상신 큐에 올리기</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -272,6 +322,7 @@
     const q = vsl ? ('?vsl_nm='+encodeURIComponent(vsl)) : '';
     const r = await fetch('/api/dock_procure/lines'+q);
     DATA = await r.json();
+    await loadSubmits();             // 상신 큐 상태 — 버튼 색으로 진행중을 드러내야 함
     render();
     loadYard(DATA.current);          // 조선소(Yard) 7카테고리 동기 로드
   }
@@ -525,6 +576,137 @@
     return `<div class="dp-stg ${on}${cls}" data-id="${l.id}" data-stage="${st}" data-val="${l[key]?0:1}">
       <div class="dp-cbx"><svg class="ic-svg" viewBox="0 0 24 24" style="stroke-width:3"><path d="M20 6 9 17l-5-5"/></svg></div><div class="sl">${label}</div>${extra}</div>`;
   }
+  // ═══ 견적 상신 (Phase ③) ═══
+  // 🔴 이 UI 가 만드는 approved 1행이 맥 워커의 실제 SVMS write 2회를 부른다.
+  //    그래서 화면은 "무엇이 나가는지"를 다 보여주고, 서버는 여기서 온 값 중 rid/업체/결재라인만 받는다
+  //    (금액·문서번호는 서버가 DB 에서 유도 — 화면 조작으로 다른 건이 나갈 수 없게).
+  const IS_ADMIN = {{ 'true' if session.role == 'admin' else 'false' }};
+  let SBM = {}, SBM_LINES = [], SBM_CUR = null;   // SBM: rid → 진행중 draft(approved/submitting)
+
+  async function loadSubmits(){
+    if(!IS_ADMIN) return;
+    try{
+      const j = await (await fetch('/api/dock_submit/drafts')).json();
+      SBM = {};
+      (j.drafts||[]).forEach(d=>{                       // 최신(id DESC) 우선 — 진행중 1건만 남긴다
+        if(['approved','submitting'].includes(d.status) && !SBM[d.rid]) SBM[d.rid]=d;
+      });
+    }catch(e){ SBM = {}; }
+  }
+  async function loadAppLines(){
+    if(!IS_ADMIN || SBM_LINES.length) return;
+    try{ SBM_LINES = (await (await fetch('/api/dock_submit/app_lines')).json()).lines||[]; }catch(e){}
+  }
+  // 버튼은 '가능해 보이는' 행에만 — 수리(R) + SVMS 연결됨 + 미발주. 진행중이면 색으로 드러낸다.
+  function sbmBtn(l){
+    if(!IS_ADMIN || l.cat_code!=='R' || !l.svms_req_no) return '';
+    const d = SBM[l.id];
+    if(!d && l.stg_order) return '';
+    const t = d ? `상신 ${d.status==='submitting'?'처리중':'대기'} — ${d.vndr_nm||d.vndr_cd}` : '견적 상신 (발주벤더 확정 + 결재)';
+    return `<button class="dp-sbm${d?' queued':''}" data-id="${l.id}" title="${esc(t)}">`
+      + `<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>`;
+  }
+
+  function sbmRender(pv){
+    const b=$('#sb-body'), go=$('#sb-go'), cx=$('#sb-cancel');
+    const d = SBM[pv.rid];
+    $('#sb-sub').textContent = `${pv.vsl_nm||''} · ${pv.req_no||''} · ${pv.rep_cd||'SVMS 미연결'}`;
+    // 이미 큐에 있으면 새로 만들 게 없다 — 상태와 취소만 보여준다.
+    if(d){
+      go.style.display='none'; cx.style.display = d.status==='approved' ? '' : 'none';
+      b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>
+        <div class="dp-mlbl">상신 큐 상태</div>
+        <div class="dp-blk">
+          <span class="dp-qst">${d.status==='submitting'?'처리중 — 워커가 SVMS 로 보내는 중':'대기 — 다음 워커 주기에 전송'}</span>
+          <div style="margin-top:9px">업체 <b>${esc(d.vndr_nm||d.vndr_cd)}</b> (${esc(d.vndr_cd)})<br>
+          금액 <b>${esc(fmtAmt(d.amt))} ${esc(d.cur||'')}</b><br>
+          결재라인 <b>${esc(d.app_nm||d.app_no)}</b><br>
+          승인 ${esc(d.decided_by||'')} · ${esc(d.decided_at||'')}</div>
+        </div>
+        ${d.status==='submitting'?'<div class="dp-warn">이미 SVMS 로 나갔을 수 있어 <b>취소할 수 없음</b>. 결과는 다음 동기화에서 상태로 확인.</div>':''}`;
+      return;
+    }
+    cx.style.display='none'; go.style.display='';
+    if(pv.blocked){
+      go.disabled=true;
+      b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>
+        <div class="dp-warn" style="margin-top:12px">상신할 수 없음 — <b>${esc(pv.blocked)}</b></div>`;
+      return;
+    }
+    const opts = (pv.candidates||[]).map((c,i)=>{
+      const amt = c.amt!=null ? `${fmtAmt(c.amt)} ${esc(c.cur||'')}` : '금액 미제출';
+      const usd = (c.usd!=null && (c.cur||'USD')!=='USD') ? `<div class="mt">≈USD ${fmtAmt(c.usd)}</div>` : '';
+      return `<label class="dp-vopt${c.ok?'':' dis'}" data-cd="${esc(c.cd||'')}" data-i="${i}">
+        <input type="radio" name="sb-v" value="${esc(c.cd||'')}"${c.ok?'':' disabled'} style="margin-top:2px">
+        <div><div class="nm">${esc(c.nm||c.cd||'업체')}${c.best?' <span style="font-weight:600;font-size:11px;color:var(--green)">최저</span>':''}</div>
+          <div class="mt">${esc(c.cd||'코드없음')} · ${esc(c.st||'상태미상')}${c.att?` · 견적서 ${c.att}`:''}</div>
+          ${c.ok?'':`<div class="mt" style="color:var(--red)">${esc(c.why||'')}</div>`}</div>
+        <div class="amt">${amt}${usd}</div></label>`;
+    }).join('') || '<div class="dp-blk">제출된 견적이 없음 — 벤더 제출 후 다시 시도.</div>';
+    b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>
+      <div class="dp-mlbl">발주할 업체 선택 (SVMS Cost Review 체크)</div>${opts}
+      <div class="dp-mlbl">결재라인</div>
+      <select id="sb-line">${SBM_LINES.length
+        ? '<option value="">— 선택 —</option>'+SBM_LINES.map(x=>`<option value="${esc(x.app_no)}">${esc(x.app_no)} · ${esc(x.app_nm||'')}${x.approvers&&x.approvers.length?` (${x.approvers.length}단계)`:''}</option>`).join('')
+        : '<option value="">캐시 없음 — 맥 워커 동기화 필요</option>'}</select>
+      <div class="dp-warn">누르면 맥 워커가 SVMS 에 <b>발주벤더 확정(Save)</b> + <b>결재 상신(Submit)</b> 을 실제로 보냅니다.
+        상신 후에는 웹에서 되돌릴 수 없고 SVMS 에서 처리해야 합니다.</div>
+      <label class="dp-ack"><input type="checkbox" id="sb-ack" style="margin-top:2px">
+        <span>위 업체·금액·결재라인을 확인했고, SVMS 로 실제 상신되는 것에 동의함</span></label>`;
+    const sync = ()=>{
+      const v=b.querySelector('input[name="sb-v"]:checked');
+      b.querySelectorAll('.dp-vopt').forEach(o=>o.classList.toggle('sel', !!v && o.dataset.cd===v.value));
+      go.disabled = !(v && $('#sb-line').value && $('#sb-ack').checked);
+    };
+    b.querySelectorAll('input[name="sb-v"]').forEach(r=>r.onchange=sync);
+    $('#sb-line').onchange=sync; $('#sb-ack').onchange=sync; sync();
+  }
+
+  async function sbmOpen(rid){
+    await loadAppLines();
+    let pv;
+    try{ pv = await (await fetch(`/api/dock_submit/preview?rid=${rid}`)).json(); }
+    catch(e){ toast('초안 조회 실패'); return; }
+    if(pv.error){ toast(pv.error); return; }
+    SBM_CUR = pv;
+    sbmRender(pv);
+    $('#sb-ov').classList.add('on');
+  }
+  function sbmClose(){ $('#sb-ov').classList.remove('on'); SBM_CUR=null; }
+
+  function bindSubmitModal(){
+    if(!IS_ADMIN) return;
+    $('#sb-close').onclick = sbmClose;
+    $('#sb-ov').onclick = e => { if(e.target.id==='sb-ov') sbmClose(); };
+    document.addEventListener('keydown', e => { if(e.key==='Escape' && $('#sb-ov').classList.contains('on')) sbmClose(); });
+    $('#sb-go').onclick = async () => {
+      if(!SBM_CUR) return;
+      const v = $('#sb-body').querySelector('input[name="sb-v"]:checked');
+      const app_no = $('#sb-line') ? $('#sb-line').value : '';
+      if(!v || !app_no) return;
+      const btn=$('#sb-go'); btn.disabled=true; btn.textContent='올리는 중…';
+      try{
+        // 보내는 건 3개뿐 — 금액·문서번호를 실어보내지 않는다(서버가 DB 에서 유도).
+        const r = await fetch('/api/dock_submit/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({rid:SBM_CUR.rid, vndr_cd:v.value, app_no})});
+        const j = await r.json();
+        if(!r.ok){ toast(j.error||'상신 큐 등록 실패'); btn.disabled=false; btn.textContent='상신 큐에 올리기'; return; }
+        toast(`상신 큐 등록 — ${j.rep_cd} / ${j.vndr_cd} (워커가 전송)`);
+        sbmClose(); await loadSubmits(); render();
+      }catch(e){ toast('상신 큐 등록 실패'); }
+      finally{ btn.disabled=false; btn.textContent='상신 큐에 올리기'; }
+    };
+    $('#sb-cancel').onclick = async () => {
+      if(!SBM_CUR) return;
+      const d = SBM[SBM_CUR.rid]; if(!d) return;
+      if(!confirm('상신 대기를 취소할까요? (아직 SVMS 로 안 나간 건만 취소됩니다)')) return;
+      const r = await fetch(`/api/dock_submit/drafts/${d.id}/cancel`,{method:'POST'});
+      const j = await r.json();
+      toast(r.ok ? '상신 취소됨' : (j.error||'취소 실패'));
+      sbmClose(); await loadSubmits(); render();
+    };
+  }
+
   function rowHtml(l){
     const [sc,sl]=statusOf(l);
     return `<tr data-id="${l.id}">
@@ -537,7 +719,7 @@
       <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:2px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${esc(l.svms_req_no)}</div>`:''}</td>
       <td class="c"><div class="dp-qwrap"><input class="dp-quote" data-id="${l.id}" value="${l.quote_amt!=null?esc(fmtAmt(l.quote_amt)):''}" placeholder="—" inputmode="decimal"><select class="dp-cur" data-id="${l.id}">${CURS.map(c=>`<option value="${c}"${(l.quote_cur||'USD')===c?' selected':''}>${c}</option>`).join('')}</select></div></td>
       <td>${l.cat_code==='P'?`<input class="dp-vnd" data-id="${l.id}" value="${esc(l.vendor||'')}" placeholder="업체(도료사)" title="페인트 자재 업체 — SVMS Dock Paint 02 VNDR_NM" style="width:100%;margin-bottom:3px;font-size:11px;color:var(--text-secondary)">`:''}<input class="dp-rmk" data-id="${l.id}" value="${esc(l.remark||'')}" placeholder="—"></td>
-      <td style="white-space:nowrap">${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)"><svg class="ic-svg" style="margin-right:0"><use href="#i-clipboard"/></svg></button><button class="dp-lnk" data-id="${l.id}" title="SVMS Inq No 수동연결 (Tier3)"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제"><svg class="ic-svg" style="margin-right:0"><use href="#i-x"/></svg></button></td>
+      <td style="white-space:nowrap">${sbmBtn(l)}${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)"><svg class="ic-svg" style="margin-right:0"><use href="#i-clipboard"/></svg></button><button class="dp-lnk" data-id="${l.id}" title="SVMS Inq No 수동연결 (Tier3)"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제"><svg class="ic-svg" style="margin-right:0"><use href="#i-x"/></svg></button></td>
     </tr>`;
   }
 
@@ -551,6 +733,7 @@
     });
     // 견적서 링크는 단계 토글 안으로 들어가 있다 — 전파를 끊어야 PDF 열면서 체크가 바뀌지 않는다.
     document.querySelectorAll('.dp-att').forEach(a=>a.onclick=e=>e.stopPropagation());
+    document.querySelectorAll('.dp-sbm').forEach(b=>b.onclick=()=>sbmOpen(+b.dataset.id));
     document.querySelectorAll('.dp-stg').forEach(s=>s.onclick=async()=>{
       const id=s.dataset.id, stage=s.dataset.stage, value=+s.dataset.val;
       const r=await fetch(`/api/dock_procure/${id}/stage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage,value})});
@@ -737,6 +920,7 @@
   bindYardFile();
   bindSyncBtn();
   bindPushBtn();
+  bindSubmitModal();
 })();
 </script>
 {% endblock %}

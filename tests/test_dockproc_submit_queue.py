@@ -239,6 +239,30 @@ c.delete('/api/dock_submit/drafts/decided')
 after = A.query("SELECT COUNT(*) n FROM dock_submit_draft", one=True)['n']
 chk(after == before, '처리완료만 삭제 · 진행중 보존', (before, after))
 
+print('# 15) 웹 컨펌 모달 — admin 만 렌더 · JS 문법')
+html = c.get('/dock_procure').get_data(as_text=True)
+chk('id="sb-ov"' in html and 'sbmOpen' in html, '모달 + 버튼 핸들러 렌더')
+chk('const IS_ADMIN = true;' in html, 'admin 플래그 true', [l for l in html.splitlines() if 'IS_ADMIN =' in l])
+chk('SVMS 로 실제 상신되는 것에 동의' in html, '동의 체크 문구(돈경로 고지)')
+with c.session_transaction() as s:
+    s['role'] = 'user'
+html_u = c.get('/dock_procure').get_data(as_text=True)
+chk('id="sb-ov"' not in html_u and 'const IS_ADMIN = false;' in html_u,
+    '🔴 일반 user 에겐 모달 자체가 없음')
+with c.session_transaction() as s:
+    s['role'] = 'admin'
+# 템플릿 안 JS 는 브라우저에서만 도니, 최소한 문법이 깨지지 않았는지는 여기서 잡는다.
+import re as _re, shutil, subprocess
+# 렌더된 HTML 에는 Jinja 블록 표시가 없다 — 이 페이지 스크립트(IS_ADMIN 이 들어간 IIFE)를 집는다.
+m = [s for s in _re.findall(r'<script>(.*?)</script>', html, _re.S) if 'IS_ADMIN' in s]
+NODE = shutil.which('node') or next((p for p in __import__('glob').glob(
+    '/opt/homebrew/Cellar/node/*/bin/node') + ['/opt/homebrew/bin/node'] if os.path.exists(p)), None)
+if m and NODE:
+    p = subprocess.run([NODE, '--check', '-'], input=m[0], capture_output=True, text=True)
+    chk(p.returncode == 0, 'inline JS 문법 통과(node --check)', p.stderr[-400:])
+else:
+    print('  --  node 없음 → JS 문법검사 건너뜀')
+
 print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')
