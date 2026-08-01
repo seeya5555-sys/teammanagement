@@ -14097,6 +14097,35 @@ def api_dockproc_att(rid, idx):
 _DOCK_SUBMIT_APP_NO_RE = re.compile(r'^[0-9A-Z]{1,10}$')
 _DOCK_SUBMIT_ACTIVE = ('approved', 'submitting')
 _DOCK_SUBMIT_DONE = ('submitted', 'failed', 'canceled')
+# 🔴 상신 **이후** 단계 라벨 = 재컨펌 차단 대상. allowlist(상신 전 라벨) 가 아니라
+#    denylist 인 이유(올마이트 2026-08-01): 반려가 어떤 라벨로 돌아오는지 전수 확인이 안 된다.
+#    allowlist 로 짜면 처음 보는 라벨·NULL 이 **영구 차단**이 되어 업무가 멈춘다.
+#    여기서 놓쳐도 이중 상신은 안 난다 — 최후 방어선은 맥 워커의 pre-read 다
+#    (SVMS 실헤더를 읽어 `RE` 가 아니면 중단. 오늘 12:31 에 실제로 그게 막았다).
+#    실측 라벨 분포(수리 R): HQ Ordered 25 · NULL 24 · Quotation Inquiry 18 · HQ Confirmed 2 · Submit 1.
+_DOCK_SUBMIT_POST = ('submit', 'confirmed', 'ordered')
+
+
+def _dock_submit_prior(rep_cd, svms_status):
+    """🔴 같은 건 재컨펌 차단 — 이미 상신된 건을 다시 큐에 올리지 못하게 한다.
+
+    실사고 2026-08-01: `BGBBME26073108` 이 12:03 에 실제 상신됐는데 화면은 아직
+    `Quotation Inquiry` 라 형이 같은 건을 다시 컨펌했다. 워커 pre-read 가 SVMS 헤더를
+    읽고 막아서 이중 상신은 안 났지만(fail-closed 정상), **버튼 단계에서 막았어야 한다.**
+
+    판정은 시각 비교가 아니라 **헤더 라벨**로 한다 — 오늘 서버 TZ 를 GMT→Asia/Seoul 로 바꿔서
+    기존 행은 UTC, 신규는 KST 스탬프라 `done_at` vs `svms_synced_at` 비교는 9시간 오판이 난다.
+    상신 성공 시 `/result` 가 이 행의 `svms_status` 를 'Submit' 로 즉시 갱신하고, 이후엔
+    sync 가 진실을 덮는다. SVMS 에서 반려돼 라벨이 되돌아오면 게이트가 저절로 열린다."""
+    sub = query("SELECT id, done_at FROM dock_submit_draft WHERE rep_cd=? AND status='submitted' "
+                "ORDER BY id DESC", (rep_cd,), one=True)
+    if not sub:
+        return None
+    st = str(svms_status or '').strip().lower()
+    if not any(k in st for k in _DOCK_SUBMIT_POST):
+        return None                       # 상신 이후 라벨이 아님 = 반려됐거나 되돌려짐 → 다시 열어준다
+    return '이미 상신됨 (#%d · %s) — SVMS 에서 반려되면 동기화 후 다시 열림' % (
+        sub['id'], sub['done_at'] or '')
 
 
 def _dock_submit_quote_pick(row, vndr_cd):
@@ -14232,6 +14261,8 @@ def api_dock_submit_preview():
                     ((row['svms_req_no'] or '').strip(), *_DOCK_SUBMIT_ACTIVE), one=True)
         if act:
             blocked = '이미 상신 큐에 있음(#%d %s)' % (act['id'], act['status'])
+        else:
+            blocked = _dock_submit_prior((row['svms_req_no'] or '').strip(), row['svms_status'])
     return jsonify({'rid': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
                     'rep_cd': (row['svms_req_no'] or '').strip() or None,
                     'subject': row['subject'], 'blocked': blocked, 'candidates': cands})
@@ -14264,6 +14295,9 @@ def api_dock_submit_create():
         return jsonify({'error': 'SVMS 문서번호(Inq No) 연결 안 됨 — 먼저 연결하세요'}), 400
     if row['stg_order']:
         return jsonify({'error': '이미 발주완료된 건'}), 409
+    prior = _dock_submit_prior(rep_cd, row['svms_status'])     # 🔴 재컨펌 차단(서버가 정본 게이트)
+    if prior:
+        return jsonify({'error': prior}), 409
     q, why = _dock_submit_quote_pick(row, vndr_cd)
     if not q:
         return jsonify({'error': why, 'field': 'vndr_cd'}), 400
@@ -14439,6 +14473,19 @@ def api_ext_dock_submit_result(did):
     rc = execute_rc("UPDATE dock_submit_draft SET status=?, done_at=datetime('now','localtime'), result=? "
                     "WHERE id=? AND status='submitting'",
                     ('submitted' if ok else 'failed', (d.get('result') or '')[:2000], did))
+    if rc and ok:
+        # 🔴 상신 성공을 화면에 **즉시** 반영한다. 다음 SVMS sync 까지 기다리면 그 사이 화면은
+        #    아직 'Quotation Inquiry' 라 형이 같은 건을 또 컨펌하게 된다(2026-08-01 실사고).
+        #    ⚠️ `stg_order` 는 건드리지 않는다 — **Submit 은 발주가 아니다**(rank 2). 이 값은
+        #    다음 sync 가 SVMS 진실로 덮으므로, 여기 쓰는 건 그 사이를 메우는 임시 표시다.
+        #    갱신 키는 `rid`(그 draft 가 가리키는 행) — `svms_req_no` 로 덮으면 같은 문서번호가
+        #    여러 행에 붙었을 때 남의 행까지 건드린다(올마이트 2026-08-01). 현재 라이브 중복은 0건이지만
+        #    정확한 키가 있는데 굳이 넓게 쓸 이유가 없다. `svms_synced_at` 은 표시 전용이다
+        #    (조회 커서로 쓰이는 곳 0곳 — sync 를 건너뛰게 만들지 않음. 실측 확인).
+        dr = query('SELECT rid FROM dock_submit_draft WHERE id=?', (did,), one=True)
+        if dr and dr['rid']:
+            execute("UPDATE dock_procure SET svms_status='Submit', "
+                    "svms_synced_at=datetime('now','localtime') WHERE id=?", (dr['rid'],))
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 

@@ -411,6 +411,58 @@ if m and NODE:
 else:
     print('  --  node 없음 → JS 문법검사 건너뜀')
 
+print('# 16) 🔴 재컨펌 차단 — 이미 상신된 건은 버튼 단계에서 막힌다 (2026-08-01 실사고)')
+# 실사고: BGBBME26073108 이 12:03 에 실제 상신됐는데 화면은 아직 'Quotation Inquiry' 라
+# 형이 같은 건을 다시 컨펌 → [지금 전송] → 워커 pre-read 가 SVMS 헤더 보고 차단(fail-closed).
+# 이중 상신은 안 났지만 버튼 단계에서 막았어야 한다. 여기서 그 게이트를 고정한다.
+A.execute("DELETE FROM dock_submit_draft")
+rid7 = mkrow('R80'); d7 = create(rid7).get_json()['id']
+c.get(f'/api/ext/dock_submit/approved?id={d7}', headers=HDR)
+r = c.post(f'/api/ext/dock_submit/drafts/{d7}/result', headers=HDR,
+           json={'ok': True, 'result': 'readback STATUS=RU(Submit)'})
+chk(r.get_json()['applied'] is True, '상신 성공 보고')
+pr = A.query('SELECT svms_status, stg_order FROM dock_procure WHERE id=?', (rid7,), one=True)
+chk(pr['svms_status'] == 'Submit', '🔴 성공 즉시 화면 상태가 Submit 로 바뀜(다음 sync 안 기다림)', dict(pr))
+chk(pr['stg_order'] == 0, '🔴 stg_order 는 안 건드림 — Submit 은 발주가 아니다(rank 2)', dict(pr))
+pv = c.get(f'/api/dock_submit/preview?rid={rid7}').get_json()
+chk('이미 상신됨' in (pv.get('blocked') or ''), '모달이 사유를 미리 보여줌', pv.get('blocked'))
+r = create(rid7)
+chk(r.status_code == 409 and '이미 상신됨' in (r.get_json().get('error') or ''),
+    '🔴 서버가 재컨펌을 409 로 거절(정본 게이트)', r.get_json())
+# 갱신 키는 rep_cd 가 아니라 그 draft 의 rid — 같은 문서번호가 여러 행에 붙어도 남의 행은 그대로.
+A.execute("INSERT INTO dock_procure(vsl_nm, vsl_cd, req_no, cat_code, subject, svms_req_no) "
+          "VALUES('TEST VESSEL','TSTV','R80B','R','sibling',?)", ('BGBBME2607R80',))
+sib = A.query("SELECT id FROM dock_procure WHERE req_no='R80B'", one=True)['id']
+rid7b = mkrow('R82'); d7b = create(rid7b).get_json()['id']
+A.execute("UPDATE dock_procure SET svms_req_no='BGBBME2607R80' WHERE id=?", (rid7b,))
+A.execute("UPDATE dock_submit_draft SET rep_cd='BGBBME2607R80' WHERE id=?", (d7b,))
+c.get(f'/api/ext/dock_submit/approved?id={d7b}', headers=HDR)
+c.post(f'/api/ext/dock_submit/drafts/{d7b}/result', headers=HDR, json={'ok': True, 'result': 'ok'})
+chk(A.query('SELECT svms_status FROM dock_procure WHERE id=?', (sib,), one=True)['svms_status'] is None,
+    '🔴 갱신은 그 draft 의 rid 한 행만 — 같은 문서번호의 남의 행을 덮지 않음')
+chk(A.query('SELECT svms_status FROM dock_procure WHERE id=?', (rid7b,), one=True)['svms_status'] == 'Submit',
+    '지목된 행은 갱신됨')
+A.execute("DELETE FROM dock_submit_draft WHERE id=?", (d7b,))
+# 상신 이후 라벨(denylist)은 모두 차단, 그 밖(반려·미지·NULL)은 열어준다.
+# allowlist 로 짜면 처음 보는 라벨이 영구 차단이 되어 업무가 멈춘다(올마이트 2026-08-01).
+for lbl in ('Submit', 'HQ Confirmed', 'HQ Ordered', 'Ordered'):
+    A.execute("UPDATE dock_procure SET svms_status=? WHERE id=?", (lbl, rid7))
+    chk('이미 상신됨' in (c.get(f'/api/dock_submit/preview?rid={rid7}').get_json().get('blocked') or ''),
+        f'상신 이후 라벨 차단 — {lbl}')
+for lbl in ('Quotation Inquiry', None, 'Rejected', 'Cost Review'):
+    A.execute("UPDATE dock_procure SET svms_status=? WHERE id=?", (lbl, rid7))
+    chk(c.get(f'/api/dock_submit/preview?rid={rid7}').get_json().get('blocked') is None,
+        f'상신 이후 라벨이 아니면 열림 — {lbl or "NULL"} (최후 방어선은 워커 pre-read)')
+chk(create(rid7).status_code == 201, '반려 후에는 다시 컨펌 가능')
+A.execute("DELETE FROM dock_submit_draft WHERE rep_cd='BGBBME2607R80'")
+rid8 = mkrow('R81'); d8 = create(rid8).get_json()['id']
+c.get(f'/api/ext/dock_submit/approved?id={d8}', headers=HDR)
+c.post(f'/api/ext/dock_submit/drafts/{d8}/result', headers=HDR, json={'ok': False, 'result': 'pre-read 실패'})
+chk(A.query('SELECT svms_status FROM dock_procure WHERE id=?', (rid8,), one=True)['svms_status'] is None,
+    '실패 보고는 화면 상태를 바꾸지 않음')
+chk(c.get(f'/api/dock_submit/preview?rid={rid8}').get_json().get('blocked') is None,
+    '실패한 건은 다시 컨펌 가능(막히면 안 됨)')
+
 print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')
