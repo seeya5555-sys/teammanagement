@@ -13855,6 +13855,12 @@ def api_ext_dockproc_sync():
             canceled += 1
             continue
         rank = _dockproc_status_rank(status)
+        # ⚠️rank 0 은 행을 아예 안 건드리므로 `svms_status` 라벨도 옛 값으로 남는다(올마이트 2026-08-01).
+        #   실측(2026-08-01 전선박): 미등재 상태 = 'VSL Approved' 26 · 'Approved' 2 · 'HQ Received' 1 —
+        #   전부 **견적의뢰 이전** 단계라 상신된 건이 여기로 되돌아오는 경로가 아니다. 상신 반려는
+        #   헤더가 'RE'(=Quotation Inquiry, rank 2)로 돌아오므로 위 라벨 갱신 경로에 걸려 게이트가 열린다.
+        #   설령 미지의 상태로 굳더라도 남는 쪽은 '게이트 닫힘'(=재컨펌 불가)이고, 오상신은 워커의
+        #   pre-read `STATUS=='RE'` 게이트가 최종 차단한다 — 안전한 방향으로 실패한다.
         if rank == 0:                                    # 매핑 없는 상태(초안 등) skip
             continue
         evidence = it.get('ordered_evidence')            # True/False/None(=근거 미확정) — 행 매칭 후 rank 게이트에 씀
@@ -13930,10 +13936,16 @@ def api_ext_dockproc_sync():
         new_qsrc = 'auto' if set_q else (row['quote_src'] or 'auto')
         new_subq = row['sub_quotes'] if quotes is False else quotes
         new_att = row['att_files'] if files is False else files
+        # 🔴 `svms_status` 를 비교대상에 포함해야 한다(2026-08-01 실측). 빠뜨리면 **단계가 같은 라벨
+        #    전이**(예: 'Quotation Inquiry'→'Submit', 둘 다 rank 2)가 '변경 없음'으로 판정돼 라벨이
+        #    영영 갱신되지 않는다. 실사고: BGBBME26073108 은 SVMS 가 'Submit' 인데 DB 는 하루 넘게
+        #    'Quotation Inquiry' 였음. 표시만의 문제가 아니라 **재컨펌 게이트가 이 라벨을 읽으므로**,
+        #    SVMS 에서 반려돼 라벨이 되돌아가도 sync 가 못 써서 게이트가 영구 잠기는 경로가 됨.
         before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'],
-                  row['svms_req_no'], row['svms_submit'], row['quote_amt'], row['quote_cur'], row['quote_src'],
+                  row['svms_req_no'], row['svms_status'], row['svms_submit'],
+                  row['quote_amt'], row['quote_cur'], row['quote_src'],
                   row['sub_quotes'], row['att_files'])
-        after = (q, v, o, new_remark, row['svms_req_no'] or inq, submit,
+        after = (q, v, o, new_remark, row['svms_req_no'] or inq, status, submit,
                  new_qamt, new_qcur, new_qsrc, new_subq, new_att)   # COALESCE(기존,신규)=멱등
         if before != after:
             changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],

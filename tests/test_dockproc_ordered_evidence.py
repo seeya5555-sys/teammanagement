@@ -175,6 +175,39 @@ r = A.query("SELECT stg_quote,stg_vendor,stg_order,quote_amt FROM dock_procure "
 chk((r['stg_quote'], r['stg_vendor'], r['stg_order']) == (1, 1, 0),
     "승인 전이라 rank2 — '발주완료인데 금액 —' 재발 차단", dict(r))
 
+print('# 14) 단계가 같은 라벨 전이도 svms_status 를 갱신한다 (2026-08-01 BGBBME26073108 실사고)')
+#   'Quotation Inquiry'(rank2) → 'Submit'(rank2) 는 체크박스가 안 바뀐다. 변경감지 튜플에
+#   svms_status 가 빠져 있어서 라벨이 영영 stale 로 굳었고, 재컨펌 게이트가 이 라벨을 읽으므로
+#   SVMS 반려로 라벨이 되돌아가도 게이트가 안 열리는 영구잠김 경로였다.
+mkrow('R33')
+sync('R33', 'Quotation Inquiry')
+j = sync('R33', 'Submit')
+row = A.query("SELECT svms_status, stg_quote, stg_vendor, stg_order FROM dock_procure "
+              "WHERE req_no='R33' AND vsl_nm='TEST VESSEL'", one=True)
+chk(j['updated'] == 1 and row['svms_status'] == 'Submit',
+    '같은 rank 라벨 전이 = updated 1 + 라벨 갱신', (j['updated'], row['svms_status']))
+chk((row['stg_quote'], row['stg_vendor'], row['stg_order']) == (1, 1, 0),
+    '라벨만 바뀌고 단계는 그대로', dict(row))
+j2 = sync('R33', 'Submit')
+chk(j2['updated'] == 0, '같은 라벨 재전송은 여전히 멱등', j2['updated'])
+j3 = sync('R33', 'Quotation Inquiry')                 # SVMS 반려 = 라벨 되돌림 → 게이트 재개방 경로
+row = A.query("SELECT svms_status FROM dock_procure WHERE req_no='R33' AND vsl_nm='TEST VESSEL'",
+              one=True)
+chk(j3['updated'] == 1 and row['svms_status'] == 'Quotation Inquiry',
+    '되돌림도 반영 — 반려되면 재컨펌이 다시 열린다', (j3['updated'], row['svms_status']))
+
+print('# 15) rank0(미등재 상태)은 라벨도 안 바꾼다 — 실패 방향이 안전한지 고정')
+#   미등재 상태 실측(2026-08-01 전선박): VSL Approved 26 / Approved 2 / HQ Received 1 = 전부 견적의뢰
+#   이전 단계. 상신 반려는 'Quotation Inquiry'(rank2)로 돌아오므로 게이트 재개방 경로는 살아있다.
+#   여기서 굳어도 남는 쪽은 '게이트 닫힘'이고 오상신은 워커 pre-read(STATUS=='RE')가 막는다.
+mkrow('R34')
+sync('R34', 'Submit')
+j = sync('R34', 'VSL Approved')
+row = A.query("SELECT svms_status, stg_vendor FROM dock_procure "
+              "WHERE req_no='R34' AND vsl_nm='TEST VESSEL'", one=True)
+chk(j['updated'] == 0 and j['matched'] == 0 and row['svms_status'] == 'Submit',
+    "미등재 상태는 무시 — 라벨/단계 모두 옛 값 유지(닫힘 쪽)", (j['updated'], row['svms_status']))
+
 print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')
