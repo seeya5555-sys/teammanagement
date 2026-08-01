@@ -7,3 +7,5 @@ __pycache__/
 
 # KR-Con auth cookies
 .krcon_session/
+trmt.db
+static/trmt-mobile-*mockup*.html
