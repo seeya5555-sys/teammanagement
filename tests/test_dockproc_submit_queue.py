@@ -109,6 +109,40 @@ chk(create(rid).status_code in (302, 401, 403), '일반 user 생성 차단')
 with c.session_transaction() as s:
     s['role'] = 'admin'
 
+print('# 2b) 🔴 Bearer 권한 행렬 — 앱 토큰이 세션 admin 을 우회하지 못한다 (올마이트 2026-08-01)')
+# `_bearer_auth` 는 서명·만료·active·비번지문(pv) 을 다 통과해야 session['role'] 을 채운다.
+# 즉 앱 토큰 = 그 사람의 로그인과 동일 신원이지, 권한 승격 경로가 아니다. 아래로 실측 고정.
+for uname, role in (('bu_user', 'member'), ('bu_admin', 'admin')):   # users.role CHECK = admin|member
+    A.execute("DELETE FROM users WHERE username=?", (uname,))
+    A.execute("INSERT INTO users(username, password_hash, display_name, role, active) "
+              "VALUES(?,?,?,?,1)", (uname, 'pbkdf2:sha256:fake$' + uname, uname, role))
+BU = {n: A.query("SELECT * FROM users WHERE username=?", (n,), one=True) for n in ('bu_user', 'bu_admin')}
+TOK = {n: A._issue_token(u) for n, u in BU.items()}
+rid2 = mkrow('R02')
+with c.session_transaction() as s:
+    saved = dict(s); s.clear()
+def bcreate(tok, rid):
+    return c.post('/api/dock_submit/drafts', headers={'Authorization': 'Bearer ' + tok},
+                  json={'rid': rid, 'vndr_cd': 'A1J43', 'app_no': '0002'})
+chk(bcreate(TOK['bu_user'], rid2).status_code in (302, 401, 403), '일반 member Bearer 생성 차단')
+chk(bcreate('garbage.token.value', rid2).status_code in (302, 401, 403), '위조 토큰 생성 차단')
+A.execute("UPDATE users SET password_hash=? WHERE username='bu_admin'", ('rotated',))
+chk(bcreate(TOK['bu_admin'], rid2).status_code in (302, 401, 403),
+    '비번 변경된 admin 의 옛 토큰 차단(pv 지문)')
+A.execute("UPDATE users SET password_hash=? WHERE username='bu_admin'", (BU['bu_admin']['password_hash'],))
+A.execute("UPDATE users SET active=0 WHERE username='bu_admin'")
+chk(bcreate(TOK['bu_admin'], rid2).status_code in (302, 401, 403), '비활성 admin 토큰 차단')
+A.execute("UPDATE users SET active=1 WHERE username='bu_admin'")
+chk(A.query("SELECT COUNT(*) n FROM dock_submit_draft", one=True)['n'] == 0,
+    '차단된 Bearer 시도는 행을 남기지 않음')
+r = bcreate(TOK['bu_admin'], rid2)
+chk(r.status_code == 201, '정상 admin Bearer 는 생성 가능(=본인 로그인과 동일 신원)', r.status_code)
+row = A.query("SELECT * FROM dock_submit_draft ORDER BY id DESC LIMIT 1", one=True)
+chk(row and row['decided_by'] == 'bu_admin', '승인자에 토큰 주인이 기록됨', dict(row or {}))
+A.execute("DELETE FROM dock_submit_draft")
+with c.session_transaction() as s:
+    s.update(saved); s['role'] = 'admin'
+
 print('# 3) 정상 생성 — rep_cd/금액은 서버가 DB 에서 채운다')
 r = create(rid)
 j = r.get_json()
@@ -182,7 +216,27 @@ chk(A.query('SELECT status FROM dock_submit_draft WHERE id=?', (did,), one=True)
 chk(c.get('/api/ext/dock_submit/approved', headers=HDR).get_json()['count'] == 0,
     '🔴 두 번째 호출은 0건 — 같은 건 두 번 상신 안 됨')
 
+print('# 9b) claim 은 limit 만큼만 — 나머지는 approved 로 남는다 (올마이트 2026-08-01 P0)')
+# 예전엔 approved 전부를 submitting 으로 잠갔고, 워커는 --max 1 만 처리해서 나머지가
+# 아무 일도 안 당한 채 6h 뒤 failed 로 떨어졌다(재큐 없음 = 형의 컨펌이 조용히 사라짐).
+A.execute("DELETE FROM dock_submit_draft")
+ids = [create(mkrow('R5%d' % i)).get_json()['id'] for i in range(3)]
+g = c.get('/api/ext/dock_submit/approved', headers=HDR).get_json()
+chk(g['count'] == 1 and g['limit'] == 1, '기본 limit=1 — 1건만 claim', g)
+left = [r['status'] for r in A.query('SELECT status FROM dock_submit_draft WHERE id IN (?,?)', tuple(ids[1:]))]
+chk(left == ['approved', 'approved'], '🔴 나머지 2건은 approved 그대로(유실 없음)', left)
+g2 = c.get('/api/ext/dock_submit/approved?limit=5', headers=HDR).get_json()
+chk(g2['count'] == 2, 'limit=5 지만 남은 2건만 claim', g2)
+chk(c.get('/api/ext/dock_submit/approved?limit=abc', headers=HDR).get_json()['limit'] == 1,
+    'limit 이 숫자가 아니면 1로 안전 폴백')
+A.execute("UPDATE dock_submit_draft SET status='approved'")
+chk(c.get('/api/ext/dock_submit/approved?limit=999', headers=HDR).get_json()['limit'] == 20,
+    'limit 상한 20 — 한 번에 무한정 잠그지 않음')
+
 print('# 10) 사람 승인 흔적 없는 행은 claim 대상 아님')
+A.execute("DELETE FROM dock_submit_draft")
+rid3 = mkrow('R40'); did = create(rid3).get_json()['id']
+c.get('/api/ext/dock_submit/approved', headers=HDR)
 A.execute("UPDATE dock_submit_draft SET status='approved', decided_by='' WHERE id=?", (did,))
 chk(c.get('/api/ext/dock_submit/approved', headers=HDR).get_json()['count'] == 0,
     'decided_by 빈 행 claim 거부')

@@ -14329,11 +14329,19 @@ def api_ext_dock_submit_approved():
       · 이번 호출에서 **새로 claim 성공한 행만** 반환(기존 submitting 재서빙 안 함 = 중복 상신 방지)
       · `submitting` 6h 초과 → `failed`. **자동 재큐 안 함** — 절반 성공한 상신의 이중 실행이 최악이다.
       · `?peek=1` = 락 없이 조회(DRY 검증용)
-      · `decided_by` 가 빈 행은 claim 대상이 아니다(사람 승인 흔적 없는 행 = 상신 금지)"""
+      · `decided_by` 가 빈 행은 claim 대상이 아니다(사람 승인 흔적 없는 행 = 상신 금지)
+      · 🔴 `?limit=N` (기본 1) — **claim 은 워커가 이번에 실제로 처리할 만큼만.**
+        올마이트 2026-08-01 P0 지적: 예전엔 approved 전부를 submitting 으로 잠갔는데 워커는
+        `--max 1` 만 처리해서, 나머지가 아무 일도 안 당한 채 6h 뒤 failed 로 떨어졌다
+        (재큐도 안 하므로 형이 다시 컨펌해야 함 = 조용한 승인 유실)."""
     cols = "id, rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_cd, vndr_nm, amt, cur, app_no, app_nm, envelope_json"
     if request.args.get('peek'):
         rows = query(f"SELECT {cols} FROM dock_submit_draft WHERE status='approved' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    try:
+        limit = max(1, min(20, int(request.args.get('limit') or 1)))
+    except (TypeError, ValueError):
+        limit = 1
     execute("UPDATE dock_submit_draft SET status='failed', "
             "result=COALESCE(result,'')||' [auto:6h+ submitting→failed, 사람 재검토]' "
             "WHERE status='submitting' AND done_at IS NOT NULL "
@@ -14341,11 +14349,13 @@ def api_ext_dock_submit_approved():
     out = []
     for r in query(f"SELECT {cols} FROM dock_submit_draft WHERE status='approved' "
                    "AND decided_at IS NOT NULL AND COALESCE(decided_by,'')<>'' ORDER BY id ASC"):
+        if len(out) >= limit:
+            break
         if execute_rc("UPDATE dock_submit_draft SET status='submitting', done_at=datetime('now','localtime') "
                       "WHERE id=? AND status='approved' AND decided_at IS NOT NULL "
                       "AND COALESCE(decided_by,'')<>''", (r['id'],)):
             out.append(dict(r))
-    return jsonify({'count': len(out), 'drafts': out})
+    return jsonify({'count': len(out), 'drafts': out, 'limit': limit})
 
 
 @app.route('/api/ext/dock_submit/drafts/<int:did>/result', methods=['POST'])
