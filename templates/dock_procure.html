@@ -133,6 +133,12 @@
   .dp-sbm{cursor:pointer;font-size:13px;border:none;background:none;margin-right:2px;opacity:.75;color:var(--blue)}
   .dp-sbm:hover{opacity:1}
   .dp-sbm.queued{color:var(--amber,#b8860b)}
+  /* 상신이 끝나면 진행중 큐에서 빠진다 — 아무 표시도 안 남기면 "내가 상신했나?" 를 화면으로 확인할 수 없다. */
+  .dp-sbm.done{color:var(--green);opacity:1}
+  .dp-sbm.failed{color:var(--red);opacity:1}
+  .dp-sbmtag{font-size:9px;font-weight:700;margin-top:2px;white-space:nowrap}
+  .dp-sbmtag.ok{color:var(--green)}
+  .dp-sbmtag.bad{color:var(--red)}
   .dp-ov{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:2400;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
   .dp-ov.on{display:flex}
   .dp-mod{background:#fff;border-radius:14px;width:100%;max-width:560px;box-shadow:0 18px 48px rgba(0,0,0,.24);overflow:hidden}
@@ -582,18 +588,25 @@
   //    그래서 화면은 "무엇이 나가는지"를 다 보여주고, 서버는 여기서 온 값 중 rid/업체/결재라인만 받는다
   //    (금액·문서번호는 서버가 DB 에서 유도 — 화면 조작으로 다른 건이 나갈 수 없게).
   const IS_ADMIN = {{ 'true' if session.role == 'admin' else 'false' }};
-  let SBM = {}, SBM_LINES = [], SBM_CUR = null;   // SBM: rid → 진행중 draft(approved/submitting)
+  // SBM: rid → 진행중 draft(approved/submitting) · SBM_DONE: rid → 최근 종료 draft(submitted/failed)
+  let SBM = {}, SBM_DONE = {}, SBM_LINES = [], SBM_CUR = null;
 
   async function loadSubmits(){
     if(!IS_ADMIN) return;
     try{
       const j = await (await fetch('/api/dock_submit/drafts')).json();
-      SBM = {};
+      SBM = {}; SBM_DONE = {};
       (j.drafts||[]).forEach(d=>{                       // 최신(id DESC) 우선 — 진행중 1건만 남긴다
         if(['approved','submitting'].includes(d.status) && !SBM[d.rid]) SBM[d.rid]=d;
+        // 🔴 상신이 끝나면 진행중 큐에서 빠지므로 그대로 두면 "내가 상신했다"는 흔적이 화면에서 사라진다
+        //    (다음 SVMS 동기화로 라벨이 바뀔 때까지 공백). 그래서 종료 1건도 들고 있다가 행에 표시한다.
+        if(['submitted','failed'].includes(d.status) && !SBM_DONE[d.rid]) SBM_DONE[d.rid]=d;
       });
-    }catch(e){ SBM = {}; }
+    }catch(e){ SBM = {}; SBM_DONE = {}; }
   }
+  const sbmWhen = s => (s||'').replace(/^\d{4}-/,'').slice(0,11).trim();   // '2026-08-01 13:12:03' → '08-01 13:12'
+  // 진행중이 있으면 그게 우선(같은 건이 다시 열려 재상신 대기중일 수 있음).
+  const sbmDone = rid => (SBM[rid] ? null : (SBM_DONE[rid] || null));
   async function loadAppLines(){
     if(!IS_ADMIN || SBM_LINES.length) return;
     try{ SBM_LINES = (await (await fetch('/api/dock_submit/app_lines')).json()).lines||[]; }catch(e){}
@@ -601,11 +614,33 @@
   // 버튼은 '가능해 보이는' 행에만 — 수리(R) + SVMS 연결됨 + 미발주. 진행중이면 색으로 드러낸다.
   function sbmBtn(l){
     if(!IS_ADMIN || l.cat_code!=='R' || !l.svms_req_no) return '';
-    const d = SBM[l.id];
-    if(!d && l.stg_order) return '';
-    const t = d ? `상신 ${d.status==='submitting'?'처리중':'승인됨 · [지금 전송] 대기'} — ${d.vndr_nm||d.vndr_cd}` : '견적 상신 (발주벤더 확정 + 결재)';
-    return `<button class="dp-sbm${d?' queued':''}" data-id="${l.id}" title="${esc(t)}">`
-      + `<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>`;
+    const d = SBM[l.id], f = sbmDone(l.id);
+    // 상신 이력이 있으면 발주완료여도 결과는 남긴다. 이때 버튼은 사실상 '이력 열기' 다 —
+    // 서버 preview 가 `이미 발주완료` / `이미 상신됨(#N)` 으로 blocked 를 내려 생성 버튼이 안 열린다
+    // (app.py 14269·14277, 생성 라우트도 같은 검사를 반복 = fail-closed).
+    if(!d && !f && l.stg_order) return '';
+    const t = d ? `상신 ${d.status==='submitting'?'처리중':'승인됨 · [지금 전송] 대기'} — ${d.vndr_nm||d.vndr_cd}`
+            : f ? (f.status==='submitted'
+                    ? `상신완료 — ${f.vndr_nm||f.vndr_cd} · ${sbmWhen(f.done_at)}`
+                    : `직전 상신 실패 — ${f.result||''}`)
+            : '견적 상신 (발주벤더 확정 + 결재)';
+    const cls = d ? ' queued' : f ? (f.status==='submitted' ? ' done' : ' failed') : '';
+    const ic = (!d && f && f.status==='submitted')
+      ? '<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M20 6 9 17l-5-5"/></svg>'
+      : '<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>';
+    return `<button class="dp-sbm${cls}" data-id="${l.id}" title="${esc(t)}">${ic}</button>`;
+  }
+  // 상태칸 밑줄 — 마우스를 올리지 않아도 상신 결과를 알 수 있어야 한다(형 요청 2026-08-01).
+  function sbmTag(l){
+    if(!IS_ADMIN || l.cat_code!=='R') return '';
+    const f = sbmDone(l.id);
+    if(!f) return '';
+    if(f.status==='submitted'){
+      const tt = `상신완료 — ${f.vndr_nm||f.vndr_cd} / ${fmtAmt(f.amt)} ${f.cur||''} · 결재라인 ${f.app_nm||f.app_no}`
+        + (f.decided_by?` · 승인 ${f.decided_by}`:'') + (f.result?` · ${f.result}`:'');
+      return `<div class="dp-sbmtag ok" title="${esc(tt)}">✓ 상신완료 ${esc(sbmWhen(f.done_at))}</div>`;
+    }
+    return `<div class="dp-sbmtag bad" title="${esc(f.result||'')}">상신 실패 ${esc(sbmWhen(f.done_at))}</div>`;
   }
 
   function sbmRender(pv){
@@ -631,9 +666,21 @@
       return;
     }
     cx.style.display='none'; px.style.display='none'; go.style.display='';
+    // 이미 한 번 나간 건이면 그 사실부터 보여준다 — 반려로 다시 열렸을 때도 이력이 남아야 한다.
+    const f = SBM_DONE[pv.rid];
+    const done = !f ? '' : (f.status==='submitted'
+      ? `<div class="dp-blk" style="margin-top:10px">
+           <b style="color:var(--green)">✓ 상신완료</b> · ${esc(sbmWhen(f.done_at))} (#${f.id})
+           <div style="margin-top:7px">업체 <b>${esc(f.vndr_nm||f.vndr_cd)}</b><br>
+           금액 <b>${esc(fmtAmt(f.amt))} ${esc(f.cur||'')}</b><br>
+           결재라인 <b>${esc(f.app_nm||f.app_no)}</b><br>
+           승인 ${esc(f.decided_by||'')} · ${esc(f.decided_at||'')}<br>
+           완료 ${esc(f.done_at||'—')}</div>
+           ${f.result?`<div class="dp-qst" style="margin-top:6px">${esc(f.result)}</div>`:''}</div>`
+      : `<div class="dp-warn" style="margin-top:10px">직전 상신 실패 (${esc(sbmWhen(f.done_at))}) — ${esc(f.result||'사유 미기재')}</div>`);
     if(pv.blocked){
       go.disabled=true;
-      b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>
+      b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>${done}
         <div class="dp-warn" style="margin-top:12px">상신할 수 없음 — <b>${esc(pv.blocked)}</b></div>`;
       return;
     }
@@ -647,7 +694,7 @@
           ${c.ok?'':`<div class="mt" style="color:var(--red)">${esc(c.why||'')}</div>`}</div>
         <div class="amt">${amt}${usd}</div></label>`;
     }).join('') || '<div class="dp-blk">제출된 견적이 없음 — 벤더 제출 후 다시 시도.</div>';
-    b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>
+    b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>${done}
       <div class="dp-mlbl">발주할 업체 선택 (SVMS Cost Review 체크)</div>${opts}
       <div class="dp-mlbl">결재라인</div>
       <select id="sb-line">${SBM_LINES.length
@@ -738,7 +785,7 @@
       <td class="c"><span class="dp-prep ${l.prepared_by||'OWNER'}" data-id="${l.id}" title="클릭하여 OWNERMANAGER 전환">${esc(l.prepared_by||'OWNER')}</span></td>
       <td class="c"><span class="dp-src ${l.source}">${esc(l.source||'')}</span></td>
       <td><div class="dp-stages">${stg(l,'stg_quote','견적<br>작성')}${stg(l,'stg_vendor','벤더<br>제출')}${stg(l,'stg_order','발주<br>완료')}</div></td>
-      <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:2px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${esc(l.svms_req_no)}</div>`:''}</td>
+      <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:2px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${esc(l.svms_req_no)}</div>`:''}${sbmTag(l)}</td>
       <td class="c"><div class="dp-qwrap"><input class="dp-quote" data-id="${l.id}" value="${l.quote_amt!=null?esc(fmtAmt(l.quote_amt)):''}" placeholder="—" inputmode="decimal"><select class="dp-cur" data-id="${l.id}">${CURS.map(c=>`<option value="${c}"${(l.quote_cur||'USD')===c?' selected':''}>${c}</option>`).join('')}</select></div></td>
       <td>${l.cat_code==='P'?`<input class="dp-vnd" data-id="${l.id}" value="${esc(l.vendor||'')}" placeholder="업체(도료사)" title="페인트 자재 업체 — SVMS Dock Paint 02 VNDR_NM" style="width:100%;margin-bottom:3px;font-size:11px;color:var(--text-secondary)">`:''}<input class="dp-rmk" data-id="${l.id}" value="${esc(l.remark||'')}" placeholder="—"></td>
       <td style="white-space:nowrap">${sbmBtn(l)}${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)"><svg class="ic-svg" style="margin-right:0"><use href="#i-clipboard"/></svg></button><button class="dp-lnk" data-id="${l.id}" title="SVMS Inq No 수동연결 (Tier3)"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제"><svg class="ic-svg" style="margin-right:0"><use href="#i-x"/></svg></button></td>
