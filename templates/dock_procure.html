@@ -265,6 +265,7 @@
       <button class="dp-btn" id="sb-close">닫기</button>
       <div style="margin-left:auto;display:flex;gap:8px">
         <button class="dp-btn" id="sb-cancel" style="display:none;color:var(--red);border-color:var(--red-border,#f4c7c7)">상신 취소</button>
+        <button class="dp-btn primary" id="sb-push" style="display:none">지금 전송</button>
         <button class="dp-btn primary" id="sb-go" disabled>상신 큐에 올리기</button>
       </div>
     </div>
@@ -602,22 +603,25 @@
     if(!IS_ADMIN || l.cat_code!=='R' || !l.svms_req_no) return '';
     const d = SBM[l.id];
     if(!d && l.stg_order) return '';
-    const t = d ? `상신 ${d.status==='submitting'?'처리중':'대기'} — ${d.vndr_nm||d.vndr_cd}` : '견적 상신 (발주벤더 확정 + 결재)';
+    const t = d ? `상신 ${d.status==='submitting'?'처리중':'승인됨 · [지금 전송] 대기'} — ${d.vndr_nm||d.vndr_cd}` : '견적 상신 (발주벤더 확정 + 결재)';
     return `<button class="dp-sbm${d?' queued':''}" data-id="${l.id}" title="${esc(t)}">`
       + `<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>`;
   }
 
   function sbmRender(pv){
-    const b=$('#sb-body'), go=$('#sb-go'), cx=$('#sb-cancel');
+    const b=$('#sb-body'), go=$('#sb-go'), cx=$('#sb-cancel'), px=$('#sb-push');
     const d = SBM[pv.rid];
     $('#sb-sub').textContent = `${pv.vsl_nm||''} · ${pv.req_no||''} · ${pv.rep_cd||'SVMS 미연결'}`;
-    // 이미 큐에 있으면 새로 만들 게 없다 — 상태와 취소만 보여준다.
+    // 이미 큐에 있으면 새로 만들 게 없다 — 상태와 [지금 전송]/취소만 보여준다.
     if(d){
       go.style.display='none'; cx.style.display = d.status==='approved' ? '' : 'none';
+      // 🔴 자동 스케줄러는 없다. 이 버튼을 눌러야만 나간다.
+      px.style.display = d.status==='approved' ? '' : 'none';
+      px.disabled=false; px.textContent='지금 전송';
       b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>
         <div class="dp-mlbl">상신 큐 상태</div>
         <div class="dp-blk">
-          <span class="dp-qst">${d.status==='submitting'?'처리중 — 워커가 SVMS 로 보내는 중':'대기 — 다음 워커 주기에 전송'}</span>
+          <span class="dp-qst">${d.status==='submitting'?'처리중 — SVMS 로 보내는 중':'승인됨 — <b>[지금 전송]</b> 을 눌러야 SVMS 로 나갑니다 (자동 전송 없음)'}</span>
           <div style="margin-top:9px">업체 <b>${esc(d.vndr_nm||d.vndr_cd)}</b> (${esc(d.vndr_cd)})<br>
           금액 <b>${esc(fmtAmt(d.amt))} ${esc(d.cur||'')}</b><br>
           결재라인 <b>${esc(d.app_nm||d.app_no)}</b><br>
@@ -626,7 +630,7 @@
         ${d.status==='submitting'?'<div class="dp-warn">이미 SVMS 로 나갔을 수 있어 <b>취소할 수 없음</b>. 결과는 다음 동기화에서 상태로 확인.</div>':''}`;
       return;
     }
-    cx.style.display='none'; go.style.display='';
+    cx.style.display='none'; px.style.display='none'; go.style.display='';
     if(pv.blocked){
       go.disabled=true;
       b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>
@@ -691,10 +695,28 @@
           body:JSON.stringify({rid:SBM_CUR.rid, vndr_cd:v.value, app_no})});
         const j = await r.json();
         if(!r.ok){ toast(j.error||'상신 큐 등록 실패'); btn.disabled=false; btn.textContent='상신 큐에 올리기'; return; }
-        toast(`상신 큐 등록 — ${j.rep_cd} / ${j.vndr_cd} (워커가 전송)`);
-        sbmClose(); await loadSubmits(); render();
+        toast(`승인 기록됨 — ${j.rep_cd} / ${j.vndr_cd} · [지금 전송] 을 누르세요`);
+        await loadSubmits(); render();
+        sbmRender(SBM_CUR);            // 같은 모달에서 바로 [지금 전송] 이 뜬다(자동 전송 없음)
       }catch(e){ toast('상신 큐 등록 실패'); }
       finally{ btn.disabled=false; btn.textContent='상신 큐에 올리기'; }
+    };
+    // 🔴 [지금 전송] — 누른 그 순간에만 SVMS 로 나간다. 응답은 맥이 readback 까지 마친 실제 결과다.
+    $('#sb-push').onclick = async () => {
+      if(!SBM_CUR) return;
+      const d = SBM[SBM_CUR.rid]; if(!d) return;
+      if(!confirm(`지금 SVMS 로 상신합니다.\n\n${d.vndr_nm||d.vndr_cd} / ${fmtAmt(d.amt)} ${d.cur||''}\n결재라인 ${d.app_nm||d.app_no}\n\n보낸 뒤에는 웹에서 되돌릴 수 없습니다.`)) return;
+      const btn=$('#sb-push'), cx=$('#sb-cancel');
+      btn.disabled=true; cx.disabled=true; btn.textContent='SVMS 전송 중…';
+      let j={};
+      try{
+        const r = await fetch(`/api/dock_submit/drafts/${d.id}/push`,{method:'POST'});
+        j = await r.json();
+        toast(r.ok && j.ok ? `상신 완료 — ${j.msg||''}` : `전송 실패 — ${j.msg||j.error||r.status}`);
+      }catch(e){ toast('전송 실패 — 응답 없음(맥 연결/타임아웃 확인)'); }
+      finally{ cx.disabled=false; }
+      // 성공이든 실패든 이 행은 활성 큐(approved/submitting)를 떠난다 → 모달을 닫고 목록을 갱신한다.
+      sbmClose(); await loadSubmits(); render();
     };
     $('#sb-cancel').onclick = async () => {
       if(!SBM_CUR) return;

@@ -233,6 +233,25 @@ A.execute("UPDATE dock_submit_draft SET status='approved'")
 chk(c.get('/api/ext/dock_submit/approved?limit=999', headers=HDR).get_json()['limit'] == 20,
     'limit 상한 20 — 한 번에 무한정 잠그지 않음')
 
+print('# 9c) 🔴 `?id=N` — [지금 전송] 이 지목한 그 행만, 가드는 동일')
+# 버튼 경로가 별도 우회로가 되면 안 된다: 같은 CAS, 같은 승인흔적 조건, 옆 행은 안 건드림.
+A.execute("DELETE FROM dock_submit_draft")
+ids = [create(mkrow('R6%d' % i)).get_json()['id'] for i in range(3)]
+g = c.get(f'/api/ext/dock_submit/approved?id={ids[1]}', headers=HDR).get_json()
+chk(g['count'] == 1 and g['drafts'][0]['id'] == ids[1], '지목한 행만 claim', g)
+sts = {r['id']: r['status'] for r in A.query('SELECT id, status FROM dock_submit_draft')}
+chk(sts[ids[0]] == 'approved' and sts[ids[2]] == 'approved', '옆 행은 approved 그대로', sts)
+chk(c.get(f'/api/ext/dock_submit/approved?id={ids[1]}', headers=HDR).get_json()['count'] == 0,
+    '🔴 같은 id 두 번째 호출은 0건(이중 상신 차단)')
+chk(c.get('/api/ext/dock_submit/approved?id=999999', headers=HDR).get_json()['count'] == 0,
+    '없는 id 는 0건')
+chk(c.get('/api/ext/dock_submit/approved?id=abc', headers=HDR).status_code == 400, 'id 형식 오류 400')
+A.execute("UPDATE dock_submit_draft SET decided_by='' WHERE id=?", (ids[0],))
+chk(c.get(f'/api/ext/dock_submit/approved?id={ids[0]}', headers=HDR).get_json()['count'] == 0,
+    '🔴 승인흔적 없는 행은 id 로 지목해도 거부')
+chk(A.query('SELECT status FROM dock_submit_draft WHERE id=?', (ids[2],), one=True)['status'] == 'approved',
+    'id 경로가 다른 행을 잠그지 않음')
+
 print('# 10) 사람 승인 흔적 없는 행은 claim 대상 아님')
 A.execute("DELETE FROM dock_submit_draft")
 rid3 = mkrow('R40'); did = create(rid3).get_json()['id']
@@ -283,6 +302,79 @@ chk(c.post(f'/api/dock_submit/drafts/{d5b}/cancel').status_code == 409,
     '🔴 submitting 은 취소 불가(SVMS 에 이미 나갔을 수 있음)')
 chk(c.post(f'/api/dock_submit/drafts/999999/cancel').status_code == 404, '없는 id 404')
 
+print('# 13b) 🔴 [지금 전송] 릴레이 — 스케줄 없음, 누른 그 순간에만 · 터널 없으면 명확히 실패')
+# 서버는 SVMS 에 못 붙는다. 이 라우트는 맥 리스너로 넘기는 릴레이일 뿐이므로,
+# 검증 대상은 "무엇이 넘어가는가"와 "안 넘어가야 할 때 조용히 넘어가지 않는가"다.
+import threading, http.server, socket
+
+SEEN = []
+
+
+class _FakeMac(http.server.BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+
+    def do_POST(self):
+        n = int(self.headers.get('Content-Length') or 0)
+        SEEN.append({'path': self.path, 'tok': self.headers.get('X-Push-Token'),
+                     'body': json.loads(self.rfile.read(n) or b'{}')})
+        b = json.dumps({'ok': True, 'msg': '상신됨'}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def log_message(self, *a):
+        pass
+
+
+_srv = http.server.HTTPServer(('127.0.0.1', 0), _FakeMac)
+threading.Thread(target=_srv.serve_forever, daemon=True).start()
+PORT = _srv.server_address[1]
+PUSH_TOK = 'tok-abc-123'
+os.environ['DOCK_PUSH_URL'] = f'http://127.0.0.1:{PORT}/push'
+os.environ['DOCK_PUSH_TOKEN'] = PUSH_TOK
+
+rid6 = mkrow('R70'); d6 = create(rid6).get_json()['id']   # 앞 섹션 행은 지우지 않는다(#14 가 rid5 를 셈)
+r = c.post(f'/api/dock_submit/drafts/{d6}/push')
+j = r.get_json()
+# 가짜 맥은 실제 `/result` readback을 호출하지 않는다. 서버가 맥의 ok만 믿으면
+# 성공 오판이므로, 상태가 approved인 동안 ok=False로 fail-closed 판정해야 한다.
+chk(r.status_code == 200 and j['ok'] is False and j['msg'] == '상신됨',
+    '맥 응답만으로 성공 판정하지 않음(readback 상태 필수)', j)
+chk(len(SEEN) == 1 and SEEN[0]['body'] == {'draft_id': d6} and SEEN[0]['tok'] == PUSH_TOK,
+    '🔴 draft_id 만 넘김 + 공유토큰 헤더', SEEN)
+chk(j.get('status') == 'approved', '상태 전이는 맥이 claim/result 로 한다(라우트가 직접 안 바꿈)', j)
+
+A.execute("UPDATE dock_submit_draft SET status='submitting' WHERE id=?", (d6,))
+r = c.post(f'/api/dock_submit/drafts/{d6}/push')
+chk(r.status_code == 409 and len(SEEN) == 1, '🔴 submitting 은 재전송 불가 — 맥 호출조차 안 함', r.status_code)
+A.execute("UPDATE dock_submit_draft SET status='canceled' WHERE id=?", (d6,))
+chk(c.post(f'/api/dock_submit/drafts/{d6}/push').status_code == 409 and len(SEEN) == 1,
+    '취소된 건도 전송 불가')
+chk(c.post('/api/dock_submit/drafts/999999/push').status_code == 404, '없는 id 404')
+
+A.execute("UPDATE dock_submit_draft SET status='approved' WHERE id=?", (d6,))
+with c.session_transaction() as s:
+    s['role'] = 'user'
+chk(c.post(f'/api/dock_submit/drafts/{d6}/push').status_code in (302, 401, 403) and len(SEEN) == 1,
+    '🔴 일반 user 는 전송 버튼을 못 씀')
+with c.session_transaction() as s:
+    s['role'] = 'admin'
+
+# 터널이 죽었을 때: 조용히 큐에 남겨두면 형의 컨펌이 어디로 갔는지 알 수 없다 → 503 으로 크게 실패.
+_dead = socket.socket(); _dead.bind(('127.0.0.1', 0)); DEADP = _dead.getsockname()[1]; _dead.close()
+os.environ['DOCK_PUSH_URL'] = f'http://127.0.0.1:{DEADP}/push'
+r = c.post(f'/api/dock_submit/drafts/{d6}/push')
+chk(r.status_code == 503 and '맥 미연결' in (r.get_json().get('error') or ''),
+    '🔴 터널 끊김 = 503 "맥 미연결" (fail-closed)', r.get_json())
+chk(A.query('SELECT status FROM dock_submit_draft WHERE id=?', (d6,), one=True)['status'] == 'approved',
+    '실패해도 approved 그대로 — 다시 누르면 됨')
+os.environ.pop('DOCK_PUSH_URL'); os.environ.pop('DOCK_PUSH_TOKEN')
+r = c.post(f'/api/dock_submit/drafts/{d6}/push')
+chk(r.status_code == 503 and '미설정' in (r.get_json().get('error') or ''), '설정 없으면 503', r.get_json())
+_srv.shutdown()
+
 print('# 14) 목록 · 정리')
 lst = c.get('/api/dock_submit/drafts').get_json()['drafts']
 chk(lst and 'envelope_json' not in lst[0], '목록엔 봉투 원문 안 실음')
@@ -298,6 +390,8 @@ html = c.get('/dock_procure').get_data(as_text=True)
 chk('id="sb-ov"' in html and 'sbmOpen' in html, '모달 + 버튼 핸들러 렌더')
 chk('const IS_ADMIN = true;' in html, 'admin 플래그 true', [l for l in html.splitlines() if 'IS_ADMIN =' in l])
 chk('SVMS 로 실제 상신되는 것에 동의' in html, '동의 체크 문구(돈경로 고지)')
+chk('id="sb-push"' in html and '지금 전송' in html, '[지금 전송] 버튼 렌더')
+chk('워커 주기' not in html, '🔴 "다음 워커 주기에 전송" 같은 거짓 문구 없음(자동 전송 스케줄러가 없다)')
 with c.session_transaction() as s:
     s['role'] = 'user'
 html_u = c.get('/dock_procure').get_data(as_text=True)

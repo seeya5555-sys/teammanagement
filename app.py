@@ -17,6 +17,7 @@ import secrets
 import threading
 import time
 import http.client
+import socket
 import urllib.error
 import urllib.request
 import mimetypes
@@ -14312,6 +14313,65 @@ def api_dock_submit_cancel(did):
     return jsonify({'id': did, 'status': 'canceled'})
 
 
+@app.route('/api/dock_submit/drafts/<int:did>/push', methods=['POST'])
+@admin_required
+def api_dock_submit_push(did):
+    """🔴 [지금 전송] — 형이 누른 그 순간에만 1건이 SVMS 로 나간다. **스케줄러 없음.**
+
+    이 서버(OCI)는 SVMS 에 못 붙는다. 그래서 맥이 `ssh -R` 역터널로 loopback 포트를
+    열어두고, 이 라우트가 그 포트를 호출한다. 맥이 claim(`?id=`)·상신·readback 까지
+    끝낸 **실제 결과**를 그대로 돌려주므로 모달에 결과가 즉시 뜬다.
+
+    fail-closed: 터널이 없으면 큐에 남겨두고 조용히 기다리지 않고 **503 으로 명확히 실패**한다
+    (형의 컨펌이 어디로 갔는지 모르는 상태가 최악)."""
+    cur = query('SELECT status FROM dock_submit_draft WHERE id=?', (did,), one=True)
+    if not cur:
+        return jsonify({'error': 'not found'}), 404
+    if cur['status'] != 'approved':
+        return jsonify({'error': '대기(approved) 상태만 전송 가능', 'status': cur['status']}), 409
+
+    url = (os.environ.get('DOCK_PUSH_URL') or '').strip()
+    token = (os.environ.get('DOCK_PUSH_TOKEN') or '').strip()
+    if not url or not token:
+        return jsonify({'error': '푸시 경로 미설정 (DOCK_PUSH_URL/TOKEN)'}), 503
+    req = urllib.request.Request(
+        url, method='POST',
+        data=json.dumps({'draft_id': did}).encode(),
+        headers={'Content-Type': 'application/json', 'X-Push-Token': token})
+    try:
+        # 45s — gunicorn `--timeout 60` 보다 짧아야 한다. 넘기면 워커(-w 1)가 통째로 죽어
+        # 다른 요청까지 끊긴다. 실측 상신 1건은 Save+Submit+readback 합쳐 20s 안쪽.
+        with urllib.request.urlopen(req, timeout=45) as r:
+            body = json.loads(r.read().decode('utf-8', 'replace') or '{}')
+            code = r.status
+    except urllib.error.HTTPError as e:                       # 맥이 사유를 담아 거절한 경우
+        try:
+            body = json.loads(e.read().decode('utf-8', 'replace') or '{}')
+        except Exception:
+            body = {'msg': f'맥 응답 오류 {e.code}'}
+        code = e.code
+    except (TimeoutError, socket.timeout):
+        # 🔴 타임아웃은 '안 나갔다'가 아니다 — 맥이 SVMS 로 이미 보냈을 수 있다(올마이트 2026-08-01).
+        #    '맥 미연결' 로 뭉뚱그리면 형이 다시 누를 수 있으므로 불확실을 그대로 말한다.
+        #    (행은 맥이 claim 해 submitting 이므로 재전송은 아래 상태가드에서 409 로 막힌다.)
+        st = query('SELECT status FROM dock_submit_draft WHERE id=?', (did,), one=True)
+        return jsonify({'error': '응답 시간 초과 — 전송 여부 불확실. 다시 누르지 말고 SVMS 에서 확인하세요',
+                        'status': st['status'] if st else None, 'ambiguous': True}), 504
+    except Exception as e:                                    # 터널 끊김·연결거부
+        if isinstance(getattr(e, 'reason', None), (TimeoutError, socket.timeout)):
+            st = query('SELECT status FROM dock_submit_draft WHERE id=?', (did,), one=True)
+            return jsonify({'error': '응답 시간 초과 — 전송 여부 불확실. 다시 누르지 말고 SVMS 에서 확인하세요',
+                            'status': st['status'] if st else None, 'ambiguous': True}), 504
+        return jsonify({'error': f'맥 미연결 — 전송 못 함 ({type(e).__name__})'}), 503
+    st = query('SELECT status, result FROM dock_submit_draft WHERE id=?', (did,), one=True)
+    # 🔴 성공 판정은 맥의 `ok` 가 아니라 **DB 최종상태**로 한다. 맥은 상신 후 `/result` 로
+    #    submitted 를 기록하고 돌아온다 — 그 기록이 없으면 화면에 완료라고 쓰지 않는다.
+    done = bool(st and st['status'] == 'submitted')
+    return jsonify({'id': did, 'ok': bool(body.get('ok')) and done, 'msg': body.get('msg') or '',
+                    'status': st['status'] if st else None,
+                    'result': st['result'] if st else None}), (200 if code == 200 else code)
+
+
 @app.route('/api/dock_submit/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_dock_submit_clear_decided():
@@ -14333,7 +14393,9 @@ def api_ext_dock_submit_approved():
       · 🔴 `?limit=N` (기본 1) — **claim 은 워커가 이번에 실제로 처리할 만큼만.**
         올마이트 2026-08-01 P0 지적: 예전엔 approved 전부를 submitting 으로 잠갔는데 워커는
         `--max 1` 만 처리해서, 나머지가 아무 일도 안 당한 채 6h 뒤 failed 로 떨어졌다
-        (재큐도 안 하므로 형이 다시 컨펌해야 함 = 조용한 승인 유실)."""
+        (재큐도 안 하므로 형이 다시 컨펌해야 함 = 조용한 승인 유실).
+      · 🔴 `?id=N` — [지금 전송] 버튼이 지목한 **그 행만** claim. 가드는 위와 완전히 동일하다
+        (같은 CAS·같은 승인흔적 조건). 버튼 경로가 별도 우회로가 되면 안 되므로 코드도 한 곳."""
     cols = "id, rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_cd, vndr_nm, amt, cur, app_no, app_nm, envelope_json"
     if request.args.get('peek'):
         rows = query(f"SELECT {cols} FROM dock_submit_draft WHERE status='approved' ORDER BY id ASC")
@@ -14346,9 +14408,18 @@ def api_ext_dock_submit_approved():
             "result=COALESCE(result,'')||' [auto:6h+ submitting→failed, 사람 재검토]' "
             "WHERE status='submitting' AND done_at IS NOT NULL "
             "AND done_at < datetime('now','localtime','-6 hours')")
+    where, params = '', ()
+    if 'id' in request.args:
+        # 🔴 빈 `?id=` 를 falsy 로 흘리면 bulk 경로로 떨어져 **지목하지 않은 다른 행**이 claim 된다
+        #    (올마이트 2026-08-01). 존재 여부로 분기하고, 못 읽으면 claim 하지 말고 거절.
+        try:
+            where, params, limit = ' AND id=?', (int(request.args['id']),), 1
+        except (TypeError, ValueError):
+            return jsonify({'count': 0, 'drafts': [], 'error': 'id 형식 오류'}), 400
     out = []
     for r in query(f"SELECT {cols} FROM dock_submit_draft WHERE status='approved' "
-                   "AND decided_at IS NOT NULL AND COALESCE(decided_by,'')<>'' ORDER BY id ASC"):
+                   "AND decided_at IS NOT NULL AND COALESCE(decided_by,'')<>''"
+                   + where + " ORDER BY id ASC", params):
         if len(out) >= limit:
             break
         if execute_rc("UPDATE dock_submit_draft SET status='submitting', done_at=datetime('now','localtime') "
