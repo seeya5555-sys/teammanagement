@@ -144,6 +144,8 @@
   const $=s=>document.querySelector(s);
   const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const list=$('#rg-list'), countEl=$('#rg-count');
+  const currentDrafts=[];
+  const stockChoice=d=>d.stock==='owner'?'owner':((d.stock==='vendor'||d.stock==='service')?'vendor':'');
 
   async function api(method,url,body,isForm){
     const opt={method,headers:{}};
@@ -187,6 +189,7 @@
     const busy=(d.status==='saving');
     // 수리신청 장비(C5=Category/Equipment) 비면 SVMS 빈 값 저장 → 승인 차단됨(서버), 카드에 경고 표시
     const eqEmpty=isRepair && !(d.equipment && String(d.equipment).trim());
+    const stockEmpty=isRepair && d.status==='pending' && !stockChoice(d);
     const trashIc=`<svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
     let acts=`<button class="rg-b del" data-act="delete">${trashIc} 삭제</button>`;
     if(d.status==='approved') acts=`<span class="rg-decided">승인됨 — 맥 러너 대기/실행중</span>`
@@ -209,6 +212,7 @@
         <div class="rg-badges">
           <span class="rg-badge ${isRepair?'b-store':(isStore?'b-store':'b-spare')}" style="${isRepair?'background:#FCEBEB;color:#A32D2D':''}">${isRepair?'수리신청':esc(d.kind_nm)}</span>
           ${eqEmpty?'<span class="rg-badge" style="background:#FCEBEB;color:#A32D2D">장비/Category 비어있음 — 입력 후 승인</span>':''}
+          ${stockEmpty?'<span class="rg-badge" style="background:#FCEBEB;color:#A32D2D">공급주체 선택 필요</span>':''}
           <span class="rg-badge st-${d.status}">${esc(d.status)}</span>
         </div>
       </div>
@@ -220,9 +224,10 @@
         ${isRepair?`<div style="margin-bottom:8px;font-size:12px"><b>Stock of Spare:</b>
           ${d.status==='pending'
             ? `<select data-stock style="border:1px solid #B4B2A9;border-radius:6px;padding:4px 8px;font-size:12px;margin-left:6px">
-                 <option value="service" ${d.stock!=='owner'?'selected':''}>서비스사 공급 (N/A, supplied by service company)</option>
-                 <option value="owner" ${d.stock==='owner'?'selected':''}>선주 공급 (Owner Supply)</option></select>`
-            : `<b>${d.stock==='owner'?'Owner Supply':'서비스사 공급'}</b>`}</div>`:''}
+                 <option value="" ${!stockChoice(d)?'selected':''} disabled>선택 필요</option>
+                 <option value="owner" ${stockChoice(d)==='owner'?'selected':''}>Owner Supply</option>
+                 <option value="vendor" ${stockChoice(d)==='vendor'?'selected':''}>Vendor Supply</option></select>`
+            : `<b>${stockChoice(d)==='owner'?'Owner Supply':(stockChoice(d)==='vendor'?'Vendor Supply':'미선택')}</b>`}</div>`:''}
         ${isRepair?repairScope(lines):linesTable(lines)}
       </div>
       <div class="rg-acts">${acts}</div>
@@ -234,8 +239,12 @@
     try{
       const j=await api('GET','/api/reqgen/drafts');
       const ds=j.drafts||[];
+      currentDrafts.splice(0,currentDrafts.length,...ds);
+      const missingStock=ds.filter(d=>d.status==='pending' && d.doc_type==='MA' && !stockChoice(d)).length;
       countEl.textContent=`대기 ${j.pending} · 전체 ${ds.length}` + (j.enabled?'':' · 자동화 OFF');
-      $('#rg-pushall').disabled = !(j.pending>0) || !j.enabled;
+      $('#rg-pushall').disabled = !(j.pending>0) || !j.enabled || missingStock>0;
+      if(missingStock) $('#bar-hint').textContent=`수리신청 ${missingStock}건 공급주체 선택 필요`;
+      else if($('#bar-hint').textContent.includes('공급주체 선택 필요')) $('#bar-hint').textContent='';
       list.innerHTML = ds.length ? ds.map(card).join('') : '<div class="rg-empty">카드 없음 — 엑셀을 업로드하세요.</div>';
     }catch(e){ list.innerHTML=`<div class="rg-err" style="padding:20px">${esc(e.message)}</div>`; }
   }
@@ -285,14 +294,21 @@
     const cause=$('#bar-cause').value.trim(), inspection=$('#bar-inspection').value.trim();
     const miss=[['Voyage',voyage],['Port',port],['Date',req_dt]].filter(x=>!x[1]).map(x=>x[0]);
     if(miss.length){ $('#bar-hint').textContent='입력 필요: '+miss.join(', '); return; }
-    if(!confirm(`대기 카드 전체를 Voyage ${voyage} / Port ${port} / Date ${req_dt} 로 SVMS에 일괄 저장할까요?`)) return;
+    const repairs=currentDrafts.filter(d=>d.status==='pending' && d.doc_type==='MA');
+    const ownerN=repairs.filter(d=>stockChoice(d)==='owner').length;
+    const vendorN=repairs.filter(d=>stockChoice(d)==='vendor').length;
+    const missingN=repairs.length-ownerN-vendorN;
+    if(missingN){ $('#bar-hint').textContent=`수리신청 ${missingN}건 공급주체 선택 필요`; return; }
+    const stockSummary=repairs.length?`\n수리신청: Owner Supply ${ownerN}건 / Vendor Supply ${vendorN}건`:'';
+    if(!confirm(`대기 카드 전체를 Voyage ${voyage} / Port ${port} / Date ${req_dt} 로 SVMS에 일괄 저장할까요?${stockSummary}`)) return;
     $('#rg-pushall').disabled=true; $('#bar-hint').textContent='승인 중…';
     try{
       const j=await api('POST','/api/reqgen/approve-all',{voyage,port,req_dt,cause,inspection});
       const nb=(j.blocked&&j.blocked.length)?j.blocked.length:0;
-      let m;
-      if(!j.approved && nb) m=`승인 0건 — ${nb}건 장비/Category 비어 전부 제외(${j.blocked.join(', ')}) · 카드에서 장비 입력 후 다시 승인`;
-      else { m=`${j.approved}건 승인 — 맥 러너 저장중(1~2분)`; if(nb) m+=` · ${nb}건 비어 제외(${j.blocked.join(', ')})`; }
+      const nbs=(j.blocked_stock&&j.blocked_stock.length)?j.blocked_stock.length:0;
+      let m=j.message||`${j.approved}건 승인 — 맥 러너 저장중(1~2분)`;
+      if(!j.message && nb) m+=` · ${nb}건 장비/Category 비어 제외(${j.blocked.join(', ')})`;
+      if(!j.message && nbs) m+=` · ${nbs}건 공급주체 미선택(${j.blocked_stock.join(', ')})`;
       $('#bar-hint').textContent=m;  // textContent라 자동 escape — esc() 불필요(이중이스케이프 방지)
       await load();
     }catch(e){ $('#bar-hint').textContent='오류: '+e.message; $('#rg-pushall').disabled=false; }
@@ -313,7 +329,7 @@
   list.addEventListener('change',async(ev)=>{
     const sel=ev.target.closest('select[data-stock]');
     if(sel){ const id=sel.closest('.rg-card').dataset.id;
-      try{ await api('PATCH',`/api/reqgen/drafts/${id}`,{stock:sel.value}); }catch(e){ alert(e.message); }
+      try{ await api('PATCH',`/api/reqgen/drafts/${id}`,{stock:sel.value}); await load(); }catch(e){ alert(e.message); }
       return; }
     const eqi=ev.target.closest('input[data-equip]');
     if(eqi){ const id=eqi.closest('.rg-card').dataset.id;

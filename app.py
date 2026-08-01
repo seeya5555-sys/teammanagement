@@ -722,7 +722,7 @@ def init_db(drop=False):
                 port        TEXT,                              -- 항구코드
                 port_nm     TEXT,
                 req_dt      TEXT,                              -- YYYYMMDD
-                stock       TEXT DEFAULT 'service',            -- 수리 Stock of Spare: service/owner (카드별)
+                stock       TEXT DEFAULT 'service',            -- 수리 공급: unselected/vendor/owner (service=기존 vendor 호환)
                 status      TEXT NOT NULL DEFAULT 'pending',   -- pending/approved/saving/saved/failed
                 req_no      TEXT,                              -- SVMS 저장 후 채번된 REQ_NO
                 result      TEXT,
@@ -12296,11 +12296,11 @@ def api_reqgen_upload():
         if dt == 'MA':                                   # 수리신청
             did = execute(
                 "INSERT INTO reqgen_draft (batch, doc_type, sheet, vsl_cd, vsl_nm, part_tp, kind_nm, "
-                "equipment, subj, line_cnt, exp_cd, header_json, lines_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "equipment, subj, line_cnt, exp_cd, header_json, lines_json, stock) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (batch, 'MA', s['sheet'], vsl_cd, (h.get('VSL_NM') or vsl_nm), None, '수리', s['equipment'],
                  s['subj'], len(lines), None,
-                 json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False)))
+                 json.dumps(h, ensure_ascii=False), json.dumps(lines, ensure_ascii=False), 'unselected'))
         else:                                            # 구매청구
             did = execute(
                 "INSERT INTO reqgen_draft (batch, doc_type, sheet, vsl_cd, vsl_nm, part_tp, kind_nm, "
@@ -12342,9 +12342,10 @@ def api_reqgen_patch(did):
     if 'stock' in d:
         stock = d.get('stock')
         if stock in (None, ''):
-            stock = 'service'     # 기존 coerce 동작 유지(빈값=기본)
-        if stock not in ('service', 'owner'):
-            return jsonify({'error': "stock 값은 'service' 또는 'owner'만 가능"}), 400
+            stock = 'unselected'
+        # service=기존 카드 호환값, vendor=신규 화면 명시선택값. 둘 다 SVMS Vendor Supply로 변환.
+        if stock not in ('unselected', 'vendor', 'service', 'owner'):
+            return jsonify({'error': "stock 값은 'owner' 또는 'vendor'만 가능 (service/unselected는 호환·상태값)"}), 400
         execute("UPDATE reqgen_draft SET stock=? WHERE id=?", (stock, did))
         return jsonify({'id': did, 'stock': stock})
     # 장비(Category/Equipment) 인라인 수정 — 빈 엑셀 C5를 재업로드 없이 채움(수리신청 MA만)
@@ -12390,6 +12391,9 @@ def api_reqgen_approve(did):
             (header.get('CATE_NM') or '').strip() and (header.get('EQ_NM') or '').strip()):
         return jsonify({'error': 'Category/Equipment(장비)가 비어 있어 저장 불가 — 카드에서 장비 입력 후 다시 승인(또는 엑셀 C5 수정)',
                         'field': 'equipment'}), 400
+    if row['doc_type'] == 'MA' and row['stock'] not in ('owner', 'vendor', 'service'):
+        return jsonify({'error': 'Stock of Spare에서 Owner Supply 또는 Vendor Supply를 선택해야 승인 가능',
+                        'field': 'stock'}), 400
     header.update({'REQ_VOY': voyage, 'PHR_VOY': voyage,
                    'REQ_PORT': port, 'REQ_PORT_NM': port_nm or None,
                    'PHR_PORT': port, 'PHR_PORT_NM': port_nm or None,
@@ -12421,8 +12425,11 @@ def api_reqgen_approve_all():
     cause = (d.get('cause') or '').strip()
     inspection = (d.get('inspection') or '').strip()
     def _stock_txt(sel):
-        return ('Owner Supply' if sel == 'owner'
-                else 'N/A, Relevant Spare parts & kits to be supplied by service company.')
+        return {
+            'owner': 'Owner Supply',
+            'vendor': 'N/A, Relevant Spare parts & kits to be supplied by service company.',
+            'service': 'N/A, Relevant Spare parts & kits to be supplied by service company.',
+        }[sel]
     missing = [k for k, v in (('Voyage', voyage), ('Port', port), ('Date', req_dt)) if not v]
     if missing:
         return jsonify({'error': f"필수입력: {', '.join(missing)}", 'field': missing[0].lower()}), 400
@@ -12438,6 +12445,7 @@ def api_reqgen_approve_all():
     user = session.get('username') or 'web'
     n = 0
     blocked = []
+    blocked_stock = []
     for row in rows:
         if not row['header_json']:
             continue
@@ -12446,6 +12454,10 @@ def api_reqgen_approve_all():
             # Category/Equipment(장비, C5) 비면 SVMS 빈 값 방지 — 승인 제외하고 pending 유지(손유석 지시)
             if not ((header.get('CATE_NM') or '').strip() and (header.get('EQ_NM') or '').strip()):
                 blocked.append(row['sheet'] or row['vsl_cd'] or str(row['id']))
+                continue
+            # 신규 파싱 수리카드는 unselected로 생성. 기존 service/owner 카드는 그대로 유효하게 보존.
+            if row['stock'] not in ('owner', 'vendor', 'service'):
+                blocked_stock.append(row['sheet'] or row['vsl_cd'] or str(row['id']))
                 continue
             header.update({'APP_VOY': voyage, 'APP_PORT_CD': port, 'APP_PORT_NM': None,
                            'APP_DT': req_dt, 'REQ_CAU': cause, 'REQ_INS': inspection,
@@ -12465,7 +12477,10 @@ def api_reqgen_approve_all():
     msg = f'{n}건 승인 — 맥 러너가 곧 SVMS 일괄 저장(최대 1~2분)'
     if blocked:
         msg += f' · ⚠ {len(blocked)}건 Category/Equipment 비어 제외(카드에서 장비 입력 후 다시 승인): {", ".join(blocked)}'
-    return jsonify({'approved': n, 'blocked': blocked, 'save_run': rid, 'message': msg})
+    if blocked_stock:
+        msg += f' · ⚠ {len(blocked_stock)}건 Stock 공급주체 미선택: {", ".join(blocked_stock)}'
+    return jsonify({'approved': n, 'blocked': blocked, 'blocked_stock': blocked_stock,
+                    'save_run': rid, 'message': msg})
 
 
 @app.route('/api/reqgen/drafts/<int:did>/reset', methods=['POST'])
