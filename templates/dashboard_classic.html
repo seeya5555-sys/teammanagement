@@ -43,6 +43,7 @@
   .dash-ev-date { color: var(--text-tertiary); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
   .dash-ev-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--blue); flex: 0 0 auto; }
   .dash-ev-title { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dash-ev-row.is-completed .dash-ev-title { text-decoration: line-through; opacity: .58; }
   .dash-zero .dash-num { color: var(--text-tertiary); }
   .dash-section-title { font-size: 13px; color: var(--text-tertiary); margin: 22px 0 2px; }
 </style>
@@ -105,7 +106,7 @@
       {% if events %}
       <div class="dash-ev">
         {% for e in events %}
-        <div class="dash-ev-row">
+        <div class="dash-ev-row{% if e['completed'] %} is-completed{% endif %}">
           <span class="dash-ev-date">{{ e['start_date'][5:] }}</span>
           <span class="dash-ev-dot"></span>
           <span class="dash-ev-title">{{ e['title'] }}{% if e['category'] %} · {{ e['category'] }}{% endif %}</span>

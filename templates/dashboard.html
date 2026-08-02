@@ -281,7 +281,7 @@
        {% if today_events %}aria-haspopup="true" aria-expanded="false"{% endif %}>
       <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-calendar"/></svg></span>
       <span class="meta"><span class="lbl">오늘 일정</span><span class="num">{{ today_count }}<small>건</small></span></span>
-      {% if today_events %}<span class="today-sched">{% for e in today_events[:2] %}{{ e['title'] }}{% if not loop.last %} · {% endif %}{% endfor %}{% if today_count > 2 %} +{{ today_count - 2 }}{% endif %}</span><span class="caret">▾</span>{% endif %}
+      {% if today_events %}<span class="today-sched">{% for e in today_events[:2] %}<span{% if e['completed'] %} style="text-decoration:line-through;opacity:.58"{% endif %}>{{ e['title'] }}</span>{% if not loop.last %} · {% endif %}{% endfor %}{% if today_count > 2 %} +{{ today_count - 2 }}{% endif %}</span><span class="caret">▾</span>{% endif %}
     </a>
     <span class="scope">담당 선박 기준</span>
   </div>
@@ -292,7 +292,7 @@
     {% for e in today_events %}
     <div class="tsp-row">
       <span class="tsp-t{% if not e['start_time'] %} allday{% endif %}">{{ e['start_time'] or '종일' }}</span>
-      <span class="tsp-title">{{ e['title'] }}{% if e['category'] %}<span class="tsp-cat"> · {{ e['category'] }}</span>{% endif %}</span>
+      <span class="tsp-title"{% if e['completed'] %} style="text-decoration:line-through;opacity:.58"{% endif %}>{{ e['title'] }}{% if e['category'] %}<span class="tsp-cat"> · {{ e['category'] }}</span>{% endif %}</span>
     </div>
     {% endfor %}
   </div>
@@ -338,7 +338,7 @@
     if(!due||!due.length){box.hidden=true;return;}
     document.getElementById('ckDueBody').innerHTML=due.map(x=>
       '<div class="ck-due">'+dchip(x.days_left)
-      +'<span class="ck-dtxt">'+(x.vessel?'<b>'+esc(x.vessel)+'</b> — ':'')+esc(x.title)+'</span>'
+      +'<span class="ck-dtxt"'+(x.completed?' style="text-decoration:line-through;opacity:.58"':'')+'>'+(x.vessel?'<b>'+esc(x.vessel)+'</b> — ':'')+esc(x.title)+'</span>'
       +'<span class="ck-dsrc">'+(SRC[x.source]||esc(x.source))+'</span></div>').join('');
     box.hidden=false;
   }

@@ -359,6 +359,11 @@ def init_db(drop=False):
             conn.executescript(f.read())
         print('  · 스키마 적용 완료')
 
+        cal_cols = [r[1] for r in conn.execute('PRAGMA table_info(calendar_events)').fetchall()]
+        if cal_cols and 'completed' not in cal_cols:
+            conn.execute('ALTER TABLE calendar_events ADD COLUMN completed INTEGER NOT NULL DEFAULT 0')
+            print('  · calendar_events.completed 컬럼 추가')
+
         # cs_surveys 에 manual_*_count 컬럼이 없으면 추가 (기존 DB 보강)
         cs_cols = [r[1] for r in conn.execute('PRAGMA table_info(cs_surveys)').fetchall()]
         if cs_cols:  # cs_surveys 테이블이 존재할 때만
@@ -1457,14 +1462,14 @@ def _dashboard_ctx():
     if scoped:
         evf, evp = vin("vessel_id")
         events = query(
-            "SELECT title, start_date, category, color FROM calendar_events "
+            "SELECT title, start_date, category, color, completed FROM calendar_events "
             "WHERE start_date >= ? AND start_date <= ? "
             f"AND (supervisor_id=? OR supervisor_id IS NULL OR {evf}) "
             "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
             (today, cal_end, sup_id, *evp))
     else:
         events = query(
-            "SELECT title, start_date, category, color FROM calendar_events "
+            "SELECT title, start_date, category, color, completed FROM calendar_events "
             "WHERE start_date >= ? AND start_date <= ? "
             "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
             (today, cal_end))
@@ -1485,12 +1490,12 @@ def _dashboard_ctx():
     if scoped:
         evf3, evp3 = vin("vessel_id")
         today_events = query(
-            "SELECT title, category, start_time FROM calendar_events WHERE start_date = ? "
+            "SELECT title, category, start_time, completed FROM calendar_events WHERE start_date = ? "
             f"AND (supervisor_id=? OR supervisor_id IS NULL OR {evf3}) "
             "ORDER BY COALESCE(start_time,'') ASC", (today, sup_id, *evp3))
     else:
         today_events = query(
-            "SELECT title, category, start_time FROM calendar_events WHERE start_date = ? "
+            "SELECT title, category, start_time, completed FROM calendar_events WHERE start_date = ? "
             "ORDER BY COALESCE(start_time,'') ASC", (today,))
     today_count = len(today_events)
 
@@ -1584,14 +1589,14 @@ def api_dashboard_cockpit():
     if scoped:
         evf, evp = vin("vessel_id")
         ce = query(
-            "SELECT ce.start_date, ce.title, v.name AS vessel FROM calendar_events ce "
+            "SELECT ce.start_date, ce.title, ce.completed, v.name AS vessel FROM calendar_events ce "
             "LEFT JOIN vessels v ON v.id=ce.vessel_id "
             "WHERE ce.start_date >= ? AND ce.start_date <= ? "
             f"AND (ce.supervisor_id=? OR ce.supervisor_id IS NULL OR {evf})",
             (today_s, horizon, sup_id, *evp))
     else:
         ce = query(
-            "SELECT ce.start_date, ce.title, v.name AS vessel FROM calendar_events ce "
+            "SELECT ce.start_date, ce.title, ce.completed, v.name AS vessel FROM calendar_events ce "
             "LEFT JOIN vessels v ON v.id=ce.vessel_id "
             "WHERE ce.start_date >= ? AND ce.start_date <= ?",
             (today_s, horizon))
@@ -1600,7 +1605,8 @@ def api_dashboard_cockpit():
         if dl is None:
             continue
         due.append({'days_left': dl, 'vessel': r['vessel'] or '',
-                    'title': (r['title'] or '일정').strip(), 'source': 'calendar'})
+                    'title': (r['title'] or '일정').strip(), 'source': 'calendar',
+                    'completed': bool(r['completed'])})
 
     due.sort(key=lambda x: x['days_left'])
     due = due[:6]
@@ -4975,9 +4981,9 @@ def api_cal_event_create():
     new_id = execute("""
         INSERT INTO calendar_events
             (supervisor_id, vessel_id, title, start_date, end_date,
-             all_day, start_time, end_time, category, color, location, notes,
+             all_day, start_time, end_time, category, color, location, notes, completed,
              source_type, source_id, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         d.get('supervisor_id') or None,
         d.get('vessel_id') or None,
@@ -4991,6 +4997,7 @@ def api_cal_event_create():
         color,
         d.get('location') or '',
         d.get('notes') or '',
+        1 if d.get('completed') else 0,
         d.get('source_type') or 'manual',
         d.get('source_id') or None,
         session.get('username'),
@@ -5016,14 +5023,14 @@ def api_cal_event_update(eid):
     sets, params = [], []
     for f in ('supervisor_id','vessel_id','title','start_date','end_date',
               'all_day','start_time','end_time','category','color',
-              'location','notes'):
+              'location','notes','completed'):
         if f in d:
             v = d[f]
             if f == 'color' and v:
                 v = v.lower()
                 if v not in CAL_VALID_COLORS:
                     v = 'blue'
-            if f == 'all_day':
+            if f in ('all_day', 'completed'):
                 v = 1 if v else 0
             sets.append(f'{f} = ?')
             params.append(None if v == '' else v)
@@ -17035,6 +17042,13 @@ def _auto_migrate():
                 conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
         except Exception as e:
             print(f'[auto_migrate] schema 재적용 건너뜀: {e}')
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(calendar_events)').fetchall()]
+            if cols and 'completed' not in cols:
+                conn.execute('ALTER TABLE calendar_events ADD COLUMN completed INTEGER NOT NULL DEFAULT 0')
+                print('[auto_migrate] calendar_events.completed 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] calendar_events.completed 점검 건너뜀: {e}')
         # SOA 그룹은 기존 prod DB에도 schema 재적용만으로 테이블이 생긴다. 최초 전환 시
         # 현행 G1/G2/G3/SKRT 값을 seed해야 runner가 빈 설정으로 fail-closed 되지 않는다.
         try:

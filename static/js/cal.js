@@ -235,7 +235,7 @@ function renderGrid() {
     const evList = el('div', { class: 'cal-cell-events' });
     for (const ev of evs.slice(0, maxShow)) {
       evList.append(el('div', {
-        class: `cal-evt dot-${ev.color || 'blue'}`,
+        class: `cal-evt dot-${ev.color || 'blue'}${ev.completed ? ' is-completed' : ''}`,
         title: evTooltip(ev),
         onclick: (e) => { e.stopPropagation(); openEditModal(ev); },
       }, evLabel(ev)));
@@ -311,9 +311,16 @@ function renderSideList() {
 
   for (const ev of evs) {
     const item = el('div', {
-      class: 'cal-side-item',
+      class: 'cal-side-item' + (ev.completed ? ' is-completed' : ''),
       onclick: () => openEditModal(ev),
     });
+    item.append(el('button', {
+      class: 'cal-complete-btn',
+      type: 'button',
+      title: ev.completed ? '완료 해제' : '완료 표시',
+      'aria-label': ev.completed ? '완료 해제' : '완료 표시',
+      onclick: (e) => { e.stopPropagation(); toggleCompleted(ev); },
+    }, ev.completed ? '✓' : '○'));
     item.append(el('span', { class: `cal-side-color dot-${ev.color || 'blue'}` }));
     const body = el('div', { class: 'cal-side-body' });
     const titleRow = el('div', { class: 'cal-side-title-row' });
@@ -346,6 +353,17 @@ function renderSideList() {
     if (ev.notes) body.append(el('div', { class: 'cal-side-notes' }, ev.notes));
     item.append(body);
     list.append(item);
+  }
+}
+
+async function toggleCompleted(ev) {
+  try {
+    await api(`/api/cal/events/${ev.id}`, {
+      method: 'PUT', body: JSON.stringify({ completed: !ev.completed }),
+    });
+    await reloadEvents();
+  } catch (err) {
+    alert('완료 상태 변경 실패: ' + err.message);
   }
 }
 
@@ -384,6 +402,7 @@ function openCreateModal(presetDate) {
   $('#cal-f-start').value = presetDate || S.selectedDate || ymd(today0);
   $('#cal-f-end').value = '';
   $('#cal-f-allday').checked = true;
+  $('#cal-f-completed').checked = false;
   $('#cal-f-time-row').hidden = true;
   $('#cal-f-stime').value = '';
   $('#cal-f-etime').value = '';
@@ -408,6 +427,7 @@ function openEditModal(ev) {
   $('#cal-f-end').value = ev.end_date || '';
   const allday = ev.all_day !== 0;
   $('#cal-f-allday').checked = allday;
+  $('#cal-f-completed').checked = Boolean(ev.completed);
   $('#cal-f-time-row').hidden = allday;
   $('#cal-f-stime').value = ev.start_time || '';
   $('#cal-f-etime').value = ev.end_time || '';
@@ -478,6 +498,7 @@ async function saveModal() {
     start_date: start,
     end_date:   end,
     all_day:    allday,
+    completed:  $('#cal-f-completed').checked,
     start_time: !allday ? ($('#cal-f-stime').value || null) : null,
     end_time:   !allday ? ($('#cal-f-etime').value || null) : null,
     supervisor_id: $('#cal-f-supervisor').value ? parseInt($('#cal-f-supervisor').value) : null,

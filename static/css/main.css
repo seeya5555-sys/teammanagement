@@ -2991,6 +2991,7 @@ col.c-edit   { width: 156px; }
   display: block;
   line-height: 1.4;
 }
+.cal-evt.is-completed { text-decoration: line-through; opacity: .58; }
 .cal-evt.more {
   background: transparent;
   color: var(--text-tertiary);
@@ -3051,6 +3052,15 @@ col.c-edit   { width: 156px; }
   transition: background 0.1s;
 }
 .cal-side-item:hover { background: var(--surface-2); }
+.cal-side-item.is-completed .cal-side-title,
+.cal-side-item.is-completed .cal-side-meta,
+.cal-side-item.is-completed .cal-side-notes { text-decoration: line-through; opacity: .58; }
+.cal-complete-btn {
+  width: 22px; height: 22px; flex: 0 0 22px; border: 1px solid var(--border);
+  border-radius: 50%; background: var(--surface); color: var(--blue);
+  font-size: 13px; line-height: 18px; padding: 0; cursor: pointer;
+}
+.cal-side-item.is-completed .cal-complete-btn { background: var(--blue); color: white; border-color: var(--blue); }
 .cal-side-color {
   width: 4px;
   border-radius: 3px;

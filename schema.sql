@@ -305,6 +305,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     color           TEXT,                               -- gray/red/amber/yellow/green/blue/purple/pink
     location        TEXT,
     notes           TEXT,
+    completed       INTEGER NOT NULL DEFAULT 0,         -- 1=완료(모든 미러 화면 취소선)
     -- 다른 모듈에서 가져온 경우 (Phase B에서 사용)
     source_type     TEXT,                               -- 'issue'|'cs'|'vetting'|'manual'(default)|null
     source_id       INTEGER,                            -- 원본 row id
