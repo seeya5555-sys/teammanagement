@@ -12764,6 +12764,11 @@ def _dockproc_norm_quotes(raw):
                     'cd': cd if re.fullmatch(r'[A-Z0-9]{1,20}', cd) else None,
                     'amt': _num(q.get('amt')),
                     'usd': _num(q.get('usd')),           # 달러환산액 — 통화 혼재 시 '최저' 비교는 이걸로만
+                    # 구매(S/ST) 표시용: amt/final_amt=TAMT(승인 스냅샷 정본), gross=AMT, dc=DIS_AMT.
+                    # 수리(R)·구버전 폴러는 이 키가 없어 모두 None 이며 기존 UI/승인 계약 유지.
+                    'gross_amt': _num(q.get('gross_amt')),
+                    'dc_amt': _num(q.get('dc_amt')),
+                    'final_amt': _num(q.get('final_amt')),
                     'cur': cur if re.fullmatch(r'[A-Z]{3}', cur) else None,
                     'att': max(0, min(99, att)),
                     'st': str(q.get('st') or '').strip()[:20]})
@@ -14304,6 +14309,8 @@ def api_dock_submit_preview():
         elif 'submit' not in str(q.get('st') or '').lower():
             why = '제출상태 아님'
         cands.append({'cd': q.get('cd'), 'nm': q.get('nm'), 'amt': q.get('amt'),
+                      'gross_amt': q.get('gross_amt'), 'dc_amt': q.get('dc_amt'),
+                      'final_amt': q.get('final_amt'),
                       'cur': q.get('cur'), 'usd': q.get('usd'), 'st': q.get('st'),
                       'att': q.get('att'), 'best': q.get('best'), 'ok': why is None, 'why': why})
     blocked = None

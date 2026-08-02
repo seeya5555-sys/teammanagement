@@ -717,12 +717,17 @@
     const opts = (pv.candidates||[]).map((c,i)=>{
       const amt = c.amt!=null ? `${fmtAmt(c.amt)} ${esc(c.cur||'')}` : '금액 미제출';
       const usd = (c.usd!=null && (c.cur||'USD')!=='USD') ? `<div class="mt">≈USD ${fmtAmt(c.usd)}</div>` : '';
+      const hasFinal = c.final_amt!=null;
+      const gross = c.gross_amt!=null ? `<div class="mt">견적 ${fmtAmt(c.gross_amt)} ${esc(c.cur||'')}</div>` : '';
+      // DIS_AMT 부호 계약을 추정하지 않고 SVMS 원값 그대로 표시한다(돈경로 계산에는 미사용).
+      const dc = c.dc_amt!=null && c.dc_amt!==0 ? `<div class="mt">DC ${fmtAmt(c.dc_amt)} ${esc(c.cur||'')}</div>` : '';
+      const final = hasFinal ? `<div style="margin-top:3px;color:var(--blue);font-weight:700">최종 DC후 ${fmtAmt(c.final_amt)} ${esc(c.cur||'')}</div>` : '';
       return `<label class="dp-vopt${c.ok?'':' dis'}" data-cd="${esc(c.cd||'')}" data-i="${i}">
         <input type="radio" name="sb-v" value="${esc(c.cd||'')}"${c.ok?'':' disabled'} style="margin-top:2px">
         <div><div class="nm">${esc(c.nm||c.cd||'업체')}${c.best?' <span style="font-weight:600;font-size:11px;color:var(--green)">최저</span>':''}</div>
           <div class="mt">${esc(c.cd||'코드없음')} · ${esc(c.st||'상태미상')}${c.att?` · 견적서 ${c.att}`:''}</div>
           ${c.ok?'':`<div class="mt" style="color:var(--red)">${esc(c.why||'')}</div>`}</div>
-        <div class="amt">${amt}${usd}</div></label>`;
+        <div class="amt">${gross}${dc}${hasFinal?final:amt}${usd}</div></label>`;
     }).join('') || '<div class="dp-blk">제출된 견적이 없음 — 벤더 제출 후 다시 시도.</div>';
     b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>${done}
       <div class="dp-mlbl">발주할 업체 선택 (SVMS Cost Review 체크)</div>${opts}
