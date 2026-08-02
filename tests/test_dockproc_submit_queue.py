@@ -421,9 +421,10 @@ c.get(f'/api/ext/dock_submit/approved?id={d7}', headers=HDR)
 r = c.post(f'/api/ext/dock_submit/drafts/{d7}/result', headers=HDR,
            json={'ok': True, 'result': 'readback STATUS=RU(Submit)'})
 chk(r.get_json()['applied'] is True, '상신 성공 보고')
-pr = A.query('SELECT svms_status, stg_order FROM dock_procure WHERE id=?', (rid7,), one=True)
+pr = A.query('SELECT svms_status, stg_confirm, stg_order FROM dock_procure WHERE id=?', (rid7,), one=True)
 chk(pr['svms_status'] == 'Submit', '🔴 성공 즉시 화면 상태가 Submit 로 바뀜(다음 sync 안 기다림)', dict(pr))
-chk(pr['stg_order'] == 0, '🔴 stg_order 는 안 건드림 — Submit 은 발주가 아니다(rank 2)', dict(pr))
+chk(pr['stg_confirm'] == 1 and pr['stg_order'] == 0,
+    '🔴 벤더컨펌은 즉시 켜고 발주완료는 안 건드림 — Submit 은 rank3', dict(pr))
 pv = c.get(f'/api/dock_submit/preview?rid={rid7}').get_json()
 chk('이미 상신됨' in (pv.get('blocked') or ''), '모달이 사유를 미리 보여줌', pv.get('blocked'))
 r = create(rid7)
@@ -460,6 +461,8 @@ c.get(f'/api/ext/dock_submit/approved?id={d8}', headers=HDR)
 c.post(f'/api/ext/dock_submit/drafts/{d8}/result', headers=HDR, json={'ok': False, 'result': 'pre-read 실패'})
 chk(A.query('SELECT svms_status FROM dock_procure WHERE id=?', (rid8,), one=True)['svms_status'] is None,
     '실패 보고는 화면 상태를 바꾸지 않음')
+chk(A.query('SELECT stg_confirm FROM dock_procure WHERE id=?', (rid8,), one=True)['stg_confirm'] == 0,
+    '상신 실패는 벤더컨펌 단계를 켜지 않음')
 chk(c.get(f'/api/dock_submit/preview?rid={rid8}').get_json().get('blocked') is None,
     '실패한 건은 다시 컨펌 가능(막히면 안 됨)')
 

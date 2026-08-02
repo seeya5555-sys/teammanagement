@@ -744,7 +744,7 @@ def init_db(drop=False):
 
         # ── Dock Procurement(입거 발주현황 트래커) ──
         #   입거선박 INDEX 엑셀 업로드 → 라인 큐 자동생성(증분/중복제외).
-        #   3단계 체크박스(견적작성→벤더제출→발주완료)로 진행추적. dedup 키=(vsl_nm, req_no).
+        #   4단계 체크박스(견적작성→벤더제출→벤더컨펌→발주완료)로 진행추적. dedup 키=(vsl_nm, req_no).
         #   R/S/ST=SVMS 연동대상(Phase 2 svms_pushed), P=페인트/SY=조선소=메일견적(SVMS 무관).
         conn.execute("""
             CREATE TABLE IF NOT EXISTS dock_procure_vessel (
@@ -773,7 +773,8 @@ def init_db(drop=False):
                 content_hash TEXT,                            -- equipment+subject 해시(내용변경 감지)
                 stg_quote    INTEGER NOT NULL DEFAULT 0,      -- 1단계: 견적서 작성
                 stg_vendor   INTEGER NOT NULL DEFAULT 0,      -- 2단계: 벤더 제출
-                stg_order    INTEGER NOT NULL DEFAULT 0,      -- 3단계: 발주 완료
+                stg_confirm  INTEGER NOT NULL DEFAULT 0,      -- 3단계: 벤더 컨펌 + 결재 상신
+                stg_order    INTEGER NOT NULL DEFAULT 0,      -- 4단계: 발주 완료
                 remark       TEXT,
                 sort_no      INTEGER,                         -- INDEX No.(정렬용)
                 rev_batch    TEXT,                            -- 추가된 업로드 배치 id
@@ -884,6 +885,13 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN sub_quotes TEXT")
             if 'att_files' not in _dpc:                       # 벤더 견적서 첨부 목록(파일명/KB/업체) — 파일 자체는 preview cache
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN att_files TEXT")
+            if 'stg_confirm' not in _dpc:                     # 벤더 선택 컨펌 + 결재 상신(발주완료 전단계)
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN stg_confirm INTEGER NOT NULL DEFAULT 0")
+            # 매 부팅 멱등 보정: ALTER 직후 crash 나도 다음 부팅에 backfill이 다시 돈다.
+            # 기존 발주완료/Submit/결재진행 행은 누적 앞단계까지 함께 맞춰 비정상 (0,0,1,0)을 만들지 않는다.
+            conn.execute("UPDATE dock_procure SET stg_quote=1, stg_vendor=1, stg_confirm=1 "
+                         "WHERE stg_order=1 OR UPPER(TRIM(COALESCE(svms_status,''))) "
+                         "IN ('SUBMIT','APPROVAL(PROCSSING)')")
             _dpv = [r[1] for r in conn.execute("PRAGMA table_info(dock_procure_vessel)").fetchall()]
             if 'shipyard_vndr_cd' not in _dpv:                # 선택된 조선소 벤더(SVMS) → dock 봉투 DR_CD/VNDR_CD
                 conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN shipyard_vndr_cd TEXT")
@@ -12673,25 +12681,25 @@ def _dockproc_source(code, prepared_by):
 
 # Phase 2 역동기화: SVMS Status → 진행단계 rank(누적). HQ Canceled=무시(맵 없음→0).
 _DOCKPROC_STATUS_RANK = {
-    # 1=견적작성 / 2=벤더제출 / 3=발주완료 (누적). HQ Canceled·미등재=무시(rank0).
+    # 1=견적작성 / 2=벤더제출 / 3=벤더컨펌·결재상신 / 4=발주완료 (누적).
+    # HQ Canceled·미등재=무시(rank0).
     'HQ CONFIRMED': 1,          # 견적작성 (수리·구매 공통)
     'QUOTATION INQUIRY': 2,     # 벤더제출(견적의뢰)
-    # 'Submit'은 발주가 아니라 **벤더 견적 제출** 단계 — 2026-07-31 SVMS 실측으로 3→2 강등(형 A안 결재).
-    # 근거: BELGIUM B R19/R26(헤더 Submit) 상세 = P_RS_D_VNDR.VNDR_STATS='Submitted',
-    # P_RS_D_ODR.ODR_YN='N'(발주서 미발행) → 발주금액(VNDR_ODR_AMT of 'Ordered')이 존재하지 않음.
+    # 'Submit'은 발주가 아니라 **업체 선택 후 결재 상신** 단계. 벤더 견적제출(VNDR_STATS='Submitted')과
+    # 구분되지만 발주서 미발행(ODR_YN='N')이라 발주완료로 올리면 안 된다.
     # 반면 실발주건(SAPS)은 헤더 'HQ Ordered' + 벤더 'Ordered' + ODR_YN='Y'.
-    # 3으로 두면 "발주완료인데 금액 —" 이 구조적으로 발생함(dock_sync._repair_order 는 'Ordered'만 읽음).
-    'SUBMIT': 2,                # 벤더제출 (수리 — 벤더 견적 제출)
-    'HQ ORDERED': 3,            # 발주완료 (수리 — 실발주)
-    'ORDERED': 3,               # 발주완료 (구매 발주)
-    'VENDOR CONFIRMED': 3,      # 발주완료 (구매 — 업체확정)
-    # 'Approval(Procssing)' 도 발주완료가 아니다 — 2026-07-31 실측으로 3→2 강등(Submit 강등과 동일 부류).
+    # 4로 두면 "발주완료인데 금액 —" 이 구조적으로 발생함(dock_sync._repair_order 는 'Ordered'만 읽음).
+    'SUBMIT': 3,                # 벤더컨펌 (수리 — 업체 선택 후 결재 상신)
+    'HQ ORDERED': 4,            # 발주완료 (수리 — 실발주)
+    'ORDERED': 4,               # 발주완료 (구매 발주)
+    'VENDOR CONFIRMED': 4,      # 발주완료 (구매 — 업체확정 완료)
+    # 'Approval(Procssing)' 도 발주완료가 아니다 — 업체 선택 후 결재 진행 중인 rank3.
     # 근거: BELGIUM B S10(BGBBES2607B11) PC_PRO 행이 스스로 밝힘 —
     #   ODR_STEP = "[Order] Order is Progressing (Not Approved)" · ODR_STATUS_CD='A'
     #   ODR_NO 는 이미 발급('BGBBES2607B11A')인데 SP_GET_ODR_LIST(BGBB)=0행 → 금액 소스에 아직 없음.
-    # 3으로 두면 "발주완료인데 금액 —"이 또 구조적으로 발생함(실제로 이 행 1건이 그렇게 떴다).
+    # 4로 두면 "발주완료인데 금액 —"이 또 구조적으로 발생함(실제로 이 행 1건이 그렇게 떴다).
     # ⚠️ODR_NO 존재만으로는 구매 발주근거가 약하다는 반례이기도 함(승인 전에도 번호가 붙음).
-    'APPROVAL(PROCSSING)': 2,   # 벤더제출 (구매 — 발주 승인 진행 중, 아직 미승인)
+    'APPROVAL(PROCSSING)': 3,   # 벤더컨펌 (구매 — 업체 선택 후 발주 승인 진행 중)
 }
 
 
@@ -13246,33 +13254,40 @@ def api_dockproc_tmpl(kind):
 @app.route('/api/dock_procure/<int:lid>/stage', methods=['POST'])
 @login_required
 def api_dockproc_stage(lid):
-    """3단계 체크 토글 + 종속 cascade(상위체크→하위완료, 하위해제→상위해제)."""
+    """4단계 체크 토글 + 종속 cascade(상위체크→하위완료, 하위해제→상위해제)."""
     d = request.get_json(silent=True) or {}
     stage = d.get('stage')
     val = 1 if d.get('value') else 0
-    if stage not in ('quote', 'vendor', 'order'):
-        return jsonify({'error': 'stage must be quote/vendor/order'}), 400
+    if stage not in ('quote', 'vendor', 'confirm', 'order'):
+        return jsonify({'error': 'stage must be quote/vendor/confirm/order'}), 400
     row = query("SELECT * FROM dock_procure WHERE id=?", (lid,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
-    q, v, o = row['stg_quote'], row['stg_vendor'], row['stg_order']
+    q, v, f, o = row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order']
     if stage == 'quote':
         q = val
         if not val:
-            v = o = 0
+            v = f = o = 0
     elif stage == 'vendor':
         v = val
         if val:
             q = 1
         else:
+            f = o = 0
+    elif stage == 'confirm':
+        f = val
+        if val:
+            q = v = 1
+        else:
             o = 0
     else:  # order
         o = val
         if val:
-            q = v = 1
-    execute("UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, "
-            "updated_at=datetime('now','localtime') WHERE id=?", (q, v, o, lid))
-    return jsonify({'id': lid, 'stg_quote': q, 'stg_vendor': v, 'stg_order': o})
+            q = v = f = 1
+    execute("UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_confirm=?, stg_order=?, "
+            "updated_at=datetime('now','localtime') WHERE id=?", (q, v, f, o, lid))
+    return jsonify({'id': lid, 'stg_quote': q, 'stg_vendor': v,
+                    'stg_confirm': f, 'stg_order': o})
 
 
 @app.route('/api/dock_procure/add', methods=['POST'])
@@ -13842,7 +13857,8 @@ def api_ext_dockproc_links():
     """진단/폴러용 — 수동연결(svms_req_no 설정된) dock 행 목록."""
     vc = (request.args.get('vsl_cd') or '').strip().upper()
     rows = query(
-        "SELECT d.req_no, d.svms_req_no, d.cat_code, d.stg_quote, d.stg_vendor, d.stg_order, d.vsl_nm "
+        "SELECT d.req_no, d.svms_req_no, d.cat_code, d.stg_quote, d.stg_vendor, "
+        "d.stg_confirm, d.stg_order, d.vsl_nm "
         "FROM dock_procure d WHERE d.svms_req_no IS NOT NULL AND d.svms_req_no<>'' "
         + ("AND (UPPER(d.vsl_cd)=? OR d.vsl_nm IN (SELECT vsl_nm FROM dock_procure_vessel WHERE UPPER(vsl_cd)=?))" if vc else ""),
         ((vc, vc) if vc else ()))
@@ -13900,13 +13916,13 @@ def api_ext_dockproc_sync():
             if len(misses) < 20:
                 misses.append({'inq': inq, 'subject': subj[:70]})
             continue
-        # 🔴 발주완료 fail-closed 게이트(2026-07-31): 헤더 상태 allowlist 만으로 rank3 을 켜지 않는다.
+        # 🔴 발주완료 fail-closed 게이트(2026-07-31): 헤더 상태 allowlist 만으로 rank4 를 켜지 않는다.
         #   근거(evidence) = 수리 `VNDR_STATS=='Ordered'` 또는 `ODR_YN=='Y'` / 구매 발주서번호 `ODR_NO` 존재.
-        #   False = 근거 없음 → 벤더제출로 강등.
+        #   False = 근거 없음 → 벤더컨펌(rank3)까지만 인정.
         #   None  = 근거 미확정(SVMS 상세조회 실패·구버전 폴러) → **이미 발주완료인 행만 유지**하고
         #           신규 승격은 막는다. 이렇게 안 하면 조회 한 번 실패했을 때 근거 없이 발주완료가 켜짐(올마이트 지적).
-        if rank >= 3 and (evidence is False or (evidence is None and not row['stg_order'])):
-            rank = 2
+        if rank >= 4 and (evidence is False or (evidence is None and not row['stg_order'])):
+            rank = 3
         prev = plan.get(row['id'])
         if not prev or rank > prev[0]:                   # 같은 행 여러건이면 최고 rank만(취소 제외 후)
             _amt = it.get('amt')
@@ -13938,7 +13954,8 @@ def api_ext_dockproc_sync():
                                _amt, (it.get('cur') or '').strip().upper() or None, _quotes, _files)
     changes = []
     for rid, (rank, status, vendor, inq, row, submit, amt, cur, quotes, files) in plan.items():
-        q, v, o = (1 if rank >= 1 else 0), (1 if rank >= 2 else 0), (1 if rank >= 3 else 0)
+        q, v, f, o = ((1 if rank >= 1 else 0), (1 if rank >= 2 else 0),
+                      (1 if rank >= 3 else 0), (1 if rank >= 4 else 0))
         new_remark = row['remark']
         # 옵션 b: 발주완료 시 Vendor명을 Remark에 기입. 단 신규완료/빈Remark일 때만(매폴 수동메모 덮어쓰기 방지)
         if o and vendor and (not row['stg_order'] or not (row['remark'] or '').strip()):
@@ -13956,25 +13973,25 @@ def api_ext_dockproc_sync():
         #    영영 갱신되지 않는다. 실사고: BGBBME26073108 은 SVMS 가 'Submit' 인데 DB 는 하루 넘게
         #    'Quotation Inquiry' 였음. 표시만의 문제가 아니라 **재컨펌 게이트가 이 라벨을 읽으므로**,
         #    SVMS 에서 반려돼 라벨이 되돌아가도 sync 가 못 써서 게이트가 영구 잠기는 경로가 됨.
-        before = (row['stg_quote'], row['stg_vendor'], row['stg_order'], row['remark'],
+        before = (row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order'], row['remark'],
                   row['svms_req_no'], row['svms_status'], row['svms_submit'],
                   row['quote_amt'], row['quote_cur'], row['quote_src'],
                   row['sub_quotes'], row['att_files'])
-        after = (q, v, o, new_remark, row['svms_req_no'] or inq, status, submit,
+        after = (q, v, f, o, new_remark, row['svms_req_no'] or inq, status, submit,
                  new_qamt, new_qcur, new_qsrc, new_subq, new_att)   # COALESCE(기존,신규)=멱등
         if before != after:
             changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
-                            'status': status, 'stages': [q, v, o],
+                            'status': status, 'stages': [q, v, f, o],
                             'remark': new_remark, 'inq_no': inq, 'submit': submit,
                             'quote_amt': new_qamt, 'quote_cur': new_qcur, 'quote_src': new_qsrc,
                             'sub_quotes': new_subq, 'att_files': new_att})
             if not dry:
                 execute(
-                    "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_order=?, remark=?, "
+                    "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_confirm=?, stg_order=?, remark=?, "
                     "svms_req_no=COALESCE(svms_req_no,?), svms_status=?, svms_submit=?, "
                     "quote_amt=?, quote_cur=?, quote_src=?, sub_quotes=?, att_files=?, "
                     "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?",
-                    (q, v, o, new_remark, inq, status, submit, new_qamt, new_qcur, new_qsrc,
+                    (q, v, f, o, new_remark, inq, status, submit, new_qamt, new_qcur, new_qsrc,
                      new_subq, new_att, rid))
                 if row['att_files'] != new_att:           # 목록이 바뀌면 안 쓰는 캐시 정리(용량 회수)
                     _dockatt_gc(rid, _dockproc_files_of(new_att))
@@ -14511,8 +14528,9 @@ def api_ext_dock_submit_result(did):
         #    (조회 커서로 쓰이는 곳 0곳 — sync 를 건너뛰게 만들지 않음. 실측 확인).
         dr = query('SELECT rid FROM dock_submit_draft WHERE id=?', (did,), one=True)
         if dr and dr['rid']:
-            execute("UPDATE dock_procure SET svms_status='Submit', "
-                    "svms_synced_at=datetime('now','localtime') WHERE id=?", (dr['rid'],))
+            execute("UPDATE dock_procure SET stg_quote=1, stg_vendor=1, stg_confirm=1, "
+                    "svms_status='Submit', svms_synced_at=datetime('now','localtime'), "
+                    "updated_at=datetime('now','localtime') WHERE id=?", (dr['rid'],))
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Dock 발주현황 — 발주완료(rank3) fail-closed 게이트 테스트.
+"""Dock 발주현황 — 4단계 상태 + 발주완료(rank4) fail-closed 게이트 테스트.
 
-배경(2026-07-31 실측): SVMS 헤더 상태만 믿고 rank3 을 켜면 "발주완료인데 금액 —" 이 생긴다.
-  · 수리 'Submit' = 벤더 견적제출(VNDR_STATS='Submitted', ODR_YN='N') → 발주 아님 → rank 2
+배경(2026-07-31 실측): SVMS 헤더 상태만 믿고 rank4 를 켜면 "발주완료인데 금액 —" 이 생긴다.
+  · 수리 'Submit' = 형이 벤더를 컨펌하고 결재 상신한 상태 → 발주 전단계 rank 3
   · 실발주 근거 = 수리 VNDR_STATS=='Ordered' 또는 ODR_YN=='Y' / 구매 발주서번호 ODR_NO 존재
 게이트: ordered_evidence True/False/None(미확정).
   False → 강등 / None → **이미 발주완료인 행만 유지**(신규 승격 차단) / True → 그대로.
@@ -47,9 +47,10 @@ def mkrow(req_no, stg_order=0, quote_amt=None, quote_src='auto'):
     A.execute("DELETE FROM dock_procure WHERE req_no=? AND vsl_nm='TEST VESSEL'", (req_no,))
     A.execute(
         "INSERT INTO dock_procure(vsl_nm, vsl_cd, req_no, cat_code, subject, "
-        "stg_quote, stg_vendor, stg_order, quote_amt, quote_src) "
-        "VALUES('TEST VESSEL','TSTV',?,?,?,?,?,?,?,?)",
-        (req_no, 'R', f'[DOCK][TSTV {req_no}]subject', 0, 0, stg_order, quote_amt, quote_src))
+        "stg_quote, stg_vendor, stg_confirm, stg_order, quote_amt, quote_src) "
+        "VALUES('TEST VESSEL','TSTV',?,?,?,?,?,?,?,?,?)",
+        (req_no, 'R', f'[DOCK][TSTV {req_no}]subject', 0, 0,
+         1 if stg_order else 0, stg_order, quote_amt, quote_src))
     return A.query("SELECT * FROM dock_procure WHERE req_no=? AND vsl_nm='TEST VESSEL'",
                    (req_no,), one=True)['id']
 
@@ -65,15 +66,16 @@ def sync(req_no, status, evidence='OMIT', amt=None, cur=None, vendor=None):
 
 
 def stages(req_no):
-    row = A.query("SELECT stg_quote, stg_vendor, stg_order, quote_amt, quote_src FROM dock_procure "
+    row = A.query("SELECT stg_quote, stg_vendor, stg_confirm, stg_order, quote_amt, quote_src FROM dock_procure "
                   "WHERE req_no=? AND vsl_nm='TEST VESSEL'", (req_no,), one=True)
-    return (row['stg_quote'], row['stg_vendor'], row['stg_order']), row['quote_amt'], row['quote_src']
+    return (row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order']), row['quote_amt'], row['quote_src']
 
-print('# 1) 상태맵 — Submit 은 벤더제출(2), 실발주만 3')
-chk(A._dockproc_status_rank('Submit') == 2, "rank('Submit') == 2", A._dockproc_status_rank('Submit'))
-chk(A._dockproc_status_rank('HQ Ordered') == 3, "rank('HQ Ordered') == 3")
-chk(A._dockproc_status_rank('Ordered') == 3, "rank('Ordered') == 3")
-chk(A._dockproc_status_rank('Vendor confirmed') == 3, "rank('Vendor confirmed') == 3")
+print('# 1) 상태맵 — Submit/결재진행은 벤더컨펌(3), 실발주만 4')
+chk(A._dockproc_status_rank('Submit') == 3, "rank('Submit') == 3", A._dockproc_status_rank('Submit'))
+chk(A._dockproc_status_rank('HQ Ordered') == 4, "rank('HQ Ordered') == 4")
+chk(A._dockproc_status_rank('Ordered') == 4, "rank('Ordered') == 4")
+chk(A._dockproc_status_rank('Vendor confirmed') == 4, "rank('Vendor confirmed') == 4")
+chk(A._dockproc_status_rank('Approval(Procssing)') == 3, "rank('Approval(Procssing)') == 3")
 chk(A._dockproc_status_rank('Quotation Inquiry') == 2, "rank('Quotation Inquiry') == 2")
 chk(A._dockproc_status_rank('HQ Canceled') == 0, "rank('HQ Canceled') == 0(무시)")
 
@@ -81,51 +83,51 @@ print('# 2) Submit = 발주완료 안 켜지고 금액도 안 들어감 (형이 
 mkrow('R19')
 sync('R19', 'Submit', evidence=False, amt=55396000, cur='KRW')
 st, amt, src = stages('R19')
-chk(st == (1, 1, 0), 'Submit → (1,1,0)', st)
+chk(st == (1, 1, 1, 0), 'Submit → 벤더컨펌 (1,1,1,0)', st)
 chk(amt is None, 'Submit 이면 제출견적액을 발주금액에 넣지 않음', amt)
 
 print('# 3) 실발주(근거 True) = 발주완료 + 금액 자동입력')
 mkrow('R20')
 sync('R20', 'HQ Ordered', evidence=True, amt=18225000, cur='KRW')
 st, amt, src = stages('R20')
-chk(st == (1, 1, 1), 'HQ Ordered+근거 → (1,1,1)', st)
+chk(st == (1, 1, 1, 1), 'HQ Ordered+근거 → (1,1,1,1)', st)
 chk(amt == 18225000 and src == 'auto', '금액 자동입력', (amt, src))
 
-print('# 4) 근거 False = rank3 상태여도 강등')
+print('# 4) 근거 False = rank4 상태여도 벤더컨펌까지만')
 mkrow('R21')
 sync('R21', 'HQ Ordered', evidence=False, amt=999, cur='USD')
 st, amt, src = stages('R21')
-chk(st == (1, 1, 0), '근거 없으면 발주완료 안 켜짐', st)
+chk(st == (1, 1, 1, 0), '근거 없으면 벤더컨펌까지만, 발주완료 안 켜짐', st)
 chk(amt is None, '강등된 행에 금액 자동입력 안 함', amt)
 
 print('# 5) 근거 None(조회실패) — 신규는 승격 차단, 이미 발주완료면 유지')
 mkrow('R22', stg_order=0)
 sync('R22', 'HQ Ordered', evidence=None, amt=500, cur='USD')
 st, amt, _ = stages('R22')
-chk(st == (1, 1, 0), 'None + 기존 rank<3 → 승격 차단', st)
+chk(st == (1, 1, 1, 0), 'None + 기존 미발주 → 벤더컨펌까지만', st)
 chk(amt is None, '근거 미확정이면 금액도 안 들어감', amt)
 
 mkrow('R23', stg_order=1, quote_amt=7000)
 sync('R23', 'HQ Ordered', evidence=None, amt=7000, cur='USD')
 st, amt, _ = stages('R23')
-chk(st == (1, 1, 1), 'None + 이미 발주완료 → 유지', st)
+chk(st == (1, 1, 1, 1), 'None + 이미 발주완료 → 유지', st)
 chk(amt == 7000, '기존 금액 보존', amt)
 
 print('# 6) ordered_evidence 키 자체가 없을 때(구버전 폴러) = None 과 동일 취급')
 mkrow('R24', stg_order=0)
 sync('R24', 'HQ Ordered')                                # 키 미전송
 st, _, _ = stages('R24')
-chk(st == (1, 1, 0), '키 미전송 + 신규 → 승격 차단', st)
+chk(st == (1, 1, 1, 0), '키 미전송 + 신규 → 벤더컨펌까지만', st)
 mkrow('R25', stg_order=1)
 sync('R25', 'HQ Ordered')
 st, _, _ = stages('R25')
-chk(st == (1, 1, 1), '키 미전송 + 이미 발주완료 → 유지', st)
+chk(st == (1, 1, 1, 1), '키 미전송 + 이미 발주완료 → 유지', st)
 
 print('# 7) 강등돼도 기존 금액은 지우지 않음 (auto/manual 둘 다)')
 mkrow('R27', stg_order=1, quote_amt=12345.0, quote_src='auto')
 sync('R27', 'Submit', evidence=False)
 st, amt, src = stages('R27')
-chk(st == (1, 1, 0) and amt == 12345.0, '강등 + auto 금액 보존', (st, amt))
+chk(st == (1, 1, 1, 0) and amt == 12345.0, '벤더컨펌으로 강등 + auto 금액 보존', (st, amt))
 mkrow('R28', stg_order=1, quote_amt=999.0, quote_src='manual')
 sync('R28', 'HQ Ordered', evidence=False, amt=111.0, cur='USD')
 st, amt, src = stages('R28')
@@ -135,13 +137,13 @@ print('# 8) manual 우선 — 근거 True 인 정상 발주에서도 manual 은 
 mkrow('R29', stg_order=0, quote_amt=888.0, quote_src='manual')
 sync('R29', 'HQ Ordered', evidence=True, amt=222.0, cur='USD')
 st, amt, src = stages('R29')
-chk(st == (1, 1, 1) and amt == 888.0 and src == 'manual', 'manual 보존 + 단계는 전진', (st, amt, src))
+chk(st == (1, 1, 1, 1) and amt == 888.0 and src == 'manual', 'manual 보존 + 단계는 전진', (st, amt, src))
 
 print('# 9) 근거 True 인데 금액 없음 = 단계만 켜짐(허용, 금액 0 저장 금지)')
 mkrow('R30')
 sync('R30', 'HQ Ordered', evidence=True, amt=None)
 st, amt, _ = stages('R30')
-chk(st == (1, 1, 1) and amt is None, '금액 없으면 단계만', (st, amt))
+chk(st == (1, 1, 1, 1) and amt is None, '금액 없으면 단계만', (st, amt))
 
 print('# 10) 취소는 게이트 이전에 무시 — evidence 와 무관하게 행을 아예 안 건드림')
 mkrow('R31', stg_order=1, quote_amt=1000.0)
@@ -170,24 +172,21 @@ chk(j2['updated'] == 0, '두 번째 동기화는 updated=0', j2['updated'])
 print("# 13) 구매 'Approval(Procssing)' = 발주 미승인 → 발주완료 아님 (2026-07-31 BGBB S10 실측)")
 mkrow('S90')
 sync('S90', 'Approval(Procssing)', evidence=True, amt=None)
-r = A.query("SELECT stg_quote,stg_vendor,stg_order,quote_amt FROM dock_procure "
+r = A.query("SELECT stg_quote,stg_vendor,stg_confirm,stg_order,quote_amt FROM dock_procure "
             "WHERE req_no='S90' AND vsl_nm='TEST VESSEL'", one=True)
-chk((r['stg_quote'], r['stg_vendor'], r['stg_order']) == (1, 1, 0),
-    "승인 전이라 rank2 — '발주완료인데 금액 —' 재발 차단", dict(r))
+chk((r['stg_quote'], r['stg_vendor'], r['stg_confirm'], r['stg_order']) == (1, 1, 1, 0),
+    "결재진행이라 벤더컨펌 — '발주완료인데 금액 —' 재발 차단", dict(r))
 
-print('# 14) 단계가 같은 라벨 전이도 svms_status 를 갱신한다 (2026-08-01 BGBBME26073108 실사고)')
-#   'Quotation Inquiry'(rank2) → 'Submit'(rank2) 는 체크박스가 안 바뀐다. 변경감지 튜플에
-#   svms_status 가 빠져 있어서 라벨이 영영 stale 로 굳었고, 재컨펌 게이트가 이 라벨을 읽으므로
-#   SVMS 반려로 라벨이 되돌아가도 게이트가 안 열리는 영구잠김 경로였다.
+print('# 14) Quotation Inquiry → Submit → 반려 시 새 벤더컨펌 단계가 왕복한다')
 mkrow('R33')
 sync('R33', 'Quotation Inquiry')
 j = sync('R33', 'Submit')
-row = A.query("SELECT svms_status, stg_quote, stg_vendor, stg_order FROM dock_procure "
+row = A.query("SELECT svms_status, stg_quote, stg_vendor, stg_confirm, stg_order FROM dock_procure "
               "WHERE req_no='R33' AND vsl_nm='TEST VESSEL'", one=True)
 chk(j['updated'] == 1 and row['svms_status'] == 'Submit',
-    '같은 rank 라벨 전이 = updated 1 + 라벨 갱신', (j['updated'], row['svms_status']))
-chk((row['stg_quote'], row['stg_vendor'], row['stg_order']) == (1, 1, 0),
-    '라벨만 바뀌고 단계는 그대로', dict(row))
+    'Submit 전이 = updated 1 + 라벨 갱신', (j['updated'], row['svms_status']))
+chk((row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order']) == (1, 1, 1, 0),
+    'Submit 이 벤더컨펌을 켬', dict(row))
 j2 = sync('R33', 'Submit')
 chk(j2['updated'] == 0, '같은 라벨 재전송은 여전히 멱등', j2['updated'])
 j3 = sync('R33', 'Quotation Inquiry')                 # SVMS 반려 = 라벨 되돌림 → 게이트 재개방 경로
@@ -195,6 +194,8 @@ row = A.query("SELECT svms_status FROM dock_procure WHERE req_no='R33' AND vsl_n
               one=True)
 chk(j3['updated'] == 1 and row['svms_status'] == 'Quotation Inquiry',
     '되돌림도 반영 — 반려되면 재컨펌이 다시 열린다', (j3['updated'], row['svms_status']))
+st, _, _ = stages('R33')
+chk(st == (1, 1, 0, 0), '반려되면 벤더제출 단계로 복귀', st)
 
 print('# 15) rank0(미등재 상태)은 라벨도 안 바꾼다 — 실패 방향이 안전한지 고정')
 #   미등재 상태 실측(2026-08-01 전선박): VSL Approved 26 / Approved 2 / HQ Received 1 = 전부 견적의뢰
@@ -203,10 +204,38 @@ print('# 15) rank0(미등재 상태)은 라벨도 안 바꾼다 — 실패 방�
 mkrow('R34')
 sync('R34', 'Submit')
 j = sync('R34', 'VSL Approved')
-row = A.query("SELECT svms_status, stg_vendor FROM dock_procure "
+row = A.query("SELECT svms_status, stg_vendor, stg_confirm FROM dock_procure "
               "WHERE req_no='R34' AND vsl_nm='TEST VESSEL'", one=True)
 chk(j['updated'] == 0 and j['matched'] == 0 and row['svms_status'] == 'Submit',
     "미등재 상태는 무시 — 라벨/단계 모두 옛 값 유지(닫힘 쪽)", (j['updated'], row['svms_status']))
+
+print('# 16) 수동 4단계 cascade — 상위 체크/하위 해제가 중간단계를 건너뛰지 않음')
+with c.session_transaction() as s:
+    s['user_id'] = 1; s['username'] = 'smoke'; s['role'] = 'admin'
+rid = mkrow('R40')
+r = c.post(f'/api/dock_procure/{rid}/stage', json={'stage': 'order', 'value': 1})
+chk(tuple(r.get_json()[k] for k in ('stg_quote','stg_vendor','stg_confirm','stg_order')) == (1,1,1,1),
+    '발주완료 체크 → 앞 3단계 모두 체크', r.get_json())
+r = c.post(f'/api/dock_procure/{rid}/stage', json={'stage': 'vendor', 'value': 0})
+chk(tuple(r.get_json()[k] for k in ('stg_quote','stg_vendor','stg_confirm','stg_order')) == (1,0,0,0),
+    '벤더제출 해제 → 컨펌/발주 해제', r.get_json())
+r = c.post(f'/api/dock_procure/{rid}/stage', json={'stage': 'confirm', 'value': 1})
+chk(tuple(r.get_json()[k] for k in ('stg_quote','stg_vendor','stg_confirm','stg_order')) == (1,1,1,0),
+    '벤더컨펌 체크 → 견적작성/벤더제출 체크', r.get_json())
+r = c.post(f'/api/dock_procure/{rid}/stage', json={'stage': 'quote', 'value': 0})
+chk(tuple(r.get_json()[k] for k in ('stg_quote','stg_vendor','stg_confirm','stg_order')) == (0,0,0,0),
+    '견적작성 해제 → 뒤 3단계 모두 해제', r.get_json())
+
+print('# 17) migration backfill — 매 부팅 멱등 + 누적 앞단계 동시 보정')
+rid = mkrow('R41')
+A.execute("UPDATE dock_procure SET stg_quote=0,stg_vendor=0,stg_confirm=0,stg_order=1 WHERE id=?", (rid,))
+rid2 = mkrow('R42')
+A.execute("UPDATE dock_procure SET stg_quote=0,stg_vendor=0,stg_confirm=0,stg_order=0,svms_status='  submit  ' WHERE id=?", (rid2,))
+A.init_db(drop=False)
+A.init_db(drop=False)  # 두 번째 부팅에도 값이 안정적이어야 함
+st1, _, _ = stages('R41'); st2, _, _ = stages('R42')
+chk(st1 == (1,1,1,1), '기존 발주완료 → 앞 3단계 backfill', st1)
+chk(st2 == (1,1,1,0), 'Submit 대소문자/공백 → 벤더컨펌 backfill', st2)
 
 print()
 if fails:

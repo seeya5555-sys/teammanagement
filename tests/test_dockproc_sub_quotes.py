@@ -3,7 +3,7 @@
 
 배경(2026-07-31 형 요청): 벤더가 견적을 제출하면 그 금액을 웹/앱에서 바로 보고 싶다.
 제출견적 ≠ 발주금액 — SVMS P_RS_D_VNDR 는 VNDR_QUO_AMT(제출)와 VNDR_ODR_AMT(발주)를 따로 들고 있고,
-발주금액 자동입력은 발주완료(rank3 + 근거)에서만 일어난다. 그래서 저장 칸을 분리했다(sub_quotes).
+발주금액 자동입력은 발주완료(rank4 + 근거)에서만 일어난다. 그래서 저장 칸을 분리했다(sub_quotes).
 
 핵심 계약:
   · `quotes` 키 미전송(상세조회 실패 등) → **기존값 유지**(화면에서 값이 사라지지 않음)
@@ -196,11 +196,11 @@ chk(raw is not None and json.loads(raw)[0]['att'] == 0, 'att=inf 도 500 없이 
 print('# 7d) 제출견적은 수동입력 발주금액·단계 플래그를 침범하지 않음')
 mkrow('R52', quote_amt=777, quote_src='manual')
 sync('R52', 'Submit', quotes=[{'nm': 'Q', 'amt': 5, 'cur': 'USD', 'st': 'Submitted'}])
-row = A.query("SELECT quote_amt, quote_src, stg_quote, stg_vendor, stg_order, sub_quotes "
+row = A.query("SELECT quote_amt, quote_src, stg_quote, stg_vendor, stg_confirm, stg_order, sub_quotes "
               "FROM dock_procure WHERE req_no='R52' AND vsl_nm='TEST VESSEL'", one=True)
 chk(row['quote_amt'] == 777.0 and row['quote_src'] == 'manual', '수동 발주금액 보존', dict(row))
-chk((row['stg_quote'], row['stg_vendor'], row['stg_order']) == (1, 1, 0),
-    "Submit=벤더제출(rank2) — 발주완료 안 켜짐", dict(row))
+chk((row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order']) == (1, 1, 1, 0),
+    "Submit=벤더컨펌(rank3) — 발주완료 안 켜짐", dict(row))
 chk(row['sub_quotes'] is not None, '제출견적은 정상 저장')
 
 print('# 8) 발주완료 + 근거 True 에서는 발주금액과 제출견적이 공존')
