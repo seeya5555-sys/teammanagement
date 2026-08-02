@@ -784,6 +784,13 @@
       ? {href:'/vetting-status?vessel='+ev, k:'SIRE', val:(v.sire_open!=null?v.sire_open:'—'), unit:(v.sire_obs_overdue?' open · 3주↑':(v.sire_open!=null?' open':'')), cls:(v.sire_obs_overdue?'red':(v.sire_open?'amber':'green'))}
       : {href:'/condition-survey?vessel='+ev, k:'Cond.Survey', val:(v.cs_open!=null?v.cs_open:'—'), unit:' open', cls:(v.cs_open?'blue':'green')};
     const card=(href,cls,k,val,unit)=>'<a class="fm-card '+cls+'" href="'+href+'"><div class="k">'+k+'</div><div class="v">'+val+'<small>'+unit+'</small></div></a>';
+    const reportDate=(raw)=>{
+      const m=String(raw||'').trim().match(/^(\d{4})(\d{2})(\d{2})/);
+      if(!m)return '';
+      const y=Number(m[1]),mo=Number(m[2]),d=Number(m[3]),dt=new Date(Date.UTC(y,mo-1,d));
+      return dt.getUTCFullYear()===y&&dt.getUTCMonth()===mo-1&&dt.getUTCDate()===d
+        ? m[1]+'-'+m[2]+'-'+m[3] : '';
+    };
     const fuelBlock=(title,items)=>{
       const rows=(Array.isArray(items)?items:[]).filter(x=>Number(x&&x.value)>0);
       if(!rows.length)return '';
@@ -810,8 +817,8 @@
       posSourceControl(v)+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
-      fuelBlock('ROB · 최신 운항보고',v.fuel_rob)+
-      fuelBlock('Total Daily Consumption',v.fuel_daily_consumption)+
+      fuelBlock('ROB · 최신 운항보고'+(reportDate(v.rpt_dt)?' · '+reportDate(v.rpt_dt):''),v.fuel_rob)+
+      fuelBlock('Total Daily Consumption'+(reportDate(v.rpt_dt)?' · '+reportDate(v.rpt_dt):''),v.fuel_daily_consumption)+
       cargo+
       '<div class="fm-sec">Vetting</div><div class="fm-line"><span class="lk">현황</span><span class="lv">'+vet+'</span></div>'+
       '<div class="fm-line"><span class="lk">최근/Plan</span><span class="lv">'+esc(v.vetting_plan||'—')+'</span></div>'+
