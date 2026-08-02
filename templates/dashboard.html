@@ -121,6 +121,10 @@
   .fm-sec{font-size:11.5px;font-weight:700;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.03em;margin-bottom:-4px}
   .fm-line{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px dashed var(--border-subtle)}.fm-line:last-child{border-bottom:0}
   .fm-line .lk{color:var(--text-secondary);flex:0 0 104px}.fm-line .lv{color:var(--text-primary);font-weight:600}
+  .fm-fuel-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .fm-fuel{display:flex;align-items:baseline;justify-content:space-between;gap:8px;background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:9px;padding:8px 10px}
+  .fm-fuel .ft{font-size:11.5px;font-weight:700;color:var(--text-secondary)}
+  .fm-fuel .fv{font-size:15px;font-weight:750;color:var(--text-primary);font-variant-numeric:tabular-nums}.fm-fuel .fu{font-size:10px;color:var(--text-tertiary);margin-left:3px}
   /* 선위 소스 스와이프 토글 (AIS on/off) */
   .fm-swipe{display:inline-block;position:relative;width:46px;height:26px;border-radius:999px;background:var(--border-strong);cursor:pointer;vertical-align:middle;transition:background .18s;flex:0 0 auto}
   .fm-swipe.on{background:var(--green,#0F6E56)}
@@ -780,6 +784,14 @@
       ? {href:'/vetting-status?vessel='+ev, k:'SIRE', val:(v.sire_open!=null?v.sire_open:'—'), unit:(v.sire_obs_overdue?' open · 3주↑':(v.sire_open!=null?' open':'')), cls:(v.sire_obs_overdue?'red':(v.sire_open?'amber':'green'))}
       : {href:'/condition-survey?vessel='+ev, k:'Cond.Survey', val:(v.cs_open!=null?v.cs_open:'—'), unit:' open', cls:(v.cs_open?'blue':'green')};
     const card=(href,cls,k,val,unit)=>'<a class="fm-card '+cls+'" href="'+href+'"><div class="k">'+k+'</div><div class="v">'+val+'<small>'+unit+'</small></div></a>';
+    const fuelBlock=(title,items)=>{
+      const rows=(Array.isArray(items)?items:[]).filter(x=>Number(x&&x.value)>0);
+      if(!rows.length)return '';
+      return '<div class="fm-sec">'+esc(title)+'</div><div class="fm-fuel-grid">'+rows.map(x=>
+        '<div class="fm-fuel"><span class="ft">'+esc(x.fuel||'')+'</span><span class="fv">'+
+        Number(x.value).toLocaleString(undefined,{maximumFractionDigits:3})+'<span class="fu">'+esc(x.unit||'MT')+'</span></span></div>'
+      ).join('')+'</div>';
+    };
     // Class/Flag 만기 경고 배너(overdue/임박)
     const dueLine = v.cls_due_state ? (
       '<a class="fm-duewarn '+v.cls_due_state+'" href="/class-status?vessel='+ev+'">Class/Flag 만기 '+
@@ -798,6 +810,8 @@
       posSourceControl(v)+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
+      fuelBlock('ROB · 최신 운항보고',v.fuel_rob)+
+      fuelBlock('Total Daily Consumption',v.fuel_daily_consumption)+
       cargo+
       '<div class="fm-sec">Vetting</div><div class="fm-line"><span class="lk">현황</span><span class="lv">'+vet+'</span></div>'+
       '<div class="fm-line"><span class="lk">최근/Plan</span><span class="lv">'+esc(v.vetting_plan||'—')+'</span></div>'+
