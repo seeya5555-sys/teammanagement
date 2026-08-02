@@ -448,11 +448,11 @@ chk(A.query('SELECT svms_status FROM dock_procure WHERE id=?', (rid7b,), one=Tru
 A.execute("DELETE FROM dock_submit_draft WHERE id=?", (d7b,))
 # 상신 이후 라벨(denylist)은 모두 차단, 그 밖(반려·미지·NULL)은 열어준다.
 # allowlist 로 짜면 처음 보는 라벨이 영구 차단이 되어 업무가 멈춘다(올마이트 2026-08-01).
-for lbl in ('Submit', 'HQ Confirmed', 'HQ Ordered', 'Ordered'):
+for lbl in ('Submit', 'HQ Progressing', 'HQ Confirmed', 'HQ Ordered', 'Ordered'):
     A.execute("UPDATE dock_procure SET svms_status=? WHERE id=?", (lbl, rid7))
     chk('이미 상신됨' in (c.get(f'/api/dock_submit/preview?rid={rid7}').get_json().get('blocked') or ''),
         f'상신 이후 라벨 차단 — {lbl}')
-for lbl in ('Quotation Inquiry', None, 'Rejected', 'Cost Review'):
+for lbl in ('Quotation Inquiry', 'HQ Rejected', None, 'Rejected', 'Cost Review'):
     A.execute("UPDATE dock_procure SET svms_status=? WHERE id=?", (lbl, rid7))
     chk(c.get(f'/api/dock_submit/preview?rid={rid7}').get_json().get('blocked') is None,
         f'상신 이후 라벨이 아니면 열림 — {lbl or "NULL"} (최후 방어선은 워커 pre-read)')

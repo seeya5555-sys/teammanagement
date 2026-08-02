@@ -76,7 +76,9 @@ chk(A._dockproc_status_rank('HQ Ordered') == 4, "rank('HQ Ordered') == 4")
 chk(A._dockproc_status_rank('Ordered') == 4, "rank('Ordered') == 4")
 chk(A._dockproc_status_rank('Vendor confirmed') == 4, "rank('Vendor confirmed') == 4")
 chk(A._dockproc_status_rank('Approval(Procssing)') == 3, "rank('Approval(Procssing)') == 3")
+chk(A._dockproc_status_rank('HQ Progressing') == 3, "rank('HQ Progressing') == 3")
 chk(A._dockproc_status_rank('Quotation Inquiry') == 2, "rank('Quotation Inquiry') == 2")
+chk(A._dockproc_status_rank('HQ Rejected') == 2, "rank('HQ Rejected') == 2")
 chk(A._dockproc_status_rank('HQ Canceled') == 0, "rank('HQ Canceled') == 0(무시)")
 
 print('# 2) Submit = 발주완료 안 켜지고 금액도 안 들어감 (형이 신고한 그 케이스)')
@@ -176,6 +178,13 @@ r = A.query("SELECT stg_quote,stg_vendor,stg_confirm,stg_order,quote_amt FROM do
             "WHERE req_no='S90' AND vsl_nm='TEST VESSEL'", one=True)
 chk((r['stg_quote'], r['stg_vendor'], r['stg_confirm'], r['stg_order']) == (1, 1, 1, 0),
     "결재진행이라 벤더컨펌 — '발주완료인데 금액 —' 재발 차단", dict(r))
+
+print("# 13b) 구매 HQ Rejected→벤더제출, 재상신 HQ Progressing→벤더컨펌")
+mkrow('S91')
+sync('S91', 'HQ Progressing', evidence=False)
+chk(stages('S91')[0] == (1, 1, 1, 0), 'HQ Progressing → 벤더컨펌', stages('S91')[0])
+sync('S91', 'HQ Rejected', evidence=False)
+chk(stages('S91')[0] == (1, 1, 0, 0), 'HQ Rejected → 벤더제출로 복귀', stages('S91')[0])
 
 print('# 14) Quotation Inquiry → Submit → 반려 시 새 벤더컨펌 단계가 왕복한다')
 mkrow('R33')

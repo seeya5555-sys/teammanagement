@@ -12692,6 +12692,9 @@ _DOCKPROC_STATUS_RANK = {
     # HQ Canceled·미등재=무시(rank0).
     'HQ CONFIRMED': 1,          # 견적작성 (수리·구매 공통)
     'QUOTATION INQUIRY': 2,     # 벤더제출(견적의뢰)
+    # 구매 결재 반려는 견적/업체선택 데이터가 살아 있는 재상신 가능 단계다.
+    # 2026-08-03 BGBB S10 실측: 상세 STATUS=X, STATUS_NM='HQ Rejected'.
+    'HQ REJECTED': 2,           # 벤더제출로 복귀(수정 후 다시 업체선택·상신 가능)
     # 'Submit'은 발주가 아니라 **업체 선택 후 결재 상신** 단계. 벤더 견적제출(VNDR_STATS='Submitted')과
     # 구분되지만 발주서 미발행(ODR_YN='N')이라 발주완료로 올리면 안 된다.
     # 반면 실발주건(SAPS)은 헤더 'HQ Ordered' + 벤더 'Ordered' + ODR_YN='Y'.
@@ -12707,6 +12710,8 @@ _DOCKPROC_STATUS_RANK = {
     # 4로 두면 "발주완료인데 금액 —"이 또 구조적으로 발생함(실제로 이 행 1건이 그렇게 떴다).
     # ⚠️ODR_NO 존재만으로는 구매 발주근거가 약하다는 반례이기도 함(승인 전에도 번호가 붙음).
     'APPROVAL(PROCSSING)': 3,   # 벤더컨펌 (구매 — 업체 선택 후 발주 승인 진행 중)
+    # 같은 BGBB S10을 HQ Rejected에서 재상신한 직후 라이브 상태.
+    'HQ PROGRESSING': 3,        # 벤더컨펌 (구매 — HQ 결재 진행 중)
 }
 
 
@@ -14154,7 +14159,7 @@ _DOCK_SUBMIT_DONE = ('submitted', 'failed', 'canceled')
 #    여기서 놓쳐도 이중 상신은 안 난다 — 최후 방어선은 맥 워커의 pre-read 다
 #    (SVMS 실헤더를 읽어 `RE` 가 아니면 중단. 오늘 12:31 에 실제로 그게 막았다).
 #    실측 라벨 분포(수리 R): HQ Ordered 25 · NULL 24 · Quotation Inquiry 18 · HQ Confirmed 2 · Submit 1.
-_DOCK_SUBMIT_POST = ('submit', 'approval', 'confirmed', 'ordered')
+_DOCK_SUBMIT_POST = ('submit', 'approval', 'progressing', 'confirmed', 'ordered')
 _DOCK_SUBMIT_CATS = ('R', 'S', 'ST')
 
 

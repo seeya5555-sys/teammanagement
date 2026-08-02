@@ -612,7 +612,7 @@
   }
   const sbmWhen = s => (s||'').replace(/^\d{4}-/,'').slice(0,11).trim();   // '2026-08-01 13:12:03' → '08-01 13:12'
   // 서버 `_DOCK_SUBMIT_POST` 와 같은 판정 — 헤더 라벨이 상신 이후면 그 건은 SVMS 에 이미 올라가 있다.
-  const sbmPosted = l => ['submit','approval','confirmed','ordered']
+  const sbmPosted = l => ['submit','approval','progressing','confirmed','ordered']
     .some(k => String(l.svms_status||'').toLowerCase().includes(k));
   /** 행에 붙일 상신 결과(진행중이면 없음 — 그건 대기 표시가 따로 붙는다).
    *  🔴 pre-read 가 '이미 상신됨' 으로 중단시킨 건은 실패가 아니라 이미 나간 것이므로 초록으로 본다
