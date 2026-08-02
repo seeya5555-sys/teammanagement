@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase ③ — 수리 견적 상신 큐 fail-closed 테스트.
+"""Phase ③ — 수리·구매 견적 상신 큐 fail-closed 테스트.
 
 이 큐의 1행 = 맥 워커의 **실제 SVMS write 2회**(SP_SET_ODR_INFO Save → SP_SET_SBM 상신)다.
 따라서 검증 대상은 "잘 되는 길"이 아니라 **잘못 나가는 길이 다 막혔는지**:
@@ -183,8 +183,10 @@ chk(create(rid, vndr_cd='a1j43!!').status_code == 400, 'vndr_cd 형식 검증')
 chk(create(mkrow('R15'), app_no='9999').status_code == 400, '캐시에 없는 결재라인 거부')
 chk(create(mkrow('R16'), app_no='').status_code == 400, '빈 결재라인 거부')
 
-print('# 7) 대상 자격 — 수리(R) · 문서번호 有 · 미발주')
-chk(create(mkrow('S20', cat='S')).status_code == 400, '구매(S) 건 거부')
+print('# 7) 대상 자격 — R/S/ST · 문서번호 有 · 미발주')
+chk(create(mkrow('S20', cat='S')).status_code == 201, '자재(S) 건 허용')
+chk(create(mkrow('ST20', cat='ST')).status_code == 201, '스토어(ST) 건 허용')
+chk(create(mkrow('P20', cat='P')).status_code == 400, '페인트(P) 건 거부')
 chk(create(mkrow('R21', rep_cd='')).status_code == 400, 'SVMS 문서번호 없음 거부')
 chk(create(mkrow('R22', stg_order=1)).status_code == 409, '이미 발주완료 거부')
 chk(create(999999).status_code == 404, '없는 rid 404')

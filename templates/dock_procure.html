@@ -612,7 +612,7 @@
   }
   const sbmWhen = s => (s||'').replace(/^\d{4}-/,'').slice(0,11).trim();   // '2026-08-01 13:12:03' → '08-01 13:12'
   // 서버 `_DOCK_SUBMIT_POST` 와 같은 판정 — 헤더 라벨이 상신 이후면 그 건은 SVMS 에 이미 올라가 있다.
-  const sbmPosted = l => ['submit','confirmed','ordered']
+  const sbmPosted = l => ['submit','approval','confirmed','ordered']
     .some(k => String(l.svms_status||'').toLowerCase().includes(k));
   /** 행에 붙일 상신 결과(진행중이면 없음 — 그건 대기 표시가 따로 붙는다).
    *  🔴 pre-read 가 '이미 상신됨' 으로 중단시킨 건은 실패가 아니라 이미 나간 것이므로 초록으로 본다
@@ -631,9 +631,9 @@
     if(!IS_ADMIN || SBM_LINES.length) return;
     try{ SBM_LINES = (await (await fetch('/api/dock_submit/app_lines')).json()).lines||[]; }catch(e){}
   }
-  // 버튼은 '가능해 보이는' 행에만 — 수리(R) + SVMS 연결됨 + 미발주. 진행중이면 색으로 드러낸다.
+  // 버튼은 '가능해 보이는' 행에만 — R/S/ST + SVMS 연결됨 + 미발주. 진행중이면 색으로 드러낸다.
   function sbmBtn(l){
-    if(!IS_ADMIN || l.cat_code!=='R' || !l.svms_req_no) return '';
+    if(!IS_ADMIN || !['R','S','ST'].includes(l.cat_code) || !l.svms_req_no) return '';
     const d = SBM[l.id], m = sbmMark(l);
     // 상신 이력이 있으면 발주완료여도 결과는 남긴다. 이때 버튼은 사실상 '이력 열기' 다 —
     // 서버 preview 가 `이미 발주완료` / `이미 상신됨(#N)` 으로 blocked 를 내려 생성 버튼이 안 열린다
@@ -653,7 +653,7 @@
   }
   // 상태칸 밑줄 — 마우스를 올리지 않아도 상신 결과를 알 수 있어야 한다(형 요청 2026-08-01).
   function sbmTag(l){
-    if(!IS_ADMIN || l.cat_code!=='R') return '';
+    if(!IS_ADMIN || !['R','S','ST'].includes(l.cat_code)) return '';
     const m = sbmMark(l);
     if(!m) return '';
     const f = m.d;

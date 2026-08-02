@@ -14133,7 +14133,7 @@ def api_dockproc_att(rid, idx):
 
 
 # ═════════════════════════════════════════════════════════════════
-#  Phase ③ — 수리 견적 상신 큐 (웹/앱 컨펌 → 맥 워커가 SVMS write 2회)
+#  Phase ③ — 수리·구매 견적 상신 큐 (웹/앱 컨펌 → 맥 워커가 SVMS write)
 # ═════════════════════════════════════════════════════════════════
 #  🔴 이 블록이 다루는 것은 **돈이 나가는 경로**다. 설계 정본 = docs/svms/phase3-submit-design.md,
 #     봉투 실측 = docs/svms/repair-submit-envelope.md(§최종 조립 규격).
@@ -14154,7 +14154,8 @@ _DOCK_SUBMIT_DONE = ('submitted', 'failed', 'canceled')
 #    여기서 놓쳐도 이중 상신은 안 난다 — 최후 방어선은 맥 워커의 pre-read 다
 #    (SVMS 실헤더를 읽어 `RE` 가 아니면 중단. 오늘 12:31 에 실제로 그게 막았다).
 #    실측 라벨 분포(수리 R): HQ Ordered 25 · NULL 24 · Quotation Inquiry 18 · HQ Confirmed 2 · Submit 1.
-_DOCK_SUBMIT_POST = ('submit', 'confirmed', 'ordered')
+_DOCK_SUBMIT_POST = ('submit', 'approval', 'confirmed', 'ordered')
+_DOCK_SUBMIT_CATS = ('R', 'S', 'ST')
 
 
 def _dock_submit_prior(rep_cd, svms_status):
@@ -14180,7 +14181,7 @@ def _dock_submit_prior(rep_cd, svms_status):
 
 
 def _dock_submit_quote_pick(row, vndr_cd):
-    """그 수리건의 제출견적 중 `cd` 가 일치하는 1건을 고른다. (없으면 None, 이유 문자열 반환)"""
+    """그 수리/구매건의 제출견적 중 `cd` 가 일치하는 1건을 고른다."""
     try:
         quotes = json.loads(row['sub_quotes'] or '[]')
     except (TypeError, ValueError):
@@ -14301,8 +14302,8 @@ def api_dock_submit_preview():
                       'cur': q.get('cur'), 'usd': q.get('usd'), 'st': q.get('st'),
                       'att': q.get('att'), 'best': q.get('best'), 'ok': why is None, 'why': why})
     blocked = None
-    if (row['cat_code'] or '') != 'R':
-        blocked = '수리(R) 건만 상신 가능'
+    if (row['cat_code'] or '') not in _DOCK_SUBMIT_CATS:
+        blocked = '서비스(R)·자재(S)·스토어(ST) 건만 상신 가능'
     elif not (row['svms_req_no'] or '').strip():
         blocked = 'SVMS 문서번호(Inq No) 연결 안 됨'
     elif row['stg_order']:
@@ -14323,7 +14324,8 @@ def api_dock_submit_preview():
 @admin_required
 def api_dock_submit_create():
     """🔴 형이 컨펌 버튼을 누르는 자리 = Phase ③ 의 **유일한 승인 게이트.**
-    여기서 만들어진 approved 1행이 맥 워커의 SVMS write 2회(SP_SET_ODR_INFO → SP_SET_SBM)를 부른다.
+    여기서 만들어진 approved 1행이 맥 워커의 SVMS write를 부른다.
+    수리(R)는 SP_SET_ODR_INFO→SP_SET_SBM, 구매(S/ST)는 SP_SET_ODR 이다.
     받는 값은 `rid`/`vndr_cd`/`app_no` **3개뿐** — 문서번호·금액은 서버가 DB 에서 읽는다(위 원칙 ②)."""
     d = request.get_json(silent=True) or {}
     try:
@@ -14339,8 +14341,9 @@ def api_dock_submit_create():
     row = query('SELECT * FROM dock_procure WHERE id=?', (rid,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
-    if (row['cat_code'] or '') != 'R':
-        return jsonify({'error': '수리(R) 건만 상신 가능 — 이 행은 %s' % (row['cat_code'] or '?')}), 400
+    if (row['cat_code'] or '') not in _DOCK_SUBMIT_CATS:
+        return jsonify({'error': '서비스(R)·자재(S)·스토어(ST) 건만 상신 가능 — 이 행은 %s' %
+                               (row['cat_code'] or '?')}), 400
     rep_cd = (row['svms_req_no'] or '').strip()
     if not rep_cd:
         return jsonify({'error': 'SVMS 문서번호(Inq No) 연결 안 됨 — 먼저 연결하세요'}), 400
@@ -14481,7 +14484,8 @@ def api_ext_dock_submit_approved():
         (재큐도 안 하므로 형이 다시 컨펌해야 함 = 조용한 승인 유실).
       · 🔴 `?id=N` — [지금 전송] 버튼이 지목한 **그 행만** claim. 가드는 위와 완전히 동일하다
         (같은 CAS·같은 승인흔적 조건). 버튼 경로가 별도 우회로가 되면 안 되므로 코드도 한 곳."""
-    cols = "id, rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_cd, vndr_nm, amt, cur, app_no, app_nm, envelope_json"
+    cols = ("id, rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_cd, vndr_nm, amt, cur, app_no, app_nm, "
+            "envelope_json, (SELECT cat_code FROM dock_procure WHERE id=dock_submit_draft.rid) AS cat_code")
     if request.args.get('peek'):
         rows = query(f"SELECT {cols} FROM dock_submit_draft WHERE status='approved' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
@@ -14533,11 +14537,13 @@ def api_ext_dock_submit_result(did):
         #    여러 행에 붙었을 때 남의 행까지 건드린다(올마이트 2026-08-01). 현재 라이브 중복은 0건이지만
         #    정확한 키가 있는데 굳이 넓게 쓸 이유가 없다. `svms_synced_at` 은 표시 전용이다
         #    (조회 커서로 쓰이는 곳 0곳 — sync 를 건너뛰게 만들지 않음. 실측 확인).
-        dr = query('SELECT rid FROM dock_submit_draft WHERE id=?', (did,), one=True)
+        dr = query('SELECT d.rid, p.cat_code FROM dock_submit_draft d '
+                   'LEFT JOIN dock_procure p ON p.id=d.rid WHERE d.id=?', (did,), one=True)
         if dr and dr['rid']:
+            interim = 'Approval(Procssing)' if dr['cat_code'] in ('S', 'ST') else 'Submit'
             execute("UPDATE dock_procure SET stg_quote=1, stg_vendor=1, stg_confirm=1, "
-                    "svms_status='Submit', svms_synced_at=datetime('now','localtime'), "
-                    "updated_at=datetime('now','localtime') WHERE id=?", (dr['rid'],))
+                    "svms_status=?, svms_synced_at=datetime('now','localtime'), "
+                    "updated_at=datetime('now','localtime') WHERE id=?", (interim, dr['rid']))
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
