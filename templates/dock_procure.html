@@ -301,13 +301,21 @@
   // (final 을 쓰면서 D/C 전 USD 를 붙이면 2026-08-03 상신모달과 같은 짝 안 맞는 표시가 됨).
   const qShown    = q => (q.final_amt!=null ? q.final_amt : q.amt);
   const qShownUsd = q => (q.final_amt!=null ? q.final_usd : q.usd);
+  // D/C 전 금액 — 구매=발주헤더 AMT, 수리=TOT_AMT. ⚠️수리는 amt 자체가 이미 D/C 후라 amt 와
+  // 비교하면 D/C 가 있어도 영원히 같아서 배지가 안 붙는다. 그래서 비교 상대는 gross 우선.
+  const qBase     = q => (q.gross_amt!=null ? q.gross_amt : q.amt);
   // 부동소수 미세차로 'D/C후' 배지가 붙으면 화면엔 같은 숫자 옆에 배지만 뜬다 — 표시 자릿수(2자리)
   // 기준으로 실제 달라 보일 때만 배지를 붙인다.
-  const qIsDC     = q => (q.final_amt!=null && q.amt!=null
-                          && Math.round(Number(q.final_amt)*100) !== Math.round(Number(q.amt)*100));
+  // `!==` 가 아니라 `<` — gross < final 인 이상값을 D/C 로 읽으면 음수 할인이 표시됨(올마이트 지적).
+  const qIsDC     = q => (q.final_amt!=null && qBase(q)!=null
+                          && Math.round(Number(q.final_amt)*100) < Math.round(Number(qBase(q))*100));
+  const qCut      = q => (qIsDC(q) ? Number(qBase(q)) - Number(q.final_amt) : null);
   const quoteTip = q => `${q.nm||'업체'} · ${qShown(q)!=null?fmtAmt(qShown(q))+' '+(q.cur||''):'금액 미제출'}`
                       + ((qShownUsd(q)!=null && (q.cur||'USD')!=='USD')?` (≈USD ${fmtAmt(qShownUsd(q))})`:'')
-                      + (qIsDC(q)?`\n  └ 제출 ${fmtAmt(q.amt)} ${q.cur||''}${q.dc_rate!=null?` · D/C ${fmtAmt(q.dc_rate)}%`:''} → D/C후`:'')
+                      // 구매는 요율(%), 수리는 금액 할인(DIS_AMT)이라 요율이 0/없음 — 있는 쪽을 근거로 쓴다.
+                      + (qIsDC(q)?`\n  └ 제출 ${fmtAmt(qBase(q))} ${q.cur||''}`
+                                  + (q.dc_rate?` · D/C ${fmtAmt(q.dc_rate)}%`:` · D/C −${fmtAmt(qCut(q))}`)
+                                  + ` → D/C후`:'')
                       + (q.att?` · 첨부 ${q.att}`:'') + ((q.st||'').toLowerCase()==='ordered'?' · 발주':'');
   // 견적서 첨부 목록(att_files) — 배열 위치가 서버 preview cache 의 idx 다(서버가 정렬을 못박음).
   const filesOf = l => { try{ const a=JSON.parse(l.att_files||'[]');
