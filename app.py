@@ -869,7 +869,9 @@ def init_db(drop=False):
                 vsl_nm        TEXT,
                 vsl_cd        TEXT,
                 req_no        TEXT,                             -- INDEX 요청번호(표시용)
-                rep_cd        TEXT NOT NULL,                    -- SVMS REP_CD (= dock_procure.svms_req_no)
+                rep_cd        TEXT NOT NULL,                    -- SVMS 키. 수리=REP_CD(dock_procure.svms_req_no)
+                                                                --  구매=REQ_NO(dock_procure.svms_pc_req_no)
+                doc_type      TEXT NOT NULL DEFAULT 'MARP',     -- MARP=수리 / PCRQ=구매·자재. 워커가 봉투를 고르는 값
                 vndr_json     TEXT NOT NULL,                    -- 선택 업체 [{cd,nm}] (≤5). 🔴 SVMS 봉투용
                                                                 --  벤더행이 아니다 — 봉투(CURSOR.P_IC_VNDR)는
                                                                 --  맥 워커가 전송 직전 SP_GET_VNDR 재조회로
@@ -888,8 +890,18 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_inquiry_status ON dock_inquiry_draft(status)")
+        # 🔴 유니크는 `rep_cd` **단독**으로 유지한다. `(doc_type, rep_cd)` 로 넓히면 같은 문서번호가
+        #    두 종류로 동시에 큐잉될 수 있어 **느슨해진다**. 수리 REP_CD(…ME…)와 구매 REQ_NO(…ES…/…EC…)는
+        #    네임스페이스가 겹치지 않으므로(실측) 단독 유니크가 더 안전한 쪽으로 실패한다.
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_dock_inquiry_active "
                      "ON dock_inquiry_draft(rep_cd) WHERE status IN ('approved','submitting')")
+        try:                                            # 기존 배포 DB 마이그레이션 — 구매 견적요청(PCRQ)
+            _diq = [r[1] for r in conn.execute("PRAGMA table_info(dock_inquiry_draft)").fetchall()]
+            if 'doc_type' not in _diq:                  # 기존 행은 전부 수리였으므로 DEFAULT 'MARP' 가 맞다
+                conn.execute("ALTER TABLE dock_inquiry_draft ADD COLUMN "
+                             "doc_type TEXT NOT NULL DEFAULT 'MARP'")
+        except Exception:
+            app.logger.debug('init-db dock_inquiry_draft migration skip', exc_info=True)
         # 결재라인 캐시 — 서버는 SVMS 에 못 붙으므로 맥이 밀어준다. **드롭다운 표시 전용**이고
         # 상신 봉투의 `CURSOR.P_IC_APP` 는 워커가 그 시점에 SP_GET_USER_APP_D 를 다시 읽어서 만든다
         # (캐시가 stale 하면 옛 결재자로 상신될 수 있으므로 캐시를 봉투 소스로 쓰지 않는다).
@@ -924,6 +936,13 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN sub_quotes TEXT")
             if 'att_files' not in _dpc:                       # 벤더 견적서 첨부 목록(파일명/KB/업체) — 파일 자체는 preview cache
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN att_files TEXT")
+            if 'svms_pc_req_no' not in _dpc:
+                # 🔴 구매(S/ST) 견적요청 키 = SVMS **REQ_NO**. `svms_req_no` 를 재사용하면 안 된다 —
+                #    구매행의 `svms_req_no` 에는 견적요청 **후** 발급되는 INQ_NO 가 들어가고(실측
+                #    2026-08-03: BGBBES2607A1 → 'BGBBES2607A11'), Phase ③ 상신·제출견적·첨부가 전부
+                #    그 값을 INQ_NO 로 읽는다. 두 값을 한 칸에 섞으면 상신이 깨진다.
+                #    채우는 곳 = 폴러 sync (`inq_alt`=REQ_NO 를 매 sync 마다 이미 보내므로 조회 추가 0).
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_pc_req_no TEXT")
             if 'stg_confirm' not in _dpc:                     # 벤더 선택 컨펌 + 결재 상신(발주완료 전단계)
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN stg_confirm INTEGER NOT NULL DEFAULT 0")
             # 매 부팅 멱등 보정: ALTER 직후 crash 나도 다음 부팅에 backfill이 다시 돈다.
@@ -12774,6 +12793,25 @@ _DOCKPROC_PRE_INQUIRY = {
 }
 
 
+# 견적요청(벤더 Submit)이 쓰는 SVMS 문서종류 — cat_code 기준. 페인트(P)/기타(SY)는 봉투 자체가 없다.
+_DOCK_INQ_DOC = {'R': 'MARP', 'S': 'PCRQ', 'ST': 'PCRQ'}
+
+
+def _dockproc_inq_target(row):
+    """그 행의 견적요청 대상 = (문서종류, SVMS 키). 키가 빈 문자열이면 '연결 안 됨'.
+
+    🔴 키가 컬럼마다 다르다 — 수리는 `svms_req_no`(=REP_CD)지만 **구매는 `svms_pc_req_no`(=REQ_NO)** 다.
+       구매의 `svms_req_no` 는 견적요청이 나간 **뒤에** 발급되는 INQ_NO 라서 요청 전에는 항상 NULL 이고
+       (실측 2026-08-03 라이브 87행), 그 칸을 REQ_NO 로 덮으면 Phase ③ 상신이 INQ_NO 를 잃는다.
+    """
+    g = (row.get if isinstance(row, dict)
+         else (lambda k, d=None: (row[k] if k in row.keys() else d)))
+    doc = _DOCK_INQ_DOC.get((g('cat_code') or '').strip().upper())
+    if not doc:
+        return '', ''
+    return doc, ((g('svms_req_no') if doc == 'MARP' else g('svms_pc_req_no')) or '').strip()
+
+
 _DOCKPROC_QUOTE_MAX = 20            # 한 건에 붙는 벤더 수 상한(표시전용 스냅샷이라 넉넉하되 무한 아님)
 
 
@@ -13100,6 +13138,9 @@ def api_dockproc_lines():
             # 실제로 열 수 있는 견적서 idx = 디스크에 **지문까지 일치하는** 캐시가 있는 자리만
             r['att_cached'] = (_dockatt_cached_idx(_dockproc_files_of(r['att_files']), disk.get(r['id']))
                                if r['att_files'] else [])
+            # 견적요청 버튼이 쓸 문서종류/키 — **어느 컬럼인지 판단은 서버가 한다**(웹·앱이 각자
+            # `cat_code`→컬럼 매핑을 들고 있으면 한쪽만 고쳐졌을 때 엉뚱한 번호로 요청이 나간다).
+            r['inq_doc'], r['inq_key'] = _dockproc_inq_target(r)
             vc = r.get('vsl_cd') or vcode
             if r.get('cat_code') in ('R', 'S', 'ST') and vc:
                 r['svms_subj'] = _reqgen_build_subj(vc, r['req_no'], r['vsl_nm'], prefix, r.get('subject'))
@@ -13954,6 +13995,7 @@ def api_ext_dockproc_sync():
     unmatched = 0
     misses = []
     linked = []                                          # rank 0(견적의뢰 이전) 연결만 채운 행
+    pc_keys = []                                         # 구매 REQ_NO(`svms_pc_req_no`) 를 새로 채운 행
     plan = {}                                            # row_id -> (rank, status, vendor, inq, row)
     for it in items:
         status = (it.get('status') or '').strip()
@@ -14003,6 +14045,21 @@ def api_ext_dockproc_sync():
                 if len(misses) < 20:
                     misses.append({'inq': inq, 'subject': subj[:70]})
             continue
+        # 🔴 구매 견적요청 키(REQ_NO)는 **별도 칸**(`svms_pc_req_no`)에 적는다. `svms_req_no` 에 섞으면
+        #    Phase ③ 상신·제출견적·첨부가 그 칸을 INQ_NO 로 읽으므로 깨진다. 폴러가 `inq_alt`(=REQ_NO)를
+        #    매 sync 마다 이미 실어보내므로 추가 SVMS 조회·선명 정규화 조인이 필요 없다.
+        #    ⚠️`rank`·`link_only` 와 **무관하게** 채운다 — 'VSL Approved'(rank 0) 행도 나중에 본사확인이
+        #      떨어지면 바로 요청 가능해야 하고, 키를 채워도 `_dock_inq_blocked` 의 라벨 게이트가 막는다.
+        #    ⚠️컬럼 존재 여부를 확인하고 쓴다 — 마이그레이션 전 DB 에서 KeyError 로 sync 전체(수리 포함)가
+        #      500 나면 안 된다(닫힘 쪽 실패: 키만 안 채워지고 버튼이 안 열린다).
+        if (it.get('doc') or '') == 'PC' and inq_alt:
+            _pcq = ((row['svms_pc_req_no'] if 'svms_pc_req_no' in row.keys() else None) or '').strip()
+            if _pcq != inq_alt:
+                pc_keys.append({'id': row['id'], 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
+                                'pc_req_no': inq_alt, 'was': _pcq or None})
+                if not dry:
+                    execute("UPDATE dock_procure SET svms_pc_req_no=?, "
+                            "updated_at=datetime('now','localtime') WHERE id=?", (inq_alt, row['id']))
         # 🔴 되돌림 fail-closed(2026-08-03, 올마이트 지적 수용): **발주 흔적이 있는 행은 라벨 하나로
         #    퇴행시키지 않는다.** stale·순서역전 sync 나 미지의 SVMS lifecycle 로 발주완료 행이 rank 0
         #    라벨로 보이면, 되돌림이 `stg_order`·발주금액 이력을 조용히 지울 수 있다. 회수 되돌림은
@@ -14140,7 +14197,8 @@ def api_ext_dockproc_sync():
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses,
-                    'linked': linked, 'linked_n': len(linked)})
+                    'linked': linked, 'linked_n': len(linked),
+                    'pc_keys': pc_keys, 'pc_keys_n': len(pc_keys)})
 
 
 # ---- 벤더 견적서(SVMS MAOE 첨부) 원본 확인 ----
@@ -14696,11 +14754,17 @@ def api_ext_dock_submit_result(did):
 #      모달이 넘기는 MARP 파라미터가 '이 수리건에 붙을 수 있는 업체'만 좁혀준다(실측 131→4).
 #      그래서 검색은 맥을 경유한 **라이브 read** 다. 터널이 없으면 검색도 전송도 못 한다(fail-closed).
 # ══════════════════════════════════════════════════════════════════════════════
-_DOCK_INQ_CATS = ('R',)                                   # 이번 범위는 수리만 — 자재(S/ST)는 봉투가 다름
 _DOCK_INQ_MAX_VNDR = 5                                    # SVMS 모달 상한 ("Can't select more than 5.")
 # 벤더제출 **이후** 라벨 = 재요청 차단 대상. Phase ③ 와 같은 이유로 denylist 다
 # (반려가 어떤 라벨로 돌아오는지 전수 확인이 안 됨 → allowlist 면 처음 보는 라벨이 영구 차단).
 _DOCK_INQ_POST = ('quotation', 'submit', 'approval', 'progressing', 'confirmed', 'ordered')
+# 🔴 문서종류별 '견적요청 전'이 **확정된** 라벨 = denylist 보다 먼저 보고 재개방한다.
+#   구매의 요청 전 라벨은 'HQ Confirmed' 인데 이 문자열이 denylist 의 'confirmed' 에 걸린다 —
+#   그대로 두면 회수 후 라벨이 되돌아와도 영구 차단이 되어 2026-08-03 수리 실사고와 같은 부류가 된다.
+#   구매가 견적요청 후 이 라벨로 남지 않는 근거(실측 2026-08-03, BGBB 24행 + SAPS 21행 전수):
+#   요청된 건은 전원 `INQ_NO` 발급 + PC_PRO `STATUS_NM='Quotation Inquiry'` 이상이고,
+#   'HQ Confirmed' 는 `INQ_NO=None` 인 미요청 건에만 나타났다.
+_DOCK_INQ_PRE = {'PCRQ': ('HQ CONFIRMED',)}
 
 
 def _dock_push_sibling(path):
@@ -14740,13 +14804,20 @@ def _dock_mac_call(path, payload, timeout=20):
         return None, 503, f'맥 미연결 ({type(e).__name__})'
 
 
-def _dock_inq_prior(rep_cd, svms_status):
-    """이미 견적요청이 나간 건의 재요청 차단(Phase ③ `_dock_submit_prior` 와 같은 판정 방식)."""
+def _dock_inq_prior(doc, rep_cd, svms_status):
+    """이미 견적요청이 나간 건의 재요청 차단(Phase ③ `_dock_submit_prior` 와 같은 판정 방식).
+
+    🔴 `_DOCK_INQ_PRE[doc]` 를 denylist(`_DOCK_INQ_POST`) 보다 **먼저** 본다 — 구매의 확정된
+       '견적요청 전' 라벨('HQ Confirmed')이 denylist 의 'confirmed' 부분일치에 걸려 영구
+       재차단되는 걸 막는다(2026-08-03 수리 회수 사고와 같은 부류를 미리 차단)."""
     sub = query("SELECT id, done_at FROM dock_inquiry_draft WHERE rep_cd=? AND status='submitted' "
                 "ORDER BY id DESC", (rep_cd,), one=True)
     if not sub:
         return None
-    st = str(svms_status or '').strip().lower()
+    raw = str(svms_status or '').strip()
+    if raw.upper() in _DOCK_INQ_PRE.get(doc, ()):
+        return None                        # 확정된 pre-요청 라벨 — denylist 부분일치보다 우선 재개방
+    st = raw.lower()
     if not any(k in st for k in _DOCK_INQ_POST):
         return None                        # 라벨이 되돌아왔다 = 반려/취소 → 다시 열어준다
     return '이미 견적요청됨 (#%d · %s) — SVMS 에서 되돌려지면 동기화 후 다시 열림' % (
@@ -14754,19 +14825,22 @@ def _dock_inq_prior(rep_cd, svms_status):
 
 
 def _dock_inq_blocked(row):
-    """견적요청 불가 사유(없으면 None). 생성 라우트와 preview 가 **같은 함수**를 쓴다."""
-    if (row['cat_code'] or '') not in _DOCK_INQ_CATS:
-        return '수리(R) 건만 견적요청 가능 — 자재는 봉투 구조가 달라 이번 범위 아님'
-    rep_cd = (row['svms_req_no'] or '').strip()
+    """견적요청 불가 사유(없으면 None). 생성 라우트와 preview 가 **같은 함수**를 쓴다.
+
+    🔴 수리(MARP)/구매(PCRQ) 공통 게이트 — 문서종류·키는 `_dockproc_inq_target()` 이 `cat_code`
+       기준으로 판정한다(수리=`svms_req_no`, 구매=`svms_pc_req_no`. 섞으면 Phase③ 조회가 깨진다)."""
+    doc, rep_cd = _dockproc_inq_target(row)
+    if not doc:
+        return '수리(R)·구매(S/ST) 건만 견적요청 가능 — 그 외 분류는 봉투 구조가 없음'
     if not rep_cd:
-        return 'SVMS 문서번호(Rep No) 연결 안 됨 — 동기화 후 다시 시도'
+        return 'SVMS 문서번호 연결 안 됨 — 동기화 후 다시 시도'
     if row['stg_vendor'] or row['stg_confirm'] or row['stg_order']:
         return '이미 벤더제출 이후 단계'
     act = query("SELECT id, status FROM dock_inquiry_draft WHERE rep_cd=? AND status IN (?,?)",
                 (rep_cd, *_DOCK_SUBMIT_ACTIVE), one=True)
     if act:
         return '이미 견적요청 큐에 있음(#%d %s)' % (act['id'], act['status'])
-    return _dock_inq_prior(rep_cd, row['svms_status'])
+    return _dock_inq_prior(doc, rep_cd, row['svms_status'])
 
 
 @app.route('/api/dock_inquiry/vendor_search', methods=['POST'])
@@ -14782,11 +14856,13 @@ def api_dock_inquiry_vendor_search():
     row = query('SELECT * FROM dock_procure WHERE id=?', (rid,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
-    rep_cd = (row['svms_req_no'] or '').strip()
+    doc, rep_cd = _dockproc_inq_target(row)
+    if not doc:
+        return jsonify({'error': '수리(R)·구매(S/ST) 건만 벤더 검색 가능'}), 400
     if not rep_cd:
-        return jsonify({'error': 'SVMS 문서번호(Rep No) 연결 안 됨'}), 400
+        return jsonify({'error': 'SVMS 문서번호 연결 안 됨'}), 400
     q = str(d.get('q') or '').strip()[:60]
-    body, code, err = _dock_mac_call('/vendor_search', {'rep_cd': rep_cd, 'q': q}, timeout=25)
+    body, code, err = _dock_mac_call('/vendor_search', {'rep_cd': rep_cd, 'q': q, 'doc': doc}, timeout=25)
     if err:
         return jsonify({'error': err}), (code if code in (503, 504) else 502)
     return jsonify({'rep_cd': rep_cd, 'q': q, 'vendors': (body or {}).get('vendors') or [],
@@ -14816,8 +14892,9 @@ def api_dock_inquiry_preview():
     row = query('SELECT * FROM dock_procure WHERE id=?', (rid,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
+    doc, rep_cd = _dockproc_inq_target(row)
     return jsonify({'rid': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
-                    'rep_cd': (row['svms_req_no'] or '').strip() or None,
+                    'doc_type': doc or None, 'rep_cd': rep_cd or None,
                     'svms_status': row['svms_status'], 'subject': row['subject'],
                     'max_vendor': _DOCK_INQ_MAX_VNDR, 'blocked': _dock_inq_blocked(row)})
 
@@ -14856,25 +14933,39 @@ def api_dock_inquiry_create():
     blocked = _dock_inq_blocked(row)                       # 🔴 preview 와 같은 게이트를 서버가 다시 검사
     if blocked:
         return jsonify({'error': blocked}), 409
-    rep_cd = (row['svms_req_no'] or '').strip()
+    doc, rep_cd = _dockproc_inq_target(row)
     picks = [{'cd': cd, 'nm': str(nms.get(cd) or '')[:80]} for cd in cds]
     names = ', '.join([p['nm'] or p['cd'] for p in picks])[:200]
-    envelope = {'step1': {'PACKAGE': 'PKG_MA_REP', 'PROCEDURE': 'SP_SET_REP',
-                          'PARAM': '헤더 verbatim + STATUS=RC (워커가 전송 시점에 재조회)'},
-                'step2': {'PACKAGE': 'PKG_MA_REP', 'PROCEDURE': 'SP_SET_REP_DTL',
-                          'PARAM': {'REP_CD': rep_cd, 'REP_YN': 'Y', 'USE_YN': 'Y', 'REF_TP': 'MARP'},
-                          'CURSOR': {'P_IC_VNDR': '선택 %d개 (워커가 SP_GET_VNDR 재조회로 verbatim 구성)'
-                                                  % len(picks)}},
-                'rep_cd': rep_cd, 'req_no': row['req_no'], 'vsl_cd': row['vsl_cd'],
-                'subject': row['subject'], 'vendors': picks,
-                'svms_status_at_approval': row['svms_status']}
+    if doc == 'PCRQ':
+        # 🔴 구매는 단일 write(SP_SET_INQ_INFO, 문서 §3) — 수리처럼 별도 Confirm 단계가 없다.
+        #    PARAM 은 워커가 SP_GET_REQ_INFO 로 재조회한 헤더 verbatim + STATUS='E'/INQ_NO='' 뿐이라
+        #    여기서 지어내지 않는다(워커의 build_inquiry_purchase 가 유일한 조립처).
+        envelope = {'step1': {'PACKAGE': 'PKG_PC_INQ', 'PROCEDURE': 'SP_SET_INQ_INFO',
+                              'PARAM': '헤더(SP_GET_REQ_INFO) verbatim + STATUS=E/INQ_NO="" '
+                                       '(워커가 전송 시점에 재조회·재조립)',
+                              'CURSOR': {'P_IC_VNDR': '선택 %d개 (워커가 SP_GET_VNDR 재조회로 verbatim 구성)'
+                                                      % len(picks),
+                                         'P_IC/P_IC_CS': '부품그리드 verbatim echo(DM_YN 으로 분기)'}},
+                    'rep_cd': rep_cd, 'req_no': row['req_no'], 'vsl_cd': row['vsl_cd'],
+                    'subject': row['subject'], 'vendors': picks,
+                    'svms_status_at_approval': row['svms_status']}
+    else:
+        envelope = {'step1': {'PACKAGE': 'PKG_MA_REP', 'PROCEDURE': 'SP_SET_REP',
+                              'PARAM': '헤더 verbatim + STATUS=RC (워커가 전송 시점에 재조회)'},
+                    'step2': {'PACKAGE': 'PKG_MA_REP', 'PROCEDURE': 'SP_SET_REP_DTL',
+                              'PARAM': {'REP_CD': rep_cd, 'REP_YN': 'Y', 'USE_YN': 'Y', 'REF_TP': 'MARP'},
+                              'CURSOR': {'P_IC_VNDR': '선택 %d개 (워커가 SP_GET_VNDR 재조회로 verbatim 구성)'
+                                                      % len(picks)}},
+                    'rep_cd': rep_cd, 'req_no': row['req_no'], 'vsl_cd': row['vsl_cd'],
+                    'subject': row['subject'], 'vendors': picks,
+                    'svms_status_at_approval': row['svms_status']}
     who = session.get('username') or 'web'
     try:
         did = execute(
-            "INSERT INTO dock_inquiry_draft (rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_json, vndr_names, "
-            "envelope_json, status, decided_at, decided_by) "
-            "VALUES (?,?,?,?,?,?,?,?,'approved',datetime('now','localtime'),?)",
-            (rid, row['vsl_nm'], row['vsl_cd'], row['req_no'], rep_cd,
+            "INSERT INTO dock_inquiry_draft (rid, vsl_nm, vsl_cd, req_no, rep_cd, doc_type, vndr_json, "
+            "vndr_names, envelope_json, status, decided_at, decided_by) "
+            "VALUES (?,?,?,?,?,?,?,?,?,'approved',datetime('now','localtime'),?)",
+            (rid, row['vsl_nm'], row['vsl_cd'], row['req_no'], rep_cd, doc or 'MARP',
              json.dumps(picks, ensure_ascii=False, sort_keys=True, separators=(',', ':')), names,
              json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(',', ':')), who))
     except sqlite3.IntegrityError:                         # 부분 유니크 = 같은 건 이중 큐잉
@@ -14946,7 +15037,7 @@ def api_ext_dock_inquiry_approved():
     """맥 워커가 처리할 approved 건 → CAS claim 으로 submitting 락. Phase ③ `/approved` 규약 동일:
     새로 claim 한 행만 반환 · `submitting` 6h 초과는 `failed`(**자동 재큐 안 함**) ·
     `?peek=1` 조회전용 · `decided_by` 빈 행은 claim 금지 · `?id=N` 은 그 행만(같은 CAS)."""
-    cols = "id, rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_json, vndr_names, envelope_json"
+    cols = "id, rid, vsl_nm, vsl_cd, req_no, rep_cd, doc_type, vndr_json, vndr_names, envelope_json"
     if request.args.get('peek'):
         rows = query(f"SELECT {cols} FROM dock_inquiry_draft WHERE status='approved' ORDER BY id ASC")
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
