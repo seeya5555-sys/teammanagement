@@ -82,16 +82,16 @@ chk(A._dockproc_norm_quotes([]) is None, '빈 리스트면 None')
 chk(A._dockproc_norm_quotes(['x', 3, None]) is None, 'dict 아닌 원소만 있으면 None')
 one = json.loads(A._dockproc_norm_quotes(
     [{'nm': 'A CO', 'cd': 'a1jfj', 'amt': '15,800', 'usd': 15800, 'cur': 'usd',
-      'gross_amt': '16,000', 'dc_amt': 200, 'final_amt': '15,800',
+      'gross_amt': '16,000', 'dc_rate': 45, 'final_amt': '8,800', 'final_usd': 8800,
       'att': '2', 'st': 'Submitted'}]))
 chk(one == [{'nm': 'A CO', 'cd': 'A1JFJ', 'amt': 15800.0, 'usd': 15800.0,
-             'gross_amt': 16000.0, 'dc_amt': 200.0, 'final_amt': 15800.0,
+             'gross_amt': 16000.0, 'dc_rate': 45.0, 'final_amt': 8800.0, 'final_usd': 8800.0,
              'cur': 'USD', 'att': 2,
              'st': 'Submitted', 'best': 1}],
     'DC전/할인/DC후 금액·통화·첨부·업체코드 정규화(+단독이면 best)', one)
 bad = json.loads(A._dockproc_norm_quotes([{'nm': 'B', 'amt': 'abc', 'cur': 'kr', 'att': 'x', 'st': ''}]))
 chk(bad == [{'nm': 'B', 'cd': None, 'amt': None, 'usd': None,
-             'gross_amt': None, 'dc_amt': None, 'final_amt': None,
+             'gross_amt': None, 'dc_rate': None, 'final_amt': None, 'final_usd': None,
              'cur': None, 'att': 0, 'st': ''}],
     '파싱불가 → amt/usd None·cur None·att 0·cd None', bad)
 

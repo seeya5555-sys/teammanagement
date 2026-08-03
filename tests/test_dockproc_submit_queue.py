@@ -47,7 +47,7 @@ HDR = {'X-API-Key': KEY}
 A.execute("INSERT INTO dock_procure_vessel(vsl_nm, vsl_cd) VALUES('TEST VESSEL','TSTV')")
 
 SUBMITTED = {'cd': 'A1J43', 'nm': 'ETMARINE', 'amt': 4800, 'usd': 4800, 'cur': 'USD',
-             'gross_amt': 5000, 'dc_amt': 200, 'final_amt': 4800,
+             'gross_amt': 5000, 'dc_rate': 4, 'final_amt': 4800, 'final_usd': 4800,
              'st': 'Submitted', 'att': 1, 'best': 1}
 
 
@@ -195,9 +195,9 @@ chk(create(999999).status_code == 404, '없는 rid 404')
 print('# 8) preview — write 0 · 거절사유 미리보기')
 pv = c.get(f'/api/dock_submit/preview?rid={mkrow("R30")}').get_json()
 chk(pv['blocked'] is None and pv['candidates'][0]['ok'] is True, '정상건은 blocked None', pv)
-chk({k: pv['candidates'][0][k] for k in ('gross_amt', 'dc_amt', 'final_amt')} ==
-    {'gross_amt': 5000, 'dc_amt': 200, 'final_amt': 4800},
-    'preview에 견적/DC/최종 DC후 금액이 함께 노출됨', pv['candidates'][0])
+chk({k: pv['candidates'][0][k] for k in ('gross_amt', 'dc_rate', 'final_amt', 'final_usd')} ==
+    {'gross_amt': 5000, 'dc_rate': 4, 'final_amt': 4800, 'final_usd': 4800},
+    'preview에 견적/D-C요율/P_RS_ODR 최종금액이 함께 노출됨', pv['candidates'][0])
 pv = c.get(f'/api/dock_submit/preview?rid={mkrow("R31", stg_order=1)}').get_json()
 chk(pv['blocked'] == '이미 발주완료', '발주완료 사유 노출', pv)
 pv = c.get(f'/api/dock_submit/preview?rid={mkrow("R32", quotes=[dict(SUBMITTED, st="Requested")])}').get_json()
@@ -398,8 +398,10 @@ chk('const IS_ADMIN = true;' in html, 'admin 플래그 true', [l for l in html.s
 chk('SVMS 로 실제 상신되는 것에 동의' in html, '동의 체크 문구(돈경로 고지)')
 chk('id="sb-push"' in html and '지금 전송' in html, '[지금 전송] 버튼 렌더')
 chk('워커 주기' not in html, '🔴 "다음 워커 주기에 전송" 같은 거짓 문구 없음(자동 전송 스케줄러가 없다)')
-chk('최종 DC후' in html and 'gross_amt' in html and 'dc_amt' in html,
-    '웹 컨펌 모달에 견적/DC/최종 DC후 금액 병기')
+chk('최종 DC후' in html and 'gross_amt' in html and 'dc_rate' in html and 'final_usd' in html,
+    '웹 컨펌 모달에 견적/D-C요율/P_RS_ODR 최종금액 병기')
+chk('isPurchase?' in html and ':`${amt}${usd}`' in html,
+    '서비스/구버전 후보는 기존 견적+USD 표시로 폴백')
 with c.session_transaction() as s:
     s['role'] = 'user'
 html_u = c.get('/dock_procure').get_data(as_text=True)
