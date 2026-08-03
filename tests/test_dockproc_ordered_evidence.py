@@ -206,17 +206,27 @@ chk(j3['updated'] == 1 and row['svms_status'] == 'Quotation Inquiry',
 st, _, _ = stages('R33')
 chk(st == (1, 1, 0, 0), '반려되면 벤더제출 단계로 복귀', st)
 
-print('# 15) rank0(미등재 상태)은 라벨도 안 바꾼다 — 실패 방향이 안전한지 고정')
-#   미등재 상태 실측(2026-08-01 전선박): VSL Approved 26 / Approved 2 / HQ Received 1 = 전부 견적의뢰
-#   이전 단계. 상신 반려는 'Quotation Inquiry'(rank2)로 돌아오므로 게이트 재개방 경로는 살아있다.
-#   여기서 굳어도 남는 쪽은 '게이트 닫힘'이고 오상신은 워커 pre-read(STATUS=='RE')가 막는다.
+print('# 15) rank0 — 미지 라벨은 무시(닫힘 쪽) / 확인된 pre-inquiry 라벨은 되돌림 (2026-08-03 개정)')
+#   ⛔ 옛 전제("상신 반려는 'Quotation Inquiry'(rank2)로 돌아오니 rank0 되돌림은 불필요")는
+#      2026-08-03 실측으로 **반증**됐다 — SVMS 견적요청 **회수**는 'HQ Received'(rank 0)로 돌아온다.
+#      옛 동작에선 `stg_vendor=1` 이 영구히 남아 재요청 게이트가 영영 잠겼다(BGBBME26073116).
+#      그래서 `_DOCKPROC_PRE_INQUIRY` 의 확인된 라벨은 단계를 되돌린다.
+#      정본 테스트 = tests/test_dockproc_recall_reopen.py.
+#   미지 라벨은 종전대로 무시 — 처음 보는 상태 하나로 단계가 조용히 꺼지면 안 되므로 닫힘 쪽으로 실패.
 mkrow('R34')
 sync('R34', 'Submit')
-j = sync('R34', 'VSL Approved')
+j = sync('R34', 'Some Unknown Status')
 row = A.query("SELECT svms_status, stg_vendor, stg_confirm FROM dock_procure "
               "WHERE req_no='R34' AND vsl_nm='TEST VESSEL'", one=True)
 chk(j['updated'] == 0 and j['matched'] == 0 and row['svms_status'] == 'Submit',
-    "미등재 상태는 무시 — 라벨/단계 모두 옛 값 유지(닫힘 쪽)", (j['updated'], row['svms_status']))
+    "미지 rank0 라벨은 무시 — 라벨/단계 모두 옛 값 유지(닫힘 쪽)", (j['updated'], row['svms_status']))
+j2 = sync('R34', 'HQ Received')
+row2 = A.query("SELECT svms_status, stg_quote, stg_vendor, stg_confirm FROM dock_procure "
+               "WHERE req_no='R34' AND vsl_nm='TEST VESSEL'", one=True)
+chk(j2['updated'] == 1 and row2['svms_status'] == 'HQ Received'
+    and not (row2['stg_quote'] or row2['stg_vendor'] or row2['stg_confirm']),
+    "확인된 pre-inquiry 라벨은 되돌림 — 회수가 반영돼 게이트가 다시 열린다",
+    (j2['updated'], row2['svms_status'], row2['stg_vendor']))
 
 print('# 16) 수동 4단계 cascade — 상위 체크/하위 해제가 중간단계를 건너뛰지 않음')
 with c.session_transaction() as s:

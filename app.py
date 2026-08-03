@@ -12750,6 +12750,27 @@ def _dockproc_status_rank(status):
     return _DOCKPROC_STATUS_RANK.get((status or '').strip().upper(), 0)
 
 
+# 🔴 rank 0 중에서도 **되돌림을 허용하는 '견적의뢰 이전' 라벨 allowlist**(2026-08-03 실사고로 신설).
+#   rank 0 은 원래 통째로 `link_only`(단계 미변경)라, 상신/견적요청이 나간 건이 SVMS 에서 **회수**돼
+#   헤더가 rank 0 라벨로 되돌아오면 `stg_*` 가 영구히 켜진 채 남아 재요청 게이트가 영구 잠겼다.
+#   실사고: BGBBME26073116([BGBB R22]) 견적요청 LIVE 성공(18:05) → 형이 SVMS 에서 회수 →
+#     SVMS 는 목록·상세 모두 STATUS='AP'(HQ Received)·벤더그리드 0행인데 DB 는 `stg_vendor=1` +
+#     `svms_status='Quotation Inquiry'`(`api_ext_dock_inquiry_result` 의 낙관적 표시)로 고착 →
+#     `_dock_inq_blocked` 가 '이미 벤더제출 이후 단계'로 409 → 큐 재적재 불가.
+#   ⚠️기존 주석은 "반려는 헤더가 'RE'(rank 2)로 돌아오니 갱신 경로에 걸린다"고 전제했는데 **틀렸다** —
+#     회수는 'AP'(HQ Received, rank 0)로 돌아온다. 그래서 그 안전장치가 발동하지 않았다.
+#   allowlist 로 좁히는 이유: 미지의 rank 0 라벨까지 되돌리면 처음 보는 상태 하나로 단계가 조용히
+#     꺼진다. 여기 등재된 **확인된 pre-inquiry 라벨만** 되돌리고 나머지는 종전대로 link_only 다.
+#   ⚠️빈 라벨('')은 절대 넣지 않는다 — SVMS 미연결 수동관리 행이고(2026-08-03 라이브 73행 중 50행이
+#     사람이 켠 단계 보유) 넣으면 그 수동 체크를 sync 가 지운다.
+#   🔴 **실측된 라벨 1개만** 넣는다(올마이트 지적 수용). 'VSL Approved'(라이브 13행)·'Approved'(1행)
+#     도 전원 단계 0 이라 넣어도 지금은 no-op 인데, 'Approved' 는 구매/수리 의미 충돌 가능성이 확인이
+#     안 됐다. 효과 0 · 위험 잠재 ⇒ 넣지 않는다. 회수 경로로 실측된 라벨은 'HQ Received' 하나다.
+_DOCKPROC_PRE_INQUIRY = {
+    'HQ RECEIVED',              # 본선 요청이 HQ 에 접수된 상태 = 견적의뢰 전. 회수 시 여기로 돌아온다.
+}
+
+
 _DOCKPROC_QUOTE_MAX = 20            # 한 건에 붙는 벤더 수 상한(표시전용 스냅샷이라 넉넉하되 무한 아님)
 
 
@@ -13939,15 +13960,22 @@ def api_ext_dockproc_sync():
         rank = _dockproc_status_rank(status)
         # ⚠️rank 0 은 행을 아예 안 건드리므로 `svms_status` 라벨도 옛 값으로 남는다(올마이트 2026-08-01).
         #   실측(2026-08-01 전선박): 미등재 상태 = 'VSL Approved' 26 · 'Approved' 2 · 'HQ Received' 1 —
-        #   전부 **견적의뢰 이전** 단계라 상신된 건이 여기로 되돌아오는 경로가 아니다. 상신 반려는
-        #   헤더가 'RE'(=Quotation Inquiry, rank 2)로 돌아오므로 위 라벨 갱신 경로에 걸려 게이트가 열린다.
-        #   설령 미지의 상태로 굳더라도 남는 쪽은 '게이트 닫힘'(=재컨펌 불가)이고, 오상신은 워커의
+        #   ⛔ 이 뒤에 있던 "상신된 건이 여기로 되돌아오는 경로가 아니다 / 반려는 'RE'(rank 2)로 돌아오니
+        #      갱신 경로에 걸린다"는 전제는 **2026-08-03 실측으로 반증됐다.** SVMS 에서 견적요청을
+        #      **회수**하면 헤더는 'RE' 가 아니라 'AP'(HQ Received, rank 0)로 돌아온다 → 옛 로직에선
+        #      `stg_vendor=1` 이 영구히 남아 게이트가 영영 잠겼다(BGBBME26073116). 그래서 아래
+        #      `_DOCKPROC_PRE_INQUIRY` allowlist 로 **확인된 pre-inquiry 라벨은 되돌림**을 허용한다.
+        #   미지의 상태로 굳는 경우는 종전대로 '게이트 닫힘'(=재컨펌 불가)으로 남고, 오상신은 워커의
         #   pre-read `STATUS=='RE'` 게이트가 최종 차단한다 — 안전한 방향으로 실패한다.
         # 🔴 2026-08-03 보강: rank 0 을 완전 스킵하면 **SVMS 연결(`svms_req_no`)조차 안 채워진다**.
         #    실사고: 형이 캡쳐한 `BGBBME26073116`([BGBB R22], HQ Received)이 dock_procure 129 행과
         #    태그로 매칭되는데도 `svms_req_no=NULL` 이라 견적요청 버튼이 쓸 REP_CD 가 없었다(BGBB R 7행 동일).
         #    그래서 rank 0 은 **연결 전용 경로**로 내린다 — 단계(stg_*)·금액·remark 는 손대지 않는다.
-        link_only = (rank == 0)
+        # 🔴 확인된 pre-inquiry 라벨은 link_only 에서 빼서 정상 경로로 보낸다 = 단계(stg_*)를 0 으로
+        #    되돌려 회수를 반영한다. 금액·remark 는 정상 경로에서도 `o`(발주완료)=0 이면 손대지 않으므로
+        #    되돌아가는 건 단계와 라벨뿐이다. 빈 라벨('')은 allowlist 에 없으니 종전대로 link_only 다.
+        pre_inq = (rank == 0 and (status or '').strip().upper() in _DOCKPROC_PRE_INQUIRY)
+        link_only = (rank == 0 and not pre_inq)
 
         evidence = it.get('ordered_evidence')            # True/False/None(=근거 미확정) — 행 매칭 후 rank 게이트에 씀
         inq = (it.get('inq_no') or '').strip() or None
@@ -13972,6 +14000,14 @@ def api_ext_dockproc_sync():
                 if len(misses) < 20:
                     misses.append({'inq': inq, 'subject': subj[:70]})
             continue
+        # 🔴 되돌림 fail-closed(2026-08-03, 올마이트 지적 수용): **발주 흔적이 있는 행은 라벨 하나로
+        #    퇴행시키지 않는다.** stale·순서역전 sync 나 미지의 SVMS lifecycle 로 발주완료 행이 rank 0
+        #    라벨로 보이면, 되돌림이 `stg_order`·발주금액 이력을 조용히 지울 수 있다. 회수 되돌림은
+        #    **견적요청 단계의 회수**만 대상이므로 발주근거가 있으면 종전대로 link_only(=닫힘 쪽)로 남긴다.
+        #    닫힘 쪽 실패 = 사람이 수동으로 체크를 풀면 되고, 오상신은 워커 pre-read 게이트가 막는다.
+        if pre_inq and (row['stg_order'] or row['quote_amt'] is not None
+                        or (row['svms_submit'] or '').strip()):
+            link_only = True
         if link_only:
             # 연결만 채운다. 라벨은 **아직 어느 단계도 안 켜진 행**에만 쓴다 —
             # 상신 이후 라벨을 rank 0 라벨로 되돌리면 재컨펌/재상신 게이트가 열릴 수 있어서다
