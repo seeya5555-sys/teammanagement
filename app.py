@@ -12785,12 +12785,54 @@ def _dockproc_status_rank(status):
 #     꺼진다. 여기 등재된 **확인된 pre-inquiry 라벨만** 되돌리고 나머지는 종전대로 link_only 다.
 #   ⚠️빈 라벨('')은 절대 넣지 않는다 — SVMS 미연결 수동관리 행이고(2026-08-03 라이브 73행 중 50행이
 #     사람이 켠 단계 보유) 넣으면 그 수동 체크를 sync 가 지운다.
-#   🔴 **실측된 라벨 1개만** 넣는다(올마이트 지적 수용). 'VSL Approved'(라이브 13행)·'Approved'(1행)
-#     도 전원 단계 0 이라 넣어도 지금은 no-op 인데, 'Approved' 는 구매/수리 의미 충돌 가능성이 확인이
-#     안 됐다. 효과 0 · 위험 잠재 ⇒ 넣지 않는다. 회수 경로로 실측된 라벨은 'HQ Received' 하나다.
+#   🔴 **실측된 라벨만** 넣는다(올마이트 지적 수용). 'Approved'(라이브 1행, 단계 0)는 구매/수리 의미
+#     충돌이 확인 안 돼 여전히 넣지 않는다 — 효과 0 · 위험 잠재.
+#   🔴 2026-08-04 추가: **'VSL Approved' 도 회수 경로로 실측됐다.** 구매 INQ `BGBBES2607B41` 을
+#     `PKG_PC_INQ.SP_SET_INQ_RTN` 으로 회수한 직후 REQ `BGBBES2607B4` 헤더가 `STATUS='C'(HQ Confirmed)`
+#     → **`STATUS='N'(VSL Approved)`·CFM_DT=null** 로 돌아갔다(화면 회수 안내문 "청구서 컨펌이전
+#     상태로 됩니다" 그대로). 즉 구매 회수의 도착지는 상황에 따라 'HQ Confirmed'(2026-08-03 실측)
+#     **또는 'VSL Approved'** 다. 넣지 않으면 그 회수건이 `link_only` 로 빠져 위 BGBBME26073116 과
+#     **똑같이 영구 잠긴다**. 라이브 영향은 0 — 이 라벨 10행 전원 `stg_*` 0 이라 no-op 이고,
+#     되돌림 대상은 방금 회수된 행뿐이다. (구 주석의 "회수 경로로 실측된 라벨은 'HQ Received' 하나"는
+#     이 실측으로 폐기.)
+#   ⚠️ stale·순서역전 sync 가 이 라벨을 실어와 진행 중 행을 되돌릴 위험은 **'HQ RECEIVED' 와 동일한
+#     기존 위험**이고 새로 생긴 게 아니다(올마이트 지적). freshness 로 걸러내고 싶어도 dock_procure
+#     sync payload 에는 시각·리비전 필드가 아예 없다(실측: `status`/`inq_no`/`amt`/`quotes`/`files`/
+#     `ordered_evidence` 뿐) ⇒ 방어선은 아래 fail-closed 가드(발주완료·발주금액·제출수>0)와 워커
+#     pre-read 게이트 두 겹뿐이다. 라벨을 하나 늘릴 때마다 이 가드가 유일한 안전선임을 기억할 것.
 _DOCKPROC_PRE_INQUIRY = {
     'HQ RECEIVED',              # 본선 요청이 HQ 에 접수된 상태 = 견적의뢰 전. 회수 시 여기로 돌아온다.
+    'VSL APPROVED',             # 본선 승인·본사확인 전. 구매 회수가 컨펌을 풀면 여기로 돌아온다(실측).
 }
+
+
+def _dockproc_submit_has_quotes(raw):
+    """`svms_submit`(SVMS `SUBMIT` = "제출수/요청수") 가 **실제 견적 제출 흔적**인가 — 순수함수.
+
+    🔴 왜 필요한가(2026-08-04 실측): 되돌림 fail-closed 가드가 `svms_submit` 을 **존재하기만 하면**
+       발주흔적으로 봤다. 그런데 견적요청이 나가면 이 칸은 곧바로 `"0/0"`·`"0/1"` 처럼 **제출 0** 값으로
+       채워진다 ⇒ 회수된 행은 언제나 이 가드에 걸려 `link_only` 로 빠지고, allowlist 를 고쳐도 단계가
+       영구히 켜진 채 남는다(S14 `BGBBES2607B4`=`"0/0"`, 정상 회수건도 `"0/1"` 이라 같은 결과).
+    ⇒ 판정을 **분자(제출수) > 0** 으로 좁힌다. 제출된 견적이 있으면 하류 데이터(금액·첨부)가 존재할 수
+       있으니 종전대로 보호하고, 제출 0 이면 지울 이력이 없으므로 회수 되돌림을 허용한다.
+    ⚠️**파싱 실패는 흔적 있음(True)** — 처음 보는 형식 하나로 이력을 조용히 지우지 않는다(닫힘 쪽 실패).
+       괄호도 **쌍으로만** 인정한다(`"(0/1"` 같은 반쪽은 미지 형식 → True). 올마이트 지적 수용.
+    🔴 `sub_quotes`/`att_files` 는 **여기서 보지 않는다**(올마이트 대안 반대 — 근거 실측):
+       그 두 칸은 폴러 payload 의 3상태 계약이 정본이라 **키 없음=기존 유지 / `[]`=0건 확정 → clear** 로
+       이미 보호된다. 즉 저장된 값은 "지금 SVMS 에 견적이 있다"는 증거가 아니라 지난 sync 의 스냅샷이다.
+       이걸 되돌림 가드에 넣으면 회수건이 옛 스냅샷 때문에 다시 영구 잠기는 **똑같은 부류의 버그**가
+       다른 칸에서 재발한다(#12 R39 = `quotes:[]` 로 회수와 정합하게 clear 되는 경로가 그 반례).
+       라이브 실측(2026-08-04, 161행): 제출0/NULL + 하류데이터 보유 + 발주흔적 없음 조합 = **0행**.
+    """
+    s = (raw or '').strip()
+    if not s:
+        return False                                   # 값 없음 = 흔적 없음
+    if len(s) >= 2 and s[0] == '(' and s[-1] == ')':   # SVMS 목록 `SUBMIT` 은 "(0/4)" 꼴, DB 는 "0/4" 꼴
+        s = s[1:-1].strip()
+    m = re.fullmatch(r'(\d+)\s*/\s*\d+', s)
+    if not m:
+        return True                                    # 미지 형식 = fail-closed
+    return int(m.group(1)) > 0
 
 
 # 견적요청(벤더 Submit)이 쓰는 SVMS 문서종류 — cat_code 기준. 페인트(P)/기타(SY)는 봉투 자체가 없다.
@@ -14114,8 +14156,11 @@ def api_ext_dockproc_sync():
         #    라벨로 보이면, 되돌림이 `stg_order`·발주금액 이력을 조용히 지울 수 있다. 회수 되돌림은
         #    **견적요청 단계의 회수**만 대상이므로 발주근거가 있으면 종전대로 link_only(=닫힘 쪽)로 남긴다.
         #    닫힘 쪽 실패 = 사람이 수동으로 체크를 풀면 되고, 오상신은 워커 pre-read 게이트가 막는다.
+        #    ⚠️2026-08-04 정정: `svms_submit` 은 **존재 여부**로 보지 않는다 — 견적요청 직후 `"0/0"`·
+        #      `"0/1"` 로 채워지므로 모든 회수건이 이 가드에 걸려 되돌림이 영구 무력화됐다. 제출수>0
+        #      (또는 미지 형식)일 때만 흔적으로 인정한다(`_dockproc_submit_has_quotes`).
         if pre_inq and (row['stg_order'] or row['quote_amt'] is not None
-                        or (row['svms_submit'] or '').strip()):
+                        or _dockproc_submit_has_quotes(row['svms_submit'])):
             link_only = True
         if link_only:
             # 연결만 채운다. 라벨은 **아직 어느 단계도 안 켜진 행**에만 쓴다 —
@@ -14242,8 +14287,11 @@ def api_ext_dockproc_sync():
                 #    stale·순서역전 sync 로 발주완료 행이 'HQ Confirmed' 로 보이면 갈래 ② 는 단계 flag
                 #    만 보고 전이해버린다 → 옛 요청 이력이 조용히 사라져 사람이 확인할 근거를 잃는다.
                 #    닫힘 쪽 실패 = 표시가 남는 것뿐이고, 사람이 '완료건 지우기'로 치울 수 있다.
+                #    ⚠️2026-08-04 정정: `svms_submit` 존재 여부 → **제출수>0** 으로 좁힌다(위 `pre_inq`
+                #      가드와 동일 사유·동일 함수). `"0/0"`·`"0/1"` 은 회수건이 항상 들고 있는 값이라
+                #      존재 여부로 보면 갈래 ② 전이가 영구히 죽는다.
                 if _had_post and (row['stg_order'] or row['quote_amt'] is not None
-                                  or (row['svms_submit'] or '').strip()):
+                                  or _dockproc_submit_has_quotes(row['svms_submit'])):
                     _had_post = False
                 _recalled = ((status or '').strip().upper() in _pre_lbls
                              and ((  # ① 단계가 통째로 되돌아감 (수리 'HQ Received' 실측 경로)

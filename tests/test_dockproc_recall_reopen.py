@@ -93,8 +93,10 @@ def mkdraft(rid, rep_cd, status='submitted'):
 
 print('# 1) allowlist 자체 — 실측된 pre-inquiry 라벨만 들어있고 빈 라벨은 없다')
 chk('HQ RECEIVED' in A._DOCKPROC_PRE_INQUIRY, "'HQ RECEIVED' 등재(회수가 돌아오는 라벨)")
-chk(A._DOCKPROC_PRE_INQUIRY == {'HQ RECEIVED'},
-    "실측 라벨 1개만 — 'VSL Approved'/'Approved' 는 회수 경로 미확인이라 제외",
+chk('VSL APPROVED' in A._DOCKPROC_PRE_INQUIRY,
+    "'VSL APPROVED' 등재 — 2026-08-04 구매 회수 실측(B41 회수 → REQ B4 가 STATUS='N' 로 복귀)")
+chk(A._DOCKPROC_PRE_INQUIRY == {'HQ RECEIVED', 'VSL APPROVED'},
+    "실측 라벨 2개만 — 'Approved' 는 회수 경로 미확인이라 여전히 제외",
     A._DOCKPROC_PRE_INQUIRY)
 chk('' not in A._DOCKPROC_PRE_INQUIRY, "빈 라벨은 미등재(수동관리 행 보호)")
 chk('QUOTATION INQUIRY' not in A._DOCKPROC_PRE_INQUIRY, "rank>=1 라벨은 미등재")
@@ -131,11 +133,14 @@ mkrow('R25', stages_on=(1, 1, 1, 1))
 sync('R25', '')
 chk(stages('R25') == (1, 1, 1, 1), "빈 라벨은 수동 체크 보존", stages('R25'))
 
-print('# 6) allowlist 밖 rank0 라벨(VSL Approved / Approved)은 되돌리지 않는다 — 종전 link_only')
-for rq, lbl in (('R26', 'VSL Approved'), ('R27', 'Approved')):
-    mkrow(rq, stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
-    sync(rq, lbl)
-    chk(stages(rq) == (1, 1, 0, 0), f"'{lbl}' 는 미등재 → 단계 보존(닫힘 쪽)", stages(rq))
+print("# 6) 'VSL Approved' 는 되돌리고, 미등재 rank0 라벨('Approved')은 종전대로 보존한다")
+#   2026-08-04 변경: 'VSL Approved' 가 구매 회수의 도착지로 실측돼 allowlist 에 들어왔다.
+mkrow('R26', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
+sync('R26', 'VSL Approved')
+chk(stages('R26') == (0, 0, 0, 0), "'VSL Approved' 는 등재 → 단계 되돌림", stages('R26'))
+mkrow('R27', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
+sync('R27', 'Approved')
+chk(stages('R27') == (1, 1, 0, 0), "'Approved' 는 미등재 → 단계 보존(닫힘 쪽)", stages('R27'))
 
 print('# 7) 🔴 fail-closed — 발주 흔적(발주완료/발주금액/submit)이 있으면 되돌리지 않는다')
 #   stale·순서역전 sync 가 rank0 라벨을 실어와도 발주 이력을 조용히 지우지 못하게 하는 게이트.
@@ -154,7 +159,97 @@ chk(stages('R31') == (1, 1, 0, 0), '발주금액만 있어도 단계 유지', st
 mkrow('R32', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
 A.execute("UPDATE dock_procure SET svms_submit='2026-07-31' WHERE req_no='R32' AND vsl_nm='TEST VESSEL'")
 sync('R32', 'HQ Received')
-chk(stages('R32') == (1, 1, 0, 0), 'svms_submit 보유 행도 단계 유지', stages('R32'))
+chk(stages('R32') == (1, 1, 0, 0),
+    'svms_submit 이 미지 형식이면 fail-closed 로 단계 유지', stages('R32'))
+
+print('# 7-1a) 🔴 svms_submit 은 존재 여부가 아니라 **제출수>0** 으로 본다 (2026-08-04 실사고)')
+#   견적요청이 나가면 이 칸은 곧바로 "0/0"·"0/1" 로 채워진다 ⇒ 존재 여부로 보면 회수 되돌림이 영구 무력화.
+for _raw, _want, _why in (
+        (None, False, 'None = 흔적 없음'),
+        ('', False, '빈 문자열 = 흔적 없음'),
+        ('   ', False, '공백만 = 흔적 없음'),
+        ('0/0', False, '"0/0" = 제출 0 (S14 실측값)'),
+        ('(0/1)', False, '"(0/1)" = 요청 1·제출 0 (정상 회수건 실측값)'),
+        ('(0/4)', False, '"(0/4)" = 제출 0'),
+        ('1/1', True, '"1/1" = 제출 1 → 흔적 있음'),
+        ('(3/4)', True, '"(3/4)" = 제출 3 → 흔적 있음'),
+        ('2026-07-31', True, '미지 형식 = fail-closed(True)'),
+        ('submitted', True, '미지 문자열 = fail-closed(True)'),
+        ('(0/1', True, '반쪽 괄호 = 미지 형식 → fail-closed (올마이트 지적)'),
+        ('0/1)', True, '반쪽 괄호(닫는쪽) = fail-closed'),
+        ('((0/1))', True, '이중 괄호 = fail-closed'),
+        ('0/', True, '분모 없음 = fail-closed'),
+        ('/1', True, '분자 없음 = fail-closed'),
+        ('0/1/2', True, '슬래시 2개 = fail-closed'),
+        ('-1/2', True, '음수 = fail-closed(정규식 미매칭)'),
+        ('( 0 / 4 )', False, '괄호쌍+공백은 정상 형식으로 인정'),
+        ('10/12', True, '두자리 분자 > 0')):
+    chk(A._dockproc_submit_has_quotes(_raw) is _want,
+        f'_dockproc_submit_has_quotes({_raw!r}) is {_want} — {_why}',
+        A._dockproc_submit_has_quotes(_raw))
+
+print('# 7-1b) e2e — 제출 0("0/0") 회수건은 되돌아가고, 제출 있는 행은 그대로 막힌다')
+mkrow('R47', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
+A.execute("UPDATE dock_procure SET svms_submit='0/0' WHERE req_no='R47' AND vsl_nm='TEST VESSEL'")
+sync('R47', 'VSL Approved')
+chk(stages('R47') == (0, 0, 0, 0),
+    "제출 0 + allowlist 라벨 → 되돌림 (S14 실사고 경로)", stages('R47'))
+mkrow('R48', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
+A.execute("UPDATE dock_procure SET svms_submit='(3/4)' WHERE req_no='R48' AND vsl_nm='TEST VESSEL'")
+sync('R48', 'VSL Approved')
+chk(stages('R48') == (1, 1, 0, 0),
+    '제출 3건 보유 행은 fail-closed 로 단계 유지', stages('R48'))
+
+print("# 7-1c) 원인 분리 — 'HQ Received'(기존 등재 라벨) + 0/0 만으로도 되돌아간다")
+#   올마이트 지적: #7-1b 는 svms_submit 수정과 allowlist 추가를 함께 태워 원인이 섞인다.
+#   이 케이스는 allowlist 를 안 건드리고 svms_submit 수정만 검증한다(수정 되돌리면 여기서 먼저 빨개짐).
+mkrow('R51', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
+A.execute("UPDATE dock_procure SET svms_submit='0/0' WHERE req_no='R51' AND vsl_nm='TEST VESSEL'")
+sync('R51', 'HQ Received')
+chk(stages('R51') == (0, 0, 0, 0),
+    "'HQ Received' + 제출 0 → 되돌림 (svms_submit 수정 단독 효과)", stages('R51'))
+mkrow('R52', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
+A.execute("UPDATE dock_procure SET svms_submit='(0/1' WHERE req_no='R52' AND vsl_nm='TEST VESSEL'")
+sync('R52', 'HQ Received')
+chk(stages('R52') == (1, 1, 0, 0),
+    '반쪽 괄호는 미지 형식 → 단계 유지(닫힘 쪽)', stages('R52'))
+
+print('# 7-1d) 🔴 하류 스냅샷(sub_quotes/att_files)은 되돌림을 막지 않는다 — 의도된 판정')
+#   올마이트 대안(하류 evidence 를 가드에 넣기)에 **반대**한 지점. 그 두 칸은 폴러 payload 3상태 계약이
+#   정본이고 저장값은 지난 sync 스냅샷일 뿐 → 가드에 넣으면 회수건이 옛 스냅샷 때문에 영구 잠긴다.
+#   라이브 실측(161행): 제출0/NULL + 하류데이터 + 발주흔적없음 조합 = 0행.
+#   여기서는 **현재 동작을 못박아** 나중에 조용히 바뀌는 걸 막는다.
+for _rq, _sql, _why in (
+        ('R53', "sub_quotes='[{\"nm\":\"V\",\"amt\":1}]'", 'sub_quotes 스냅샷만 있음'),
+        ('R54', "att_files='[{\"nm\":\"a.pdf\"}]'", 'att_files 스냅샷만 있음'),
+        ('R55', "sub_quotes='[{\"nm\":\"V\",\"amt\":1}]', att_files='[{\"nm\":\"a.pdf\"}]'", '둘 다 있음')):
+    mkrow(_rq, stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
+    A.execute("UPDATE dock_procure SET svms_submit='0/1', %s "
+              "WHERE req_no=? AND vsl_nm='TEST VESSEL'" % _sql, (_rq,))
+    sync(_rq, 'HQ Received')
+    chk(stages(_rq) == (0, 0, 0, 0), f'{_why} → 되돌림 (가드 대상 아님)', stages(_rq))
+    _r = row_of(_rq)
+    chk(_r['sub_quotes'] is not None or 'sub_quotes' not in _sql,
+        f'{_why} — quotes 키 미전송이므로 스냅샷 자체는 보존', _r['sub_quotes'])
+    chk(_r['att_files'] is not None or 'att_files' not in _sql,
+        f'{_why} — files 키 미전송이므로 첨부 스냅샷 보존', _r['att_files'])
+
+print("# 7-1e) 'VSL Approved' 가 정상 진행 행을 되돌리지 않는다 (신규·stale 시나리오)")
+#   ① 처음부터 VSL Approved 로 들어오는 신규 행 = 단계 0 이라 되돌릴 것이 없다(no-op).
+mkrow('R56', stages_on=(0, 0, 0, 0), svms_status=None)
+sync('R56', 'VSL Approved')
+chk(stages('R56') == (0, 0, 0, 0), '신규 행은 no-op', stages('R56'))
+chk(row_of('R56')['svms_status'] == 'VSL Approved', '라벨은 채워짐', row_of('R56')['svms_status'])
+#   ② 발주완료 행에 stale VSL Approved 가 도착 = fail-closed 로 방어(유일한 안전선).
+mkrow('R57', stages_on=(1, 1, 1, 1), svms_status='HQ Ordered', quote_amt=999)
+sync('R57', 'VSL Approved')
+chk(stages('R57') == (1, 1, 1, 1), 'stale 라벨이 발주완료를 지우지 못한다', stages('R57'))
+chk(row_of('R57')['quote_amt'] == 999, '발주금액도 보존', row_of('R57')['quote_amt'])
+#   ③ 제출 있는 진행 행(제출수>0)도 방어.
+mkrow('R58', stages_on=(1, 1, 1, 0), svms_status='Submit')
+A.execute("UPDATE dock_procure SET svms_submit='2/4' WHERE req_no='R58' AND vsl_nm='TEST VESSEL'")
+sync('R58', 'VSL Approved')
+chk(stages('R58') == (1, 1, 1, 0), '제출 2건 진행 행도 유지', stages('R58'))
 
 print('# 7-2) 충돌 입력 — allowlist 라벨 + 발주근거(ordered_evidence=True) 동시')
 #   rank 는 라벨로 정하므로 rank0 이고, 발주근거 True 라도 발주완료로 승격되지 않는다.
@@ -269,6 +364,23 @@ mkdraft(rid45, 'TSTVME26073145', status='submitted')
 sync('R45', 'HQ Received', inq_no='TSTVME26073145')
 chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073145'",
             one=True)['status'] == 'submitted', '발주근거 보유 → 단계·이력 모두 유지')
+
+print('# 13-5) 🔴 이력 무효화도 제출수>0 기준을 쓴다 (2군데 가드 일관성)')
+#   갈래 ②(_had_post) 가드가 `svms_submit` 존재 여부를 보던 탓에 회수건 이력이 영구히 submitted 로 남았다.
+rid49 = mkrow('R49', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+              svms_req_no='TSTVME26073149')
+A.execute("UPDATE dock_procure SET svms_submit='(0/1)' WHERE req_no='R49' AND vsl_nm='TEST VESSEL'")
+mkdraft(rid49, 'TSTVME26073149', status='submitted')
+sync('R49', 'HQ Received', inq_no='TSTVME26073149')
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073149'",
+            one=True)['status'] == 'recalled', "제출 0 회수건 → 이력도 'recalled'")
+rid50 = mkrow('R50', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+              svms_req_no='TSTVME26073150')
+A.execute("UPDATE dock_procure SET svms_submit='(2/4)' WHERE req_no='R50' AND vsl_nm='TEST VESSEL'")
+mkdraft(rid50, 'TSTVME26073150', status='submitted')
+sync('R50', 'HQ Received', inq_no='TSTVME26073150')
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073150'",
+            one=True)['status'] == 'submitted', '제출 2건 보유 → 이력 유지(닫힘 쪽)')
 
 print('# 14) 이력 여러 건 / result 서식 / dry-run / 멱등 (올마이트 지적 갭)')
 rid46 = mkrow('R46', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
