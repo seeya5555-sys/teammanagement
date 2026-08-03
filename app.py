@@ -9242,14 +9242,69 @@ def api_ext_roster_sync_done():
 
 
 # ===== dock_procure 수동 SVMS 발주 새로고침(dock_sync 온디맨드 트리거) — roster-sync 패턴 =====
+def _dock_sync_flag_bump():
+    """dock_sync 온디맨드 트리거 flag 를 세우고 **실효 flag** 를 반환한다 — 단일 writer.
+
+    호출자 = ①'SVMS 발주 새로고침' 버튼 ②견적요청 성공 콜백(`api_ext_dock_inquiry_result`).
+    맥 watcher(launchd `ai.openclaw.dock-sync-watch`, 60s)가 `/api/ext/dock_procure/sync/pending`
+    (**flag>done 일 때만** flag 반환)을 폴링해 `dock_sync.sh --live` 를 1회 돌리고
+    `/api/ext/dock_procure/sync/done` 으로 flag+결과를 기록(=clear)한다. dock_sync 는 선박 전체를
+    다시 읽는 멱등 read-only 폴러라 flag 가 몇 번 세워져도 결과가 달라지지 않는다.
+
+    🔴 flag 는 **항상 전진**하고, `done` 보다도 **엄격히 크게** 만든다. 이유는 두 개의 조용한 유실:
+      · 같은 초에 done 이 이미 찍혀 있으면(버튼→sync→done 직후 견적요청 성공) `now == done` 이라
+        pending 이 false → 우리 요청이 아무 sync 도 못 일으키고 사라진다.
+      · watcher 가 flag=T1 을 들고 sync 를 **이미 시작한 뒤** 우리 write 가 들어오면, 그 sync 는
+        우리 변경 이전의 SVMS 를 읽고 done=T1 로 flag 를 닫는다. 그래서 pending 인 flag 를 보고
+        "이미 예약됨"으로 재사용하지 않고 새 시각으로 밀어 **우리 write 이후에 시작하는 sync** 를
+        보장한다. 최악의 대가 = 멱등 폴러 1회 더 실행(read-only).
+
+    🔴 write 는 **단일 SQL 의 조건부 upsert**(`WHERE excluded.v > api_settings.v`)로 한다 — 읽고
+       계산한 뒤 무조건 덮으면, 두 호출이 겹쳤을 때 늦게 도착한 쪽이 **더 작은 값으로 후퇴**시켜
+       앞선 요청이 조용히 유실될 수 있다(올마이트 지적 수용). 반환값은 upsert 후 실제 저장값이다.
+    🔴 파싱 불가한 쓰레기값(수동 DB 편집 등)은 **비교 대상에서 지운다.** 남겨두면
+       ①`max()` 가 'zzz' 같은 lexical high 값을 floor 로 골라 `+1 second` 가 NULL → now 폴백 →
+         `flag > done` 보장이 깨지고, ②조건부 upsert 도 `'2026-…' > 'zzz'` 가 false 라 영구 잠긴다.
+       특히 `dock_sync_done` 이 쓰레기면 pending 판정(`done < flag`)이 영구 false 라 **버튼·자동
+       반영 둘 다 죽는다** — 그래서 경고 로그를 남기고 지운다(done 은 기계가 쓰는 북마크일 뿐,
+       watcher 는 자기 `.state/sync_last_flag` 로 중복을 막으므로 지워도 재실행 1회가 최대 대가).
+
+    ⚠️ 반영 지연 가능성은 남는다: 폴러가 읽는 `SP_GET_INQ_LIST` 가 write 직후 즉시 최신인지는
+       미실측이다(워커의 성공 판정 readback 은 `SP_GET_REP_INFO`/부품그리드로 **다른 프로시저**).
+       여기서 "미반영이면 다시 flag" 같은 재시도 루프는 **일부러 넣지 않았다** — 종료조건이
+       SVMS 응답에 달려 무한 재트리거가 될 수 있다. 늦으면 기존 1시간 폴러가 결국 채운다
+       (= 최악이 이 수정 전 상태와 동일, 회귀 없음).
+    """
+    _ensure_api_table()
+    now = query("SELECT datetime('now','localtime') t", one=True)['t']
+    vals = {}
+    for k in ('dock_sync_flag', 'dock_sync_done'):
+        r = query("SELECT v FROM api_settings WHERE k=?", (k,), one=True)
+        v = (r['v'] if r else None) or ''
+        if v:
+            ok = query("SELECT datetime(?) t", (v,), one=True)
+            if not (ok and ok['t']):                       # sqlite 가 시각으로 못 읽는 값 = 쓰레기
+                app.logger.warning('api_settings.%s 가 시각이 아님(%r) — 비교 대상에서 제거', k, v[:40])
+                execute("DELETE FROM api_settings WHERE k=?", (k,))
+                v = ''
+        vals[k] = v
+    # 같은 'YYYY-MM-DD HH:MM:SS' 포맷이라 문자열 비교 = 시각 비교(기존 pending 판정과 동일 방식)
+    floor = max(vals['dock_sync_flag'], vals['dock_sync_done'])
+    flag = now
+    if floor >= now:
+        nxt = query("SELECT datetime(?, '+1 second') t", (floor,), one=True)
+        flag = (nxt['t'] if nxt else None) or now
+    execute("INSERT INTO api_settings (k, v) VALUES ('dock_sync_flag', ?) "
+            "ON CONFLICT(k) DO UPDATE SET v=excluded.v WHERE excluded.v > api_settings.v", (flag,))
+    eff = query("SELECT v FROM api_settings WHERE k='dock_sync_flag'", one=True)
+    return ((eff['v'] if eff else None) or flag)          # 경합 시 더 큰 쪽이 이긴 실효 flag
+
+
 @app.route('/api/dock_procure/sync/trigger', methods=['POST'])
 @login_required
 def api_dockproc_sync_trigger():
     """'SVMS 발주 새로고침' 버튼 — 시각 flag. 맥 dock-sync watcher(~1분 폴링)가 감지→dock_sync.sh --live→done."""
-    _ensure_api_table()
-    now = query("SELECT datetime('now','localtime') t", one=True)['t']
-    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('dock_sync_flag', ?)", (now,))
-    return jsonify({'ok': True, 'flagged_at': now})
+    return jsonify({'ok': True, 'flagged_at': _dock_sync_flag_bump()})
 
 
 @app.route('/api/dock_procure/sync/status')
@@ -9262,7 +9317,16 @@ def api_dockproc_sync_status():
     dr = query("SELECT v FROM api_settings WHERE k='dock_sync_result'", one=True)
     flag = fr['v'] if fr else None
     done = dn['v'] if dn else None
-    return jsonify({'pending': bool(flag) and (not done or done < flag),
+    pend = bool(flag) and (not done or done < flag)
+    # `stale` = pending 인데 5분 넘게 안 닫힌 상태 = 맥 watcher 정지·sync 실패 의심.
+    # 🔴 이 필드가 필요해진 이유: 견적요청 성공이 flag 를 세우게 되면서 **형이 버튼을 누르지
+    #    않아도** pending 이 뜬다. watcher 가 죽어 있으면 버튼이 영구 비활성으로 잠겨 수동
+    #    새로고침 수단까지 사라진다(올마이트 지적 수용) → stale 이면 UI 가 버튼을 다시 열어준다.
+    stale = False
+    if pend:
+        lim = query("SELECT datetime('now','localtime','-5 minutes') t", one=True)['t']
+        stale = flag < lim
+    return jsonify({'pending': pend, 'stale': stale,
                     'flagged_at': flag, 'done_at': done, 'last_result': (dr['v'] if dr else None)})
 
 
@@ -15225,6 +15289,15 @@ def api_ext_dock_inquiry_result(did):
             execute("UPDATE dock_procure SET stg_quote=1, stg_vendor=1, svms_status='Quotation Inquiry', "
                     "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') "
                     "WHERE id=?", (dr['rid'],))
+        # 표시칸 `svms_submit`(제출수/요청수)·`svms_req_no`(INQ_NO)·SVMS 실단계 라벨은 위 낙관적
+        # UPDATE 가 못 채운다 — **폴러(dock_sync)만** 채우는 칸이다. 자동 폴러는 1시간 간격이라
+        # 견적요청 성공 후 최대 1시간 동안 "0/N 없음 · Quotation Inquiry 링크 없음"이 보였다
+        # (2026-08-04 형 실관측, S14/BGBBES2607B41). 기존 온디맨드 트리거 flag 를 재사용해
+        # ~1분 안에 채워지게 한다(새 인프라·새 스케줄러 0개). 실패해도 결과기록은 유지(격리).
+        try:
+            _dock_sync_flag_bump()
+        except Exception:
+            app.logger.warning('dock_sync flag bump 실패(무시) did=%s', did, exc_info=True)
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 

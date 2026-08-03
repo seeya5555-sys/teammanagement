@@ -1287,7 +1287,11 @@
     let poll=null;
     async function refreshStatus(){
       try{ const r=await fetch('/api/dock_procure/sync/status'); const j=await r.json();
-        if(j.pending){ btn.disabled=true; stat.textContent='SVMS 당겨오는 중…';
+        if(j.pending){
+          // 견적요청 성공도 flag를 세우므로(자동 반영) 안 눌러도 pending이 뜬다.
+          // stale=5분+ 미완 → watcher 정지 의심: 버튼을 다시 열어 수동수단을 남긴다.
+          btn.disabled=!!j.pending && !j.stale;
+          stat.textContent = j.stale ? 'SVMS 반영 지연 — 다시 눌러보세요' : 'SVMS 당겨오는 중…';
           if(!poll) poll=setInterval(refreshStatus, 5000);   // 로드시 이미 pending이면 폴링 시작
         }
         else{ btn.disabled=false;
