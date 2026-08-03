@@ -296,8 +296,18 @@
   // 벤더 제출견적 스냅샷(sub_quotes) — 서버가 JSON 문자열로 준다. 깨진 값이 화면 전체를 죽이지 않게 방어.
   const quotesOf = l => { try{ const a=JSON.parse(l.sub_quotes||'[]');
     return Array.isArray(a)?a.filter(q=>q&&typeof q==='object'):[] }catch(e){ return [] } };
-  const quoteTip = q => `${q.nm||'업체'} · ${q.amt!=null?fmtAmt(q.amt)+' '+(q.cur||''):'금액 미제출'}`
-                      + ((q.usd!=null && (q.cur||'USD')!=='USD')?` (≈USD ${fmtAmt(q.usd)})`:'')
+  // 화면에 쓰는 제출견적 금액 = **D/C 적용 후**(final_amt). D/C 가 안 붙은 건·구버전 스냅샷은
+  // final_amt 가 없으므로 제출원금(amt)을 그대로 쓴다. USD 도 같은 기준으로 짝을 맞춘다
+  // (final 을 쓰면서 D/C 전 USD 를 붙이면 2026-08-03 상신모달과 같은 짝 안 맞는 표시가 됨).
+  const qShown    = q => (q.final_amt!=null ? q.final_amt : q.amt);
+  const qShownUsd = q => (q.final_amt!=null ? q.final_usd : q.usd);
+  // 부동소수 미세차로 'D/C후' 배지가 붙으면 화면엔 같은 숫자 옆에 배지만 뜬다 — 표시 자릿수(2자리)
+  // 기준으로 실제 달라 보일 때만 배지를 붙인다.
+  const qIsDC     = q => (q.final_amt!=null && q.amt!=null
+                          && Math.round(Number(q.final_amt)*100) !== Math.round(Number(q.amt)*100));
+  const quoteTip = q => `${q.nm||'업체'} · ${qShown(q)!=null?fmtAmt(qShown(q))+' '+(q.cur||''):'금액 미제출'}`
+                      + ((qShownUsd(q)!=null && (q.cur||'USD')!=='USD')?` (≈USD ${fmtAmt(qShownUsd(q))})`:'')
+                      + (qIsDC(q)?`\n  └ 제출 ${fmtAmt(q.amt)} ${q.cur||''}${q.dc_rate!=null?` · D/C ${fmtAmt(q.dc_rate)}%`:''} → D/C후`:'')
                       + (q.att?` · 첨부 ${q.att}`:'') + ((q.st||'').toLowerCase()==='ordered'?' · 발주':'');
   // 견적서 첨부 목록(att_files) — 배열 위치가 서버 preview cache 의 idx 다(서버가 정렬을 못박음).
   const filesOf = l => { try{ const a=JSON.parse(l.att_files||'[]');
@@ -557,17 +567,21 @@
         if(n>=1 && statusOf(l)[0]==='sent') cls=' subhi';
       }
       // 벤더가 제출한 견적액(SVMS VNDR_QUO_AMT). 발주금액 칸과 별개 — 여기 숫자는 아직 발주 아님.
-      const qs = quotesOf(l), priced = qs.filter(q=>q.amt!=null);
+      const qs = quotesOf(l), priced = qs.filter(q=>qShown(q)!=null);
       if(priced.length){
         // 어느 견적이 '최저'인지는 서버가 정한다(best 플래그) — 통화 혼재 비교 규칙을 테스트되는
         // 파이썬 층에 두기 위함. best 가 없으면 = 비교 불가(통화 섞였고 환산액 없음) → 건수만 보여준다.
         const tip = qs.map(quoteTip).join('\n');
-        const best = qs.find(q=>q.best);
+        // best 가 있어도 그 건의 표시금액이 없으면(비정상 스냅샷) 숫자를 만들어내지 않고 건수로 떨어진다.
+        const best = qs.find(q=>q.best && qShown(q)!=null);
         const body = best
-          ? `${esc(fmtAmt(best.amt))} ${esc(best.cur||'')}`
-            + (priced.length>1?` <span style="font-weight:400">최저·${priced.length}</span>`:'')
+          ? `${esc(fmtAmt(qShown(best)))} ${esc(best.cur||'')}`
+            + (qIsDC(best)?` <span style="font-weight:400">D/C후</span>`:'')
+            // '최저'는 서버가 **D/C 전 제출원금**으로 고른 것 — D/C 후 금액 옆에 그냥 '최저'라 쓰면
+            // 표시값 기준 최저로 오해된다(업체별 D/C 조건이 다르면 순위가 뒤집힐 수 있음).
+            + (priced.length>1?` <span style="font-weight:400">제출최저·${priced.length}</span>`:'')
           : `제출 ${priced.length}건 <span style="font-weight:400">통화상이</span>`;
-        extra += `<div class="dp-sub q" title="제출견적 (발주금액 아님)&#10;${esc(tip)}">${body}</div>`;
+        extra += `<div class="dp-sub q" title="제출견적 (발주금액 아님) · 금액은 D/C 후, '제출최저'는 D/C 전 제출원금 기준&#10;${esc(tip)}">${body}</div>`;
       }
       // 벤더가 올린 견적서 원본. 서버 캐시에 실제로 있는 것만 링크로 — 없는 건 '수집 대기'로 구분해서
       // 보여준다(링크가 404 나는 것보다 낫고, 형이 다음 동기화를 기다리면 된다는 걸 알 수 있음).
