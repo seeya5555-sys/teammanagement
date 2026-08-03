@@ -14302,6 +14302,16 @@ def api_ext_dockproc_sync():
         #    영영 갱신되지 않는다. 실사고: BGBBME26073108 은 SVMS 가 'Submit' 인데 DB 는 하루 넘게
         #    'Quotation Inquiry' 였음. 표시만의 문제가 아니라 **재컨펌 게이트가 이 라벨을 읽으므로**,
         #    SVMS 에서 반려돼 라벨이 되돌아가도 sync 가 못 써서 게이트가 영구 잠기는 경로가 됨.
+        # 관측 전용(동작 변경 없음) — 구매행에 **다른** INQ_NO 가 들어오면 아래 `COALESCE` 가 그걸 버린다.
+        #   버리는 건 의도다: 한 REQ 에 INQ 가 여럿 공존하는 게 실측됐고(2026-08-04 B61 껍데기 + B62 정상)
+        #   덮으면 Phase ③ 상신이 쓰는 rep_cd 가 sync 마다 흔들린다(돈경로 키 flapping).
+        #   다만 '회수→재요청' 이 sync 사이에 다 끝나면 죽은 번호가 남는 잔여 창이라, 실제로 일어나는지
+        #   **로그로만** 남긴다. 실측되면 그때 교체 규칙(제출이력·발주흔적 fail-closed 포함)을 설계한다.
+        if ((inq or '').strip() and (row['svms_req_no'] or '').strip()
+                and inq.strip() != row['svms_req_no'].strip()
+                and _DOCK_INQ_DOC.get((row['cat_code'] or '').strip().upper()) == 'PCRQ'):
+            app.logger.warning('dock sync: 구매 INQ_NO 불일치(유지) rid=%s 보관=%s 수신=%s 라벨=%s',
+                               rid, row['svms_req_no'], inq, status)
         before = (row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order'], row['remark'],
                   row['svms_req_no'], row['svms_status'], row['svms_submit'],
                   row['quote_amt'], row['quote_cur'], row['quote_src'],
@@ -14354,8 +14364,9 @@ def api_ext_dockproc_sync():
                 #    ⚠️2026-08-04 정정: `svms_submit` 존재 여부 → **제출수>0** 으로 좁힌다(위 `pre_inq`
                 #      가드와 동일 사유·동일 함수). `"0/0"`·`"0/1"` 은 회수건이 항상 들고 있는 값이라
                 #      존재 여부로 보면 갈래 ② 전이가 영구히 죽는다.
-                if _had_post and (row['stg_order'] or row['quote_amt'] is not None
-                                  or _dockproc_submit_has_quotes(row['svms_submit'])):
+                _no_odr = not (row['stg_order'] or row['quote_amt'] is not None
+                               or _dockproc_submit_has_quotes(row['svms_submit']))
+                if _had_post and not _no_odr:
                     _had_post = False
                 _recalled = ((status or '').strip().upper() in _pre_lbls
                              and ((  # ① 단계가 통째로 되돌아감 (수리 'HQ Received' 실측 경로)
@@ -14377,6 +14388,35 @@ def api_ext_dockproc_sync():
                             "|| ? || datetime('now','localtime') || ')' "
                             "WHERE rep_cd=? AND status IN ('submitted','failed')",
                             ('SVMS 회수로 무효화(%s, ' % status, _rep))
+                    # 🔴 구매 회수는 SVMS 에서 **INQ_NO 자체가 삭제**된다(2026-08-04 실측: `SP_SET_INQ_RTN`
+                    #    으로 BGBBES2607B41 회수 → INQ 목록 12→10행). 그런데 `svms_req_no` 는 위 본문
+                    #    UPDATE 가 `COALESCE(svms_req_no,?)` 라 **한 번 박히면 영영 안 덮인다** → 죽은
+                    #    번호를 계속 들고 있고, 재요청으로 새 INQ_NO 가 나와도 그 자리에 못 들어온다.
+                    #    Phase ③ 상신(`api_dock_submit_*`)이 이 칸을 rep_cd 로 그대로 쓰므로
+                    #    **삭제된 문서번호로 상신이 나가는 경로**다 → 회수 시점에 비운다.
+                    #    비우면 폴러가 다음 sync 에서 현재 INQ_NO 를 COALESCE 로 정상 적재한다.
+                    #    ⚠️구매(PCRQ)만. 수리의 `svms_req_no` 는 REP_CD = 견적요청 키 그 자체라 비우면
+                    #      버튼이 죽는다(fail-open). 문서종류 미상('')·페인트도 손대지 않는다.
+                    #    ⚠️이번 sync 가 INQ_NO 를 실어왔으면(=SVMS 에 아직 살아있음) 건드리지 않는다.
+                    #    ⚠️발주 흔적(`_no_odr`)은 **중복 방어**다 — 지금은 상류에서 이미 걸러진다
+                    #      (rank0 라벨은 위 `pre_inq` 가드가 link_only 로 빼고, rank1 갈래 ② 는
+                    #      `_had_post` 가 꺼진다). 그래서 mutation 으로 지워도 red 가 안 난다.
+                    #      그래도 남긴다: 이 칸이 Phase ③ 상신 rep_cd 라 돈경로에 붙어 있고,
+                    #      상류 가드 2개가 바뀌면 조용히 열리는 자리이기 때문.
+                    #      닫힘 쪽 실패 = 낡은 번호가 남는 것뿐이고 사람이 '연결'로 고칠 수 있다.
+                    #    ⚠️남는 창(미수정, 의도): 회수와 재요청 사이에 sync 가 **한 번도** 안 돌면 이
+                    #      전이 자체가 안 일어나 옛 번호가 남는다. 실무상 회수 후 버튼 게이트가
+                    #      직전 라벨로 잠겨 있어 재요청 전에 sync 가 먼저 도는 게 정상 경로다.
+                    if (_inq_doc == 'PCRQ' and _no_odr
+                            and not (inq or '').strip() and (row['svms_req_no'] or '').strip()):
+                        execute("UPDATE dock_procure SET svms_req_no=NULL, "
+                                "updated_at=datetime('now','localtime') WHERE id=?", (rid,))
+                        app.logger.info('dock sync: 회수로 svms_req_no 비움 rid=%s old=%s label=%s',
+                                        rid, row['svms_req_no'], status)
+                        # 응답에도 남긴다 — 본문 UPDATE 와 별개 write 라 안 적으면 `changes` 만 보고는
+                        # 번호가 사라진 걸 알 수 없다(올마이트 지적). `changes[-1]` = 바로 위에서
+                        # 이 행이 append 한 항목이다(같은 반복, 사이에 다른 append 없음).
+                        changes[-1]['req_no_cleared'] = row['svms_req_no']
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses,

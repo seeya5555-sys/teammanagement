@@ -578,6 +578,156 @@ if lr.status_code == 200:
     p9 = {x['req_no']: x for x in (lr2.get_json() or {}).get('lines', [])}.get('P9') or {}
     chk((p9.get('inq_key') or '') == '', '문서종류 없는 행은 키가 비어 버튼이 닫힌다', p9.get('inq_key'))
 
+print('# 16) 🔴 회수 후 죽은 INQ_NO(`svms_req_no`) 가 남아 새 번호를 막던 갭 (2026-08-04)')
+#   구매 회수는 SVMS 에서 INQ_NO 자체를 삭제한다(`SP_SET_INQ_RTN`, B41 실측). 그런데 본문 UPDATE 가
+#   `COALESCE(svms_req_no,?)` 라 한 번 박힌 값은 영영 안 덮여서 ①죽은 번호를 계속 표시하고
+#   ②재요청으로 나온 새 INQ_NO 가 그 자리에 못 들어오며 ③Phase ③ 상신이 그 죽은 번호를 rep_cd 로 쓴다.
+
+
+def mkpc2(req_no, stages_on, svms_status, pc_key, inq_no, **kw):
+    """구매 행 — 요청키(`svms_pc_req_no`)와 발급된 INQ_NO(`svms_req_no`)를 **둘 다** 채운다."""
+    rid = mkpc(req_no, stages_on, svms_status, pc_key)
+    A.execute("UPDATE dock_procure SET svms_req_no=?, svms_submit=? WHERE id=?",
+              (inq_no, kw.get('svms_submit', '0/1'), rid))
+    if kw.get('quote_amt') is not None:
+        A.execute("UPDATE dock_procure SET quote_amt=? WHERE id=?", (kw['quote_amt'], rid))
+    return rid
+
+
+rid_s30 = mkpc2('S30', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607C1', 'TSTVES2607C11')
+sync('S30', 'HQ Confirmed')                                     # 회수 = INQ_NO 사라진 상태로 돌아옴
+r30 = row_of('S30')
+chk((r30['svms_req_no'] or '') == '', '구매 회수 → 죽은 INQ_NO 비움', r30['svms_req_no'])
+chk(r30['svms_pc_req_no'] == 'TSTVES2607C1',
+    '요청키(`svms_pc_req_no`)는 보존 — 이게 없으면 재요청 버튼이 죽는다', r30['svms_pc_req_no'])
+chk(A._dockproc_inq_target(row_of('S30')) == ('PCRQ', 'TSTVES2607C1'),
+    '견적요청 대상 판정 그대로', A._dockproc_inq_target(row_of('S30')))
+
+print('# 16-1) 🔴 이 수정의 목적 — 재요청으로 나온 **새 INQ_NO** 가 실제로 적재된다')
+sync('S30', 'Quotation Inquiry', inq_no='TSTVES2607C12')        # 재요청 → SVMS 가 새 번호 발급
+chk(row_of('S30')['svms_req_no'] == 'TSTVES2607C12',
+    '비워진 칸에 새 번호가 COALESCE 로 들어옴', row_of('S30')['svms_req_no'])
+
+print('# 16-1a) 대조군 — 안 비우면 새 번호가 들어오지 못한다(COALESCE 특성 자체를 못박음)')
+rid_s31 = mkpc2('S31', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607C2', 'TSTVES2607C21')
+sync('S31', 'Quotation Inquiry', inq_no='TSTVES2607C22')        # 회수 없이 번호만 바뀐 척
+chk(row_of('S31')['svms_req_no'] == 'TSTVES2607C21',
+    '회수 전이가 없으면 옛 번호 유지(=이 갭의 원인)', row_of('S31')['svms_req_no'])
+
+print('# 16-2) 수리는 절대 안 비운다 — `svms_req_no` 가 REP_CD = 견적요청 키 그 자체')
+mkrow('R40', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+      svms_req_no='TSTVME2607D11', cat_code='R')
+sync('R40', 'HQ Received')                                      # 수리 회수 실측 경로(단계 통째 되돌림)
+chk(stages('R40') == (0, 0, 0, 0), '수리 회수 전이는 종전대로 동작', stages('R40'))
+chk(row_of('R40')['svms_req_no'] == 'TSTVME2607D11',
+    '수리 키는 보존(비우면 재요청 버튼이 죽는다)', row_of('R40')['svms_req_no'])
+chk(A._dock_inq_blocked(row_of('R40')) is None, '수리 재요청 게이트도 열려 있다',
+    A._dock_inq_blocked(row_of('R40')))
+
+print('# 16-3) 이번 sync 가 INQ_NO 를 실어오면(= SVMS 에 살아있음) 안 비운다')
+mkpc2('S32', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607C3', 'TSTVES2607C31')
+sync('S32', 'HQ Confirmed', inq_no='TSTVES2607C31')
+chk(row_of('S32')['svms_req_no'] == 'TSTVES2607C31',
+    'SVMS 가 아직 번호를 주면 손대지 않음', row_of('S32')['svms_req_no'])
+
+print('# 16-4) 🔴 fail-closed — 발주 흔적이 있으면 비우지 않는다')
+for _tag, _kw, _why in (
+        ('S33', {'quote_amt': 1234.0}, '발주금액 보유'),
+        ('S34', {'svms_submit': '3/4'}, '제출수>0'),
+        ('S35', {'svms_submit': '2026-07-31'}, '미지 형식(fail-closed)')):
+    mkpc2(_tag, (1, 1, 1, 0), 'Quotation Inquiry', f'TSTVES2607{_tag}', f'TSTVES2607{_tag}1', **_kw)
+    sync(_tag, 'HQ Confirmed')
+    chk(row_of(_tag)['svms_req_no'] == f'TSTVES2607{_tag}1', f'{_why} → 번호 보존')
+
+print('# 16-5) 발주완료 행은 회수 전이 자체가 없다(중복 방어 확인)')
+#   ⚠️단계는 라벨 rank 로 다시 계산되므로 (1,0,0,0) 이 되는 게 **정상**이다(회수 전이와 무관한 종전 동작).
+#     여기서 확인할 것은 ①번호 보존 ②견적요청 이력이 `recalled` 로 무효화되지 않음 두 가지다.
+rid_s36 = mkpc2('S36', (1, 1, 1, 1), 'Ordered', 'TSTVES2607C6', 'TSTVES2607C61', svms_submit=None)
+mkdraft(rid_s36, 'TSTVES2607C6', status='submitted')
+sync('S36', 'HQ Confirmed')
+chk(row_of('S36')['svms_req_no'] == 'TSTVES2607C61', '발주완료 → 번호 보존',
+    row_of('S36')['svms_req_no'])
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607C6'",
+            one=True)['status'] == 'submitted', '견적요청 이력도 보존(fail-closed)')
+
+print("# 16-6) 문서종류 미상(페인트 P)은 손대지 않는다")
+_pid = mkrow('P10', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+             svms_req_no='TSTVPA2607E11', cat_code='P')
+sync('P10', 'HQ Received')
+chk(row_of('P10')['svms_req_no'] == 'TSTVPA2607E11',
+    '봉투 없는 종류는 비우지 않음', row_of('P10')['svms_req_no'])
+
+print('# 16-7) 🔴 실제 위험 차단 — 비운 뒤 Phase ③ 상신이 죽은 번호로 나가지 못한다')
+with c.session_transaction() as s:
+    s['user_id'] = 1
+    s['username'] = 'SS0094'
+    s['role'] = 'admin'
+rid_s37 = mkpc2('S37', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607C7', 'TSTVES2607C71')
+pv0 = c.get(f'/api/dock_submit/preview?rid={rid_s37}')
+chk(pv0.status_code == 200, '상신 미리보기 200(회수 전)', pv0.status_code)
+chk((pv0.get_json() or {}).get('rep_cd') == 'TSTVES2607C71',
+    '회수 전에는 그 번호로 상신 대상이 잡힌다', (pv0.get_json() or {}).get('rep_cd'))
+sync('S37', 'HQ Confirmed')
+pv1 = c.get(f'/api/dock_submit/preview?rid={rid_s37}')
+j37 = pv1.get_json() or {}
+chk(j37.get('rep_cd') is None, '회수 후에는 상신 대상 번호가 없다', j37.get('rep_cd'))
+chk((j37.get('blocked') or '').startswith('SVMS 문서번호'),
+    '삭제된 번호로 상신하는 대신 차단된다', j37.get('blocked'))
+cr = c.post('/api/dock_submit/drafts', json={'rid': rid_s37, 'vndr_cd': 'A1MM3', 'app_no': 'AP01'})
+chk(cr.status_code == 400, '상신 생성도 400 으로 막힌다', cr.status_code)
+
+print('# 16-8) 멱등 — 같은 sync 를 반복해도 값이 흔들리지 않는다')
+#   S30 은 16-1 에서 새 번호(C12)를 받은 상태. 회수 라벨을 두 번 더 보내 최종값을 **정확히** 못박는다.
+sync('S30', 'HQ Confirmed')                                     # 1차: C12 가 죽은 번호가 되어 비워짐
+chk((row_of('S30')['svms_req_no'] or '') == '', '1차 회수 sync → 비움', row_of('S30')['svms_req_no'])
+sync('S30', 'HQ Confirmed')                                     # 2차: 비울 것이 없다
+chk((row_of('S30')['svms_req_no'] or '') == '', '2차도 동일(멱등)', row_of('S30')['svms_req_no'])
+
+print('# 16-9) 🔴 dry-run 은 아무것도 안 지운다')
+mkpc2('S38', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607C8', 'TSTVES2607C81')
+it = {'vsl_cd': 'TSTV', 'subject': '[DOCK][TSTV S38]subject', 'status': 'HQ Confirmed',
+      'inq_no': None, 'amt': None, 'cur': None, 'vendor': None}
+jd = c.post('/api/ext/dock_procure/sync', json={'items': [it], 'dry': True}, headers=HDR).get_json()
+chk(row_of('S38')['svms_req_no'] == 'TSTVES2607C81', 'dry-run 후에도 번호 그대로',
+    row_of('S38')['svms_req_no'])
+chk(jd['dry'] is True and jd['updated'] == 1, 'dry 응답 자체는 변경 예정으로 잡힘',
+    (jd['dry'], jd['updated']))
+jw = sync('S38', 'HQ Confirmed')                                # 진짜로 돌리면 비워진다
+chk((row_of('S38')['svms_req_no'] or '') == '', '실행하면 비워짐', row_of('S38')['svms_req_no'])
+_ch = [x for x in jw['changes'] if x['req_no'] == 'S38']
+chk(len(_ch) == 1 and _ch[0].get('req_no_cleared') == 'TSTVES2607C81',
+    '응답 changes 에 지운 번호가 남는다(별개 write 가시화)', _ch)
+
+print('# 16-10) 오판(사실은 살아있던 번호)이어도 다음 sync 가 스스로 복구한다')
+#   SVMS 응답 누락으로 INQ_NO 가 빠진 채 회수 라벨이 오면 비울 수 있다. 그래도 self-healing 이다 —
+#   번호가 살아있으면 다음 sync 가 그 번호를 실어오고, 빈 칸이므로 COALESCE 가 그대로 채운다.
+sync('S38', 'Quotation Inquiry', inq_no='TSTVES2607C81')
+chk(row_of('S38')['svms_req_no'] == 'TSTVES2607C81', '다음 sync 가 원래 번호를 되채움',
+    row_of('S38')['svms_req_no'])
+
+print('# 16-11) 다른 INQ_NO 가 들어와도 교체하지 않는다(설계 — 한 REQ 에 INQ 공존 실측)')
+#   덮으면 Phase ③ rep_cd 가 sync 마다 흔들린다. 대신 서버 로그 warning 으로 관측한다.
+import logging as _lg
+
+
+class _Cap(_lg.Handler):
+    def __init__(self):
+        super().__init__()
+        self.msgs = []
+
+    def emit(self, rec):
+        self.msgs.append(rec.getMessage())
+
+
+_cap = _Cap()
+A.app.logger.addHandler(_cap)
+sync('S38', 'Quotation Inquiry', inq_no='TSTVES2607C89')        # 같은 REQ 의 다른 INQ
+A.app.logger.removeHandler(_cap)
+chk(row_of('S38')['svms_req_no'] == 'TSTVES2607C81', '보관값 유지(교체 없음)',
+    row_of('S38')['svms_req_no'])
+chk(any('구매 INQ_NO 불일치' in m and 'TSTVES2607C89' in m for m in _cap.msgs),
+    '불일치는 로그로 관측된다', _cap.msgs[-3:])
+
 print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')
