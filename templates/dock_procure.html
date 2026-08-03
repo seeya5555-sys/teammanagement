@@ -290,7 +290,7 @@
 <div class="dp-ov" id="iq-ov">
   <div class="dp-mod" role="dialog" aria-modal="true" aria-labelledby="iq-ttl">
     <div class="dp-mh">
-      <h3 id="iq-ttl"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>견적요청 — SVMS Confirm + 벤더 제출</h3>
+      <h3 id="iq-ttl"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>견적요청 — SVMS 벤더 제출</h3>
       <div class="sub" id="iq-sub">—</div>
     </div>
     <div class="dp-mb" id="iq-body"></div>
@@ -895,9 +895,13 @@
       return {ok:true, d:bad, when:'', note:`SVMS 헤더가 이미 견적요청 이후(${l.svms_status||''}) — 우리 큐 시도는 pre-read 에서 중단됨`};
     return {ok:false, d:bad, when:sbmWhen(bad.done_at), note:''};
   }
-  // 수리(R) + SVMS 연결됨 + 벤더제출 전 행에만 — 진행중/결과는 색으로 드러낸다.
+  // 수리(MARP) + 구매(PCRQ) + SVMS 연결됨 + 벤더제출 전 행에만 — 진행중/결과는 색으로 드러낸다.
+  // 🔴 종류·키 판정을 화면이 다시 하지 않는다 — 서버 `_dockproc_inq_target()` 이 내려준 `inq_key`
+  //    유무만 본다. 화면에 `cat_code==='R'`·`svms_req_no` 를 하드코딩하면 (a) 구매가 영구히 안 열리고
+  //    (b) 구매의 `svms_req_no` 는 견적요청 **후** 발급되는 INQ_NO 라서 엉뚱한 번호로 요청이 나간다.
+  //    페인트(P)·기타(SY)는 서버가 `inq_doc=''` 로 내려주므로 여기서 자동으로 닫힌다.
   function iqBtn(l){
-    if(!IS_ADMIN || l.cat_code!=='R' || !l.svms_req_no) return '';
+    if(!IS_ADMIN || !l.inq_key) return '';
     const d = INQ[l.id], m = inqMark(l);
     if(!d && !m && (l.stg_vendor || l.stg_confirm || l.stg_order)) return '';
     const t = d ? `견적요청 ${d.status==='submitting'?'처리중':'승인됨 · [지금 전송] 대기'} — ${d.vndr_names||''}`
@@ -912,7 +916,8 @@
     return `<button class="dp-inq${cls}" data-id="${l.id}" title="${esc(t)}">${ic}</button>`;
   }
   function iqTag(l){
-    if(!IS_ADMIN || l.cat_code!=='R') return '';
+    // 태그는 `inq_doc`(종류) 기준 — 키가 빠진 뒤에도 지난 요청 이력은 계속 보여야 하므로 `inq_key` 아님.
+    if(!IS_ADMIN || !l.inq_doc) return '';
     const m = inqMark(l);
     if(!m) return '';
     const f = m.d;
@@ -1028,10 +1033,22 @@
       return;
     }
     INQ_PICK = []; INQ_ROWS = []; INQ_NM = {};
-    const needCnf = !/confirm/i.test(String(pv.svms_status||''));
+    // 🔴 Confirm(AP→RC) 은 **수리(MARP) 전용** 단계다. 구매(PCRQ)는 STATUS='C' 인 건만 열리고 워커가
+    //    write 1회(견적요청)만 보낸다 ⇒ 구매에 'Confirm 이 먼저 실행됩니다' 라고 쓰면 형에게 거짓말이 된다.
+    //    종류 판정은 라벨 문자열이 아니라 `doc_type` 으로 한다 — 'HQ Confirmed' 에 confirm 이 들어가서
+    //    지금까지 우연히 맞았을 뿐이고, SVMS 가 라벨을 바꾸면 조용히 거짓 안내로 뒤집힌다.
+    // ⚠️ 단, MARP 의 'Confirm 이 이미 됐는지' 판정은 **여전히 라벨 문자열 추론**이다(표시 전용 힌트,
+    //    실제 판정은 워커 pre-read 가 정본). 이것까지 없애려면 서버가 needs_confirm 을 내려줘야 한다.
+    // ⚠️ 미지/누락 doc_type 은 어느 쪽도 단정하지 않고 문구를 비운다 — 앱(needsConfirm)과 같은 규칙.
+    //    없는 단계를 안내하거나 있는 단계를 숨기는 것보다 침묵이 안전하다.
+    const isMarp = pv.doc_type === 'MARP', isPcrq = pv.doc_type === 'PCRQ';
+    const needCnf = isMarp && !/confirm/i.test(String(pv.svms_status||''));
+    const cnfNote = isMarp
+      ? (needCnf ? ' · 전송 시 <b>Confirm</b> 이 먼저 실행됩니다' : ' · 이미 Confirm 됨 → 견적요청만 실행')
+      : isPcrq ? ' · 구매는 Confirm 단계 없이 <b>견적요청 1회</b>만 실행' : '';
     b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b>
         <div class="dp-qst" style="margin-top:6px">SVMS 상태 <b>${esc(pv.svms_status||'—')}</b> · 문서 ${esc(pv.rep_cd||'')}
-        ${needCnf?' · 전송 시 <b>Confirm</b> 이 먼저 실행됩니다':' · 이미 Confirm 됨 → 견적요청만 실행'}</div></div>${done}
+        ${cnfNote}</div></div>${done}
       <div class="dp-mlbl">업체 검색 (SVMS 실시간 · 최대 ${pv.max_vendor}개 선택) <span id="iq-cnt" style="font-weight:600;color:var(--text-tertiary)">0 / ${pv.max_vendor}</span></div>
       <div style="display:flex;gap:6px;margin-bottom:8px">
         <input id="iq-q" placeholder="업체명 일부 (예: 훌루)" style="flex:1">
