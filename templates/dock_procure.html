@@ -884,9 +884,12 @@
       });
     }catch(e){ INQ = {}; INQ_OK = {}; INQ_BAD = {}; }
   }
-  // 서버 `_DOCK_INQ_POST` 와 같은 판정 — 라벨이 견적요청 이후면 SVMS 에 이미 올라가 있다.
-  const inqPosted = l => ['quotation','submit','approval','progressing','confirmed','ordered']
-    .some(k => String(l.svms_status||'').toLowerCase().includes(k));
+  // 🔴 라벨이 '이미 견적요청 이후'인지는 **서버 `inq_posted` 만** 본다(2026-08-03 실사고로 교체).
+  //    화면이 `_DOCK_INQ_POST` 부분일치 리스트를 복사해 들고 있었더니 `_DOCK_INQ_PRE` 예외가 빠져
+  //    구매의 **요청 전** 라벨 'HQ Confirmed' 가 'confirmed' 에 걸렸고, 직전 실패 이력이
+  //    '견적요청됨 ✓' 으로 뒤집혀 회수·재적재된 행에 옛 정보가 계속 붙었다(BGBB S14).
+  //    구버전 서버(키 없음)에서는 `undefined` → false = 실패는 실패로 보이는 안전한 쪽.
+  const inqPosted = l => l.inq_posted === true;
   function inqMark(l){
     if(INQ[l.id]) return null;
     const ok = INQ_OK[l.id], bad = INQ_BAD[l.id];

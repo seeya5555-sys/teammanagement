@@ -322,6 +322,150 @@ else:
     chk(A._DOCK_SUBMIT_DONE + ('recalled',) == ('submitted', 'failed', 'canceled', 'recalled'),
         "인증 없이 호출 불가 → 종료상태 집합으로 대신 확인")
 
+print('# 15) 🔴 구매 회수 2차 실사고(형 제보 BGBB S14) — 라벨 재해석·키·전이조건 3중 갭')
+# 실측 상태: cat_code='S', svms_status='HQ Confirmed', svms_req_no=NULL,
+#   svms_pc_req_no='BGBBES2607B4', 단계 (1,0,0,0), draft(status='failed', rep_cd=pc키).
+# ① 화면이 'HQ Confirmed' 를 'confirmed' 부분일치로 '견적요청 이후'로 오판 → 실패 이력이 초록 ✓
+# ② 전이 조건이 '단계 전부 꺼짐' 이라 rank1(견적작성 잔존)인 구매 회수에 안 걸림
+# ③ 전이 SQL 의 키가 `svms_req_no` 뿐이라 구매 draft(rep_cd=REQ_NO)와 절대 안 맞음
+chk(A._dockproc_inq_posted('PCRQ', 'HQ Confirmed') is False,
+    "구매 'HQ Confirmed' = 견적요청 **전**(denylist 부분일치보다 _DOCK_INQ_PRE 우선)")
+chk(A._dockproc_inq_posted('PCRQ', '  hq confirmed ') is False, '대소문자·공백 정규화')
+chk(A._dockproc_inq_posted('PCRQ', 'VSL Approved') is False, "구매 'VSL Approved' = 요청 전")
+chk(A._dockproc_inq_posted('MARP', 'HQ Confirmed') is True,
+    "수리는 종전 denylist 그대로 — 회수 라벨 미실측이라 확장하지 않음")
+chk(A._dockproc_inq_posted('PCRQ', 'Quotation Inquiry') is True, "'Quotation Inquiry' = 요청 이후")
+chk(A._dockproc_inq_posted('PCRQ', 'Ordered') is True, "'Ordered' = 요청 이후")
+chk(A._dockproc_inq_posted('PCRQ', '') is False, '빈 라벨 = 판정 불가 → False(실패는 실패로 보인다)')
+chk(A._dockproc_inq_posted('PCRQ', None) is False, 'None 안전')
+chk(A._dockproc_inq_posted('', 'HQ Confirmed') is True,
+    '문서종류 미상은 예외 없음 = 종전 denylist (닫힘 쪽)')
+
+print('# 15-1) `_dock_inq_prior` 리팩터 동등성 — 구매는 재개방, 수리는 계속 차단')
+mkdraft(999, 'TSTVES2607PRIOR', status='submitted')
+chk(A._dock_inq_prior('PCRQ', 'TSTVES2607PRIOR', 'HQ Confirmed') is None,
+    "구매 'HQ Confirmed' + submitted 이력 → 재개방")
+chk(A._dock_inq_prior('PCRQ', 'TSTVES2607PRIOR', 'Quotation Inquiry') is not None,
+    "요청 이후 라벨이면 계속 차단")
+chk(A._dock_inq_prior('MARP', 'TSTVES2607PRIOR', 'HQ Confirmed') is not None,
+    "수리는 종전대로 차단(동등성)")
+A.execute("DELETE FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607PRIOR'")
+
+
+def mkpc(req_no, stages_on, svms_status, pc_key):
+    """구매(S) 행 — 견적요청 키는 `svms_pc_req_no` 다(`svms_req_no` 아님)."""
+    rid = mkrow(req_no, stages_on=stages_on, svms_status=svms_status, cat_code='S')
+    A.execute("UPDATE dock_procure SET svms_pc_req_no=? WHERE id=?", (pc_key, rid))
+    return rid
+
+
+print('# 15-2) 🔴 구매 회수(→HQ Confirmed, rank1) 가 견적요청 이력을 초기화한다')
+rid_s14 = mkpc('S14', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607B4')
+mkdraft(rid_s14, 'TSTVES2607B4', status='submitted')
+sync('S14', 'HQ Confirmed')
+chk(stages('S14') == (1, 0, 0, 0), '단계는 견적작성만 남는다(rank 1)', stages('S14'))
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607B4'",
+            one=True)['status'] == 'recalled',
+    '견적요청 이력 → recalled (구매 키 `svms_pc_req_no` 로 매칭)')
+chk(A._dock_inq_blocked(row_of('S14')) is None, '재요청 게이트도 열려 있다',
+    A._dock_inq_blocked(row_of('S14')))
+
+print("# 15-3) 형 지시 '초기화' — failed 이력도 같이 무효화한다(사유가 이미 낡았다)")
+rid_s15 = mkpc('S15', (1, 1, 0, 0), 'Quotation Inquiry', 'TSTVES2607B5')
+mkdraft(rid_s15, 'TSTVES2607B5', status='failed')
+sync('S15', 'HQ Confirmed')
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607B5'",
+            one=True)['status'] == 'recalled', 'failed → recalled')
+
+print('# 15-4) 과잉전이 방지 — 견적요청 이후 단계가 애초에 없던 행은 안 건드린다')
+rid_s16 = mkpc('S16', (1, 0, 0, 0), 'VSL Approved', 'TSTVES2607B6')
+mkdraft(rid_s16, 'TSTVES2607B6', status='failed')
+sync('S16', 'HQ Confirmed')
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607B6'",
+            one=True)['status'] == 'failed', '되돌림이 아니므로 이력 유지')
+
+print('# 15-5) 활성 큐(approved/submitting)는 절대 건드리지 않는다 — 워커 소유')
+rid_s17 = mkpc('S17', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607B7')
+mkdraft(rid_s17, 'TSTVES2607B7', status='approved')
+sync('S17', 'HQ Confirmed')
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607B7'",
+            one=True)['status'] == 'approved', '전송 대기 행은 그대로')
+
+print('# 15-6) 라벨 allowlist 는 문서종류별 — 수리에서 HQ Confirmed 는 전이 라벨이 아니다')
+rid_r49 = mkrow('R49', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+                svms_req_no='TSTVME26073149')
+mkdraft(rid_r49, 'TSTVME26073149', status='submitted')
+sync('R49', 'HQ Confirmed')
+chk(stages('R49') == (1, 0, 0, 0), '단계는 rank 대로 되돌아간다', stages('R49'))
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073149'",
+            one=True)['status'] == 'submitted',
+    '수리 이력은 유지 — 미실측 라벨로 이력을 지우지 않는다(추측 금지)')
+
+print('# 15-7) 🔴 갈래 ② fail-closed — 발주 흔적이 있으면 이력을 무효화하지 않는다(올마이트 지적)')
+for _tag, _kw in (('S18', "stg_order"), ('S19', 'quote_amt'), ('S20', 'svms_submit')):
+    _rid = mkpc(_tag, (1, 1, 1, 1 if _kw == 'stg_order' else 0), 'Ordered', f'TSTVES2607{_tag}')
+    if _kw == 'quote_amt':
+        A.execute("UPDATE dock_procure SET quote_amt=1234.0 WHERE id=?", (_rid,))
+    elif _kw == 'svms_submit':
+        A.execute("UPDATE dock_procure SET svms_submit='SUB-1' WHERE id=?", (_rid,))
+    mkdraft(_rid, f'TSTVES2607{_tag}', status='submitted')
+    sync(_tag, 'HQ Confirmed')                                  # stale·순서역전 sync 가정
+    chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd=?",
+                (f'TSTVES2607{_tag}',), one=True)['status'] == 'submitted',
+        f'{_kw} 있으면 이력 보존(닫힘 쪽 실패)')
+
+print('# 15-8) 같은 rep_cd 의 이력 여러 건이면 종료상태 전부 전이 · 활성건은 보호')
+rid_s21 = mkpc('S21', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607B21')
+for _st in ('submitted', 'failed', 'submitting'):
+    A.execute(
+        "INSERT INTO dock_inquiry_draft(rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_json, vndr_names, "
+        "envelope_json, status, decided_at, decided_by, done_at) "
+        "VALUES(?,'TEST VESSEL','TSTV','S21','TSTVES2607B21','[]','t','{}',?,"
+        "datetime('now','localtime'),'SS0094',datetime('now','localtime'))", (rid_s21, _st))
+sync('S21', 'HQ Confirmed')
+_sts = sorted(r['status'] for r in A.query(
+    "SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607B21'"))
+chk(_sts == ['recalled', 'recalled', 'submitting'],
+    'submitted·failed 는 recalled, submitting 은 보호', _sts)
+
+print('# 15-9) 구매 갈래 멱등 — 2차 sync 는 전이할 게 없다')
+j3 = sync('S21', 'HQ Confirmed')
+chk(j3['updated'] == 0, '변경 0(단계가 이미 되돌아가 있음)', j3['updated'])
+chk(sorted(r['status'] for r in A.query(
+    "SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607B21'"))
+    == ['recalled', 'recalled', 'submitting'], '상태도 그대로')
+
+print("# 15-10) `_dock_inq_prior` 빈 라벨 직접 동등성 — 라벨 없으면 열어준다")
+mkdraft(998, 'TSTVES2607EMPTY', status='submitted')
+for _lbl in ('', '   ', None):
+    chk(A._dock_inq_prior('PCRQ', 'TSTVES2607EMPTY', _lbl) is None, f'빈 라벨({_lbl!r}) → 재개방')
+    chk(A._dock_inq_prior('MARP', 'TSTVES2607EMPTY', _lbl) is None, f'수리도 동일({_lbl!r})')
+A.execute("DELETE FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607EMPTY'")
+
+print('# 15-11) 목록 API 가 `inq_posted` 를 실제로 내려준다(화면이 라벨을 다시 안 읽는 전제)')
+with c.session_transaction() as s:
+    s['user_id'] = 1
+    s['role'] = 'admin'
+lr = c.get('/api/dock_procure/lines?vsl=TEST VESSEL')
+# 🔴 401/302 를 통과로 봐주지 않는다(올마이트 지적) — 그러면 payload 검증이 조용히 생략된다.
+chk(lr.status_code == 200, '세션 심어 목록 조회 200', lr.status_code)
+if lr.status_code == 200:
+    lns = {x['req_no']: x for x in (lr.get_json() or {}).get('lines', [])}
+    s14 = lns.get('S14') or {}
+    chk('inq_posted' in s14, '행 payload 에 키 존재', sorted(s14.keys())[:8])
+    chk(s14.get('inq_posted') is False, "구매 'HQ Confirmed' 는 False 로 내려간다",
+        s14.get('inq_posted'))
+    chk(s14.get('inq_doc') == 'PCRQ' and s14.get('inq_key') == 'TSTVES2607B4',
+        '문서종류·키도 서버 판정 그대로', (s14.get('inq_doc'), s14.get('inq_key')))
+    r49 = lns.get('R49') or {}
+    chk(r49.get('inq_posted') is True,
+        "수리 'HQ Confirmed' 는 종전 denylist 대로 True", r49.get('inq_posted'))
+    # 페인트/기타처럼 `inq_doc` 이 없는 행은 버튼 자체가 안 그려지므로 `inq_posted` 값이 소비되지 않는다.
+    _p = mkrow('P9', stages_on=(1, 0, 0, 0), svms_status='HQ Confirmed', cat_code='P')
+    lr2 = c.get('/api/dock_procure/lines?vsl=TEST VESSEL')
+    p9 = {x['req_no']: x for x in (lr2.get_json() or {}).get('lines', [])}.get('P9') or {}
+    chk((p9.get('inq_key') or '') == '', '문서종류 없는 행은 키가 비어 버튼이 닫힌다', p9.get('inq_key'))
+
 print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')

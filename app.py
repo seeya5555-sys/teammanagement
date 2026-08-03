@@ -13187,6 +13187,9 @@ def api_dockproc_lines():
             r['inq_doc'], r['inq_key'] = _dockproc_inq_target(r)
             # 버튼을 미리 회색처리할 사유(없으면 None) — 라벨만 보는 순수 판정이라 쿼리가 늘지 않는다.
             r['inq_block'] = _dockproc_inq_stage_block(r['inq_doc'], r.get('svms_status'))
+            # 라벨이 '이미 견적요청 이후'인지도 **서버가** 판정해 내려준다 — 화면이 부분일치 리스트를
+            # 각자 복사해 들고 있으면 `_DOCK_INQ_PRE` 예외가 빠져 실패 이력이 초록으로 뒤집힌다.
+            r['inq_posted'] = _dockproc_inq_posted(r['inq_doc'], r.get('svms_status'))
             vc = r.get('vsl_cd') or vcode
             if r.get('cat_code') in ('R', 'S', 'ST') and vc:
                 r['svms_subj'] = _reqgen_build_subj(vc, r['req_no'], r['vsl_nm'], prefix, r.get('subject'))
@@ -14226,12 +14229,34 @@ def api_ext_dockproc_sync():
                 #    조건은 `rank==0` 같은 간접지표가 아니라 **①allowlist 라벨 ②직전 단계 켜짐
                 #      ③이번 계산 결과 단계 전부 꺼짐** 3개를 직접 확인한다(올마이트 지적 수용) —
                 #      나중에 rank 0 라벨이 늘어도 과잉 전이되지 않게.
-                _recalled = ((status or '').strip().upper() in _DOCKPROC_PRE_INQUIRY
-                             and (row['stg_quote'] or row['stg_vendor']
-                                  or row['stg_confirm'] or row['stg_order'])
-                             and not (q or v or f or o))
+                #    🔴 2026-08-03 2차(형 제보 BGBB S14): **구매 회수는 라벨이 'HQ Confirmed'(rank 1)로
+                #      돌아온다** — 단계가 통째로 0 이 되지 않고 `견적작성`(q=1)만 남는다. 그래서 위
+                #      "단계 전부 꺼짐" 조건에 걸리지 않아 draft 가 살아남았다. 회수의 본질은
+                #      **견적요청(=벤더제출) 이후 단계가 되돌려진 것**이므로 그 갈래를 따로 인정한다.
+                #      라벨 allowlist 도 문서종류별 확정 pre-요청 라벨(`_DOCK_INQ_PRE`)을 합집합으로 본다.
+                _inq_doc, _inq_key = _dockproc_inq_target(row)
+                _pre_lbls = _DOCKPROC_PRE_INQUIRY | set(_DOCK_INQ_PRE.get(_inq_doc, ()))
+                _had_post = bool(row['stg_vendor'] or row['stg_confirm'] or row['stg_order'])
+                # 🔴 갈래 ② fail-closed(올마이트 2026-08-03 지적 수용): **발주 흔적이 있는 행은 라벨
+                #    하나로 이력을 무효화하지 않는다.** 위 `pre_inq` 되돌림에 이미 걸어둔 것과 같은 기준.
+                #    stale·순서역전 sync 로 발주완료 행이 'HQ Confirmed' 로 보이면 갈래 ② 는 단계 flag
+                #    만 보고 전이해버린다 → 옛 요청 이력이 조용히 사라져 사람이 확인할 근거를 잃는다.
+                #    닫힘 쪽 실패 = 표시가 남는 것뿐이고, 사람이 '완료건 지우기'로 치울 수 있다.
+                if _had_post and (row['stg_order'] or row['quote_amt'] is not None
+                                  or (row['svms_submit'] or '').strip()):
+                    _had_post = False
+                _recalled = ((status or '').strip().upper() in _pre_lbls
+                             and ((  # ① 단계가 통째로 되돌아감 (수리 'HQ Received' 실측 경로)
+                                     (row['stg_quote'] or row['stg_vendor']
+                                      or row['stg_confirm'] or row['stg_order'])
+                                     and not (q or v or f or o))
+                                  # ② 견적요청 이후 단계만 되돌아감 (구매 'HQ Confirmed' 실측 경로)
+                                  or (_had_post and not (v or f or o))))
                 if _recalled:
-                    _rep = (row['svms_req_no'] or inq or '').strip()
+                    # 🔴 키는 문서종류별로 다르다 — 수리 `svms_req_no`(REP_CD) / 구매 `svms_pc_req_no`(REQ_NO).
+                    #    `svms_req_no` 만 보면 구매 draft 의 `rep_cd` 와 절대 안 맞아 전이가 no-op 이 된다
+                    #    (S14: `svms_req_no=NULL`, draft.rep_cd='BGBBES2607B4'=`svms_pc_req_no`).
+                    _rep = (_inq_key or row['svms_req_no'] or inq or '').strip()
                     if _rep:
                         # `result` 가 비어 있을 때 선행 ' · ' 가 붙지 않게 분기(올마이트 지적).
                         execute(
@@ -14813,6 +14838,25 @@ _DOCK_INQ_POST = ('quotation', 'submit', 'approval', 'progressing', 'confirmed',
 _DOCK_INQ_PRE = {'PCRQ': ('HQ CONFIRMED',)}
 
 
+def _dockproc_inq_posted(doc, svms_status):
+    """이 라벨이 '이미 견적요청이 나간 이후'인가 — `_dock_inq_prior` 와 **같은 판정**의 순수함수.
+
+    🔴 이 판정을 **서버만** 한다(2026-08-03 형 제보 실사고). 웹 `inqPosted()`·iOS `isInquiryPosted()`
+       가 `_DOCK_INQ_POST` 부분일치 리스트를 각자 복사해 들고 있었는데 `_DOCK_INQ_PRE` 예외가 빠져서,
+       구매의 **요청 전** 라벨 'HQ Confirmed' 가 'confirmed' 에 걸려 **직전 실패 이력을
+       '견적요청됨 ✓'(초록)으로 뒤집어** 그렸다. 게다가 그 초록이 `inq_block` 회색처리까지 눌러서
+       회수·재적재된 행에 옛 요청 정보가 계속 붙어 있었다(BGBB S14 = `BGBBES2607B4`).
+       ⇒ 목록 API 가 `inq_posted` 로 내려주고 두 화면은 그 값만 읽는다(`inq_key`/`inq_block` 규약과 동일).
+    """
+    raw = str(svms_status or '').strip()
+    if not raw:
+        return False
+    if raw.upper() in _DOCK_INQ_PRE.get(doc, ()):
+        return False                       # 확정된 pre-요청 라벨 — denylist 부분일치보다 우선
+    st = raw.lower()
+    return any(k in st for k in _DOCK_INQ_POST)
+
+
 def _dock_push_sibling(path):
     """맥 리스너의 형제 경로 URL — `DOCK_PUSH_URL`(=…/push) 에서 유도한다.
     별도 env 를 새로 두지 않는 이유: /etc/trmt.env 편집·터널 추가 없이 같은 포트를 쓰기 위함."""
@@ -14860,12 +14904,8 @@ def _dock_inq_prior(doc, rep_cd, svms_status):
                 "ORDER BY id DESC", (rep_cd,), one=True)
     if not sub:
         return None
-    raw = str(svms_status or '').strip()
-    if raw.upper() in _DOCK_INQ_PRE.get(doc, ()):
-        return None                        # 확정된 pre-요청 라벨 — denylist 부분일치보다 우선 재개방
-    st = raw.lower()
-    if not any(k in st for k in _DOCK_INQ_POST):
-        return None                        # 라벨이 되돌아왔다 = 반려/취소 → 다시 열어준다
+    if not _dockproc_inq_posted(doc, svms_status):
+        return None                        # pre-요청 라벨이거나 라벨이 되돌아왔다(반려/취소) → 다시 열어준다
     return '이미 견적요청됨 (#%d · %s) — SVMS 에서 되돌려지면 동기화 후 다시 열림' % (
         sub['id'], sub['done_at'] or '')
 
