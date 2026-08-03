@@ -12813,15 +12813,23 @@ def _dockproc_inq_target(row):
 
 
 # 견적요청이 열리는 SVMS 헤더 라벨 — 워커 pre-read(`inquiry_watch.py`)의 코드 게이트와 1:1 대응이다.
-#   수리 `OPEN_STATUS=('AP','RC')` = 'HQ Received' / 'HQ Confirmed'
-#   구매 `PC_OPEN_STATUS=('C',)`   = 'HQ Confirmed'
-_DOCK_INQ_STAGE_OK = {'MARP': ('HQ RECEIVED', 'HQ CONFIRMED'), 'PCRQ': ('HQ CONFIRMED',)}
+#   수리 `OPEN_STATUS=('AP','RC')`                    = 'HQ Received' / 'HQ Confirmed'
+#   구매 `PC_OPEN_STATUS=('C',)` + `PC_CONFIRM_STATUS=('N',)` = 'HQ Confirmed' / 'VSL Approved'
+# 🔴 'VSL APPROVED'(=구매 `STATUS='N'`) 추가 근거(2026-08-03 형 요청 "컨펌 버튼 누르는 기능까지 포함"):
+#    워커가 견적요청 **직전에** SVMS Confirm(`SP_SET_REQ_INFO`+STATUS='C')을 대신 눌러 'C' 로 올린 뒤
+#    요청한다. 그래서 이 라벨은 더 이상 '헛클릭'이 아니다. 수리(MARP)에는 추가하지 않는다 —
+#    수리 쪽 대응 코드가 미실측이고, 워커도 수리 Confirm 은 `AP`/`RC` 에서만 한다.
+_DOCK_INQ_STAGE_OK = {'MARP': ('HQ RECEIVED', 'HQ CONFIRMED'),
+                      'PCRQ': ('HQ CONFIRMED', 'VSL APPROVED')}
 # 그 단계가 **아님이 실측된** 라벨만 미리 회색처리한다(2026-08-03 라이브 전수 + 폴러 관측값).
 # 🔴 allowlist 반전(=OK 아니면 전부 차단)을 쓰지 않는 이유: 아직 못 본 라벨과 폴러가 못 채운 빈
 #    라벨까지 닫혀 **실제로 가능한 건이 영구히 막힌다**. 최종 안전선은 워커 pre-read 이고(SVMS
 #    실시간 재조회 · 불일치면 write 0 으로 거부), 이 게이트는 헛클릭을 줄이는 표시층이다.
 _DOCK_INQ_STAGE_BLOCK = {
-    'VSL APPROVED':      '본선 승인 단계 — HQ 확인(HQ Confirmed) 전이라 견적요청 불가',
+    # 🔴 구매(PCRQ)는 이 라벨을 **더 이상 차단하지 않는다** — `_DOCK_INQ_STAGE_OK['PCRQ']` 가 먼저
+    #    통과시키고, 워커가 견적요청 직전에 SVMS Confirm 을 대신 누른다(2026-08-03).
+    #    여기 남겨두는 건 **수리(MARP) 등 다른 문서종류**에서 같은 라벨이 나올 때를 위한 사유다.
+    'VSL APPROVED':      '본선 승인 단계 — 이 문서종류는 HQ 확인 후에만 견적요청 가능',
     'HQ REJECTED':       'HQ 반려됨',
     'QUOTATION INQUIRY': '이미 견적요청된 건',
     'VENDOR CONFIRMED':  '이미 벤더 확정 이후 단계',

@@ -110,8 +110,13 @@ print('# 9) 단계 라벨 게이트 `_dockproc_inq_stage_block()` — 버튼 회
 # 🔴 정본은 워커 pre-read 다. 이 게이트는 그 거부를 **미리 화면에 비추는** 표시층이라,
 #    확실히 아닌 라벨만 닫고 모르는 라벨은 연다(반대로 하면 가능한 건이 영구히 막힌다).
 S = A._dockproc_inq_stage_block
-chk(S('PCRQ', 'VSL Approved') is not None, '구매 VSL Approved → 회색(형이 실제로 막힌 라벨)')
-chk('VSL Approved' in (S('PCRQ', 'VSL Approved') or ''), '사유에 라벨 원문이 그대로 보임')
+# 🔴 2026-08-03 형 요청("컨펌 버튼 누르는 기능까지 포함")으로 **이 판정이 뒤집혔다.**
+#    어제는 "구매 VSL Approved → 회색"이 정답이었고 그렇게 못박아 뒀지만, 이제 워커가 견적요청
+#    직전에 SVMS Confirm(`SP_SET_REQ_INFO`+STATUS='C', 화면 `fnConfirm` verbatim)을 대신 누른다.
+#    → 구매만 열고 수리는 그대로 닫는다(수리 쪽 대응 코드 미실측).
+chk(S('PCRQ', 'VSL Approved') is None,
+    '구매 VSL Approved → 열림(워커가 Confirm 을 대신 누름, PC_CONFIRM_STATUS=N)')
+chk(S('PCRQ', ' vsl approved ') is None, '구매 VSL Approved 열림 판정도 대소문자·공백 흡수')
 chk(S('PCRQ', 'HQ Confirmed') is None, '구매 HQ Confirmed → 열림(워커 PC_OPEN_STATUS=C)')
 chk(S('MARP', 'HQ Received') is None, '수리 HQ Received → 열림(워커 OPEN_STATUS AP)')
 chk(S('MARP', 'HQ Confirmed') is None, '수리 HQ Confirmed → 열림(워커 OPEN_STATUS RC)')
@@ -126,7 +131,7 @@ chk(S('PCRQ', None) is None and S('PCRQ', '') is None and S('PCRQ', '   ') is No
 chk(S('PCRQ', 'Something New') is None, '처음 보는 라벨 → 열어둠(추측으로 닫지 않음)')
 chk(S('', 'VSL Approved') is None and S(None, 'HQ Ordered') is None,
     '문서종류 없음(페인트·기타) → 버튼 자체가 없으므로 사유도 없음')
-chk(S('PCRQ', ' vsl approved ') is not None, '대소문자·공백 흔들림 흡수')
+chk(S('MARP', ' vsl approved ') is not None, '대소문자·공백 흔들림 흡수(수리는 여전히 차단)')
 # 라이브 실측 분포(2026-08-03 키 有 행): 수리 HQ Ordered 36·Quotation Inquiry 8·HQ Received 1·
 # HQ Confirmed 1·Approved 1 / 구매 Vendor confirmed 10·Quotation Inquiry 9·VSL Approved 12·
 # Ordered 9·HQ Confirmed 2. 'Approved'(수리 1건)는 SVMS 코드 대응을 실측 못 해 일부러 열어둔다.
@@ -150,10 +155,19 @@ chk("const blk = (!d && !(m && m.ok)) ? (l.inq_block || '') : '';" in tpl,
 print()
 print('# 11) `_dock_inq_blocked` 사유 우선순위 — 단계 게이트가 기존 사유를 가리지 않는다')
 r = row('S', pc='TSTPC001')
-A.execute("UPDATE dock_procure SET svms_status='VSL Approved' WHERE id=?", (r['id'],))
+# 🔴 2026-08-03: 여기 원래 'VSL Approved' 를 썼는데 그 라벨은 이제 **구매에서 열린다**(워커가
+#    Confirm 을 대신 누름). 게이트가 API 경로에 물려 있다는 것 자체는 여전히 검증해야 하므로
+#    아직 확실히 닫힌 라벨('HQ Rejected')로 바꾼다.
+A.execute("UPDATE dock_procure SET svms_status='HQ Rejected' WHERE id=?", (r['id'],))
 r = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
 b = A._dock_inq_blocked(r)
-chk(b is not None and 'VSL Approved' in b, '단계 게이트가 API 경로에서도 실제로 막는다', str(b))
+chk(b is not None and 'HQ Rejected' in b, '단계 게이트가 API 경로에서도 실제로 막는다', str(b))
+# 반대편 — 구매 VSL Approved 는 API 경로에서도 열려야 한다(Confirm 대행이 붙은 뒤의 정상 경로)
+A.execute("UPDATE dock_procure SET svms_status='VSL Approved' WHERE id=?", (r['id'],))
+rv = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
+chk(A._dock_inq_blocked(rv) is None,
+    '구매 VSL Approved 는 API 경로에서도 열림(워커 Confirm 대행 전제)')
+A.execute("UPDATE dock_procure SET svms_status='HQ Rejected' WHERE id=?", (r['id'],))
 # 큐에 활성 초안이 있으면 그 사유가 먼저 나와야 한다(단계 문구로 덮이면 사용자가 큐를 못 찾는다)
 A.execute("INSERT INTO dock_inquiry_draft(rid, rep_cd, doc_type, vndr_json, status) "
           "VALUES(?,?,'PCRQ','[]','approved')", (r['id'], 'TSTPC001'))
