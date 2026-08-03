@@ -139,6 +139,12 @@
   .dp-sbmtag{font-size:9px;font-weight:700;margin-top:2px;white-space:nowrap}
   .dp-sbmtag.ok{color:var(--green)}
   .dp-sbmtag.bad{color:var(--red)}
+  /* ── 견적요청 컨펌 (수리 Confirm → Vendor Submit) — Phase ③ 와 다른 단계, dp-sbmtag 색은 공유 ── */
+  .dp-inq{cursor:pointer;font-size:13px;border:none;background:none;margin-right:2px;opacity:.75;color:var(--blue)}
+  .dp-inq:hover{opacity:1}
+  .dp-inq.queued{color:var(--amber,#b8860b)}
+  .dp-inq.done{color:var(--green);opacity:1}
+  .dp-inq.failed{color:var(--red);opacity:1}
   .dp-ov{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:2400;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
   .dp-ov.on{display:flex}
   .dp-mod{background:#fff;border-radius:14px;width:100%;max-width:560px;box-shadow:0 18px 48px rgba(0,0,0,.24);overflow:hidden}
@@ -277,6 +283,27 @@
     </div>
   </div>
 </div>
+
+<!-- 견적요청 컨펌 (수리 Confirm → Vendor Submit) — Phase ③ 상신과 **다른 단계**다.
+     이 모달의 [견적요청 큐에 올리기] 가 유일한 승인 게이트이고, 이어지는 [지금 전송] 을
+     눌러야만 맥 워커가 SVMS 에 Confirm + 벤더 견적요청을 실제로 보낸다. -->
+<div class="dp-ov" id="iq-ov">
+  <div class="dp-mod" role="dialog" aria-modal="true" aria-labelledby="iq-ttl">
+    <div class="dp-mh">
+      <h3 id="iq-ttl"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>견적요청 — SVMS Confirm + 벤더 제출</h3>
+      <div class="sub" id="iq-sub">—</div>
+    </div>
+    <div class="dp-mb" id="iq-body"></div>
+    <div class="dp-mf">
+      <button class="dp-btn" id="iq-close">닫기</button>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="dp-btn" id="iq-cancel" style="display:none;color:var(--red);border-color:var(--red-border,#f4c7c7)">요청 취소</button>
+        <button class="dp-btn primary" id="iq-push" style="display:none">지금 전송</button>
+        <button class="dp-btn primary" id="iq-go" disabled>견적요청 큐에 올리기</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endif %}
 {% endblock %}
 
@@ -350,6 +377,7 @@
     const r = await fetch('/api/dock_procure/lines'+q);
     DATA = await r.json();
     await loadSubmits();             // 상신 큐 상태 — 버튼 색으로 진행중을 드러내야 함
+    await loadInquiries();           // 견적요청 큐 상태 (Phase ③ 와 다른 단계, 별 큐)
     render();
     loadYard(DATA.current);          // 조선소(Yard) 7카테고리 동기 로드
   }
@@ -835,6 +863,253 @@
     };
   }
 
+  // ═══ 견적요청 (수리 Confirm → Vendor Submit) ═══
+  // 🔴 Phase ③ 상신과 **다른 단계**다(프로시저·큐·워커가 다름) — sbm* 과 iq* 를 섞지 말 것.
+  //    화면이 서버로 보내는 건 rid + 업체코드뿐이다. 봉투(CURSOR.P_IC_VNDR)는 맥 워커가
+  //    전송 직전 SP_GET_VNDR 를 다시 읽어 만든다 ⇒ 브라우저가 봉투 내용을 정할 수 없다.
+  let INQ = {}, INQ_OK = {}, INQ_BAD = {}, INQ_CUR = null;
+  let INQ_PICK = [], INQ_ROWS = [], INQ_NM = {}, INQ_BUSY = false;   // 선택코드 · 검색결과 · 코드→이름
+
+  async function loadInquiries(){
+    if(!IS_ADMIN) return;
+    try{
+      const j = await (await fetch('/api/dock_inquiry/drafts')).json();
+      INQ = {}; INQ_OK = {}; INQ_BAD = {};
+      (j.drafts||[]).forEach(d=>{                       // id DESC — 종류별 최신 1건만
+        if(['approved','submitting'].includes(d.status) && !INQ[d.rid]) INQ[d.rid]=d;
+        if(d.status==='submitted' && !INQ_OK[d.rid]) INQ_OK[d.rid]=d;
+        if(d.status==='failed' && !INQ_BAD[d.rid]) INQ_BAD[d.rid]=d;
+      });
+    }catch(e){ INQ = {}; INQ_OK = {}; INQ_BAD = {}; }
+  }
+  // 서버 `_DOCK_INQ_POST` 와 같은 판정 — 라벨이 견적요청 이후면 SVMS 에 이미 올라가 있다.
+  const inqPosted = l => ['quotation','submit','approval','progressing','confirmed','ordered']
+    .some(k => String(l.svms_status||'').toLowerCase().includes(k));
+  function inqMark(l){
+    if(INQ[l.id]) return null;
+    const ok = INQ_OK[l.id], bad = INQ_BAD[l.id];
+    if(ok) return {ok:true, d:ok, when:sbmWhen(ok.done_at), note:''};
+    if(!bad) return null;
+    // 이미 견적요청된 건을 또 누르면 pre-read 가 막아 failed 가 된다 — '안 나갔다'가 아니다(Phase ③ 과 동일).
+    if(inqPosted(l))
+      return {ok:true, d:bad, when:'', note:`SVMS 헤더가 이미 견적요청 이후(${l.svms_status||''}) — 우리 큐 시도는 pre-read 에서 중단됨`};
+    return {ok:false, d:bad, when:sbmWhen(bad.done_at), note:''};
+  }
+  // 수리(R) + SVMS 연결됨 + 벤더제출 전 행에만 — 진행중/결과는 색으로 드러낸다.
+  function iqBtn(l){
+    if(!IS_ADMIN || l.cat_code!=='R' || !l.svms_req_no) return '';
+    const d = INQ[l.id], m = inqMark(l);
+    if(!d && !m && (l.stg_vendor || l.stg_confirm || l.stg_order)) return '';
+    const t = d ? `견적요청 ${d.status==='submitting'?'처리중':'승인됨 · [지금 전송] 대기'} — ${d.vndr_names||''}`
+            : m ? (m.ok ? (m.note ? `견적요청됨 (SVMS 헤더 기준) — ${m.note}`
+                                  : `견적요청됨 — ${m.d.vndr_names||''}${m.when?` · ${m.when}`:''}`)
+                        : `직전 견적요청 실패 — ${m.d.result||''}`)
+            : '견적요청 (SVMS Confirm + 벤더 제출)';
+    const cls = d ? ' queued' : m ? (m.ok ? ' done' : ' failed') : '';
+    const ic = (!d && m && m.ok)
+      ? '<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M20 6 9 17l-5-5"/></svg>'
+      : '<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    return `<button class="dp-inq${cls}" data-id="${l.id}" title="${esc(t)}">${ic}</button>`;
+  }
+  function iqTag(l){
+    if(!IS_ADMIN || l.cat_code!=='R') return '';
+    const m = inqMark(l);
+    if(!m) return '';
+    const f = m.d;
+    if(m.ok){
+      const tt = m.note ? `${m.note} · 실제 요청 내용은 SVMS 에서 확인`
+        : `견적요청됨 — ${f.vndr_names||''}` + (f.decided_by?` · 승인 ${f.decided_by}`:'') + (f.result?` · ${f.result}`:'');
+      return `<div class="dp-sbmtag ok" title="${esc(tt)}">✓ 견적요청${m.when?' '+esc(m.when):''}</div>`;
+    }
+    return `<div class="dp-sbmtag bad" title="${esc(f.result||'')}">견적요청 실패 ${esc(m.when)}</div>`;
+  }
+
+  function iqSync(){
+    const b=$('#iq-body'), go=$('#iq-go');
+    const ack=$('#iq-ack'), max=(INQ_CUR&&INQ_CUR.max_vendor)||5;
+    const cnt=$('#iq-cnt');
+    if(cnt) cnt.textContent = `${INQ_PICK.length} / ${max}`;
+    b.querySelectorAll('.dp-vopt').forEach(o=>o.classList.toggle('sel', INQ_PICK.includes(o.dataset.cd)));
+    if(go) go.disabled = !(INQ_PICK.length>0 && INQ_PICK.length<=max && ack && ack.checked);
+  }
+  function iqPickToggle(cd, nm){
+    const max=(INQ_CUR&&INQ_CUR.max_vendor)||5;
+    const i=INQ_PICK.indexOf(cd);
+    if(i>=0){ INQ_PICK.splice(i,1); }
+    else{
+      if(INQ_PICK.length>=max){ toast(`업체는 최대 ${max}개 (SVMS 상한)`); return; }
+      INQ_PICK.push(cd); if(nm) INQ_NM[cd]=nm;
+    }
+    iqSync(); iqPickList();
+  }
+  function iqPickList(){
+    const el=$('#iq-picked');
+    if(!el) return;
+    el.innerHTML = INQ_PICK.length
+      ? INQ_PICK.map(cd=>`<span class="dp-chip" data-cd="${esc(cd)}" title="클릭하면 제외">${esc(INQ_NM[cd]||cd)} <b>×</b></span>`).join('')
+      : '<span class="dp-qst">선택된 업체 없음</span>';
+    el.querySelectorAll('.dp-chip').forEach(c=>c.onclick=()=>iqPickToggle(c.dataset.cd));
+  }
+  function iqVndHtml(){
+    if(!INQ_ROWS.length) return '<div class="dp-qst" style="padding:6px 2px">업체명을 입력해 검색하세요 (SVMS 실시간 조회)</div>';
+    return INQ_ROWS.map(v=>`<label class="dp-vopt" data-cd="${esc(v.cd)}">
+      <input type="checkbox" ${INQ_PICK.includes(v.cd)?'checked':''} style="margin-top:2px">
+      <div><div class="nm">${esc(v.nm||v.cd)}</div>
+        <div class="mt">${esc(v.cd)}${v.has_mail?'':' · <span style="color:var(--amber,#b8860b)">등록 메일 없음</span>'}</div></div>
+      <div class="amt"></div></label>`).join('');
+  }
+  function iqBindVnd(){
+    const b=$('#iq-body');
+    b.querySelectorAll('.dp-vopt').forEach(o=>{
+      o.onclick = e => { if(e.target.tagName!=='INPUT') e.preventDefault();
+        const v = INQ_ROWS.find(x=>x.cd===o.dataset.cd);
+        iqPickToggle(o.dataset.cd, v && v.nm);
+        const ck=o.querySelector('input'); if(ck) ck.checked = INQ_PICK.includes(o.dataset.cd); };
+    });
+  }
+  async function iqSearch(){
+    if(!INQ_CUR || INQ_BUSY) return;
+    const rid = INQ_CUR.rid;                    // 🔴 응답이 늦게 와도 "그때 열려있던 건" 으로 고정
+    const q = ($('#iq-q')||{}).value || '';
+    INQ_BUSY = true; $('#iq-vnd').innerHTML = '<div class="dp-qst" style="padding:6px 2px">SVMS 조회 중…</div>';
+    try{
+      const r = await fetch('/api/dock_inquiry/vendor_search',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({rid, q})});
+      const j = await r.json();
+      // 🔴 대기 중 모달을 닫고 다른 건을 열었으면 이 응답은 버린다 — 아니면 A 건 검색결과가
+      // B 건 화면에 얹혀서, 이름만 보고 고른 업체가 실은 B 건과 무관한 코드로 나갈 수 있다.
+      if(!INQ_CUR || INQ_CUR.rid !== rid) return;
+      if(!r.ok){ $('#iq-vnd').innerHTML = `<div class="dp-warn" style="margin-top:0">업체 조회 실패 — ${esc(j.error||r.status)}</div>`; return; }
+      INQ_ROWS = j.vendors||[];
+      $('#iq-vnd').innerHTML = (j.truncated?`<div class="dp-qst" style="padding:4px 2px">결과가 많아 앞 ${INQ_ROWS.length}건만 표시 — 업체명을 더 입력하세요</div>`:'') + iqVndHtml();
+      iqBindVnd(); iqSync();
+    }catch(e){
+      if(INQ_CUR && INQ_CUR.rid === rid)
+        $('#iq-vnd').innerHTML = '<div class="dp-warn" style="margin-top:0">업체 조회 실패 — 응답 없음(맥 연결 확인)</div>';
+    }
+    finally{ INQ_BUSY = false; }
+  }
+
+  function iqRender(pv){
+    const b=$('#iq-body'), go=$('#iq-go'), cx=$('#iq-cancel'), px=$('#iq-push');
+    const d = INQ[pv.rid];
+    $('#iq-sub').textContent = `${pv.vsl_nm||''} · ${pv.req_no||''} · ${pv.rep_cd||'SVMS 미연결'}`;
+    if(d){
+      go.style.display='none'; cx.style.display = d.status==='approved' ? '' : 'none';
+      px.style.display = d.status==='approved' ? '' : 'none';
+      px.disabled=false; px.textContent='지금 전송';
+      b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>
+        <div class="dp-mlbl">견적요청 큐 상태</div>
+        <div class="dp-blk">
+          <span class="dp-qst">${d.status==='submitting'?'처리중 — SVMS 로 보내는 중':'승인됨 — <b>[지금 전송]</b> 을 눌러야 SVMS 로 나갑니다 (자동 전송 없음)'}</span>
+          <div style="margin-top:9px">업체 <b>${esc(d.vndr_names||'')}</b><br>
+          문서 <b>${esc(d.rep_cd||'')}</b><br>
+          승인 ${esc(d.decided_by||'')} · ${esc(d.decided_at||'')}</div>
+        </div>
+        ${d.status==='submitting'?'<div class="dp-warn">이미 SVMS 로 나갔을 수 있어 <b>취소할 수 없음</b>. 결과는 다음 동기화에서 상태로 확인.</div>':''}`;
+      return;
+    }
+    cx.style.display='none'; px.style.display='none'; go.style.display='';
+    const ln = (DATA.lines||[]).find(x=>x.id===pv.rid);
+    const m = ln ? inqMark(ln) : null, f = m && m.d;
+    const done = !m ? '' : (m.ok
+      ? `<div class="dp-blk" style="margin-top:10px">
+           <b style="color:var(--green)">✓ 견적요청됨</b>${m.when?` · ${esc(m.when)}`:''}${m.note?' (SVMS 헤더 기준)':''} (#${f.id})
+           ${m.note?`<div class="dp-qst" style="margin-top:6px">${esc(m.note)}</div>`:''}
+           <div style="margin-top:7px">업체 <b>${esc(f.vndr_names||'')}</b><br>
+           승인 ${esc(f.decided_by||'')} · ${esc(f.decided_at||'')}<br>
+           완료 ${esc(m.note ? '—' : (f.done_at||'—'))}</div>
+           ${f.result?`<div class="dp-qst" style="margin-top:6px">${esc(f.result)}</div>`:''}</div>`
+      : `<div class="dp-warn" style="margin-top:10px">직전 견적요청 실패 (${esc(m.when)}) — ${esc(f.result||'사유 미기재')}</div>`);
+    if(pv.blocked){
+      go.disabled=true;
+      b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>${done}
+        <div class="dp-warn" style="margin-top:12px">견적요청할 수 없음 — <b>${esc(pv.blocked)}</b></div>`;
+      return;
+    }
+    INQ_PICK = []; INQ_ROWS = []; INQ_NM = {};
+    const needCnf = !/confirm/i.test(String(pv.svms_status||''));
+    b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b>
+        <div class="dp-qst" style="margin-top:6px">SVMS 상태 <b>${esc(pv.svms_status||'—')}</b> · 문서 ${esc(pv.rep_cd||'')}
+        ${needCnf?' · 전송 시 <b>Confirm</b> 이 먼저 실행됩니다':' · 이미 Confirm 됨 → 견적요청만 실행'}</div></div>${done}
+      <div class="dp-mlbl">업체 검색 (SVMS 실시간 · 최대 ${pv.max_vendor}개 선택) <span id="iq-cnt" style="font-weight:600;color:var(--text-tertiary)">0 / ${pv.max_vendor}</span></div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input id="iq-q" placeholder="업체명 일부 (예: 훌루)" style="flex:1">
+        <button class="dp-btn" id="iq-find">검색</button>
+      </div>
+      <div id="iq-vnd"></div>
+      <div class="dp-mlbl">선택된 업체</div>
+      <div id="iq-picked" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      <div class="dp-warn">누르면 맥 워커가 SVMS 에 ${needCnf?'<b>Confirm</b> + ':''}<b>벤더 견적요청(Submit)</b> 을 실제로 보냅니다.
+        요청 후에는 웹에서 되돌릴 수 없고 SVMS 에서 처리해야 합니다.</div>
+      <label class="dp-ack"><input type="checkbox" id="iq-ack" style="margin-top:2px">
+        <span>위 업체를 확인했고, SVMS 로 실제 견적요청되는 것에 동의함</span></label>`;
+    $('#iq-vnd').innerHTML = iqVndHtml();
+    $('#iq-find').onclick = iqSearch;
+    $('#iq-q').onkeydown = e => { if(e.key==='Enter'){ e.preventDefault(); iqSearch(); } };
+    $('#iq-ack').onchange = iqSync;
+    iqPickList(); iqSync();
+  }
+
+  async function iqOpen(rid){
+    let pv;
+    try{ pv = await (await fetch(`/api/dock_inquiry/preview?rid=${rid}`)).json(); }
+    catch(e){ toast('초안 조회 실패'); return; }
+    if(pv.error){ toast(pv.error); return; }
+    INQ_CUR = pv;
+    iqRender(pv);
+    $('#iq-ov').classList.add('on');
+  }
+  function iqClose(){ $('#iq-ov').classList.remove('on'); INQ_CUR=null; INQ_PICK=[]; INQ_ROWS=[]; }
+
+  function bindInquiryModal(){
+    if(!IS_ADMIN) return;
+    $('#iq-close').onclick = iqClose;
+    $('#iq-ov').onclick = e => { if(e.target.id==='iq-ov') iqClose(); };
+    document.addEventListener('keydown', e => { if(e.key==='Escape' && $('#iq-ov').classList.contains('on')) iqClose(); });
+    $('#iq-go').onclick = async () => {
+      if(!INQ_CUR || !INQ_PICK.length) return;
+      const btn=$('#iq-go'); btn.disabled=true; btn.textContent='올리는 중…';
+      try{
+        // 보내는 건 rid + 업체코드뿐 — 이름은 표시용 스냅샷이다.
+        const nms={}; INQ_PICK.forEach(cd=>{ if(INQ_NM[cd]) nms[cd]=INQ_NM[cd]; });
+        const r = await fetch('/api/dock_inquiry/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({rid:INQ_CUR.rid, vndr_cds:INQ_PICK, vndr_nms:nms})});
+        const j = await r.json();
+        if(!r.ok){ toast(j.error||'견적요청 큐 등록 실패'); btn.disabled=false; btn.textContent='견적요청 큐에 올리기'; return; }
+        toast(`승인 기록됨 — ${j.rep_cd} / ${j.vndr_names||''} · [지금 전송] 을 누르세요`);
+        await loadInquiries(); render();
+        iqRender(INQ_CUR);
+      }catch(e){ toast('견적요청 큐 등록 실패'); }
+      finally{ btn.disabled=false; btn.textContent='견적요청 큐에 올리기'; }
+    };
+    // 🔴 [지금 전송] — 누른 그 순간에만 SVMS 로 나간다. 응답은 맥이 readback 까지 마친 실제 결과다.
+    $('#iq-push').onclick = async () => {
+      if(!INQ_CUR) return;
+      const d = INQ[INQ_CUR.rid]; if(!d) return;
+      if(!confirm(`지금 SVMS 로 견적요청합니다.\n\n${d.rep_cd}\n업체: ${d.vndr_names||''}\n\n보낸 뒤에는 웹에서 되돌릴 수 없습니다.`)) return;
+      const btn=$('#iq-push'), cx=$('#iq-cancel');
+      btn.disabled=true; cx.disabled=true; btn.textContent='SVMS 전송 중…';
+      let j={};
+      try{
+        const r = await fetch(`/api/dock_inquiry/drafts/${d.id}/push`,{method:'POST'});
+        j = await r.json();
+        toast(r.ok && j.ok ? `견적요청 완료 — ${j.msg||''}` : `전송 실패 — ${j.msg||j.error||r.status}`);
+      }catch(e){ toast('전송 실패 — 응답 없음(맥 연결/타임아웃 확인)'); }
+      finally{ cx.disabled=false; }
+      iqClose(); await loadInquiries(); render();
+    };
+    $('#iq-cancel').onclick = async () => {
+      if(!INQ_CUR) return;
+      const d = INQ[INQ_CUR.rid]; if(!d) return;
+      if(!confirm('견적요청 대기를 취소할까요? (아직 SVMS 로 안 나간 건만 취소됩니다)')) return;
+      const r = await fetch(`/api/dock_inquiry/drafts/${d.id}/cancel`,{method:'POST'});
+      const j = await r.json();
+      toast(r.ok ? '견적요청 취소됨' : (j.error||'취소 실패'));
+      iqClose(); await loadInquiries(); render();
+    };
+  }
+
   function rowHtml(l){
     const [sc,sl]=statusOf(l);
     return `<tr data-id="${l.id}">
@@ -844,10 +1119,10 @@
       <td class="c"><span class="dp-prep ${l.prepared_by||'OWNER'}" data-id="${l.id}" title="클릭하여 OWNERMANAGER 전환">${esc(l.prepared_by||'OWNER')}</span></td>
       <td class="c"><span class="dp-src ${l.source}">${esc(l.source||'')}</span></td>
       <td><div class="dp-stages">${stg(l,'stg_quote','견적<br>작성')}${stg(l,'stg_vendor','벤더<br>제출')}${stg(l,'stg_confirm','벤더<br>컨펌')}${stg(l,'stg_order','발주<br>완료')}</div></td>
-      <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:2px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${esc(l.svms_req_no)}</div>`:''}${sbmTag(l)}</td>
+      <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:2px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${esc(l.svms_req_no)}</div>`:''}${sbmTag(l)}${iqTag(l)}</td>
       <td class="c"><div class="dp-qwrap"><input class="dp-quote" data-id="${l.id}" value="${l.quote_amt!=null?esc(fmtAmt(l.quote_amt)):''}" placeholder="—" inputmode="decimal"><select class="dp-cur" data-id="${l.id}">${CURS.map(c=>`<option value="${c}"${(l.quote_cur||'USD')===c?' selected':''}>${c}</option>`).join('')}</select></div></td>
       <td>${l.cat_code==='P'?`<input class="dp-vnd" data-id="${l.id}" value="${esc(l.vendor||'')}" placeholder="업체(도료사)" title="페인트 자재 업체 — SVMS Dock Paint 02 VNDR_NM" style="width:100%;margin-bottom:3px;font-size:11px;color:var(--text-secondary)">`:''}<input class="dp-rmk" data-id="${l.id}" value="${esc(l.remark||'')}" placeholder="—"></td>
-      <td style="white-space:nowrap">${sbmBtn(l)}${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)"><svg class="ic-svg" style="margin-right:0"><use href="#i-clipboard"/></svg></button><button class="dp-lnk" data-id="${l.id}" title="SVMS Inq No 수동연결 (Tier3)"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제"><svg class="ic-svg" style="margin-right:0"><use href="#i-x"/></svg></button></td>
+      <td style="white-space:nowrap">${sbmBtn(l)}${iqBtn(l)}${(l.cat_code==='R'||l.cat_code==='S'||l.cat_code==='ST')?`<button class="dp-cpy" data-id="${l.id}" title="SVMS 정규제목 복사 (수동작성 시 붙여넣기)"><svg class="ic-svg" style="margin-right:0"><use href="#i-clipboard"/></svg></button><button class="dp-lnk" data-id="${l.id}" title="SVMS Inq No 수동연결 (Tier3)"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>`:''}<button class="dp-del" data-id="${l.id}" title="삭제"><svg class="ic-svg" style="margin-right:0"><use href="#i-x"/></svg></button></td>
     </tr>`;
   }
 
@@ -862,6 +1137,7 @@
     // 견적서 링크는 단계 토글 안으로 들어가 있다 — 전파를 끊어야 PDF 열면서 체크가 바뀌지 않는다.
     document.querySelectorAll('.dp-att').forEach(a=>a.onclick=e=>e.stopPropagation());
     document.querySelectorAll('.dp-sbm').forEach(b=>b.onclick=()=>sbmOpen(+b.dataset.id));
+    document.querySelectorAll('.dp-inq').forEach(b=>b.onclick=()=>iqOpen(+b.dataset.id));
     document.querySelectorAll('.dp-stg').forEach(s=>s.onclick=async()=>{
       const id=s.dataset.id, stage=s.dataset.stage, value=+s.dataset.val;
       const r=await fetch(`/api/dock_procure/${id}/stage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage,value})});
@@ -1049,6 +1325,7 @@
   bindSyncBtn();
   bindPushBtn();
   bindSubmitModal();
+  bindInquiryModal();
 })();
 </script>
 {% endblock %}
