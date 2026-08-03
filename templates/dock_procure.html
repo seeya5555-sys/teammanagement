@@ -145,6 +145,8 @@
   .dp-inq.queued{color:var(--amber,#b8860b)}
   .dp-inq.done{color:var(--green);opacity:1}
   .dp-inq.failed{color:var(--red);opacity:1}
+  .dp-inq.blocked,.dp-inq:disabled{color:#9aa0a6;opacity:.4;cursor:not-allowed}
+  .dp-inq:disabled:hover{opacity:.4}
   .dp-ov{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:2400;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
   .dp-ov.on{display:flex}
   .dp-mod{background:#fff;border-radius:14px;width:100%;max-width:560px;box-shadow:0 18px 48px rgba(0,0,0,.24);overflow:hidden}
@@ -909,11 +911,20 @@
                                   : `견적요청됨 — ${m.d.vndr_names||''}${m.when?` · ${m.when}`:''}`)
                         : `직전 견적요청 실패 — ${m.d.result||''}`)
             : '견적요청 (SVMS Confirm + 벤더 제출)';
-    const cls = d ? ' queued' : m ? (m.ok ? ' done' : ' failed') : '';
+    // 🔴 SVMS 단계가 아직 아니면(또는 이미 지났으면) **회색 비활성**으로 그린다. 서버
+    //    `_dockproc_inq_stage_block()` 판정(`inq_block`)만 쓴다 — 화면이 라벨을 다시 해석하면
+    //    웹·앱이 어긋난다. 눌러야 워커 pre-read 에서 실패하던 헛클릭을 없애는 게 목적.
+    // 🔴 **직전 실패 이력이 있어도 막는다**(올마이트 2026-08-03 지적). 실패한 건이야말로 형이
+    //    다시 누르는 자리라, 이력을 예외로 두면 정작 사고가 난 행이 계속 활성으로 남는다.
+    //    큐 대기(d)·성공(m.ok)만 자기 색을 지킨다 — 그 둘은 재요청 대상이 아니다.
+    const blk = (!d && !(m && m.ok)) ? (l.inq_block || '') : '';
+    const cls = blk ? ' blocked' : d ? ' queued' : m ? (m.ok ? ' done' : ' failed') : '';
     const ic = (!d && m && m.ok)
       ? '<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M20 6 9 17l-5-5"/></svg>'
       : '<svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
-    return `<button class="dp-inq${cls}" data-id="${l.id}" title="${esc(t)}">${ic}</button>`;
+    // 회색이어도 직전 실패 사유는 툴팁에 남긴다 — 이력 태그(iqTag)와 함께 '왜 막혔나'가 보여야 한다.
+    const bt = blk && m && !m.ok ? `${blk} · 직전 시도 실패: ${m.d.result||''}` : blk;
+    return `<button class="dp-inq${cls}" data-id="${l.id}"${blk?' disabled':''} title="${esc(bt||t)}">${ic}</button>`;
   }
   function iqTag(l){
     // 태그는 `inq_doc`(종류) 기준 — 키가 빠진 뒤에도 지난 요청 이력은 계속 보여야 하므로 `inq_key` 아님.

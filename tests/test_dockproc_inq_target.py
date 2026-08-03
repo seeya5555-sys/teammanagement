@@ -104,6 +104,72 @@ chk(src.count('_dockproc_inq_target(row)') >= 4,
     'blocked/vendor_search/preview/create 가 공용 판정 사용', str(src.count('_dockproc_inq_target(row)')))
 
 print()
+print('# 9) 단계 라벨 게이트 `_dockproc_inq_stage_block()` — 버튼 회색처리의 단일 정본')
+# 형 제보(2026-08-03): 자재 S16 을 눌렀더니 "pre-read 검증 실패: 헤더 상태가 HQ Confirmed(C)
+# 아님(STATUS=N / VSL Approved)". 버튼이 멀쩡히 파랬기 때문에 누를 수밖에 없었다.
+# 🔴 정본은 워커 pre-read 다. 이 게이트는 그 거부를 **미리 화면에 비추는** 표시층이라,
+#    확실히 아닌 라벨만 닫고 모르는 라벨은 연다(반대로 하면 가능한 건이 영구히 막힌다).
+S = A._dockproc_inq_stage_block
+chk(S('PCRQ', 'VSL Approved') is not None, '구매 VSL Approved → 회색(형이 실제로 막힌 라벨)')
+chk('VSL Approved' in (S('PCRQ', 'VSL Approved') or ''), '사유에 라벨 원문이 그대로 보임')
+chk(S('PCRQ', 'HQ Confirmed') is None, '구매 HQ Confirmed → 열림(워커 PC_OPEN_STATUS=C)')
+chk(S('MARP', 'HQ Received') is None, '수리 HQ Received → 열림(워커 OPEN_STATUS AP)')
+chk(S('MARP', 'HQ Confirmed') is None, '수리 HQ Confirmed → 열림(워커 OPEN_STATUS RC)')
+chk(S('MARP', 'VSL Approved') is not None, '수리 VSL Approved → 회색(AP/RC 아님)')
+chk(S('MARP', 'HQ Ordered') is not None, '수리 HQ Ordered → 회색(발주 이후)')
+chk(S('PCRQ', 'Ordered') is not None and S('PCRQ', 'Vendor confirmed') is not None,
+    '구매 Ordered/Vendor confirmed → 회색(라이브 실측 라벨)')
+chk(S('PCRQ', 'Quotation Inquiry') is not None, '이미 견적요청된 라벨 → 회색')
+# 🔴 fail-open 이 의도임을 못박는다 — 이게 깨지면 라벨이 안 채워진 행의 버튼이 통째로 죽는다.
+chk(S('PCRQ', None) is None and S('PCRQ', '') is None and S('PCRQ', '   ') is None,
+    '빈 라벨 → 열어둠(폴러 미관측일 뿐 불가가 아님)')
+chk(S('PCRQ', 'Something New') is None, '처음 보는 라벨 → 열어둠(추측으로 닫지 않음)')
+chk(S('', 'VSL Approved') is None and S(None, 'HQ Ordered') is None,
+    '문서종류 없음(페인트·기타) → 버튼 자체가 없으므로 사유도 없음')
+chk(S('PCRQ', ' vsl approved ') is not None, '대소문자·공백 흔들림 흡수')
+# 라이브 실측 분포(2026-08-03 키 有 행): 수리 HQ Ordered 36·Quotation Inquiry 8·HQ Received 1·
+# HQ Confirmed 1·Approved 1 / 구매 Vendor confirmed 10·Quotation Inquiry 9·VSL Approved 12·
+# Ordered 9·HQ Confirmed 2. 'Approved'(수리 1건)는 SVMS 코드 대응을 실측 못 해 일부러 열어둔다.
+chk(S('MARP', 'Approved') is None, "수리 'Approved' 는 코드 미확인이라 열어둠(추측 차단 금지)")
+
+print()
+print('# 10) 게이트가 실제 경로에 물려 있다 — 목록 API·생성 게이트 양쪽')
+chk("r['inq_block'] = _dockproc_inq_stage_block(r['inq_doc'], r.get('svms_status'))" in src,
+    'api_dockproc_lines 가 inq_block 을 실어보냄(프론트 회색처리 입력)')
+chk('_dockproc_inq_stage_block(doc, row[\'svms_status\'])' in src,
+    '_dock_inq_blocked 도 같은 게이트를 통과(화면만 막고 API 는 뚫리는 일 없음)')
+tpl = open('templates/dock_procure.html', encoding='utf-8').read()
+chk('l.inq_block' in tpl and 'blk?\' disabled\':\'\'' in tpl,
+    '웹 iqBtn 이 inq_block 으로 버튼을 비활성화')
+chk('.dp-inq.blocked' in tpl, '회색 스타일 존재')
+# 🔴 올마이트 2026-08-03 지적 — 실패 이력을 예외로 두면 정작 사고난 행(형이 누른 S16)이 계속 활성.
+#    JS 는 테스트 타깃이 없으므로 조건식 자체를 못박는다(웹·iOS 가 같은 조건이어야 함).
+chk("const blk = (!d && !(m && m.ok)) ? (l.inq_block || '') : '';" in tpl,
+    '웹 차단 조건이 성공 이력만 예외로 둠(실패 이력은 계속 차단)')
+
+print()
+print('# 11) `_dock_inq_blocked` 사유 우선순위 — 단계 게이트가 기존 사유를 가리지 않는다')
+r = row('S', pc='TSTPC001')
+A.execute("UPDATE dock_procure SET svms_status='VSL Approved' WHERE id=?", (r['id'],))
+r = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
+b = A._dock_inq_blocked(r)
+chk(b is not None and 'VSL Approved' in b, '단계 게이트가 API 경로에서도 실제로 막는다', str(b))
+# 큐에 활성 초안이 있으면 그 사유가 먼저 나와야 한다(단계 문구로 덮이면 사용자가 큐를 못 찾는다)
+A.execute("INSERT INTO dock_inquiry_draft(rid, rep_cd, doc_type, vndr_json, status) "
+          "VALUES(?,?,'PCRQ','[]','approved')", (r['id'], 'TSTPC001'))
+b2 = A._dock_inq_blocked(r)
+chk(b2 is not None and '큐' in b2, '활성 큐 사유가 단계 사유보다 우선', str(b2))
+A.execute("DELETE FROM dock_inquiry_draft WHERE rep_cd='TSTPC001'")
+# 단계가 맞으면(HQ Confirmed) 통과 — 게이트가 구매를 통째로 막아버리는 회귀 방지
+A.execute("UPDATE dock_procure SET svms_status='HQ Confirmed' WHERE id=?", (r['id'],))
+r2 = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
+chk(A._dock_inq_blocked(r2) is None, '구매 HQ Confirmed 는 끝까지 통과(요청 가능 상태)')
+# 라벨이 비어도 통과 — fail-open 이 API 경로에서도 유지되는지
+A.execute("UPDATE dock_procure SET svms_status=NULL WHERE id=?", (r['id'],))
+r3 = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
+chk(A._dock_inq_blocked(r3) is None, '라벨 미관측 행은 API 경로에서도 열려 있음')
+
+print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')
     sys.exit(1)

@@ -12812,6 +12812,42 @@ def _dockproc_inq_target(row):
     return doc, ((g('svms_req_no') if doc == 'MARP' else g('svms_pc_req_no')) or '').strip()
 
 
+# 견적요청이 열리는 SVMS 헤더 라벨 — 워커 pre-read(`inquiry_watch.py`)의 코드 게이트와 1:1 대응이다.
+#   수리 `OPEN_STATUS=('AP','RC')` = 'HQ Received' / 'HQ Confirmed'
+#   구매 `PC_OPEN_STATUS=('C',)`   = 'HQ Confirmed'
+_DOCK_INQ_STAGE_OK = {'MARP': ('HQ RECEIVED', 'HQ CONFIRMED'), 'PCRQ': ('HQ CONFIRMED',)}
+# 그 단계가 **아님이 실측된** 라벨만 미리 회색처리한다(2026-08-03 라이브 전수 + 폴러 관측값).
+# 🔴 allowlist 반전(=OK 아니면 전부 차단)을 쓰지 않는 이유: 아직 못 본 라벨과 폴러가 못 채운 빈
+#    라벨까지 닫혀 **실제로 가능한 건이 영구히 막힌다**. 최종 안전선은 워커 pre-read 이고(SVMS
+#    실시간 재조회 · 불일치면 write 0 으로 거부), 이 게이트는 헛클릭을 줄이는 표시층이다.
+_DOCK_INQ_STAGE_BLOCK = {
+    'VSL APPROVED':      '본선 승인 단계 — HQ 확인(HQ Confirmed) 전이라 견적요청 불가',
+    'HQ REJECTED':       'HQ 반려됨',
+    'QUOTATION INQUIRY': '이미 견적요청된 건',
+    'VENDOR CONFIRMED':  '이미 벤더 확정 이후 단계',
+    'ORDERED':           '이미 발주 이후 단계',
+    'HQ ORDERED':        '이미 발주 이후 단계',
+}
+
+
+def _dockproc_inq_stage_block(doc, svms_status):
+    """SVMS 단계 라벨만 보는 견적요청 게이트 — 사유(문자열) 또는 None(=열어둠).
+
+    쿼리 0 인 순수 함수라 목록 API 가 행마다 불러도 비용이 없다. 웹·iOS 가 이 결과(`inq_block`)만
+    보고 버튼을 회색처리하므로 두 클라이언트가 각자 라벨을 해석하다 어긋나는 일이 없다."""
+    lbl = str(svms_status or '').strip()
+    if not lbl or not doc:
+        return None                      # 라벨 미관측 = 판단 보류(워커 pre-read 가 최종 판정)
+    if lbl.upper() in _DOCK_INQ_STAGE_OK.get(doc, ()):
+        return None
+    why = _DOCK_INQ_STAGE_BLOCK.get(lbl.upper())
+    if not why:
+        return None                      # 처음 보는 라벨 — 추측으로 닫지 않는다
+    # 라벨은 폴러가 채운 스냅샷이라 SVMS 가 방금 움직였으면 낡을 수 있다 — 영구 차단으로 오해하지
+    # 않도록 해소 경로를 사유에 같이 적는다(`_dock_inq_prior` 의 '동기화 후 다시 열림'과 같은 규약).
+    return 'SVMS 단계가 %s — %s (동기화 후 단계가 바뀌면 다시 열림)' % (lbl, why)
+
+
 _DOCKPROC_QUOTE_MAX = 20            # 한 건에 붙는 벤더 수 상한(표시전용 스냅샷이라 넉넉하되 무한 아님)
 
 
@@ -13141,6 +13177,8 @@ def api_dockproc_lines():
             # 견적요청 버튼이 쓸 문서종류/키 — **어느 컬럼인지 판단은 서버가 한다**(웹·앱이 각자
             # `cat_code`→컬럼 매핑을 들고 있으면 한쪽만 고쳐졌을 때 엉뚱한 번호로 요청이 나간다).
             r['inq_doc'], r['inq_key'] = _dockproc_inq_target(r)
+            # 버튼을 미리 회색처리할 사유(없으면 None) — 라벨만 보는 순수 판정이라 쿼리가 늘지 않는다.
+            r['inq_block'] = _dockproc_inq_stage_block(r['inq_doc'], r.get('svms_status'))
             vc = r.get('vsl_cd') or vcode
             if r.get('cat_code') in ('R', 'S', 'ST') and vc:
                 r['svms_subj'] = _reqgen_build_subj(vc, r['req_no'], r['vsl_nm'], prefix, r.get('subject'))
@@ -14840,7 +14878,12 @@ def _dock_inq_blocked(row):
                 (rep_cd, *_DOCK_SUBMIT_ACTIVE), one=True)
     if act:
         return '이미 견적요청 큐에 있음(#%d %s)' % (act['id'], act['status'])
-    return _dock_inq_prior(doc, rep_cd, row['svms_status'])
+    prior = _dock_inq_prior(doc, rep_cd, row['svms_status'])
+    if prior:
+        return prior
+    # 단계 라벨 게이트 — 워커 pre-read 가 어차피 거부할 건을 여기서 먼저 끊는다(SVMS 호출 0).
+    # 라벨이 stale 이라 막혔다면 동기화 후 다시 열린다(`_dock_inq_prior` 와 같은 규약).
+    return _dockproc_inq_stage_block(doc, row['svms_status'])
 
 
 @app.route('/api/dock_inquiry/vendor_search', methods=['POST'])
