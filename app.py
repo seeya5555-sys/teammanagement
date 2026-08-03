@@ -877,6 +877,9 @@ def init_db(drop=False):
                 vndr_names    TEXT,                             -- 표시용 요약 'A, B'
                 envelope_json TEXT,                             -- 사람이 승인한 초안 스냅샷(그대로 보관)
                 status        TEXT NOT NULL DEFAULT 'approved',  -- approved/submitting/submitted/failed/canceled
+                                                                --  /recalled = SVMS 에서 회수돼 무효화된 이력
+                                                                --  (2026-08-03). 어느 표시 버킷에도 안 잡혀
+                                                                --  카드에서 '견적요청됨' 이 사라진다. 행은 보존.
                 decided_at    TEXT,
                 decided_by    TEXT,                             -- 버튼 누른 사람(세션) — 비면 워커가 claim 안 함
                 done_at       TEXT,
@@ -14106,6 +14109,34 @@ def api_ext_dockproc_sync():
                      new_subq, new_att, rid))
                 if row['att_files'] != new_att:           # 목록이 바뀌면 안 쓰는 캐시 정리(용량 회수)
                     _dockatt_gc(rid, _dockproc_files_of(new_att))
+                # 🔴 회수 되돌림이면 **직전 견적요청 이력을 무효화**한다(2026-08-03 형 지시 "재적재 시
+                #    이전에 견적요청된 인포가 남아있는데 초기화해줘").
+                #    이유: 웹/앱은 `status=='submitted'` 를 '견적요청됨 ✓' 으로 그린다. 단계는 되돌아가도
+                #    이 draft 가 남아 있어서 카드에 초록 체크·"견적요청됨" 이 계속 붙었다 = 실제와 불일치.
+                #    지우지 않고 `recalled` 로 **보존**한다(append-only 이력). 어느 버킷에도 안 잡혀
+                #    표시가 사라지고, 앱은 재빌드 없이도 즉시 정상화된다(버킷 매칭이 클라이언트 판정이라).
+                #    ⚠️활성 큐(`approved`/`submitting`)는 **절대 건드리지 않는다** — 워커가 소유한 행이고
+                #      전송 중일 수 있다. 그건 `_dock_inq_blocked` 가 '이미 큐에 있음'으로 계속 막는 게 맞다.
+                #      이 행이 나중에 `submitted` 로 완료돼 표시가 되살아나는 건 **버그가 아니다** —
+                #      그건 형이 회수 후 새로 올린 요청이 실제로 SVMS 로 나간 것이라 표시가 맞다
+                #      (회수된 옛 요청의 draft 는 회수 시점에 이미 `submitted` = 여기서 전이된다).
+                #    조건은 `rank==0` 같은 간접지표가 아니라 **①allowlist 라벨 ②직전 단계 켜짐
+                #      ③이번 계산 결과 단계 전부 꺼짐** 3개를 직접 확인한다(올마이트 지적 수용) —
+                #      나중에 rank 0 라벨이 늘어도 과잉 전이되지 않게.
+                _recalled = ((status or '').strip().upper() in _DOCKPROC_PRE_INQUIRY
+                             and (row['stg_quote'] or row['stg_vendor']
+                                  or row['stg_confirm'] or row['stg_order'])
+                             and not (q or v or f or o))
+                if _recalled:
+                    _rep = (row['svms_req_no'] or inq or '').strip()
+                    if _rep:
+                        # `result` 가 비어 있을 때 선행 ' · ' 가 붙지 않게 분기(올마이트 지적).
+                        execute(
+                            "UPDATE dock_inquiry_draft SET status='recalled', "
+                            "result=CASE WHEN COALESCE(result,'')='' THEN '' ELSE result || ' · ' END "
+                            "|| ? || datetime('now','localtime') || ')' "
+                            "WHERE rep_cd=? AND status IN ('submitted','failed')",
+                            ('SVMS 회수로 무효화(%s, ' % status, _rep))
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses,
@@ -14899,7 +14930,12 @@ def api_dock_inquiry_push(did):
 @app.route('/api/dock_inquiry/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_dock_inquiry_clear_decided():
-    n = execute_rc("DELETE FROM dock_inquiry_draft WHERE status IN (?,?,?)", _DOCK_SUBMIT_DONE)
+    # 🔴 `recalled` 도 종료상태다(2026-08-03). 안 넣으면 회수로 무효화된 이력이 '완료건 지우기'로
+    #    영원히 안 지워져 큐 목록에 쌓인다(올마이트가 지적한 consumer 갭 — 실측 확인).
+    #    Phase ③ 상신 쪽 `_DOCK_SUBMIT_DONE` 의미는 건드리지 않고 이 라우트에서만 확장한다.
+    _term = _DOCK_SUBMIT_DONE + ('recalled',)
+    n = execute_rc("DELETE FROM dock_inquiry_draft WHERE status IN (%s)" % ','.join('?' * len(_term)),
+                   _term)
     return jsonify({'ok': True, 'deleted': n})
 
 

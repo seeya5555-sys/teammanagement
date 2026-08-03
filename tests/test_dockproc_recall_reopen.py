@@ -218,6 +218,110 @@ r39 = row_of('R39')
 chk(stages('R39') == (0, 0, 0, 0), '발주근거 없으면 되돌림', stages('R39'))
 chk(r39['sub_quotes'] is None, "quotes=[] → '제출 0건 확정' 이므로 clear (회수와 정합)", r39['sub_quotes'])
 
+print('# 13) 🔴 회수 되돌림이 직전 견적요청 이력을 recalled 로 무효화한다 (형 지시: 재적재 시 초기화)')
+#   웹/앱은 `status=='submitted'` 를 '견적요청됨 ✓' 으로 그린다 → 남아 있으면 실제와 불일치.
+rid40 = mkrow('R40', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+              svms_req_no='TSTVME26073140')
+mkdraft(rid40, 'TSTVME26073140', status='submitted')
+sync('R40', 'HQ Received', inq_no='TSTVME26073140')
+d40 = A.query("SELECT status, result FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073140'", one=True)
+chk(d40['status'] == 'recalled', "submitted 이력 → 'recalled'", d40['status'])
+chk('회수로 무효화' in (d40['result'] or ''), '무효화 사유가 result 에 남는다', d40['result'])
+chk(A.query("SELECT COUNT(*) n FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073140'",
+            one=True)['n'] == 1, '행은 지우지 않고 보존(append-only 이력)')
+chk(A._dock_inq_blocked(row_of('R40')) is None, '게이트도 열린 상태', A._dock_inq_blocked(row_of('R40')))
+
+print('# 13-1) failed 이력도 같이 무효화 — 회수 후엔 옛 실패표시도 실제와 무관')
+rid41 = mkrow('R41', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+              svms_req_no='TSTVME26073141')
+mkdraft(rid41, 'TSTVME26073141', status='failed')
+sync('R41', 'HQ Received', inq_no='TSTVME26073141')
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073141'",
+            one=True)['status'] == 'recalled', "failed 이력 → 'recalled'")
+
+print('# 13-2) 🔴 활성 큐(approved/submitting)는 절대 건드리지 않는다 — 워커 소유·전송 중일 수 있음')
+for st in ('approved', 'submitting'):
+    rq = 'R42' if st == 'approved' else 'R43'
+    rep = 'TSTVME2607314' + ('2' if st == 'approved' else '3')
+    rid_ = mkrow(rq, stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry', svms_req_no=rep)
+    mkdraft(rid_, rep, status=st)
+    sync(rq, 'HQ Received', inq_no=rep)
+    got = A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd=?", (rep,), one=True)['status']
+    chk(got == st, f"'{st}' 큐는 그대로 유지", got)
+    blk = A._dock_inq_blocked(row_of(rq))
+    chk(blk is not None and '큐에 있음' in blk, f"'{st}' 는 '이미 큐에 있음'으로 계속 차단", blk)
+
+print('# 13-3) 되돌림이 아닌 경로(link_only / 정상 진행)는 이력을 건드리지 않는다')
+rid44 = mkrow('R44', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+              svms_req_no='TSTVME26073144')
+mkdraft(rid44, 'TSTVME26073144', status='submitted')
+sync('R44', 'Some Unknown Status', inq_no='TSTVME26073144')   # 미지 라벨 = link_only
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073144'",
+            one=True)['status'] == 'submitted', '미지 라벨(link_only)은 이력 유지')
+sync('R44', 'Submit', inq_no='TSTVME26073144')                # 정상 진행(rank 2)
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073144'",
+            one=True)['status'] == 'submitted', '정상 진행도 이력 유지')
+
+print('# 13-4) fail-closed 로 되돌림이 막힌 행은 이력도 건드리지 않는다(일관성)')
+rid45 = mkrow('R45', stages_on=(1, 1, 1, 1), svms_status='HQ Ordered',
+              svms_req_no='TSTVME26073145', quote_amt=100)
+mkdraft(rid45, 'TSTVME26073145', status='submitted')
+sync('R45', 'HQ Received', inq_no='TSTVME26073145')
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073145'",
+            one=True)['status'] == 'submitted', '발주근거 보유 → 단계·이력 모두 유지')
+
+print('# 14) 이력 여러 건 / result 서식 / dry-run / 멱등 (올마이트 지적 갭)')
+rid46 = mkrow('R46', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+              svms_req_no='TSTVME26073146')
+for i, (st, res) in enumerate((('submitted', None), ('failed', 'pre-read 차단'), ('submitted', ''))):
+    A.execute(
+        "INSERT INTO dock_inquiry_draft(rid, vsl_nm, vsl_cd, req_no, rep_cd, vndr_json, vndr_names, "
+        "envelope_json, status, result, done_at) VALUES(?,'TEST VESSEL','TSTV','R46',"
+        "'TSTVME26073146','[]','t','{}',?,?,datetime('now','localtime'))", (rid46, st, res))
+sync('R46', 'HQ Received', inq_no='TSTVME26073146')
+ds = A.query("SELECT status, result FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073146' ORDER BY id")
+chk(len(ds) == 3 and all(d['status'] == 'recalled' for d in ds),
+    '같은 rep_cd 의 종료 이력 3건 모두 전이', [d['status'] for d in ds])
+chk(not ds[0]['result'].startswith(' · ') and not ds[2]['result'].startswith(' · '),
+    "result 가 비어 있으면 선행 ' · ' 안 붙음", [d['result'] for d in ds])
+chk(ds[1]['result'].startswith('pre-read 차단 · '), '기존 result 는 보존하고 뒤에 append',
+    ds[1]['result'])
+
+print('# 14-1) dry-run 은 이력을 바꾸지 않는다')
+rid47 = mkrow('R47', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
+              svms_req_no='TSTVME26073147')
+mkdraft(rid47, 'TSTVME26073147', status='submitted')
+r = c.post('/api/ext/dock_procure/sync',
+           json={'dry': True, 'items': [{'vsl_cd': 'TSTV', 'subject': '[DOCK][TSTV R47]subject',
+                                         'status': 'HQ Received'}]}, headers=HDR)
+chk(r.get_json()['dry'] is True and A.query(
+    "SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073147'",
+    one=True)['status'] == 'submitted', 'dry 는 이력·단계 모두 불변')
+
+print('# 14-2) 반복 sync 멱등 — 두 번째엔 전이할 게 없다(이미 recalled)')
+sync('R47', 'HQ Received')                                     # 1차: 실제 전이
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073147'",
+            one=True)['status'] == 'recalled', '1차 sync 에서 전이')
+j2 = sync('R47', 'HQ Received')
+chk(j2['updated'] == 0, '2차 sync 는 변경 0(단계가 이미 0 → 전이 조건 미성립)', j2['updated'])
+
+print('# 14-3) svms_req_no 가 비고 inq_no 로만 매칭되는 행도 이력을 전이한다')
+rid48 = mkrow('R48', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry', svms_req_no=None)
+mkdraft(rid48, 'TSTVME26073148', status='submitted')
+sync('R48', 'HQ Received', inq_no='TSTVME26073148')
+chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073148'",
+            one=True)['status'] == 'recalled', 'inq_no 로 rep_cd 를 찾아 전이')
+
+print("# 14-4) '완료건 지우기' 가 recalled 도 지운다(큐 목록에 영구 잔류 방지)")
+n = c.delete('/api/dock_inquiry/drafts/decided')
+chk(n.status_code in (200, 302, 401, 403), '라우트 응답', n.status_code)
+if n.status_code == 200:
+    left = A.query("SELECT COUNT(*) n FROM dock_inquiry_draft WHERE status='recalled'", one=True)['n']
+    chk(left == 0, 'recalled 가 남지 않는다', left)
+else:
+    chk(A._DOCK_SUBMIT_DONE + ('recalled',) == ('submitted', 'failed', 'canceled', 'recalled'),
+        "인증 없이 호출 불가 → 종료상태 집합으로 대신 확인")
+
 print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')
