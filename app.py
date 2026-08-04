@@ -857,6 +857,13 @@ def init_db(drop=False):
         # 같은 수리건을 두 번 큐잉하면 이중 상신 — 부분 유니크로 DB 층에 못박는다(앱 검사와 이중방어).
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_dock_submit_active "
                      "ON dock_submit_draft(rep_cd) WHERE status IN ('approved','submitting')")
+        # 🔴 실패기록 소거(2026-08-04 형 지시) — **행을 지우지 않고** 화면에서만 내린다.
+        #    `wrote` = 그 실패가 SVMS write 를 실제로 던진 뒤인지(1) 던지기 전인지(0). 워커가 보낸다.
+        #    NULL = 구 워커가 보낸 행 → 사유 문자열로 보수 판정(`_dock_submit_dismissable`).
+        _sbm_cols = [r[1] for r in conn.execute('PRAGMA table_info(dock_submit_draft)').fetchall()]
+        for _c, _t in (('dismissed_at', 'TEXT'), ('wrote', 'INTEGER')):
+            if _c not in _sbm_cols:
+                conn.execute('ALTER TABLE dock_submit_draft ADD COLUMN %s %s' % (_c, _t))
         # ===== 수리 견적요청 큐 (견적작성 → 벤더제출) =====
         #  🔴 이 큐의 1행 = 맥 워커의 **SVMS write 2회**(Confirm `SP_SET_REP`+STATUS='RC' → 벤더제출
         #     `SP_SET_REP_DTL`). 봉투 규격 정본 = docs/svms/repair-inquiry-envelope.md.
@@ -14623,7 +14630,74 @@ def _dock_submit_quote_pick(row, vndr_cd):
 def _dock_submit_row_json(r):
     d = dict(r)
     d.pop('envelope_json', None)                          # 목록엔 스냅샷 원문 안 실음(길다)
+    d['dismissable'] = _dock_submit_dismissable(r)        # 모달 [실패기록 지우기] 문구 분기용
     return d
+
+
+# 🔴 SVMS write 를 **던지기 전에** 끝난 실패 사유들(워커 `submit_watch.py` 문자열과 1:1).
+#    `wrote` 컬럼이 없는 구행 판정에만 쓰는 폴백이다 — 새 행은 워커가 보낸 0/1 이 정본.
+#    prefix 매칭인 이유: 사유 뒤에 상세가 붙는다("구매 pre-read 검증 실패: 업체 …").
+_DOCK_SUBMIT_NOWRITE_PREFIX = (
+    '구매 pre-read 검증 실패', 'pre-read 검증 실패',
+    '구매 봉투 조립 실패', '봉투 조립 실패',
+    '승인 스냅샷 불일치', '지원하지 않는/누락된 cat_code',
+)
+
+
+def _dock_submit_dismissable(r):
+    """이 실패기록을 **자동으로** 화면에서 내려도 되는가.
+
+    🔴 기준은 "SVMS 에 write 가 0 건인가" 하나다. pre-read/조립/스냅샷 단계 실패는 SVMS 가
+    전혀 안 바뀌었으니(형 2026-08-04: "실패는 trmt 앱에서 실패인거지 svms는 바뀐게 없잖아")
+    다음 시도 때 남아 있을 이유가 없다. 반대로 Confirm 이 이미 나간 뒤의 실패는 SVMS 가
+    **반쪽 상태**일 수 있어 조용히 사라지면 안 된다(실사고 #13 신호 유실) — 그건 형이
+    모달에서 직접 지워야 한다(force).
+    """
+    d = dict(r)
+    if (d.get('status') or '') != 'failed':
+        return False
+    w = d.get('wrote')
+    if w is not None:
+        return int(w) == 0
+    return str(d.get('result') or '').startswith(_DOCK_SUBMIT_NOWRITE_PREFIX)
+
+
+def _dock_submit_dismiss(rid=None, vsl_nm=None, force=False, who='web', ids=None):
+    """실패기록 소거 — `dismissed_at` 스탬프만 찍는다(행·사유 보존, 감사 추적 유지).
+
+    범위: `rid` = 그 행의 실패기록 전부 · `vsl_nm` = 그 선박 · 둘 다 없으면 전체.
+    🔴 개별 draft id 로 소거하지 않는 이유(올마이트 2026-08-04 지적, 실측 확증): 같은 rid 에
+    실패가 여러 건 쌓인다(라이브 rid 148 = #16·#17 둘 다 failed). 최신 1건만 내리면 형이
+    삭제를 눌렀는데 **그 아래 있던 옛 실패가 배지로 올라온다.** 그래서 최소 단위가 rid 다.
+
+    force=True 는 모달의 수동 삭제 버튼 전용(형이 사유를 읽고 경고를 확인한 뒤 누르는 자리) —
+    그때만 SVMS write 가 이미 나간 실패도 내려간다. 전체 범위에는 force 를 허용하지 않는다."""
+    sql = "SELECT * FROM dock_submit_draft WHERE status='failed' AND dismissed_at IS NULL"
+    args = []
+    if ids is not None:
+        ids = [int(x) for x in ids]
+        if not ids:
+            return [], []
+        sql += ' AND id IN (%s)' % ','.join('?' for _ in ids)
+        args.extend(ids)
+    elif rid is not None:
+        sql += ' AND rid=?'
+        args.append(rid)
+    elif vsl_nm:
+        sql += ' AND vsl_nm=?'
+        args.append(vsl_nm)
+    done, kept = [], []
+    for r in query(sql, tuple(args)):
+        if not (force or _dock_submit_dismissable(r)):
+            kept.append(r['id'])
+            continue
+        # 조건부 UPDATE 의 실제 반영 건수로 판정한다 — 동시에 두 번 눌리면 뒤엣것은 0건이고,
+        # 그걸 성공으로 세면 "지웠다"는 오보가 된다(올마이트 2026-08-04).
+        rc = execute_rc("UPDATE dock_submit_draft SET dismissed_at=datetime('now','localtime'), "
+                        "result=COALESCE(result,'')||' [dismissed by '||?||']' "
+                        "WHERE id=? AND status='failed' AND dismissed_at IS NULL", (who, r['id']))
+        (done if rc else kept).append(r['id'])
+    return done, kept
 
 
 @app.route('/api/dock_submit/app_lines')
@@ -14679,15 +14753,60 @@ def api_ext_svms_app_lines():
 @app.route('/api/dock_submit/drafts')
 @login_required
 def api_dock_submit_list():
+    # 🔴 소거된 실패기록은 안 내린다 — 이 한 줄이 웹·iOS 양쪽 배지를 같이 끈다(앱 업데이트 없이도).
+    #    행은 DB 에 그대로 남아 있고(`?all=1` 로 조회 가능), 성공/취소 기록은 소거 대상이 아니다.
+    keep_all = request.args.get('all') in ('1', 'true')
+    flt = '' if keep_all else ' AND dismissed_at IS NULL'
     rid = request.args.get('rid')
     if rid:
         try:
-            rows = query('SELECT * FROM dock_submit_draft WHERE rid=? ORDER BY id DESC', (int(rid),))
+            rows = query('SELECT * FROM dock_submit_draft WHERE rid=?%s ORDER BY id DESC' % flt, (int(rid),))
         except (TypeError, ValueError):
             return jsonify({'error': 'bad rid'}), 400
     else:
-        rows = query('SELECT * FROM dock_submit_draft ORDER BY id DESC LIMIT 200')
+        rows = query('SELECT * FROM dock_submit_draft WHERE 1=1%s ORDER BY id DESC LIMIT 200' % flt)
     return jsonify({'drafts': [_dock_submit_row_json(r) for r in rows]})
+
+
+@app.route('/api/dock_submit/drafts/dismiss', methods=['POST'])
+@admin_required
+def api_dock_submit_dismiss():
+    """직전 상신 **실패기록**을 화면에서 내린다 — SVMS 는 건드리지 않는다(read/write 0).
+
+    형 지시 2026-08-04: "trmt 앱/웹에서 실패한거는 리프래시나 다시 상신 시도할때 자동으로
+    이전 failure 기록을 없애는걸로 해 (아니면 모달내에 수동으로 이전 실패기록 삭제 버튼을…)".
+
+    · `vsl_nm`      = 새로고침(웹 동기화 버튼·앱 pull-to-refresh) → 그 **선박**의 write 0 실패 소거
+    · 인자 없음      = 전체 (범위 지정 못 하는 호출자용 폴백)
+    · `rid` + `force` = 모달 수동 삭제(Confirm 이 나간 뒤의 실패도 형이 사유를 보고 지울 수 있게)
+    행을 DELETE 하지 않는 이유 = 사후 추적. `dismissed_at` 만 찍고 목록에서 빠진다."""
+    d = request.get_json(silent=True) or {}
+    try:
+        rid = int(d['rid']) if d.get('rid') is not None else None
+    except (TypeError, ValueError):
+        return jsonify({'error': 'bad rid'}), 400
+    # 모달은 표시 중인 실패 draft의 id를 보낸다. 실패가 같은 rid에 여러 건 쌓일 수
+    # 있으므로 id를 그 행의 rid로 해석해 해당 건의 실패 이력을 함께 내린다.
+    if d.get('id') is not None:
+        try:
+            did = int(d['id'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'bad id'}), 400
+        picked = query("SELECT rid, status FROM dock_submit_draft WHERE id=?",
+                       (did,), one=True)
+        if not picked:
+            return jsonify({'error': '실패 기록을 찾을 수 없음'}), 404
+        if picked['status'] != 'failed':
+            return jsonify({'ok': True, 'dismissed': [], 'kept': [],
+                            'note': '실패 기록만 삭제할 수 있음'}), 200
+        rid = picked['rid']
+    # force 는 rid 지정 시에만 — 선박/전체 범위에 붙으면 반쪽 상태 실패까지 싹 지운다.
+    force = bool(d.get('force')) and rid is not None
+    done, kept = _dock_submit_dismiss(rid=rid, vsl_nm=(d.get('vsl_nm') or '').strip() or None,
+                                      force=force, who=session.get('username') or 'web')
+    return jsonify({'ok': True, 'dismissed': done, 'kept': kept,
+                    'note': ('SVMS write 가 이미 나간 실패는 남겨둠 — 모달에서 직접 삭제'
+                             if kept else '')})
 
 
 @app.route('/api/dock_submit/preview')
@@ -14777,6 +14896,11 @@ def api_dock_submit_create():
     line = query('SELECT * FROM svms_app_line WHERE app_no=?', (app_no,), one=True)
     if not line:
         return jsonify({'error': '결재라인 캐시에 없음 — 맥 워커 동기화 필요', 'field': 'app_no'}), 400
+    # 새 시도와 이전 실패를 분리한다. INSERT 뒤에 rid 전체를 dismiss하면 워커가
+    # 새 행을 아주 빠르게 failed로 만든 경우 새 실패까지 이전 기록으로 오인할 수 있다.
+    prior_failure_ids = [r['id'] for r in query(
+        "SELECT id FROM dock_submit_draft WHERE rid=? AND status='failed' AND dismissed_at IS NULL",
+        (rid,))]
     try:
         approvers = json.loads(line['approvers'] or '[]')
     except (TypeError, ValueError):
@@ -14801,8 +14925,12 @@ def api_dock_submit_create():
                     (rep_cd, *_DOCK_SUBMIT_ACTIVE), one=True)
         return jsonify({'error': '이미 상신 큐에 있음', 'id': act['id'] if act else None,
                         'status': act['status'] if act else None}), 409
+    # 🔴 재시도 = 이전 실패기록의 수명 끝(형 지시 2026-08-04). 새 시도가 큐에 올라간 **뒤에**
+    #    소거해서, 위에서 400/409 로 막힌 경우엔 실패 사유가 화면에 남아 있게 한다.
+    #    소거 대상은 SVMS write 0 건인 실패뿐 — 반쪽 상태 실패는 그대로 보인다.
+    dismissed, _kept = _dock_submit_dismiss(ids=prior_failure_ids, who=who)
     return jsonify({'id': did, 'status': 'approved', 'rep_cd': rep_cd,
-                    'vndr_cd': vndr_cd, 'app_no': app_no}), 201
+                    'vndr_cd': vndr_cd, 'app_no': app_no, 'dismissed': dismissed}), 201
 
 
 @app.route('/api/dock_submit/drafts/<int:did>/cancel', methods=['POST'])
@@ -14944,9 +15072,15 @@ def api_ext_dock_submit_result(did):
     (`SP_GET_REP_INFO` 재조회로 상태 전이 확인). 응답 성공키를 몰라도 되는 이유가 이것."""
     d = request.get_json(silent=True) or {}
     ok = bool(d.get('ok'))
-    rc = execute_rc("UPDATE dock_submit_draft SET status=?, done_at=datetime('now','localtime'), result=? "
-                    "WHERE id=? AND status='submitting'",
-                    ('submitted' if ok else 'failed', (d.get('result') or '')[:2000], did))
+    # `wrote` = 이 결과가 SVMS write 를 던진 **뒤**인지(1) 던지기 전인지(0). 실패기록 자동소거 판정용.
+    # 키가 없으면 NULL 로 남긴다 — 구 워커 행은 사유 문자열로 보수 판정(`_dock_submit_dismissable`).
+    try:
+        wrote = None if d.get('wrote') is None else int(bool(int(d['wrote'])))
+    except (TypeError, ValueError):
+        wrote = 1                                          # 이상값 = 안전한 쪽(write 있었다고 본다)
+    rc = execute_rc("UPDATE dock_submit_draft SET status=?, done_at=datetime('now','localtime'), "
+                    "result=?, wrote=? WHERE id=? AND status='submitting'",
+                    ('submitted' if ok else 'failed', (d.get('result') or '')[:2000], wrote, did))
     if rc and ok:
         # 🔴 상신 성공을 화면에 **즉시** 반영한다. 다음 SVMS sync 까지 기다리면 그 사이 화면은
         #    아직 'Quotation Inquiry' 라 형이 같은 건을 또 컨펌하게 된다(2026-08-01 실사고).

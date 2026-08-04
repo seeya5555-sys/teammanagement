@@ -759,7 +759,15 @@
            승인 ${esc(f.decided_by||'')} · ${esc(f.decided_at||'')}<br>
            완료 ${esc(m.note ? '—' : (f.done_at||'—'))}</div>
            ${f.result?`<div class="dp-qst" style="margin-top:6px">${esc(f.result)}</div>`:''}</div>`
-      : `<div class="dp-warn" style="margin-top:10px">직전 상신 실패 (${esc(m.when)}) — ${esc(f.result||'사유 미기재')}</div>`);
+      // 🔴 실패기록 수동 삭제(형 지시 2026-08-04) — SVMS 는 안 건드리고 이 기록만 화면에서 내린다.
+      //    `dismissable`(서버 판정 = SVMS write 0건)이 아니면 문구를 바꿔 경고한다 — Confirm 이
+      //    이미 나간 반쪽 상태일 수 있어 형이 사유를 읽고 지우는 자리다.
+      : `<div class="dp-warn" style="margin-top:10px">직전 상신 실패 (${esc(m.when)}) — ${esc(f.result||'사유 미기재')}
+           <div style="margin-top:8px">
+             <button class="dp-btn dp-sbmdel" data-id="${f.id}" data-force="${f.dismissable?'0':'1'}"
+               title="${f.dismissable?'SVMS 는 안 바뀐 실패 — 이 기록만 지움':'⚠️ SVMS 로 write 가 이미 나간 뒤의 실패 — 기록을 지워도 SVMS 상태는 그대로다'}">
+               이전 실패기록 삭제${f.dismissable?'':' (SVMS write 이미 나간 건)'}</button>
+           </div></div>`);
     if(pv.blocked){
       go.disabled=true;
       b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>${done}
@@ -818,6 +826,22 @@
     if(!IS_ADMIN) return;
     $('#sb-close').onclick = sbmClose;
     $('#sb-ov').onclick = e => { if(e.target.id==='sb-ov') sbmClose(); };
+    // [이전 실패기록 삭제] — 위임 바인딩(모달 본문은 sbmRender 가 매번 새로 그린다).
+    $('#sb-body').addEventListener('click', async e => {
+      const b = e.target.closest('.dp-sbmdel'); if(!b) return;
+      const force = b.dataset.force === '1';
+      if(force && !confirm('이 실패는 SVMS 로 write 가 이미 나간 뒤의 실패입니다.\n\n기록을 지워도 SVMS 상태는 바뀌지 않습니다. SVMS 화면에서 실제 상태를 먼저 확인하세요.\n\n그래도 이 기록을 지울까요?')) return;
+      b.disabled = true;
+      try{
+        const r = await fetch('/api/dock_submit/drafts/dismiss',{method:'POST',
+          headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:+b.dataset.id, force})});
+        const j = await r.json();
+        if(!r.ok){ toast(j.error||'삭제 실패'); b.disabled=false; return; }
+        toast((j.dismissed||[]).length ? '실패기록 삭제됨 (SVMS 는 변경 없음)' : (j.note||'삭제된 기록 없음'));
+      }catch(err){ toast('삭제 실패'); b.disabled=false; return; }
+      await loadSubmits(); render();
+      if(SBM_CUR) sbmRender(SBM_CUR);      // 같은 모달에서 경고가 즉시 사라진다
+    });
     document.addEventListener('keydown', e => { if(e.key==='Escape' && $('#sb-ov').classList.contains('on')) sbmClose(); });
     $('#sb-go').onclick = async () => {
       if(!SBM_CUR) return;
@@ -1302,6 +1326,11 @@
     }
     btn.onclick=async()=>{
       btn.disabled=true; stat.textContent='요청 보냄…';
+      // 🔴 새로고침 = 이전 실패기록의 수명 끝(형 지시 2026-08-04). SVMS write 0건인 실패만 내려간다.
+      //    자동 로드(load())가 아니라 **형이 누른 새로고침**에만 붙인다 — 안 그러면 실패 사유를
+      //    읽기도 전에 배지가 사라진다. 실패해도 동기화는 계속 진행한다(부수 작업).
+      if(IS_ADMIN) try{ await fetch('/api/dock_submit/drafts/dismiss',{method:'POST',
+        headers:{'Content-Type':'application/json'}, body:'{}'}); }catch(e){}
       try{
         const r=await fetch('/api/dock_procure/sync/trigger',{method:'POST'});
         if(!r.ok){ btn.disabled=false; stat.textContent='요청 실패'; return; }

@@ -476,6 +476,105 @@ chk(A.query('SELECT stg_confirm FROM dock_procure WHERE id=?', (rid8,), one=True
 chk(c.get(f'/api/dock_submit/preview?rid={rid8}').get_json().get('blocked') is None,
     '실패한 건은 다시 컨펌 가능(막히면 안 됨)')
 
+print('# 17) 🔴 실패기록 소거 — SVMS write 0건만 자동, write 나간 건은 남는다 (형 지시 2026-08-04)')
+# 형: "실패는 trmt 앱에서 실패인거지 svms는 바뀐게 없잖아? … 리프래시나 다시 상신 시도할때
+#      자동으로 이전 failure 기록을 없애는걸로 해". 단 Confirm 이 이미 나간 뒤의 실패는
+# SVMS 가 반쪽 상태일 수 있어 조용히 사라지면 안 된다 → 그건 형이 모달에서 force 로 지운다.
+
+
+def fail_draft(req_no, result, wrote=None, cat='R'):
+    """상신 1건을 만들어 claim → 실패 보고까지 진행하고 (rid, did) 를 준다."""
+    rid = mkrow(req_no, cat=cat)
+    did = create(rid).get_json()['id']
+    c.get(f'/api/ext/dock_submit/approved?id={did}', headers=HDR)
+    body = {'ok': False, 'result': result}
+    if wrote is not None:
+        body['wrote'] = wrote
+    c.post(f'/api/ext/dock_submit/drafts/{did}/result', headers=HDR, json=body)
+    return rid, did
+
+
+def drafts_seen(rid):
+    return [d['id'] for d in c.get(f'/api/dock_submit/drafts?rid={rid}').get_json()['drafts']]
+
+
+def dismissed_at(did):
+    return A.query('SELECT dismissed_at FROM dock_submit_draft WHERE id=?', (did,), one=True)['dismissed_at']
+
+
+rid9, d9 = fail_draft('R90', '구매 pre-read 검증 실패: 업체 A1CA8 제출금액이 0', wrote=0)
+rid10, d10 = fail_draft('R91', '구매 Cost Review Confirm 실패(Submit 안 함): {}', wrote=1)
+chk(A.query('SELECT wrote FROM dock_submit_draft WHERE id=?', (d9,), one=True)['wrote'] == 0,
+    '워커가 보낸 wrote=0 이 저장됨')
+chk(c.get(f'/api/dock_submit/drafts?rid={rid9}').get_json()['drafts'][0]['dismissable'] is True,
+    'pre-read 단계 실패 = 자동소거 대상')
+chk(c.get(f'/api/dock_submit/drafts?rid={rid10}').get_json()['drafts'][0]['dismissable'] is False,
+    '🔴 Confirm 이 나간 뒤 실패 = 자동소거 대상 아님(SVMS 반쪽 상태 신호 보존)')
+
+r = c.post('/api/dock_submit/drafts/dismiss', json={})       # = 새로고침
+j = r.get_json()
+chk(r.status_code == 200 and d9 in (j.get('dismissed') or []), '새로고침 소거 — write 0건 실패는 내려감')
+chk(d10 in (j.get('kept') or []), '🔴 새로고침 소거 — write 나간 실패는 남는다')
+chk(d9 not in drafts_seen(rid9), '소거된 실패기록은 목록에 안 나옴(= 배지 사라짐)')
+chk(d10 in drafts_seen(rid10), 'write 나간 실패기록은 계속 보인다')
+chk(A.query('SELECT COUNT(*) n FROM dock_submit_draft WHERE id=?', (d9,), one=True)['n'] == 1
+    and dismissed_at(d9) is not None,
+    '🔴 행을 DELETE 하지 않는다 — dismissed_at 스탬프만(사후 추적 유지)')
+chk(d9 in [x['id'] for x in c.get(f'/api/dock_submit/drafts?rid={rid9}&all=1').get_json()['drafts']],
+    '?all=1 로는 소거된 기록도 조회됨')
+
+# force = 특정 1건만. 전체 소거에 force 를 붙여도 무시된다(반쪽 상태 실패 일괄삭제 차단).
+r = c.post('/api/dock_submit/drafts/dismiss', json={'force': True})
+chk(d10 in (r.get_json().get('kept') or []), '🔴 force 는 전체 소거에 안 먹는다(id 지정 필수)')
+r = c.post('/api/dock_submit/drafts/dismiss', json={'id': d10, 'force': True})
+chk(d10 in (r.get_json().get('dismissed') or []), '모달 수동 삭제(force+id)는 write 나간 실패도 지움')
+chk(d10 not in drafts_seen(rid10), '수동 삭제 후 목록에서 사라짐')
+
+# 다시 상신 시도 = 이전 실패기록의 수명 끝. 단 새 시도가 큐에 올라간 뒤에만 소거된다.
+rid11, d11 = fail_draft('R92', 'pre-read 검증 실패: STATUS 가 RE 아님', wrote=0)
+r = create(rid11)
+chk(r.status_code == 201 and d11 in (r.get_json().get('dismissed') or []),
+    '재상신 시도 → 이전 실패기록 자동 소거')
+chk(d11 not in drafts_seen(rid11), '재상신 후 이전 실패 배지 없음')
+new_did = r.get_json()['id']
+chk(new_did in drafts_seen(rid11), '새 큐 행은 그대로 보인다')
+A.execute("DELETE FROM dock_submit_draft WHERE id=?", (new_did,))
+
+# 재상신이 **거절**되면(이미 발주완료 등) 실패 사유는 화면에 남아 있어야 한다 — 소거는 201 이후에만.
+rid12, d12 = fail_draft('R93', 'pre-read 검증 실패: 그 벤더 없음', wrote=0)
+A.execute('UPDATE dock_procure SET stg_order=1 WHERE id=?', (rid12,))
+chk(create(rid12).status_code == 409, '이미 발주완료 → 409')
+chk(d12 in drafts_seen(rid12), '🔴 거절된 재시도는 이전 실패기록을 지우지 않는다')
+
+# 구 워커(wrote 미전송) 행은 사유 문자열로 보수 판정한다.
+rid13, d13 = fail_draft('R94', '구매 pre-read 검증 실패: 업체 없음')          # wrote 안 보냄
+rid14, d14 = fail_draft('R95', 'PC Confirm=ok Submit=fail · 전이 없음')       # wrote 안 보냄
+chk(A.query('SELECT wrote FROM dock_submit_draft WHERE id=?', (d13,), one=True)['wrote'] is None,
+    '구 워커 행은 wrote NULL')
+r = c.post('/api/dock_submit/drafts/dismiss', json={})
+chk(d13 in (r.get_json().get('dismissed') or []), '구행 폴백 — pre-read 사유는 소거 가능')
+chk(d14 in (r.get_json().get('kept') or []), '🔴 구행 폴백 — 모르는 사유는 남긴다(fail-closed)')
+
+# 소거는 실패기록만 — 성공 이력이 사라지면 "내가 상신했다"는 흔적을 잃는다.
+rid15 = mkrow('R96'); d15 = create(rid15).get_json()['id']
+c.get(f'/api/ext/dock_submit/approved?id={d15}', headers=HDR)
+c.post(f'/api/ext/dock_submit/drafts/{d15}/result', headers=HDR, json={'ok': True, 'result': 'ok', 'wrote': 1})
+c.post('/api/dock_submit/drafts/dismiss', json={})
+chk(d15 in drafts_seen(rid15), '🔴 상신완료 기록은 소거 대상 아님')
+chk(c.post('/api/dock_submit/drafts/dismiss', json={'id': d15, 'force': True})
+    .get_json().get('dismissed') == [], 'force 로도 성공기록은 못 지운다')
+
+# 소거는 사람만(ext api_key 로는 못 부른다) — 화면 기록을 워커가 지울 이유가 없다.
+# 세션 없는 새 클라이언트로 확인한다(위 `c` 는 admin 쿠키를 들고 있어 api_key 여부를 못 가린다).
+chk(A.app.test_client().post('/api/dock_submit/drafts/dismiss', headers=HDR, json={}).status_code
+    in (302, 401, 403), '🔴 소거는 admin 세션 전용(api_key 거부)')
+with c.session_transaction() as s:
+    s['role'] = 'user'
+chk(c.post('/api/dock_submit/drafts/dismiss', json={}).status_code in (302, 401, 403),
+    '일반 user 는 소거 불가')
+with c.session_transaction() as s:
+    s['role'] = 'admin'
+
 print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')
