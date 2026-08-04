@@ -342,13 +342,27 @@
   const qIsDC     = q => (q.final_amt!=null && qBase(q)!=null
                           && Math.round(Number(q.final_amt)*100) < Math.round(Number(qBase(q))*100));
   const qCut      = q => (qIsDC(q) ? Number(qBase(q)) - Number(q.final_amt) : null);
+  // 품목 견적 결함(견적 미제출 · 단가 0 등). 🔴 판정은 화면이 하지 않는다 — 맥 워커의 상신 게이트와
+  // **같은 함수**(dock_items.item_gaps)가 동기화 때 계산해 스냅샷에 넣어준 걸 그대로 읽는다.
+  // 상신을 막는 건 라이브로 읽는 워커 게이트고, 여기 표시는 "누르기 전에 미리 알기" 용이다.
+  const qGapN   = q => { const n=Number(q.gap_n||0); return (Number.isFinite(n)&&n>0)?n:0 };
+  const qGapLbls = q => (Array.isArray(q.gaps) ? q.gaps.map(g=>g&&g.label).filter(Boolean) : []);
+  const qGapTip = q => { if(!qGapN(q)) return ''; const ls = qGapLbls(q);
+    return `\n  └ ⚠ 이 업체 견적 결함 ${qGapN(q)}건` + (ls.length?`: ${ls.join(' · ')}`:'')
+         + (qGapN(q)>ls.length?` (외 ${qGapN(q)-ls.length}건)`:'') };
+  // 업체명이 앞에 붙은 한 줄 — 카드 배지 툴팁은 **결함 있는 업체 전부**를 이걸로 나열한다
+  // (표시업체(최저)만 보면 형이 다른 업체로 발주할 때 결함이 숨는다 — 올마이트 지적).
+  const qGapLine = q => { const ls = qGapLbls(q);
+    return `${q.nm||'업체'} — 견적 결함 ${qGapN(q)}건` + (ls.length?`: ${ls.join(' · ')}`:'')
+         + (qGapN(q)>ls.length?` (외 ${qGapN(q)-ls.length}건)`:'') };
   const quoteTip = q => `${q.nm||'업체'} · ${qShown(q)!=null?fmtAmt(qShown(q))+' '+(q.cur||''):'금액 미제출'}`
                       + ((qShownUsd(q)!=null && (q.cur||'USD')!=='USD')?` (≈USD ${fmtAmt(qShownUsd(q))})`:'')
                       // 구매는 요율(%), 수리는 금액 할인(DIS_AMT)이라 요율이 0/없음 — 있는 쪽을 근거로 쓴다.
                       + (qIsDC(q)?`\n  └ 제출 ${fmtAmt(qBase(q))} ${q.cur||''}`
                                   + (q.dc_rate?` · D/C ${fmtAmt(q.dc_rate)}%`:` · D/C −${fmtAmt(qCut(q))}`)
                                   + ` → D/C후`:'')
-                      + (q.att?` · 첨부 ${q.att}`:'') + ((q.st||'').toLowerCase()==='ordered'?' · 발주':'');
+                      + (q.att?` · 첨부 ${q.att}`:'') + ((q.st||'').toLowerCase()==='ordered'?' · 발주':'')
+                      + qGapTip(q);
   // 견적서 첨부 목록(att_files) — 배열 위치가 서버 preview cache 의 idx 다(서버가 정렬을 못박음).
   const filesOf = l => { try{ const a=JSON.parse(l.att_files||'[]');
     return Array.isArray(a)?a.filter(f=>f&&typeof f==='object'):[] }catch(e){ return [] } };
@@ -622,7 +636,15 @@
             // 표시값 기준 최저로 오해된다(업체별 D/C 조건이 다르면 순위가 뒤집힐 수 있음).
             + (priced.length>1?` <span style="font-weight:400">제출최저·${priced.length}</span>`:'')
           : `제출 ${priced.length}건 <span style="font-weight:400">통화상이</span>`;
-        extra += `<div class="dp-sub q" title="제출견적 (발주금액 아님) · 금액은 D/C 후, '제출최저'는 D/C 전 제출원금 기준&#10;${esc(tip)}">${body}</div>`;
+        // ⚠ 견적 결함 알림 — **결함 있는 업체가 하나라도 있으면** 뜬다(표시업체만 보면 형이 다른
+        //   업체로 발주할 때 결함이 숨는다). 표시업체(최저) 자체가 결함이면 품목 수를, 아니면
+        //   '업체 N곳' 으로 말한다. 상신을 막지는 않는다(스냅샷 기준 — 라이브 판정은 워커).
+        const gapVs = qs.filter(q=>qGapN(q)>0);
+        const gapBadge = gapVs.length
+          ? ` <span style="font-weight:600;color:var(--red)" title="마지막 동기화 기준&#10;${esc(gapVs.map(qGapLine).join('\n'))}">⚠${
+              (best && qGapN(best)>0) ? `품목 ${qGapN(best)}` : `업체 ${gapVs.length}곳`}</span>`
+          : '';
+        extra += `<div class="dp-sub q" title="제출견적 (발주금액 아님) · 금액은 D/C 후, '제출최저'는 D/C 전 제출원금 기준&#10;${esc(tip)}">${body}${gapBadge}</div>`;
       }
       // 벤더가 올린 견적서 원본. 서버 캐시에 실제로 있는 것만 링크로 — 없는 건 '수집 대기'로 구분해서
       // 보여준다(링크가 404 나는 것보다 낫고, 형이 다음 동기화를 기다리면 된다는 걸 알 수 있음).
@@ -813,6 +835,16 @@
         <div class="dp-warn" style="margin-top:12px">상신할 수 없음 — <b>${esc(pv.blocked)}</b></div>`;
       return;
     }
+    // 🔴 업체별 품목 견적 결함 — 형이 [지금 전송] 을 눌러서 실패로 알게 되는 대신 **여기서 먼저** 본다.
+    //   (2026-08-04 S7: (주)딘텍 SEQ 0040 단가 0 → 워커 게이트가 상신 실패로 돌려준 건)
+    //   라디오는 막지 않는다 — 이 값은 마지막 동기화 스냅샷이고, 라이브 최종판정은 워커가 한다.
+    const gapRows = c => { const n = qGapN(c); if(!n) return '';
+      const ls = Array.isArray(c.gaps) ? c.gaps.map(g=>g&&g.label).filter(Boolean) : [];
+      // 문구는 스냅샷 성격을 밝힌다 — 형이 SVMS 에서 방금 고쳤으면 이 경고는 이미 옛 사실이다.
+      return `<div class="mt" style="color:var(--red);font-weight:600">⚠ 마지막 동기화 기준 견적 결함 ${n}건 — 이대로면 상신 실패함</div>`
+           + ls.map(t=>`<div class="mt" style="color:var(--red)">· ${esc(t)}</div>`).join('')
+           + (n>ls.length?`<div class="mt" style="color:var(--red)">· 외 ${n-ls.length}건</div>`:'')
+           + `<div class="mt">SVMS 에서 해당 품목을 처리한 뒤 동기화하면 사라짐</div>`; };
     const opts = (pv.candidates||[]).map((c,i)=>{
       const amt = c.amt!=null ? `${fmtAmt(c.amt)} ${esc(c.cur||'')}` : '금액 미제출';
       const shownUsd = c.final_amt!=null ? c.final_usd : c.usd;
@@ -827,7 +859,8 @@
         <input type="radio" name="sb-v" value="${esc(c.cd||'')}"${c.ok?'':' disabled'} style="margin-top:2px">
         <div><div class="nm">${esc(c.nm||c.cd||'업체')}${c.best?' <span style="font-weight:600;font-size:11px;color:var(--green)">최저</span>':''}</div>
           <div class="mt">${esc(c.cd||'코드없음')} · ${esc(c.st||'상태미상')}${c.att?` · 견적서 ${c.att}`:''}</div>
-          ${c.ok?'':`<div class="mt" style="color:var(--red)">${esc(c.why||'')}</div>`}</div>
+          ${c.ok?'':`<div class="mt" style="color:var(--red)">${esc(c.why||'')}</div>`}
+          ${gapRows(c)}</div>
         <div class="amt">${isPurchase?`${gross||amt}${dc}${final}${usd}`:`${amt}${usd}`}</div></label>`;
     }).join('') || '<div class="dp-blk">제출된 견적이 없음 — 벤더 제출 후 다시 시도.</div>';
     b.innerHTML = `<div class="dp-blk"><b>${esc(pv.subject||'')}</b></div>${done}

@@ -84,15 +84,17 @@ one = json.loads(A._dockproc_norm_quotes(
     [{'nm': 'A CO', 'cd': 'a1jfj', 'amt': '15,800', 'usd': 15800, 'cur': 'usd',
       'gross_amt': '16,000', 'dc_rate': 45, 'final_amt': '8,800', 'final_usd': 8800,
       'att': '2', 'st': 'Submitted'}]))
+#   gap_n/gaps = 품목 견적 결함(2026-08-04 추가). 폴러가 안 보내면 0/빈 배열로 고정돼
+#   구버전 스냅샷과 같은 화면이 된다(경고 안 뜸). 상세 계약은 tests/test_dock_item_gaps.py.
 chk(one == [{'nm': 'A CO', 'cd': 'A1JFJ', 'amt': 15800.0, 'usd': 15800.0,
              'gross_amt': 16000.0, 'dc_rate': 45.0, 'final_amt': 8800.0, 'final_usd': 8800.0,
-             'cur': 'USD', 'att': 2,
+             'cur': 'USD', 'att': 2, 'gap_n': 0, 'gaps': [],
              'st': 'Submitted', 'best': 1}],
     'DC전/할인/DC후 금액·통화·첨부·업체코드 정규화(+단독이면 best)', one)
 bad = json.loads(A._dockproc_norm_quotes([{'nm': 'B', 'amt': 'abc', 'cur': 'kr', 'att': 'x', 'st': ''}]))
 chk(bad == [{'nm': 'B', 'cd': None, 'amt': None, 'usd': None,
              'gross_amt': None, 'dc_rate': None, 'final_amt': None, 'final_usd': None,
-             'cur': None, 'att': 0, 'st': ''}],
+             'cur': None, 'att': 0, 'gap_n': 0, 'gaps': [], 'st': ''}],
     '파싱불가 → amt/usd None·cur None·att 0·cd None', bad)
 
 print('# 1b) cd = SVMS VNDR_CD (Phase 3 SELETED_VDR 의 정본 식별자)')

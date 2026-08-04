@@ -12970,6 +12970,7 @@ def _dockproc_inq_stage_block(doc, svms_status):
 
 
 _DOCKPROC_QUOTE_MAX = 20            # 한 건에 붙는 벤더 수 상한(표시전용 스냅샷이라 넉넉하되 무한 아님)
+_DOCKPROC_GAP_MAX = 5               # 업체당 보여줄 결함 품목 줄 수 상한(전체 건수는 gap_n 이 따로 말한다)
 
 
 def _dockproc_norm_quotes(raw):
@@ -13008,7 +13009,28 @@ def _dockproc_norm_quotes(raw):
             att = 0
         cur = str(q.get('cur') or '').strip().upper()
         cd = str(q.get('cd') or '').strip().upper()[:20]
+        # 품목 견적 결함(견적 미제출 · 단가 0 …). 🔴 판정은 맥 워커가 **상신 게이트와 같은 함수**
+        #   (`dock_items.item_gaps`)로 이미 했다 — 여기서는 형태만 방어한다(개수·길이 캡). 서버가
+        #   다시 판정하면 두 판정이 갈려서 "화면은 조용한데 상신만 실패" 가 재발한다.
+        #   구버전 폴러는 이 키를 안 보내 gap_n=0 이 되고, 화면은 경고를 안 띄운다(하위호환).
+        #   ⚠️ 키가 항상 있으므로 배포 후 첫 sync 에서 기존 S/ST 행은 canonical 문자열이 달라져
+        #      한 번 UPDATE 된다(값 변화 없음, 멱등은 그 다음 sync 부터 복귀).
+        try:
+            gap_n = int(q.get('gap_n') or 0)
+        except (TypeError, ValueError, OverflowError):
+            gap_n = 0
+        gaps = []
+        for g in (q.get('gaps') if isinstance(q.get('gaps'), list) else [])[:_DOCKPROC_GAP_MAX]:
+            if not isinstance(g, dict):
+                continue
+            gaps.append({'seq': str(g.get('seq') or '').strip()[:20],
+                         'why': str(g.get('why') or '').strip()[:20],
+                         'label': str(g.get('label') or '').strip()[:200]})
+        # 라벨이 건수보다 많으면(캡·이상값) 건수를 라벨 수로 올린다 — "외 −1건" 같은 표시 방지.
+        gap_n = max(0, min(999, gap_n), len(gaps))
         out.append({'nm': str(q.get('nm') or '').strip()[:120],
+                    'gap_n': gap_n,
+                    'gaps': gaps if gap_n else [],
                     # cd = SVMS VNDR_CD. Phase ③ 상신 봉투의 SELETED_VDR 가 이 값이다.
                     # 구버전 폴러는 안 보내므로 None 가능 — 그 경우 상신 대상에서 제외(fail-closed).
                     'cd': cd if re.fullmatch(r'[A-Z0-9]{1,20}', cd) else None,
@@ -14838,7 +14860,12 @@ def api_dock_submit_preview():
                       'gross_amt': q.get('gross_amt'), 'dc_rate': q.get('dc_rate'),
                       'final_amt': q.get('final_amt'), 'final_usd': q.get('final_usd'),
                       'cur': q.get('cur'), 'usd': q.get('usd'), 'st': q.get('st'),
-                      'att': q.get('att'), 'best': q.get('best'), 'ok': why is None, 'why': why})
+                      'att': q.get('att'), 'best': q.get('best'), 'ok': why is None, 'why': why,
+                      # 🔴 품목 견적 결함(견적 미제출·단가 0…) = **알림만, 선택은 막지 않는다.**
+                      #   판정은 맥 워커의 상신 게이트와 같은 `dock_items.item_gaps` 가 했고 이 값은
+                      #   마지막 동기화 시점의 스냅샷이다. 여기서 라디오를 비활성하면 형이 SVMS 에서
+                      #   고친 직후에도 다음 동기화까지 상신을 못 한다 — 최종 차단은 워커가 라이브로 한다.
+                      'gap_n': q.get('gap_n'), 'gaps': q.get('gaps')})
     blocked = None
     if (row['cat_code'] or '') not in _DOCK_SUBMIT_CATS:
         blocked = '서비스(R)·자재(S)·스토어(ST) 건만 상신 가능'
