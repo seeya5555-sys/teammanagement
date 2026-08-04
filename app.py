@@ -13355,6 +13355,8 @@ def api_dockproc_lines():
             # 라벨이 '이미 견적요청 이후'인지도 **서버가** 판정해 내려준다 — 화면이 부분일치 리스트를
             # 각자 복사해 들고 있으면 `_DOCK_INQ_PRE` 예외가 빠져 실패 이력이 초록으로 뒤집힌다.
             r['inq_posted'] = _dockproc_inq_posted(r['inq_doc'], r.get('svms_status'))
+            # 상신 쪽도 같은 규약 — 화면은 이 값만 읽는다(`_DOCK_SUBMIT_PRE` 예외가 서버에만 있다).
+            r['sbm_posted'] = _dockproc_sbm_posted(r.get('svms_status'))
             vc = r.get('vsl_cd') or vcode
             if r.get('cat_code') in ('R', 'S', 'ST') and vc:
                 r['svms_subj'] = _reqgen_build_subj(vc, r['req_no'], r['vsl_nm'], prefix, r.get('subject'))
@@ -14632,6 +14634,31 @@ _DOCK_SUBMIT_DONE = ('submitted', 'failed', 'canceled')
 #    실측 라벨 분포(수리 R): HQ Ordered 25 · NULL 24 · Quotation Inquiry 18 · HQ Confirmed 2 · Submit 1.
 _DOCK_SUBMIT_POST = ('submit', 'approval', 'progressing', 'confirmed', 'ordered')
 _DOCK_SUBMIT_CATS = ('R', 'S', 'ST')
+# 🔴 상신 **전**이 rank 맵으로 확정된 라벨 = 위 denylist 부분일치보다 먼저 본다(정확일치).
+#   'HQ Confirmed' 는 `_DOCKPROC_STATUS_RANK` 에서 rank **1(견적작성)** 인데 denylist 의 'confirmed' 에
+#   걸린다. 견적요청 쪽은 2026-08-03 실사고 후 `_DOCK_INQ_PRE` 로 같은 함정을 막았는데 상신 쪽은
+#   안 옮겨져 있었다 → 실패 이력이 있는 행이 초록 '✓ 상신완료' 로 뒤집혀 보였다(표시 결함).
+_DOCK_SUBMIT_PRE = ('HQ CONFIRMED',)
+
+
+def _dockproc_sbm_posted(svms_status):
+    """이 헤더 라벨이 '이미 상신 이후'인가 — 순수함수. `_dockproc_inq_posted` 와 같은 규약.
+
+    🔴 이 판정을 **서버만** 한다. 웹 `sbmPosted()` 와 iOS `isPosted()` 가 `_DOCK_SUBMIT_POST`
+       부분일치 리스트를 각자 복사해 들고 있었고, 둘 다 `_DOCK_SUBMIT_PRE` 예외가 없어서
+       'HQ Confirmed'(=상신 전 rank1) 행의 **실패 이력이 초록 '✓ 상신완료' 로 뒤집혔다.**
+       ⇒ 목록 API 가 `sbm_posted` 로 내려주고 두 화면은 그 값만 읽는다.
+
+    ⚠️ 실제 재상신 **차단** 게이트(`_dock_submit_prior`)는 이 예외를 쓰지 않는다 — 돈경로를
+       넓히는 방향이라 형 컨펌 없이 완화하지 않는다. 여기서 고치는 건 **표시**뿐이다.
+    """
+    raw = str(svms_status or '').strip()
+    if not raw:
+        return False
+    if raw.upper() in _DOCK_SUBMIT_PRE:
+        return False
+    st = raw.lower()
+    return any(k in st for k in _DOCK_SUBMIT_POST)
 
 
 def _dock_submit_prior(rep_cd, svms_status):
@@ -14677,6 +14704,25 @@ def _dock_submit_quote_pick(row, vndr_cd):
         # 금액 없는 발주가 되므로 여기서 막고, 실제 반례가 관측되면 근거를 보고 완화한다.
         return None, "제출상태가 아님(st=%s) — 발주 대상 아님" % (st or '없음')
     return q, None
+
+
+_DOCK_DRAFT_COLS = {}
+
+
+def _dock_draft_cols(table):
+    """목록 조회용 컬럼 목록 = `envelope_json` 만 뺀 전부.
+
+    🔴 왜: 목록 API 는 `SELECT *` 로 봉투 스냅샷 원문(행당 수 KB)까지 읽어와 직렬화 직전에
+       `pop` 으로 버렸다. 200행이면 그만큼을 헛읽는다. 컬럼 이름을 손으로 나열하지 않고
+       **스키마에서** 뽑는 이유는, 하드코딩하면 나중에 추가된 컬럼이 목록에서 조용히 빠져
+       화면이 이유 없이 빈칸을 보이기 때문이다(테이블명은 우리 리터럴만 들어온다).
+    """
+    cols = _DOCK_DRAFT_COLS.get(table)
+    if not cols:
+        names = [r['name'] for r in query('PRAGMA table_info(%s)' % table)]
+        cols = ', '.join(n for n in names if n != 'envelope_json') or '*'
+        _DOCK_DRAFT_COLS[table] = cols
+    return cols
 
 
 def _dock_submit_row_json(r):
@@ -14810,13 +14856,15 @@ def api_dock_submit_list():
     keep_all = request.args.get('all') in ('1', 'true')
     flt = '' if keep_all else ' AND dismissed_at IS NULL'
     rid = request.args.get('rid')
+    cols = _dock_draft_cols('dock_submit_draft')     # 봉투 원문 제외 — 아래서 pop 할 값을 읽지 않는다
     if rid:
         try:
-            rows = query('SELECT * FROM dock_submit_draft WHERE rid=?%s ORDER BY id DESC' % flt, (int(rid),))
+            rows = query('SELECT %s FROM dock_submit_draft WHERE rid=?%s ORDER BY id DESC' % (cols, flt),
+                         (int(rid),))
         except (TypeError, ValueError):
             return jsonify({'error': 'bad rid'}), 400
     else:
-        rows = query('SELECT * FROM dock_submit_draft WHERE 1=1%s ORDER BY id DESC LIMIT 200' % flt)
+        rows = query('SELECT %s FROM dock_submit_draft WHERE 1=1%s ORDER BY id DESC LIMIT 200' % (cols, flt))
     return jsonify({'drafts': [_dock_submit_row_json(r) for r in rows]})
 
 
