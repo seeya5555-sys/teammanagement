@@ -1329,8 +1329,9 @@
       // 🔴 새로고침 = 이전 실패기록의 수명 끝(형 지시 2026-08-04). SVMS write 0건인 실패만 내려간다.
       //    자동 로드(load())가 아니라 **형이 누른 새로고침**에만 붙인다 — 안 그러면 실패 사유를
       //    읽기도 전에 배지가 사라진다. 실패해도 동기화는 계속 진행한다(부수 작업).
-      if(IS_ADMIN) try{ await fetch('/api/dock_submit/drafts/dismiss',{method:'POST',
-        headers:{'Content-Type':'application/json'}, body:'{}'}); }catch(e){}
+      //    범위는 **보고 있는 선박**으로 좁힌다 — 전체로 돌리면 아직 안 읽은 딴 배 실패까지 내려간다.
+      if(IS_ADMIN && DATA.current) try{ await fetch('/api/dock_submit/drafts/dismiss',{method:'POST',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({vsl_nm:DATA.current})}); }catch(e){}
       try{
         const r=await fetch('/api/dock_procure/sync/trigger',{method:'POST'});
         if(!r.ok){ btn.disabled=false; stat.textContent='요청 실패'; return; }

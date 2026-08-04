@@ -576,6 +576,63 @@ with c.session_transaction() as s:
     s['role'] = 'admin'
 
 print()
+print('# 18) 🔴 소거 범위·fail-closed 보강 (올마이트 2026-08-04 지적 반영)')
+# ① 새로고침 소거는 **보고 있는 선박**만 — 전체로 돌리면 아직 안 읽은 딴 배 실패까지 사라진다.
+A.execute("INSERT INTO dock_procure_vessel(vsl_nm, vsl_cd) VALUES('OTHER VESSEL','OTHV')")
+rid16, d16 = fail_draft('R97', 'pre-read 검증 실패: 업체 없음', wrote=0)
+A.execute("UPDATE dock_procure SET vsl_nm='OTHER VESSEL' WHERE id=?", (rid16,))
+A.execute("UPDATE dock_submit_draft SET vsl_nm='OTHER VESSEL' WHERE id=?", (d16,))
+rid17, d17 = fail_draft('R98', 'pre-read 검증 실패: 업체 없음', wrote=0)
+j = c.post('/api/dock_submit/drafts/dismiss', json={'vsl_nm': 'TEST VESSEL'}).get_json()
+chk(d17 in (j.get('dismissed') or []), 'vsl_nm 범위 — 그 선박 실패는 소거됨')
+chk(d16 not in (j.get('dismissed') or []) and dismissed_at(d16) is None,
+    '🔴 vsl_nm 범위 — 딴 선박 실패는 건드리지 않는다(안 읽은 신호 보존)')
+
+# ② 같은 rid 에 실패가 여러 건이면 **한 번에** 내려가야 한다. 최신 1건만 지우면 형이
+#    삭제를 눌렀는데 그 아래 옛 실패가 배지로 올라온다(라이브 rid 148 = 실패 2건 실측).
+rid18, old = fail_draft('R99', 'pre-read 검증 실패: 1차', wrote=0)
+did2 = create(rid18).get_json()['id']                       # 이 시점에 old 는 자동소거된다
+c.get(f'/api/ext/dock_submit/approved?id={did2}', headers=HDR)
+c.post(f'/api/ext/dock_submit/drafts/{did2}/result', headers=HDR,
+       json={'ok': False, 'result': 'pre-read 검증 실패: 2차', 'wrote': 0})
+# 자동소거가 없던 시절에 쌓인 라이브 상태를 재현한다(rid 148 = #16·#17 둘 다 failed·미소거).
+A.execute("UPDATE dock_submit_draft SET dismissed_at=NULL WHERE id=?", (old,))
+chk(len([x for x in drafts_seen(rid18) if x in (old, did2)]) == 2, '같은 rid 에 실패 2건 쌓임(전제)')
+j = c.post('/api/dock_submit/drafts/dismiss', json={'id': did2, 'force': True}).get_json()
+chk(old in (j.get('dismissed') or []) and did2 in (j.get('dismissed') or []),
+    '🔴 모달 삭제는 그 rid 의 실패 이력을 함께 내린다(옛 실패 재노출 없음)')
+chk(not [x for x in drafts_seen(rid18) if x in (old, did2)], '삭제 후 그 rid 실패 배지 0건')
+
+# ③ 6h stale 로 failed 된 행 = wrote NULL + 모르는 사유 → 자동 소거 대상이 **아니다**.
+rid19 = mkrow('RA1'); d19 = create(rid19).get_json()['id']
+c.get(f'/api/ext/dock_submit/approved?id={d19}', headers=HDR)
+A.execute("UPDATE dock_submit_draft SET done_at=datetime('now','localtime','-7 hours') WHERE id=?", (d19,))
+c.get('/api/ext/dock_submit/approved?limit=1', headers=HDR)   # 청소 트리거(peek 분기는 청소 안 함)
+chk(A.query('SELECT status, wrote FROM dock_submit_draft WHERE id=?', (d19,), one=True)['status']
+    == 'failed', '6h stale → failed (전제)')
+j = c.post('/api/dock_submit/drafts/dismiss', json={'vsl_nm': 'TEST VESSEL'}).get_json()
+chk(d19 in (j.get('kept') or []) and dismissed_at(d19) is None,
+    '🔴 6h stale 행은 남긴다 — SVMS 에 절반 나갔을 수 있어 사람이 봐야 한다(fail-closed)')
+
+# ④ 소거가 터져도 재상신 큐잉(201)은 깨지지 않는다 — 형이 알아야 하는 건 "큐에 올라갔나"다.
+rid20, d20 = fail_draft('RA2', 'pre-read 검증 실패: 업체 없음', wrote=0)
+_orig_dismiss = A._dock_submit_dismiss
+
+
+def _boom(*a, **k):
+    raise RuntimeError('소거 폭발 테스트')
+
+
+A._dock_submit_dismiss = _boom
+try:
+    r = create(rid20)
+finally:
+    A._dock_submit_dismiss = _orig_dismiss
+chk(r.status_code == 201 and r.get_json().get('dismissed') == [],
+    '🔴 소거 예외가 재상신 201 을 500 으로 만들지 않는다')
+chk(d20 in drafts_seen(rid20), '소거 실패 시 이전 기록은 그대로 남는다(조용한 유실 없음)')
+
+print()
 if fails:
     print(f'❌ FAIL {len(fails)}건: {fails}')
     sys.exit(1)

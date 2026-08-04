@@ -14928,7 +14928,13 @@ def api_dock_submit_create():
     # 🔴 재시도 = 이전 실패기록의 수명 끝(형 지시 2026-08-04). 새 시도가 큐에 올라간 **뒤에**
     #    소거해서, 위에서 400/409 로 막힌 경우엔 실패 사유가 화면에 남아 있게 한다.
     #    소거 대상은 SVMS write 0 건인 실패뿐 — 반쪽 상태 실패는 그대로 보인다.
-    dismissed, _kept = _dock_submit_dismiss(ids=prior_failure_ids, who=who)
+    #    소거는 **부가 기능**이라 여기서 터져도 큐잉(201)을 깨면 안 된다 — 형이 알아야 하는 건
+    #    "상신이 큐에 올라갔나"이고, 오래된 실패 배지가 남는 건 그 다음 문제다.
+    try:
+        dismissed, _kept = _dock_submit_dismiss(ids=prior_failure_ids, who=who)
+    except Exception as e:                                 # noqa: BLE001 — 큐잉 성공을 지킨다
+        app.logger.warning('dock_submit 재시도 소거 실패 rid=%s: %s', rid, e)
+        dismissed = []
     return jsonify({'id': did, 'status': 'approved', 'rep_cd': rep_cd,
                     'vndr_cd': vndr_cd, 'app_no': app_no, 'dismissed': dismissed}), 201
 
