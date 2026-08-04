@@ -1210,7 +1210,7 @@
       <td class="dp-req">${esc(l.req_no)}</td>
       <td><span class="dp-pill cat-${l.cat_code}">${esc(CATS.find(c=>c.code===l.cat_code)?.nm||l.category||'')}</span></td>
       <td><div class="dp-subj">${esc(l.subject||'—')}</div><div class="dp-equip">${esc(l.equipment||'')}</div></td>
-      <td class="c"><span class="dp-prep ${l.prepared_by||'OWNER'}" data-id="${l.id}" title="클릭하여 OWNERMANAGER 전환">${esc(l.prepared_by||'OWNER')}</span></td>
+      <td class="c"><span class="dp-prep ${l.prepared_by||'OWNER'}" data-id="${l.id}" title="클릭하여 OWNER↔MANAGER 전환">${esc(l.prepared_by||'OWNER')}</span></td>
       <td class="c"><span class="dp-src ${l.source}">${esc(l.source||'')}</span></td>
       <td><div class="dp-stages">${stg(l,'stg_quote','견적<br>작성')}${stg(l,'stg_vendor','벤더<br>제출')}${stg(l,'stg_confirm','벤더<br>컨펌')}${stg(l,'stg_order','발주<br>완료')}</div></td>
       <td class="c"><span class="dp-status st-${sc}" ${l.svms_status?`title="SVMS: ${esc(l.svms_status)}${l.svms_synced_at?(' · '+esc(l.svms_synced_at)):''}"`:''}>${sl}</span>${l.svms_req_no?`<div style="font-size:9px;color:var(--text-tertiary);margin-top:2px" title="연결된 SVMS Inq No"><svg class="ic-svg" viewBox="0 0 24 24" style="margin-right:2px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${esc(l.svms_req_no)}</div>`:''}${sbmTag(l)}${iqTag(l)}</td>
