@@ -12973,6 +12973,28 @@ _DOCKPROC_QUOTE_MAX = 20            # 한 건에 붙는 벤더 수 상한(표시
 _DOCKPROC_GAP_MAX = 5               # 업체당 보여줄 결함 품목 줄 수 상한(전체 건수는 gap_n 이 따로 말한다)
 
 
+def _dockproc_hard_n(q, gap_n=None):
+    """업체 견적 스냅샷 한 건의 **상신을 막는 결함 수**. 읽기 규칙을 여기 한 곳만 둔다.
+
+    정규화(적재)와 상신 preview(조회)가 각자 계산하면 같은 행을 놓고 화면이 서로 다른 말을 한다.
+    🔴 `hard_n` 도 `gaps[].hard` 도 없는 스냅샷(hard/soft 분리 이전 폴러가 적재한 행)은 차단 여부를
+       **모른다**. 그때는 0 이 아니라 `gap_n` 으로 본다 — 모르는 걸 "상신 가능" 이라고 말하면 형이
+       버튼을 누른 뒤 실패하고, 반대 방향은 한 번 더 확인하는 것뿐이다. 다음 sync 에서 새 폴러
+       값이 들어오면 자동 해소된다(올마이트 2026-08-04 지적 반영).
+    """
+    def _c(v):
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError
+            return 0
+    gaps = [g for g in (q.get('gaps') if isinstance(q.get('gaps'), list) else []) if isinstance(g, dict)]
+    n = _c(q.get('gap_n')) if gap_n is None else gap_n
+    n = max(0, min(999, n), len(gaps))
+    if q.get('hard_n') is None and not any('hard' in g for g in gaps):
+        return n
+    return min(n, max(0, _c(q.get('hard_n')), sum(1 for g in gaps if g.get('hard') is True)))
+
+
 def _dockproc_norm_quotes(raw):
     """폴러가 보낸 **벤더 제출견적** 목록 → canonical JSON 문자열(쓸 값이 없으면 None).
     발주금액(quote_amt)과 다른 값이다 — 제출견적은 아직 발주가 아니므로 절대 섞지 않는다.
@@ -13015,21 +13037,29 @@ def _dockproc_norm_quotes(raw):
         #   구버전 폴러는 이 키를 안 보내 gap_n=0 이 되고, 화면은 경고를 안 띄운다(하위호환).
         #   ⚠️ 키가 항상 있으므로 배포 후 첫 sync 에서 기존 S/ST 행은 canonical 문자열이 달라져
         #      한 번 UPDATE 된다(값 변화 없음, 멱등은 그 다음 sync 부터 복귀).
-        try:
-            gap_n = int(q.get('gap_n') or 0)
-        except (TypeError, ValueError, OverflowError):
-            gap_n = 0
+        #   `hard_n` = 그 중 상신을 실제로 막는 건수. 단가 0 은 hard 가 아니다(형 지시 = 인폼만).
+        def _cnt(v):
+            try:
+                return int(v or 0)
+            except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError
+                return 0
+        gap_n = _cnt(q.get('gap_n'))
         gaps = []
         for g in (q.get('gaps') if isinstance(q.get('gaps'), list) else [])[:_DOCKPROC_GAP_MAX]:
             if not isinstance(g, dict):
                 continue
             gaps.append({'seq': str(g.get('seq') or '').strip()[:20],
                          'why': str(g.get('why') or '').strip()[:20],
+                         'hard': g.get('hard') is True,
                          'label': str(g.get('label') or '').strip()[:200]})
         # 라벨이 건수보다 많으면(캡·이상값) 건수를 라벨 수로 올린다 — "외 −1건" 같은 표시 방지.
         gap_n = max(0, min(999, gap_n), len(gaps))
+        # hard 는 전체를 넘을 수 없다. 폴러가 hard_n 을 안 보내도(구버전) 라벨의 hard 플래그로 복원하고,
+        # 그것마저 없으면 gap_n 으로 본다 — 규칙 정본은 `_dockproc_hard_n` 한 곳(조회 경로와 공유).
+        hard_n = _dockproc_hard_n(q, gap_n)
         out.append({'nm': str(q.get('nm') or '').strip()[:120],
                     'gap_n': gap_n,
+                    'hard_n': hard_n if gap_n else 0,
                     'gaps': gaps if gap_n else [],
                     # cd = SVMS VNDR_CD. Phase ③ 상신 봉투의 SELETED_VDR 가 이 값이다.
                     # 구버전 폴러는 안 보내므로 None 가능 — 그 경우 상신 대상에서 제외(fail-closed).
@@ -14865,7 +14895,11 @@ def api_dock_submit_preview():
                       #   판정은 맥 워커의 상신 게이트와 같은 `dock_items.item_gaps` 가 했고 이 값은
                       #   마지막 동기화 시점의 스냅샷이다. 여기서 라디오를 비활성하면 형이 SVMS 에서
                       #   고친 직후에도 다음 동기화까지 상신을 못 한다 — 최종 차단은 워커가 라이브로 한다.
-                      'gap_n': q.get('gap_n'), 'gaps': q.get('gaps')})
+                      #   `hard_n` 만 "이대로면 실패" 다. 단가 0(soft)은 형 지시로 통과시킨다.
+                      #   저장된 스냅샷을 그대로 읽으므로 hard/soft 분리 이전 행이 섞일 수 있다 —
+                      #   `_dockproc_hard_n` 이 그 경우 "모름 = 전부 차단" 으로 되돌린다(적재 경로와 같은 규칙).
+                      'gap_n': q.get('gap_n'), 'hard_n': _dockproc_hard_n(q),
+                      'gaps': q.get('gaps')})
     blocked = None
     if (row['cat_code'] or '') not in _DOCK_SUBMIT_CATS:
         blocked = '서비스(R)·자재(S)·스토어(ST) 건만 상신 가능'
