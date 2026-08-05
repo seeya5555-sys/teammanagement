@@ -320,7 +320,16 @@
     const id=btn.closest('.rg-card').dataset.id, act=btn.dataset.act;
     try{
       if(act==='delete'){ if(!confirm('이 카드를 삭제할까요?')) return; await api('DELETE',`/api/reqgen/drafts/${id}`); }
-      else if(act==='reset'){ await api('POST',`/api/reqgen/drafts/${id}/reset`); }
+      else if(act==='reset'){
+        // failed 카드의 [재시도] = SVMS 재저장. 러너가 SVMS 를 부른 뒤 응답만 깨졌을 가능성이 남아
+        // (REQ_NO 가 붙은 건은 서버가 아예 거부) 사람이 중복 여부를 확인하고 누르게 한다.
+        const d=currentDrafts.find(x=>String(x.id)===String(id));
+        if(d && d.status==='failed' &&
+           !confirm('SVMS에 다시 저장을 시도합니다.\n실패 원인(엑셀 단위 등)을 먼저 고쳤는지, '
+                    +'그리고 SVMS에 같은 청구가 이미 없는지 확인하세요.\n계속할까요?')) return;
+        const j=await api('POST',`/api/reqgen/drafts/${id}/reset`);
+        if(j&&j.message) $('#bar-hint').textContent=j.message;
+      }
       await load();
     }catch(e){ alert(e.message); }
   });

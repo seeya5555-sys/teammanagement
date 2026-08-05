@@ -10641,12 +10641,21 @@ def api_ext_aor_create():
         return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
 
 
-def _queue_aor(task, user):
-    """approve/reject 시 aor_submit·aor_reject run 큐 적재(대기/진행중이면 재사용 — claim이 해당 상태 전부 처리)."""
+def _queue_aor(task, user, fresh_if_running=False):
+    """approve/reject 시 aor_submit·aor_reject run 큐 적재(대기/진행중이면 재사용 — claim이 해당 상태 전부 처리).
+
+    `fresh_if_running=True` = 이미 running 인 run 은 재사용하지 않고 새 run 을 만든다.
+    러너(reqgen_save 등)는 **프로세스 시작 시 approved 를 한 번만 claim** 하므로, 그 뒤에 생긴
+    카드는 running run 에 절대 안 실린다 — 재사용하면 "재시도 눌렀는데 아무 일 없음"이 된다
+    (2026-08-05 올마이트 지적, `automation/svms-soa-opex/reqgen_save.py::main` 실측).
+    queued 는 아직 claim 전이라 그대로 재사용해도 실린다.
+    """
     if not _automation_enabled():
         return None
+    states = ('queued',) if fresh_if_running else ('queued', 'running')
     busy = query("SELECT run_id FROM automation_run WHERE task=? "
-                 "AND status IN ('queued','running') ORDER BY id DESC LIMIT 1", (task,), one=True)
+                 f"AND status IN ({','.join('?' * len(states))}) ORDER BY id DESC LIMIT 1",
+                 (task, *states), one=True)
     if busy:
         return busy['run_id']
     rid = uuid.uuid4().hex[:12]
@@ -12655,13 +12664,39 @@ def api_reqgen_approve_all():
 @app.route('/api/reqgen/drafts/<int:did>/reset', methods=['POST'])
 @login_required
 def api_reqgen_reset(did):
-    """승인 취소 — 저장 전(approved)만 pending 으로 복귀."""
+    """승인 취소(approved→pending) · 실패 재시도(failed→approved+저장큐).
+
+    같은 버튼이 카드 상태에 따라 두 일을 한다(템플릿: approved=취소 / failed=재시도).
+    종전엔 approved 만 처리해서 **failed 카드의 [재시도] 가 409 로 죽어 있었다**(2026-08-05 S33).
+    재시도는 `req_no` 가 비어 있을 때만 — 번호가 이미 붙었으면 SVMS 에 절반 저장됐을 수 있고
+    자동 재저장은 이중저장이 된다. 그 경우는 사람이 SVMS 를 보고 판단한다(fail-closed).
+    """
     rc = execute_rc("UPDATE reqgen_draft SET status='pending', decided_at=NULL, decided_by=NULL "
                     "WHERE id=? AND status='approved'", (did,))
-    if not rc:
-        cur = query('SELECT status FROM reqgen_draft WHERE id=?', (did,), one=True)
-        return jsonify({'error': '저장 전(approved)만 취소 가능', 'status': cur['status'] if cur else '?'}), 409
-    return jsonify({'id': did, 'status': 'pending'})
+    if rc:
+        return jsonify({'id': did, 'status': 'pending'})
+    cur = query('SELECT status, req_no FROM reqgen_draft WHERE id=?', (did,), one=True)
+    if cur and cur['status'] == 'failed':
+        # 공백문자 REQ_NO 도 '번호 있음'으로 본다 — 러너는 SVMS 가 준 CODE 를 그대로 넣으므로
+        # 이상한 값이어도 채번은 일어난 것이고, 자동 재저장은 이중저장이다(fail-closed).
+        if (cur['req_no'] or '') != '':
+            return jsonify({'error': f"이미 SVMS 번호({cur['req_no']})가 붙은 건이라 자동 재시도 불가 — "
+                                     "SVMS 에서 상태 확인 후 처리", 'status': 'failed'}), 409
+        if not _automation_enabled():
+            return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
+        rc = execute_rc("UPDATE reqgen_draft SET status='approved', result=NULL, done_at=NULL "
+                        "WHERE id=? AND status='failed' AND (req_no IS NULL OR req_no='')", (did,))
+        if rc:
+            rid = _queue_aor('reqgen_save', session.get('username') or 'web', fresh_if_running=True)
+            if not rid:                       # 큐 적재 실패 → approved 로 방치하면 영영 안 돌아간다
+                execute("UPDATE reqgen_draft SET status='failed', "
+                        "result='재시도 큐 적재 실패 — 다시 시도하세요' WHERE id=? AND status='approved'",
+                        (did,))
+                return jsonify({'error': '재시도 큐 적재 실패 — 자동화 상태 확인 후 다시 시도'}), 409
+            return jsonify({'id': did, 'status': 'approved', 'save_run': rid,
+                            'message': '재시도 큐 등록 — 맥 러너가 곧 다시 저장(최대 1~2분)'})
+    return jsonify({'error': '승인 취소는 저장 전(approved), 재시도는 실패(failed) 카드만 가능',
+                    'status': cur['status'] if cur else '?'}), 409
 
 
 @app.route('/api/reqgen/drafts/<int:did>', methods=['DELETE'])
