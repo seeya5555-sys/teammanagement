@@ -13615,8 +13615,46 @@ def api_dockproc_stage(lid):
         o = val
         if val:
             q = v = f = 1
-    execute("UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_confirm=?, stg_order=?, "
-            "updated_at=datetime('now','localtime') WHERE id=?", (q, v, f, o, lid))
+    # 🔴 SVMS 정본 행은 사람이 단계를 **내리지 못한다**(2026-08-05 실사고 BGBB S13 = id 148).
+    #   실측: SVMS 'Ordered'(발주서 `BGBBES2608A21A` 발급) 행을 sync 가 08-04 21:50 에 [●●●●] 로
+    #   세팅해 뒀는데, 08-05 13:38 이 엔드포인트 호출 1건이 '벤더제출' 을 끄면서 cascade 로
+    #   v=f=o=0 → **발주완료 건이 '견적작성' 버킷으로 떨어졌다**(형 제보 캡처). 이 엔드포인트를
+    #   자동 호출하는 코드는 웹·iOS·워커 어디에도 없다. ⚠️단, 서버에 access log 가 없어
+    #   (gunicorn `--error-logfile -` 만) **호출 주체는 특정 못 했다** — 화면 탭이 가장 그럴듯하지만
+    #   직접 API 호출·스크립트도 배제 못 한다(올마이트 지적 수용). 확정된 건 "이 엔드포인트를 탄 쓰기
+    #   1건" 까지다.
+    #   다음 정기 sync(최대 1시간)가 되돌리지만, **되돌아온다는 사실 자체가 이 토글이 무의미**하다는
+    #   뜻이고 그 사이 화면·필터·상태배지는 명백히 틀린 값을 보여준다.
+    #   기준선 = min(SVMS 라벨 rank, 지금 켜져 있는 rank).
+    #     · SVMS rank = 정본이 "여기까지 왔다"고 말한 단계는 사람이 못 내린다.
+    #     · 현재 rank 로 한 번 더 낮추는 이유 = 발주근거 fail-closed 게이트가 rank4 를 3 으로 눌러둔
+    #       행(`ordered_evidence` False/None)에서 화면에 없는 단계까지 요구하면 정상 행이 통째로
+    #       잠긴다. 사람이 sync 보다 앞서 켜 둔 단계를 스스로 되돌리는 것도 이 min() 덕에 계속 된다.
+    #   ⚠️rank 0 은 **fail-open**(종전대로 자유 해제)이다. rank 0 = "SVMS 미연결"이 아니라
+    #     "이 라벨로는 단계를 주장할 수 없음"이다 — 빈 라벨(수동관리 행. 2026-08-03 실측 73행 중
+    #     50행이 사람이 켠 단계만 보유) 뿐 아니라 `HQ Received`·`VSL Approved` 같은 **견적의뢰 이전
+    #     SVMS 라벨**과 미등재·오탈자 라벨도 전부 여기 떨어진다(올마이트 지적 — 옛 주석은 rank0 을
+    #     '미연결'로 뭉뚱그렸는데 틀렸다). 처음 보는 라벨 하나로 사람 조작을 잠그지 않는 쪽이 맞다.
+    _sv_rank = _dockproc_status_rank(row['svms_status'])
+    if _sv_rank >= 1:
+        _cur_rank = (4 if row['stg_order'] else 3 if row['stg_confirm']
+                     else 2 if row['stg_vendor'] else 1 if row['stg_quote'] else 0)
+        _new_rank = 4 if o else 3 if f else 2 if v else 1 if q else 0
+        if _new_rank < min(_sv_rank, _cur_rank):
+            return jsonify({'error': "SVMS 상태가 '%s' 라 이 단계는 해제할 수 없음 — 해제해도 다음 "
+                                     "동기화에서 되돌아옵니다. SVMS 에서 먼저 되돌려 주세요."
+                                     % (row['svms_status'] or '')}), 409
+    # 🔴 낙관적 락 — SELECT 와 UPDATE 사이에 sync 가 끼어들면 위 게이트가 **stale 스냅샷**으로 통과한
+    #   뒤 옛 단계값을 그대로 덮어써 같은 사고가 재현된다(올마이트 지적 수용). 스냅샷 4개를 WHERE 에
+    #   실어 그 사이 값이 바뀌었으면 0행 = 409 로 돌린다. 클라이언트는 새로고침 후 다시 누르면 된다.
+    #   (`rowcount` 가 필요해 `execute` 대신 `execute_rc`.)
+    rc = execute_rc(
+        "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_confirm=?, stg_order=?, "
+        "updated_at=datetime('now','localtime') WHERE id=? AND stg_quote=? AND stg_vendor=? "
+        "AND stg_confirm=? AND stg_order=?",
+        (q, v, f, o, lid, row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order']))
+    if not rc:
+        return jsonify({'error': '동기화가 방금 이 항목을 갱신했습니다. 새로고침 후 다시 시도하세요.'}), 409
     return jsonify({'id': lid, 'stg_quote': q, 'stg_vendor': v,
                     'stg_confirm': f, 'stg_order': o})
 
