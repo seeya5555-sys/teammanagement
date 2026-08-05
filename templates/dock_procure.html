@@ -80,6 +80,17 @@
   .dp-stg.subhi{background:var(--red-bg);border-radius:7px;box-shadow:0 0 0 1.5px var(--red-border);padding:2px 0}
   .dp-sub{font-size:9px;font-weight:800;color:var(--red);margin-top:1px;line-height:1}
   .dp-sub.q{color:var(--text-secondary);font-weight:700;letter-spacing:-.2px;cursor:help}  /* 벤더 제출견적액(발주금액 아님) */
+  /* 분할발주(한 청구를 업체 2곳으로 나눠 발주) 업체별 줄 — `발주금액` 칸 하나로는 한쪽이 사라진다 */
+  .dp-ords{margin-top:2px;display:flex;flex-direction:column;gap:1px}
+  .dp-ordv{display:flex;gap:3px;justify-content:space-between;align-items:baseline;font-size:8px;
+    line-height:1.45;padding:0 3px;border-radius:3px;background:var(--bg-subtle,#f3f4f6);
+    color:var(--text-secondary);cursor:help}
+  .dp-ordv.on{background:#e7f3ec;color:var(--green,#186A3B);font-weight:800}  /* 실제 발주 나간 업체 */
+  .dp-ordv .ov-nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:88px;text-align:left}
+  .dp-ordv .ov-amt{white-space:nowrap;font-weight:700}
+  .dp-ordv .ov-amt.na{font-weight:600;opacity:.75}      /* 금액 미확정 = 0원이 아님 */
+  .dp-ordt{font-size:8px;font-weight:800;color:var(--text-secondary);text-align:right;padding:0 3px}
+  .dp-ordt.mix{font-weight:600;opacity:.8}              /* 통화 혼재 = 합계를 만들지 않는다 */
   /* 벤더 견적서 원본(SVMS MAOE 첨부) — 클릭하면 새 탭에 PDF */
   .dp-atts{display:flex;flex-wrap:wrap;gap:2px;justify-content:center;margin-top:2px}
   .dp-att{font-size:8px;font-weight:700;line-height:1.5;padding:0 3px;border-radius:3px;
@@ -341,6 +352,26 @@
   // 벤더 제출견적 스냅샷(sub_quotes) — 서버가 JSON 문자열로 준다. 깨진 값이 화면 전체를 죽이지 않게 방어.
   const quotesOf = l => { try{ const a=JSON.parse(l.sub_quotes||'[]');
     return Array.isArray(a)?a.filter(q=>q&&typeof q==='object'):[] }catch(e){ return [] } };
+  // 분할발주 업체별 발주서 스냅샷(ord_vendors). 서버 canonical JSON — 화면은 판정하지 않고 그대로 읽는다.
+  // 🔴 `sub_quotes`(제출견적)와 다른 칸이다: 그건 '누가 얼마에 제출했나', 이건 '누구에게 실제로 발주가
+  //   나갔나'다. 섞으면 발주 안 된 업체가 발주완료로 보인다.
+  const ordersOf = l => { try{ const a=JSON.parse(l.ord_vendors||'[]');
+    return Array.isArray(a)?a.filter(o=>o&&typeof o==='object'):[] }catch(e){ return [] } };
+  // 🔴 통화가 섞이면 **합계를 만들지 않는다** — 실측 [BGBB S1] 은 KRW + USD 라 더한 숫자는 아무 뜻이
+  //   없다. 같은 통화일 때만 합계를 쓰고, 섞였으면 업체별 줄만 보여준다(거짓 합계 방지).
+  //   USD 환산 합계도 쓰지 않는다 — 환산율은 스냅샷 시점 값이고 발주서 금액이 아니다.
+  //   🔴 **하나라도 미확정이면 합계를 만들지 않는다**(올마이트 지적 2026-08-05) — 확정된 것만 더해서
+  //     '합계'라 쓰면 실제보다 **적게** 보인다(S1 이면 42,523.32 USD 만 합계로 뜸 = 딘텍 금액 누락).
+  const ordTotal = os => { if(!os.length || os.some(o=>o.amt==null)) return null;
+    const cs=new Set(os.map(o=>o.cur||'')); if(cs.size!==1) return null;
+    return {amt:os.reduce((s,o)=>s+Number(o.amt),0), cur:[...cs][0], n:os.length} };
+  // 업체 1줄. `amt==null` 은 **0 이 아니라 '아직 확정 안 됨'**(결재 진행중 발주서는 ODR_LIST 에 없다).
+  const ordLine = o => `<div class="dp-ordv${o.ordered?' on':''}" title="발주서 ${esc(o.odr_no||'')}${
+      o.st?` · SVMS: ${esc(o.st)}`:''}${o.amt==null?' · 발주금액 미확정(결재 진행중)':''}">`
+    + `<span class="ov-nm">${esc(o.nm||o.cd||'—')}</span>`
+    + (o.amt!=null ? `<span class="ov-amt">${esc(fmtAmt(o.amt))} ${esc(o.cur||'')}</span>`
+                   : `<span class="ov-amt na">미확정</span>`)
+    + `</div>`;
   // 화면에 쓰는 금액 = **발주서 최종금액**(final_amt). 없을 때만 제출원금(amt)으로 폴백한다.
   // USD 도 같은 기준으로 짝을 맞춘다(final 을 쓰면서 D/C 전 USD 를 붙이면 2026-08-03 상신모달과
   // 같은 짝 안 맞는 표시가 됨).
@@ -703,7 +734,11 @@
 
   function stg(l,key,label){
     const on = l[key]?'on':'';
-    const st = key==='stg_quote'?'quote':key==='stg_vendor'?'vendor':'order';
+    // 🔴 `stg_confirm` 이 빠져 있어서 **벤더컨펌 체크박스가 서버로 'order' 를 보냈다**(2026-08-05 발견).
+    //    서버는 'confirm' 을 정상 지원하는데(`api_dockproc_stage`) 화면 매핑만 없어서, 형이 벤더컨펌을
+    //    누르면 cascade 로 `stg_order=1` = **발주 안 한 건이 발주완료로 켜졌다**. 돈 표시가 걸린 칸이라
+    //    조용히 두면 안 된다.
+    const st = key==='stg_quote'?'quote':key==='stg_vendor'?'vendor':key==='stg_confirm'?'confirm':'order';
     let extra='', cls='';
     if(key==='stg_vendor'){
       if(l.svms_submit){                                // 견적 제출수/의뢰수 표시 + 1건↑이면 하이라이트
@@ -749,6 +784,32 @@
           ? `<a class="dp-att" href="/api/dock_procure/${l.id}/attachments/${i}?sv=${encodeURIComponent(f.sv || '')}" target="_blank" rel="noopener" title="견적서 열기&#10;${esc(attTip(f))}">${esc(attNm(f))}</a>`
           : `<span class="dp-att off" title="아직 서버에 안 받아옴 — 다음 동기화에서 수집됨&#10;${esc(attTip(f))}">${esc(attNm(f))}</span>`
         ).join('') + `</div>`;
+      }
+    }
+    // 🔴 분할발주 — 자재(S)·스토어(ST)는 한 청구를 업체 2곳으로 나눠 발주할 수 있다(형 2026-08-05).
+    //    `발주금액` 칸은 값이 하나, `비고`(업체명)도 하나라서 그 모델로는 한쪽이 통째로 사라진다.
+    //    그래서 업체·금액은 **합치지 않고 단계 칸에 업체별로** 적는다. 통화가 섞이면(실측 [BGBB S1]
+    //    = KRW + USD) 합계를 만들지 않는다 — 더한 숫자는 아무 뜻이 없다.
+    //    업체 1곳뿐인 보통 건은 기존 `발주금액` 표시와 중복이라 띄우지 않는다(화면 소음 방지).
+    if(key==='stg_confirm' || key==='stg_order'){
+      const os = ordersOf(l);
+      if(os.length>1){
+        const done = os.filter(o=>o.ordered);
+        // 벤더컨펌 = 선택된 업체 전원(누구를 골랐나) / 발주완료 = 실제 발주 나간 업체만(누구에게 나갔나).
+        const show = key==='stg_confirm' ? os : done;
+        extra += `<div class="dp-sub">${key==='stg_confirm'?`업체 ${os.length}곳`:`발주 ${done.length}/${os.length}`}</div>`;
+        if(show.length){
+          const tot = ordTotal(show);
+          extra += `<div class="dp-ords">` + show.map(ordLine).join('')
+            // 합계가 없는 이유를 **정확히** 쓴다 — '통화 상이'로 뭉개면 금액이 아직 안 나온 건까지
+            // 통화 문제로 오독한다(형이 SVMS 를 확인해야 하는 사유가 다르다).
+            + (show.length>1
+                ? (tot ? `<div class="dp-ordt">합계 ${esc(fmtAmt(tot.amt))} ${esc(tot.cur)}</div>`
+                       : `<div class="dp-ordt mix">${show.some(o=>o.amt==null)
+                            ? '일부 금액 미확정 — 합계 없음' : '통화 상이 — 합계 없음'}</div>`)
+                : '')
+            + `</div>`;
+        }
       }
     }
     return `<div class="dp-stg ${on}${cls}" data-id="${l.id}" data-stage="${st}" data-val="${l[key]?0:1}">

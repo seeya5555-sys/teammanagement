@@ -797,6 +797,7 @@ def init_db(drop=False):
                 vendor       TEXT,                            -- 페인트(P) 수동 업체명 → SVMS Dock Paint(02) VNDR_NM
                 sub_quotes   TEXT,                            -- 벤더 '제출견적' 스냅샷 JSON [{cd,nm,amt,usd,cur,att,st,best}] — 표시전용(발주금액 quote_amt 과 별개). cd=VNDR_CD(Phase③ 상신 SELETED_VDR 소스)
                 att_files    TEXT,                            -- 벤더 견적서 첨부 목록 JSON [{nm,kb,vndr,vnm,dt}] — 배열 위치(idx)가 preview cache 파일명
+                ord_vendors  TEXT,                            -- 분할발주 업체별 발주서 스냅샷 JSON [{odr_no,nm,cd,st,amt,cur,ordered}] — 자재/스토어를 업체 2곳으로 나눠 발주한 건. `quote_amt`(단일칸)과 별개이며 통화 혼재 시 합산 불가라 합치지 않는다
                 created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 UNIQUE(vsl_nm, req_no)
@@ -945,6 +946,8 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN sub_quotes TEXT")
             if 'att_files' not in _dpc:                       # 벤더 견적서 첨부 목록(파일명/KB/업체) — 파일 자체는 preview cache
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN att_files TEXT")
+            if 'ord_vendors' not in _dpc:                     # 분할발주 업체별 발주서 스냅샷(업체 2곳 나눠발주 표시용)
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN ord_vendors TEXT")
             if 'svms_pc_req_no' not in _dpc:
                 # 🔴 구매(S/ST) 견적요청 키 = SVMS **REQ_NO**. `svms_req_no` 를 재사용하면 안 된다 —
                 #    구매행의 `svms_req_no` 에는 견적요청 **후** 발급되는 INQ_NO 가 들어가고(실측
@@ -13239,6 +13242,69 @@ def _dockproc_norm_files(raw):
     return json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
 
 
+_DOCKPROC_ORDER_MAX = 10            # 한 청구를 나눠 발주할 수 있는 업체 수 상한(실측 2 — 넉넉하되 무한 아님)
+
+
+def _dockproc_norm_orders(raw):
+    """폴러가 보낸 **발주서(ODR_NO)별 업체·금액** 목록 → canonical JSON 문자열(쓸 값 없으면 None).
+
+    왜 별도 칸(`ord_vendors`)인가: `quote_amt` 는 값이 **하나**뿐이고 `remark` 도 업체명 한 칸이다.
+      자재(S)·스토어(ST)는 한 청구를 업체 2곳으로 나눠 발주할 수 있어서(실측 2026-08-05 [BGBB S1]
+      = 딘텍 KRW 14,700,100 + 에버런스 USD 42,523.32) 단일 칸으로는 한쪽이 통째로 사라진다.
+      게다가 통화가 섞이면 합계 자체가 성립하지 않는다 ⇒ **합치지 않고 업체별로 그대로 보관**한다.
+    `sub_quotes`(제출견적) 와 섞지 말 것 — 그건 '누가 얼마에 제출했나'고 이건 '누구에게 실제로
+      발주가 나갔나'다. 섞으면 발주 안 된 업체가 발주완료로 보인다.
+    표시전용이라 값 신뢰보다 형태 방어가 우선: 개수 캡·타입 강제·통화 3글자 검증(`sub_quotes` 동일).
+    🔴 `amt=None` 은 **0 이 아니라 '아직 확정 안 됨'** 이다(결재 중인 발주서는 ODR_LIST 에 없다).
+      0·음수·inf 도 None 으로 떨군다 — 화면이 '0원 발주'로 그리면 형이 무료 발주로 읽는다.
+    canonical 두 겹(원소 키 정렬 + 리스트 정렬)은 `sub_quotes` 와 같은 이유 — SVMS 응답 순서가
+      흔들려도 같은 집합이 '변경'으로 잡혀 매 폴링 UPDATE 가 돌지 않게. 정렬 1순위는 유일 식별자
+      `odr_no` 다.
+    """
+    if not isinstance(raw, list):
+        return None
+    out = []
+    seen = set()
+    for o in raw[:_DOCKPROC_ORDER_MAX]:
+        if not isinstance(o, dict):
+            continue
+        odr = str(o.get('odr_no') or '').strip().upper()[:40]
+        if not odr or odr in seen:
+            continue                     # 번호 없음 = '발주'라 말할 수 없음 / 중복 = 같은 발주서 두 줄 표시 방지
+        seen.add(odr)
+        try:
+            amt = None if o.get('amt') in (None, '') else float(str(o.get('amt')).replace(',', ''))
+        except (TypeError, ValueError):
+            amt = None
+        if amt is not None and (not math.isfinite(amt) or amt <= 0):
+            amt = None                                   # 금액 미확정으로 본다(0원 발주 표시 방지)
+        cur = str(o.get('cur') or '').strip().upper()
+        cd = str(o.get('cd') or '').strip().upper()[:20]
+        out.append({'odr_no': odr,
+                    'nm': str(o.get('nm') or '').strip()[:120],
+                    'cd': cd if re.fullmatch(r'[A-Z0-9]{1,20}', cd) else None,
+                    'st': str(o.get('st') or '').strip()[:40],
+                    'amt': amt,
+                    'cur': cur if re.fullmatch(r'[A-Z]{3}', cur) else None,
+                    # 🔴 `is True` — 폴러가 문자열 'false'/1 을 보내도 발주완료로 읽지 않는다(닫힘 쪽 실패).
+                    'ordered': o.get('ordered') is True})
+    if not out:
+        return None
+    out.sort(key=lambda o: (o['odr_no'], o['nm']))
+    return json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def _dockproc_orders_of(raw):
+    """저장된 `ord_vendors` JSON → 리스트(깨진 값은 빈 목록). 서버 내부 판정·테스트용."""
+    if isinstance(raw, str):
+        try:
+            v = json.loads(raw or '[]')
+        except (ValueError, TypeError):
+            return []
+        return [o for o in v if isinstance(o, dict)] if isinstance(v, list) else []
+    return []
+
+
 def _dockproc_files_of(raw):
     """저장된 att_files JSON → 리스트(깨진 값은 빈 목록). 서버 내부 비교·검증용."""
     if isinstance(raw, str):
@@ -14518,7 +14584,8 @@ def api_ext_dockproc_links():
 def api_ext_dockproc_sync():
     """Phase 2 역동기화 — 맥 폴러가 SVMS 수리/구매 목록을 보내면 Status→체크박스 자동전진 + 발주완료시 Vendor→Remark.
     매칭: ① 저장된 svms_req_no(=Inq No) ② Subject 태그 [VSL_CD REQ_NO]. HQ Canceled 무시. dry=true면 미리보기.
-    item 옵션 `quotes`=벤더 제출견적 스냅샷(표시전용, 발주금액과 별개) — 키 미전송 시 기존값 유지."""
+    item 옵션 `quotes`=벤더 제출견적 스냅샷(표시전용, 발주금액과 별개) — 키 미전송 시 기존값 유지.
+    item 옵션 `orders`=발주서(ODR_NO)별 업체·금액(분할발주 표시용, `ord_vendors`) — 같은 3상태 계약."""
     import re as _re
     d = request.get_json(silent=True) or {}
     items = d.get('items') or []
@@ -14643,6 +14710,38 @@ def api_ext_dockproc_sync():
         #           신규 승격은 막는다. 이렇게 안 하면 조회 한 번 실패했을 때 근거 없이 발주완료가 켜짐(올마이트 지적).
         if rank >= 4 and (evidence is False or (evidence is None and not row['stg_order'])):
             rank = 3
+        # 🔴 분할발주 부분완료 게이트(2026-08-05 형 확인 기준 = **전부 발주돼야 완료**): 한 청구를 업체
+        #   2곳으로 나눠 발주하면 발주서가 2장이고 PC_PRO 는 장마다 행을 준다. 한 장만 승인돼도 그 행의
+        #   rank 는 4 라서, 아래 '최고 rank 채택' 규칙 때문에 **절반만 발주된 건이 발주완료로 켜졌다**
+        #   (실측 [BGBB S1]: 에버런스 발주완료 + 딘텍 결재중 → 카드는 발주완료·에버런스 금액만).
+        #   ⇒ 하나라도 미승인이면 벤더컨펌(rank 3)까지만 인정하고, 부분완료 사실은 화면이 `ord_vendors`
+        #     로 "발주 1/2" 처럼 그대로 말한다.
+        #   ⚠️**이미 발주완료인 행은 내리지 않는다**(`row['stg_order']` 가드) — stale·순서역전 sync 나
+        #     처음 보는 lifecycle 로 완료 이력이 조용히 되돌아가면 안 된다(위 `evidence is None` 가드와
+        #     같은 방향 = 닫힘 쪽 실패).
+        #   ⚠️`len>1` 로 좁힌 이유: 발주서 1장인 보통 건은 위 `evidence` 게이트가 이미 같은 판정을 한다.
+        #     여기서 1장까지 보면 규칙이 두 곳으로 갈려 판정이 어긋날 수 있다(동작 변화 0 을 보장).
+        #   ⚠️키 미전송(`orders` 없음)일 때는 **저장된 스냅샷으로 판정한다** — 폴러가 한 번 못 실어보냈다고
+        #     게이트가 열려 stg_order 가 켜지면, 화면엔 같은 카드에 '발주완료' 와 '발주 1/2' 가 같이 뜬다
+        #     (모순 = 형이 어느 쪽을 믿을지 알 수 없음). 스냅샷도 없으면 종전 `evidence` 규칙만 적용된다.
+        #   ⚠️판정 입력은 **정규화 결과**다(올마이트 2026-08-05 지적 수용). raw 를 세면 무효·중복 ODR_NO 까지
+        #     세어져 저장값(canonical 1건)과 판정(2건)이 갈린다 = 화면은 1곳인데 게이트만 닫히는 불일치.
+        _ordraw = it.get('orders')
+        if not isinstance(_ordraw, list):
+            _orders = False                              # 미전송 → 기존값 유지
+        elif not _ordraw:
+            _orders = None                               # 발주 0건 확정 → clear
+        else:
+            _orders = _dockproc_norm_orders(_ordraw) or False   # 전부 무효 = 계약위반 → 유지
+        if isinstance(_orders, str):
+            _gate = _dockproc_orders_of(_orders)
+        elif _orders is None:
+            _gate = []                                   # 발주 0건 = 분할발주 아님(게이트 대상 아님)
+        else:
+            _gate = _dockproc_orders_of(row['ord_vendors'] if 'ord_vendors' in row.keys() else None)
+        if (rank >= 4 and not row['stg_order'] and len(_gate) > 1
+                and not all(o.get('ordered') is True for o in _gate)):
+            rank = 3
         prev = plan.get(row['id'])
         if not prev or rank > prev[0]:                   # 같은 행 여러건이면 최고 rank만(취소 제외 후)
             _amt = it.get('amt')
@@ -14669,17 +14768,32 @@ def api_ext_dockproc_sync():
                 _files = None
             else:
                 _files = _dockproc_norm_files(_raw_f) or False
+            # 분할발주 스냅샷(`_orders`)과 그 정규화 결과(`_gate`)는 위 게이트에서 이미 만들었다 —
+            # 여기서 다시 파싱하면 판정과 저장이 갈릴 수 있어 **같은 값을 그대로** 싣는다.
             plan[row['id']] = (rank, status, (it.get('vendor') or '').strip() or None,
                                inq, row, (it.get('submit') or '').strip() or None,
-                               _amt, (it.get('cur') or '').strip().upper() or None, _quotes, _files)
+                               _amt, (it.get('cur') or '').strip().upper() or None, _quotes, _files,
+                               _orders, _gate)
     changes = []
-    for rid, (rank, status, vendor, inq, row, submit, amt, cur, quotes, files) in plan.items():
+    for rid, (rank, status, vendor, inq, row, submit, amt, cur, quotes, files, orders, gate) in plan.items():
         q, v, f, o = ((1 if rank >= 1 else 0), (1 if rank >= 2 else 0),
                       (1 if rank >= 3 else 0), (1 if rank >= 4 else 0))
         new_remark = row['remark']
         # 옵션 b: 발주완료 시 Vendor명을 Remark에 기입. 단 신규완료/빈Remark일 때만(매폴 수동메모 덮어쓰기 방지)
         if o and vendor and (not row['stg_order'] or not (row['remark'] or '').strip()):
             new_remark = vendor
+        # 🔴 분할발주(업체 2곳 이상) 발주금액은 **다시 계산한다**(올마이트 2026-08-05 지적 수용).
+        #   폴러가 주는 `amt` 는 INQ 단위 합산인데 **통화가 섞이면 첫 건만 남긴 값**이라, 그대로 쓰면
+        #   한 업체 금액이 전체 발주금액으로 박힌다(형이 전에 잡은 "이게 최종비용이잖아" 와 같은 부류).
+        #   ⇒ 발주서 스냅샷으로 **전원 금액확정 + 단일통화일 때만** 합계를 쓰고, 하나라도 미확정이거나
+        #     통화가 섞였으면 칸을 **비워둔다** — 업체별 줄이 진실을 말한다(거짓 대표금액 금지).
+        if len(gate) > 1:
+            _gamts = [g.get('amt') for g in gate]
+            _gcurs = {(g.get('cur') or '') for g in gate}
+            if all(isinstance(x, (int, float)) for x in _gamts) and len(_gcurs) == 1:
+                amt, cur = float(sum(_gamts)), (next(iter(_gcurs)) or None)
+            else:
+                amt = None
         # 발주금액 자동입력: 발주완료(o)·금액있음·manual아님 일 때만(사용자 수정 우선)
         set_q = (o == 1 and amt is not None and (row['quote_src'] or 'auto') != 'manual')
         new_qamt = amt if set_q else row['quote_amt']
@@ -14688,6 +14802,10 @@ def api_ext_dockproc_sync():
         new_qsrc = 'auto' if set_q else (row['quote_src'] or 'auto')
         new_subq = row['sub_quotes'] if quotes is False else quotes
         new_att = row['att_files'] if files is False else files
+        # 컬럼 존재 확인 후 읽는다 — 마이그레이션 전 DB 에서 KeyError 로 sync 전체(수리 포함)가 500 나면
+        # 안 된다(닫힘 쪽 실패: 스냅샷만 안 채워지고 나머지 동기화는 정상).
+        _cur_ords = row['ord_vendors'] if 'ord_vendors' in row.keys() else None
+        new_ords = _cur_ords if orders is False else orders
         # 🔴 `svms_status` 를 비교대상에 포함해야 한다(2026-08-01 실측). 빠뜨리면 **단계가 같은 라벨
         #    전이**(예: 'Quotation Inquiry'→'Submit', 둘 다 rank 2)가 '변경 없음'으로 판정돼 라벨이
         #    영영 갱신되지 않는다. 실사고: BGBBME26073108 은 SVMS 가 'Submit' 인데 DB 는 하루 넘게
@@ -14706,23 +14824,23 @@ def api_ext_dockproc_sync():
         before = (row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order'], row['remark'],
                   row['svms_req_no'], row['svms_status'], row['svms_submit'],
                   row['quote_amt'], row['quote_cur'], row['quote_src'],
-                  row['sub_quotes'], row['att_files'])
+                  row['sub_quotes'], row['att_files'], _cur_ords)
         after = (q, v, f, o, new_remark, row['svms_req_no'] or inq, status, submit,
-                 new_qamt, new_qcur, new_qsrc, new_subq, new_att)   # COALESCE(기존,신규)=멱등
+                 new_qamt, new_qcur, new_qsrc, new_subq, new_att, new_ords)   # COALESCE(기존,신규)=멱등
         if before != after:
             changes.append({'id': rid, 'req_no': row['req_no'], 'vsl_nm': row['vsl_nm'],
                             'status': status, 'stages': [q, v, f, o],
                             'remark': new_remark, 'inq_no': inq, 'submit': submit,
                             'quote_amt': new_qamt, 'quote_cur': new_qcur, 'quote_src': new_qsrc,
-                            'sub_quotes': new_subq, 'att_files': new_att})
+                            'sub_quotes': new_subq, 'att_files': new_att, 'ord_vendors': new_ords})
             if not dry:
                 execute(
                     "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_confirm=?, stg_order=?, remark=?, "
                     "svms_req_no=COALESCE(svms_req_no,?), svms_status=?, svms_submit=?, "
-                    "quote_amt=?, quote_cur=?, quote_src=?, sub_quotes=?, att_files=?, "
+                    "quote_amt=?, quote_cur=?, quote_src=?, sub_quotes=?, att_files=?, ord_vendors=?, "
                     "svms_synced_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?",
                     (q, v, f, o, new_remark, inq, status, submit, new_qamt, new_qcur, new_qsrc,
-                     new_subq, new_att, rid))
+                     new_subq, new_att, new_ords, rid))
                 if row['att_files'] != new_att:           # 목록이 바뀌면 안 쓰는 캐시 정리(용량 회수)
                     _dockatt_gc(rid, _dockproc_files_of(new_att))
                 # 🔴 회수 되돌림이면 **직전 견적요청 이력을 무효화**한다(2026-08-03 형 지시 "재적재 시
