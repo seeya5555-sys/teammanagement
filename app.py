@@ -232,7 +232,8 @@ def execute(sql, params=()):
     cur = db.execute(sql, params)
     # 선박 purge는 여러 DELETE를 하나의 명시 transaction으로 묶는다.
     # 그 밖의 기존 호출은 기존처럼 즉시 commit한다.
-    if not getattr(g, '_vessel_purge_transaction', False):
+    if not (getattr(g, '_vessel_purge_transaction', False)
+            or getattr(g, '_reqgen_result_transaction', False)):
         db.commit()
     last_id = cur.lastrowid
     cur.close()
@@ -243,7 +244,8 @@ def execute_rc(sql, params=()):
     """UPDATE/DELETE 영향 행수 반환 — 조건부(낙관적 락) 갱신 race 판정용."""
     db = get_db()
     cur = db.execute(sql, params)
-    db.commit()
+    if not getattr(g, '_reqgen_result_transaction', False):
+        db.commit()
     rc = cur.rowcount
     cur.close()
     return rc
@@ -12750,14 +12752,54 @@ def api_ext_reqgen_approved():
 @app.route('/api/ext/reqgen/drafts/<int:did>/result', methods=['POST'])
 @api_key_required
 def api_ext_reqgen_result(did):
-    """저장 결과: ok=True → saved(+req_no), else failed(사람 재검토)."""
+    """저장 결과: ok=True → saved(+req_no), else failed(사람 재검토). 성공건은 발주현황에 자동적재."""
     d = request.get_json(silent=True) or {}
     ok = bool(d.get('ok'))
-    rc = execute_rc("UPDATE reqgen_draft SET status=?, req_no=?, done_at=datetime('now','localtime'), "
-                    "result=? WHERE id=? AND status='saving'",
-                    ('saved' if ok else 'failed', (d.get('req_no') or None),
-                     (d.get('result') or '')[:2000], did))
-    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+    db = get_db()
+    g._reqgen_result_transaction = True
+    try:
+        cur = db.execute("UPDATE reqgen_draft SET status=?, req_no=?, done_at=datetime('now','localtime'), "
+                         "result=? WHERE id=? AND status='saving'",
+                         ('saved' if ok else 'failed', (d.get('req_no') or None),
+                          (d.get('result') or '')[:2000], did))
+        rc = cur.rowcount
+        cur.close()
+        dock = _reqgen_dock_autoload(did) if rc and ok else None
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        app.logger.exception('reqgen result rollback did=%s', did)
+        return jsonify({'id': did, 'ok': ok, 'applied': False,
+                        'error': f'결과와 Dock 적재를 함께 저장하지 못함: {exc}'}), 500
+    finally:
+        g._reqgen_result_transaction = False
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc), 'dock': dock})
+
+
+def _reqgen_dock_autoload(did):
+    """청구 저장 성공 → 그 시트번호(S33/R7/ST2)로 발주현황 행 보장. 입거 트래커에 있는 선박만.
+
+    이게 없으면 INDEX 엑셀에 없는 시트로 나간 청구는 화면에 영원히 안 뜬다(2026-08-05 S33 실사고).
+    청구가 SVMS 에 실제 저장된 시점이므로 '추측으로 행을 만드는' 경로가 아니다.
+    """
+    d = query("SELECT vsl_cd, sheet, doc_type, subj, equipment, req_no FROM reqgen_draft WHERE id=?",
+              (did,), one=True)
+    if not d or not (d['sheet'] or '').strip():
+        return None
+    vc = (d['vsl_cd'] or '').strip().upper()
+    ves = query("SELECT vsl_nm, vsl_cd FROM dock_procure_vessel WHERE UPPER(vsl_cd)=? "
+                "ORDER BY updated_at DESC", (vc,), one=True) if vc else None
+    if not ves:                                          # 입거선박 목록에 없으면 발주현황 대상이 아니다
+        return None
+    rq = (d['sheet'] or '').strip().upper()
+    lid, created, key_state = _dockproc_adopt_svms(
+        ves['vsl_nm'], ves['vsl_cd'] or vc, rq,
+        _dockproc_subject_from_svms(d['subj']),
+        (d['equipment'] or None), (d['doc_type'] or ''), d['req_no'])
+    if not lid:
+        return None
+    return {'id': lid, 'created': bool(created), 'req_no': rq, 'vsl_nm': ves['vsl_nm'],
+            'key_state': key_state}
 
 
 AUTOMATION_TASKS_BASE = {
@@ -13288,6 +13330,120 @@ def _dockproc_hash(equipment, subject):
     return _hl.md5(s.encode('utf-8')).hexdigest()[:16]
 
 
+def _dockproc_subject_from_svms(subj):
+    """SVMS 제목 → 트래커 `subject`. `_reqgen_build_subj` 의 역함수.
+
+    '[DOCK][BGBB S33]M/T BELGIUM B - AUXILIARY BOILER SPARE PARTS' → 'AUXILIARY BOILER SPARE PARTS'.
+    ' - ' 가 없는 수동작성 제목은 태그만 떼고 남은 전체를 쓴다(비우는 것보다 낫다).
+    """
+    import re as _re
+    s = (subj or '').strip()
+    s = _re.sub(r'^\s*\[DOCK\]\s*', '', s, flags=_re.I)
+    s = _re.sub(r'^\s*\[[^\]]*\]\s*', '', s)             # [BGBB S33]
+    head, sep, tail = s.partition(' - ')
+    return ((tail if sep else head).strip() or None)
+
+
+def _dockproc_fill_key(row, doc, svms_key):
+    """SVMS 문서번호를 **문서종류에 맞는 칸**에 채운다(비어 있을 때만).
+
+    🔴 키 분리 규약: 수리=`svms_req_no`(REP_CD) / 구매=`svms_pc_req_no`(REQ_NO).
+       섞으면 Phase ③ 상신이 INQ_NO 를 잃는다(`_dockproc_inq_target` 주석 참조).
+    """
+    key = (svms_key or '').strip()
+    if not key or row is None:
+        return 'none'
+    col = 'svms_req_no' if (doc or '').strip().upper() in ('MA', 'MARP') else 'svms_pc_req_no'
+    keys = row.keys() if hasattr(row, 'keys') else ()
+    if col not in keys:                                  # 마이그레이션 전 DB — 닫힘 쪽 실패(키만 안 채움)
+        return 'none'
+    if ((row[col] or '').strip()):
+        return 'same' if row[col].strip() == key else 'conflict'
+    execute(f"UPDATE dock_procure SET {col}=?, updated_at=datetime('now','localtime') WHERE id=?",
+            (key, row['id']))
+    return 'filled'
+
+
+def _dockproc_adopt_svms(vsl_nm, vsl_cd, req_no, subject, equipment, doc, svms_key):
+    """SVMS 에 **이미 존재하는** 입거 청구 1건을 발주현황 행으로 적재. 반환 (row_id, created).
+
+    발주현황 행은 종전에 INDEX 엑셀 업로드로만 생겼고 역동기화는 update-only 였다 →
+    엑셀에 없는 시트번호로 청구가 나가면 붙을 행이 없어 `unmatched` 로 조용히 버려졌다
+    (2026-08-05 실측: BGBB S2·S18·S21~S24·S33 = 7건이 SVMS 에만 있고 화면엔 없었음).
+    ⚠️청구 존재가 확인된 건에만 쓴다 — 추측으로 행을 만들지 않는다.
+    ⚠️P(페인트)·SY(조선소)는 메일견적이라 SVMS 청구가 아니다 → 자동적재 대상에서 제외.
+    """
+    code = _dockproc_cat_code(req_no)
+    if code not in ('R', 'S', 'ST'):
+        return None, False
+    rq = req_no.strip().upper()
+    ex = query("SELECT * FROM dock_procure WHERE vsl_nm=? AND UPPER(req_no)=?", (vsl_nm, rq), one=True)
+    if ex:                                               # 이미 있으면 만들지 않고 키만 채운다(멱등)
+        key_state = _dockproc_fill_key(ex, doc, svms_key)
+        return ex['id'], False, key_state
+    nxt = query("SELECT COALESCE(MAX(sort_no),0)+1 n FROM dock_procure WHERE vsl_nm=?",
+                (vsl_nm,), one=True)['n']                # 목록 맨 뒤(NULL 이면 정렬 맨 앞으로 튄다)
+    lid = execute(
+        "INSERT INTO dock_procure (vsl_nm, vsl_cd, req_no, cat_code, category, equipment, subject, "
+        "prepared_by, source, content_hash, sort_no, remark) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (vsl_nm, vsl_cd, rq, code, _DOCKPROC_CAT_NM.get(code), equipment, subject,
+         'OWNER', _dockproc_source(code, 'OWNER'), _dockproc_hash(equipment, subject), nxt,
+         'SVMS 청구 자동적재'))
+    key_state = _dockproc_fill_key(query("SELECT * FROM dock_procure WHERE id=?", (lid,), one=True), doc, svms_key)
+    return lid, True, key_state
+
+
+# ---- 미적재 청구(orphan) 보관: 태그는 맞는데 발주현황에 행이 없는 SVMS 청구 ----
+#   종전엔 sync 가 `unmatched` 카운터로만 세고 버려서 형 화면에는 흔적이 0 이었다. 자동으로 행을
+#   만들지 않고 **목록으로 남겨** 사람이 [적재] 를 누르게 한다 — 자동생성은 형이 지운 행을 다음
+#   sync 가 부활시키고(삭제는 하드 DELETE), 옛 입거 잔상까지 끌어올 수 있어서다.
+_DOCKPROC_ORPHAN_KEY = 'dockproc_orphans'
+_DOCKPROC_ORPHAN_MAX = 50                                # 선박당 보관 상한
+
+
+def _dockproc_orphans_all():
+    row = query("SELECT v FROM api_settings WHERE k=?", (_DOCKPROC_ORPHAN_KEY,), one=True)
+    if not row or not row['v']:
+        return {}
+    try:
+        d = json.loads(row['v'])
+        return d if isinstance(d, dict) else {}
+    except Exception:                                    # 값이 깨졌으면 비어있는 것으로 본다(화면만 영향)
+        return {}
+
+
+def _dockproc_orphans_save(items, orphans):
+    """이번 sync payload 가 다룬 선박의 목록만 갈아치운다 — 폴러는 선박별로 호출하므로
+    남의 선박 목록을 지우면 배너가 사라진다. 0건이 된 선박은 키를 없애 배너도 사라진다."""
+    seen = {(it.get('vsl_cd') or '').strip().upper() for it in items}
+    seen.discard('')
+    if not seen:
+        return
+    cur = _dockproc_orphans_all()
+    for vc in seen:
+        cur.pop(vc, None)
+    for o in orphans:
+        vc = (o.get('vsl_cd') or '').strip().upper()
+        if vc and len(cur.setdefault(vc, [])) < _DOCKPROC_ORPHAN_MAX:
+            cur[vc].append(o)
+    execute("INSERT OR REPLACE INTO api_settings (k,v) VALUES (?,?)",
+            (_DOCKPROC_ORPHAN_KEY, json.dumps(cur, ensure_ascii=False)))
+
+
+def _dockproc_orphans_of(vsl_cd, have=()):
+    """화면용 — 그 선박의 미적재 목록. 이미 행이 생긴 번호는 즉시 빠진다(다음 sync 를 안 기다림)."""
+    vc = (vsl_cd or '').strip().upper()
+    if not vc:
+        return []
+    hv = {(h or '').strip().upper() for h in have}
+    out = []
+    for o in (_dockproc_orphans_all().get(vc) or []):
+        rq = (o.get('req_no') or '').strip().upper()
+        if rq and rq not in hv:
+            out.append(o)
+    return out
+
+
 def _dockproc_cell(ws, coord):
     v = ws[coord].value
     if v is None:
@@ -13400,6 +13556,7 @@ def api_dockproc_lines():
     if not vsl and vessels:
         vsl = vessels[0]['vsl_nm']
     rows = []
+    orphans = []
     if vsl:
         rows = [dict(r) for r in query(
             "SELECT * FROM dock_procure WHERE vsl_nm=? " + _DOCKPROC_ORDER, (vsl,))]
@@ -13427,7 +13584,10 @@ def api_dockproc_lines():
                 r['svms_subj'] = _reqgen_build_subj(vc, r['req_no'], r['vsl_nm'], prefix, r.get('subject'))
             else:
                 r['svms_subj'] = None
-    return jsonify({'vessels': vessels, 'current': vsl, 'lines': rows})
+        # SVMS 엔 있는데 이 목록에 행이 없는 청구 — 화면 배너에서 [적재] 로 끌어올린다.
+        orphans = _dockproc_orphans_of(vcode, [r['req_no'] for r in rows])
+    return jsonify({'vessels': vessels, 'current': vsl, 'lines': rows,
+                    'orphans': orphans if vsl else []})
 
 
 @app.route('/api/dock_procure/vessel_code', methods=['POST'])
@@ -14313,6 +14473,7 @@ def api_ext_dockproc_sync():
     canceled = 0
     unmatched = 0
     misses = []
+    orphans = []                                         # 태그는 맞는데 발주현황에 행이 없는 청구(배너용)
     linked = []                                          # rank 0(견적의뢰 이전) 연결만 채운 행
     pc_keys = []                                         # 구매 REQ_NO(`svms_pc_req_no`) 를 새로 채운 행
     plan = {}                                            # row_id -> (rank, status, vendor, inq, row)
@@ -14346,6 +14507,7 @@ def api_ext_dockproc_sync():
         inq_alt = (it.get('inq_alt') or '').strip() or None   # 구매 INQ_NO(REQ_NO와 별개) — 둘 다 매칭키
         subj = it.get('subject') or ''
         row = None
+        tag = None
         cand = [c for c in (inq, inq_alt) if c]
         if cand:                                              # 저장된 svms_req_no가 REQ_NO/INQ_NO 어느 쪽이든 매칭
             qm = ",".join("?" * len(cand))
@@ -14354,6 +14516,7 @@ def api_ext_dockproc_sync():
             m = TAG.search(subj)
             if m:
                 vc, rq = m.group(1).upper(), m.group(2).upper()
+                tag = (vc, rq)
                 row = query(
                     "SELECT * FROM dock_procure WHERE UPPER(req_no)=? AND (UPPER(vsl_cd)=? "
                     "OR vsl_nm IN (SELECT vsl_nm FROM dock_procure_vessel WHERE UPPER(vsl_cd)=?))",
@@ -14363,6 +14526,16 @@ def api_ext_dockproc_sync():
                 unmatched += 1
                 if len(misses) < 20:
                     misses.append({'inq': inq, 'subject': subj[:70]})
+            # 🔴 태그가 있는데 붙을 행이 없는 건 = 'INDEX 엑셀에 없는 시트번호로 나간 청구'다.
+            #    종전엔 카운터로만 세고 버려서 형 화면에 흔적이 0 이었다(2026-08-05 BGBB 7건).
+            #    여기서 자동으로 행을 만들지는 않는다 — 배너에 띄우고 사람이 [적재] 를 누른다
+            #    (자동생성 = 하드 DELETE 로 지운 행 부활 + 옛 입거 잔상 유입 위험).
+            #    `link_only`(rank 0) 여부와 무관하게 남긴다 — 단계가 아직 0 이어도 없는 행은 없는 행이다.
+            if tag:
+                orphans.append({'vsl_cd': tag[0], 'req_no': tag[1], 'subject': subj[:160],
+                                'status': status, 'doc': (it.get('doc') or '').strip().upper(),
+                                # 적재 시 채울 SVMS 키 — 구매는 REQ_NO(`inq_alt`), 수리는 REP_CD(`inq_no`)
+                                'key': (inq_alt if (it.get('doc') or '') == 'PC' else inq)})
             continue
         # 🔴 구매 견적요청 키(REQ_NO)는 **별도 칸**(`svms_pc_req_no`)에 적는다. `svms_req_no` 에 섞으면
         #    Phase ③ 상신·제출견적·첨부가 그 칸을 INQ_NO 로 읽으므로 깨진다. 폴러가 `inq_alt`(=REQ_NO)를
@@ -14581,11 +14754,14 @@ def api_ext_dockproc_sync():
                         # 번호가 사라진 걸 알 수 없다(올마이트 지적). `changes[-1]` = 바로 위에서
                         # 이 행이 append 한 항목이다(같은 반복, 사이에 다른 append 없음).
                         changes[-1]['req_no_cleared'] = row['svms_req_no']
+    if not dry:
+        _dockproc_orphans_save(items, orphans)
     return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses,
                     'linked': linked, 'linked_n': len(linked),
-                    'pc_keys': pc_keys, 'pc_keys_n': len(pc_keys)})
+                    'pc_keys': pc_keys, 'pc_keys_n': len(pc_keys),
+                    'orphans': orphans, 'orphans_n': len(orphans)})
 
 
 # ---- 벤더 견적서(SVMS MAOE 첨부) 원본 확인 ----
