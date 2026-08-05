@@ -13365,7 +13365,7 @@ def _dockproc_fill_key(row, doc, svms_key):
 
 
 def _dockproc_adopt_svms(vsl_nm, vsl_cd, req_no, subject, equipment, doc, svms_key):
-    """SVMS 에 **이미 존재하는** 입거 청구 1건을 발주현황 행으로 적재. 반환 (row_id, created).
+    """SVMS 에 **이미 존재하는** 입거 청구 1건을 발주현황 행으로 적재. 반환 (row_id, created, key_state).
 
     발주현황 행은 종전에 INDEX 엑셀 업로드로만 생겼고 역동기화는 update-only 였다 →
     엑셀에 없는 시트번호로 청구가 나가면 붙을 행이 없어 `unmatched` 로 조용히 버려졌다
@@ -13375,8 +13375,12 @@ def _dockproc_adopt_svms(vsl_nm, vsl_cd, req_no, subject, equipment, doc, svms_k
     """
     code = _dockproc_cat_code(req_no)
     if code not in ('R', 'S', 'ST'):
-        return None, False
-    rq = req_no.strip().upper()
+        # 🔴 반드시 3-tuple 로 반환한다 — 호출부가 `lid, created, key_state` 로 언패킹한다.
+        #    2-tuple 로 나가면 `ValueError` 가 `api_ext_reqgen_result` 의 트랜잭션을 rollback 시켜
+        #    **SVMS 에는 저장됐는데 카드는 `saving` 에 갇히고 6h 뒤 failed** 가 된다(형이 실패로 봄).
+        #    도달 경로: 시트명이 `R\d+/S\d+/ST\d+` 형식이 아닐 때(P·SY 시트, `S33A` 같은 변형).
+        return None, False, 'none'
+    rq = (req_no or '').strip().upper()
     ex = query("SELECT * FROM dock_procure WHERE vsl_nm=? AND UPPER(req_no)=?", (vsl_nm, rq), one=True)
     if ex:                                               # 이미 있으면 만들지 않고 키만 채운다(멱등)
         key_state = _dockproc_fill_key(ex, doc, svms_key)
@@ -13909,6 +13913,56 @@ def api_dockproc_add():
          _dockproc_source(code, prep), _dockproc_hash(equip, subj),
          (d.get('remark') or None)))
     return jsonify({'id': lid, 'req_no': req_no}), 201
+
+
+@app.route('/api/dock_procure/adopt', methods=['POST'])
+@login_required
+def api_dockproc_adopt():
+    """미적재 배너의 [적재] — SVMS 에만 있는 입거 청구를 발주현황 행으로 끌어온다.
+
+    🔒 입력은 **폴러가 남긴 미적재 목록 안에서만** 고른다(클라가 보낸 제목·키를 그대로 쓰지 않음) —
+       화면에서 임의 행을 만들어 넣는 경로가 되면 안 되고, 제목·문서키는 SVMS 실측값이어야 한다.
+    자동생성이 아니라 사람 클릭인 이유: 삭제가 하드 DELETE 라 자동적재는 형이 지운 행을 되살리고,
+    옛 입거 잔상까지 끌어올 수 있다(태그 번호는 입거마다 재사용됨).
+    """
+    d = request.get_json(silent=True)
+    # 문자열 아닌 값(dict·list·숫자)이 오면 `.strip()` 에서 500 이 난다 — 계약 위반은 400 으로 떨어뜨린다.
+    def _s(v):
+        return v.strip().upper() if isinstance(v, str) else ''
+    if not isinstance(d, dict):
+        return jsonify({'error': 'JSON object 필요'}), 400
+    vc, rq = _s(d.get('vsl_cd')), _s(d.get('req_no'))
+    if not vc or not rq:
+        return jsonify({'error': 'vsl_cd, req_no 필수'}), 400
+    ves = query("SELECT vsl_nm, vsl_cd FROM dock_procure_vessel WHERE UPPER(vsl_cd)=? "
+                "ORDER BY updated_at DESC", (vc,), one=True)
+    if not ves:
+        return jsonify({'error': f'{vc} 가 입거선박 목록에 없음'}), 404
+    src = next((o for o in (_dockproc_orphans_all().get(vc) or [])
+                if (o.get('req_no') or '').strip().upper() == rq), None)
+    # 🔴 이미 행이 있으면 목록 밖이어도 성공(200)으로 돌려준다. sync 가 목록에서 뺀 뒤 같은 요청이
+    #    오는 건 정상 경로(두 탭·더블클릭·동시 적재)이고, 이때 409 를 주면 형이 '실패'로 읽는다.
+    #    행 **생성**만 목록 안으로 제한한다 — 임의 행 생성 경로 차단이라는 목적은 그대로다.
+    ex = query("SELECT id FROM dock_procure WHERE vsl_nm=? AND UPPER(req_no)=?",
+               (ves['vsl_nm'], rq), one=True)
+    if not ex and not src:
+        return jsonify({'error': f'{rq} 는 동기화가 남긴 미적재 목록에 없음 — 새로고침(동기화) 후 다시'}), 409
+    src = src or {}
+    try:
+        lid, created, key_state = _dockproc_adopt_svms(
+            ves['vsl_nm'], ves['vsl_cd'] or vc, rq, _dockproc_subject_from_svms(src.get('subject')),
+            None, src.get('doc'), src.get('key'))
+    except sqlite3.IntegrityError:
+        # UNIQUE(vsl_nm, req_no) — 동시 적재로 남이 먼저 만든 경우. 실패가 아니라 이미 된 것이다.
+        row = query("SELECT id FROM dock_procure WHERE vsl_nm=? AND UPPER(req_no)=?",
+                    (ves['vsl_nm'], rq), one=True)
+        if not row:
+            raise
+        lid, created, key_state = row['id'], False, 'none'
+    if not lid:
+        return jsonify({'error': f'{rq} 는 적재 대상 아님 — SVMS 청구(R/S/ST)만 가능'}), 400
+    return jsonify({'id': lid, 'req_no': rq, 'vsl_nm': ves['vsl_nm'],
+                    'created': bool(created), 'key_state': key_state}), (201 if created else 200)
 
 
 @app.route('/api/dock_procure/<int:lid>/prep', methods=['POST'])

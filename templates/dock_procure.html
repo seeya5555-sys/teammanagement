@@ -106,6 +106,13 @@
   .dp-code.unset{color:var(--blue);font-family:inherit;font-weight:650;border-bottom:none}
   .dp-code:hover{color:var(--blue)}
   .dp-empty{text-align:center;color:var(--text-tertiary);padding:40px;font-size:13px}
+  .dp-orphan{border:1px solid var(--amber-border,#e6cf9a);background:var(--amber-bg,#fdf6e6);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+  .dp-orphan .oh{font-size:12px;font-weight:700;color:var(--text-secondary);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .dp-orphan .or{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;border-top:1px dashed var(--amber-border,#e6cf9a);font-size:12px}
+  .dp-orphan .or .rq{font-family:ui-monospace,Menlo,monospace;font-weight:700;min-width:52px}
+  .dp-orphan .or .sj{flex:1;min-width:160px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dp-orphan .or .st{color:var(--text-tertiary);font-size:11px}
+  .dp-orphan .or button{padding:3px 10px;font-size:11px}
   .dp-foot{margin-top:12px;font-size:11px;color:var(--text-tertiary);display:flex;gap:16px;flex-wrap:wrap}
   .dy-card{margin-top:22px;border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--surface-2,#fff)}
   .dy-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
@@ -194,6 +201,9 @@
     </div>
     <div class="dp-vmeta" id="dp-vmeta"></div>
   </div>
+
+  <!-- SVMS 엔 청구가 있는데 이 목록엔 행이 없는 건(INDEX 엑셀에 없던 시트번호). 자동생성 안 하고 사람이 [적재]. -->
+  <div class="dp-orphan" id="dp-orphans" style="display:none"></div>
 
   <div class="dp-cards" id="dp-cards"></div>
 
@@ -558,7 +568,40 @@
     };
   }
 
+  // SVMS 엔 청구가 있는데 이 목록엔 행이 없는 것(INDEX 엑셀에 없던 시트번호) — 서버가 동기화 때 모아둔 것만 보여준다.
+  // 자동생성하지 않는 이유: 라인 삭제가 하드 DELETE 라 자동적재는 형이 지운 행을 되살리고,
+  // 태그 번호가 입거마다 재사용되므로 옛 입거 잔상까지 끌어올 수 있다. 그래서 사람이 [적재] 를 누른다.
+  function renderOrphans(){
+    const box = $('#dp-orphans');
+    if(!box) return;
+    const list = DATA.orphans || [];
+    if(!list.length){ box.style.display='none'; box.innerHTML=''; return; }
+    box.style.display='';
+    box.innerHTML = `<div class="oh">⚠ SVMS 에만 있는 청구 ${list.length}건 — 이 목록엔 행이 없습니다 (INDEX 엑셀에 없던 시트번호)</div>`
+      + list.map(o=>`<div class="or">
+          <span class="rq">${esc(o.req_no)}</span>
+          <span class="sj">${esc(o.subject||'—')}</span>
+          <span class="st">${esc(o.status||'')}</span>
+          <button class="dp-btn dp-adopt" data-rq="${esc(o.req_no)}" data-vc="${esc(o.vsl_cd||'')}">적재</button>
+        </div>`).join('');
+    box.querySelectorAll('.dp-adopt').forEach(b=>b.onclick=async()=>{
+      b.disabled=true;
+      let ok=false, j={};
+      try{
+        const r=await fetch('/api/dock_procure/adopt',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({vsl_cd:b.dataset.vc,req_no:b.dataset.rq})});
+        j=await r.json().catch(()=>({})); ok=r.ok;
+        if(!ok) toast('적재 실패: '+(j.error||'오류'));
+      }catch(e){ toast('요청 실패(네트워크)'); }
+      if(!ok){ b.disabled=false; return; }
+      // 🔴 적재는 이미 성공했다 — 뒤이은 목록 재조회 실패를 '적재 실패' 로 말하면 안 된다(오보).
+      toast(`적재됨: ${j.req_no}${j.created?'':' (이미 있던 행)'}${j.key_state==='conflict'?' — 문서키 충돌, 기존 값 유지':''}`);
+      try{ await load(DATA.current); }catch(e){ toast('적재됨 — 목록 새로고침만 실패(다시 열면 보입니다)'); }
+    });
+  }
+
   function render(){
+    renderOrphans();
     const _dyc=document.querySelector('.dy-card'); if(_dyc) _dyc.style.display=(FILTER==='SY')?'':'none';   // 조선소 카드는 조선소(SY) 필터일때만
     // vessel card selector
     const vc = $('#dp-vcards');
