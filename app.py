@@ -13016,6 +13016,75 @@ def _dockproc_submit_has_quotes(raw):
     return int(m.group(1)) > 0
 
 
+def _dockproc_submit_pair(raw):
+    """`svms_submit`("3/5"·"(3/5)") → (제출수, 요청수). 미지 형식은 None.
+
+    ⚠️`_dockproc_submit_has_quotes` 와 **판정 목적이 다르다** — 저건 되돌림 가드용이라 미지 형식을
+      True(흔적 있음)로 fail-closed 하지만, 여기는 푸시 트리거라 미지 형식이면 **아무 것도 안 한다**
+      (모르는 값으로 알림을 만들면 형에게 틀린 숫자가 간다).
+    """
+    s = (raw or '').strip()
+    if len(s) >= 2 and s[0] == '(' and s[-1] == ')':
+        s = s[1:-1].strip()
+    m = re.fullmatch(r'(\d+)\s*/\s*(\d+)', s)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+# 결재반려 라벨 — 웹 `SBM_REJ_LABELS`·iOS `rejectedLabels` 와 1:1. 부분일치 금지(정확일치).
+_DOCKPROC_REJ_LABELS = {'HQ REJECTED'}
+
+
+def _dockproc_push_events(row, status, ordered, submit, vendor, amt, cur):
+    """Dock 단계전이 → 푸시 이벤트 목록. **판정만 하고 발송은 안 한다**(테스트 가능하게 분리).
+
+    🔴 `event_key` 설계 = "중복 1건 < 미탐 1건"(BV 감시 교훈)이되 폭주는 막는다.
+       키에 **직전 `updated_at`(전이 직전 행 상태의 지문)** 을 넣는다 — SVMS 에는 회차 번호가 없고,
+       상태값만으로 키를 만들면 **되풀이되는 전이가 첫 번째 것과 충돌해 두 번째부터 영구히 묻힌다**
+       (올마이트 지적: 제출수 3→2→3 재증가, 같은 날 2차 반려). `updated_at` 은 전이가 일어날 때마다
+       sync 가 새로 찍으므로 회차 대용으로 쓸 수 있고, **시계가 아니라 데이터에서 나오므로**
+       fast/full 이 같은 변화를 동시에 봐도 두 프로세스가 같은 키를 만든다(= 중복발송 안 남).
+       · `dock_quote`  : 제출수까지 넣어 제출이 늘 때마다 1번.
+       · `dock_ordered`: 발주완료 1번(되돌렸다 다시 완료되면 그건 새 전이라 다시 1번).
+       · `dock_reject` : 반려 1번. 재상신→재반려는 그 사이에 `updated_at` 이 바뀌므로 또 온다.
+    🔴 제출수 증가는 **목록 라벨이 그대로여도 일어난다**('Quotation Inquiry' 유지). 그래서 라벨 전이로는
+       절대 못 잡고, 이 판정에는 상세조회로 채운 `submit` 이 반드시 있어야 한다(fast 폴러가 견적진행
+       중인 행을 항상 상세조회하는 이유).
+    """
+    ev = []
+    _g = (lambda k: (row[k] if k in row.keys() else None))
+    rid = _g('id')
+    seq = (_g('updated_at') or '').strip() or '0'     # 전이 회차 대용(위 docstring)
+    head = ('[%s] %s' % ((_g('vsl_nm') or '').strip(), (_g('req_no') or '').strip())).strip()
+    subj = (_g('subject') or '').strip()
+    tail = (' · ' + subj[:60]) if subj else ''
+    # ① 벤더 견적제출 = 분자 증가.
+    was = _dockproc_submit_pair(_g('svms_submit'))
+    now = _dockproc_submit_pair(submit)
+    if now and now[0] > (was[0] if was else 0):
+        ev.append({'kind': 'dock_quote', 'collapse': 'dq%s' % rid,
+                   'event_key': 'dock_quote:%s:%s:%s/%s' % (rid, seq, now[0], now[1]),
+                   'title': '%s 견적 제출' % head,
+                   'body': '%s/%s개 업체 제출%s' % (now[0], now[1], tail)})
+    # ② 발주완료. 분할발주는 **전 업체 승인**돼야 여기 온다(상류 부분완료 게이트가 이미 rank 를 내림).
+    if ordered and not _g('stg_order'):
+        money = ''
+        if isinstance(amt, (int, float)):
+            money = ' · %s %s' % ((cur or '').strip(), format(amt, ',.0f'))
+        ev.append({'kind': 'dock_ordered', 'collapse': 'do%s' % rid,
+                   'event_key': 'dock_ordered:%s:%s' % (rid, seq),
+                   'title': '%s 발주완료' % head,
+                   'body': '%s%s%s' % ((vendor or '업체 미상'), money, tail)})
+    # ③ 결재 반려 — 라벨 정확일치. 이미 반려 상태였으면 재발송 안 함.
+    cu = (status or '').strip().upper()
+    pv = (_g('svms_status') or '').strip().upper()
+    if cu in _DOCKPROC_REJ_LABELS and pv not in _DOCKPROC_REJ_LABELS:
+        ev.append({'kind': 'dock_reject', 'collapse': 'dr%s' % rid,
+                   'event_key': 'dock_reject:%s:%s' % (rid, seq),
+                   'title': '%s 결재 반려' % head,
+                   'body': '%s%s' % ((status or '').strip(), tail)})
+    return ev
+
+
 # 견적요청(벤더 Submit)이 쓰는 SVMS 문서종류 — cat_code 기준. 페인트(P)/기타(SY)는 봉투 자체가 없다.
 _DOCK_INQ_DOC = {'R': 'MARP', 'S': 'PCRQ', 'ST': 'PCRQ'}
 
@@ -14596,6 +14665,12 @@ def api_ext_dockproc_sync():
     d = request.get_json(silent=True) or {}
     items = d.get('items') or []
     dry = bool(d.get('dry'))
+    # 🔴 `partial` = 델타 폴(`dock_sync.py --fast`)이 **변화 후보 행만** 보낸 payload 라는 선언.
+    #   미적재(orphan) 배너는 `_dockproc_orphans_save` 가 "payload 에 등장한 선박의 목록을 통째로
+    #   갈아치우는" 구조라, 부분 payload 로 그걸 돌리면 **대기 중인 배너가 통째로 사라진다**
+    #   (2026-08-06 설계 시 실코드 확인). 배너 갱신 책임은 전량 sync 한쪽에만 둔다.
+    partial = bool(d.get('partial'))
+    # 단계전이 → 푸시는 `push_outbox` 에 적재하고(행 UPDATE 보다 먼저) 루프 끝에서 비운다.
     TAG = _re.compile(r'\[([A-Z]{2,6})\s+((?:SY|ST|R|S|P)\d+)\]')
     canceled = 0
     unmatched = 0
@@ -14839,6 +14914,18 @@ def api_ext_dockproc_sync():
                             'remark': new_remark, 'inq_no': inq, 'submit': submit,
                             'quote_amt': new_qamt, 'quote_cur': new_qcur, 'quote_src': new_qsrc,
                             'sub_quotes': new_subq, 'att_files': new_att, 'ord_vendors': new_ords})
+            # 🔴 푸시는 여기서 **판정 + 대기함 적재**만 하고 발송은 루프 끝에서 한다. APNs 왕복(수백 ms)
+            #   을 이 안에 넣으면 행 수만큼 폴 시간이 늘고, 발송 예외 하나가 남은 행의 동기화까지 날린다.
+            #   ⚠️적재는 반드시 **아래 UPDATE 보다 먼저** — 순서가 뒤집히면 그 틈에 죽었을 때
+            #     "행은 갱신됐는데 알림은 영영 없는" 미탐이 남는다(올마이트 블로커 지적).
+            if not dry:
+                try:
+                    for _ev in _dockproc_push_events(row, status, o, submit, vendor,
+                                                     new_qamt, new_qcur):
+                        _push_outbox_add(_ev['kind'], _ev['event_key'], _ev['title'], _ev['body'],
+                                         link='trmt://dock', collapse_id=_ev['collapse'])
+                except Exception:
+                    app.logger.exception('dock sync push 판정 실패 rid=%s', rid)
             if not dry:
                 execute(
                     "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_confirm=?, stg_order=?, remark=?, "
@@ -14932,9 +15019,19 @@ def api_ext_dockproc_sync():
                         # 번호가 사라진 걸 알 수 없다(올마이트 지적). `changes[-1]` = 바로 위에서
                         # 이 행이 append 한 항목이다(같은 반복, 사이에 다른 append 없음).
                         changes[-1]['req_no_cleared'] = row['svms_req_no']
-    if not dry:
+    if not dry and not partial:                          # 부분 payload 로 배너를 갈아치우지 않는다
         _dockproc_orphans_save(items, orphans)
-    return jsonify({'dry': dry, 'matched': len(plan), 'updated': len(changes),
+    # 대기함 비우기 — 이번에 적재한 것 + **지난 폴에서 발송 실패한 것**을 같이 보낸다.
+    # 🔴 발송 실패는 로그만 남기고 sync 결과를 뒤집지 않는다(동기화는 이미 성공했고, 못 보낸 알림은
+    #   대기함에 남아 다음 폴이 이어받는다).
+    pushed = []
+    if not dry:
+        try:
+            pushed = _push_outbox_drain()
+        except Exception:
+            app.logger.exception('dock sync push 대기함 발송 실패')
+    return jsonify({'dry': dry, 'partial': partial, 'pushed': pushed,
+                    'matched': len(plan), 'updated': len(changes),
                     'unmatched': unmatched, 'canceled_skipped': canceled,
                     'changes': changes, 'misses': misses,
                     'linked': linked, 'linked_n': len(linked),
@@ -18632,6 +18729,54 @@ def _push_dispatch(kind, event_key, title, body, link=None,
             (sent, failed, '; '.join(detail)[:500] or None, event_key))
     return {'ok': True, 'sent': sent, 'failed': failed,
             'devices': len(targets), 'detail': '; '.join(detail)[:500]}
+
+
+_PUSH_OUTBOX_MAX_TRIES = 6      # 15분 폴 기준 약 1.5시간 재시도
+_PUSH_OUTBOX_MAX_AGE_H = 24     # 그보다 늙은 알림은 형에게 가치가 없다(늦은 알림 = 오보에 가깝다)
+
+
+def _push_outbox_add(kind, event_key, title, body, link=None, collapse_id=None):
+    """발송 예정 이벤트를 durable 하게 적재. 이미 있으면(=같은 전이 재관측) 조용히 통과.
+
+    🔴 반드시 **상태 UPDATE 보다 먼저** 부른다 — 순서가 뒤집히면 그 사이에 죽었을 때
+       "행은 갱신됐는데 알림은 없는" 영구 미탐이 남는다(schema.sql push_outbox 주석 참조).
+    """
+    execute("INSERT OR IGNORE INTO push_outbox (event_key, kind, title, body, link, collapse_id) "
+            "VALUES (?,?,?,?,?,?)",
+            (event_key, kind, title, body, link, collapse_id))
+
+
+def _push_outbox_drain(limit=20):
+    """대기함 발송. 성공·중복이면 삭제, 실패면 tries+1 하고 남긴다. 결과 목록 반환.
+
+    ⚠️`sent=0` 은 실패가 아니다 — 등록된 기기가 0대면 보낼 곳이 없을 뿐이고 `_push_dispatch` 가
+      claim 을 유지하므로 여기서도 지운다(안 지우면 기기 등록 순간 과거 알림이 폭주한다).
+    """
+    rows = query("SELECT * FROM push_outbox ORDER BY created_at LIMIT ?", (limit,))
+    out = []
+    for r in rows:
+        key = r['event_key']
+        old = query("SELECT CAST((julianday('now','localtime') - julianday(?)) * 24 AS REAL) h",
+                    (r['created_at'],), one=True)
+        if r['tries'] >= _PUSH_OUTBOX_MAX_TRIES or (old and (old['h'] or 0) > _PUSH_OUTBOX_MAX_AGE_H):
+            execute("DELETE FROM push_outbox WHERE event_key=?", (key,))
+            app.logger.warning('push outbox 포기 key=%s tries=%s', key, r['tries'])
+            out.append({'kind': r['kind'], 'key': key, 'ok': False, 'sent': 0, 'reason': 'dropped'})
+            continue
+        try:
+            res = _push_dispatch(r['kind'], key, r['title'] or '', r['body'] or '',
+                                 link=r['link'], collapse_id=r['collapse_id'])
+        except Exception as e:
+            app.logger.exception('push outbox 발송 예외 key=%s', key)
+            res = {'ok': False, 'reason': 'exception', 'detail': str(e)[:200]}
+        if res.get('ok'):
+            execute("DELETE FROM push_outbox WHERE event_key=?", (key,))
+        else:
+            execute("UPDATE push_outbox SET tries=tries+1, last_error=? WHERE event_key=?",
+                    ((res.get('reason') or '')[:200], key))
+        out.append({'kind': r['kind'], 'key': key, 'ok': bool(res.get('ok')),
+                    'sent': res.get('sent', 0), 'reason': res.get('reason')})
+    return out
 
 
 # ---- 앱(Bearer) : 디바이스 등록/해제 ----

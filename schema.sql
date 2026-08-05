@@ -747,3 +747,21 @@ CREATE TABLE IF NOT EXISTS push_log (
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_push_log_kind ON push_log(kind, created_at DESC);
+
+-- 🔴 발송 대기함(outbox) — "상태는 전이됐는데 알림은 못 갔다" 를 막는 durable queue.
+--   푸시 판정은 **DB 의 이전값과 새값을 비교**해서 나온다. 그래서 행을 갱신한 뒤에 발송이 실패하면
+--   다음 폴은 "변화 없음" 으로 보고 그 알림은 **영구 미탐**이 된다(APNs 일시장애·프로세스 종료).
+--   그래서 판정 즉시 여기 먼저 적재하고(같은 요청에서 dock_procure UPDATE 보다 **앞**), 발송에
+--   성공해야 지운다. 프로세스가 중간에 죽어도 다음 sync 가 이 표를 비우며 이어받는다.
+--   push_log(=중복발송 차단 원장)와 역할이 다르다: 저건 "이미 보냈나", 이건 "아직 못 보냈나".
+CREATE TABLE IF NOT EXISTS push_outbox (
+    event_key   TEXT PRIMARY KEY,           -- push_log 와 같은 키 → 재시도해도 중복발송 안 됨
+    kind        TEXT NOT NULL,
+    title       TEXT,
+    body        TEXT,
+    link        TEXT,
+    collapse_id TEXT,
+    tries       INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
