@@ -331,11 +331,16 @@
   // 벤더 제출견적 스냅샷(sub_quotes) — 서버가 JSON 문자열로 준다. 깨진 값이 화면 전체를 죽이지 않게 방어.
   const quotesOf = l => { try{ const a=JSON.parse(l.sub_quotes||'[]');
     return Array.isArray(a)?a.filter(q=>q&&typeof q==='object'):[] }catch(e){ return [] } };
-  // 화면에 쓰는 제출견적 금액 = **D/C 적용 후**(final_amt). D/C 가 안 붙은 건·구버전 스냅샷은
-  // final_amt 가 없으므로 제출원금(amt)을 그대로 쓴다. USD 도 같은 기준으로 짝을 맞춘다
+  // 화면에 쓰는 '제출견적' 금액 = **벤더 제출액(amt)**. 발주헤더 금액(final_amt)으로 대체하는 건
+  // **D/C 근거가 있을 때만**이다. USD 도 같은 기준으로 짝을 맞춘다
   // (final 을 쓰면서 D/C 전 USD 를 붙이면 2026-08-03 상신모달과 같은 짝 안 맞는 표시가 됨).
-  const qShown    = q => (q.final_amt!=null ? q.final_amt : q.amt);
-  const qShownUsd = q => (q.final_amt!=null ? q.final_usd : q.usd);
+  // 🔴 예전엔 final_amt 가 있기만 하면 무조건 앞세웠다. 발주서가 제출견적과 다른 금액으로 기안되면
+  //    (할인 아님) 그 발주액이 '제출견적' 라벨을 달고 뜨고 진짜 제출액은 어디에도 안 보였다 —
+  //    실사고 2026-08-05 S7 `BGBBES2608A11`: 벤더 제출/컨펌 82,425,700 KRW 인데 승인 전 발주서
+  //    (Not Approved) 72,723,900 을 표시, DIS_RATE=0·DIS_AMT=null 이라 'D/C후' 배지도 안 붙어
+  //    차액 9,701,800 이 통째로 숨었다(형 보고). 상신 게이트는 amt 로 비교하므로 화면과 게이트가
+  //    서로 다른 금액을 보던 상태이기도 하다.
+  //    (규칙 본체는 아래 qOrdAuth/qShown — qIsDC 정의 뒤에 온다.)
   // D/C 전 금액 — 구매=발주헤더 AMT, 수리=TOT_AMT. ⚠️수리는 amt 자체가 이미 D/C 후라 amt 와
   // 비교하면 D/C 가 있어도 영원히 같아서 배지가 안 붙는다. 그래서 비교 상대는 gross 우선.
   const qBase     = q => (q.gross_amt!=null ? q.gross_amt : q.amt);
@@ -345,6 +350,16 @@
   const qIsDC     = q => (q.final_amt!=null && qBase(q)!=null
                           && Math.round(Number(q.final_amt)*100) < Math.round(Number(qBase(q))*100));
   const qCut      = q => (qIsDC(q) ? Number(qBase(q)) - Number(q.final_amt) : null);
+  // 판정 근거는 **실제로 깎인 금액이 있는지**(qIsDC) 하나뿐. dc_rate!==0 도 근거로 삼으려다 뺐다 —
+  // 요율은 있는데 gross===final 인 모순 데이터에서 발주액이 앞서면서 배지도 '제출' 줄도 안 붙어
+  // 위와 똑같은 은닉이 재발한다(올마이트 지적 2026-08-05). 진짜 D/C 는 언제나 final < gross.
+  const qOrdAuth  = q => qIsDC(q);
+  const qShown    = q => (qOrdAuth(q) ? q.final_amt : (q.amt!=null ? q.amt : q.final_amt));
+  const qShownUsd = q => (qOrdAuth(q) ? q.final_usd : (q.usd!=null ? q.usd : q.final_usd));
+  // D/C 로 설명되지 않는데 제출견적과 다른 발주서 금액 — 숨기지 않고 별도 줄로 보여준다.
+  // (승인 여부는 이 스냅샷에 없으므로 '발주서 금액'이라고만 말한다 — 단정 금지.)
+  const qOrdOnly  = q => { if(qOrdAuth(q) || q.final_amt==null || q.amt==null) return null;
+    return Math.round(Number(q.final_amt)*100)===Math.round(Number(q.amt)*100) ? null : q.final_amt };
   // 품목 견적 결함(견적 미제출 · 단가 0 등). 🔴 판정은 화면이 하지 않는다 — 맥 워커의 상신 게이트와
   // **같은 함수**(dock_items.item_gaps)가 동기화 때 계산해 스냅샷에 넣어준 걸 그대로 읽는다.
   // 상신을 막는 건 라이브로 읽는 워커 게이트고, 여기 표시는 "누르기 전에 미리 알기" 용이다.
@@ -377,7 +392,8 @@
                       // 구매는 요율(%), 수리는 금액 할인(DIS_AMT)이라 요율이 0/없음 — 있는 쪽을 근거로 쓴다.
                       + (qIsDC(q)?`\n  └ 제출 ${fmtAmt(qBase(q))} ${q.cur||''}`
                                   + (q.dc_rate?` · D/C ${fmtAmt(q.dc_rate)}%`:` · D/C −${fmtAmt(qCut(q))}`)
-                                  + ` → D/C후`:'')
+                                  + ` → D/C후`
+                                  : (qOrdOnly(q)!=null ? `\n  └ 발주서 ${fmtAmt(qOrdOnly(q))} ${q.cur||''}` : ''))
                       + (q.att?` · 첨부 ${q.att}`:'') + ((q.st||'').toLowerCase()==='ordered'?' · 발주':'')
                       + qGapTip(q);
   // 견적서 첨부 목록(att_files) — 배열 위치가 서버 preview cache 의 idx 다(서버가 정렬을 못박음).
