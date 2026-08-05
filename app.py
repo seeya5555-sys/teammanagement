@@ -14157,10 +14157,16 @@ def api_ext_dock_push_data():
     vsl_nm = ves['vsl_nm']
     yard = query("SELECT category, amount, cur, remark, src, sort_no FROM dock_yard "
                  "WHERE vsl_nm=? ORDER BY sort_no, category", (vsl_nm,))
+    # 🔴 `quote_amt IS NOT NULL` 만 걸면 **분할발주(업체 2곳)가 경고도 없이 통째로 빠진다** —
+    #   통화가 섞이면 합계를 만들지 않으므로 `quote_amt=NULL` 이 정상이다(실측 [BGBB S1] KRW+USD).
+    #   그래서 `ord_vendors` 가 있는 행도 내려보내고, 라인 조립·보류 판단은 조립기(build_envelope)에
+    #   맡긴다. 조립기는 금액을 못 만들면 **warn 을 남기고 omit** 하므로 조용한 누락이 사라진다.
     lines = query(
         "SELECT req_no, cat_code, category, subject, equipment, quote_amt, quote_cur, quote_src, "
-        "vendor, svms_req_no, stg_order FROM dock_procure "
-        "WHERE vsl_nm=? AND quote_amt IS NOT NULL ORDER BY cat_code, req_no", (vsl_nm,))
+        "vendor, svms_req_no, stg_order, ord_vendors FROM dock_procure "
+        "WHERE vsl_nm=? AND (quote_amt IS NOT NULL "
+        "  OR (ord_vendors IS NOT NULL AND TRIM(ord_vendors) NOT IN ('', '[]'))) "
+        "ORDER BY cat_code, req_no", (vsl_nm,))
     def bycat(*codes):
         return [dict(r) for r in lines if r['cat_code'] in codes]
     return jsonify({
