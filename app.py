@@ -12182,7 +12182,37 @@ def api_ext_invoice_reject_result(did):
 #   automation_run(reqgen_save) 큐 → 맥 러너가 SVMS NEW→SP_SET_REQ_INFO DRAFT 저장.
 #   매핑 근거: memory/svms-api-reqgen-save.md (F12 실캡처). 상신은 사람이 SVMS서 직접.
 # ============================================================
-_REQGEN_UNIT_MAP = {'PCS': 'EA'}
+# SVMS `PUNIT_CD` 는 4자 제한 — 5자 이상이면 SP_SET_REQ_INFO 가 ORA-06502 로 죽는다.
+#   2026-08-05 통제실험(테스트 draft 생성 후 전량 삭제): 'QQQQ'(4자) 저장됨 · 'QQQQQ'/'Piece'(5자) 실패.
+#   같은 봉투로 59자 PART_NM·정수/빈 MFG_PART_NO 는 전부 통과했다 = 코드마스터 검증이 아니라 길이만 본다.
+#   엑셀 UNIT 칸은 'Pieces'/'Set' 처럼 사람 말로 적혀 오는데 종전 표엔 PCS 하나뿐이라 그대로 흘러갔고,
+#   S33(AUX BOILER 26라인)이 통째로 저장 실패했다. 표에 없는 단위는 **자르지 않고 원문 그대로 둔다** —
+#   'SHEET'→'SHEE' 같은 조용한 변조가 더 나쁘기 때문. 미등록이어도 4자 이하면 SVMS 가 받으므로 통과시키고,
+#   4자 초과만 러너(`svms-soa-opex/reqgen_save.py`)가 저장 전에 막아 이유를 카드에 남긴다.
+_REQGEN_UNIT_MAP = {
+    'PCS': 'EA', 'PIECE': 'EA', 'PIECES': 'EA', 'EACH': 'EA', 'EA': 'EA', 'NOS': 'EA', 'PC': 'PC',
+    'SET': 'SET', 'SETS': 'SET', 'KIT': 'KIT', 'KITS': 'KIT',
+    'PAIR': 'PAIR', 'PAIRS': 'PAIR', 'PACK': 'PACK', 'PACKS': 'PACK', 'PACKET': 'PACK',
+    'PACKAGE': 'PKG', 'PKG': 'PKG', 'CARTON': 'CTN', 'CARTONS': 'CTN', 'CTN': 'CTN',
+    'BOX': 'BOX', 'BOXES': 'BOX', 'CAN': 'CAN', 'CANS': 'CAN', 'BAG': 'BAG', 'BAGS': 'BAG',
+    'BOTTLE': 'BTL', 'BOTTLES': 'BTL', 'BTL': 'BTL', 'DRUM': 'DRUM', 'DRUMS': 'DRUM',
+    'ROLL': 'ROLL', 'ROLLS': 'ROLL', 'COIL': 'COIL', 'COILS': 'COIL',
+    'SHEET': 'SHT', 'SHEETS': 'SHT', 'SHT': 'SHT', 'TUBE': 'TUBE', 'TUBES': 'TUBE',
+    'METER': 'M', 'METERS': 'M', 'METRE': 'M', 'METRES': 'M', 'MTR': 'M', 'M': 'M',
+    'LITER': 'L', 'LITERS': 'L', 'LITRE': 'L', 'LITRES': 'L', 'LTR': 'L', 'L': 'L',
+    'KG': 'KG', 'KGS': 'KG', 'KILOGRAM': 'KG', 'TON': 'TON', 'TONS': 'TON', 'MT': 'MT',
+    'UNIT': 'UNIT', 'UNITS': 'UNIT', 'LOT': 'LOT', 'LOTS': 'LOT',
+}
+
+
+def _reqgen_unit_cd(unit):
+    """엑셀 UNIT 텍스트 → SVMS PUNIT_CD. 못 접는 값은 원문 유지(러너가 fail-closed 로 잡는다)."""
+    if unit is None:
+        return None
+    s = str(unit).strip().rstrip('.')
+    if not s:
+        return None
+    return _REQGEN_UNIT_MAP.get(s.upper(), s)
 _REQGEN_EXP_RULES = [
     ('090301', ('MAIN ENGINE', 'M/E')),
     ('090302', ('G/E', 'GENERATOR', 'AUX ENGINE', 'A/E')),
@@ -12285,7 +12315,7 @@ def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm, vsl_prefix='M/T'):
         if qty is None and no is None:
             continue
         seq += 1
-        unit_cd = _REQGEN_UNIT_MAP.get(str(unit).upper(), unit) if unit else None
+        unit_cd = _reqgen_unit_cd(unit)
         lines.append({
             'SORT_SEQ': seq, 'COMPO_NM': current_compo,
             'MFG_PART_NO': partno, 'PART_NM': desc,
