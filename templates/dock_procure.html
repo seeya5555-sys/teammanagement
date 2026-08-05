@@ -86,7 +86,9 @@
     line-height:1.45;padding:0 3px;border-radius:3px;background:var(--bg-subtle,#f3f4f6);
     color:var(--text-secondary);cursor:help}
   .dp-ordv.on{background:#e7f3ec;color:var(--green,#186A3B);font-weight:800}  /* 실제 발주 나간 업체 */
-  .dp-ordv .ov-nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:88px;text-align:left}
+  .dp-ordv .ov-nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:72px;text-align:left}
+  /* 라인 태그(S1-A / S1-B) — 발주서 접미사라 형이 SVMS·기안에서 그대로 대조할 수 있다 */
+  .dp-ordv .ov-tag{flex:0 0 auto;font-weight:800;opacity:.9;font-variant-numeric:tabular-nums}
   .dp-ordv .ov-amt{white-space:nowrap;font-weight:700}
   .dp-ordv .ov-amt.na{font-weight:600;opacity:.75}      /* 금액 미확정 = 0원이 아님 */
   .dp-ordt{font-size:8px;font-weight:800;color:var(--text-secondary);text-align:right;padding:0 3px}
@@ -365,9 +367,36 @@
   const ordTotal = os => { if(!os.length || os.some(o=>o.amt==null)) return null;
     const cs=new Set(os.map(o=>o.cur||'')); if(cs.size!==1) return null;
     return {amt:os.reduce((s,o)=>s+Number(o.amt),0), cur:[...cs][0], n:os.length} };
+  // 🔴 라인 태그(S1-A / S1-B)는 **우리가 글자를 발명하지 않는다** — SVMS 가 발주서 번호를 INQ_NO 뒤에
+  //   A/B 로 이미 나눠 발급한다(실측 INQ `BGBBES2607A11` → `…A11A` 딘텍 / `…A11B` 에버런스). 그 접미사를
+  //   그대로 쓰므로 형이 기안·SVMS 화면과 1:1 로 대조할 수 있다. 접미사가 없는 옛 데이터만 순번 폴백.
+  //   ⚠️ 행을 실제로 2개로 쪼개지는 않는다 — sync 매칭이 `svms_req_no` 1행 고정(`one=True`)이라
+  //     쪼개면 한쪽이 영구 미동기화되고, 태그 정규식(`\d+` 끝)·orphan 배너·`svms_subj`·집계가 다 깨진다.
+  //   🔴 접미사 판정 규칙(웹·iOS 정본 동일, 올마이트 2026-08-05 지적 반영): 끝의 A~Z **1~2자**이고
+  //     **그 앞이 숫자**일 때만 유효하다. `ABC` 처럼 숫자 없이 문자로만 끝나는 번호를 접미사로 먹으면
+  //     `S1-ABC` 같은 근거 없는 태그가 뜬다.
+  const ordSfx = o => { const m=/[0-9]([A-Z]{1,2})$/.exec(String(o.odr_no||'').toUpperCase());
+    return m?m[1]:'' };
+  // 표시 순서 = 발주서 번호순(A→B). 저장 canonical 은 금액 문자열순이라 화면에서 정렬해야 A/B 가 안 뒤집힌다.
+  // 🔴 `localeCompare` 를 쓰지 않는다 — locale 에 따라 순서가 바뀌면 Swift 의 `<`(스칼라 비교)와 갈려
+  //   같은 건이 웹/앱에서 다른 태그를 받는다. 양쪽 다 **대문자화 후 스칼라 비교**로 고정한다.
+  const ordKey = o => String(o.odr_no||'').toUpperCase();
+  const ordSorted = os => os.slice().sort((a,b)=>{
+    const A=ordKey(a), B=ordKey(b); return A<B?-1:A>B?1:0 });
+  // 태그는 **전체 목록 기준**으로 매긴다 — 발주완료 단계에서 필터한 배열로 매기면 B 가 A 로 밀린다.
+  // 🔴 전부-or-전무: 하나라도 접미사가 없거나 접미사가 겹치면 **전원 순번(A,B,C…)** 으로 간다. 섞어 쓰면
+  //   접미사 있는 건과 순번 폴백이 같은 글자를 받아 태그가 중복된다(올마이트 지적).
+  //   상한은 서버 `_DOCKPROC_ORDER_MAX=10` 이라 Z 를 넘길 일이 없지만, 넘겨도 양쪽이 같게 Z 로 고정한다.
+  const ordTags = (os, req) => { const ss=ordSorted(os), sf=ss.map(ordSfx);
+    const ok = sf.every(x=>x) && new Set(sf).size===sf.length;
+    const m={};
+    ss.forEach((o,i)=>{ m[o.odr_no] =
+      `${req||''}-${ok?sf[i]:String.fromCharCode(65+Math.min(i,25))}` });
+    return m };
   // 업체 1줄. `amt==null` 은 **0 이 아니라 '아직 확정 안 됨'**(결재 진행중 발주서는 ODR_LIST 에 없다).
-  const ordLine = o => `<div class="dp-ordv${o.ordered?' on':''}" title="발주서 ${esc(o.odr_no||'')}${
+  const ordLine = (o, tag) => `<div class="dp-ordv${o.ordered?' on':''}" title="발주서 ${esc(o.odr_no||'')}${
       o.st?` · SVMS: ${esc(o.st)}`:''}${o.amt==null?' · 발주금액 미확정(결재 진행중)':''}">`
+    + (tag?`<span class="ov-tag">${esc(tag)}</span>`:'')
     + `<span class="ov-nm">${esc(o.nm||o.cd||'—')}</span>`
     + (o.amt!=null ? `<span class="ov-amt">${esc(fmtAmt(o.amt))} ${esc(o.cur||'')}</span>`
                    : `<span class="ov-amt na">미확정</span>`)
@@ -796,11 +825,12 @@
       if(os.length>1){
         const done = os.filter(o=>o.ordered);
         // 벤더컨펌 = 선택된 업체 전원(누구를 골랐나) / 발주완료 = 실제 발주 나간 업체만(누구에게 나갔나).
-        const show = key==='stg_confirm' ? os : done;
+        const show = ordSorted(key==='stg_confirm' ? os : done);
+        const tags = ordTags(os, l.req_no);
         extra += `<div class="dp-sub">${key==='stg_confirm'?`업체 ${os.length}곳`:`발주 ${done.length}/${os.length}`}</div>`;
         if(show.length){
           const tot = ordTotal(show);
-          extra += `<div class="dp-ords">` + show.map(ordLine).join('')
+          extra += `<div class="dp-ords">` + show.map(o=>ordLine(o, tags[o.odr_no])).join('')
             // 합계가 없는 이유를 **정확히** 쓴다 — '통화 상이'로 뭉개면 금액이 아직 안 나온 건까지
             // 통화 문제로 오독한다(형이 SVMS 를 확인해야 하는 사유가 다르다).
             + (show.length>1
