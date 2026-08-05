@@ -709,3 +709,41 @@ CREATE TABLE IF NOT EXISTS soa_review_audit (
     created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_soa_review_audit_case ON soa_review_audit(case_id, created_at DESC);
+
+-- ═══════════════════════════════════════════════════════════════
+--  iOS 푸시알림 (APNs)
+-- ═══════════════════════════════════════════════════════════════
+-- 디바이스 토큰. token UNIQUE = 같은 폰 재설치/토큰갱신 시 행이 늘지 않게.
+-- env: production(Ad Hoc·App Store 서명) / sandbox(Xcode Debug 설치).
+--   🔴 환경이 틀리면 APNs 가 400 BadDeviceToken 으로 조용히 거절 → 앱이 빌드구성으로 알려준다.
+CREATE TABLE IF NOT EXISTS ios_device (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    token        TEXT NOT NULL UNIQUE,
+    user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    env          TEXT NOT NULL DEFAULT 'production',
+    app_ver      TEXT,
+    device_name  TEXT,
+    active       INTEGER NOT NULL DEFAULT 1,
+    dead_reason  TEXT,                     -- 비활성 사유(Unregistered 등). 일시실패로는 안 끔
+    prefs        TEXT,                     -- 알림종류 on/off JSON {kind: 0|1}
+    last_push_at TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_ios_device_user ON ios_device(user_id, active);
+
+-- 발송 원장. event_key UNIQUE = 중복발송 차단(폴러가 같은 변화를 재관측해도 1회만).
+-- 🔴 INSERT 성공을 발송 자격으로 쓰는 2단 커밋: 먼저 예약(claim) → 발송 → 결과 기록.
+CREATE TABLE IF NOT EXISTS push_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key  TEXT NOT NULL UNIQUE,
+    kind       TEXT NOT NULL,
+    title      TEXT,
+    body       TEXT,
+    link       TEXT,
+    sent_n     INTEGER NOT NULL DEFAULT 0,
+    fail_n     INTEGER NOT NULL DEFAULT 0,
+    detail     TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_push_log_kind ON push_log(kind, created_at DESC);

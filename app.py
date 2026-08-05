@@ -18516,6 +18516,286 @@ def api_class_status_export_by_manager():
 
 
 # ═════════════════════════════════════════════════════════════════
+#  iOS 푸시알림 (APNs) — 디바이스 등록 · 발송 · 종류별 on/off
+# ═════════════════════════════════════════════════════════════════
+# 발송 자체는 apns_push.py(curl --http2 + ES256 JWT). 키가 없으면 라우트는 살아 있고
+# 'not_configured' 를 정직하게 반환한다 — 조용히 성공으로 위장하지 않는다.
+#
+# 알림 종류. 앱 설정화면이 이 목록을 그대로 그리므로 키를 바꾸면 기존 저장값이 끊긴다.
+PUSH_KINDS = [
+    ('dock_quote',       'Dock 견적 제출',      '업체가 견적을 올렸을 때'),
+    ('dock_ordered',     'Dock 발주완료',       '발주가 전부 완료됐을 때'),
+    ('dock_reject',      'Dock 결재반려',       '상신이 반려돼 단계가 되돌아갔을 때'),
+    ('dock_submit_fail', 'Dock 상신 실패',      'SVMS 상신이 실패로 끝났을 때'),
+    ('auto_fail',        '자동화 실패',         '러너 실패·killswitch·차단'),
+    ('approval_new',     '승인 대기 신규',      '전자결재/Fund Request 신규 대기'),
+    ('issue_urgent',     '긴급 현안',           '긴급으로 등록된 현안'),
+    ('class_due',        '선급·증서 만료',      'D-30/D-7 요약'),
+    ('test',             '테스트 알림',         '설정 확인용'),
+]
+PUSH_KIND_KEYS = {k for k, _l, _d in PUSH_KINDS}
+_PUSH_DEVICE_CAP = 20        # 단일 요청에서 발송할 디바이스 상한(폭주 방지)
+
+
+def _push_module():
+    """apns_push 지연 import — 모듈이 없어도 앱 전체가 죽지 않게."""
+    try:
+        import apns_push
+        return apns_push
+    except Exception as e:
+        print(f'[push] apns_push import 실패: {e}')
+        return None
+
+
+def _push_prefs(row):
+    try:
+        p = json.loads(row['prefs'] or '{}')
+    except Exception:
+        p = {}
+    return p if isinstance(p, dict) else {}
+
+
+def _push_kind_enabled(row, kind):
+    """미설정 = 켜짐(기본 on). 형이 명시적으로 끈 것만 뺀다."""
+    return bool(_push_prefs(row).get(kind, 1))
+
+
+def _push_devices(user_ids=None, kind=None):
+    """발송 대상 기기. `user_ids=None` = 전체 브로드캐스트(호출측이 의도적으로 None 을 줄 때만).
+
+    🔴 cap 은 **prefs 필터 뒤에** 적용한다(올마이트 지적). SQL LIMIT 으로 먼저 자르면
+       상위 N 대가 그 종류를 껐을 때 켜둔 기기가 영구히 미발송된다 — 조용한 미탐.
+    """
+    sql = "SELECT * FROM ios_device WHERE active=1"
+    params = []
+    if user_ids:
+        sql += " AND user_id IN (%s)" % ','.join('?' * len(user_ids))
+        params += list(user_ids)
+    sql += " ORDER BY updated_at DESC"
+    rows = query(sql, tuple(params))
+    if kind:
+        rows = [r for r in rows if _push_kind_enabled(r, kind)]
+    return rows[:_PUSH_DEVICE_CAP]
+
+
+def _push_dispatch(kind, event_key, title, body, link=None,
+                   user_ids=None, collapse_id=None):
+    """알림 1건 발송. 반환 dict(ok/sent/failed/reason).
+
+    🔴 2단 커밋(BV 감시 교훈): event_key 를 먼저 claim 해 중복을 막되, **디바이스가 있었는데
+       전부 발송 실패**면 claim 을 풀어 다음 폴링에 재시도되게 한다. 안 풀면 일시적 네트워크
+       오류 1회가 그 이벤트를 영구 미탐으로 만든다.
+       디바이스가 0대면 claim 을 유지한다(배달할 곳이 없는 과거 이벤트가 나중에 폭주하는 것 방지).
+    """
+    if kind not in PUSH_KIND_KEYS:
+        return {'ok': False, 'reason': 'unknown_kind', 'sent': 0, 'failed': 0}
+    ap = _push_module()
+    if ap is None:
+        return {'ok': False, 'reason': 'module_missing', 'sent': 0, 'failed': 0}
+    try:
+        conf = ap.load_conf()
+    except Exception as e:
+        return {'ok': False, 'reason': 'not_configured', 'detail': str(e),
+                'sent': 0, 'failed': 0}
+
+    try:                                     # ── claim (중복발송 차단)
+        execute("INSERT INTO push_log (event_key, kind, title, body, link) "
+                "VALUES (?,?,?,?,?)", (event_key, kind, title, body, link))
+    except sqlite3.IntegrityError:
+        return {'ok': True, 'dup': True, 'reason': 'already_sent',
+                'sent': 0, 'failed': 0}
+
+    targets = _push_devices(user_ids, kind=kind)
+    sent, failed, detail = 0, 0, []
+    for d in targets:
+        payload = ap.alert_payload(title, body, link=link, kind=kind)
+        ok, st, reason = ap.send(d['token'], payload, env=(d['env'] or 'production'),
+                                 conf=conf, collapse_id=collapse_id)
+        if ok:
+            sent += 1
+            execute("UPDATE ios_device SET last_push_at=datetime('now','localtime') "
+                    "WHERE id=?", (d['id'],))
+        else:
+            failed += 1
+            detail.append(f"dev{d['id']}:{st}:{reason}")
+            if ap.is_dead(st, reason):       # 영구 사망 사유만 비활성(일시실패로는 안 끔)
+                execute("UPDATE ios_device SET active=0, dead_reason=?, "
+                        "updated_at=datetime('now','localtime') WHERE id=?",
+                        (f'{st}:{reason}', d['id']))
+
+    if targets and sent == 0:                # 전부 실패 → claim 해제(재시도 가능하게)
+        execute("DELETE FROM push_log WHERE event_key=? AND sent_n=0", (event_key,))
+        return {'ok': False, 'reason': 'all_failed', 'sent': 0,
+                'failed': failed, 'detail': '; '.join(detail)[:500]}
+
+    execute("UPDATE push_log SET sent_n=?, fail_n=?, detail=? WHERE event_key=?",
+            (sent, failed, '; '.join(detail)[:500] or None, event_key))
+    return {'ok': True, 'sent': sent, 'failed': failed,
+            'devices': len(targets), 'detail': '; '.join(detail)[:500]}
+
+
+# ---- 앱(Bearer) : 디바이스 등록/해제 ----
+@app.route('/api/ios/device', methods=['POST'])
+@login_required
+def api_ios_device_register():
+    d = request.get_json(silent=True) or {}
+    tok = (d.get('token') or '').strip()
+    # APNs 토큰은 hex 문자열(보통 64자, 향후 확장 여지로 상한만 둔다)
+    if not tok or not re.fullmatch(r'[0-9a-fA-F]{40,200}', tok):
+        return jsonify({'error': 'bad_token'}), 400
+    env = (d.get('env') or 'production').strip().lower()
+    if env not in ('production', 'sandbox'):
+        env = 'production'
+    # 🔴 신규 기기(재설치로 토큰이 바뀐 경우 포함)는 같은 계정의 기존 prefs 를 물려받는다(올마이트 지적).
+    #    안 물려받으면 형이 껐던 종류가 재설치만으로 조용히 다시 켜진다 = 형 의도를 뒤집는 동작.
+    prior = query("SELECT prefs FROM ios_device WHERE user_id=? AND prefs IS NOT NULL "
+                  "ORDER BY updated_at DESC LIMIT 1", (session['user_id'],))
+    inherit = prior[0]['prefs'] if prior else None
+    execute("""
+        INSERT INTO ios_device (token, user_id, env, app_ver, device_name, active,
+                                dead_reason, prefs, updated_at)
+        VALUES (?,?,?,?,?,1,NULL,?,datetime('now','localtime'))
+        ON CONFLICT(token) DO UPDATE SET
+            user_id=excluded.user_id, env=excluded.env, app_ver=excluded.app_ver,
+            device_name=excluded.device_name, active=1, dead_reason=NULL,
+            -- 소유자가 바뀌면 이전 사용자의 설정을 남기지 않는다(계정 전환 잔상 차단).
+            prefs=CASE WHEN ios_device.user_id = excluded.user_id
+                       THEN COALESCE(ios_device.prefs, excluded.prefs)
+                       ELSE excluded.prefs END,
+            updated_at=datetime('now','localtime')
+    """, (tok.lower(), session['user_id'], env,
+          (d.get('app_ver') or '')[:32] or None, (d.get('device_name') or '')[:64] or None,
+          inherit))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/ios/device', methods=['DELETE'])
+@login_required
+def api_ios_device_unregister():
+    d = request.get_json(silent=True) or {}
+    tok = (d.get('token') or '').strip().lower()
+    if not tok:
+        return jsonify({'error': 'bad_token'}), 400
+    execute("UPDATE ios_device SET active=0, dead_reason='unregistered_by_app', "
+            "updated_at=datetime('now','localtime') WHERE token=? AND user_id=?",
+            (tok, session['user_id']))
+    return jsonify({'ok': True})
+
+
+# ---- 앱(Bearer) : 알림 종류 on/off ----
+@app.route('/api/ios/notify-prefs', methods=['GET'])
+@login_required
+def api_ios_prefs_get():
+    rows = query("SELECT * FROM ios_device WHERE user_id=? AND active=1 "
+                 "ORDER BY updated_at DESC", (session['user_id'],))
+    prefs = _push_prefs(rows[0]) if rows else {}
+    ap = _push_module()
+    return jsonify({
+        'ok': True,
+        'kinds': [{'key': k, 'label': l, 'desc': dsc,
+                   'enabled': bool(prefs.get(k, 1))} for k, l, dsc in PUSH_KINDS],
+        'devices': len(rows),
+        'configured': bool(ap and ap.configured()),
+    })
+
+
+@app.route('/api/ios/notify-prefs', methods=['PUT'])
+@login_required
+def api_ios_prefs_put():
+    d = request.get_json(silent=True) or {}
+    incoming = d.get('prefs')
+    if not isinstance(incoming, dict):
+        return jsonify({'error': 'bad_request'}), 400
+    clean = {k: (1 if incoming.get(k) else 0) for k in incoming if k in PUSH_KIND_KEYS}
+    # 형 폰이 여러 대여도 설정은 계정 단위로 같게 유지(기기별로 달라 헷갈리는 일 방지)
+    execute("UPDATE ios_device SET prefs=?, updated_at=datetime('now','localtime') "
+            "WHERE user_id=?", (json.dumps(clean, ensure_ascii=False), session['user_id']))
+    return jsonify({'ok': True, 'prefs': clean})
+
+
+# ---- 앱(Bearer) : 상태 확인 + 테스트 발송 ----
+@app.route('/api/ios/push/status', methods=['GET'])
+@login_required
+def api_ios_push_status():
+    ap = _push_module()
+    rows = query("SELECT id, env, app_ver, device_name, active, dead_reason, "
+                 "last_push_at, updated_at FROM ios_device WHERE user_id=? "
+                 "ORDER BY updated_at DESC LIMIT 10", (session['user_id'],))
+    # push_log 는 계정 컬럼이 없어(이벤트 단위 dedup 용) user 로 좁힐 수 없다.
+    # 🔴 그래서 admin 이 아니면 title 을 지운다(올마이트 지적) — 다른 감독의 알림 내용이 새면 안 된다.
+    #    진단에 필요한 kind/성패 카운트는 그대로 남긴다.
+    is_admin = session.get('role') == 'admin'
+    last = query("SELECT kind, title, sent_n, fail_n, created_at FROM push_log "
+                 "ORDER BY id DESC LIMIT 5")
+    recent = []
+    for r in last:
+        item = dict(r)
+        if not is_admin:
+            item['title'] = None
+        recent.append(item)
+    return jsonify({
+        'ok': True,
+        'configured': bool(ap and ap.configured()),
+        'devices': [dict(r) for r in rows],
+        'recent': recent,
+    })
+
+
+@app.route('/api/ios/push/test', methods=['POST'])
+@login_required
+def api_ios_push_test():
+    """형이 앱에서 눌러 실제로 알림이 뜨는지 확인 — 카나리 검증 수단.
+    🔴 event_key 에 난수를 붙인다(올마이트 지적): 초 단위 시각만 쓰면 같은 초에 두 번 누른 두 번째가
+       dup 으로 흘러 "발송 0건"으로 보이고, 형은 그걸 실패로 읽는다."""
+    stamp = datetime.now().strftime('%Y%m%d%H%M%S') + '-' + uuid.uuid4().hex[:8]
+    res = _push_dispatch(
+        'test', f"test:{session['user_id']}:{stamp}",
+        'TRMT 알림 테스트',
+        f"푸시 경로 정상 — {datetime.now().strftime('%m/%d %H:%M:%S')}",
+        link='trmt://automation', user_ids=[session['user_id']])
+    return jsonify(res), (200 if res.get('ok') else 502)
+
+
+# ---- 자동화(X-API-Key) : 이벤트 → 알림 ----
+@app.route('/api/ext/push', methods=['POST'])
+@api_key_required
+def api_ext_push():
+    """맥 워커/자동화가 상태변화를 알릴 때 호출.
+    event_key 는 호출측이 '이 이벤트 1회'를 규정하는 안정키여야 한다
+    (예: dock_ordered:R1:ATBG). 같은 키로 두 번 오면 두 번째는 dup 으로 조용히 흘린다."""
+    d = request.get_json(silent=True) or {}
+    kind = (d.get('kind') or '').strip()
+    ekey = (d.get('event_key') or '').strip()
+    title = (d.get('title') or '').strip()
+    body = (d.get('body') or '').strip()
+    if kind not in PUSH_KIND_KEYS or not ekey or not title:
+        return jsonify({'error': 'bad_request',
+                        'message': 'kind(등록된 값)/event_key/title 필수',
+                        'kinds': sorted(PUSH_KIND_KEYS)}), 400
+    # 🔴 user_ids 는 3상태다(올마이트 지적): 키 없음/null = 전체 브로드캐스트, 정상 리스트 = 그 사용자,
+    #    **빈 리스트 = 대상 없음** — 이걸 None 으로 접으면 "아무에게도"가 "전원에게"로 뒤집힌다.
+    #    숫자로 못 바꾸는 값이 섞이면 500 대신 400 으로 명확히 거절한다.
+    uids = d.get('user_ids')
+    if uids is None:
+        pass
+    elif not isinstance(uids, list):
+        return jsonify({'error': 'bad_request', 'message': 'user_ids 는 배열이어야 함'}), 400
+    elif not uids:
+        return jsonify({'error': 'bad_request',
+                        'message': 'user_ids 가 빈 배열 — 대상이 없으면 호출하지 말 것'}), 400
+    else:
+        try:
+            uids = [int(x) for x in uids]
+        except (TypeError, ValueError):
+            return jsonify({'error': 'bad_request',
+                            'message': 'user_ids 에 정수 아닌 값이 있음'}), 400
+    res = _push_dispatch(kind, ekey[:200], title[:120], body[:300],
+                         link=(d.get('link') or None),
+                         user_ids=uids, collapse_id=d.get('collapse_id'))
+    return jsonify(res), (200 if res.get('ok') else 502)
+
+
+# ═════════════════════════════════════════════════════════════════
 #  CLI entry
 # ═════════════════════════════════════════════════════════════════
 def _auto_migrate():
