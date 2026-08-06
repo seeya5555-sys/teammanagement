@@ -11820,6 +11820,8 @@ def api_ext_invoice_create():
     inv_cd = (d.get('inv_cd') or '').strip()
     if not inv_cd:
         return jsonify({'error': 'inv_cd required'}), 400
+    # 러너가 실측한 SVMS 라이브 STATUS(없으면 구버전 러너 = 판정 안 함).
+    svms_status = (d.get('svms_status') or '').strip().upper()
     ex = query("SELECT id, status, raw_card, gate FROM invoice_draft WHERE inv_cd=? "
                "AND status IN ('pending','approved','submitting','submitted',"
                "'rejecting','reject_submitting','rejected') "
@@ -11846,7 +11848,23 @@ def api_ext_invoice_create():
         sets = ', '.join(f"{k}=?" for k in cols)
         execute(f"UPDATE invoice_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
         return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
-    if ex:   # 이미 결정/진행중 — 손대지 않음
+    # SVMS 가 뒤로 돌아간 '재개건' 재적재:
+    #   로컬은 종착(submitted=우리가 컨펌 / rejected=우리가 반려)인데 SVMS 라이브가 다시
+    #   STATUS=S/R(재검토 대상) = SVMS에서 다시 처리해야 하는 상태 → 로컬 종착기록이 stale 이므로
+    #   새 카드로 재적재해 다시 승인대기에 세운다(과거 행은 이력으로 보존).
+    #   ⚠️ in-flight(approved/submitting/rejecting/reject_submitting)는 러너와의 이중처리
+    #   위험 때문에 절대 재적재하지 않는다. svms_status 를 안 보낸 구버전 러너는 종전대로 dedup.
+    reopened_from = None
+    if ex and svms_status in ('S', 'R') and ex['status'] == 'submitted':
+        # 재적재 직전 재확인 — 러너 두 런이 겹쳐 같은 inv_cd 카드가 2장 생기는 걸 좁힌다.
+        dup = query("SELECT id, status FROM invoice_draft WHERE inv_cd=? AND id>? "
+                    "AND status IN ('pending','approved','submitting','rejecting',"
+                    "'reject_submitting') ORDER BY id DESC LIMIT 1",
+                    (inv_cd, ex['id']), one=True)
+        if dup:
+            return jsonify({'id': dup['id'], 'status': dup['status'], 'dedup': True}), 200
+        reopened_from = ex['id']
+    elif ex:   # 이미 결정/진행중 — 손대지 않음
         return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
     did = execute(
         "INSERT INTO invoice_draft (inv_cd, vsl_cd, vsl_nm, vndr_cd, vndr_nm, amt, cur_cd, vat, "
@@ -11855,7 +11873,12 @@ def api_ext_invoice_create():
         "match_src, had_lines, attachments, flags, gate, raw_card) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (inv_cd, *cols.values()))
-    return jsonify({'id': did, 'status': 'pending'}), 201
+    if reopened_from:
+        # 계보를 DB 에 남긴다(응답 필드만이면 나중에 왜 카드가 2장인지 추적 불가).
+            execute("UPDATE invoice_draft SET result=COALESCE(result,'') || ? WHERE id=?",
+                ('\n[재개] SVMS STATUS=%s 로 다시 재검토 대상이 되어 카드 #%d 로 재적재됨(%s).'
+                 % (svms_status, did, datetime.now().strftime('%Y-%m-%d %H:%M')), reopened_from))
+    return jsonify({'id': did, 'status': 'pending', 'reopened_from': reopened_from}), 201
 
 
 @app.route('/api/ext/invoice/drafts/by-inv/<inv_cd>')
@@ -12188,6 +12211,82 @@ def api_ext_invoice_reject_result(did):
     if rc and ok:   # 리젝 성공 → 미리보기 PDF 자동삭제(실패건은 재검토 위해 보존)
         _invoice_pdf_delete(did)
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
+
+
+@app.route('/api/ext/invoice/open')
+@api_key_required
+def api_ext_invoice_open():
+    """열려 있는(사람 판단대기) 카드 목록 — 읽기전용. DB write·금전효과 0.
+    러너가 이 목록을 SVMS 라이브 STATUS 와 대조해, 사람이 SVMS 에서 직접 컨펌/반려한 건을
+    찾아 /api/ext/invoice/reconcile 로 종결하기 위한 최소정보만 준다.
+    in-flight(submitting/reject_submitting)는 대조 대상이 아니라 애초에 안 내려준다."""
+    lim = 500          # 러너가 건별 SVMS 조회를 도는 목록 — 무제한이면 한 런이 영원히 안 끝난다
+    rows = query("SELECT id, inv_cd, status, vsl_cd, amt, cur_cd, created_at FROM invoice_draft "
+                 "WHERE status IN ('pending','approved') ORDER BY id ASC LIMIT ?", (lim + 1,))
+    more = len(rows) > lim                     # 잘렸으면 조용히 숨기지 않고 러너 로그까지 올린다
+    return jsonify({'count': len(rows[:lim]), 'drafts': [dict(r) for r in rows[:lim]],
+                    'truncated': more, 'limit': lim})
+
+
+_INV_EXT_CLOSE = {'A': ('submitted', '컨펌'), 'R': ('rejected', '반려')}
+
+
+@app.route('/api/ext/invoice/reconcile', methods=['POST'])
+@api_key_required
+def api_ext_invoice_reconcile():
+    """사람이 SVMS 에서 직접 처리한 건의 카드 종결. payload={items:[{id, inv_cd, svms_status, note?}]}.
+    SVMS A(컨펌)→submitted / R(반려)→rejected 로 닫아 승인대기에서 사라지게 한다.
+
+    설계 원칙:
+      · 여기서 SVMS 를 다시 읽지 않는다 — 판정근거는 러너가 SP_GET_INV_INFO 로 실측한 STATUS.
+        확신 없는 값(S/D/조회실패)은 러너가 아예 보내지 않는다(fail-closed).
+      · `id` 필수 — /open 이 준 그 카드만 닫는다. inv_cd 만으로 '최신 열린 행'을 찾으면,
+        조회~POST 사이에 재적재된 **새 카드**를 남의 판정으로 닫아버릴 수 있다(올마이트 지적).
+      · 대상은 pending/approved 뿐. submitting/reject_submitting(러너 in-flight)은 절대 안 건드림.
+      · 조건부 UPDATE(낙관락) — 조회~갱신 사이 러너가 claim 했으면 skip 으로 남긴다.
+      · SVMS 에 아무것도 쓰지 않는다(로컬 카드 상태 정리 전용)."""
+    d = request.get_json(silent=True) or {}
+    items = d.get('items')
+    if not isinstance(items, list):
+        return jsonify({'error': 'items array required'}), 400
+    closed, skipped = [], []
+    for it in items:
+        it = it if isinstance(it, dict) else {}
+        inv_cd = (it.get('inv_cd') or '').strip()
+        sv = (it.get('svms_status') or '').strip().upper()
+        pair = _INV_EXT_CLOSE.get(sv)
+        if not inv_cd or not pair:
+            skipped.append({'inv_cd': inv_cd, 'why': 'svms_status 부적격(%s)' % sv})
+            continue
+        new_status, word = pair
+        try:
+            did = int(it.get('id'))
+        except (TypeError, ValueError):
+            skipped.append({'inv_cd': inv_cd, 'why': 'id 없음(구버전 러너)'})
+            continue
+        row = query("SELECT id, inv_cd, status FROM invoice_draft WHERE id=?", (did,), one=True)
+        if not row or row['inv_cd'] != inv_cd:
+            skipped.append({'id': did, 'inv_cd': inv_cd, 'why': 'id/inv_cd 불일치'})
+            continue
+        if row['status'] not in ('pending', 'approved'):
+            skipped.append({'id': did, 'inv_cd': inv_cd,
+                            'why': '열린 카드 아님(%s)' % row['status']})
+            continue
+        note = ('[외부] SVMS 에서 사람이 직접 %s (STATUS=%s) — TRMT 러너 미개입, 카드만 정리. %s'
+                % (word, sv, (it.get('note') or '')))[:2000]
+        rc = execute_rc("UPDATE invoice_draft SET status=?, done_at=datetime('now','localtime'), "
+                        "decided_at=COALESCE(decided_at, datetime('now','localtime')), "
+                        "decided_by=COALESCE(decided_by, 'svms-direct'), result=? "
+                        "WHERE id=? AND inv_cd=? AND status=?",
+                        (new_status, note, did, inv_cd, row['status']))
+        if not rc:   # 그 사이 러너가 claim — 러너 결과회신에 맡긴다
+            skipped.append({'id': did, 'inv_cd': inv_cd, 'why': 'race: 상태 변경됨'})
+            continue
+        _invoice_pdf_delete(did)
+        closed.append({'inv_cd': inv_cd, 'id': did,
+                       'from': row['status'], 'to': new_status, 'svms_status': sv})
+    return jsonify({'closed': closed, 'skipped': skipped,
+                    'closed_n': len(closed), 'skipped_n': len(skipped)})
 
 
 # ============================================================
