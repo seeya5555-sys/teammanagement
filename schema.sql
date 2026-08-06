@@ -744,9 +744,16 @@ CREATE TABLE IF NOT EXISTS push_log (
     sent_n     INTEGER NOT NULL DEFAULT 0,
     fail_n     INTEGER NOT NULL DEFAULT 0,
     detail     TEXT,
+    -- 화면에서만 감춘 시각. 🔴 행을 **지우지 않는 이유**: event_key 가 중복발송 차단 claim 이라
+    -- 하드 삭제하면 지운 직후 같은 이벤트가 다시 발송된다(캘린더 슬롯 재발송·outbox 재시도).
+    hidden_at  TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_push_log_kind ON push_log(kind, created_at DESC);
+-- 🔴 `hidden_at` partial index 는 **여기 두지 않는다**. 이 파일은 기존 DB 에도 통째로 재적용되는데,
+--    컬럼이 아직 없는 구버전 DB 에서 그 index 문이 "no such column" 으로 터지면 executescript 가
+--    거기서 멈춰 **뒤쪽 schema 문이 전부 스킵**된다. 컬럼 ALTER 뒤에 만들어야 안전하므로
+--    `app.py::_auto_migrate()` 가 만든다(`idx_push_log_visible`).
 
 -- 🔴 발송 대기함(outbox) — "상태는 전이됐는데 알림은 못 갔다" 를 막는 durable queue.
 --   푸시 판정은 **DB 의 이전값과 새값을 비교**해서 나온다. 그래서 행을 갱신한 뒤에 발송이 실패하면

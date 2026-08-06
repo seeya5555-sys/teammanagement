@@ -18872,7 +18872,7 @@ def api_ios_push_status():
     #    진단에 필요한 kind/성패 카운트는 그대로 남긴다.
     is_admin = session.get('role') == 'admin'
     last = query("SELECT kind, title, sent_n, fail_n, created_at FROM push_log "
-                 "ORDER BY id DESC LIMIT 5")
+                 "WHERE hidden_at IS NULL ORDER BY id DESC LIMIT 5")
     recent = []
     for r in last:
         item = dict(r)
@@ -18884,7 +18884,30 @@ def api_ios_push_status():
         'configured': bool(ap and ap.configured()),
         'devices': [dict(r) for r in rows],
         'recent': recent,
+        # 발송기록은 계정 컬럼이 없는 전사 공용 자원이라 지우면 남의 화면에서도 사라진다 →
+        # admin 만. 화면은 이 값만 보고 버튼을 그린다(자체판정 금지).
+        'can_clear': is_admin,
     })
+
+
+@app.route('/api/ios/push/log/clear', methods=['POST'])
+@login_required
+def api_ios_push_log_clear():
+    """최근 발송 기록 감추기.
+
+    🔴 **행을 지우지 않는다.** `push_log.event_key` 는 화면 이력이자 **중복발송 차단 claim** 이다.
+       하드 DELETE 하면 지운 직후 같은 이벤트가 다시 나간다(캘린더 슬롯 재발송, outbox 재시도가
+       이미 보낸 알림을 다시 발송). 그래서 `hidden_at` 만 찍어 화면에서만 감춘다.
+    """
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'forbidden',
+                        'message': '발송기록은 공용 자원이라 admin 만 정리할 수 있음'}), 403
+    # 🔴 COUNT 후 UPDATE 로 나누지 않는다(올마이트 지적) — 그 사이에 들어온 알림까지 같이
+    #    감춰지면서 건수만 틀린다("2건 감춤"인데 방금 온 알림도 사라짐 = 미탐으로 보임).
+    #    한 문장으로 감추고 실제 영향 행수를 그대로 돌려준다.
+    n = execute_rc("UPDATE push_log SET hidden_at=datetime('now','localtime') "
+                   "WHERE hidden_at IS NULL")
+    return jsonify({'ok': True, 'hidden': n})
 
 
 @app.route('/api/ios/push/test', methods=['POST'])
@@ -19103,6 +19126,23 @@ def _auto_migrate():
                 print('[auto_migrate] calendar_events.completed 추가됨')
         except Exception as e:
             print(f'[auto_migrate] calendar_events.completed 점검 건너뜀: {e}')
+        # 🔴 CREATE TABLE IF NOT EXISTS 재적용으로는 **기존 테이블에 컬럼이 안 붙는다** —
+        #    schema.sql 만 고치고 여기를 빼먹으면 라이브에서 "no such column" 으로 화면이 죽는다.
+        # 🔴 **독립 try**(올마이트 지적) — 위 블록이 먼저 죽으면 이 컬럼까지 같이 건너뛰어
+        #    푸시 상태 화면이 통째로 500 이 된다. 마이그레이션끼리 운명을 묶지 않는다.
+        try:
+            pcols = [r[1] for r in conn.execute('PRAGMA table_info(push_log)').fetchall()]
+            if pcols and 'hidden_at' not in pcols:
+                conn.execute('ALTER TABLE push_log ADD COLUMN hidden_at TEXT')
+                print('[auto_migrate] push_log.hidden_at 추가됨')
+            # 화면은 "안 감춰진 최근 5건" 만 본다. soft hide 가 쌓이면 감춘 행을 계속 훑으므로
+            # partial index. 🔴 schema.sql 이 아니라 **여기서** 만든다 — 컬럼보다 먼저 실행되면
+            # "no such column" 으로 schema 재적용 전체가 그 줄에서 끊긴다.
+            if pcols:
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_push_log_visible '
+                             'ON push_log(id DESC) WHERE hidden_at IS NULL')
+        except Exception as e:
+            print(f'[auto_migrate] push_log.hidden_at 점검 건너뜀: {e}')
         # SOA 그룹은 기존 prod DB에도 schema 재적용만으로 테이블이 생긴다. 최초 전환 시
         # 현행 G1/G2/G3/SKRT 값을 seed해야 runner가 빈 설정으로 fail-closed 되지 않는다.
         try:
