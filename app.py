@@ -18628,6 +18628,7 @@ PUSH_KINDS = [
     ('approval_new',     '승인 대기 신규',      '전자결재/Fund Request 신규 대기'),
     ('issue_urgent',     '긴급 현안',           '긴급으로 등록된 현안'),
     ('class_due',        '선급·증서 만료',      'D-30/D-7 요약'),
+    ('calendar_daily',   '오늘 일정 요약',      '매일 10시·14시, 미완료 일정만'),
     ('test',             '테스트 알림',         '설정 확인용'),
 ]
 PUSH_KIND_KEYS = {k for k, _l, _d in PUSH_KINDS}
@@ -18938,6 +18939,128 @@ def api_ext_push():
                          link=(d.get('link') or None),
                          user_ids=uids, collapse_id=d.get('collapse_id'))
     return jsonify(res), (200 if res.get('ok') else 502)
+
+
+# ---- 자동화(X-API-Key) : 오늘 일정 요약(하루 2회) ----
+# 형 지시(2026-08-06): "하루에 2번(10시·14시) 캘린더 일정 푸시알람(완료 제외)".
+# 14시 판은 그 사이에 체크한 일정이 빠지므로 자연스럽게 '아직 안 한 것' 리마인더가 된다.
+CAL_PUSH_SLOTS = {'10': ('오늘 일정', 10), '14': ('오늘 남은 일정', 14)}
+_CAL_PUSH_MAX_ITEMS = 6
+_CAL_PUSH_LATE_H = 3       # 슬롯 + 이 시간 이상 늦은 실행은 버린다(늦은 알림 = 오보에 가깝다)
+_CAL_DAY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+
+def _cal_slot_window_ok(slot, now_hour):
+    """이 실행이 해당 슬롯의 유효 시간대(hour ~ hour+3, 끝 제외) 안인가.
+
+    🔴 **이른 실행도 막는다**(올마이트 지적). launchd `StartCalendarInterval` 은 놓친 잡을 깨어날 때
+       즉시 돌린다 — 맥이 꺼져 있다 09시에 부팅하면 10시판이 09시에 나가고, 그 event_key 가
+       오늘치를 선점해 **진짜 10시 실행이 dedup 으로 묻힌다**(조기발송 + 미탐 동시 발생).
+    """
+    h = CAL_PUSH_SLOTS[slot][1]
+    return h <= now_hour < h + _CAL_PUSH_LATE_H
+
+
+def _calendar_daily_items(sup_id, day):
+    """`day` 에 걸치는 **미완료** 일정. 멀티데이는 기간에 걸치면 매일 포함(입거 같은 진행형).
+
+    스코프는 캘린더 화면과 같은 규칙(해당 감독 + 공용 supervisor_id IS NULL)이다 —
+    화면과 알림이 다르면 형이 둘 다 못 믿는다.
+    🔴 `sup_id` 가 없는 계정은 **공용만** 본다. 화면은 전체를 보여주지만, 푸시는 능동 발송이라
+       남의 감독 개인일정을 폰으로 밀어내지 않는다(fail-closed).
+    """
+    sql = ("SELECT title, all_day, start_time FROM calendar_events "
+           "WHERE completed=0 AND start_date<=? AND COALESCE(end_date, start_date)>=?")
+    params = [day, day]
+    if sup_id is None:
+        sql += " AND supervisor_id IS NULL"
+    else:
+        sql += " AND (supervisor_id=? OR supervisor_id IS NULL)"
+        params.append(sup_id)
+    sql += " ORDER BY all_day, COALESCE(start_time,'99:99'), id"   # 시각 있는 일정 먼저
+    return query(sql, tuple(params))
+
+
+def _calendar_daily_body(rows, limit=300):
+    """본문 조립. 🔴 길이 초과는 뒤를 자르는 게 아니라 **항목을 줄인다**(올마이트 지적) —
+    그냥 자르면 '외 N건' 꼬리가 날아가 형이 나머지가 있는 줄도 모른다."""
+    def line(r):
+        when = (r['start_time'] or '')[:5] if (not r['all_day'] and r['start_time']) else '종일'
+        t = (r['title'] or '일정').strip()
+        return '%s %s' % (when, t if len(t) <= 60 else t[:59] + '…')
+
+    n = min(len(rows), _CAL_PUSH_MAX_ITEMS)
+    while n >= 0:
+        parts = [line(r) for r in rows[:n]]
+        rest = len(rows) - n
+        if rest > 0:
+            parts.append('외 %d건' % rest)
+        body = ' · '.join(parts)
+        if len(body) <= limit or n == 0:
+            return body[:limit]
+        n -= 1
+
+
+@app.route('/api/ext/push/calendar-daily', methods=['POST'])
+@api_key_required
+def api_ext_push_calendar_daily():
+    """맥 launchd 가 10시·14시에 호출. 일정 계산은 전부 서버가 한다(러너는 트리거일 뿐).
+
+    body: {"slot":"10"|"14", "dry":0|1, "date":"YYYY-MM-DD"(dry 전용)}
+    · 0건이면 **보내지 않는다**(`skipped_empty`) — 빈 알림이 매일 2번 오면 형이 알림을 끈다.
+    · 대기함(push_outbox)은 쓰지 않는다. 그 경로엔 user_ids 가 없어 재발송이 전체 브로드캐스트가
+      된다(개인일정 유출). 실패는 claim 이 풀리므로 러너가 재시도한다.
+    """
+    d = request.get_json(silent=True) or {}
+    slot = str(d.get('slot') or '').strip()
+    if slot not in CAL_PUSH_SLOTS:
+        return jsonify({'error': 'bad_request', 'message': 'slot 은 10 또는 14',
+                        'slots': sorted(CAL_PUSH_SLOTS)}), 400
+    # 🔴 dry 는 문자열 "0"/"false" 를 참으로 보면 안 된다(올마이트 지적) — 실발송 의도가
+    #    조용히 dry 로 접히면 그 슬롯은 통째로 미탐이다.
+    _dry = d.get('dry')
+    dry = bool(_dry) and str(_dry).strip().lower() not in ('0', 'false', 'no', '')
+    now = datetime.now()
+    today = now.strftime('%Y-%m-%d')
+    day = (str(d.get('date') or '').strip() or today)
+    if not _CAL_DAY_RE.match(day):
+        return jsonify({'error': 'bad_request', 'message': 'date 는 YYYY-MM-DD'}), 400
+    if day != today and not dry:
+        # 과거/미래 날짜 실발송은 막는다 — 백필 한 번이 알림 폭주가 된다.
+        return jsonify({'error': 'bad_request',
+                        'message': '오늘이 아닌 날짜는 dry 에서만 허용'}), 400
+
+    label, _hour = CAL_PUSH_SLOTS[slot]
+    if not dry and not _cal_slot_window_ok(slot, now.hour):
+        return jsonify({'ok': True, 'skipped': 'out_of_window', 'slot': slot, 'day': day,
+                        'now_hour': now.hour}), 200
+
+    rows = query("SELECT DISTINCT d.user_id, u.supervisor_id FROM ios_device d "
+                 "JOIN users u ON u.id=d.user_id "
+                 "WHERE d.active=1 AND u.active=1")
+    results = []
+    for r in rows:
+        uid = r['user_id']
+        items = _calendar_daily_items(r['supervisor_id'], day)
+        if not items:
+            results.append({'user_id': uid, 'n': 0, 'ok': True, 'reason': 'skipped_empty'})
+            continue
+        title = '%s %d건' % (label, len(items))
+        body = _calendar_daily_body(items)
+        ekey = 'calendar_daily:%s:%s:%s' % (uid, day, slot)
+        if dry:
+            results.append({'user_id': uid, 'n': len(items), 'ok': True, 'dry': True,
+                            'event_key': ekey, 'title': title, 'body': body})
+            continue
+        res = _push_dispatch('calendar_daily', ekey, title, body,
+                             link='trmt://calendar', user_ids=[uid],
+                             collapse_id='cal-%s-%s' % (day, slot))
+        results.append({'user_id': uid, 'n': len(items), 'ok': bool(res.get('ok')),
+                        'sent': res.get('sent', 0), 'reason': res.get('reason')})
+
+    failed = [x for x in results if not x['ok']]
+    return jsonify({'ok': not failed, 'day': day, 'slot': slot, 'dry': dry,
+                    'users': len(rows), 'results': results}), (200 if not failed else 502)
 
 
 # ═════════════════════════════════════════════════════════════════
