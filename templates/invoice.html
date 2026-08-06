@@ -56,7 +56,7 @@
   .fr-edit input{border:1px solid var(--border-strong);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text-primary)}
   .fr-subj-in{min-width:240px;flex:1}
   .fr-exp-in{min-width:150px}
-  .fr-date-in{width:110px}
+  .fr-date-in{width:150px;font-family:inherit}   /* type=date — 캘린더 아이콘까지 들어가므로 텍스트칸보다 넓게 */
   .fr-exp-nm{font-size:12px}
   .fr-b.ed{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)}
   .fr-top{cursor:pointer}
@@ -130,6 +130,9 @@
     return `<span class="mun">${label} —</span>`;
   }
   function jparse(s){if(s==null)return null;if(typeof s!=='string')return s;try{return JSON.parse(s);}catch(e){return null;}}
+  // INV_DT 저장형(YYYYMMDD) ↔ input[type=date] 표시형(YYYY-MM-DD). 8자리 숫자가 아니면 빈칸(캘린더는 임의 문자열을 못 실음).
+  function dtIso(s){s=String(s==null?'':s).trim();return /^\d{8}$/.test(s)?`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}`:'';}
+  function dtCompact(s){return String(s==null?'':s).replace(/-/g,'').trim();}
   function card(d){
     const dec=['approved','rejecting','reject_submitting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
     const gate=(d.gate||'').toUpperCase();
@@ -170,7 +173,7 @@
         +`<div class="fr-edit">`
         +`<label>적요 <input class="fr-subj-in" value="${esc(d.subject||'')}" placeholder="적요(라인 내용)"></label>`
         +`<label>EXP <input class="fr-exp-in" list="expcodes" value="${esc(d.exp_cd||'')}" placeholder="코드/명칭 검색"></label>`
-        +`<label>INV_DT <input class="fr-date-in" inputmode="numeric" maxlength="8" value="${esc(d.inv_dt||'')}" placeholder="YYYYMMDD"></label>`
+        +`<label>INV_DT <input type="date" class="fr-date-in" value="${esc(dtIso(d.inv_dt))}" title="인보이스 일자(캘린더에서 선택)"></label>`
         +`<button class="fr-b ed" data-act="edit"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>수정저장</button>`
         +`<span class="fr-exp-nm mun">${d.exp_nm?esc(d.exp_nm):''}${d.exp_conf!=null?` (conf ${esc(d.exp_conf)})`:''}</span>`
         +`</div>`
@@ -211,8 +214,16 @@
       <div class="fr-acts">${acts}</div>
     </div>`;
   }
-  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
-  async function _load(){
+  async function load(auto){const _sy=window.scrollY;try{return await _load(auto);}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  // 편집 중(카드 안 입력요소에 포커스)이면 자동 새로고침은 건너뛴다.
+  // 값 스냅샷 복원만으론 부족 — innerHTML 을 갈아끼우면 열려 있던 캘린더 팝업이 닫혀서
+  // 8초마다 날짜 선택이 끊긴다. 수동 load()(저장·승인 후)는 auto 가 아니라 그대로 돈다.
+  function editingNow(){
+    const a=document.activeElement;
+    return !!(a && a.closest && a.closest('.fr-card') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+  }
+  async function _load(auto){
+    if(auto && editingNow()) return;
     // 자동 새로고침(8s) 때 사용자 입력 날아가는 버그 방지 — 체크/편집 상태 스냅샷 후 복원
     const snap={};
     document.querySelectorAll('.fr-card').forEach(el=>{
@@ -261,7 +272,7 @@
     if(a==='edit'){   // 적요·EXP·INV_DT 교정 저장 (입력값=`코드 명칭` → 코드만 파싱)
       const sj=el.querySelector('.fr-subj-in').value.trim();
       const exRaw=el.querySelector('.fr-exp-in').value.trim();
-      const invDt=el.querySelector('.fr-date-in').value.trim();
+      const invDt=dtCompact(el.querySelector('.fr-date-in').value);   // 캘린더 값(YYYY-MM-DD) → 서버 저장형(YYYYMMDD)
       const exp_cd=exRaw.split(/\s+/)[0].replace(/[^0-9A-Za-z]/g,'');
       const body={subject:sj,exp_cd:exp_cd};
       const curInvDt=(el.dataset.invDt||'').trim();
@@ -318,7 +329,7 @@
   $('#fr-reload').onclick=load;
   $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌/보류/실패) 카드를 비울까요?'))return;
     await api('DELETE','/api/invoice/drafts/decided');load();};
-  loadExp(); load(); setInterval(load,8000);
+  loadExp(); load(); setInterval(()=>load(true),8000);
 })();
 </script>
 {% endblock %}
