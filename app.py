@@ -2812,6 +2812,98 @@ def api_issue_update(iid):
     return jsonify({'id': iid})
 
 
+@app.route('/api/issues/<int:iid>/actions/<int:idx>', methods=['PATCH'])
+@login_required
+def api_issue_action_patch(iid, idx):
+    """진행 경과 1건만 수정 — 내용·발생일·중요표시(모바일 인라인 편집용).
+
+    편집 모달은 `PUT /api/issues/<id>` 로 actions 배열을 통째로 덮지만, 인라인 편집은
+    "화면에 보이던 그 줄"만 고쳐야 한다. 배열 전체를 되돌려쓰는 사이 웹/다른 기기가
+    진행을 추가하면 그 추가가 조용히 사라지고, 더 나쁘게는 배열이 밀려 **다른 줄**이
+    고쳐진다. 그래서 두 겹으로 fail-closed 한다:
+      ① `prev`(편집 시작 시점의 date/progress) 대조 — 다르면 409, DB 무변경.
+      ② 읽은 원문 JSON 을 조건으로 건 CAS(`WHERE actions=?`) — 읽고 쓰는 사이의
+         변경도 409 로 떨어진다(rowcount 0).
+    409 응답엔 서버 정본 actions 를 실어 보내 클라이언트가 새로고침 없이 되돌릴 수 있게 한다.
+    """
+    _issue_write_scope(iid)
+    row = query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)
+    if not row:
+        abort(404)
+    raw = row['actions']
+    try:
+        actions = json.loads(raw) if raw else []
+    except Exception as e:
+        app.logger.warning('issue-action-patch: %s', e)
+        actions = []
+    if not isinstance(actions, list):
+        actions = []
+    if not (0 <= idx < len(actions)) or not isinstance(actions[idx], dict):
+        return jsonify({'error': '해당 진행 경과가 없습니다. 새로고침 후 다시 시도하세요.',
+                        'actions': actions}), 409
+
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'error': '요청 형식이 올바르지 않습니다.'}), 400
+    tgt = actions[idx]
+
+    def _txt(v):
+        return '' if v is None else str(v)
+
+    # prev 는 **필수** — 없으면 index 만 믿고 고치게 되어 목록이 밀린 순간 다른 줄이 수정된다(올마이트 지적).
+    prev = d.get('prev')
+    if not isinstance(prev, dict) or 'date' not in prev or 'progress' not in prev:
+        return jsonify({'error': 'prev(date/progress)가 필요합니다.'}), 400
+    for k in ('date', 'progress'):
+        if not isinstance(prev.get(k), (str, type(None))):
+            return jsonify({'error': f'prev.{k} 형식이 올바르지 않습니다.'}), 400
+        if _txt(prev.get(k)) != _txt(tgt.get(k)):
+            return jsonify({'error': '다른 곳에서 이미 변경됐습니다. 새로고침 후 다시 시도하세요.',
+                            'actions': actions}), 409
+    # important 도 대조 — 안 보면 다른 기기가 켜 둔 별을 이 요청이 옛 값으로 되돌린다.
+    if 'important' in prev and bool(prev.get('important')) != bool(tgt.get('important')):
+        return jsonify({'error': '다른 곳에서 이미 변경됐습니다. 새로고침 후 다시 시도하세요.',
+                        'actions': actions}), 409
+
+    for k, t in (('progress', str), ('date', str), ('important', bool)):
+        if k in d and not isinstance(d[k], t):
+            return jsonify({'error': f'{k} 형식이 올바르지 않습니다.'}), 400
+    if 'progress' in d:
+        p = d['progress'].strip()
+        if not p:
+            return jsonify({'error': '진행 내용을 입력하세요.'}), 400
+        tgt['progress'] = p
+    if 'date' in d:
+        # 빈 값은 무시(발생일 없는 행으로 떨어뜨리지 않는다). 형식은 화면과 동일하게 YYYY-MM-DD 만.
+        nd = d['date'].strip()
+        if nd:
+            try:
+                if nd != datetime.strptime(nd, '%Y-%m-%d').strftime('%Y-%m-%d'):
+                    raise ValueError(nd)
+            except ValueError:
+                return jsonify({'error': '발생일 형식이 올바르지 않습니다(YYYY-MM-DD).'}), 400
+            tgt['date'] = nd
+    if 'important' in d:
+        tgt['important'] = d['important']
+
+    new_raw = json.dumps(actions, ensure_ascii=False)
+    if raw is None:
+        rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
+                        'WHERE id=? AND actions IS NULL', (new_raw, iid))
+    else:
+        rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
+                        'WHERE id=? AND actions=?', (new_raw, iid, raw))
+    if not rc:
+        cur = query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)
+        try:
+            live = json.loads(cur['actions']) if (cur and cur['actions']) else []
+        except Exception:
+            live = []
+        return jsonify({'error': '다른 곳에서 이미 변경됐습니다. 새로고침 후 다시 시도하세요.',
+                        'actions': live if isinstance(live, list) else []}), 409
+    return jsonify({'id': iid, 'actions': actions})
+
+
 @app.route('/api/issues/<int:iid>', methods=['DELETE'])
 @login_required
 def api_issue_delete(iid):
