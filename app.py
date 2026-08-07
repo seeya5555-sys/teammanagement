@@ -1313,7 +1313,10 @@ def _bearer_auth():
     if not tok:
         return
     try:
-        data = _token_serializer.loads(tok, max_age=_TOKEN_MAXAGE)
+        # return_timestamp: 발급시각을 함께 받아 /api/me 가 만료시각을 돌려줄 수 있게 한다.
+        # 네이티브 앱이 오프라인 진입 여부를 fail-closed 로 판정하는 근거값(만료 모르면 진입 거부).
+        data, issued_at = _token_serializer.loads(
+            tok, max_age=_TOKEN_MAXAGE, return_timestamp=True)
     except BadData:
         return                      # 무효/만료/위조 → decorator/view가 401 처리
     if not isinstance(data, dict):
@@ -1333,6 +1336,7 @@ def _bearer_auth():
     session['role']          = u['role']
     session['supervisor_id'] = u['supervisor_id']
     g._token_auth = True
+    g._token_issued_at = issued_at
 
 @app.after_request
 def _suppress_bearer_session_cookie(response):
@@ -1795,13 +1799,24 @@ def boarding_edit_page(rid):
 @app.route('/api/me')
 @login_required
 def api_me():
-    return jsonify({
+    out = {
         'user_id':       session['user_id'],
         'username':      session['username'],
         'display_name':  session.get('display_name'),
         'role':          session.get('role'),
         'supervisor_id': session.get('supervisor_id'),
-    })
+    }
+    # Bearer 요청에 한해 이 토큰의 만료시각(epoch)을 함께 준다.
+    # 네이티브 앱은 오프라인일 때 캐시 프로필로 진입하는데, 만료시각을 모르면 진입을 거부한다
+    # (fail-closed — 서버가 준 유효기간을 앱이 임의로 늘려주면 폰 분실·권한 회수가 영영 반영 안 됨).
+    # 쿠키 세션(브라우저) 요청엔 발급시각이 없으므로 키 자체를 생략한다.
+    issued = getattr(g, '_token_issued_at', None)
+    if issued is not None:
+        try:
+            out['token_expires_at'] = int(issued.timestamp()) + _TOKEN_MAXAGE
+        except (AttributeError, OSError, OverflowError, ValueError):
+            pass
+    return jsonify(out)
 
 
 @app.route('/api/drydock/mobile-entry')
