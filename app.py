@@ -786,6 +786,7 @@ def init_db(drop=False):
                 stg_vendor   INTEGER NOT NULL DEFAULT 0,      -- 2단계: 벤더 제출
                 stg_confirm  INTEGER NOT NULL DEFAULT 0,      -- 3단계: 벤더 컨펌 + 결재 상신
                 stg_order    INTEGER NOT NULL DEFAULT 0,      -- 4단계: 발주 완료
+                stg_manual   INTEGER NOT NULL DEFAULT 0,      -- 사람이 마지막으로 확정한 단계 rank(0=없음). sync 가 이 아래로 못 내림
                 remark       TEXT,
                 sort_no      INTEGER,                         -- INDEX No.(정렬용)
                 rev_batch    TEXT,                            -- 추가된 업로드 배치 id
@@ -960,6 +961,12 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN svms_pc_req_no TEXT")
             if 'stg_confirm' not in _dpc:                     # 벤더 선택 컨펌 + 결재 상신(발주완료 전단계)
                 conn.execute("ALTER TABLE dock_procure ADD COLUMN stg_confirm INTEGER NOT NULL DEFAULT 0")
+            if 'stg_manual' not in _dpc:
+                # 🔴 사람이 확정한 단계 floor(2026-08-07 형 지시). SVMS 밖에서 발주한 건(메일 발주 등)은
+                #    SVMS 라벨이 영원히 '벤더제출' 이라, 사람이 켠 '발주완료' 를 sync 가 매시간 되돌렸다.
+                #    backfill 은 하지 않는다 — 기존 행은 사람이 켠 것과 sync 가 켠 것을 구분할 수 없고,
+                #    일괄로 floor 를 세우면 SVMS 의 정당한 되돌림(회수·반려)까지 영구히 막힌다.
+                conn.execute("ALTER TABLE dock_procure ADD COLUMN stg_manual INTEGER NOT NULL DEFAULT 0")
             # 매 부팅 멱등 보정: ALTER 직후 crash 나도 다음 부팅에 backfill이 다시 돈다.
             # 기존 발주완료/Submit/결재진행 행은 누적 앞단계까지 함께 맞춰 비정상 (0,0,1,0)을 만들지 않는다.
             conn.execute("UPDATE dock_procure SET stg_quote=1, stg_vendor=1, stg_confirm=1 "
@@ -13498,6 +13505,9 @@ def _dockproc_push_events(row, status, ordered, submit, vendor, amt, cur):
                    'title': '%s 견적 제출' % head,
                    'body': '%s/%s개 업체 제출%s' % (now[0], now[1], tail)})
     # ② 발주완료. 분할발주는 **전 업체 승인**돼야 여기 온다(상류 부분완료 게이트가 이미 rank 를 내림).
+    #   ⚠️`not stg_order` 때문에 **사람이 먼저 발주완료를 켜둔 행은 SVMS 추인 때 푸시가 안 간다**
+    #     (올마이트 2026-08-07 지적 → 실측 판정: 의도된 억제, `stg_manual` floor 도입 전과 동일 동작).
+    #     사람이 직접 켠 상태를 SVMS 가 뒤늦게 따라오는 건 형에게 새 정보가 아니다.
     if ordered and not _g('stg_order'):
         money = ''
         if isinstance(amt, (int, float)):
@@ -14444,15 +14454,22 @@ def api_dockproc_stage(lid):
     #   뒤 옛 단계값을 그대로 덮어써 같은 사고가 재현된다(올마이트 지적 수용). 스냅샷 4개를 WHERE 에
     #   실어 그 사이 값이 바뀌었으면 0행 = 409 로 돌린다. 클라이언트는 새로고침 후 다시 누르면 된다.
     #   (`rowcount` 가 필요해 `execute` 대신 `execute_rc`.)
+    # 🔴 사람이 확정한 단계는 **floor** 로 굳힌다(2026-08-07 형 지시, 실사고 BGBB S5).
+    #   실측: 형이 '발주완료' 를 켜고 remark 에 "이메일 발주 : 오션어스" 를 적어둔 행을 다음 정기
+    #   sync 가 SVMS 라벨(rank 2 = 벤더제출)로 되돌렸다. SVMS 로 발주하지 않은 건(메일·직접 발주)은
+    #   SVMS 라벨이 영원히 올라오지 않으므로, 이대로면 사람 입력이 매시간 지워진다.
+    #   ⇒ 이 엔드포인트로 세운 rank 를 기록하고, sync 는 그 아래로 내리지 못한다(올리는 건 계속 허용).
+    #   해제 경로는 살아 있다 — 사람이 다시 내리면 floor 도 같이 내려간다(위 SVMS 하한 게이트까지).
+    _man = 4 if o else 3 if f else 2 if v else 1 if q else 0
     rc = execute_rc(
-        "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_confirm=?, stg_order=?, "
+        "UPDATE dock_procure SET stg_quote=?, stg_vendor=?, stg_confirm=?, stg_order=?, stg_manual=?, "
         "updated_at=datetime('now','localtime') WHERE id=? AND stg_quote=? AND stg_vendor=? "
         "AND stg_confirm=? AND stg_order=?",
-        (q, v, f, o, lid, row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order']))
+        (q, v, f, o, _man, lid, row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order']))
     if not rc:
         return jsonify({'error': '동기화가 방금 이 항목을 갱신했습니다. 새로고침 후 다시 시도하세요.'}), 409
     return jsonify({'id': lid, 'stg_quote': q, 'stg_vendor': v,
-                    'stg_confirm': f, 'stg_order': o})
+                    'stg_confirm': f, 'stg_order': o, 'stg_manual': _man})
 
 
 @app.route('/api/dock_procure/add', methods=['POST'])
@@ -15289,11 +15306,20 @@ def api_ext_dockproc_sync():
                                _orders, _gate)
     changes = []
     for rid, (rank, status, vendor, inq, row, submit, amt, cur, quotes, files, orders, gate) in plan.items():
-        q, v, f, o = ((1 if rank >= 1 else 0), (1 if rank >= 2 else 0),
-                      (1 if rank >= 3 else 0), (1 if rank >= 4 else 0))
+        # 🔴 사람이 확정한 단계 floor(2026-08-07 형 지시). SVMS 밖 발주(메일·직접)는 SVMS 라벨이 절대
+        #   따라오지 않으므로, 사람이 켠 단계를 SVMS rank 로 되돌리면 매시간 입력이 지워진다.
+        #   ⚠️floor 는 **단계 표시(stg_*)에만** 적용한다. 발주금액 자동입력·푸시 판정은 아래 `svms_o`
+        #     (=SVMS 가 실제로 발주완료라고 말한 경우)로 계속 게이트한다 — 사람 체크 하나로 돈 경로
+        #     자동입력이나 '발주완료' 푸시가 열리면 안 된다.
+        #   ⚠️컬럼 없는 구버전 DB 에서 KeyError 로 sync 전체가 죽지 않게 keys() 확인 후 읽는다.
+        svms_o = 1 if rank >= 4 else 0
+        _mfloor = (row['stg_manual'] or 0) if 'stg_manual' in row.keys() else 0
+        rank_eff = max(rank, _mfloor)
+        q, v, f, o = ((1 if rank_eff >= 1 else 0), (1 if rank_eff >= 2 else 0),
+                      (1 if rank_eff >= 3 else 0), (1 if rank_eff >= 4 else 0))
         new_remark = row['remark']
         # 옵션 b: 발주완료 시 Vendor명을 Remark에 기입. 단 신규완료/빈Remark일 때만(매폴 수동메모 덮어쓰기 방지)
-        if o and vendor and (not row['stg_order'] or not (row['remark'] or '').strip()):
+        if svms_o and vendor and (not row['stg_order'] or not (row['remark'] or '').strip()):
             new_remark = vendor
         # 🔴 분할발주(업체 2곳 이상) 발주금액은 **다시 계산한다**(올마이트 2026-08-05 지적 수용).
         #   폴러가 주는 `amt` 는 INQ 단위 합산인데 **통화가 섞이면 첫 건만 남긴 값**이라, 그대로 쓰면
@@ -15308,7 +15334,7 @@ def api_ext_dockproc_sync():
             else:
                 amt = None
         # 발주금액 자동입력: 발주완료(o)·금액있음·manual아님 일 때만(사용자 수정 우선)
-        set_q = (o == 1 and amt is not None and (row['quote_src'] or 'auto') != 'manual')
+        set_q = (svms_o == 1 and amt is not None and (row['quote_src'] or 'auto') != 'manual')
         new_qamt = amt if set_q else row['quote_amt']
         new_qcur = ((cur if (cur and _re.fullmatch(r'[A-Z]{3}', cur)) else 'USD')
                     if set_q else row['quote_cur'])      # SVMS CUR_CD 이상값 방어
@@ -15352,7 +15378,7 @@ def api_ext_dockproc_sync():
             #     "행은 갱신됐는데 알림은 영영 없는" 미탐이 남는다(올마이트 블로커 지적).
             if not dry:
                 try:
-                    for _ev in _dockproc_push_events(row, status, o, submit, vendor,
+                    for _ev in _dockproc_push_events(row, status, svms_o, submit, vendor,
                                                      new_qamt, new_qcur):
                         _push_outbox_add(_ev['kind'], _ev['event_key'], _ev['title'], _ev['body'],
                                          link='trmt://dock', collapse_id=_ev['collapse'])
