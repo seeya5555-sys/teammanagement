@@ -772,3 +772,26 @@ CREATE TABLE IF NOT EXISTS push_outbox (
     last_error  TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+-- 🔴 클라이언트 재전송 중복방지 원장(오프라인 보관함 → 재전송). 네이티브 앱이 오프라인에서
+--   보관한 쓰기를 연결 복구 후 다시 쏘는데, "서버는 저장됐는데 응답만 못 받은" 경우가 반드시 생긴다
+--   (기내모드 해제 직후 링크 플랩·타임아웃). 그때 그냥 재전송하면 현안·영수증이 **두 번 생긴다**.
+--   그래서 앱이 요청마다 고정 `X-Idempotency-Key` 를 붙이고, 서버는 (user_id, key) 로 여기에
+--   claim 을 박은 뒤 성공응답을 저장해 두 번째 요청엔 그 응답을 그대로 되돌려준다.
+--   status: in_progress=처리중 / done=성공응답 보관 / unknown=처리 중 죽어서 결과 모름(자동 재실행 금지).
+--   ⚠️ 4xx 는 행을 지운다(클라 잘못 = 아무것도 안 바뀜 → 고쳐서 재전송이 정상 흐름).
+--      5xx 는 **지우지 않고 unknown 으로 남긴다** — 뷰가 도중에 죽어 일부 커밋됐을 수 있어
+--      자동 재실행이 곧 이중집행이다. 구분해서 다루지 않으면 둘 중 하나가 반드시 사고가 된다.
+CREATE TABLE IF NOT EXISTS client_idem (
+    user_id     INTEGER NOT NULL,
+    idem_key    TEXT    NOT NULL,
+    method      TEXT    NOT NULL,
+    path        TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'in_progress',
+    code        INTEGER,
+    body        TEXT,
+    content_type TEXT,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (user_id, idem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_client_idem_created ON client_idem(created_at);

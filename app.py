@@ -1351,6 +1351,134 @@ def _suppress_bearer_session_cookie(response):
 
 
 # ═════════════════════════════════════════════════════════════════
+#  오프라인 재전송 중복방지(Idempotency-Key) — 네이티브 앱 보관함 전용
+#  🔴 등록 위치가 계약이다: 반드시 `_bearer_auth` **아래**에 있어야 한다.
+#     before_request 는 등록순으로 도는데, 위에 두면 session['user_id'] 가 아직 없어
+#     스코프를 못 잡고 훅이 통째로 무력화된다(중복 생성이 조용히 살아남음).
+# ═════════════════════════════════════════════════════════════════
+_IDEM_METHODS   = ('POST', 'PUT', 'PATCH', 'DELETE')
+_IDEM_KEY_RE    = re.compile(r'^[A-Za-z0-9_.:\-]{8,128}$')
+_IDEM_BODY_MAX  = 256 * 1024        # 이보다 큰 성공응답은 본문을 버리고 재생 전용 표식만 남김
+_IDEM_TTL_DAYS  = 7
+
+
+def _idem_key_of(req):
+    """이 요청이 중복방지 대상이면 key, 아니면 None. 잘못된 key 는 (None, 400) 로 거절한다.
+    🔴 형식 위반을 조용히 무시하면 '멱등이라 믿고 재전송' 하는 클라가 중복을 만든다 — 400 으로 깬다."""
+    if req.method not in _IDEM_METHODS:
+        return None, None
+    if not req.path.startswith('/api/') or req.path.startswith('/api/ext/'):
+        return None, None            # /api/ext/ 는 워커·api_key 경로라 앱 보관함과 무관
+    raw = (req.headers.get('X-Idempotency-Key') or '').strip()
+    if not raw:
+        return None, None
+    if not _IDEM_KEY_RE.match(raw):
+        return None, (jsonify({'error': 'bad_idempotency_key'}), 400)
+    return raw, None
+
+
+@app.before_request
+def _idem_replay():
+    """같은 key 재요청이면 저장된 성공응답을 그대로 되돌려준다(뷰를 다시 실행하지 않음).
+
+    상태별 처리
+      · done        → 저장된 (code, body) 재생 + `X-Idempotent-Replay: 1`
+      · in_progress → 409 in_progress. 앞 요청이 아직 도는 중 = 잠시 뒤 재시도하라는 뜻
+      · unknown     → 409 idem_unknown. **자동 재실행 절대 금지** — 뷰가 처리 도중 죽어
+                      저장됐는지 모르는 상태다. 여기서 재실행하면 돈경로에서 이중집행이 된다.
+      · 없음        → claim 을 박고 뷰로 진행
+    """
+    key, err = _idem_key_of(request)
+    if err:
+        return err
+    if not key:
+        return
+    uid = session.get('user_id')
+    if not uid:
+        return                       # 미인증은 어차피 401 — 원장에 남길 이유 없음
+    row = query('SELECT method,path,status,code,body,content_type FROM client_idem '
+                'WHERE user_id=? AND idem_key=?', (uid, key), one=True)
+    if row is not None:
+        # 같은 key 를 다른 요청에 재사용하면 남의 응답을 돌려줄 위험 — 경로/메서드까지 대조.
+        if row['method'] != request.method or row['path'] != request.path:
+            return jsonify({'error': 'idempotency_key_reused'}), 409
+        if row['status'] == 'done':
+            resp = app.response_class(
+                row['body'] or '', status=row['code'] or 200,
+                content_type=row['content_type'] or 'application/json')
+            resp.headers['X-Idempotent-Replay'] = '1'
+            return resp
+        if row['status'] == 'unknown':
+            return jsonify({'error': 'idem_unknown',
+                            'message': '이전 시도의 처리 결과를 알 수 없습니다. 서버에서 확인 후 다시 시도하세요.'}), 409
+        return jsonify({'error': 'in_progress'}), 409
+    try:
+        execute('INSERT INTO client_idem (user_id,idem_key,method,path,status) '
+                'VALUES (?,?,?,?,?)', (uid, key, request.method, request.path, 'in_progress'))
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'in_progress'}), 409      # 동시 중복요청 — 하나만 통과
+    g._idem = (uid, key)
+    if secrets.randbelow(100) == 0:                         # 가끔만 청소(인덱스 있어 저렴)
+        try:
+            execute("DELETE FROM client_idem WHERE created_at < datetime('now','localtime',?)",
+                    (f'-{_IDEM_TTL_DAYS} days',))
+        except Exception:
+            app.logger.debug('client_idem prune skip', exc_info=True)
+
+
+@app.after_request
+def _idem_finalize(response):
+    """성공응답만 보관한다. 실패 처리는 4xx 와 5xx 를 **절대 같이 묶지 않는다**:
+      · 4xx = 클라이언트가 잘못 보낸 것 → 아무것도 안 바뀜 → claim 삭제(고쳐서 재전송이 정상)
+      · 5xx = 서버가 도중에 깨진 것 → **일부 커밋됐을 수 있음** → unknown 으로 남겨 자동 재실행 차단
+    🔴 5xx 를 지우면 재전송이 뷰를 다시 돌려 이중집행이 된다(예외는 Flask 가 500 으로 삼켜
+       after_request 까지 오므로, teardown 만 믿으면 이 경로가 통째로 빠진다)."""
+    claim = getattr(g, '_idem', None)
+    if not claim:
+        return response
+    uid, key = claim
+    try:
+        if response.status_code >= 500:
+            execute("UPDATE client_idem SET status='unknown', code=? "
+                    'WHERE user_id=? AND idem_key=?', (response.status_code, uid, key))
+        elif 200 <= response.status_code < 300:
+            body, ctype = None, response.content_type
+            if response.is_streamed or response.direct_passthrough:
+                body = None                                 # 스트리밍 응답은 소비하면 안 됨
+            else:
+                raw = response.get_data()
+                body = raw.decode('utf-8', 'replace') if len(raw) <= _IDEM_BODY_MAX else None
+            if body is None:
+                # 본문을 못 남겨도 **재실행은 막아야 한다** — 재생용 최소 응답으로 대체.
+                body, ctype = '{"ok":true,"idempotent_replay":true,"body_omitted":true}', 'application/json'
+            execute('UPDATE client_idem SET status=?, code=?, body=?, content_type=? '
+                    'WHERE user_id=? AND idem_key=?',
+                    ('done', response.status_code, body, ctype, uid, key))
+        else:
+            execute('DELETE FROM client_idem WHERE user_id=? AND idem_key=?', (uid, key))
+        g._idem = None                                      # teardown 이 unknown 으로 덮지 않게
+    except Exception:
+        app.logger.warning('client_idem finalize 실패(uid=%s)', uid, exc_info=True)
+    return response
+
+
+@app.teardown_request
+def _idem_mark_unknown(exc=None):
+    """뷰가 예외로 죽었거나 after_request 가 못 돈 경우 = **결과 모름**.
+    🔴 여기서 행을 지우면 다음 재전송이 뷰를 다시 실행한다 — 이미 커밋된 쓰기가 있었다면 이중집행.
+       모르면 모른다고 남기고(unknown) 사람이 확인하게 한다."""
+    claim = getattr(g, '_idem', None)
+    if not claim:
+        return
+    uid, key = claim
+    try:
+        execute("UPDATE client_idem SET status='unknown' "
+                "WHERE user_id=? AND idem_key=? AND status='in_progress'", (uid, key))
+    except Exception:
+        app.logger.warning('client_idem unknown 표기 실패(uid=%s)', uid, exc_info=True)
+
+
+# ═════════════════════════════════════════════════════════════════
 #  Auth decorators
 # ═════════════════════════════════════════════════════════════════
 def login_required(f):
@@ -2828,6 +2956,64 @@ def api_issue_update(iid):
     params.append(iid)
     execute(f'UPDATE issues SET {", ".join(sets)} WHERE id = ?', params)
     return jsonify({'id': iid})
+
+
+@app.route('/api/issues/<int:iid>/actions', methods=['POST'])
+@login_required
+def api_issue_action_append(iid):
+    """진행 경과 1건 **원자적 추가**(앱 오프라인 보관함 전용 경로이자, 일반 추가의 안전판).
+
+    🔴 왜 따로 두는가: 앱은 지금까지 `PUT /api/issues/<id>` 로 actions **배열 전체**를 덮어
+       진행을 추가했다. 온라인에서는 직전에 상세를 다시 읽어 위험이 짧지만, 오프라인 보관함은
+       읽은 시점과 보내는 시점이 몇 시간~며칠 벌어진다 — 그 사이 웹/다른 기기가 추가한 진행이
+       **조용히 사라진다**. 여기서는 서버가 그 순간의 원문을 읽어 append 하므로 유실이 없다.
+       (같은 이유로 ext(api_key) 전용이던 append 를 login/Bearer 에도 연다 — 계약은 동일.)
+    CAS 로 읽고-쓰는 사이의 변경까지 막고, 밀리면 최신 원문으로 1회 재시도한다
+    (append 는 순서만 맞으면 되므로 PATCH 처럼 409 로 사람을 부를 이유가 없다).
+    """
+    from datetime import date as _date
+    _issue_write_scope(iid)
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'error': '요청 형식이 올바르지 않습니다.'}), 400
+    progress = (d.get('progress') or '').strip()
+    if not progress:
+        return jsonify({'error': '진행 내용을 입력하세요.'}), 400
+    adate = (d.get('date') or '').strip()
+    if adate:
+        try:
+            if adate != datetime.strptime(adate, '%Y-%m-%d').strftime('%Y-%m-%d'):
+                raise ValueError(adate)
+        except ValueError:
+            return jsonify({'error': '발생일 형식이 올바르지 않습니다(YYYY-MM-DD).'}), 400
+    else:
+        adate = _date.today().isoformat()
+    entry = {'date': adate, 'progress': progress, 'important': bool(d.get('important'))}
+
+    for _ in range(2):
+        row = query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)
+        if not row:
+            abort(404)
+        raw = row['actions']
+        try:
+            actions = json.loads(raw) if raw else []
+        except Exception as e:
+            app.logger.warning('issue-action-append: %s', e)
+            actions = []
+        if not isinstance(actions, list):
+            actions = []
+        merged = actions + [entry]
+        new_raw = json.dumps(merged, ensure_ascii=False)
+        if raw is None:
+            rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
+                            'WHERE id=? AND actions IS NULL', (new_raw, iid))
+        else:
+            rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
+                            'WHERE id=? AND actions=?', (new_raw, iid, raw))
+        if rc:
+            return jsonify({'id': iid, 'actions': merged})
+    # 두 번 연속 밀렸다 = 동시 쓰기가 몰리는 중. 조용히 성공으로 위장하지 않는다.
+    return jsonify({'error': '다른 곳에서 동시에 변경 중입니다. 잠시 후 다시 시도하세요.'}), 409
 
 
 @app.route('/api/issues/<int:iid>/actions/<int:idx>', methods=['PATCH'])
@@ -7343,6 +7529,43 @@ def api_receipt_upload(tid):
     return jsonify({'ok': True, 'filename': fname, 'url': url,
                     'original_kb': round(orig / 1024, 1),
                     'final_kb': round(final / 1024, 1)}), 201
+
+
+@app.route('/api/biz-trips/<int:tid>/receipts/upload', methods=['POST'])
+@login_required
+def api_receipt_create_with_file(tid):
+    """영수증 사진 + 입력값을 **한 요청**으로 저장(앱 오프라인 보관함 전용 경로).
+
+    🔴 왜 합쳤는가: 기존 흐름은 `upload-receipt`(파일) → `receipts`(행 생성) 2단계다.
+       온라인에선 문제없지만 오프라인 보관함은 1단계 응답(서버가 지어준 파일명)을 받을 수 없어
+       2단계를 조립할 수 없다. 쪼갠 채로 큐에 넣으면 **사진만 올라가고 행은 없는 고아 파일**이
+       생긴다. 그래서 파일과 필드를 함께 받아 한 트랜잭션처럼 처리한다.
+    필드는 multipart 텍스트 파트로 온다(JSON 바디를 함께 보낼 수 없으므로).
+    """
+    resp = api_receipt_upload(tid)
+    # api_receipt_upload 는 (body, status) 또는 body 를 돌려준다 — 실패면 그대로 전달.
+    payload, status = (resp if isinstance(resp, tuple) else (resp, 200))
+    if status >= 400:
+        return payload, status
+    up = payload.get_json()
+
+    mx = query('SELECT COALESCE(MAX(display_order),-1) AS m FROM biz_receipts WHERE trip_id=?',
+               (tid,), one=True)['m']
+    fld = request.form
+    new_id = execute('''
+        INSERT INTO biz_receipts
+            (trip_id, image_filename, image_url, vendor, cost_type, use_type,
+             occur_date, card_no, remark, currency, amount, extracted_raw, display_order)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ''', (
+        tid, _safe_receipt_filename(up.get('filename')), up.get('url') or None,
+        fld.get('vendor') or None, fld.get('cost_type') or None, fld.get('use_type') or None,
+        fld.get('occur_date') or None, fld.get('card_no') or None, fld.get('remark') or None,
+        fld.get('currency') or None, _parse_amount(fld.get('amount')), None, mx + 1,
+    ))
+    execute("UPDATE biz_trips SET updated_at=datetime('now','localtime') WHERE id=?", (tid,))
+    r = query('SELECT * FROM biz_receipts WHERE id=?', (new_id,), one=True)
+    return jsonify({'ok': True, 'receipt': dict(r)}), 201
 
 
 # ─── Gemini 비전 추출 (Gemini 3.1 Flash Lite) ────────────────
@@ -19379,6 +19602,20 @@ def _auto_migrate():
                 print('[auto_migrate] automation_run.progress 추가됨')
         except Exception as e:
             print(f'[auto_migrate] automation_run.progress 점검 건너뜀: {e}')
+        # 오프라인 보관함 재전송 중복방지 원장. schema 재적용으로도 생기지만, 위 executescript 가
+        # 어떤 이유로든 중간에 끊기면 이 표만 없어 **재전송이 중복 생성**으로 이어진다.
+        # 🔴 독립 try + 명시 생성 — 중복방지는 조용히 빠지면 안 되는 종류다.
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS client_idem (
+                    user_id INTEGER NOT NULL, idem_key TEXT NOT NULL,
+                    method TEXT NOT NULL, path TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'in_progress',
+                    code INTEGER, body TEXT, content_type TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    PRIMARY KEY (user_id, idem_key))""")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_client_idem_created ON client_idem(created_at)')
+        except Exception as e:
+            print(f'[auto_migrate] client_idem 점검 건너뜀: {e}')
         # SOA 그룹은 기존 prod DB에도 schema 재적용만으로 테이블이 생긴다. 최초 전환 시
         # 현행 G1/G2/G3/SKRT 값을 seed해야 runner가 빈 설정으로 fail-closed 되지 않는다.
         try:
