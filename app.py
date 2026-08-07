@@ -450,15 +450,18 @@ def init_db(drop=False):
                 finished_at   TEXT,
                 exit_code     INTEGER,
                 summary       TEXT,
-                params        TEXT
+                params        TEXT,
+                progress      TEXT
             )
         """)
         try:                                            # 마이그: 기존 DB에 params 추가(선박별 SOA 검증 버튼)
             _cols = [r[1] for r in conn.execute("PRAGMA table_info(automation_run)").fetchall()]
             if 'params' not in _cols:
                 conn.execute("ALTER TABLE automation_run ADD COLUMN params TEXT")
+            if 'progress' not in _cols:                 # 러너 중간보고(굳음 vs 도는중 구분)
+                conn.execute("ALTER TABLE automation_run ADD COLUMN progress TEXT")
         except Exception:
-            app.logger.debug('automation_run params 마이그 skip', exc_info=True)
+            app.logger.debug('automation_run params/progress 마이그 skip', exc_info=True)
 
         # Daily 사이드바 선박 커스텀 순서 (유저별, 드래그앤드롭 저장)
         conn.execute("""
@@ -16416,7 +16419,7 @@ def api_automation_run():
 @app.route('/api/automation/runs')
 @admin_required
 def api_automation_runs():
-    rows = query("SELECT run_id,task,mode,status,requested_at,started_at,finished_at,exit_code,summary "
+    rows = query("SELECT run_id,task,mode,status,requested_at,started_at,finished_at,exit_code,summary,progress "
                  "FROM automation_run ORDER BY id DESC LIMIT 40")
     total = query("SELECT COUNT(*) c FROM automation_run", one=True)['c']
     cleared = None
@@ -16494,7 +16497,7 @@ def api_ext_automation_claim():
     # 짧게 잡으면 살아있는 장기 run 을 오판→이중 dispatch(돈경로) 위험이라 길게(6h) —
     # 재큐잉 안 함(사람이 허브에서 재실행). 정상 run 은 수 분 내라 6h 오탐 없음.
     execute("UPDATE automation_run SET status='failed', finished_at=datetime('now','localtime'), "
-            "summary=COALESCE(summary,'') || ' [auto-expired: running>6h, 러너 무응답 간주]' "
+            "summary=COALESCE(summary,'') || ' [auto-expired: running>6h, 러너 무응답 간주]', progress=NULL "
             "WHERE status='running' AND started_at IS NOT NULL "
             "AND started_at < datetime('now','localtime','-6 hours')")
     # 진행중이 있으면 신규 claim 안 함(스크립트 순차 실행 — SVMS 세션 충돌 방지)
@@ -16524,14 +16527,30 @@ def api_ext_automation_claim():
     return jsonify({'run': {'run_id': row['run_id'], 'task': row['task'], 'mode': row['mode'], 'params': _params}})
 
 
+@app.route('/api/ext/automation/<run_id>/progress', methods=['POST'])
+@api_key_required
+def api_ext_automation_progress(run_id):
+    """러너 중간보고. 화면에서 '굳음'과 '도는중'을 구분하기 위한 표시 전용 필드.
+    · status='running' 인 행에만 쓴다 — 끝난 run 에 진행문구가 되살아나면 오히려 오독을 만든다.
+    · 제어문자 제거 + 길이 컷: 러너 stdout 이 그대로 화면에 들어오는 경로라 로그 injection 방지.
+    · 실패해도 러너는 계속 돈다(호출측이 삼킴) — 여기서 500 을 내도 돈경로에는 영향 없음."""
+    d = request.get_json(silent=True) or {}
+    raw = str(d.get('progress') or '')[:300]
+    text = ''.join(c if c.isprintable() else ' ' for c in raw).strip()
+    execute("UPDATE automation_run SET progress=? WHERE run_id=? AND status='running'",
+            (text or None, run_id))
+    return jsonify({'ok': True})
+
+
 @app.route('/api/ext/automation/<run_id>/done', methods=['POST'])
 @api_key_required
 def api_ext_automation_done(run_id):
     d = request.get_json(silent=True) or {}
     status = 'failed' if (d.get('status') == 'failed' or d.get('exit_code')) else 'done'
     summary = (d.get('summary') or '')[:4000]
+    # progress=NULL: 끝난 run 에 '준비 3/12 판독중' 같은 중간문구가 남아 있으면 진행중으로 오독된다.
     execute("UPDATE automation_run SET status=?, finished_at=datetime('now','localtime'), "
-            "exit_code=?, summary=? WHERE run_id=?",
+            "exit_code=?, summary=?, progress=NULL WHERE run_id=?",
             (status, d.get('exit_code'), summary, run_id))
     # Fail-safe: review scripts normally POST their structured result first. If they crash before that,
     # never leave the case permanently locked; the run summary remains visible for manual reconcile.
@@ -19349,6 +19368,17 @@ def _auto_migrate():
                              'ON push_log(id DESC) WHERE hidden_at IS NULL')
         except Exception as e:
             print(f'[auto_migrate] push_log.hidden_at 점검 건너뜀: {e}')
+        # 러너 중간보고(진행률) 컬럼. 🔴 init_db 의 인라인 마이그는 기존 DB 배포에선 안 돈다
+        #    (__main__ 에서 DB 가 있으면 _auto_migrate 만 호출) — 여기에 없으면 /api/automation/runs
+        #    SELECT 가 "no such column: progress" 로 죽어 자동화 탭이 통째로 500 이 된다.
+        # 🔴 독립 try — 위 블록과 운명을 묶지 않는다.
+        try:
+            acols = [r[1] for r in conn.execute('PRAGMA table_info(automation_run)').fetchall()]
+            if acols and 'progress' not in acols:
+                conn.execute('ALTER TABLE automation_run ADD COLUMN progress TEXT')
+                print('[auto_migrate] automation_run.progress 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] automation_run.progress 점검 건너뜀: {e}')
         # SOA 그룹은 기존 prod DB에도 schema 재적용만으로 테이블이 생긴다. 최초 전환 시
         # 현행 G1/G2/G3/SKRT 값을 seed해야 runner가 빈 설정으로 fail-closed 되지 않는다.
         try:

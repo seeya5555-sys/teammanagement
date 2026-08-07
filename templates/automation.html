@@ -38,6 +38,7 @@
   .au-log-cleared{font-size:11px;color:var(--text-tertiary);margin-top:6px;padding-left:4px}
   .au-logrow{border:1px solid var(--border-subtle);border-radius:9px;padding:9px 12px;margin-bottom:7px;background:#fff;font-size:12.5px}
   .au-logmeta{color:var(--text-secondary);font-size:11.5px;margin-bottom:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .au-logprog{font-size:11.5px;color:var(--accent,#2563eb);font-weight:600;margin:2px 0}
   .au-logsum{white-space:pre-wrap;color:var(--text-primary);font-family:ui-monospace,Menlo,monospace;font-size:11.5px;max-height:170px;overflow:auto}
   .au-note{font-size:12px;color:var(--text-secondary);margin:4px 0 16px;line-height:1.5}
   /* 전자결재 검증 인라인 체크리스트 */
@@ -311,6 +312,7 @@
         <span class="au-status st-${r.status}">${r.status}</span>
         <b>${TASKS[r.task]||r.task}</b><span>· ${modeL}</span><span>· ${t}</span>
       </div>
+      ${(r.status==='running'&&r.progress)?`<div class="au-logprog">⏳ ${(r.progress).replace(/</g,'&lt;')}</div>`:''}
       ${r.summary?`<div class="au-logsum">${(r.summary).replace(/</g,'&lt;')}</div>`:''}
     </div>`;
   }
