@@ -544,7 +544,14 @@
     applyFilters();renderAlert();fmClose();
   }
   // 선위 소스 라벨: 이메일 override > TRMT DB 실시간 > SVMS noon. 끊김 경고 포함.
+  // 이메일 모드인데 override 미도착이면 실제 표시원(TRMT DB/AIS)을 숨기지 않고 '대기중'을 앞에 붙임.
   function posSrcLabel(v){
+    if(v.email_pending)
+      return '<span style="color:#b7791f">위치=메일 선위 대기중</span>'+
+        ' <span style="font-size:11px;color:var(--muted)">(현재 표시: '+posSrcLabelBase(v)+')</span>';
+    return posSrcLabelBase(v);
+  }
+  function posSrcLabelBase(v){
     if(v.pos_mode==='svms')
       return '<span style="color:#8a6100">위치=SVMS 운항데이터 <span style="font-size:11px">(수동 AIS off)</span></span>';
     if(v.pos_source==='email')

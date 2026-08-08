@@ -18291,11 +18291,17 @@ def api_fleet_map_data():
         v['email_watch'] = _k in _watch
         v['ais_off'] = _k in _ais_off_keys              # 수동 SVMS 고정
         v['pos_mode'] = 'email' if v['email_watch'] else ('svms' if v['ais_off'] else 'ais')
+        # 이메일 모드인데 아직 override 가 안 꽂힌 구간(watch 등록 직후 ~ 다음 watcher 실행).
+        # 이 때 화면은 TRMT DB/AIS 를 보여주므로 "메일대로 안 바뀐다"로 오인됨 → 대기중임을 표면화.
+        v['email_pending'] = bool(v['email_watch'] and _k not in override_keys)
         ep = v.get('position_ts_epoch')
         src = str(v.get('position_source') or '')
-        # AIS 소스인데 마지막 측위가 AIS_STALE_HOURS 초과 → 끊김(이메일/SVMS 수동모드면 표시 안 함)
+        # AIS 소스인데 마지막 측위가 AIS_STALE_HOURS 초과 → 끊김(이메일/SVMS 수동모드면 표시 안 함).
+        # 단 email_pending 구간은 실제로 AIS 를 보여주는 중이므로 끊김 경고를 억제하면 안 됨
+        # (억제하면 낡은 AIS 좌표가 아무 경고 없이 '현재 표시'로 나감 — 올마이트 지적, 2026-08-08).
+        _mail_active = v['email_watch'] and not v['email_pending']
         v['ais_stale'] = bool(
-            ep and 'AIS' in src and not v['email_watch'] and not v['ais_off']
+            ep and 'AIS' in src and not _mail_active and not v['ais_off']
             and (_now_epoch - float(ep)) > AIS_STALE_HOURS * 3600)
     is_admin = (session.get('role') == 'admin')
     sup_id = session.get('supervisor_id')
