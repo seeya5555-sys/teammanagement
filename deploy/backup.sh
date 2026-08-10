@@ -131,7 +131,9 @@ log "db backup ok: $(basename "$OUT") ($(stat -c%s "$OUT") bytes, raw $SIZE_RAW)
 # ⚠️ static/uploads 는 2026-08-11 복구 리허설에서 빠진 게 발각된 곳이다. 지우지 말 것.
 # data/·yard_profiles/·static/ota 는 전부 git 추적이라 GitHub 에서 복원 가능 → 제외.
 # 주의: DB 와 이 아카이브는 동일 시점 스냅샷이 아니다 → 첨부 RPO 는 최대 FILES_EVERY_DAYS 일.
-NEWEST="$(find "$DEST/files" \( -name 'files-*.tar.gz' -o -name 'instance-*.tar.gz' \) -mtime "-$FILES_EVERY_DAYS" -print -quit 2>/dev/null || true)"
+# 신선도 판정은 신규 포맷(files-*)만 본다. 구 포맷(instance-*)은 static/uploads 가 없어서
+# 그걸 "최근 백업 있음"으로 세면 첨부 원본이 FILES_EVERY_DAYS 동안 무백업으로 남는다.
+NEWEST="$(find "$DEST/files" -name 'files-*.tar.gz' -mtime "-$FILES_EVERY_DAYS" -print -quit 2>/dev/null || true)"
 if [ -z "$NEWEST" ]; then
   FOUT="$DEST/files/files-$(date '+%Y%m%d').tar.gz"
   FTMP="$FOUT.partial"
