@@ -36,7 +36,7 @@ fi
 APP_DIR="${TRMT_APP_DIR:-$HOME/app}"
 DEST="${TRMT_BACKUP_DIR:-$HOME/backups/trmt}"
 KEEP_DB="${TRMT_KEEP_DB:-30}"
-KEEP_FILES="${TRMT_KEEP_FILES:-6}"
+KEEP_FILES="${TRMT_KEEP_FILES:-4}"       # 아카이브 1개가 ~370MB (static/uploads 포함)
 FILES_EVERY_DAYS="${TRMT_FILES_EVERY_DAYS:-6}"
 
 DB="$APP_DIR/instance/trmt.db"
@@ -124,12 +124,16 @@ rm -f "$TMP"
 CLEAN=()
 log "db backup ok: $(basename "$OUT") ($(stat -c%s "$OUT") bytes, raw $SIZE_RAW)"
 
-# ---- 3) instance/ 첨부·업로드 (자주 안 바뀌므로 주기 실행) -------------------
-# 주의: DB 와 이 아카이브는 동일 시점 스냅샷이 아니다 → 첨부 파일 RPO 는 최대
-# FILES_EVERY_DAYS 일. 첨부 원본이 더 촘촘히 필요해지면 이 주기를 줄일 것.
-NEWEST="$(find "$DEST/files" -name 'instance-*.tar.gz' -mtime "-$FILES_EVERY_DAYS" -print -quit 2>/dev/null || true)"
+# ---- 3) 업로드·첨부 원본 (자주 안 바뀌므로 주기 실행) ----------------------
+# 대상 = 서버에만 존재하는 런타임 데이터 2곳:
+#   instance/       미리보기 cache·PDF·STT 오디오·fleet json·.secret_key
+#   static/uploads/ attachments 테이블이 가리키는 첨부 원본 (git 추적 3개, 서버 실물 109개)
+# ⚠️ static/uploads 는 2026-08-11 복구 리허설에서 빠진 게 발각된 곳이다. 지우지 말 것.
+# data/·yard_profiles/·static/ota 는 전부 git 추적이라 GitHub 에서 복원 가능 → 제외.
+# 주의: DB 와 이 아카이브는 동일 시점 스냅샷이 아니다 → 첨부 RPO 는 최대 FILES_EVERY_DAYS 일.
+NEWEST="$(find "$DEST/files" \( -name 'files-*.tar.gz' -o -name 'instance-*.tar.gz' \) -mtime "-$FILES_EVERY_DAYS" -print -quit 2>/dev/null || true)"
 if [ -z "$NEWEST" ]; then
-  FOUT="$DEST/files/instance-$(date '+%Y%m%d').tar.gz"
+  FOUT="$DEST/files/files-$(date '+%Y%m%d').tar.gz"
   FTMP="$FOUT.partial"
   CLEAN+=("$FTMP")
   rc=0
@@ -139,7 +143,7 @@ if [ -z "$NEWEST" ]; then
       --exclude='instance/backups' \
       --exclude='instance/deleted-files-*' \
       --exclude='__pycache__' \
-      instance || rc=$?
+      instance static/uploads || rc=$?
   # tar 는 "읽는 중 파일이 바뀜"에 1 을 낸다(부분 손상 아님). 2 이상은 실패.
   if [ "$rc" -gt 1 ]; then log "❌ tar 실패 rc=$rc"; exit 1; fi
   [ "$rc" -eq 1 ] && log "⚠️ tar rc=1 (읽는 중 변경된 파일 있음 — 아카이브는 유효)"
@@ -161,8 +165,9 @@ prune() { # $1=dir $2=glob $3=keep
 }
 prune "$DEST/db"    'trmt-*.db.gz'       "$KEEP_DB"
 prune "$DEST/db"    'trmt-*.manifest.json' "$KEEP_DB"
-prune "$DEST/files" 'instance-*.tar.gz'  "$KEEP_FILES"
+prune "$DEST/files" 'files-*.tar.gz'     "$KEEP_FILES"
+prune "$DEST/files" 'instance-*.tar.gz'  1      # 구 이름(static/uploads 미포함) — 1개만 남김
 
 # ---- 5) 감시용 상태 파일 (여기까지 왔다는 건 검증까지 통과한 것) --------------
 printf '%s %s\n' "$(date '+%F %T')" "$(basename "$OUT")" > "$DEST/.last_ok"
-log "done. db=$(find "$DEST/db" -name 'trmt-*.db.gz' | wc -l)개 files=$(find "$DEST/files" -name 'instance-*.tar.gz' | wc -l)개 총 $(du -sh "$DEST" | cut -f1)"
+log "done. db=$(find "$DEST/db" -name 'trmt-*.db.gz' | wc -l)개 files=$(find "$DEST/files" -name 'files-*.tar.gz' | wc -l)개 총 $(du -sh "$DEST" | cut -f1)"

@@ -31,7 +31,7 @@ gzip -t "$LATEST"
 gunzip -c "$LATEST" > "$WORK/trmt.db"
 echo "· 압축 해제 : $(stat -c%s "$WORK/trmt.db") bytes"
 
-FARCH="$(find "$DEST/files" -maxdepth 1 -name 'instance-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+FARCH="$(find "$DEST/files" -maxdepth 1 -name 'files-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
 if [ -n "$FARCH" ]; then
   tar -tzf "$FARCH" > "$WORK/files.list"
   echo "· 첨부 아카이브: $(basename "$FARCH") — 항목 $(wc -l < "$WORK/files.list")개, 정상 해독"
@@ -89,15 +89,20 @@ with A.app.app_context():
     assert r.status_code == 200, f'/login → {r.status_code}'
     print(f'  GET /login → 200 ({len(r.data)} bytes)')
 
-    # --- 6) 첨부 참조 표본이 아카이브 안에 있는가 ---
+    # --- 6) 첨부 원본이 아카이브 안에 있는가 (하드 검증) ---
+    # 2026-08-11: 첨부 원본은 instance/ 가 아니라 static/uploads/ 에 있어서 백업에서
+    # 통째로 빠져 있었다. 그때 경고로만 흘렸으면 못 잡았을 것 → 여기서 실패시킨다.
     if os.path.exists(flist) and os.path.getsize(flist):
-        names = set(open(flist, encoding='utf-8', errors='replace').read().split())
+        arch = {os.path.basename(n) for n in
+                open(flist, encoding='utf-8', errors='replace').read().split()}
         rows = A.query("SELECT stored_name FROM attachments WHERE stored_name IS NOT NULL "
-                       "ORDER BY id DESC LIMIT 20")
-        if rows:
-            hit = sum(1 for r0 in rows
-                      if any(os.path.basename(n) == os.path.basename(r0['stored_name']) for n in names))
-            print(f'  첨부 표본 {len(rows)}건 중 아카이브에 존재 {hit}건'
-                  + ('' if hit else '  ⚠️ 0건 — 첨부 경로 규칙 확인 필요'))
+                       "ORDER BY id DESC LIMIT 30")
+        live = [r0['stored_name'] for r0 in rows
+                if os.path.exists(os.path.join(A.UPLOAD_DIR, os.path.basename(r0['stored_name'])))]
+        missing = [n for n in live if os.path.basename(n) not in arch]
+        assert not missing, (f'첨부 원본 {len(missing)}/{len(live)}건이 아카이브에 없음 — '
+                             f'백업 대상 경로 누락 (예: {os.path.basename(missing[0])[:8]}…)')
+        print(f'  첨부 하드검증 통과 — DB 참조 {len(rows)}건 중 디스크 실존 {len(live)}건, '
+              f'전부 아카이브에 포함')
 print('✅ 복구 리허설 통과 — 이 백업으로 앱이 기동되고, 데이터가 백업 시점과 행수까지 일치함')
 PYEOF
