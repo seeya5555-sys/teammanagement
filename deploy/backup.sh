@@ -38,6 +38,9 @@ DEST="${TRMT_BACKUP_DIR:-$HOME/backups/trmt}"
 KEEP_DB="${TRMT_KEEP_DB:-30}"
 KEEP_FILES="${TRMT_KEEP_FILES:-4}"       # 아카이브 1개가 ~370MB (static/uploads 포함)
 FILES_EVERY_DAYS="${TRMT_FILES_EVERY_DAYS:-6}"
+TAR_BIN="${TRMT_TAR_BIN:-tar}"
+TAR_RETRIES="${TRMT_TAR_RETRIES:-3}"
+FLOCK_BIN="${TRMT_FLOCK_BIN:-flock}"
 
 DB="$APP_DIR/instance/trmt.db"
 PY="$APP_DIR/venv/bin/python3"
@@ -57,7 +60,8 @@ trap cleanup EXIT
 
 # ---- 1) 중복 실행 방지 ------------------------------------------------------
 exec 9>"$DEST/.lock"
-if ! flock -n 9; then log "이미 실행 중 → 이번 실행 종료"; exit 0; fi
+command -v "$FLOCK_BIN" >/dev/null 2>&1 || { log "❌ flock 없음: $FLOCK_BIN"; exit 1; }
+if ! "$FLOCK_BIN" -n 9; then log "이미 실행 중 → 이번 실행 종료"; exit 0; fi
 
 [ -f "$DB" ] || { log "❌ DB 없음: $DB"; exit 1; }
 [ -x "$PY" ] || { log "❌ python 없음: $PY"; exit 1; }
@@ -106,23 +110,27 @@ if len(tables) < MIN_TABLES:
 counts = {}
 for t in tables:
     counts[t] = dst.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+attachment_stored_names = [r[0] for r in dst.execute(
+    'SELECT stored_name FROM attachments WHERE stored_name IS NOT NULL ORDER BY stored_name')]
 uv = dst.execute('PRAGMA user_version').fetchone()[0]
 dst.close()
 
 with open(mf_path, 'w', encoding='utf-8') as f:
     json.dump({'source': src_path, 'user_version': uv,
-               'tables': len(tables), 'counts': counts}, f, ensure_ascii=False, indent=1)
+               'tables': len(tables), 'counts': counts,
+               'attachment_stored_names': attachment_stored_names},
+              f, ensure_ascii=False, indent=1)
 print(f'tables={len(tables)} integrity=ok fk=0 rows={sum(counts.values())}')
 PYEOF
 
-SIZE_RAW="$(stat -c%s "$TMP")"
+SIZE_RAW="$(wc -c < "$TMP" | tr -d ' ')"
 gzip -9 -c "$TMP" > "$TMPGZ"
 gzip -t "$TMPGZ"                       # 압축물 자체 검증 후에만 최종 이름으로 승격
 mv "$TMPGZ" "$OUT"
 mv "$TMPMF" "$OUTMF"
 rm -f "$TMP"
 CLEAN=()
-log "db backup ok: $(basename "$OUT") ($(stat -c%s "$OUT") bytes, raw $SIZE_RAW)"
+log "db backup ok: $(basename "$OUT") ($(wc -c < "$OUT" | tr -d ' ') bytes, raw $SIZE_RAW)"
 
 # ---- 3) 업로드·첨부 원본 (자주 안 바뀌므로 주기 실행) ----------------------
 # 대상 = 서버에만 존재하는 런타임 데이터 2곳:
@@ -134,27 +142,60 @@ log "db backup ok: $(basename "$OUT") ($(stat -c%s "$OUT") bytes, raw $SIZE_RAW)
 # 신선도 판정은 신규 포맷(files-*)만 본다. 구 포맷(instance-*)은 static/uploads 가 없어서
 # 그걸 "최근 백업 있음"으로 세면 첨부 원본이 FILES_EVERY_DAYS 동안 무백업으로 남는다.
 NEWEST="$(find "$DEST/files" -name 'files-*.tar.gz' -mtime "-$FILES_EVERY_DAYS" -print -quit 2>/dev/null || true)"
+LATEST_FILES=""
 if [ -z "$NEWEST" ]; then
-  FOUT="$DEST/files/files-$(date '+%Y%m%d').tar.gz"
+  FOUT="$DEST/files/files-$TS.tar.gz"
   FTMP="$FOUT.partial"
-  CLEAN+=("$FTMP")
-  rc=0
+  FMF="$FOUT.manifest.json"
+  FMFTMP="$FMF.partial"
+  CLEAN+=("$FTMP" "$FMFTMP")
   # DB 는 위에서 따로 떴으므로 제외. 옛 수동 스냅샷·삭제보관·캐시도 제외.
-  tar -czf "$FTMP" -C "$APP_DIR" \
-      --exclude='instance/trmt.db*' \
-      --exclude='instance/backups' \
-      --exclude='instance/deleted-files-*' \
-      --exclude='__pycache__' \
-      instance static/uploads || rc=$?
-  # tar 는 "읽는 중 파일이 바뀜"에 1 을 낸다(부분 손상 아님). 2 이상은 실패.
-  if [ "$rc" -gt 1 ]; then log "❌ tar 실패 rc=$rc"; exit 1; fi
-  [ "$rc" -eq 1 ] && log "⚠️ tar rc=1 (읽는 중 변경된 파일 있음 — 아카이브는 유효)"
-  tar -tzf "$FTMP" >/dev/null            # 실제로 풀리는지 확인 후 승격
+  rc=1
+  for attempt in $(seq 1 "$TAR_RETRIES"); do
+    rm -f "$FTMP"
+    if "$TAR_BIN" -czf "$FTMP" -C "$APP_DIR" \
+        --exclude='instance/trmt.db*' \
+        --exclude='instance/backups' \
+        --exclude='instance/deleted-files-*' \
+        --exclude='__pycache__' \
+        instance static/uploads; then rc=0; break; else rc=$?; fi
+    log "⚠️ files tar 실패 rc=$rc — 재시도 $attempt/$TAR_RETRIES"
+    [ "$attempt" -lt "$TAR_RETRIES" ] && sleep 2
+  done
+  [ "$rc" -eq 0 ] || { log "❌ files tar ${TAR_RETRIES}회 실패 rc=$rc"; exit 1; }
+  "$TAR_BIN" -tzf "$FTMP" >/dev/null      # 실제로 풀리는지 확인
+
+  # archive 자체 hash/member 목록 + 같은 실행의 DB backup ID 를 묶는다.
+  # paired DB의 모든 attachments 참조가 archive에 없으면 성공 승격하지 않는다.
+  "$PY" - "$FTMP" "$OUTMF" "$FMFTMP" "$(basename "$OUT")" <<'PYEOF'
+import hashlib, json, os, sys, tarfile
+archive, db_mf_path, out_path, db_backup = sys.argv[1:]
+db_mf = json.load(open(db_mf_path, encoding='utf-8'))
+with tarfile.open(archive, 'r:gz') as tf:
+    members = sorted(m.name.rstrip('/') for m in tf.getmembers() if m.isfile())
+member_set = set(members)
+refs = db_mf.get('attachment_stored_names', [])
+expected = [f'static/uploads/{os.path.basename(n)}' for n in refs]
+missing = [n for n in expected if n not in member_set]
+if missing:
+    raise SystemExit(f'paired DB attachment {len(missing)}/{len(expected)}개 archive 누락: {missing[0]}')
+h = hashlib.sha256()
+with open(archive, 'rb') as f:
+    for chunk in iter(lambda: f.read(1024 * 1024), b''): h.update(chunk)
+with open(out_path, 'w', encoding='utf-8') as f:
+    json.dump({'db_backup': db_backup, 'sha256': h.hexdigest(),
+               'members': members, 'attachment_refs': expected},
+              f, ensure_ascii=False, indent=1)
+print(f'files manifest: members={len(members)} attachment_refs={len(expected)} sha256={h.hexdigest()[:12]}')
+PYEOF
   mv "$FTMP" "$FOUT"
+  mv "$FMFTMP" "$FMF"
   CLEAN=()
-  log "files backup ok: $(basename "$FOUT") ($(stat -c%s "$FOUT") bytes)"
+  LATEST_FILES="$(basename "$FOUT")"
+  log "files backup ok: $LATEST_FILES ($(wc -c < "$FOUT" | tr -d ' ') bytes)"
 else
-  log "files backup skip (최근 ${FILES_EVERY_DAYS}일 내 존재: $(basename "$NEWEST"))"
+  LATEST_FILES="$(basename "$NEWEST")"
+  log "files backup skip (최근 ${FILES_EVERY_DAYS}일 내 존재: $LATEST_FILES)"
 fi
 
 # ---- 4) 보관기간 정리 -------------------------------------------------------
@@ -168,8 +209,9 @@ prune() { # $1=dir $2=glob $3=keep
 prune "$DEST/db"    'trmt-*.db.gz'       "$KEEP_DB"
 prune "$DEST/db"    'trmt-*.manifest.json' "$KEEP_DB"
 prune "$DEST/files" 'files-*.tar.gz'     "$KEEP_FILES"
+prune "$DEST/files" 'files-*.tar.gz.manifest.json' "$KEEP_FILES"
 prune "$DEST/files" 'instance-*.tar.gz'  1      # 구 이름(static/uploads 미포함) — 1개만 남김
 
 # ---- 5) 감시용 상태 파일 (여기까지 왔다는 건 검증까지 통과한 것) --------------
-printf '%s %s\n' "$(date '+%F %T')" "$(basename "$OUT")" > "$DEST/.last_ok"
+printf '%s db=%s files=%s\n' "$(date '+%F %T')" "$(basename "$OUT")" "${LATEST_FILES:-none}" > "$DEST/.last_ok"
 log "done. db=$(find "$DEST/db" -name 'trmt-*.db.gz' | wc -l)개 files=$(find "$DEST/files" -name 'files-*.tar.gz' | wc -l)개 총 $(du -sh "$DEST" | cut -f1)"

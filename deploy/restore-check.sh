@@ -32,17 +32,22 @@ gunzip -c "$LATEST" > "$WORK/trmt.db"
 echo "· 압축 해제 : $(stat -c%s "$WORK/trmt.db") bytes"
 
 FARCH="$(find "$DEST/files" -maxdepth 1 -name 'files-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
-if [ -n "$FARCH" ]; then
-  tar -tzf "$FARCH" > "$WORK/files.list"
-  echo "· 첨부 아카이브: $(basename "$FARCH") — 항목 $(wc -l < "$WORK/files.list")개, 정상 해독"
-else
-  echo "⚠️ 첨부 아카이브 없음(아직 주기 도달 안 함) — DB 만 검증함"
-fi
+[ -n "$FARCH" ] || { echo "❌ files archive 없음: $DEST/files"; exit 1; }
+FMF="$FARCH.manifest.json"
+[ -f "$FMF" ] || { echo "❌ files manifest 없음: $FMF"; exit 1; }
+tar -tzf "$FARCH" > "$WORK/files.list"
+PAIR_NAME="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["db_backup"])' "$FMF")"
+case "$PAIR_NAME" in trmt-*.db.gz) ;; *) echo "❌ 잘못된 paired DB 이름: $PAIR_NAME"; exit 1;; esac
+PAIR="$DEST/db/$PAIR_NAME"
+[ -f "$PAIR" ] || { echo "❌ paired DB 없음: $PAIR"; exit 1; }
+gzip -t "$PAIR"
+gunzip -c "$PAIR" > "$WORK/paired.db"
+echo "· 첨부 아카이브: $(basename "$FARCH") — 항목 $(wc -l < "$WORK/files.list")개, paired DB=$PAIR_NAME"
 
 cd "$APP_DIR"
-"$PY" - "$WORK/trmt.db" "$MF" "${WORK}/files.list" <<'PYEOF'
-import json, os, sqlite3, sys
-p, mf_path, flist = sys.argv[1], sys.argv[2], sys.argv[3]
+"$PY" - "$WORK/trmt.db" "$MF" "${WORK}/files.list" "$FMF" "$FARCH" "$WORK/paired.db" <<'PYEOF'
+import hashlib, json, os, sqlite3, sys
+p, mf_path, flist, files_mf_path, archive_path, paired_db = sys.argv[1:]
 mf = json.load(open(mf_path, encoding='utf-8'))
 
 # --- 2) DB 레벨 검증 ---
@@ -89,20 +94,22 @@ with A.app.app_context():
     assert r.status_code == 200, f'/login → {r.status_code}'
     print(f'  GET /login → 200 ({len(r.data)} bytes)')
 
-    # --- 6) 첨부 원본이 아카이브 안에 있는가 (하드 검증) ---
-    # 2026-08-11: 첨부 원본은 instance/ 가 아니라 static/uploads/ 에 있어서 백업에서
-    # 통째로 빠져 있었다. 그때 경고로만 흘렸으면 못 잡았을 것 → 여기서 실패시킨다.
-    if os.path.exists(flist) and os.path.getsize(flist):
-        arch = {os.path.basename(n) for n in
-                open(flist, encoding='utf-8', errors='replace').read().split()}
-        rows = A.query("SELECT stored_name FROM attachments WHERE stored_name IS NOT NULL "
-                       "ORDER BY id DESC LIMIT 30")
-        live = [r0['stored_name'] for r0 in rows
-                if os.path.exists(os.path.join(A.UPLOAD_DIR, os.path.basename(r0['stored_name'])))]
-        missing = [n for n in live if os.path.basename(n) not in arch]
-        assert not missing, (f'첨부 원본 {len(missing)}/{len(live)}건이 아카이브에 없음 — '
-                             f'백업 대상 경로 누락 (예: {os.path.basename(missing[0])[:8]}…)')
-        print(f'  첨부 하드검증 통과 — DB 참조 {len(rows)}건 중 디스크 실존 {len(live)}건, '
-              f'전부 아카이브에 포함')
+# --- 6) files archive hash/member manifest + paired DB의 전체 첨부 참조 ---
+fmf = json.load(open(files_mf_path, encoding='utf-8'))
+h = hashlib.sha256()
+with open(archive_path, 'rb') as f:
+    for chunk in iter(lambda: f.read(1024 * 1024), b''): h.update(chunk)
+assert h.hexdigest() == fmf['sha256'], 'files archive sha256 불일치'
+arch = {n.rstrip('/') for n in open(flist, encoding='utf-8', errors='strict').read().splitlines()}
+assert arch == set(fmf['members']), 'files member 목록이 manifest와 불일치'
+pc = sqlite3.connect(paired_db)
+refs = [r[0] for r in pc.execute(
+    'SELECT stored_name FROM attachments WHERE stored_name IS NOT NULL ORDER BY stored_name')]
+pc.close()
+expected = [f'static/uploads/{os.path.basename(n)}' for n in refs]
+missing = [n for n in expected if n not in arch]
+assert not missing, f'paired DB 첨부 {len(missing)}/{len(expected)}건 archive 누락: {missing[0]}'
+assert expected == fmf['attachment_refs'], 'paired DB 첨부 참조가 files manifest와 불일치'
+print(f'  첨부 하드검증 통과 — paired DB 전체 {len(expected)}건, archive sha/member 일치')
 print('✅ 복구 리허설 통과 — 이 백업으로 앱이 기동되고, 데이터가 백업 시점과 행수까지 일치함')
 PYEOF
