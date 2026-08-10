@@ -31,7 +31,9 @@ if [ "${TRMT_SKIP_VENV:-0}" = "1" ]; then
   # 부트스트랩 생략 모드(CI 등)에서는 버전 게이트를 강제하지 않는다.
   # 프로덕션 서버는 3.9 라서, "3.9 에서 뭐가 깨지는지"를 재려면 3.9 로도 돌아야 한다.
   # 실제 차단 요인(hashlib.scrypt)은 아래에서 따로 검사한다.
-  PY="${TRMT_TEST_PY:-$(command -v "python$WANT" || command -v python3)}"
+  # CI의 setup-python은 선택 버전을 PATH의 python3로 제공한다. 고정 버전명보다 먼저 써야
+  # 3.9 parity job이 runner 내장 /usr/bin/python3.12로 새는 false test를 막는다.
+  PY="${TRMT_TEST_PY:-$(command -v python3 || command -v "python$WANT" || command -v python)}"
   [ -n "$PY" ] || { echo "❌ python 인터프리터 없음"; exit 2; }
   "$PY" -c 'import sys;sys.exit(0 if sys.version_info[:2]>=(3,10) else 1)' 2>/dev/null \
     || echo "⚠️ $("$PY" -V 2>&1) — 권장 $WANT 미만. 결과는 참고용으로 볼 것."
