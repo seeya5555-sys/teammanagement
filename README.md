@@ -49,7 +49,9 @@ pip install -r requirements.txt
 python app.py
 
 # → http://localhost:5000
-# 기본 관리자 계정: admin / admin0424
+# 계정이 0개인 빈 DB 면 admin 계정이 자동 생성되고, 비밀번호는 실행 로그에
+# "기본 관리자 생성: admin / ..." 줄로 딱 한 번 출력된다(코드에 박혀 있지 않음).
+# 값을 미리 정하려면: TRMT_ADMIN_INIT_PW=... python app.py
 ```
 
 DB 완전 재초기화가 필요한 경우:
@@ -100,5 +102,6 @@ nohup gunicorn -w 2 -b 0.0.0.0:5000 app:app > app.log 2>&1 &
 ## 보안 주의
 
 - `instance/.secret_key` 파일은 절대 공유/커밋 금지 (세션 서명에 사용)
-- `admin / admin0424` 기본 비밀번호는 **첫 로그인 후 즉시 변경** 하세요
+- 최초 생성되는 admin 비밀번호는 난수이며 **기동 로그에 1회만** 표시된다 → 확인 후 즉시 변경
+  (`TRMT_ADMIN_INIT_PW` 로 지정 가능. 기본 비밀번호를 코드/문서에 적지 않는다)
 - 외부 공개 시 HTTPS 리버스 프록시 (nginx/Caddy) 필수

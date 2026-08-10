@@ -16,7 +16,7 @@ launchd `ai.openclaw.dock-sync` = `StartInterval 3600`(1시간) 이라 최대 1�
 """
 import os, sys, tempfile
 
-os.chdir(os.path.expanduser('~/projects/teammanagement'))
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root (clone 위치 무관)
 sys.path.insert(0, os.getcwd())
 DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB

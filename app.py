@@ -1170,15 +1170,23 @@ def init_db(drop=False):
                 conn.executescript(f.read())
             print('  · 시드 데이터 로드 완료')
 
-        # 기본 admin 계정 자동 생성
+        # 기본 admin 계정 자동 생성 — 계정이 0개일 때만(빈 DB 최초 기동·재해복구).
+        # 비번은 코드에 박지 않는다(이 저장소는 public). TRMT_ADMIN_INIT_PW 가 있으면 그걸,
+        # 없으면 매번 새로 난수 생성하고 이 자리에서 딱 한 번만 표시한다.
+        # 표시된 값을 놓쳤으면 DB 를 지우고 다시 초기화하거나 관리자 계정으로 재설정할 것.
         if conn.execute('SELECT COUNT(*) FROM users').fetchone()[0] == 0:
+            init_pw = os.environ.get('TRMT_ADMIN_INIT_PW') or secrets.token_urlsafe(12)
             conn.execute(
                 'INSERT INTO users (username, password_hash, display_name, role) '
                 'VALUES (?, ?, ?, ?)',
-                ('admin', generate_password_hash('admin0424'),
+                ('admin', generate_password_hash(init_pw),
                  'Administrator', 'admin'),
             )
-            print('  · 기본 관리자 생성: admin / admin0424')
+            if os.environ.get('TRMT_ADMIN_INIT_PW'):
+                # 운영자가 준 값은 되풀이해 찍지 않는다(로그·journal 에 남으므로).
+                print('  · 기본 관리자 생성: admin / TRMT_ADMIN_INIT_PW 값 (표시 생략)')
+            else:
+                print(f'  · 기본 관리자 생성: admin / {init_pw}   (자동생성 · 이 줄에서만 표시됨)')
         conn.commit()
         print(f'[OK] DB 초기화 완료: {DATABASE}')
     finally:

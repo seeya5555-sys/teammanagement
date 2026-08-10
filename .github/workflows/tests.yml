@@ -1,0 +1,55 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 동시 실행 정리 — 같은 브랜치에 연속 push 되면 앞 실행은 취소.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: run tests
+        # venv 부트스트랩은 러너에서 불필요(setup-python 이 이미 격리됨).
+        # OpenClaw workspace 소스를 읽는 패리티 테스트 5개는 러너에 그 저장소가 없어
+        # 자동 SKIP 되고, 러너가 목록을 출력한다(조용히 빠지지 않음).
+        run: TRMT_SKIP_VENV=1 ./run_tests.sh
+
+  prod-parity:
+    # 프로덕션 서버는 python 3.9.25 로 돌아간다(개발/CI 는 3.12).
+    # 이 job 은 그 간극을 관측하기 위한 정보용이며 머지를 막지 않는다.
+    name: prod-parity (python 3.9, 정보용)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: run tests
+        run: TRMT_SKIP_VENV=1 ./run_tests.sh

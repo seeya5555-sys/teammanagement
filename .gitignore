@@ -9,3 +9,4 @@ __pycache__/
 .krcon_session/
 trmt.db
 static/trmt-mobile-*mockup*.html
+.venv-test/

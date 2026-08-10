@@ -1,0 +1,11 @@
+[Unit]
+Description=TRMT nightly backup (sqlite online backup + instance files)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+WorkingDirectory=/home/opc/app
+ExecStart=/bin/bash /home/opc/app/deploy/backup.sh
+Nice=10
+IOSchedulingClass=idle

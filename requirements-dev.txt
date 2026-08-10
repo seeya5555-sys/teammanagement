@@ -1,0 +1,4 @@
+# 테스트·CI 재현용 의존성.
+# 테스트는 app.py 를 그대로 import 하므로 프로덕션 의존성 전부가 필요하다.
+# 테스트 전용 추가 패키지는 현재 없음(표준 unittest 만 사용).
+-r requirements.txt

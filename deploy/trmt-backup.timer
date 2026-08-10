@@ -1,0 +1,12 @@
+[Unit]
+Description=Run TRMT backup daily at 03:20 KST
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+# 서버가 꺼져 있어 놓친 실행은 부팅 후 따라잡는다.
+Persistent=true
+RandomizedDelaySec=300
+Unit=trmt-backup.service
+
+[Install]
+WantedBy=timers.target

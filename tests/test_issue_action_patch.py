@@ -18,7 +18,7 @@
 """
 import os, sys, json, tempfile
 
-os.chdir(os.path.expanduser('~/projects/teammanagement'))
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root (clone 위치 무관)
 sys.path.insert(0, os.getcwd())
 DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
