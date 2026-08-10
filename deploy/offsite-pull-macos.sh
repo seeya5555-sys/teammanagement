@@ -37,7 +37,8 @@ ok = dst.execute('PRAGMA integrity_check').fetchone()[0]
 dst.close()
 if ok != 'ok': raise SystemExit('remote integrity: ' + str(ok))
 PY" || fail "A1 DB snapshot/integrity failed"
-DBTMP="$DBDIR/.incoming-$STAMP.db"; TMP+=("$DBTMP")
+DBTMP="$DBDIR/.incoming-$STAMP.db"
+TMP+=("$DBTMP" "$DBTMP-shm" "$DBTMP-wal" "$DBTMP-journal")
 "${SCP[@]}" "$A1:$REMOTE_TMP" "$DBTMP" || fail "DB scp failed"
 "${SSH[@]}" "rm -f '$REMOTE_TMP'" 2>/dev/null || true
 loc="$(sqlite3 "$DBTMP" 'PRAGMA integrity_check;' 2>/dev/null || echo err)"
@@ -46,7 +47,8 @@ DBGZTMP="$DBDIR/.trmt-$STAMP.db.gz.partial"; TMP+=("$DBGZTMP")
 gzip -c "$DBTMP" > "$DBGZTMP"
 gzip -t "$DBGZTMP"
 DBGZ="$DBDIR/trmt-$STAMP.db.gz"
-mv "$DBGZTMP" "$DBGZ"; rm -f "$DBTMP"
+mv "$DBGZTMP" "$DBGZ"
+rm -f "$DBTMP" "$DBTMP-shm" "$DBTMP-wal" "$DBTMP-journal"
 
 # 2) latest server files archive: manifest first, then .partial archive, sha256+tar verify, atomic rename.
 # Server naming contract: files-*.tar.gz.manifest.json

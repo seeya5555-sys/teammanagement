@@ -107,6 +107,8 @@ class BackupContractTest(unittest.TestCase):
         text = script.read_text(encoding="utf-8")
         for required in (".partial", "sha256", "tar -tzf", "files-*.tar.gz.manifest.json"):
             self.assertIn(required, text)
+        self.assertIn("$DBTMP-shm", text, "sqlite integrity probe sidecars must be cleaned")
+        self.assertIn("$DBTMP-wal", text, "sqlite integrity probe sidecars must be cleaned")
 
 
 if __name__ == "__main__":
