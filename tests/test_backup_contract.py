@@ -97,6 +97,10 @@ class BackupContractTest(unittest.TestCase):
             self.assertEqual(c.execute("SELECT stored_name FROM attachments").fetchone()[0], "proof.txt")
             c.close()
 
+    def test_restore_member_check_ignores_directory_entries(self) -> None:
+        text = (ROOT / "deploy" / "restore-check.sh").read_text(encoding="utf-8")
+        self.assertIn("m.isfile()", text, "restore member comparison must use regular files only")
+
     def test_offsite_pull_script_has_atomic_verified_files_copy(self) -> None:
         script = ROOT / "deploy" / "offsite-pull-macos.sh"
         self.assertTrue(script.is_file(), "off-host pull script must be versioned")

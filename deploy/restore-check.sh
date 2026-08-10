@@ -46,7 +46,7 @@ echo "· 첨부 아카이브: $(basename "$FARCH") — 항목 $(wc -l < "$WORK/f
 
 cd "$APP_DIR"
 "$PY" - "$WORK/trmt.db" "$MF" "${WORK}/files.list" "$FMF" "$FARCH" "$WORK/paired.db" <<'PYEOF'
-import hashlib, json, os, sqlite3, sys
+import hashlib, json, os, sqlite3, sys, tarfile
 p, mf_path, flist, files_mf_path, archive_path, paired_db = sys.argv[1:]
 mf = json.load(open(mf_path, encoding='utf-8'))
 
@@ -100,7 +100,8 @@ h = hashlib.sha256()
 with open(archive_path, 'rb') as f:
     for chunk in iter(lambda: f.read(1024 * 1024), b''): h.update(chunk)
 assert h.hexdigest() == fmf['sha256'], 'files archive sha256 불일치'
-arch = {n.rstrip('/') for n in open(flist, encoding='utf-8', errors='strict').read().splitlines()}
+with tarfile.open(archive_path, 'r:gz') as tf:
+    arch = {m.name.rstrip('/') for m in tf.getmembers() if m.isfile()}
 assert arch == set(fmf['members']), 'files member 목록이 manifest와 불일치'
 pc = sqlite3.connect(paired_db)
 refs = [r[0] for r in pc.execute(
