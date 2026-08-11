@@ -77,8 +77,10 @@ if row:
         'ext digest: 직전 Report 수치가 아님')
     chk(row['status'] == 'Next Plan' and row['oil_major'] == PLAN['company'],
         'ext digest: 상태·오일메이저도 같은 행')
-    # 🔴 하류 미러(vlcc-sire-push → vercel 카드, fleet-map)는 "지난 수검 지적 건수"를 묻는다.
-    #    요약행이 계획으로 바뀌었다고 그 카드가 0 으로 덮이면 안 된다(형: "그외는 현행동일").
+    # 🔴 화면 숫자는 어디서나 obs_*(요약행) 다 — vercel 카드도 fleet-map 도 탭의 미러이므로
+    #    탭이 0/0 이면 카드도 0/0(형 지시 2026-08-11 11:07 "페루 5/0 으로 푸시됨, 수정해줘").
+    #    report_obs_* 는 이제 **push.py 의 obsNote 클리어 판정 하나**만 쓴다 — "지적이 다 닫혔다"는
+    #    실제 수검 결과의 사실이라, 다음 수검이 잡혔다고 형 메모를 지우면 안 되기 때문.
     chk(row['report_obs_total'] == PREV['obs'] and row['report_obs_open'] == PREV['open'],
         'ext digest: report_obs_* = 직전 Report 값',
         f"{row.get('report_obs_total')}/{row.get('report_obs_open')}")
