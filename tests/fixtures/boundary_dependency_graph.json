@@ -1,36 +1,4 @@
 {
-  "ai_gemini.py": {
-    "app.py": [
-      "UPLOAD_DIR",
-      "abort",
-      "app",
-      "execute",
-      "json",
-      "jsonify",
-      "os",
-      "query",
-      "request",
-      "send_from_directory",
-      "session",
-      "uuid"
-    ],
-    "helpers_shared.py": [
-      "GEMINI_API_KEY",
-      "VETTING_TYPES",
-      "_MARITIME_TERMS",
-      "_coerce_translation_items",
-      "_ext_allowed",
-      "_findings_workbook",
-      "_gemini_call_json",
-      "_model_for",
-      "_re_cls",
-      "_safe_filename",
-      "_vetting_display_order",
-      "_vetting_with_counts",
-      "_xlsx_to_text",
-      "login_required"
-    ]
-  },
   "app.py": {
     "helpers_shared.py": [
       "_AOR_ACTIVE_STATUSES",

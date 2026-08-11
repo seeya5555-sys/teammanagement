@@ -18,8 +18,14 @@ in each file, not from intent.  Counts are `@app.route` declarations.
 - `routes_core.py` (59 routes): login/logout/auth, dashboard, issues, vessels,
   users/supervisors, widget, condition-survey CRUD (`/api/cs/surveys`), and the
   `/calendar`, `/condition-survey`, `/vetting-status`, `/dry-dock` **pages**;
-- `ai_gemini.py` (21 routes): vetting CRUD (`/api/vettings`), findings and
-  attachments, plus report extraction/translation and AI-adjacent pure helpers;
+- `ai_gemini.py` (21 routes, **converted — a real imported module with
+  `Blueprint("ai_gemini")`**, the canary of the Blueprint migration): vetting
+  CRUD (`/api/vettings`), findings and attachments, report extraction.  Its
+  dependencies are explicit imports (stdlib, Flask, and `app` — which includes
+  everything `helpers_shared.py` executed into it), enforced as zero unresolved
+  names by `test_converted_modules_are_self_contained`.  Endpoints carry the
+  `ai_gemini.` prefix; URLs are unchanged and zero call sites referenced the
+  old endpoint names (measured);
 - `routes_calendar_dock.py` (204 routes): the `/api/ext/*` worker surface (74),
   calendar/report/expense/business-trip APIs, STT, and the money APIs
   (`/api/invoice`, `/api/fundreq`, `/api/aor`, `/api/reqgen`);
@@ -104,6 +110,16 @@ a Blueprint conversion can now proceed one boundary at a time, importing only
 `app.py` primitives and `helpers_shared` — the endpoint-rename churn (`bp.name`
 prefixes, `url_for` call sites, the 396-entry contract snapshot) remains the
 open cost and is a per-boundary, reviewable change.
+
+`ai_gemini.py` is the first converted boundary (2026-08-11).  The conversion
+recipe it establishes: measure `url_for`/`request.endpoint`/test references to
+the boundary's endpoint names first (here: zero), add explicit imports for
+exactly the module's free names (derived with `symtable`, not by hand), swap
+`@app.route` → `@bp.route`, and replace the loader line with
+`import <mod>; app.register_blueprint(<mod>.bp)`.  A converted module leaves
+the exec graph and is instead held to the stronger self-containment contract;
+the snapshot diff must be exactly the endpoint renames of that boundary and
+nothing else (verified programmatically, not by eyeballing the diff).
 
 ## Database and persistent state
 

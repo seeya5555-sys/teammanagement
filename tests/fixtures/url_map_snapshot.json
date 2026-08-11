@@ -1,4141 +1,4141 @@
 [
-  {
-    "defaults": {},
-    "endpoint": "index",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "aor_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/aor",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_admin_ext_key_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/admin/ext-key",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/aor/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/aor/drafts/<int:did>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_approve",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/aor/drafts/<int:did>/approve",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_attachment_pdf",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/aor/drafts/<int:did>/attachments/<int:idx>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_hold",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/aor/drafts/<int:did>/hold",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_reject",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/aor/drafts/<int:did>/reject",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_unhold",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/aor/drafts/<int:did>/unhold",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_bulk_delete",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/aor/drafts/bulk-delete",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_aor_clear_decided",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/aor/drafts/decided",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_attachment_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/attachments/<int:aid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_attachment_download",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/attachments/<int:aid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_attachment_msg_preview",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/attachments/<int:aid>/msg-preview",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_attachment_msg_preview_file",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/attachments/<int:aid>/msg-preview/attachments/<int:index>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_auth_token",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/auth/token",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_health",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/health",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_jeonja_exclude",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/automation/jeonja/exclude",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_jeonja_items",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/jeonja/items",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_jeonja_pdf",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/jeonja/items/<ref>/pdf",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_killswitch",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/automation/killswitch",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_run",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/automation/run",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_runs",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/runs",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_runs_clear",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/runs",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_soa_groups",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/automation/soa/groups",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_soa_group_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/soa/groups/<group_key>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_automation_soa_group_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/automation/soa/groups/<group_key>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_soa_review_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/soa/reviews",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_soa_review_detail",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/soa/reviews/<sx_cd>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_soa_review_action",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/automation/soa/reviews/<sx_cd>/action",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_soa_review_draft",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/automation/soa/reviews/<sx_cd>/draft",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_soa_review_attachment_pdf",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/automation/soa/reviews/attachments/<int:aid>/pdf",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_receipt_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/biz-receipts/<int:rid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_receipt_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/biz-receipts/<int:rid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_trips_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/biz-trips",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_trips_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/biz-trips",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_trip_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/biz-trips/<int:tid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_trip_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/biz-trips/<int:tid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_trip_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/biz-trips/<int:tid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_receipt_extract",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/biz-trips/<int:tid>/extract",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_receipt_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/biz-trips/<int:tid>/receipts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_receipt_create_with_file",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/biz-trips/<int:tid>/receipts/upload",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_receipt_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/biz-trips/<int:tid>/upload-receipt",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_block_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/boarding-blocks/<int:bid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_block_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/boarding-blocks/<int:bid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_block_move",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/boarding-blocks/<int:bid>/move",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/boarding-reports",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/boarding-reports",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/boarding-reports/<int:rid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/boarding-reports/<int:rid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/boarding-reports/<int:rid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_export_docx",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/boarding-reports/<int:rid>/export/docx",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_export_pdf",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/boarding-reports/<int:rid>/export/pdf",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_section_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/boarding-reports/<int:rid>/sections",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_upload_image",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/boarding-reports/<int:rid>/upload-image",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_section_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/boarding-sections/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_section_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/boarding-sections/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_block_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/boarding-sections/<int:sid>/blocks",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_section_move",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/boarding-sections/<int:sid>/move",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_brep_section_reparent",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/boarding-sections/<int:sid>/reparent",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cal_event_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/cal/events",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cal_events_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/cal/events",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cal_event_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/cal/events/<int:eid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cal_event_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/cal/events/<int:eid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cal_event_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/cal/events/<int:eid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cal_event_find",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/cal/events/find",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/class-status",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/class-status/<int:cs_id>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_assign",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/class-status/<int:cs_id>/assign",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_export",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/class-status/<int:cs_id>/export",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_file",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/class-status/<int:cs_id>/file",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_export_all",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/class-status/export-all",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_export_by_manager",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/class-status/export-by-manager",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_item_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/class-status/items/<int:iid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_managers",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/class-status/managers",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_push",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/class-status/push",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_class_status_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/class-status/upload",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_attachment_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/cs/attachments/<int:aid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_attachment_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/cs/attachments/<int:aid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_finding_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/cs/findings/<int:fid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_finding_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/cs/findings/<int:fid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_survey_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/cs/surveys",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_surveys_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/cs/surveys",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_survey_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/cs/surveys/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_survey_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/cs/surveys/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_survey_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/cs/surveys/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_attachment_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/cs/surveys/<int:sid>/attachments",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_attachments_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/cs/surveys/<int:sid>/attachments",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_survey_export",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/cs/surveys/<int:sid>/export",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_extract_report",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/cs/surveys/<int:sid>/extract-report",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_cs_finding_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/cs/surveys/<int:sid>/findings",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dashboard_cockpit",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dashboard/cockpit",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_block_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock-blocks/<int:bid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_block_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/dock-blocks/<int:bid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_block_move",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock-blocks/<int:bid>/move",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock-reports",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock-reports",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock-reports/<int:rid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock-reports/<int:rid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/dock-reports/<int:rid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_export_docx",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock-reports/<int:rid>/export/docx",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_export_pdf",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock-reports/<int:rid>/export/pdf",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_section_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock-reports/<int:rid>/sections",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_upload_image",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock-reports/<int:rid>/upload-image",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_section_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock-sections/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_section_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/dock-sections/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_block_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock-sections/<int:sid>/blocks",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_section_move",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock-sections/<int:sid>/move",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_section_reparent",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock-sections/<int:sid>/reparent",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_inquiry_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_inquiry/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_inquiry_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_inquiry/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_inquiry_cancel",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_inquiry/drafts/<int:did>/cancel",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_inquiry_push",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_inquiry/drafts/<int:did>/push",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_inquiry_clear_decided",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_inquiry/drafts/decided",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_inquiry_preview",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_inquiry/preview",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_inquiry_vendor_search",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_inquiry/vendor_search",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_procure/<int:lid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_patch",
-    "methods": [
-      "OPTIONS",
-      "PATCH"
-    ],
-    "rule": "/api/dock_procure/<int:lid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_link",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/<int:lid>/link",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_prep",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/<int:lid>/prep",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_stage",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/<int:lid>/stage",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_att",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_procure/<int:rid>/attachments/<int:idx>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_add",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/add",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_adopt",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/adopt",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_lines",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_procure/lines",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_push_status",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_procure/push/status",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_push_trigger",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/push/trigger",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_set_dkcd",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/set-dkcd",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_set_shipyard",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/shipyard",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_sync_status",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_procure/sync/status",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_sync_trigger",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/sync/trigger",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_tmpl",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_procure/template/<kind>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/upload",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_vessel_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/vessel",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_vessel_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_procure/vessel",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dockproc_vessel_code",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_procure/vessel_code",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_submit_app_lines",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_submit/app_lines",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_submit_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_submit/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_submit_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_submit/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_submit_cancel",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_submit/drafts/<int:did>/cancel",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_submit_push",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_submit/drafts/<int:did>/push",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_submit_clear_decided",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_submit/drafts/decided",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_submit_dismiss",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_submit/drafts/dismiss",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_submit_preview",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_submit/preview",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_yard_lines",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_yard",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_yard_patch",
-    "methods": [
-      "OPTIONS",
-      "PATCH"
-    ],
-    "rule": "/api/dock_yard/<int:lid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_yard_profiles",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_yard/profiles",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_yard_shipyards",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/dock_yard/shipyards",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_dock_yard_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/dock_yard/upload",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_drydock_mobile_entry",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/drydock/mobile-entry",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_all",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/all",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_aor_approved",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/aor/approved",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_aor_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/aor/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_aor_attachment_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/aor/drafts/<int:did>/attachments/<int:idx>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_aor_reject_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/aor/drafts/<int:did>/reject-result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_aor_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/aor/drafts/<int:did>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_aor_reingest_statuses",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/aor/reingest-statuses",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_aor_rejecting",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/aor/rejecting",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_aor_stats",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/aor/stats",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_automation_done",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/automation/<run_id>/done",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_automation_progress",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/automation/<run_id>/progress",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_automation_claim",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/automation/claim",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_automation_enqueue",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/automation/enqueue",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_automation_health",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/automation/health",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_boarding",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/boarding-reports",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_calendar",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/calendar",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_class_status",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/class-status",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_class_status_push_flag",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/class-status/push-flag",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_class_status_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/class-status/upload",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dock",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock-reports",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dock_push_data",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock/push_data",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dock_inquiry_approved",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_inquiry/approved",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dock_inquiry_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/dock_inquiry/drafts/<int:did>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_att_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/dock_procure/<int:rid>/attachments/<int:idx>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_att_pending",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_procure/attachments/pending",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_links",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_procure/links",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_push_targets",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_procure/push-targets",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_push_done",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/dock_procure/push/done",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_push_pending",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_procure/push/pending",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_quotes",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_procure/quotes",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_sync",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/dock_procure/sync",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_sync_done",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/dock_procure/sync/done",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_sync_pending",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_procure/sync/pending",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dockproc_vessels",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_procure/vessels",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dock_submit_approved",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/dock_submit/approved",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dock_submit_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/dock_submit/drafts/<int:did>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_dock_yard_shipyards",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/dock_yard/shipyards",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fleet_map_ais_off_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/fleet-map/ais-off",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fleet_map_email_watch_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/fleet-map/email-watch",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fleet_map_override",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/fleet-map/override",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fleet_map_push",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/fleet-map/push",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fleet_map_wind_push",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/fleet-map/wind",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fundreq_approved",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/fundreq/approved",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fundreq_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/fundreq/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fundreq_attachment_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/fundreq/drafts/<int:did>/attachments/<int:idx>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fundreq_reject_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/fundreq/drafts/<int:did>/reject-result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fundreq_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/fundreq/drafts/<int:did>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fundreq_pending_attachments",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/fundreq/drafts/pending-attachments",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_fundreq_rejecting",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/fundreq/rejecting",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_approved",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/invoice/approved",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/invoice/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_pdf_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/invoice/drafts/<int:did>/pdf",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_reject_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/invoice/drafts/<int:did>/reject-result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/invoice/drafts/<int:did>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_lookup",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/invoice/drafts/by-inv/<inv_cd>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_expense_codes",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/invoice/expense-codes",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_open",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/invoice/open",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_reconcile",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/invoice/reconcile",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_invoice_rejecting",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/invoice/rejecting",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_issue_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/issues",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_issues",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/issues",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_issue_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/ext/issues/<int:iid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_issue_add_action",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/issues/<int:iid>/actions",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_issue_set_email_key",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/issues/<int:iid>/email-key",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_issue_match",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/issues/match",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_jeonja_exclusions",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/jeonja/exclusions",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_jeonja_review",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/jeonja/review",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_jeonja_pdf_complete",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/jeonja/review/<ref>/complete",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_jeonja_pdf_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/jeonja/review/<ref>/pdf",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_key_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/key",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_key_regen",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/key/regenerate",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_push",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/push",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_push_calendar_daily",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/push/calendar-daily",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_reqgen_approved",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/reqgen/approved",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_reqgen_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/reqgen/drafts/<int:did>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_roster",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/roster",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_roster_sync_done",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/roster-sync/done",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_roster_sync_pending",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/roster-sync/pending",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_shipwiki_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/shipwiki/<int:cid>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_shipwiki_decided",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/shipwiki/decided",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_shipwiki_push",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/shipwiki/push",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_soa_groups",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/soa/groups",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_soa_review_command",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/soa/reviews/<sx_cd>/command",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_soa_review_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/soa/reviews/<sx_cd>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_soa_review_open",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/soa/reviews/open",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_soa_review_snapshot",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/soa/reviews/snapshot",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_soa_vessel_owners",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/soa/vessel-owners",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_stt_audio",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/stt/jobs/<int:jid>/audio",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_stt_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/stt/jobs/<int:jid>/result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_stt_summary_result",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/stt/jobs/<int:jid>/summary_result",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_stt_pending",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/stt/jobs/pending",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_stt_summary_pending",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/stt/jobs/summary_pending",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_summaries",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/summaries",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_summary_generate",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/summary-generate",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_supervisors",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/supervisors",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_surveys",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/surveys",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_svms_app_lines",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/svms/app_lines",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_version",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/version",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_vessels",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/vessels",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_vessel_identifiers",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/ext/vessels/<int:vid>/identifiers",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_vetting_digests",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/vetting-digests",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_vettings",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/vettings",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_vlcc_push_done",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/vlcc-push/done",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_vlcc_push_mark",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ext/vlcc-push/mark",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ext_vlcc_push_pending",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ext/vlcc-push/pending",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_data",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/fleet-map/data",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_email_watch_set",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/fleet-map/email-watch",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_eta_override_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/fleet-map/eta-override",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_eta_override_set",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/fleet-map/eta-override",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_next_port_override_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/fleet-map/next-port-override",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_next_port_override_set",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/fleet-map/next-port-override",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_pos_source_set",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/fleet-map/pos-source",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_track",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/fleet-map/track",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fleet_map_wind",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/fleet-map/wind",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fundreq_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/fundreq/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fundreq_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/fundreq/drafts/<int:did>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fundreq_approve",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/fundreq/drafts/<int:did>/approve",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fundreq_attachment",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/fundreq/drafts/<int:did>/attachments/<int:idx>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fundreq_reject",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/fundreq/drafts/<int:did>/reject",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fundreq_reset",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/fundreq/drafts/<int:did>/reset",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_fundreq_clear_decided",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/fundreq/drafts/decided",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/invoice/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/invoice/drafts/<int:did>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_approve",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/invoice/drafts/<int:did>/approve",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_edit",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/invoice/drafts/<int:did>/edit",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_pdf",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/invoice/drafts/<int:did>/pdf",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_reject",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/invoice/drafts/<int:did>/reject",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_reset",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/invoice/drafts/<int:did>/reset",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_approve_bulk",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/invoice/drafts/approve-bulk",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_clear_decided",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/invoice/drafts/decided",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_invoice_expense_codes",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/invoice/expense-codes",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ios_device_register",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ios/device",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ios_device_unregister",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/ios/device",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ios_prefs_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ios/notify-prefs",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ios_prefs_put",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/ios/notify-prefs",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ios_push_log_clear",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ios/push/log/clear",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ios_push_status",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/ios/push/status",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_ios_push_test",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/ios/push/test",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/issues",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/issues",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/issues/<int:iid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/issues/<int:iid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/issues/<int:iid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_action_append",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/issues/<int:iid>/actions",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_action_patch",
-    "methods": [
-      "OPTIONS",
-      "PATCH"
-    ],
-    "rule": "/api/issues/<int:iid>/actions/<int:idx>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_attachment_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/issues/<int:iid>/attachments",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_export",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/issues/export",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_summary_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/issues/summary",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_summary_counts",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/issues/summary-counts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_summary_export",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/issues/summary-export",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_issue_summary_generate",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/issues/summary-generate",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_me",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/me",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_me_password",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/me/password",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_mobile_issue_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/mobile/issues",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_approve_all",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/reqgen/approve-all",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/reqgen/drafts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/reqgen/drafts/<int:did>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_patch",
-    "methods": [
-      "OPTIONS",
-      "PATCH"
-    ],
-    "rule": "/api/reqgen/drafts/<int:did>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_approve",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/reqgen/drafts/<int:did>/approve",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_reset",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/reqgen/drafts/<int:did>/reset",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_clear_all",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/reqgen/drafts/all",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_clear_decided",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/reqgen/drafts/decided",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_reqgen_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/reqgen/upload",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_roster_sync_status",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/roster-sync/status",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_roster_sync_trigger",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/roster-sync/trigger",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_shipwiki_cards",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/shipwiki/cards",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_shipwiki_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/shipwiki/cards/<int:cid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_shipwiki_decide",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/shipwiki/cards/<int:cid>/decide",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_shipwiki_reset",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/shipwiki/cards/<int:cid>/reset",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_shipwiki_clear_applied",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/shipwiki/cards/applied",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_stt_jobs_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/stt/jobs",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_stt_jobs_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/stt/jobs",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_stt_job_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/stt/jobs/<int:jid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_stt_job_edit",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/stt/jobs/<int:jid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_stt_job_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/stt/jobs/<int:jid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_stt_job_audio_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/stt/jobs/<int:jid>/audio",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_stt_job_audio_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/stt/jobs/<int:jid>/audio",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_stt_job_summarize",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/stt/jobs/<int:jid>/summarize",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_supervisor_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/supervisors",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_supervisors",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/supervisors",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_supervisor_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/supervisors/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_supervisor_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/supervisors/<int:sid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_user_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/users",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_users_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/users",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_user_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/users/<int:uid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_user_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/users/<int:uid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_user_reset_password",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/users/<int:uid>/password",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vessel_order",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/vessel-order",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vessel_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/vessels",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vessels",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vessels",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vessel_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/vessels/<int:vid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vessel_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/vessels/<int:vid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vessel_delete_impact",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vessels/<int:vid>/delete-impact",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vessel_active_counts",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vessels/active-counts",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vessels_all",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vessels/all",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vetting_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/vettings",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vettings_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vettings",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vetting_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/vettings/<int:vid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vetting_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vettings/<int:vid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vetting_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/vettings/<int:vid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_attachment_upload",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/vettings/<int:vid>/attachments",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_attachments_list",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vettings/<int:vid>/attachments",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_export",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vettings/<int:vid>/export",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_extract_report",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/vettings/<int:vid>/extract-report",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_findings_create",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/vettings/<int:vid>/findings",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_obs_summary",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/vettings/<int:vid>/obs-summary",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vlcc_push_status",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vlcc-push/status",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vlcc_push_trigger",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/api/vlcc-push/trigger",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_attachment_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/vt-attachments/<int:aid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_attachment_get",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/vt-attachments/<int:aid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_finding_delete",
-    "methods": [
-      "DELETE",
-      "OPTIONS"
-    ],
-    "rule": "/api/vt-findings/<int:fid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_vt_finding_update",
-    "methods": [
-      "OPTIONS",
-      "PUT"
-    ],
-    "rule": "/api/vt-findings/<int:fid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_widget_fleet",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/widget/fleet",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_widget_issues",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/widget/issues",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "api_widget_vetting",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/api/widget/vetting",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "automation_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/automation",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "boarding_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/boarding",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "boarding_edit_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/boarding/<int:rid>/edit",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "calendar_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/calendar",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "class_status_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/class-status",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "condition_survey",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/condition-survey",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "dashboard",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/dashboard",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "dashboard_classic",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/dashboard/classic",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "dock_procure_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/dock_procure",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "dockproc_tmpl_blank",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/dock_procure/template/blank",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "dockproc_tmpl_example",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/dock_procure/template/example",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "dry_dock_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/dry-dock",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "dry_dock_edit_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/dry-dock/<int:rid>/edit",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "expenses_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/expenses",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "expense_detail_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/expenses/<int:tid>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "fundreq_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/fundreq",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "health_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/health",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "invoice_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/invoice",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "krcon_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/krcon",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "krcon_ai",
-    "methods": [
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/krcon/ai",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "krcon_search",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/krcon/search",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "krcon_view",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/krcon/view/<doc_id>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "login",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS",
-      "POST"
-    ],
-    "rule": "/login",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "logout",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/logout",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "meeting_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/meeting",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "mobile_app",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/mobile",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "reqgen_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/reqgen",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "shipwiki_page",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/shipwiki",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "static",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/static/<path:filename>",
-    "strict_slashes": true
-  },
-  {
-    "defaults": {},
-    "endpoint": "vetting_status",
-    "methods": [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ],
-    "rule": "/vetting-status",
-    "strict_slashes": true
-  }
+ {
+  "rule": "/",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "index",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/aor",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "aor_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/admin/ext-key",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_admin_ext_key_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_aor_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts/<int:did>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_aor_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts/<int:did>/approve",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_aor_approve",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts/<int:did>/attachments/<int:idx>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_aor_attachment_pdf",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts/<int:did>/hold",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_aor_hold",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts/<int:did>/reject",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_aor_reject",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts/<int:did>/unhold",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_aor_unhold",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts/bulk-delete",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_aor_bulk_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/aor/drafts/decided",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_aor_clear_decided",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/attachments/<int:aid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_attachment_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/attachments/<int:aid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_attachment_download",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/attachments/<int:aid>/msg-preview",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_attachment_msg_preview",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/attachments/<int:aid>/msg-preview/attachments/<int:index>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_attachment_msg_preview_file",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/auth/token",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_auth_token",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/health",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_automation_health",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/jeonja/exclude",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_automation_jeonja_exclude",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/jeonja/items",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_automation_jeonja_items",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/jeonja/items/<ref>/pdf",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_automation_jeonja_pdf",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/killswitch",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_automation_killswitch",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/run",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_automation_run",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/runs",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_automation_runs",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/runs",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_automation_runs_clear",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/soa/groups",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_automation_soa_groups",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/soa/groups/<group_key>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_automation_soa_group_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/soa/groups/<group_key>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_automation_soa_group_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/soa/reviews",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_soa_review_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/soa/reviews/<sx_cd>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_soa_review_detail",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/soa/reviews/<sx_cd>/action",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_soa_review_action",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/soa/reviews/<sx_cd>/draft",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_soa_review_draft",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/automation/soa/reviews/attachments/<int:aid>/pdf",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_soa_review_attachment_pdf",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-receipts/<int:rid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_receipt_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-receipts/<int:rid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_receipt_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_trips_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_trips_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips/<int:tid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_trip_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips/<int:tid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_trip_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips/<int:tid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_trip_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips/<int:tid>/extract",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_receipt_extract",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips/<int:tid>/receipts",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_receipt_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips/<int:tid>/receipts/upload",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_receipt_create_with_file",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/biz-trips/<int:tid>/upload-receipt",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_receipt_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-blocks/<int:bid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_brep_block_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-blocks/<int:bid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_brep_block_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-blocks/<int:bid>/move",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_brep_block_move",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_brep_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_brep_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports/<int:rid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_brep_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports/<int:rid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_brep_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports/<int:rid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_brep_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports/<int:rid>/export/docx",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_brep_export_docx",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports/<int:rid>/export/pdf",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_brep_export_pdf",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports/<int:rid>/sections",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_brep_section_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-reports/<int:rid>/upload-image",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_brep_upload_image",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-sections/<int:sid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_brep_section_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-sections/<int:sid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_brep_section_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-sections/<int:sid>/blocks",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_brep_block_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-sections/<int:sid>/move",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_brep_section_move",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/boarding-sections/<int:sid>/reparent",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_brep_section_reparent",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cal/events",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_cal_event_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cal/events",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_cal_events_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cal/events/<int:eid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_cal_event_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cal/events/<int:eid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_cal_event_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cal/events/<int:eid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_cal_event_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cal/events/find",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_cal_event_find",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_class_status_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/<int:cs_id>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_class_status_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/<int:cs_id>/assign",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_class_status_assign",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/<int:cs_id>/export",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_class_status_export",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/<int:cs_id>/file",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_class_status_file",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/export-all",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_class_status_export_all",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/export-by-manager",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_class_status_export_by_manager",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/items/<int:iid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_class_status_item_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/managers",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_class_status_managers",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/push",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_class_status_push",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/class-status/upload",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_class_status_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/attachments/<int:aid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_cs_attachment_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/attachments/<int:aid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_cs_attachment_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/findings/<int:fid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_cs_finding_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/findings/<int:fid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_cs_finding_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_cs_survey_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_cs_surveys_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys/<int:sid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_cs_survey_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys/<int:sid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_cs_survey_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys/<int:sid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_cs_survey_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys/<int:sid>/attachments",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_cs_attachment_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys/<int:sid>/attachments",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_cs_attachments_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys/<int:sid>/export",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_cs_survey_export",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys/<int:sid>/extract-report",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_cs_extract_report",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/cs/surveys/<int:sid>/findings",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_cs_finding_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dashboard/cockpit",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dashboard_cockpit",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-blocks/<int:bid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_block_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-blocks/<int:bid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_dock_block_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-blocks/<int:bid>/move",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_block_move",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports/<int:rid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports/<int:rid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports/<int:rid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_dock_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports/<int:rid>/export/docx",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_export_docx",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports/<int:rid>/export/pdf",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_export_pdf",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports/<int:rid>/sections",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_section_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-reports/<int:rid>/upload-image",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_upload_image",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-sections/<int:sid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_section_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-sections/<int:sid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_dock_section_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-sections/<int:sid>/blocks",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_block_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-sections/<int:sid>/move",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_section_move",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-sections/<int:sid>/reparent",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_section_reparent",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_inquiry/drafts",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_inquiry_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_inquiry/drafts",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_inquiry_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_inquiry/drafts/<int:did>/cancel",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_inquiry_cancel",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_inquiry/drafts/<int:did>/push",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_inquiry_push",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_inquiry/drafts/decided",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_inquiry_clear_decided",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_inquiry/preview",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_inquiry_preview",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_inquiry/vendor_search",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_inquiry_vendor_search",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/<int:lid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dockproc_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/<int:lid>",
+  "methods": [
+   "OPTIONS",
+   "PATCH"
+  ],
+  "endpoint": "api_dockproc_patch",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/<int:lid>/link",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_link",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/<int:lid>/prep",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_prep",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/<int:lid>/stage",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_stage",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/<int:rid>/attachments/<int:idx>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dockproc_att",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/add",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_add",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/adopt",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_adopt",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/lines",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dockproc_lines",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/push/status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dockproc_push_status",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/push/trigger",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_push_trigger",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/set-dkcd",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_set_dkcd",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/shipyard",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_set_shipyard",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/sync/status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dockproc_sync_status",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/sync/trigger",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_sync_trigger",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/template/<kind>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dockproc_tmpl",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/upload",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/vessel",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_vessel_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/vessel",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dockproc_vessel_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_procure/vessel_code",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dockproc_vessel_code",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_submit/app_lines",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_submit_app_lines",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_submit/drafts",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_submit_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_submit/drafts",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_submit_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_submit/drafts/<int:did>/cancel",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_submit_cancel",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_submit/drafts/<int:did>/push",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_submit_push",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_submit/drafts/decided",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_submit_clear_decided",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_submit/drafts/dismiss",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_submit_dismiss",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_submit/preview",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_submit_preview",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_yard",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_yard_lines",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_yard/<int:lid>",
+  "methods": [
+   "OPTIONS",
+   "PATCH"
+  ],
+  "endpoint": "api_dock_yard_patch",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_yard/profiles",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_yard_profiles",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_yard/shipyards",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_dock_yard_shipyards",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock_yard/upload",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_dock_yard_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/drydock/mobile-entry",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_drydock_mobile_entry",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/all",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_all",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/aor/approved",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_aor_approved",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/aor/drafts",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_aor_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/aor/drafts/<int:did>/attachments/<int:idx>",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_aor_attachment_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/aor/drafts/<int:did>/reject-result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_aor_reject_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/aor/drafts/<int:did>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_aor_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/aor/reingest-statuses",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_aor_reingest_statuses",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/aor/rejecting",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_aor_rejecting",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/aor/stats",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_aor_stats",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/automation/<run_id>/done",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_automation_done",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/automation/<run_id>/progress",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_automation_progress",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/automation/claim",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_automation_claim",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/automation/enqueue",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_automation_enqueue",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/automation/health",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_automation_health",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/boarding-reports",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_boarding",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/calendar",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_calendar",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/class-status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_class_status",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/class-status/push-flag",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_class_status_push_flag",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/class-status/upload",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_class_status_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-reports",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dock",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock/push_data",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dock_push_data",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_inquiry/approved",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dock_inquiry_approved",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_inquiry/drafts/<int:did>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_dock_inquiry_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/<int:rid>/attachments/<int:idx>",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_dockproc_att_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/attachments/pending",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dockproc_att_pending",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/links",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dockproc_links",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/push-targets",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dockproc_push_targets",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/push/done",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_dockproc_push_done",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/push/pending",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dockproc_push_pending",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/quotes",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dockproc_quotes",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/sync",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_dockproc_sync",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/sync/done",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_dockproc_sync_done",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/sync/pending",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dockproc_sync_pending",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_procure/vessels",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dockproc_vessels",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_submit/approved",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_dock_submit_approved",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_submit/drafts/<int:did>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_dock_submit_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock_yard/shipyards",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_dock_yard_shipyards",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fleet-map/ais-off",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_fleet_map_ais_off_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fleet-map/email-watch",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_fleet_map_email_watch_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fleet-map/override",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_fleet_map_override",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fleet-map/push",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_fleet_map_push",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fleet-map/wind",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_fleet_map_wind_push",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fundreq/approved",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_fundreq_approved",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fundreq/drafts",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_fundreq_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fundreq/drafts/<int:did>/attachments/<int:idx>",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_fundreq_attachment_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fundreq/drafts/<int:did>/reject-result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_fundreq_reject_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fundreq/drafts/<int:did>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_fundreq_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fundreq/drafts/pending-attachments",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_fundreq_pending_attachments",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/fundreq/rejecting",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_fundreq_rejecting",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/approved",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_invoice_approved",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/drafts",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_invoice_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/drafts/<int:did>/pdf",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_invoice_pdf_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/drafts/<int:did>/reject-result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_invoice_reject_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/drafts/<int:did>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_invoice_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/drafts/by-inv/<inv_cd>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_invoice_lookup",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/expense-codes",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_invoice_expense_codes",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/open",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_invoice_open",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/reconcile",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_invoice_reconcile",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/invoice/rejecting",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_invoice_rejecting",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/issues",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_issue_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/issues",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_issues",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/issues/<int:iid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_ext_issue_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/issues/<int:iid>/actions",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_issue_add_action",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/issues/<int:iid>/email-key",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_issue_set_email_key",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/issues/match",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_issue_match",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/jeonja/exclusions",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_jeonja_exclusions",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/jeonja/review",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_jeonja_review",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/jeonja/review/<ref>/complete",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_jeonja_pdf_complete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/jeonja/review/<ref>/pdf",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_jeonja_pdf_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/key",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_key_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/key/regenerate",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_key_regen",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/push",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_push",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/push/calendar-daily",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_push_calendar_daily",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/reqgen/approved",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_reqgen_approved",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/reqgen/drafts/<int:did>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_reqgen_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/roster",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_roster",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/roster-sync/done",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_roster_sync_done",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/roster-sync/pending",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_roster_sync_pending",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/shipwiki/<int:cid>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_shipwiki_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/shipwiki/decided",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_shipwiki_decided",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/shipwiki/push",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_shipwiki_push",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/soa/groups",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_soa_groups",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/soa/reviews/<sx_cd>/command",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_soa_review_command",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/soa/reviews/<sx_cd>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_soa_review_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/soa/reviews/open",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_soa_review_open",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/soa/reviews/snapshot",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_soa_review_snapshot",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/soa/vessel-owners",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_soa_vessel_owners",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/stt/jobs/<int:jid>/audio",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_stt_audio",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/stt/jobs/<int:jid>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_stt_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/stt/jobs/<int:jid>/summary_result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_stt_summary_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/stt/jobs/pending",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_stt_pending",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/stt/jobs/summary_pending",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_stt_summary_pending",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/summaries",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_summaries",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/summary-generate",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_summary_generate",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/supervisors",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_supervisors",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/surveys",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_surveys",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/svms/app_lines",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_svms_app_lines",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/version",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_version",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/vessels",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_vessels",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/vessels/<int:vid>/identifiers",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_ext_vessel_identifiers",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/vetting-digests",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_vetting_digests",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/vettings",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_vettings",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/vlcc-push/done",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_vlcc_push_done",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/vlcc-push/mark",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ext_vlcc_push_mark",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/vlcc-push/pending",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ext_vlcc_push_pending",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/data",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fleet_map_data",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/email-watch",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_fleet_map_email_watch_set",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/eta-override",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fleet_map_eta_override_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/eta-override",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_fleet_map_eta_override_set",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/next-port-override",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fleet_map_next_port_override_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/next-port-override",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_fleet_map_next_port_override_set",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/pos-source",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_fleet_map_pos_source_set",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/track",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fleet_map_track",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fleet-map/wind",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fleet_map_wind",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fundreq/drafts",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fundreq_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fundreq/drafts/<int:did>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fundreq_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fundreq/drafts/<int:did>/approve",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_fundreq_approve",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fundreq/drafts/<int:did>/attachments/<int:idx>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fundreq_attachment",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fundreq/drafts/<int:did>/reject",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_fundreq_reject",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fundreq/drafts/<int:did>/reset",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_fundreq_reset",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/fundreq/drafts/decided",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_fundreq_clear_decided",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_invoice_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts/<int:did>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_invoice_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts/<int:did>/approve",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_invoice_approve",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts/<int:did>/edit",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_invoice_edit",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts/<int:did>/pdf",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_invoice_pdf",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts/<int:did>/reject",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_invoice_reject",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts/<int:did>/reset",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_invoice_reset",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts/approve-bulk",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_invoice_approve_bulk",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/drafts/decided",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_invoice_clear_decided",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/invoice/expense-codes",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_invoice_expense_codes",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ios/device",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ios_device_register",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ios/device",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ios_device_unregister",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ios/notify-prefs",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ios_prefs_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ios/notify-prefs",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_ios_prefs_put",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ios/push/log/clear",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ios_push_log_clear",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ios/push/status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_ios_push_status",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ios/push/test",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_ios_push_test",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_issue_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_issue_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/<int:iid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_issue_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/<int:iid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_issue_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/<int:iid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_issue_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/<int:iid>/actions",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_issue_action_append",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/<int:iid>/actions/<int:idx>",
+  "methods": [
+   "OPTIONS",
+   "PATCH"
+  ],
+  "endpoint": "api_issue_action_patch",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/<int:iid>/attachments",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_attachment_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/export",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_issue_export",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/summary",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_issue_summary_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/summary-counts",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_issue_summary_counts",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/summary-export",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_issue_summary_export",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/issues/summary-generate",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_issue_summary_generate",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/me",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_me",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/me/password",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_me_password",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/mobile/issues",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_mobile_issue_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/approve-all",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_reqgen_approve_all",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/drafts",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_reqgen_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/drafts/<int:did>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_reqgen_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/drafts/<int:did>",
+  "methods": [
+   "OPTIONS",
+   "PATCH"
+  ],
+  "endpoint": "api_reqgen_patch",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/drafts/<int:did>/approve",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_reqgen_approve",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/drafts/<int:did>/reset",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_reqgen_reset",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/drafts/all",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_reqgen_clear_all",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/drafts/decided",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_reqgen_clear_decided",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/reqgen/upload",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_reqgen_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/roster-sync/status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_roster_sync_status",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/roster-sync/trigger",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_roster_sync_trigger",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/shipwiki/cards",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_shipwiki_cards",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/shipwiki/cards/<int:cid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_shipwiki_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/shipwiki/cards/<int:cid>/decide",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_shipwiki_decide",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/shipwiki/cards/<int:cid>/reset",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_shipwiki_reset",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/shipwiki/cards/applied",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_shipwiki_clear_applied",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/stt/jobs",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_stt_jobs_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/stt/jobs",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_stt_jobs_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/stt/jobs/<int:jid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_stt_job_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/stt/jobs/<int:jid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_stt_job_edit",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/stt/jobs/<int:jid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_stt_job_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/stt/jobs/<int:jid>/audio",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_stt_job_audio_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/stt/jobs/<int:jid>/audio",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_stt_job_audio_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/stt/jobs/<int:jid>/summarize",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_stt_job_summarize",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/supervisors",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_supervisor_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/supervisors",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_supervisors",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/supervisors/<int:sid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_supervisor_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/supervisors/<int:sid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_supervisor_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/users",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_user_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/users",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_users_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/users/<int:uid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_user_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/users/<int:uid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_user_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/users/<int:uid>/password",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_user_reset_password",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vessel-order",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_vessel_order",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vessels",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_vessel_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vessels",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_vessels",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vessels/<int:vid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "api_vessel_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vessels/<int:vid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "api_vessel_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vessels/<int:vid>/delete-impact",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_vessel_delete_impact",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vessels/active-counts",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_vessel_active_counts",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vessels/all",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_vessels_all",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_vetting_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vettings_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vetting_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vetting_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "ai_gemini.api_vetting_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>/attachments",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_vt_attachment_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>/attachments",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vt_attachments_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>/export",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vt_export",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>/extract-report",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_vt_extract_report",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>/findings",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_vt_findings_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vettings/<int:vid>/obs-summary",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_vt_obs_summary",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vlcc-push/status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_vlcc_push_status",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vlcc-push/trigger",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "api_vlcc_push_trigger",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vt-attachments/<int:aid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vt_attachment_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vt-attachments/<int:aid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vt_attachment_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vt-findings/<int:fid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vt_finding_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vt-findings/<int:fid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "ai_gemini.api_vt_finding_update",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/widget/fleet",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_widget_fleet",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/widget/issues",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_widget_issues",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/widget/vetting",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "api_widget_vetting",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/automation",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "automation_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/boarding",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "boarding_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/boarding/<int:rid>/edit",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "boarding_edit_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/calendar",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "calendar_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/class-status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "class_status_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/condition-survey",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "condition_survey",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/dashboard",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "dashboard",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/dashboard/classic",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "dashboard_classic",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/dock_procure",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "dock_procure_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/dock_procure/template/blank",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "dockproc_tmpl_blank",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/dock_procure/template/example",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "dockproc_tmpl_example",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/dry-dock",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "dry_dock_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/dry-dock/<int:rid>/edit",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "dry_dock_edit_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/expenses",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "expenses_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/expenses/<int:tid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "expense_detail_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/fundreq",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "fundreq_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/health",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "health_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/invoice",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "invoice_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/krcon",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "krcon_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/krcon/ai",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "krcon_ai",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/krcon/search",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "krcon_search",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/krcon/view/<doc_id>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "krcon_view",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/login",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "login",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/logout",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "logout",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/meeting",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "meeting_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/mobile",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "mobile_app",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/reqgen",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "reqgen_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/shipwiki",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "shipwiki_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/static/<path:filename>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "static",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/vetting-status",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "vetting_status",
+  "strict_slashes": true,
+  "defaults": {}
+ }
 ]

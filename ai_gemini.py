@@ -1,3 +1,50 @@
+"""Vetting / condition-survey APIs — the first boundary converted to a real module.
+
+Until 2026-08-11 this file was executed inside the ``app`` namespace by
+``_load_extracted_module``; every dependency was an invisible shared-global.
+It is now a normal imported module with a Blueprint: dependencies are the
+explicit imports below and nothing else, so a misspelled helper fails at
+import time instead of as a request-time ``NameError``.
+
+Import contract (enforced by ``test_converted_modules_are_self_contained``):
+only stdlib, Flask, and ``app`` (which includes everything ``helpers_shared.py``
+executed into it) — never a sibling ``routes_*`` boundary.
+
+Endpoints are prefixed ``ai_gemini.`` by the Blueprint; the URLs themselves are
+unchanged and no template or Python code referenced the old endpoint names
+(measured 2026-08-11: zero ``url_for``/nav hits).
+"""
+import json
+import os
+import re as _re_cls
+import uuid
+
+from flask import abort, jsonify, request, send_from_directory, session
+from flask import Blueprint
+
+from app import (
+    GEMINI_API_KEY,
+    UPLOAD_DIR,
+    VETTING_TYPES,
+    _MARITIME_TERMS,
+    _coerce_translation_items,
+    _ext_allowed,
+    _findings_workbook,
+    _gemini_call_json,
+    _model_for,
+    _safe_filename,
+    _vetting_display_order,
+    _vetting_with_counts,
+    _xlsx_to_text,
+    app,
+    execute,
+    login_required,
+    query,
+)
+
+bp = Blueprint("ai_gemini", __name__)
+
+
 
 
 
@@ -215,7 +262,7 @@ def _extract_findings_from_upload(f, kind):
     return _normalize_findings(parsed, kind), None
 
 
-@app.route('/api/cs/surveys/<int:sid>/extract-report', methods=['POST'])
+@bp.route('/api/cs/surveys/<int:sid>/extract-report', methods=['POST'])
 @login_required
 def api_cs_extract_report(sid):
     if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
@@ -228,7 +275,7 @@ def api_cs_extract_report(sid):
     return jsonify({'ok': True, 'items': items, 'count': len(items)})
 
 
-@app.route('/api/cs/surveys/<int:sid>/export')
+@bp.route('/api/cs/surveys/<int:sid>/export')
 @login_required
 def api_cs_survey_export(sid):
     from flask import send_file
@@ -258,7 +305,7 @@ def api_cs_survey_export(sid):
 
 # ----- CS 첨부파일 -----
 
-@app.route('/api/cs/surveys/<int:sid>/attachments', methods=['GET'])
+@bp.route('/api/cs/surveys/<int:sid>/attachments', methods=['GET'])
 @login_required
 def api_cs_attachments_list(sid):
     rows = query(
@@ -268,7 +315,7 @@ def api_cs_attachments_list(sid):
     return jsonify([dict(r) for r in rows])
 
 
-@app.route('/api/cs/surveys/<int:sid>/attachments', methods=['POST'])
+@bp.route('/api/cs/surveys/<int:sid>/attachments', methods=['POST'])
 @login_required
 def api_cs_attachment_upload(sid):
     if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
@@ -295,7 +342,7 @@ def api_cs_attachment_upload(sid):
     return jsonify({'id': aid, 'filename': f.filename, 'file_size': size}), 201
 
 
-@app.route('/api/cs/attachments/<int:aid>', methods=['GET'])
+@bp.route('/api/cs/attachments/<int:aid>', methods=['GET'])
 @login_required
 def api_cs_attachment_get(aid):
     a = query('SELECT * FROM cs_attachments WHERE id=?', (aid,), one=True)
@@ -309,7 +356,7 @@ def api_cs_attachment_get(aid):
     )
 
 
-@app.route('/api/cs/attachments/<int:aid>', methods=['DELETE'])
+@bp.route('/api/cs/attachments/<int:aid>', methods=['DELETE'])
 @login_required
 def api_cs_attachment_delete(aid):
     a = query('SELECT * FROM cs_attachments WHERE id=?', (aid,), one=True)
@@ -334,7 +381,7 @@ def api_cs_attachment_delete(aid):
 
 # ----- Vettings (vessel별 그룹) -----
 
-@app.route('/api/vettings', methods=['GET'])
+@bp.route('/api/vettings', methods=['GET'])
 @login_required
 def api_vettings_list():
     """선박별 vetting 그룹 응답.
@@ -420,7 +467,7 @@ def api_vettings_list():
     return jsonify(out)
 
 
-@app.route('/api/vettings', methods=['POST'])
+@bp.route('/api/vettings', methods=['POST'])
 @login_required
 def api_vetting_create():
     """단일 vetting 생성. 선박 ID만 필수, 나머지는 선택."""
@@ -460,7 +507,7 @@ def api_vetting_create():
     return jsonify(_vetting_with_counts(row)), 201
 
 
-@app.route('/api/vettings/<int:vid>', methods=['GET'])
+@bp.route('/api/vettings/<int:vid>', methods=['GET'])
 @login_required
 def api_vetting_get(vid):
     v = query('SELECT * FROM vettings WHERE id=?', (vid,), one=True)
@@ -472,7 +519,7 @@ def api_vetting_get(vid):
     return jsonify(d)
 
 
-@app.route('/api/vettings/<int:vid>', methods=['PUT'])
+@bp.route('/api/vettings/<int:vid>', methods=['PUT'])
 @login_required
 def api_vetting_update(vid):
     if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
@@ -493,7 +540,7 @@ def api_vetting_update(vid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/vettings/<int:vid>', methods=['DELETE'])
+@bp.route('/api/vettings/<int:vid>', methods=['DELETE'])
 @login_required
 def api_vetting_delete(vid):
     # 첨부 파일도 같이 삭제 (CASCADE는 DB만, 파일은 직접)
@@ -516,7 +563,7 @@ def _vt_next_no(vid):
     return r['next']
 
 
-@app.route('/api/vettings/<int:vid>/findings', methods=['POST'])
+@bp.route('/api/vettings/<int:vid>/findings', methods=['POST'])
 @login_required
 def api_vt_findings_create(vid):
     """단건 또는 배치(items 배열) 생성."""
@@ -553,7 +600,7 @@ def api_vt_findings_create(vid):
     return jsonify({'ids': created, 'count': len(created)}), 201
 
 
-@app.route('/api/vt-findings/<int:fid>', methods=['PUT'])
+@bp.route('/api/vt-findings/<int:fid>', methods=['PUT'])
 @login_required
 def api_vt_finding_update(fid):
     cur = query('SELECT vetting_id, status FROM vt_findings WHERE id=?', (fid,), one=True)
@@ -582,7 +629,7 @@ def api_vt_finding_update(fid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/vt-findings/<int:fid>', methods=['DELETE'])
+@bp.route('/api/vt-findings/<int:fid>', methods=['DELETE'])
 @login_required
 def api_vt_finding_delete(fid):
     f = query('SELECT vetting_id FROM vt_findings WHERE id=?', (fid,), one=True)
@@ -702,7 +749,7 @@ def _extract_vetting_from_upload(f):
     return items, meta, None
 
 
-@app.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
+@bp.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
 @login_required
 def api_vt_extract_report(vid):
     if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
@@ -786,7 +833,7 @@ def _condense_obs(items):
     return out
 
 
-@app.route('/api/vettings/<int:vid>/obs-summary', methods=['POST'])
+@bp.route('/api/vettings/<int:vid>/obs-summary', methods=['POST'])
 @login_required
 def api_vt_obs_summary(vid):
     """Priority 체크 + Open 항목 기준으로 '지적 상세' 요약을 생성해 overall_remark에 기록."""
@@ -831,7 +878,7 @@ def api_vt_obs_summary(vid):
                     'total_open': total_open, 'priority_open': len(prio), 'minor': minor})
 
 
-@app.route('/api/vettings/<int:vid>/export')
+@bp.route('/api/vettings/<int:vid>/export')
 @login_required
 def api_vt_export(vid):
     from flask import send_file
@@ -861,7 +908,7 @@ def api_vt_export(vid):
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@app.route('/api/vettings/<int:vid>/attachments', methods=['GET'])
+@bp.route('/api/vettings/<int:vid>/attachments', methods=['GET'])
 @login_required
 def api_vt_attachments_list(vid):
     rows = query(
@@ -871,7 +918,7 @@ def api_vt_attachments_list(vid):
     return jsonify([dict(r) for r in rows])
 
 
-@app.route('/api/vettings/<int:vid>/attachments', methods=['POST'])
+@bp.route('/api/vettings/<int:vid>/attachments', methods=['POST'])
 @login_required
 def api_vt_attachment_upload(vid):
     if not query('SELECT id FROM vettings WHERE id=?', (vid,), one=True):
@@ -898,7 +945,7 @@ def api_vt_attachment_upload(vid):
     return jsonify({'id': aid, 'filename': f.filename, 'file_size': size}), 201
 
 
-@app.route('/api/vt-attachments/<int:aid>', methods=['GET'])
+@bp.route('/api/vt-attachments/<int:aid>', methods=['GET'])
 @login_required
 def api_vt_attachment_get(aid):
     a = query('SELECT * FROM vt_attachments WHERE id=?', (aid,), one=True)
@@ -912,7 +959,7 @@ def api_vt_attachment_get(aid):
     )
 
 
-@app.route('/api/vt-attachments/<int:aid>', methods=['DELETE'])
+@bp.route('/api/vt-attachments/<int:aid>', methods=['DELETE'])
 @login_required
 def api_vt_attachment_delete(aid):
     a = query('SELECT * FROM vt_attachments WHERE id=?', (aid,), one=True)

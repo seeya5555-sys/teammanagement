@@ -1519,7 +1519,20 @@ def _load_extracted_module(filename):
         exec(compile(_source.read(), _path, 'exec'), globals(), globals())
 _load_extracted_module("helpers_shared.py")
 _load_extracted_module("routes_core.py")
-_load_extracted_module("ai_gemini.py")
+# ai_gemini is a real module since 2026-08-11 — imported, not exec'd.
+# Its `from app import ...` works because this line runs after helpers_shared
+# and the app.py primitives it needs are already bound.
+#
+# The alias below is what keeps `python app.py` (the dev entry point) alive:
+# run as a script this file is module `__main__`, so without the alias
+# `from app import ...` would execute app.py a SECOND time as module "app" —
+# and that second pass would reach its own `import ai_gemini` while ai_gemini
+# is still half-initialized (`bp` not yet bound) and crash.  With the alias the
+# import resolves to the already-running module.  A no-op under gunicorn/tests,
+# where this file is imported as "app" in the first place.
+sys.modules.setdefault('app', sys.modules[__name__])
+import ai_gemini
+app.register_blueprint(ai_gemini.bp)
 _load_extracted_module("routes_calendar_dock.py")
 _load_extracted_module("routes_dock_submit.py")
 _load_extracted_module("routes_tail.py")

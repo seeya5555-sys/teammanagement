@@ -96,6 +96,24 @@ def boundary_files():
     return [main] + [ROOT / name for name in loaded]
 
 
+def converted_modules():
+    """Blueprint 로 전환된 실제 모듈 목록 — app.py 의 register_blueprint 에서 도출.
+
+    수동 목록은 다음 전환 때 등록 누락으로 검사가 조용히 빠진다. 최상위
+    `app.register_blueprint(<mod>.bp)` 형태만 인정한다.
+    """
+    tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
+    names = []
+    for stmt in tree.body:
+        node = stmt.value if isinstance(stmt, ast.Expr) else None
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "register_blueprint"
+                and node.args and isinstance(node.args[0], ast.Attribute)
+                and isinstance(node.args[0].value, ast.Name)):
+            names.append(node.args[0].value.id + ".py")
+    return names
+
+
 def _table(path):
     source = path.read_text(encoding="utf-8")
     return symtable.symtable(source, str(path), "exec")
@@ -258,6 +276,65 @@ class BoundaryDependencyGraphTests(unittest.TestCase):
             "경계 층위 위반(형제 경계 참조 — 공용이면 helpers_shared.py 로 옮길 것):\n"
             + "\n".join(f"  {s} → {d}" for s, d in violations.items()),
         )
+
+    def test_converted_modules_are_self_contained(self):
+        """Blueprint 로 전환된 실제 모듈의 계약: 모든 전역 참조는 명시 import 다.
+
+        exec 경계는 공유 네임스페이스라 그래프 분석이 필요했지만, 전환된 모듈은
+        더 강한 계약을 직접 검증할 수 있다 — 모듈 안에서 참조하는 모든 이름이
+        그 모듈의 import/def/대입으로 바인딩돼 있어야 한다(미해결 이름 0).
+        미해결 이름이 하나라도 있으면 그 라우트는 호출 시점 NameError 다.
+
+        검사 대상은 손으로 관리하지 않고 app.py 의 register_blueprint 호출에서
+        자동 도출한다(올마이트 2026-08-11: 수동 목록은 다음 전환 때 등록 누락
+        가능). 아울러 import 대상도 계약이다: 형제 routes_* 경계나 exec 경계인
+        helpers_shared 를 import 하면 층위 위반이므로 여기서 함께 금지한다 —
+        허용은 stdlib/서드파티/app 뿐.
+        """
+        converted = converted_modules()
+        self.assertTrue(converted, "전환 모듈 자동 도출 실패 — register_blueprint 호출을 못 찾음")
+        boundary_names = {p.stem for p in boundary_files()} - {"app"}
+        for filename in converted:
+            tree = ast.parse((ROOT / filename).read_text(encoding="utf-8"), filename=filename)
+            banned = []
+            for node in ast.walk(tree):
+                mods = []
+                if isinstance(node, ast.Import):
+                    mods = [a.name.split(".")[0] for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    mods = [node.module.split(".")[0]]
+                banned += [m for m in mods if m in boundary_names or m in {Path(c).stem for c in converted if c != filename}]
+            self.assertEqual(
+                [], banned,
+                f"{filename}: 형제 경계 import 금지 위반 — 공용이면 helpers_shared(즉 app 경유)로: {banned}",
+            )
+        for filename in converted:
+            path = ROOT / filename
+            top = _table(path)
+            provided = {
+                s.get_name() for s in top.get_symbols()
+                if s.is_assigned() or s.is_imported() or s.is_namespace()
+            }
+            referenced = set()
+
+            def scan(table, is_module):
+                for sym in table.get_symbols():
+                    if not sym.is_referenced():
+                        continue
+                    if is_module:
+                        if not (sym.is_assigned() or sym.is_imported() or sym.is_namespace()):
+                            referenced.add(sym.get_name())
+                    elif sym.is_global():
+                        referenced.add(sym.get_name())
+                for child in table.get_children():
+                    scan(child, False)
+
+            scan(top, True)
+            unresolved = sorted(referenced - provided - BUILTIN_NAMES)
+            self.assertEqual(
+                [], unresolved,
+                f"{filename}: import 없이 참조되는 이름(호출 시점 NameError): {unresolved}",
+            )
 
     def test_recorded_boundary_paths_match_loader(self):
         """app.py 가 reloader 에 넘기는 경로 목록이 실제 로드 목록과 같은지.

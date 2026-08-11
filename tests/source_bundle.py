@@ -21,17 +21,28 @@ ROOT = Path(__file__).resolve().parents[1]
 def _loaded_boundaries():
     # 최상위 Expr(Call) 만 실제 로더로 인정한다: ast.walk 전체를 세면 함수 안이나
     # 죽은 분기의 호출까지 로드된 경계로 오인한다 (올마이트 2026-08-11 지적).
+    #
+    # 번들은 두 종류의 경계를 모두 포함해야 한다:
+    #   · exec 로 로드되는 경계  — _load_extracted_module("<file>.py")
+    #   · Blueprint 로 전환된 실제 모듈 — app.register_blueprint(<mod>.bp)
+    # 전환된 모듈을 빼먹으면 소스 계약 테스트가 그 코드를 더는 읽지 않는데도
+    # 초록으로 남는다 (helpers_shared 추출 때 실제로 벌어진 사각지대와 동형).
     tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
     names = []
     for stmt in tree.body:
         node = stmt.value if isinstance(stmt, ast.Expr) else None
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == "_load_extracted_module"
+        if not isinstance(node, ast.Call):
+            continue
+        if (isinstance(node.func, ast.Name) and node.func.id == "_load_extracted_module"
                 and node.args and isinstance(node.args[0], ast.Constant)
                 and isinstance(node.args[0].value, str)):
             names.append(node.args[0].value)
+        elif (isinstance(node.func, ast.Attribute) and node.func.attr == "register_blueprint"
+                and node.args and isinstance(node.args[0], ast.Attribute)
+                and isinstance(node.args[0].value, ast.Name)):
+            names.append(node.args[0].value.id + ".py")
     if not names:
-        raise AssertionError("app.py 에서 _load_extracted_module 호출을 못 찾음 — 번들이 비게 된다")
+        raise AssertionError("app.py 에서 경계 로드(_load_extracted_module/register_blueprint)를 못 찾음 — 번들이 비게 된다")
     return names
 
 
