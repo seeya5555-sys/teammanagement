@@ -125,6 +125,28 @@ class ProductizationGatesTests(unittest.TestCase):
         }
         self.assertEqual(expected_pages, exercised)
 
+    def test_error_page_templates_render(self):
+        """404.html 은 어떤 라우트에도 안 붙어 있어 위의 라우트 스모크가 못 건드린다.
+
+        이 템플릿도 `url_for('dashboard')` 를 쓰므로, endpoint 이름이 바뀌는 변경
+        (특히 Blueprint 전환)에서 404 페이지만 500 으로 죽는 구멍이 생긴다.
+        errorhandler 를 직접 태워서 그 구멍을 막는다.
+        """
+        response = self.client.get("/this-path-does-not-exist")
+        self.assertEqual(404, response.status_code)
+        self.assertIn("text/html", response.content_type)
+        body = response.get_data(as_text=True)
+        # 상태코드·content-type 만 보면 템플릿이 실제로 렌더됐는지 알 수 없다.
+        # 404.html 고유 문구와, 문제의 url_for 결과인 대시보드 링크를 직접 확인한다.
+        self.assertIn("페이지를 찾을 수 없습니다 (404)", body,
+                      "404.html 이 렌더되지 않았음 — 다른 응답이 404 를 대신하고 있음")
+        self.assertIn('href="/dashboard"', body,
+                      "url_for('dashboard') 결과가 없음 — endpoint 이름 변경에 이 페이지가 취약")
+
+        api_response = self.client.get("/api/this-path-does-not-exist")
+        self.assertEqual(404, api_response.status_code)
+        self.assertEqual({"error": "not found"}, api_response.get_json())
+
 
 if __name__ == "__main__":
     unittest.main()

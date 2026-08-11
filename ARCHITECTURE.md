@@ -7,19 +7,78 @@ configuration, the Flask instance, database primitives, authentication hooks,
 and the historical public helper names.  The implementation loaded into that
 namespace is split into five focused boundaries:
 
-- `routes_core.py`: authentication, dashboard, issues, vessels, and survey
-  routes;
-- `ai_gemini.py`: report extraction/translation and AI-adjacent pure helpers;
-- `routes_calendar_dock.py`: calendar, survey/vetting, expenses, and dock
-  operations;
-- `routes_dock_submit.py`: dock procurement/inquiry submission workflows;
-- `routes_tail.py`: ShipWiki, fleet map, Class Status, iOS, and push routes.
+Boundary contents below are measured from the route decorators actually present
+in each file, not from intent.  Counts are `@app.route` declarations.
+
+- `routes_core.py` (59 routes): login/logout/auth, dashboard, issues, vessels,
+  users/supervisors, widget, condition-survey CRUD (`/api/cs/surveys`), and the
+  `/calendar`, `/condition-survey`, `/vetting-status`, `/dry-dock` **pages**;
+- `ai_gemini.py` (21 routes): vetting CRUD (`/api/vettings`), findings and
+  attachments, plus report extraction/translation and AI-adjacent pure helpers;
+- `routes_calendar_dock.py` (204 routes): the `/api/ext/*` worker surface (74),
+  calendar/report/expense/business-trip APIs, STT, and the money APIs
+  (`/api/invoice`, `/api/fundreq`, `/api/aor`, `/api/reqgen`);
+- `routes_dock_submit.py` (73 routes): dock procurement/inquiry/submit/yard
+  workflows and the ShipWiki card surface (`/shipwiki`, `/api/shipwiki/*`);
+- `routes_tail.py` (38 routes): Class Status, fleet map, iOS and `/api/ext/push`
+  delivery, ShipWiki push callbacks, and `/dashboard/classic`.
+
+Two naming traps follow from the measurement and are load-bearing when locating
+code: **vetting APIs live in `ai_gemini.py`, not `routes_calendar_dock.py`**, and
+the **`/calendar` page lives in `routes_core.py`** while only calendar *APIs* are
+in `routes_calendar_dock.py`.  ShipWiki is split by direction: the card surface
+is in `routes_dock_submit.py`, the push callbacks in `routes_tail.py`.
 
 The loader executes each boundary in the application namespace.  This is
 intentional: decorators still register on the one Flask app, `import app` and
 `wsgi:application` remain valid, and existing imports do not silently change.
 New non-trivial code goes directly into an extracted boundary; `app.py` is not
 the destination for new features.
+
+The development server does not watch these files by default: they never enter
+`sys.modules`, and the reloader watches imported modules only.  `app.py` records
+each loaded path in `EXTRACTED_BOUNDARY_PATHS` and passes it to `app.run` as
+`extra_files`, so an edit to a boundary restarts the dev server instead of
+silently doing nothing.  Production runs under gunicorn and is unaffected.
+
+## Boundary coupling (read before any Blueprint work)
+
+Because the boundaries share one namespace, cross-file dependencies are real but
+undeclared — no `import` line records them.  Two consequences are handled by
+`tests/test_boundary_dependency_graph.py`:
+
+- a misspelled helper name is not a startup error but a **request-time
+  `NameError`**, so `test_no_unresolved_names` performs the undefined-name check
+  that a normal module structure would delegate to static analysis.  Name
+  resolution uses `symtable`, the same scope analysis CPython compiles with, so
+  function locals, arguments, comprehension variables, closure free variables and
+  `global` declarations are distinguished correctly.  An earlier `ast.walk`
+  version pooled every binding per file and therefore treated one function's
+  local as a module-level provider, silently accepting a typo elsewhere in the
+  same file; that under-detection is what the scope-aware version fixes.  This is
+  the deliberate substitute for a linter here: `flake8`/`ruff` would report every
+  cross-boundary free variable as F821 and require a blanket suppression, which
+  detects nothing.  The residual, accepted cost is that IDE go-to-definition
+  still does not cross a boundary; that is resolved only when boundaries become
+  real modules with explicit imports;
+- no top-level name may be provided by two boundaries.  If it were, the effective
+  binding would be whichever file loads last, and "which boundary does this
+  depend on" would stop being well defined;
+- the dependency graph is frozen in
+  `tests/fixtures/boundary_dependency_graph.json` (22 edges, 232 symbols) and is
+  the concrete import list a Blueprint conversion has to satisfy.  It is a list of
+  required imports, not a proof that those imports are acyclic: load-time and
+  request-time references are not distinguished, and dynamic access through
+  `globals()` or `getattr` is invisible to it.
+
+The measured graph is **cyclic**: every boundary depends on at least one other,
+`routes_dock_submit.py` consumes 43 symbols from `routes_calendar_dock.py`, and
+`app.py` itself consumes 5 symbols from `routes_calendar_dock.py`.  This does not
+make a Blueprint conversion impossible — a façade, dependency inversion, or a
+temporary compatibility import can each carry a gradual move.  What it does mean
+is that **the boundaries are not independently movable as they stand**, so an
+explicit dependency plan (which shared helpers move out of the cycle first, and
+by which mechanism) is a prerequisite rather than part of the move itself.
 
 ## Database and persistent state
 
@@ -56,7 +115,22 @@ gates.
 `tests/fixtures/url_map_snapshot.json` is the route contract: rule, method set,
 endpoint name, `strict_slashes`, and defaults are reviewed together.  The
 authenticated HTML smoke gate exercises every non-API HTML GET route and
-requires an explicit safe fixture for parameterized pages.  iOS `TRMTTests`
+requires an explicit safe fixture for parameterized pages.  `404.html` is
+reached by no route, so it is exercised through the error handler instead; it
+renders `url_for('dashboard')` and would otherwise be the one template an
+endpoint rename could break unobserved.
+
+Note what the route contract does **not** cover: it compares rule, method, and
+endpoint name, so a route that keeps its URL while losing `@admin_required`
+passes it.  `tests/test_money_path_guard_contract.py` closes that specific gap
+for the money path with a static decorator check (including decorator order —
+a guard placed above `@app.route` is discarded by Flask) and a runtime check
+that all 43 money rule/method pairs reject anonymous and non-admin callers.
+`tests/test_money_bulk_contract.py` covers the two highest-consequence money
+routes that no test previously named, asserting final database state rather than
+response counts: bulk approval must not re-approve already decided or in-flight
+rows (double execution), and the decided-row purge must not delete live rows.
+iOS `TRMTTests`
 contains pure model/normalization tests and is generated from `project.yml`;
 the workspace CI workflow runs `xcodegen` followed by `xcodebuild test`.
 

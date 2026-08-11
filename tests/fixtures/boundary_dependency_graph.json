@@ -1,0 +1,290 @@
+{
+  "ai_gemini.py": {
+    "app.py": [
+      "UPLOAD_DIR",
+      "abort",
+      "app",
+      "execute",
+      "json",
+      "jsonify",
+      "os",
+      "query",
+      "request",
+      "send_from_directory",
+      "session",
+      "uuid"
+    ],
+    "routes_calendar_dock.py": [
+      "GEMINI_API_KEY",
+      "GEMINI_MODEL",
+      "_ext_allowed",
+      "_model_for",
+      "_safe_filename"
+    ],
+    "routes_core.py": [
+      "login_required"
+    ],
+    "routes_tail.py": [
+      "_re_cls",
+      "_xlsx_to_text"
+    ]
+  },
+  "app.py": {
+    "routes_calendar_dock.py": [
+      "_AOR_ACTIVE_STATUSES",
+      "_API_TABLE_READY",
+      "_aor_absorbing_trigger_install",
+      "_aor_active_index_install",
+      "_aor_status_list_sql"
+    ]
+  },
+  "routes_calendar_dock.py": {
+    "ai_gemini.py": [
+      "CAL_VALID_COLORS",
+      "_gemini_call_json",
+      "_vetting_pick"
+    ],
+    "app.py": [
+      "ALLOWED_EXT",
+      "AOR_PDF_DIR",
+      "BytesIO",
+      "DATABASE",
+      "DOCKATT_FILE_DIR",
+      "FUNDREQ_FILE_DIR",
+      "HTTPException",
+      "INVOICE_PDF_DIR",
+      "SOA_REVIEW_PDF_DIR",
+      "STT_AUDIO_DIR",
+      "STT_AUDIO_EXT",
+      "STT_LEASE_SEC",
+      "STT_MAX_ATTEMPTS",
+      "STT_MAX_BYTES",
+      "UPLOAD_DIR",
+      "_NON_STT_UPLOAD_MAX",
+      "abort",
+      "app",
+      "datetime",
+      "execute",
+      "execute_rc",
+      "g",
+      "get_db",
+      "hashlib",
+      "hmac",
+      "json",
+      "jsonify",
+      "make_response",
+      "math",
+      "mimetypes",
+      "os",
+      "query",
+      "re",
+      "render_template",
+      "request",
+      "secrets",
+      "secure_filename",
+      "send_file",
+      "send_from_directory",
+      "session",
+      "sqlite3",
+      "threading",
+      "timedelta",
+      "url_for",
+      "uuid",
+      "wraps"
+    ],
+    "routes_core.py": [
+      "_ensure_summary_table",
+      "_issue_write_scope",
+      "_run_summary_generate",
+      "admin_required",
+      "login_required"
+    ],
+    "routes_tail.py": [
+      "_annotate_drafts_with_vessel",
+      "_cls_handle_files",
+      "_match_vessel_by_name"
+    ]
+  },
+  "routes_core.py": {
+    "ai_gemini.py": [
+      "VETTING_TYPES",
+      "_gen_issue_summaries",
+      "_latest_action",
+      "_latest_action_progress",
+      "_md_label",
+      "_translate_rows_en",
+      "_vetting_pick"
+    ],
+    "app.py": [
+      "INSTANCE_DIR",
+      "SOA_REVIEW_PDF_DIR",
+      "UPLOAD_DIR",
+      "_DUMMY_PW_HASH",
+      "_TOKEN_MAXAGE",
+      "_issue_token",
+      "_token_note_fail",
+      "_token_rate_limited",
+      "_token_reset_fails",
+      "abort",
+      "app",
+      "check_password_hash",
+      "date",
+      "datetime",
+      "execute",
+      "execute_rc",
+      "g",
+      "generate_password_hash",
+      "get_db",
+      "json",
+      "jsonify",
+      "make_response",
+      "os",
+      "query",
+      "re",
+      "redirect",
+      "render_template",
+      "request",
+      "session",
+      "sqlite3",
+      "timedelta",
+      "url_for",
+      "wraps"
+    ],
+    "routes_calendar_dock.py": [
+      "_automation_health_summary",
+      "_safe_filename",
+      "_soa_review_attachment_path",
+      "_vkey"
+    ],
+    "routes_tail.py": [
+      "_fleet_visible_auto_vessels"
+    ]
+  },
+  "routes_dock_submit.py": {
+    "ai_gemini.py": [
+      "_gemini_call_json"
+    ],
+    "app.py": [
+      "JEONJA_PDF_DIR",
+      "abort",
+      "app",
+      "execute",
+      "execute_rc",
+      "get_db",
+      "hashlib",
+      "json",
+      "jsonify",
+      "math",
+      "os",
+      "query",
+      "re",
+      "render_template",
+      "request",
+      "send_file",
+      "session",
+      "socket",
+      "sqlite3",
+      "urllib",
+      "uuid"
+    ],
+    "routes_calendar_dock.py": [
+      "AUTOMATION_MODES",
+      "GEMINI_API_KEY",
+      "_DOCKPROC_ATT_MAX",
+      "_DOCKPROC_CAT_NM",
+      "_DOCKPROC_PRE_INQUIRY",
+      "_DOCK_INQ_DOC",
+      "_FUNDREQ_ATT_INLINE",
+      "_FUNDREQ_ATT_MAX",
+      "_FUNDREQ_ATT_MIME",
+      "_automation_enabled",
+      "_dock_sync_flag_bump",
+      "_dockatt_cached_idx",
+      "_dockatt_disk_map",
+      "_dockatt_find",
+      "_dockatt_fp",
+      "_dockatt_gc",
+      "_dockatt_path",
+      "_dockproc_adopt_svms",
+      "_dockproc_cat_code",
+      "_dockproc_files_of",
+      "_dockproc_hard_n",
+      "_dockproc_hash",
+      "_dockproc_inq_stage_block",
+      "_dockproc_inq_target",
+      "_dockproc_norm_files",
+      "_dockproc_norm_orders",
+      "_dockproc_norm_quotes",
+      "_dockproc_orders_of",
+      "_dockproc_push_events",
+      "_dockproc_source",
+      "_dockproc_status_rank",
+      "_dockproc_subject_from_svms",
+      "_dockproc_submit_has_quotes",
+      "_ensure_api_table",
+      "_fundreq_att_ext",
+      "_fundreq_att_sniff_ok",
+      "_reqgen_build_subj",
+      "_reqgen_vsl_prefix",
+      "_soa_review_case_unlock",
+      "_soa_vessel_codes_from_params",
+      "_soa_vessel_params",
+      "api_key_required",
+      "automation_tasks"
+    ],
+    "routes_core.py": [
+      "admin_required",
+      "login_required"
+    ],
+    "routes_tail.py": [
+      "_push_outbox_add",
+      "_push_outbox_drain"
+    ]
+  },
+  "routes_tail.py": {
+    "ai_gemini.py": [
+      "_MARITIME_TERMS",
+      "_findings_workbook",
+      "_gemini_call_json"
+    ],
+    "app.py": [
+      "BASE_DIR",
+      "INSTANCE_DIR",
+      "UPLOAD_DIR",
+      "abort",
+      "app",
+      "datetime",
+      "execute",
+      "execute_rc",
+      "get_db",
+      "http",
+      "json",
+      "jsonify",
+      "math",
+      "os",
+      "query",
+      "re",
+      "render_template",
+      "request",
+      "secure_filename",
+      "session",
+      "sqlite3",
+      "threading",
+      "time",
+      "timedelta",
+      "urllib",
+      "uuid"
+    ],
+    "routes_calendar_dock.py": [
+      "_ensure_api_table",
+      "_model_for",
+      "_vkey",
+      "api_key_required"
+    ],
+    "routes_core.py": [
+      "_dashboard_ctx",
+      "admin_required",
+      "login_required"
+    ]
+  }
+}

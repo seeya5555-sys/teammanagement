@@ -1496,6 +1496,9 @@ def _idem_mark_unknown(exc=None):
 # ═════════════════════════════════════════════════════════════════
 #  Extracted implementation boundaries
 # ═════════════════════════════════════════════════════════════════
+EXTRACTED_BOUNDARY_PATHS = []
+
+
 def _load_extracted_module(filename):
     """Load a boundary in the application namespace.
 
@@ -1503,8 +1506,15 @@ def _load_extracted_module(filename):
     letting route/helper implementations live in focused files.  Decorators
     therefore register on this same Flask app and existing helper aliases stay
     available to callers.
+
+    The loaded path is recorded because these files never enter ``sys.modules``:
+    the development reloader watches imported modules only, so without an
+    explicit ``extra_files`` list an edit to a boundary would not restart the
+    dev server ("fixed it but nothing changed").  Production runs under gunicorn
+    and is unaffected either way.
     """
     _path = os.path.join(BASE_DIR, filename)
+    EXTRACTED_BOUNDARY_PATHS.append(_path)
     with open(_path, encoding='utf-8') as _source:
         exec(compile(_source.read(), _path, 'exec'), globals(), globals())
 _load_extracted_module("routes_core.py")
@@ -1890,4 +1900,7 @@ if __name__ == '__main__':
     # 기본 off. 로컬 개발 시 TRMT_DEBUG=1 로 실행.
     debug = os.environ.get('TRMT_DEBUG') == '1'
     # threaded: 요청을 스레드로 병렬 처리(개발서버 단일요청 병목 해소, 임시 조치).
-    app.run(host='0.0.0.0', port=5000, debug=debug, threaded=True)
+    # extra_files: 추출 경계는 sys.modules 에 없어 reloader 기본 감시 대상이 아니다.
+    # debug=False 면 reloader 자체가 안 돌아 이 인자는 무해하다.
+    app.run(host='0.0.0.0', port=5000, debug=debug, threaded=True,
+            extra_files=EXTRACTED_BOUNDARY_PATHS)
