@@ -21,6 +21,7 @@
 import os
 import secrets
 import sqlite3
+import tempfile
 from datetime import timedelta
 
 from flask import Flask, g
@@ -38,15 +39,6 @@ FUNDREQ_FILE_DIR = os.path.join(INSTANCE_DIR, 'fundreq_files')  # 비용청구 S
 SOA_REVIEW_PDF_DIR = os.path.join(INSTANCE_DIR, 'soa_review_pdfs')  # SOA 수동검토 첨부 PDF cache
 DOCKATT_FILE_DIR = os.path.join(INSTANCE_DIR, 'dockproc_files')  # Dock 발주현황 벤더 견적서(SVMS MAOE) preview cache
 STT_AUDIO_DIR = os.path.join(INSTANCE_DIR, 'stt_audio')       # 회의록 STT 원본 오디오 cache
-os.makedirs(INSTANCE_DIR, exist_ok=True)
-os.makedirs(UPLOAD_DIR,   exist_ok=True)
-os.makedirs(INVOICE_PDF_DIR, exist_ok=True)
-os.makedirs(JEONJA_PDF_DIR, exist_ok=True)
-os.makedirs(AOR_PDF_DIR, exist_ok=True)
-os.makedirs(FUNDREQ_FILE_DIR, exist_ok=True)
-os.makedirs(SOA_REVIEW_PDF_DIR, exist_ok=True)
-os.makedirs(DOCKATT_FILE_DIR, exist_ok=True)
-os.makedirs(STT_AUDIO_DIR, exist_ok=True)
 # 회의록 STT Phase 0a 상수
 STT_AUDIO_EXT = {'m4a', 'wav', 'mp3', 'aac', 'caf', 'webm', 'ogg', 'mp4', 'aiff', 'flac'}
 STT_MAX_BYTES = 200 * 1024 * 1024   # 200MB 상한
@@ -63,18 +55,64 @@ ALLOWED_EXT = {
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'msg'
 }
 
+_RUNTIME_DIRS = (
+    INSTANCE_DIR, UPLOAD_DIR, INVOICE_PDF_DIR, JEONJA_PDF_DIR, AOR_PDF_DIR,
+    FUNDREQ_FILE_DIR, SOA_REVIEW_PDF_DIR, DOCKATT_FILE_DIR, STT_AUDIO_DIR,
+)
+
+
 def _load_or_create_secret_key():
-    if os.path.exists(SECRET_KEY_FILE):
+    """Load the durable key, atomically publishing it once when absent."""
+    try:
         with open(SECRET_KEY_FILE, 'rb') as f:
-            return f.read()
-    key = secrets.token_bytes(32)
-    with open(SECRET_KEY_FILE, 'wb') as f:
-        f.write(key)
+            key = f.read()
+    except FileNotFoundError:
+        key = secrets.token_bytes(32)
+        secret_dir = os.path.dirname(SECRET_KEY_FILE)
+        fd, candidate = tempfile.mkstemp(prefix='.secret_key.', dir=secret_dir)
+        try:
+            try:
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(key)
+                    f.flush()
+                    os.fsync(f.fileno())
+                # Hard-link publication is atomic and never replaces a winner.
+                # Unlike O_EXCL + write, readers can only observe a complete file.
+                os.link(candidate, SECRET_KEY_FILE)
+            except FileExistsError:
+                with open(SECRET_KEY_FILE, 'rb') as f:
+                    key = f.read()
+        finally:
+            try:
+                os.unlink(candidate)
+            except OSError:
+                pass
+    if not key:
+        raise RuntimeError(f'empty secret key file: {SECRET_KEY_FILE}')
     return key
+
+
+def init_runtime():
+    """Create runtime directories and switch Flask to the persisted key.
+
+    Importing this module deliberately has no filesystem side effects.  Startup
+    and migration entry points call this idempotent initializer explicitly.
+    """
+    for path in _RUNTIME_DIRS:
+        os.makedirs(path, exist_ok=True)
+    key = _load_or_create_secret_key()
+    app.config['SECRET_KEY'] = key
+    return key
+
+
+# Descriptive alias for callers that prefer the full name.
+initialize_runtime = init_runtime
 
 app = Flask(__name__)
 app.config.update(
-    SECRET_KEY=_load_or_create_secret_key(),
+    # A fresh import needs a usable key for Flask's session machinery, but must
+    # not create instance/.secret_key until an explicit runtime initializer runs.
+    SECRET_KEY=secrets.token_bytes(32),
     DATABASE=DATABASE,
     UPLOAD_FOLDER=UPLOAD_DIR,
     MAX_CONTENT_LENGTH=STT_MAX_BYTES + (1 << 20),  # 상한=회의록 오디오 200MB. 그 외 업로드는 before_request서 20MB로 조임

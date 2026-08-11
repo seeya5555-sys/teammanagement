@@ -37,10 +37,9 @@ jobs:
 
   prod-parity:
     # 프로덕션 서버는 python 3.9.25 로 돌아간다(개발/CI 는 3.12).
-    # 이 job 은 그 간극을 관측하기 위한 정보용이며 머지를 막지 않는다.
-    name: prod-parity (python 3.9, 정보용)
+    # 이 job 은 프로덕션 런타임 호환성을 검증하며 실패 시 머지를 막는다.
+    name: prod-parity (python 3.9, blocking)
     runs-on: ubuntu-latest
-    continue-on-error: true
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

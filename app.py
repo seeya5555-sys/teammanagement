@@ -34,14 +34,18 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 import hmac, hashlib
-from itsdangerous import URLSafeTimedSerializer, BadData
+from itsdangerous import BadData
 
 from app_core import (
     ALLOWED_EXT, AOR_PDF_DIR, BASE_DIR, DATABASE, DOCKATT_FILE_DIR, FUNDREQ_FILE_DIR,
     INSTANCE_DIR, INVOICE_PDF_DIR, JEONJA_PDF_DIR, SCHEMA_FILE, SECRET_KEY_FILE, SEED_FILE,
     SOA_REVIEW_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT, STT_LEASE_SEC, STT_MAX_ATTEMPTS,
     STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, _SOA_REVIEW_SNAPSHOT_MAX,
-    _load_or_create_secret_key, app, close_db, execute, execute_rc, get_db, query,
+    _load_or_create_secret_key, app, close_db, execute, execute_rc, get_db, init_runtime, query,
+)
+from token_auth import (
+    _DUMMY_PW_HASH, _TOKEN_MAXAGE, _issue_token, _load_token, _pw_fingerprint,
+    _token_note_fail, _token_rate_limited, _token_reset_fails,
 )
 
 
@@ -75,66 +79,6 @@ def _limit_non_stt_upload():
     except (AttributeError, TypeError):
         pass
 
-# ── 네이티브 앱 Bearer 토큰 (스테이트리스, 세션쿠키와 병행) ──────────────
-_TOKEN_SALT   = 'trmt-mobile-bearer-v1'
-_TOKEN_MAXAGE = 60 * 60 * 24 * 30          # 30일
-_token_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'], salt=_TOKEN_SALT)
-
-def _pw_fingerprint(pw_hash):
-    """비번 해시의 keyed HMAC 지문 — 비번 변경 시 기존 토큰 무효화용.
-    서명 토큰 payload는 암호화 안 되므로 해시 원문을 넣지 않고 HMAC 값만 넣음."""
-    key = app.config['SECRET_KEY']
-    if isinstance(key, str):
-        key = key.encode()
-    msg = b'trmt-pv-v1 ' + (pw_hash or '').encode()
-    return hmac.new(key, msg, hashlib.sha256).hexdigest()
-
-def _issue_token(u):
-    return _token_serializer.dumps({'uid': u['id'], 'pv': _pw_fingerprint(u['password_hash'])})
-
-# 토큰 엔드포인트 brute-force 방어 (in-memory, canonical user_id 키, thread-safe, hard-bounded).
-# 키 설계: 존재하는(active) 유저만 DB user_id(int) 버킷 생성. 비존재 username은 엔드포인트에서
-# 조회 직후 401로 끝나 버킷을 아예 안 만듦 → 키 개수 ≤ 관측된 유저수(하드 상한, 공격자가
-# 임의 username으로 키 증식 불가=메모리 DoS 봉쇄). 존재/비존재 첫 응답 모두 401이라
-# enumeration 불가. IP/XFF 미사용(프록시 spoof 무관), canonical id라 username 대소문자 변형
-# 우회도 봉쇄. 성공 시 해당 버킷만 리셋(교차오염 없음). 만료 버킷은 재조회 시 자동 pop.
-# gunicorn 멀티워커면 워커별 카운터(무의존 tradeoff, 실효 한도 ≈ MAX×워커수).
-_TOKEN_FAILS       = {}           # user_id(int) -> [실패 epoch, ...]
-_TOKEN_FAIL_LOCK   = threading.Lock()
-_TOKEN_FAIL_WINDOW = 15 * 60      # 15분
-_TOKEN_FAIL_MAX    = 10           # 윈도우당 최대 실패 → 초과 시 429
-# 비존재 username 경로의 timing oracle 완화용 더미 해시(값 무의미). 존재 유저와 동일하게
-# check_password_hash 1회를 태워 "존재=느림/비존재=빠름" 시간차로 enumeration하는 걸 막음.
-_DUMMY_PW_HASH     = generate_password_hash('trmt-mobile-timing-equalizer')
-
-def _token_rate_limited(key):
-    """해당 버킷이 현재 차단 상태인지(윈도우 내 실패 ≥ MAX). 기록은 안 함."""
-    now = time.time()
-    with _TOKEN_FAIL_LOCK:
-        fails = [t for t in _TOKEN_FAILS.get(key, []) if now - t < _TOKEN_FAIL_WINDOW]
-        if fails:
-            _TOKEN_FAILS[key] = fails
-        else:
-            _TOKEN_FAILS.pop(key, None)
-        return len(fails) >= _TOKEN_FAIL_MAX
-
-def _token_note_fail(key):
-    now = time.time()
-    with _TOKEN_FAIL_LOCK:
-        # opportunistic sweep: 윈도우 완전만료된 버킷 전체 정리(삭제/비활성 user_id 잔존 방지).
-        # dict 크기는 유저수 상한이라 값쌈. 이걸로 stale key가 실제로 소멸해 하드 상한이 성립.
-        for k in [k for k, v in list(_TOKEN_FAILS.items())
-                  if all(now - t >= _TOKEN_FAIL_WINDOW for t in v)]:
-            _TOKEN_FAILS.pop(k, None)
-        fails = [t for t in _TOKEN_FAILS.get(key, []) if now - t < _TOKEN_FAIL_WINDOW]
-        fails.append(now)
-        _TOKEN_FAILS[key] = fails
-
-def _token_reset_fails(key):
-    with _TOKEN_FAIL_LOCK:
-        _TOKEN_FAILS.pop(key, None)
-
-
 # static(css/js) URL에 파일 수정시각을 ?v= 로 자동 부착 — 파일 변경 시 URL이 바뀌어
 # 브라우저(특히 iOS Safari) 캐시를 강제 무효화. 템플릿 수정 불필요(모든 url_for('static') 적용).
 @app.url_defaults
@@ -154,6 +98,7 @@ def init_db(drop=False):
     재실행 안전: 이미 데이터가 있어도 schema는 IF NOT EXISTS 라 무해.
     옛 priority 값(Critical/High/Low)이 남아있으면 새 분류로 자동 마이그레이션.
     """
+    init_runtime()
     if drop and os.path.exists(DATABASE):
         os.remove(DATABASE)
         print(f'  · 기존 DB 삭제: {DATABASE}')
@@ -1231,8 +1176,7 @@ def _bearer_auth():
     try:
         # return_timestamp: 발급시각을 함께 받아 /api/me 가 만료시각을 돌려줄 수 있게 한다.
         # 네이티브 앱이 오프라인 진입 여부를 fail-closed 로 판정하는 근거값(만료 모르면 진입 거부).
-        data, issued_at = _token_serializer.loads(
-            tok, max_age=_TOKEN_MAXAGE, return_timestamp=True)
+        data, issued_at = _load_token(tok)
     except BadData:
         return                      # 무효/만료/위조 → decorator/view가 401 처리
     if not isinstance(data, dict):
@@ -1442,6 +1386,7 @@ def _auto_migrate():
     · schema.sql 의 CREATE TABLE/INDEX IF NOT EXISTS 재적용(누락 테이블 생성)
     · ALTER 가 필요한 신규 컬럼은 개별 점검 후 추가
     """
+    init_runtime()
     if not os.path.exists(DATABASE):
         return
     conn = sqlite3.connect(DATABASE)
@@ -1805,6 +1750,7 @@ def _auto_migrate():
 
 
 if __name__ == '__main__':
+    init_runtime()
     if len(sys.argv) > 1 and sys.argv[1] == '--init-db':
         init_db(drop=True)
         sys.exit(0)

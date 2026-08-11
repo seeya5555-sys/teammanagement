@@ -22,6 +22,7 @@ TRMT_DIR = os.environ.get("TRMT_DIR", HERE)
 sys.path.insert(0, HERE)                # drydock_integration.py 위치
 sys.path.insert(0, TRMT_DIR)            # TRMT app.py 위치
 import app as trmt                      # noqa: E402
+trmt.init_runtime()
 trmt_app = trmt.app
 
 # ── 2. Dock Manager (drydock/app.py) 를 별도 모듈로 import ──────

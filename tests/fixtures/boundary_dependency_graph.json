@@ -53,6 +53,7 @@
       "execute",
       "execute_rc",
       "get_db",
+      "init_runtime",
       "query"
     ],
     "helpers_shared.py": [
@@ -65,7 +66,17 @@
     "routes_calendar_dock.py": [],
     "routes_core.py": [],
     "routes_dock_submit.py": [],
-    "routes_tail.py": []
+    "routes_tail.py": [],
+    "token_auth.py": [
+      "_DUMMY_PW_HASH",
+      "_TOKEN_MAXAGE",
+      "_issue_token",
+      "_load_token",
+      "_pw_fingerprint",
+      "_token_note_fail",
+      "_token_rate_limited",
+      "_token_reset_fails"
+    ]
   },
   "app_core.py": {},
   "boarding_report_docx.py": {
@@ -180,14 +191,6 @@
     "krcon_client.py": []
   },
   "routes_core.py": {
-    "app.py": [
-      "_DUMMY_PW_HASH",
-      "_TOKEN_MAXAGE",
-      "_issue_token",
-      "_token_note_fail",
-      "_token_rate_limited",
-      "_token_reset_fails"
-    ],
     "app_core.py": [
       "INSTANCE_DIR",
       "SOA_REVIEW_PDF_DIR",
@@ -214,6 +217,14 @@
       "_vkey",
       "admin_required",
       "login_required"
+    ],
+    "token_auth.py": [
+      "_DUMMY_PW_HASH",
+      "_TOKEN_MAXAGE",
+      "_issue_token",
+      "_token_note_fail",
+      "_token_rate_limited",
+      "_token_reset_fails"
     ]
   },
   "routes_dock_submit.py": {
@@ -308,6 +319,11 @@
       "admin_required",
       "api_key_required",
       "login_required"
+    ]
+  },
+  "token_auth.py": {
+    "app_core.py": [
+      "app"
     ]
   }
 }

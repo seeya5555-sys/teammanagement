@@ -21,7 +21,7 @@ from datetime import datetime
 from app_core import (
     INSTANCE_DIR, SOA_REVIEW_PDF_DIR, UPLOAD_DIR, app, execute, execute_rc, get_db, query,
 )
-from app import (
+from token_auth import (
     _DUMMY_PW_HASH, _TOKEN_MAXAGE, _issue_token, _token_note_fail, _token_rate_limited,
     _token_reset_fails,
 )
@@ -2258,5 +2258,4 @@ def api_cs_finding_delete(fid):
     for idx, r in enumerate(rows, 1):
         execute('UPDATE cs_findings SET no=? WHERE id=?', (idx, r['id']))
     return jsonify({'ok': True})
-
 
