@@ -1,0 +1,16 @@
+[Unit]
+# 백업 파일이 생겼다는 사실은 복구 가능성을 증명하지 않는다.
+# backup.sh 는 매일 도는데 restore-check.sh 는 사람이 기억할 때만 돌던 상태였다(2026-08-11 실측:
+# 타이머·cron 어디에도 등록돼 있지 않았음) — 그러면 "매일 백업되지만 되살아나는지는 아무도 모름"이 된다.
+Description=TRMT restore rehearsal (백업이 실제로 되살아나는지 검증)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+WorkingDirectory=/home/opc/app
+ExecStart=/bin/bash /home/opc/app/deploy/restore-check.sh
+# 361MB archive 의 sha256 + tar 전개가 들어가므로 운영 트래픽에 양보시킨다.
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=3600

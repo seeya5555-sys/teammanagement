@@ -45,12 +45,15 @@ LOCAL=$(cat "$SHA_FILE" 2>/dev/null || echo none)
 
 # 롤백으로 차단된 SHA 는 다시 배포하지 않는다(deploy/rollback.sh 가 기록).
 # 이게 없으면 롤백 60초 뒤 타이머가 방금 되돌린 나쁜 커밋을 그대로 재배포한다.
-# main 에 새 커밋이 올라오면 REMOTE 가 달라지므로 hold 는 자동으로 풀린다.
-if [ -s "$HOLD_FILE" ] && [ "$REMOTE" = "$(cat "$HOLD_FILE")" ]; then
+#
+# 🔴 hold 는 한 줄이 아니라 "차단된 SHA 집합"이다(연속 롤백에서 앞의 차단이 풀리지 않게).
+#    새 커밋이 오면 그 SHA 는 집합에 없으므로 그냥 배포된다 = 파일을 지울 필요가 없다.
+#    지우면 옛 나쁜 커밋의 차단까지 같이 풀려서, 그 커밋이 다시 main HEAD 가 되는 순간 재배포된다.
+#    수동 해제는 `deploy/rollback.sh --unhold`.
+if [ -s "$HOLD_FILE" ] && grep -qxF "$REMOTE" "$HOLD_FILE"; then
   echo "$(date '+%F %T') hold: ${REMOTE:0:7} 은 롤백으로 차단됨 — 배포 건너뜀"
   exit 0
 fi
-[ -s "$HOLD_FILE" ] && { echo "$(date '+%F %T') 새 커밋 감지 — hold 해제"; rm -f "$HOLD_FILE"; }
 
 # 현재 배포본의 zip 이 보관돼 있지 않으면 먼저 확보한다(롤백 대상이 없으면 롤백을 못 한다).
 # 최초 도입/수동 배포 직후에만 걸리고, 실패해도 배포 자체는 계속 진행한다.
@@ -87,11 +90,29 @@ cd "$APP_DIR"
 #    zip 에 애초에 없는 운영 자산 — wsgi.py·drydock_integration.py(서버 수동 배치),
 #    static/uploads/*(사용자 업로드), instance/(DB) — 이 전부 삭제 대상이 되어 서비스가 죽는다.
 #    zip 두 개의 차집합만 보면 그런 파일은 애초에 후보에 오르지 않는다.
-PREV_ZIP="$REL_DIR/${LOCAL}.zip"
 PEND_FILE="$APP_DIR/.deploy_deletions_pending"   # 이번에 못 지운 것 — 다음 배포에서 재시도
+BASE_FILE="$APP_DIR/.deploy_deletions_base_sha"  # 마지막으로 삭제 전파에 성공한 SHA
 APP_REAL=$(cd "$APP_DIR" && pwd -P)
 
 _sha_ok() { printf '%s' "${1:-}" | grep -qE '^[0-9a-f]{40}$'; }
+
+# 🔴 비교 기준은 `.deployed_sha`(LOCAL)가 아니라 "마지막으로 삭제 전파에 성공한 SHA"다.
+#    이걸 분리하지 않으면 누락이 영구화된다:
+#      회차1 에서 zip 판독 실패로 삭제를 건너뛴다 → 그래도 배포는 진행되어 .deployed_sha=REMOTE
+#      → 회차2 는 PREV_ZIP 이 REMOTE 가 되므로 회차1 에서 사라졌어야 할 파일이 후보에서 빠진다
+#      → 그 파일은 서버에 영원히 남는다(다음 회차는 LOCAL=REMOTE 로 조기종료).
+#    base 를 성공했을 때만 전진시키면, 실패한 회차의 삭제분이 다음 배포에서 자동으로 다시 잡힌다.
+DEL_BASE=$(cat "$BASE_FILE" 2>/dev/null || true)
+_sha_ok "$DEL_BASE" || DEL_BASE="$LOCAL"
+# base 의 zip 이 보관 정리(prune)로 사라졌으면 그 구간은 복구 불가다. 조용히 정체시키지 말고
+# LOCAL 로 리셋해 전진하되, 무엇을 놓쳤는지 로그로 크게 남긴다.
+if [ "$DEL_BASE" != "$LOCAL" ] && [ ! -f "$REL_DIR/${DEL_BASE}.zip" ]; then
+  echo "$(date '+%F %T') WARN: 삭제 기준 ${DEL_BASE:0:7} 의 zip 이 보관에서 사라짐 — 기준을 ${LOCAL:0:7} 로 리셋(그 사이 삭제분은 서버에 잔존할 수 있음)"
+  DEL_BASE="$LOCAL"
+  # 같은 경고가 매 배포마다 반복되지 않도록 리셋 사실을 즉시 굳힌다.
+  _sha_ok "$LOCAL" && printf '%s\n' "$LOCAL" > "$BASE_FILE"
+fi
+PREV_ZIP="$REL_DIR/${DEL_BASE}.zip"
 
 # zip 의 파일 목록을 root prefix 를 벗겨 $3 에 쓴다.
 # 🔴 하나라도 예상 root(teammanagement-<sha>/) 밖에 있으면 실패시킨다. prefix 가 안 벗겨지면
@@ -116,11 +137,11 @@ _build_cand() {
 
 del_ok=1
 _d=$(mktemp -d /tmp/trmt_del.XXXXXX)
-if [ "$LOCAL" = "none" ] || ! _sha_ok "$LOCAL" || ! _sha_ok "$REMOTE"; then
+if [ "$DEL_BASE" = "none" ] || ! _sha_ok "$DEL_BASE" || ! _sha_ok "$REMOTE"; then
   echo "$(date '+%F %T') WARN: SHA 형식 이상(.deployed_sha 손상 의심) — 삭제 전파 생략"; del_ok=0
 elif [ ! -f "$PREV_ZIP" ]; then
   echo "$(date '+%F %T') WARN: 직전 릴리스 zip 없음 — 삭제 전파 생략(사라진 파일이 서버에 남을 수 있음)"; del_ok=0
-elif ! _zip_list "$PREV_ZIP" "$LOCAL" "$_d/prev.list" || ! _zip_list "${NEW_ZIP}.part" "$REMOTE" "$_d/new.list"; then
+elif ! _zip_list "$PREV_ZIP" "$DEL_BASE" "$_d/prev.list" || ! _zip_list "${NEW_ZIP}.part" "$REMOTE" "$_d/new.list"; then
   echo "$(date '+%F %T') WARN: zip 판독 실패 또는 archive root 규칙 불일치 — 삭제 전파 생략"; del_ok=0
 elif ! _build_cand; then
   # `|| true` 로 삼키면 부분 목록으로 삭제할 수 있다 — 실패는 실패로 다룬다.
@@ -167,6 +188,9 @@ if [ "$del_ok" = 1 ]; then
       -o -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
   fi
   if [ -s "$_d/pend.new" ]; then sort -u "$_d/pend.new" > "$PEND_FILE"; else rm -f "$PEND_FILE"; fi
+  # 여기까지 왔으면 이 회차의 삭제 판정은 끝났다 → 다음 비교 기준을 전진시킨다.
+  # (상한 초과로 실제 삭제를 건너뛴 건은 PEND_FILE 에 남아 다음 회차 후보로 다시 올라온다)
+  printf '%s\n' "$REMOTE" > "$BASE_FILE"
 fi
 rm -rf "$_d"
 

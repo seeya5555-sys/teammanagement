@@ -41,7 +41,10 @@ case "${1:-}" in
       [ "$s" = "$cur" ] && mark="  <- 현재 배포본"
       printf '  %s  %s%s\n' "${s:0:7}" "$(du -h "$z" | cut -f1)" "$mark"
     done
-    [ -s "$HOLD_FILE" ] && echo "hold: $(cut -c1-7 < "$HOLD_FILE") (이 SHA 는 자동배포 차단 중)"
+    if [ -s "$HOLD_FILE" ]; then
+      echo "hold (아래 SHA 는 자동배포 차단 중):"
+      cut -c1-7 < "$HOLD_FILE" | sed 's/^/  - /'
+    fi
     exit 0 ;;
   --unhold)
     rm -f "$HOLD_FILE"
@@ -103,7 +106,12 @@ if [ -f "$CUR_ZIP" ]; then
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       # 런타임 데이터와 배포 도구는 절대 건드리지 않는다.
-      case "$f" in instance/*|venv/*|uploads/*|../*|/*) continue ;; esac
+      # 🔴 static/uploads/ 를 반드시 포함할 것. repo 는 첨부 몇 개를 실제로 추적하고 있어서
+      #    (git ls-files static/uploads → 3건) 그 경로가 릴리스 zip 에 들어간다. 즉 차집합
+      #    후보에 오를 수 있고, 빠뜨리면 롤백이 사용자 첨부 원본을 지운다.
+      #    `uploads/*` 패턴은 prefix 매칭이라 `static/uploads/x` 에 맞지 않는다 — 별도로 적어야 한다.
+      #    autodeploy.sh 의 보호 목록과 항상 같이 고칠 것(둘이 갈리면 한쪽에서만 사고 난다).
+      case "$f" in instance/*|venv/*|uploads/*|static/uploads/*|/*|../*|*/../*|*/..|..) continue ;; esac
       printf '%s\n' "$f" | grep -qE "$EXCLUDE_RE" && continue
       [ -d "$APP_DIR/$f" ] && { echo "$(ts) WARN: $f 가 디렉토리 — 수동 확인 필요, 건너뜀"; continue; }
       rm -f "$APP_DIR/$f"
@@ -120,11 +128,18 @@ cd "$APP_DIR"
 
 # hold: 이 SHA 로는 다시 자동배포하지 않는다. 이게 없으면 락 해제 직후 타이머가
 # 방금 되돌린 나쁜 커밋을 그대로 다시 배포한다(롤백이 무의미해짐).
-# main 에 새 커밋이 올라오면 REMOTE 가 달라져 자동으로 해제된다.
-# 아래 검증이 실패해도 이 두 파일은 남긴다 — 디스크의 코드가 실제로 TARGET 이므로
+#
+# 🔴 덮어쓰지 말고 누적할 것. 단일 값으로 두면 연속 롤백에서 앞의 차단이 풀린다:
+#    main HEAD 가 A(나쁨) → A→B 롤백(hold=A) → B 도 나빠서 B→C 롤백(hold=B 로 덮임)
+#    → REMOTE 는 여전히 A 인데 hold 에 없으니 다음 타이머가 A 를 재배포한다.
+#    차단된 SHA 는 집합으로 들고, main 에 새 커밋이 오면 그 SHA 는 집합에 없으므로 자연히 배포된다
+#    (= 자동 해제를 위해 파일을 지울 필요가 없다. 지우면 옛 나쁜 커밋의 차단까지 같이 풀린다).
+# 아래 검증이 실패해도 hold/sha 는 남긴다 — 디스크의 코드가 실제로 TARGET 이므로
 # 그게 사실에 부합하고, 실패했다고 나쁜 커밋으로 되돌아가는 편이 더 위험하다.
 # 대신 실패 시 조용히 멈추지 않도록 아래에서 크게 실패시킨다.
-echo "$CURRENT" > "$HOLD_FILE"
+{ printf '%s\n' "$CURRENT"; cat "$HOLD_FILE" 2>/dev/null || true; } \
+  | grep -E '^[0-9a-f]{40}$' | awk '!seen[$0]++' | head -20 > "$HOLD_FILE.tmp"
+mv "$HOLD_FILE.tmp" "$HOLD_FILE"
 echo "$TARGET" > "$SHA_FILE"
 # 되돌린 릴리스를 최신으로 표시 — 보관 정리(mtime 기준)에서 밀려나지 않게 하고,
 # 다음 롤백의 "직전" 계산이 실제 배포 이력과 어긋나지 않게 한다.

@@ -45,8 +45,13 @@ gunzip -c "$PAIR" > "$WORK/paired.db"
 echo "· 첨부 아카이브: $(basename "$FARCH") — 항목 $(wc -l < "$WORK/files.list")개, paired DB=$PAIR_NAME"
 
 cd "$APP_DIR"
-"$PY" - "$WORK/trmt.db" "$MF" "${WORK}/files.list" "$FMF" "$FARCH" "$WORK/paired.db" <<'PYEOF'
+# 🔴 env -u: 이 검증은 assert 로 쓰여 있어서 -O / PYTHONOPTIMIZE 가 켜지면 전부 제거된다.
+#    그러면 깨진 백업도 조용히 "복구 리허설 통과"가 된다(= false green). 환경을 지우고,
+#    그래도 최적화 모드로 들어오면 아래 __debug__ 가드가 즉시 죽인다(이중 방어).
+env -u PYTHONOPTIMIZE "$PY" - "$WORK/trmt.db" "$MF" "${WORK}/files.list" "$FMF" "$FARCH" "$WORK/paired.db" <<'PYEOF'
 import hashlib, json, os, sqlite3, sys, tarfile
+if not __debug__:
+    raise SystemExit('FATAL: 최적화 모드(-O/PYTHONOPTIMIZE)에서는 assert 기반 검증이 사라진다 — 중단')
 p, mf_path, flist, files_mf_path, archive_path, paired_db = sys.argv[1:]
 mf = json.load(open(mf_path, encoding='utf-8'))
 
@@ -114,3 +119,40 @@ assert expected == fmf['attachment_refs'], 'paired DB 첨부 참조가 files man
 print(f'  첨부 하드검증 통과 — paired DB 전체 {len(expected)}건, archive sha/member 일치')
 print('✅ 복구 리허설 통과 — 이 백업으로 앱이 기동되고, 데이터가 백업 시점과 행수까지 일치함')
 PYEOF
+
+# ---- 7) drydock(Dock Manager) DB ----
+# TRMT 와 달리 앱 레벨(import·/login)까지는 안 본다 — drydock 코드는 우리 repo 소유가 아니라
+# 여기서 기동시키면 이 리허설이 남의 스키마 변경에 물려 깨진다. 파일 레벨(압축·무결성·행수)만 본다.
+DFILE="$(find "$DEST/db" -maxdepth 1 -name 'fleet-*.db.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+if [ -z "$DFILE" ]; then
+  # 없는 게 정상인 경우 = 2026-08-11 이전 백업 세트. 그 이후로도 계속 비어 있으면 backup.sh 가
+  # drydock 구간에서 조용히 건너뛰고 있다는 뜻이므로, 통과시키되 반드시 눈에 띄게 남긴다.
+  echo "⚠️ drydock 백업 없음 — backup.sh 의 drydock 구간이 도는지 확인할 것"
+else
+  DMF="${DFILE%.db.gz}.manifest.json"
+  [ -f "$DMF" ] || { echo "❌ drydock manifest 없음: $DMF"; exit 1; }
+  gzip -t "$DFILE"
+  gunzip -c "$DFILE" > "$WORK/fleet.db"
+  echo "· drydock 백업: $(basename "$DFILE") → $(stat -c%s "$WORK/fleet.db") bytes"
+  env -u PYTHONOPTIMIZE "$PY" - "$WORK/fleet.db" "$DMF" <<'PYEOF'
+import json, sqlite3, sys
+if not __debug__:
+    raise SystemExit('FATAL: 최적화 모드에서는 assert 기반 검증이 사라진다 — 중단')
+p, mf_path = sys.argv[1:]
+mf = json.load(open(mf_path, encoding='utf-8'))
+c = sqlite3.connect(p)
+ok = c.execute('PRAGMA integrity_check').fetchone()[0]
+assert ok == 'ok', f'drydock integrity_check: {ok}'
+tables = [r[0] for r in c.execute(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+assert len(tables) == mf['tables'], f"drydock 테이블 수 {len(tables)} != manifest {mf['tables']}"
+diff = []
+for t, want in mf['counts'].items():
+    got = c.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+    if got != want:
+        diff.append(f'{t}: {got} != {want}')
+assert not diff, 'drydock 행수 불일치: ' + ', '.join(diff[:10])
+c.close()
+print(f'  drydock 통과 — 테이블 {len(tables)}개 · 총 {sum(mf["counts"].values())}행 일치')
+PYEOF
+fi

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run TRMT restore rehearsal weekly (Sun 04:10 KST)
+
+[Timer]
+# 백업(03:20)이 끝난 뒤 같은 새벽에 돌린다. 매일 돌리기엔 무거워서 주 1회.
+OnCalendar=Sun *-*-* 04:10:00
+# 서버가 꺼져 있어 놓친 실행은 부팅 후 따라잡는다.
+Persistent=true
+RandomizedDelaySec=600
+Unit=trmt-restore-check.service
+
+[Install]
+WantedBy=timers.target

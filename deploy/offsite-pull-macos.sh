@@ -14,7 +14,21 @@ KEEP_DB="${TRMT_OFFSITE_KEEP_DB:-7}"
 KEEP_FILES="${TRMT_OFFSITE_KEEP_FILES:-4}"
 mkdir -p "$DBDIR" "$FILESDIR"
 LOCK="$BKROOT/.trmt-offsite-pull.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then exit 0; fi
+# 🔴 mkdir 락은 trap 이 안 돌면(SIGKILL·강제종료·맥 절전 중 프로세스 정리) 영구히 남는다.
+#    그대로 `exit 0` 하면 이후 모든 실행이 로그 한 줄 없이 조용히 죽어서, off-host 백업이
+#    멈춘 걸 아무도 모르게 된다(= 정확히 우리가 없애려던 silent no-op).
+#    그래서 (a) 오래된 락은 stale 로 보고 회수하고 (b) 넘길 때도 반드시 로그를 남긴다.
+LOCK_STALE_MIN="${TRMT_OFFSITE_LOCK_STALE_MIN:-120}"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if [ -d "$LOCK" ] && [ -z "$(find "$LOCK" -maxdepth 0 -mmin "-$LOCK_STALE_MIN" 2>/dev/null)" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') WARN: ${LOCK_STALE_MIN}분 넘은 stale lock 회수 후 진행" >>"$LOG"
+    rmdir "$LOCK" 2>/dev/null || true
+    mkdir "$LOCK" 2>/dev/null || { echo "$(date '+%Y-%m-%d %H:%M:%S') SKIP: lock 회수 실패" >>"$LOG"; exit 0; }
+  else
+    echo "$(date '+%Y-%m-%d %H:%M:%S') SKIP: 다른 실행이 진행 중(lock)" >>"$LOG"
+    exit 0
+  fi
+fi
 TMP=()
 cleanup() { [ "${#TMP[@]}" -eq 0 ] || rm -f -- "${TMP[@]}" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true; }
 trap cleanup EXIT
@@ -71,6 +85,40 @@ if [ ! -f "$LARCH" ] || [ "$(shasum -a 256 "$LARCH" | cut -d' ' -f1)" != "$WANT"
   mv "$ARCH_TMP" "$LARCH"
 fi
 mv "$MF_TMP" "$LMF"
+
+# 2-b) files archive 와 "짝이 맞는" DB 도 같이 가져온다.
+# 🔴 위 1) 에서 뜬 DB 는 방금 찍은 fresh snapshot 이라 이 archive 와 시점이 다르다. 서버 backup.sh 는
+#    "paired DB 가 참조하는 첨부가 archive 에 전부 있는지"를 검증하고 승격하는데, off-host 에
+#    fresh DB 만 두면 그 짝 보장이 깨진다 — fresh DB 가 참조하는 새 첨부는 (files 는 주기 실행이라)
+#    archive 에 없을 수 있다. off-host 만으로 복구하는 상황에서 첨부 누락이 되는 경로다.
+#    그래서 fresh DB(최신성) 와 paired DB(정합성) 를 둘 다 보관한다.
+PAIRED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("db_backup",""))' "$LMF" 2>/dev/null || true)"
+case "$PAIRED" in
+  trmt-*.db.gz)
+    if [ ! -f "$FILESDIR/$PAIRED" ]; then
+      P_TMP="$FILESDIR/$PAIRED.partial"; TMP+=("$P_TMP")
+      if "${SCP[@]}" "$A1:/home/opc/backups/trmt/db/$PAIRED" "$P_TMP" 2>/dev/null; then
+        if gzip -t "$P_TMP" 2>/dev/null; then
+          mv "$P_TMP" "$FILESDIR/$PAIRED"
+          "${SCP[@]}" "$A1:/home/opc/backups/trmt/db/${PAIRED%.db.gz}.manifest.json" \
+            "$FILESDIR/${PAIRED%.db.gz}.manifest.json" 2>/dev/null || true
+        else
+          fail "paired DB gzip 검증 실패 ($PAIRED)"
+        fi
+      else
+        # 서버 보관기간이 지나 이미 정리된 경우 — archive 만으로는 첨부 정합성을 확인할 수 없다.
+        echo "$(ts) WARN: paired DB $PAIRED 를 서버에서 못 받음(보관기간 만료 의심)" >>"$LOG"
+      fi
+    fi ;;
+  *) echo "$(ts) WARN: files manifest 에 db_backup 이 없음 — paired DB 미확보" >>"$LOG" ;;
+esac
+
+# files archive 가 너무 오래됐으면 알린다. 서버 backup.sh 가 죽어도 여기서는 "가장 최신"을
+# 계속 성공적으로 받아오므로, 신선도를 안 보면 영원히 OK 로 보인다(false green).
+FILES_MAX_DAYS="${TRMT_OFFSITE_FILES_MAX_DAYS:-8}"
+if [ -z "$(find "$LARCH" -maxdepth 0 -mtime "-$FILES_MAX_DAYS" 2>/dev/null)" ]; then
+  echo "$(ts) WARN: files archive 가 ${FILES_MAX_DAYS}일 이상 오래됨($(basename "$LARCH")) — 서버 백업 점검 필요" >>"$LOG"
+fi
 
 # 3) retention. Manifests without retained archives are removed too.
 ls -1t "$DBDIR"/trmt-*.db.gz 2>/dev/null | tail -n +$((KEEP_DB+1)) | xargs -r rm -f 2>/dev/null || true

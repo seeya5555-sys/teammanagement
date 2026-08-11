@@ -16,7 +16,9 @@
 #
 # 산출물 (기본 ~/backups/trmt):
 #   db/trmt-YYYYmmdd-HHMMSS.db.gz + .manifest.json   매일, KEEP_DB 세트 보관
-#   files/instance-YYYYmmdd.tar.gz                   FILES_EVERY_DAYS 지났을 때만
+#   db/fleet-YYYYmmdd-HHMMSS.db.gz + .manifest.json  drydock DB, 매일, KEEP_DRYDOCK 세트
+#   files/files-YYYYmmdd-HHMMSS.tar.gz               FILES_EVERY_DAYS 지났을 때만
+#                                                    (app instance·static/uploads + drydock 소스)
 #   .last_ok / backup.log                            감시용
 #
 # 수동 실행: bash ~/app/deploy/backup.sh
@@ -38,6 +40,12 @@ DEST="${TRMT_BACKUP_DIR:-$HOME/backups/trmt}"
 KEEP_DB="${TRMT_KEEP_DB:-30}"
 KEEP_FILES="${TRMT_KEEP_FILES:-4}"       # 아카이브 1개가 ~370MB (static/uploads 포함)
 FILES_EVERY_DAYS="${TRMT_FILES_EVERY_DAYS:-6}"
+# Dock Manager(drydock)는 $APP_DIR 밖에 따로 산다. 2026-08-11 감사에서 이게 백업 0 으로 발각됐다:
+#   · instance/fleet.db (~240MB) — 어디에도 사본이 없었음
+#   · static/css/trmt-dock-ui.css 등 미푸시 소스 — repo(seeya5555-sys/drydock)에도 없어 서버뿐
+# wsgi.py 가 이 디렉토리를 /drydock 으로 마운트하므로, 여기가 날아가면 통합 UI 가 통째로 사라진다.
+DRYDOCK_DIR="${TRMT_DRYDOCK_DIR:-$HOME/drydock}"
+KEEP_DRYDOCK="${TRMT_KEEP_DRYDOCK:-10}"  # fleet.db 는 229MB 라 TRMT DB 와 같은 30일치는 과하다
 TAR_BIN="${TRMT_TAR_BIN:-tar}"
 TAR_RETRIES="${TRMT_TAR_RETRIES:-3}"
 FLOCK_BIN="${TRMT_FLOCK_BIN:-flock}"
@@ -132,6 +140,61 @@ rm -f "$TMP"
 CLEAN=()
 log "db backup ok: $(basename "$OUT") ($(wc -c < "$OUT" | tr -d ' ') bytes, raw $SIZE_RAW)"
 
+# ---- 2-b) Dock Manager(drydock) DB -----------------------------------------
+# TRMT DB 와 같은 방식(online backup → integrity → gzip 검증 후 승격). 별도 파일로 둔다.
+# 실패하면 여기서 죽는다 = .last_ok 갱신 안 됨. drydock 만 조용히 빠지는 상태(=지금까지의 상태)로
+# 돌아가지 않게 하려는 것. 디렉토리 자체가 없으면 그건 설정이므로 경고만 남기고 넘어간다.
+DRYDOCK_DB="$DRYDOCK_DIR/instance/fleet.db"
+DRYDOCK_OUT=""
+if [ ! -d "$DRYDOCK_DIR" ]; then
+  log "⚠️ drydock 디렉토리 없음($DRYDOCK_DIR) — drydock 백업 건너뜀"
+elif [ ! -f "$DRYDOCK_DB" ]; then
+  log "⚠️ drydock DB 없음($DRYDOCK_DB) — 소스만 files 아카이브에 포함됨"
+else
+  DTMP="$DEST/db/.partial-fleet-$TS.db"
+  DTMPGZ="$DEST/db/.partial-fleet-$TS.db.gz"
+  DTMPMF="$DEST/db/.partial-fleet-$TS.manifest.json"
+  DOUT="$DEST/db/fleet-$TS.db.gz"
+  DOUTMF="$DEST/db/fleet-$TS.manifest.json"
+  CLEAN+=("$DTMP" "$DTMPGZ" "$DTMPMF")
+  "$PY" - "$DRYDOCK_DB" "$DTMP" "$DTMPMF" <<'PYEOF'
+import json, sqlite3, sys
+src_path, dst_path, mf_path = sys.argv[1], sys.argv[2], sys.argv[3]
+src = sqlite3.connect(f'file:{src_path}?mode=ro', uri=True)
+dst = sqlite3.connect(dst_path)
+with dst:
+    src.backup(dst)
+src.close()
+ok = dst.execute('PRAGMA integrity_check').fetchone()[0]
+if ok != 'ok':
+    raise SystemExit(f'drydock integrity_check: {ok}')
+fk = dst.execute('PRAGMA foreign_key_check').fetchall()
+if fk:
+    raise SystemExit(f'drydock foreign_key_check 위반 {len(fk)}건')
+tables = [r[0] for r in dst.execute(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+# TRMT 쪽 MIN_TABLES 같은 하한은 두지 않는다 — drydock 스키마를 우리가 소유하지 않아서
+# 임의의 숫자를 박으면 상대가 테이블을 줄였을 때 백업이 통째로 멈춘다. 대신 "테이블 0개"만 막는다.
+if not tables:
+    raise SystemExit('drydock: 테이블 0개 — 빈 파일 의심')
+counts = {t: dst.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0] for t in tables}
+uv = dst.execute('PRAGMA user_version').fetchone()[0]
+dst.close()
+with open(mf_path, 'w', encoding='utf-8') as f:
+    json.dump({'source': src_path, 'user_version': uv,
+               'tables': len(tables), 'counts': counts}, f, ensure_ascii=False, indent=1)
+print(f'drydock tables={len(tables)} integrity=ok fk=0 rows={sum(counts.values())}')
+PYEOF
+  gzip -9 -c "$DTMP" > "$DTMPGZ"
+  gzip -t "$DTMPGZ"
+  mv "$DTMPGZ" "$DOUT"
+  mv "$DTMPMF" "$DOUTMF"
+  rm -f "$DTMP"
+  CLEAN=()
+  DRYDOCK_OUT="$(basename "$DOUT")"
+  log "drydock db backup ok: $DRYDOCK_OUT ($(wc -c < "$DOUT" | tr -d ' ') bytes)"
+fi
+
 # ---- 3) 업로드·첨부 원본 (자주 안 바뀌므로 주기 실행) ----------------------
 # 대상 = 서버에만 존재하는 런타임 데이터 2곳:
 #   instance/       미리보기 cache·PDF·STT 오디오·fleet json·.secret_key
@@ -150,15 +213,25 @@ if [ -z "$NEWEST" ]; then
   FMFTMP="$FMF.partial"
   CLEAN+=("$FTMP" "$FMFTMP")
   # DB 는 위에서 따로 떴으므로 제외. 옛 수동 스냅샷·삭제보관·캐시도 제외.
+  # drydock 소스도 같이 담는다(다른 부모 디렉토리라 -C 를 한 번 더 준다). fleet.db 는 2-b 에서
+  # 따로 떴으므로 제외 — 아카이브에 240MB 를 중복으로 넣지 않는다.
+  DRYDOCK_TAR=()
+  if [ -d "$DRYDOCK_DIR" ]; then
+    DRYDOCK_TAR=(-C "$(dirname "$DRYDOCK_DIR")" "$(basename "$DRYDOCK_DIR")")
+  fi
   rc=1
   for attempt in $(seq 1 "$TAR_RETRIES"); do
     rm -f "$FTMP"
-    if "$TAR_BIN" -czf "$FTMP" -C "$APP_DIR" \
+    if "$TAR_BIN" -czf "$FTMP" \
         --exclude='instance/trmt.db*' \
         --exclude='instance/backups' \
         --exclude='instance/deleted-files-*' \
         --exclude='__pycache__' \
-        instance static/uploads; then rc=0; break; else rc=$?; fi
+        --exclude='drydock/instance/fleet.db*' \
+        --exclude='drydock/venv' \
+        --exclude='drydock/.git' \
+        -C "$APP_DIR" instance static/uploads \
+        ${DRYDOCK_TAR[@]+"${DRYDOCK_TAR[@]}"}; then rc=0; break; else rc=$?; fi
     log "⚠️ files tar 실패 rc=$rc — 재시도 $attempt/$TAR_RETRIES"
     [ "$attempt" -lt "$TAR_RETRIES" ] && sleep 2
   done
@@ -208,10 +281,13 @@ prune() { # $1=dir $2=glob $3=keep
 }
 prune "$DEST/db"    'trmt-*.db.gz'       "$KEEP_DB"
 prune "$DEST/db"    'trmt-*.manifest.json' "$KEEP_DB"
+prune "$DEST/db"    'fleet-*.db.gz'       "$KEEP_DRYDOCK"
+prune "$DEST/db"    'fleet-*.manifest.json' "$KEEP_DRYDOCK"
 prune "$DEST/files" 'files-*.tar.gz'     "$KEEP_FILES"
 prune "$DEST/files" 'files-*.tar.gz.manifest.json' "$KEEP_FILES"
 prune "$DEST/files" 'instance-*.tar.gz'  1      # 구 이름(static/uploads 미포함) — 1개만 남김
 
 # ---- 5) 감시용 상태 파일 (여기까지 왔다는 건 검증까지 통과한 것) --------------
-printf '%s db=%s files=%s\n' "$(date '+%F %T')" "$(basename "$OUT")" "${LATEST_FILES:-none}" > "$DEST/.last_ok"
+printf '%s db=%s files=%s drydock=%s\n' "$(date '+%F %T')" "$(basename "$OUT")" \
+  "${LATEST_FILES:-none}" "${DRYDOCK_OUT:-none}" > "$DEST/.last_ok"
 log "done. db=$(find "$DEST/db" -name 'trmt-*.db.gz' | wc -l)개 files=$(find "$DEST/files" -name 'files-*.tar.gz' | wc -l)개 총 $(du -sh "$DEST" | cut -f1)"
