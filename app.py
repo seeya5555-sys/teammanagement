@@ -1518,24 +1518,29 @@ def _load_extracted_module(filename):
     with open(_path, encoding='utf-8') as _source:
         exec(compile(_source.read(), _path, 'exec'), globals(), globals())
 _load_extracted_module("helpers_shared.py")
-_load_extracted_module("routes_core.py")
-# ai_gemini is a real module since 2026-08-11 — imported, not exec'd.
-# Its `from app import ...` works because this line runs after helpers_shared
-# and the app.py primitives it needs are already bound.
+# The five route boundaries are real imported modules since 2026-08-11.  Their
+# `from app import ...` works because these lines run after helpers_shared and
+# every app.py primitive they need is already bound.
 #
 # The alias below is what keeps `python app.py` (the dev entry point) alive:
 # run as a script this file is module `__main__`, so without the alias
 # `from app import ...` would execute app.py a SECOND time as module "app" —
-# and that second pass would reach its own `import ai_gemini` while ai_gemini
-# is still half-initialized (`bp` not yet bound) and crash.  With the alias the
-# import resolves to the already-running module.  A no-op under gunicorn/tests,
-# where this file is imported as "app" in the first place.
+# and that second pass would reach its own module imports while they are still
+# half-initialized (`bp` not yet bound) and crash with
+# "partially initialized module".  With the alias the import resolves to the
+# already-running module.  A no-op under gunicorn/tests, where this file is
+# imported as "app" in the first place.
 sys.modules.setdefault('app', sys.modules[__name__])
+import routes_core
+app.register_blueprint(routes_core.bp)
 import ai_gemini
 app.register_blueprint(ai_gemini.bp)
-_load_extracted_module("routes_calendar_dock.py")
-_load_extracted_module("routes_dock_submit.py")
-_load_extracted_module("routes_tail.py")
+import routes_calendar_dock
+app.register_blueprint(routes_calendar_dock.bp)
+import routes_dock_submit
+app.register_blueprint(routes_dock_submit.bp)
+import routes_tail
+app.register_blueprint(routes_tail.bp)
 # Static contract marker: dock sync notifications keep the historical deep link.
 # The executable call remains in routes_dock_submit.py.
 # link='trmt://dock'
@@ -1729,7 +1734,14 @@ def _auto_migrate():
         # 마이그레이션 후에도 R을 저장할 수 없으면 '승인 끝난 건이 승인대기로 남는' 사고가 재발한다.
         # DDL 문자열 대신 실제로 넣어보고 되돌리는 실측으로 판정한다(형식 변형에 영향받지 않음).
         # probe 자체가 예외면 마지막 알려진 False를 유지하면 fail-open이다. 성공할 때만 False로 내린다.
-        globals()['SOA_REVIEW_SCHEMA_DEGRADED'] = True
+        #
+        # 🔴 이 플래그의 소유자는 routes_calendar_dock 이다(ingest fail-closed 게이트가 거기 있음).
+        # exec 공유 네임스페이스 시절의 globals()['...'] 쓰기는 Blueprint 전환 후 app 모듈에만
+        # 반영되고 소유 모듈은 영원히 True(fail-closed)로 남는다 — R 상태 ingest 가 프로덕션에서
+        # 영구 차단되는 결함이라 소유 모듈 속성으로 직접 쓴다. import 는 이 함수가 모듈 로드
+        # 이후에만 호출되므로 안전하다.
+        import routes_calendar_dock as _soa_owner
+        _soa_owner.SOA_REVIEW_SCHEMA_DEGRADED = True
         try:
             conn.execute('SAVEPOINT soa_chk_probe')
             try:
@@ -1740,7 +1752,7 @@ def _auto_migrate():
             finally:
                 conn.execute('ROLLBACK TO soa_chk_probe')
                 conn.execute('RELEASE soa_chk_probe')
-            globals()['SOA_REVIEW_SCHEMA_DEGRADED'] = degraded
+            _soa_owner.SOA_REVIEW_SCHEMA_DEGRADED = degraded
             if degraded:
                 print('[auto_migrate] ⚠ soa_review_case.status가 R을 거부함 — 상태 동기화 불가(수동 조치 필요)')
         except Exception as e:

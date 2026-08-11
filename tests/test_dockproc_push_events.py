@@ -26,7 +26,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
-from source_bundle import read_app_sources
+from source_bundle import read_app_sources, shared_ns
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -143,20 +143,20 @@ chk(len({e['collapse'] for e in ev}) == 2, 'collapse_id 가 서로 달라 알림
 
 print('\n# 6) 🔴 partial=true 는 미적재(orphan) 배너를 갈아치우지 않는다')
 A.execute("INSERT OR REPLACE INTO api_settings (k,v) VALUES (?,?)",
-          (A._DOCKPROC_ORPHAN_KEY, json.dumps({'TSTV': [{'vsl_cd': 'TSTV', 'req_no': 'S99',
+          (shared_ns._DOCKPROC_ORPHAN_KEY, json.dumps({'TSTV': [{'vsl_cd': 'TSTV', 'req_no': 'S99',
                                                          'subject': '[TSTV S99] 미적재', 'status': 'HQ Confirmed'}]})))
-before = A._dockproc_orphans_all().get('TSTV')
+before = shared_ns._dockproc_orphans_all().get('TSTV')
 res = c.post('/api/ext/dock_procure/sync', headers=H,
              json={'partial': True, 'items': [
                  {'vsl_cd': 'TSTV', 'inq_no': 'X1', 'subject': '[TSTV S1] TEST ITEM',
                   'status': 'Quotation Inquiry', 'submit': '2/3', 'doc': 'PC'}]})
 chk(res.status_code == 200 and res.get_json().get('partial') is True, 'partial 응답 플래그', res.status_code)
-chk(A._dockproc_orphans_all().get('TSTV') == before, '배너 그대로 유지', A._dockproc_orphans_all().get('TSTV'))
+chk(shared_ns._dockproc_orphans_all().get('TSTV') == before, '배너 그대로 유지', shared_ns._dockproc_orphans_all().get('TSTV'))
 res = c.post('/api/ext/dock_procure/sync', headers=H,
              json={'items': [{'vsl_cd': 'TSTV', 'inq_no': 'X2', 'subject': '[TSTV S1] TEST ITEM',
                               'status': 'Quotation Inquiry', 'submit': '3/3', 'doc': 'PC'}]})
-chk(res.status_code == 200 and not A._dockproc_orphans_all().get('TSTV'),
-    '전량 sync 는 종전대로 배너를 갱신(0건이면 사라짐)', A._dockproc_orphans_all().get('TSTV'))
+chk(res.status_code == 200 and not shared_ns._dockproc_orphans_all().get('TSTV'),
+    '전량 sync 는 종전대로 배너를 갱신(0건이면 사라짐)', shared_ns._dockproc_orphans_all().get('TSTV'))
 
 print('\n# 7) 푸시 미설정이어도 sync 는 정상 완료 — 알림이 동기화를 막지 않는다')
 res = c.post('/api/ext/dock_procure/sync', headers=H,
@@ -183,8 +183,8 @@ chk(res.get_json().get('pushed') == [], 'dry → pushed 0건', res.get_json().ge
 
 print('\n# 9) 🔴 대기함(push_outbox) — 발송 실패가 영구 미탐이 되지 않는다')
 # 이게 없으면: 행은 이미 갱신됐으므로 다음 폴은 "변화 없음" 으로 보고 그 알림은 영영 안 간다.
-_real = A._push_dispatch
-A._push_dispatch = lambda *a, **k: {'ok': False, 'reason': 'all_failed', 'sent': 0, 'failed': 1}
+_real = shared_ns._push_dispatch
+shared_ns._push_dispatch = lambda *a, **k: {'ok': False, 'reason': 'all_failed', 'sent': 0, 'failed': 1}
 mkrow('TEST VESSEL', 'TSTV', 'S8', svms_status='Submit')     # 아직 반려 아님 = 전이가 생기는 행
 res = c.post('/api/ext/dock_procure/sync', headers=H,
              json={'partial': True, 'items': [
@@ -198,7 +198,7 @@ _pending_key = ob[0]['event_key']
 chk(ob[0]['link'] == 'trmt://dock' and ob[0]['collapse_id'], 'link·collapse_id 도 함께 보존', dict(ob[0]))
 
 # 다음 폴 = 새 변화가 없어도 대기함을 이어받아 재시도한다.
-A._push_dispatch = _real
+shared_ns._push_dispatch = _real
 res = c.post('/api/ext/dock_procure/sync', headers=H, json={'partial': True, 'items': []})
 j = res.get_json()
 chk([p['key'] for p in j.get('pushed') or []] == [_pending_key],
@@ -207,11 +207,11 @@ chk(A.query("SELECT * FROM push_outbox") == [], '성공하면 대기함에서 �
     A.query("SELECT event_key FROM push_outbox"))
 
 # 무한재시도 금지 — 한도 넘으면 버리고 로그만 남긴다(형에게 늦은 알림은 오보에 가깝다).
-A._push_dispatch = lambda *a, **k: {'ok': False, 'reason': 'all_failed', 'sent': 0, 'failed': 1}
+shared_ns._push_dispatch = lambda *a, **k: {'ok': False, 'reason': 'all_failed', 'sent': 0, 'failed': 1}
 A.execute("INSERT INTO push_outbox (event_key, kind, title, body, tries) VALUES "
           "('dock_quote:zombie', 'dock_quote', 't', 'b', ?)", (A._PUSH_OUTBOX_MAX_TRIES,))
 out = A._push_outbox_drain()
-A._push_dispatch = _real
+shared_ns._push_dispatch = _real
 chk([o['reason'] for o in out] == ['dropped'] and A.query("SELECT * FROM push_outbox") == [],
     '한도 초과건은 포기하고 대기함에서 제거', out)
 

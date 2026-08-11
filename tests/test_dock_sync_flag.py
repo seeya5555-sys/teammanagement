@@ -22,6 +22,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 from flask import session
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -43,10 +44,10 @@ c = A.app.test_client()
 
 KEY = 'testkey-dock-sync-flag'
 A._ensure_api_table()
-A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
+shared_ns.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 
-A.execute("INSERT INTO dock_procure_vessel(vsl_nm, vsl_cd) VALUES('TEST VESSEL','TSTV')")
+shared_ns.execute("INSERT INTO dock_procure_vessel(vsl_nm, vsl_cd) VALUES('TEST VESSEL','TSTV')")
 
 
 def setting(k):
@@ -55,7 +56,7 @@ def setting(k):
 
 
 def set_setting(k, v):
-    A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES(?, ?)", (k, v))
+    shared_ns.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES(?, ?)", (k, v))
 
 
 def flag():
@@ -70,15 +71,15 @@ def pending():
 
 
 def mkrow(req_no):
-    A.execute("DELETE FROM dock_procure WHERE req_no=? AND vsl_nm='TEST VESSEL'", (req_no,))
-    A.execute("INSERT INTO dock_procure(vsl_nm, vsl_cd, req_no, cat_code, subject) "
+    shared_ns.execute("DELETE FROM dock_procure WHERE req_no=? AND vsl_nm='TEST VESSEL'", (req_no,))
+    shared_ns.execute("INSERT INTO dock_procure(vsl_nm, vsl_cd, req_no, cat_code, subject) "
               "VALUES('TEST VESSEL','TSTV',?,'R',?)", (req_no, f'[DOCK][TSTV {req_no}]subject'))
     return A.query("SELECT id FROM dock_procure WHERE req_no=? AND vsl_nm='TEST VESSEL'",
                    (req_no,), one=True)['id']
 
 
 def mkdraft(rid, req_no, status='submitting'):
-    A.execute("INSERT INTO dock_inquiry_draft(rid, vsl_nm, vsl_cd, req_no, rep_cd, doc_type, "
+    shared_ns.execute("INSERT INTO dock_inquiry_draft(rid, vsl_nm, vsl_cd, req_no, rep_cd, doc_type, "
               "vndr_json, status, decided_at, decided_by) "
               "VALUES(?, 'TEST VESSEL','TSTV',?,?, 'REP', '[]', ?, "
               "datetime('now','localtime'), 'tester')", (rid, req_no, req_no, status))
@@ -86,19 +87,19 @@ def mkdraft(rid, req_no, status='submitting'):
 
 
 def clear_flags():
-    A.execute("DELETE FROM api_settings WHERE k IN ('dock_sync_flag','dock_sync_done','dock_sync_result')")
+    shared_ns.execute("DELETE FROM api_settings WHERE k IN ('dock_sync_flag','dock_sync_done','dock_sync_result')")
 
 
 # ══════════════════════════════════════════════════════════════════════════
 print('\n#1 _dock_sync_flag_bump 기본 — 빈 상태')
 clear_flags()
-f1 = A._dock_sync_flag_bump()
+f1 = shared_ns._dock_sync_flag_bump()
 chk(bool(f1), 'flag 가 세워진다', repr(f1))
 chk(flag() == f1, '반환값 == 저장값', f'{f1} vs {flag()}')
 chk(pending() == f1, 'watcher 가 pending 으로 본다', repr(pending()))
 
 print('\n#2 flag 는 전진만 한다(연타)')
-f2 = A._dock_sync_flag_bump()
+f2 = shared_ns._dock_sync_flag_bump()
 chk(f2 >= f1, '두 번째 flag >= 첫 번째', f'{f1} → {f2}')
 chk(pending() == f2, '여전히 pending', repr(pending()))
 
@@ -108,7 +109,7 @@ now = A.query("SELECT datetime('now','localtime') t", one=True)['t']
 set_setting('dock_sync_flag', now)
 set_setting('dock_sync_done', now)                     # 버튼→sync→done 직후 = pending 아님
 chk(pending() is None, '전제: 지금은 pending 아님', repr(pending()))
-f3 = A._dock_sync_flag_bump()
+f3 = shared_ns._dock_sync_flag_bump()
 chk(f3 > now, 'flag 가 done 보다 엄격히 크다', f'flag={f3} done={now}')
 chk(pending() == f3, 'watcher 가 새 sync 를 집는다', repr(pending()))
 
@@ -116,14 +117,14 @@ print('\n#4 done 이 미래(시계 왜곡)여도 pending 이 된다')
 clear_flags()
 fut = A.query("SELECT datetime('now','localtime','+1 hour') t", one=True)['t']
 set_setting('dock_sync_done', fut)
-f4 = A._dock_sync_flag_bump()
+f4 = shared_ns._dock_sync_flag_bump()
 chk(f4 > fut, 'flag > 미래 done', f'flag={f4} done={fut}')
 chk(pending() == f4, 'pending 성립', repr(pending()))
 
 print('\n#5 pending 인 flag 가 이미 있어도 새 시각으로 민다(진행 중 sync 가 우리 write 를 놓치는 경합)')
 clear_flags()
 set_setting('dock_sync_flag', now)                     # watcher 가 now 를 들고 sync 중일 수 있다
-f5 = A._dock_sync_flag_bump()
+f5 = shared_ns._dock_sync_flag_bump()
 chk(f5 > now, 'flag 가 전진했다', f'{now} → {f5}')
 # watcher 가 처리 중이던 flag(now) 로 done 을 찍어도 우리 flag 는 살아남아 한 번 더 돈다
 c.post('/api/ext/dock_procure/sync/done', json={'flag': now, 'result': 'x'}, headers=HDR)
@@ -132,7 +133,7 @@ chk(pending() == f5, '이전 sync 의 done 이 우리 요청을 덮지 않는다
 print('\n#6 쓰레기 flag 값은 비교대상에서 제거되고 정상 시각으로 대체된다')
 clear_flags()
 set_setting('dock_sync_flag', 'zzz-not-a-date')
-f6 = A._dock_sync_flag_bump()
+f6 = shared_ns._dock_sync_flag_bump()
 chk(f6 and f6 != 'zzz-not-a-date', 'flag 가 정상 시각으로 대체된다', repr(f6))
 chk(flag() == f6 and flag() is not None, 'flag 가 NULL/쓰레기로 남지 않는다', repr(flag()))
 chk(pending() == f6, 'pending 성립(조건부 upsert 가 쓰레기에 막히지 않는다)', repr(pending()))
@@ -142,7 +143,7 @@ clear_flags()
 fut2 = A.query("SELECT datetime('now','localtime','+30 minutes') t", one=True)['t']
 set_setting('dock_sync_flag', 'zzz-not-a-date')       # lexical high 쓰레기
 set_setting('dock_sync_done', fut2)                   # 정상 미래값
-f61 = A._dock_sync_flag_bump()
+f61 = shared_ns._dock_sync_flag_bump()
 chk(f61 > fut2, 'flag > done (쓰레기가 floor 를 오염시키지 않는다)', f'flag={f61} done={fut2}')
 # ⚠️문자열 비교라 'zzz' 도 lexically 크다 — 실제 시각인지 따로 못박는다(그래야 위 체크가 공허하지 않다)
 chk(bool(A.query("SELECT datetime(?) t", (f61,), one=True)['t']), 'flag 가 실제 시각 형식', repr(f61))
@@ -151,7 +152,7 @@ chk(pending() == f61, 'watcher 가 집는다', repr(pending()))
 print('\n#6-2 🔴 쓰레기 done 은 지우고 경고 — 기능 영구사망 방지')
 clear_flags()
 set_setting('dock_sync_done', 'zzz-broken')           # 남겨두면 done<flag 가 영구 false
-f62 = A._dock_sync_flag_bump()
+f62 = shared_ns._dock_sync_flag_bump()
 chk(setting('dock_sync_done') is None, '쓰레기 done 제거됨', repr(setting('dock_sync_done')))
 chk(pending() == f62, 'pending 회복', repr(pending()))
 
@@ -160,16 +161,16 @@ clear_flags()
 big = A.query("SELECT datetime('now','localtime','+10 minutes') t", one=True)['t']
 set_setting('dock_sync_flag', big)
 small = A.query("SELECT datetime('now','localtime','-10 minutes') t", one=True)['t']
-A.execute("INSERT INTO api_settings (k, v) VALUES ('dock_sync_flag', ?) "
+shared_ns.execute("INSERT INTO api_settings (k, v) VALUES ('dock_sync_flag', ?) "
           "ON CONFLICT(k) DO UPDATE SET v=excluded.v WHERE excluded.v > api_settings.v", (small,))
 chk(flag() == big, '더 작은 값은 무시된다(경합 후퇴 차단)', f'{big} vs {flag()}')
-f63 = A._dock_sync_flag_bump()
+f63 = shared_ns._dock_sync_flag_bump()
 chk(f63 > big and flag() == f63, 'bump 는 전진시킨다', f'{big} → {f63}')
 
 print('\n#6-4 🔴 실제 경합 주입 — 읽기~쓰기 사이에 다른 writer 가 flag 를 밀어도 후퇴하지 않는다')
 clear_flags()
 big2 = A.query("SELECT datetime('now','localtime','+20 minutes') t", one=True)['t']
-_execute = A.execute
+_execute = shared_ns.execute
 _hit = {'n': 0}
 
 
@@ -181,11 +182,11 @@ def racing_execute(sql, params=()):
     return _execute(sql, params)
 
 
-A.execute = racing_execute
+shared_ns.execute = racing_execute
 try:
-    f64 = A._dock_sync_flag_bump()
+    f64 = shared_ns._dock_sync_flag_bump()
 finally:
-    A.execute = _execute
+    shared_ns.execute = _execute
 chk(_hit['n'] == 1, '경합 주입이 실제로 걸렸다(테스트 자체 검증)')
 chk(flag() == big2, '저장된 flag 가 후퇴하지 않았다', f'expect={big2} got={flag()}')
 chk(f64 == big2, '반환값도 실효 flag(더 큰 쪽)', f'{f64} vs {big2}')
@@ -195,7 +196,7 @@ print('\n#7 빈 문자열 flag/done 도 안전')
 clear_flags()
 set_setting('dock_sync_flag', '')
 set_setting('dock_sync_done', '')
-f7 = A._dock_sync_flag_bump()
+f7 = shared_ns._dock_sync_flag_bump()
 chk(bool(f7) and pending() == f7, "빈값 상태에서도 pending 성립", repr(f7))
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -246,7 +247,7 @@ print('\n#12 rid 가 이미 삭제된 행을 가리켜도 flag 는 선다(SVMS �
 clear_flags()
 rid4 = mkrow('R904')
 did4 = mkdraft(rid4, 'R904')
-A.execute("DELETE FROM dock_procure WHERE id=?", (rid4,))    # 단계 UPDATE 는 0행이 된다
+shared_ns.execute("DELETE FROM dock_procure WHERE id=?", (rid4,))    # 단계 UPDATE 는 0행이 된다
 r = c.post(f'/api/ext/dock_inquiry/drafts/{did4}/result', json={'ok': True}, headers=HDR)
 chk(r.get_json().get('applied') is True, 'result 반영됨', repr(r.get_json()))
 chk(bool(flag()), 'flag 가 선다', repr(flag()))
@@ -288,18 +289,18 @@ print('\n#13-2 flag bump 가 터져도 견적요청 결과기록·단계는 유�
 clear_flags()
 rid6 = mkrow('R906')
 did6 = mkdraft(rid6, 'R906')
-orig = A._dock_sync_flag_bump
+orig = shared_ns._dock_sync_flag_bump
 
 
 def boom():
     raise RuntimeError('bump 고장 주입')
 
 
-A._dock_sync_flag_bump = boom
+shared_ns._dock_sync_flag_bump = boom
 try:
     r = c.post(f'/api/ext/dock_inquiry/drafts/{did6}/result', json={'ok': True}, headers=HDR)
 finally:
-    A._dock_sync_flag_bump = orig
+    shared_ns._dock_sync_flag_bump = orig
 chk(r.status_code == 200 and r.get_json().get('applied') is True, 'result 는 정상 200/반영', repr(r.get_json()))
 chk(A.query("SELECT status FROM dock_inquiry_draft WHERE id=?", (did6,), one=True)['status']
     == 'submitted', 'draft submitted 유지')

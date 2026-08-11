@@ -4,20 +4,21 @@ import tempfile
 import unittest
 
 import app as appmod
+from source_bundle import shared_ns
 
 
 class FleetNextPortOverrideTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.old_db = appmod.app.config["DATABASE"]
-        self.old_locode_files = appmod.FLEET_LOCODE_FILES
-        self.old_locode_name_files = appmod.FLEET_LOCODE_NAME_FILES
-        self.old_country_map_files = appmod.FLEET_COUNTRY_MAP_FILES
-        self.old_label_files = appmod.FLEET_LOCODE_LABEL_FILES
-        self.old_catalog_cache = appmod._fleet_port_catalog_cache
-        self.old_fleet_map_file = appmod.FLEET_MAP_FILE
+        self.old_locode_files = shared_ns.FLEET_LOCODE_FILES
+        self.old_locode_name_files = shared_ns.FLEET_LOCODE_NAME_FILES
+        self.old_country_map_files = shared_ns.FLEET_COUNTRY_MAP_FILES
+        self.old_label_files = shared_ns.FLEET_LOCODE_LABEL_FILES
+        self.old_catalog_cache = shared_ns._fleet_port_catalog_cache
+        self.old_fleet_map_file = shared_ns.FLEET_MAP_FILE
         appmod.app.config["DATABASE"] = os.path.join(self.tmp.name, "test.db")
-        appmod.FLEET_MAP_FILE = os.path.join(self.tmp.name, "fleet_map.json")
+        shared_ns.FLEET_MAP_FILE = os.path.join(self.tmp.name, "fleet_map.json")
         self.ctx = appmod.app.app_context()
         self.ctx.push()
 
@@ -25,12 +26,12 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         appmod.close_db()
         self.ctx.pop()
         appmod.app.config["DATABASE"] = self.old_db
-        appmod.FLEET_LOCODE_FILES = self.old_locode_files
-        appmod.FLEET_LOCODE_NAME_FILES = self.old_locode_name_files
-        appmod.FLEET_COUNTRY_MAP_FILES = self.old_country_map_files
-        appmod.FLEET_LOCODE_LABEL_FILES = self.old_label_files
-        appmod._fleet_port_catalog_cache = self.old_catalog_cache
-        appmod.FLEET_MAP_FILE = self.old_fleet_map_file
+        shared_ns.FLEET_LOCODE_FILES = self.old_locode_files
+        shared_ns.FLEET_LOCODE_NAME_FILES = self.old_locode_name_files
+        shared_ns.FLEET_COUNTRY_MAP_FILES = self.old_country_map_files
+        shared_ns.FLEET_LOCODE_LABEL_FILES = self.old_label_files
+        shared_ns._fleet_port_catalog_cache = self.old_catalog_cache
+        shared_ns.FLEET_MAP_FILE = self.old_fleet_map_file
         self.tmp.cleanup()
 
     def test_explicit_dzalg_code_resolves_to_algiers_not_ohio(self):
@@ -75,21 +76,21 @@ class FleetNextPortOverrideTests(unittest.TestCase):
     def test_esalg_and_algeciras_manual_resolution_use_packaged_catalog(self):
         missing = os.path.join(self.tmp.name, "missing")
         pkg = appmod.FLEET_MAP_PACKAGED_DIR
-        appmod.FLEET_LOCODE_FILES = (os.path.join(pkg, "locode.json"), os.path.join(missing, "locode.json"))
-        appmod.FLEET_LOCODE_NAME_FILES = (os.path.join(pkg, "locode_name.json"), os.path.join(missing, "locode_name.json"))
-        appmod.FLEET_COUNTRY_MAP_FILES = (os.path.join(pkg, "country_map.json"), os.path.join(missing, "country_map.json"))
-        appmod.FLEET_LOCODE_LABEL_FILES = (os.path.join(pkg, "locode_labels.json"),)
-        appmod._fleet_port_catalog_cache = None
-        by_code, err = appmod._fleet_resolve_port_input("ESALG")
+        shared_ns.FLEET_LOCODE_FILES = (os.path.join(pkg, "locode.json"), os.path.join(missing, "locode.json"))
+        shared_ns.FLEET_LOCODE_NAME_FILES = (os.path.join(pkg, "locode_name.json"), os.path.join(missing, "locode_name.json"))
+        shared_ns.FLEET_COUNTRY_MAP_FILES = (os.path.join(pkg, "country_map.json"), os.path.join(missing, "country_map.json"))
+        shared_ns.FLEET_LOCODE_LABEL_FILES = (os.path.join(pkg, "locode_labels.json"),)
+        shared_ns._fleet_port_catalog_cache = None
+        by_code, err = shared_ns._fleet_resolve_port_input("ESALG")
         self.assertIsNone(err)
         self.assertEqual(by_code, {"label": "Algeciras", "code": "ESALG", "xy": [36.1275, -5.4533]})
-        by_name, err = appmod._fleet_resolve_port_input("Algeciras")
+        by_name, err = shared_ns._fleet_resolve_port_input("Algeciras")
         self.assertIsNone(err)
         self.assertEqual(by_name["label"], "Algeciras")
         self.assertEqual(by_name["xy"], [36.1275, -5.4533])
 
     def test_country_qualified_unknown_country_rejected(self):
-        resolved, err = appmod._fleet_resolve_port_input("Busan, Neverland")
+        resolved, err = shared_ns._fleet_resolve_port_input("Busan, Neverland")
         self.assertIsNone(resolved)
         self.assertEqual(err, "unknown country")
 
@@ -108,11 +109,11 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             json.dump({"XCOUNTRY": "XX"}, f)
         with open(label_file, "w", encoding="utf-8") as f:
             json.dump({"XXOK": "Ok Port"}, f)
-        appmod.FLEET_LOCODE_FILES = (locode_file,)
-        appmod.FLEET_LOCODE_NAME_FILES = (name_file,)
-        appmod.FLEET_COUNTRY_MAP_FILES = (country_file,)
-        appmod.FLEET_LOCODE_LABEL_FILES = (label_file,)
-        appmod._fleet_port_catalog_cache = None
+        shared_ns.FLEET_LOCODE_FILES = (locode_file,)
+        shared_ns.FLEET_LOCODE_NAME_FILES = (name_file,)
+        shared_ns.FLEET_COUNTRY_MAP_FILES = (country_file,)
+        shared_ns.FLEET_LOCODE_LABEL_FILES = (label_file,)
+        shared_ns._fleet_port_catalog_cache = None
         cat = appmod._fleet_port_catalog()
         self.assertNotIn("XXNAN", cat["locodes"])
         self.assertNotIn("XXINF", cat["locodes"])
@@ -129,15 +130,15 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "lng": 20.0,
             "next_port": {"name": "Algiers", "cd": "DZALG", "xy": [36.75, 3.05]},
         }
-        auto_id = appmod._fleet_auto_next_port_identity(vessel)
-        appmod._ensure_fleet_next_port_override_table()
+        auto_id = shared_ns._fleet_auto_next_port_identity(vessel)
+        shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(
             "INSERT INTO fleet_next_port_override "
             "(vessel_key, vessel_name, manual_label, manual_lat, manual_lng, auto_snapshot) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("ship a", "Ship A", "Busan", 35.1333, 129.05, auto_id),
         )
-        appmod._fleet_apply_manual_next_port_overrides([vessel])
+        shared_ns._fleet_apply_manual_next_port_overrides([vessel])
         self.assertTrue(vessel["next_port"]["manual"])
         self.assertEqual(vessel["next_port"]["name"], "Busan")
         self.assertEqual(vessel["route_legs"], [[[10.0, 20.0], [35.1333, 129.05]]])
@@ -150,15 +151,15 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "next_port": {"name": "Algiers", "cd": "DZALG", "xy": [36.75, 3.05]},
             "route_legs": [[[10.0, 20.0], [15.0, 25.0], [36.75, 3.05]]],
         }
-        auto_id = appmod._fleet_auto_next_port_identity(vessel)
-        appmod._ensure_fleet_next_port_override_table()
+        auto_id = shared_ns._fleet_auto_next_port_identity(vessel)
+        shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(
             "INSERT INTO fleet_next_port_override "
             "(vessel_key, vessel_name, manual_label, manual_lat, manual_lng, auto_snapshot) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("ship a", "Ship A", "Busan", 35.1333, 129.05, auto_id),
         )
-        appmod._fleet_apply_manual_next_port_overrides([vessel])
+        shared_ns._fleet_apply_manual_next_port_overrides([vessel])
         self.assertEqual(vessel["route_legs"], [[[10.0, 20.0], [15.0, 25.0], [35.1333, 129.05]]])
 
     def test_get_style_manual_apply_does_not_create_override_table(self):
@@ -168,7 +169,7 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "lng": 20.0,
             "next_port": {"name": "Algiers", "cd": "DZALG", "xy": [36.75, 3.05]},
         }
-        appmod._fleet_apply_manual_next_port_overrides([vessel], ensure_schema=False)
+        shared_ns._fleet_apply_manual_next_port_overrides([vessel], ensure_schema=False)
         row = appmod.query("SELECT name FROM sqlite_master WHERE type='table' AND name='fleet_next_port_override'",
                            one=True)
         self.assertIsNone(row)
@@ -180,14 +181,14 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "lng": 20.0,
             "next_port": {"name": "Yokohama", "cd": "JPYOK", "xy": [35.45, 139.65]},
         }
-        appmod._ensure_fleet_next_port_override_table()
+        shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(
             "INSERT INTO fleet_next_port_override "
             "(vessel_key, vessel_name, manual_label, manual_lat, manual_lng, auto_snapshot) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("ship a", "Ship A", "Busan", 35.1333, 129.05, "CODE:DZALG"),
         )
-        appmod._fleet_apply_manual_next_port_overrides([vessel])
+        shared_ns._fleet_apply_manual_next_port_overrides([vessel])
         self.assertNotIn("manual", vessel["next_port"])
         row = appmod.query("SELECT vessel_key FROM fleet_next_port_override WHERE vessel_key=?", ("ship a",), one=True)
         self.assertIsNotNone(row)
@@ -199,27 +200,27 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "lng": 20.0,
             "next_port": {},
         }
-        appmod._ensure_fleet_next_port_override_table()
+        shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(
             "INSERT INTO fleet_next_port_override "
             "(vessel_key, vessel_name, manual_label, manual_lat, manual_lng, auto_snapshot) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("ship a", "Ship A", "Busan", 35.1333, 129.05, "CODE:DZALG"),
         )
-        appmod._fleet_apply_manual_next_port_overrides([vessel])
+        shared_ns._fleet_apply_manual_next_port_overrides([vessel])
         self.assertNotIn("manual", vessel["next_port"])
         row = appmod.query("SELECT vessel_key FROM fleet_next_port_override WHERE vessel_key=?", ("ship a",), one=True)
         self.assertIsNotNone(row)
 
     def test_push_invalidation_is_one_way_and_does_not_reactivate(self):
-        appmod._ensure_fleet_next_port_override_table()
+        shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(
             "INSERT INTO fleet_next_port_override "
             "(vessel_key, vessel_name, manual_label, manual_lat, manual_lng, auto_snapshot) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("ship a", "Ship A", "Busan", 35.1333, 129.05, "CODE:DZALG"),
         )
-        invalidated = appmod._fleet_invalidate_next_port_overrides_from_push([{
+        invalidated = shared_ns._fleet_invalidate_next_port_overrides_from_push([{
             "name": "Ship A",
             "lat": 10.0,
             "lng": 20.0,
@@ -231,7 +232,7 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         self.assertEqual(row["active"], 0)
         self.assertEqual(row["inactivated_reason"], "auto identity changed")
 
-        invalidated = appmod._fleet_invalidate_next_port_overrides_from_push([{
+        invalidated = shared_ns._fleet_invalidate_next_port_overrides_from_push([{
             "name": "Ship A",
             "lat": 10.0,
             "lng": 20.0,
@@ -244,13 +245,13 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "lng": 20.0,
             "next_port": {"name": "Algiers", "cd": "DZALG", "xy": [36.75, 3.05]},
         }
-        appmod._fleet_apply_manual_next_port_overrides([vessel])
+        shared_ns._fleet_apply_manual_next_port_overrides([vessel])
         self.assertNotIn("manual", vessel["next_port"])
 
     def test_external_push_route_invalidates_active_override(self):
         appmod._ensure_api_table()
         appmod.execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)", ("secret",))
-        appmod._ensure_fleet_next_port_override_table()
+        shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(
             "INSERT INTO fleet_next_port_override "
             "(vessel_key, vessel_name, manual_label, manual_lat, manual_lng, auto_snapshot) "
@@ -277,14 +278,14 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         self.assertEqual(row["active"], 0)
 
     def test_push_missing_auto_identity_inactivates_override(self):
-        appmod._ensure_fleet_next_port_override_table()
+        shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(
             "INSERT INTO fleet_next_port_override "
             "(vessel_key, vessel_name, manual_label, manual_lat, manual_lng, auto_snapshot) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("ship a", "Ship A", "Busan", 35.1333, 129.05, "CODE:DZALG"),
         )
-        invalidated = appmod._fleet_invalidate_next_port_overrides_from_push([{
+        invalidated = shared_ns._fleet_invalidate_next_port_overrides_from_push([{
             "name": "Ship A",
             "lat": 10.0,
             "lng": 20.0,
@@ -297,14 +298,14 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         self.assertEqual(row["inactivated_reason"], "auto identity missing")
 
     def test_partial_push_does_not_inactivate_absent_vessel_override(self):
-        appmod._ensure_fleet_next_port_override_table()
+        shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(
             "INSERT INTO fleet_next_port_override "
             "(vessel_key, vessel_name, manual_label, manual_lat, manual_lng, auto_snapshot) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("ship a", "Ship A", "Busan", 35.1333, 129.05, "CODE:DZALG"),
         )
-        invalidated = appmod._fleet_invalidate_next_port_overrides_from_push([{
+        invalidated = shared_ns._fleet_invalidate_next_port_overrides_from_push([{
             "name": "Ship B",
             "lat": 10.0,
             "lng": 20.0,
@@ -317,7 +318,7 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         self.assertIsNone(row["inactivated_at"])
 
     def test_invalid_manual_input_is_rejected(self):
-        resolved, err = appmod._fleet_resolve_port_input("Definitely Not A Real Port")
+        resolved, err = shared_ns._fleet_resolve_port_input("Definitely Not A Real Port")
         self.assertIsNone(resolved)
         self.assertIsNotNone(err)
 

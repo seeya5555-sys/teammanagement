@@ -25,6 +25,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -106,27 +107,27 @@ chk(row_of('A2')['svms_status'] == 'HQ Rejected', '라벨도 반려로 갱신', 
 
 print('# 3) 🔴 재상신 게이트가 열린다 — submitted draft 가 남아 있어도')
 mkdraft(rid, 'TSTVES2608A21')
-chk(A._dock_submit_prior('TSTVES2608A21', 'HQ Rejected') is None,
-    "'HQ Rejected' → 재상신 허용", A._dock_submit_prior('TSTVES2608A21', 'HQ Rejected'))
+chk(shared_ns._dock_submit_prior('TSTVES2608A21', 'HQ Rejected') is None,
+    "'HQ Rejected' → 재상신 허용", shared_ns._dock_submit_prior('TSTVES2608A21', 'HQ Rejected'))
 
 print('# 4) 대조군 — 상신 이후 라벨은 계속 막힌다 (2차 상신 = 돈경로 사고)')
 for lab in ('HQ Progressing', 'Submit', 'HQ Confirmed', 'HQ Ordered', 'Approval'):
-    got = A._dock_submit_prior('TSTVES2608A21', lab)
+    got = shared_ns._dock_submit_prior('TSTVES2608A21', lab)
     chk(got is not None, f"'{lab}' → 재상신 차단 유지", got)
 
 print('# 4-1) 이력이 아예 없으면 라벨과 무관하게 None (첫 상신은 게이트 대상 아님)')
-chk(A._dock_submit_prior('NOSUCHREPCD', 'HQ Progressing') is None,
-    'draft 없으면 열림', A._dock_submit_prior('NOSUCHREPCD', 'HQ Progressing'))
+chk(shared_ns._dock_submit_prior('NOSUCHREPCD', 'HQ Progressing') is None,
+    'draft 없으면 열림', shared_ns._dock_submit_prior('NOSUCHREPCD', 'HQ Progressing'))
 
 print('# 4-2) submitted 아닌 이력(failed)은 게이트를 만들지 않는다')
 mkdraft(rid, 'TSTVES2608A22', status='failed')
-chk(A._dock_submit_prior('TSTVES2608A22', 'HQ Progressing') is None,
-    "failed 이력은 '이미 상신됨' 이 아니다", A._dock_submit_prior('TSTVES2608A22', 'HQ Progressing'))
+chk(shared_ns._dock_submit_prior('TSTVES2608A22', 'HQ Progressing') is None,
+    "failed 이력은 '이미 상신됨' 이 아니다", shared_ns._dock_submit_prior('TSTVES2608A22', 'HQ Progressing'))
 
 print('# 5) 라벨 없음/빈값은 열림 쪽 — 반려 판정과 같은 계열(닫을 근거가 없다)')
 for lab in (None, '', '   '):
-    chk(A._dock_submit_prior('TSTVES2608A21', lab) is None,
-        f'라벨 {lab!r} → 재상신 허용', A._dock_submit_prior('TSTVES2608A21', lab))
+    chk(shared_ns._dock_submit_prior('TSTVES2608A21', lab) is None,
+        f'라벨 {lab!r} → 재상신 허용', shared_ns._dock_submit_prior('TSTVES2608A21', lab))
 
 print('# 6) 🔴 e2e — 반려 행은 상신 큐가 실제로 다시 만들어진다 (게이트 함수만이 아니라 라우트까지)')
 #   올마이트 지적 수용: `_dock_submit_prior` 단위확인만으론 재적재를 보장 못 한다 → 생성 라우트를 태운다.

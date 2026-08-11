@@ -37,6 +37,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -108,9 +109,9 @@ c.post('/api/ext/dock_procure/sync', headers=HDR, json=pay)     # 다시 채워�
 
 print()
 print('# 3) 화면용 목록은 이미 행이 생긴 번호를 즉시 뺀다')
-chk([x['req_no'] for x in A._dockproc_orphans_of('BGBB')] == ['S18'], '행 없으면 나온다')
-chk(A._dockproc_orphans_of('BGBB', ['s18']) == [], '행 있으면 대소문자 무관 빠진다')
-chk(A._dockproc_orphans_of('') == [], '선박코드 없으면 빈 목록')
+chk([x['req_no'] for x in shared_ns._dockproc_orphans_of('BGBB')] == ['S18'], '행 없으면 나온다')
+chk(shared_ns._dockproc_orphans_of('BGBB', ['s18']) == [], '행 있으면 대소문자 무관 빠진다')
+chk(shared_ns._dockproc_orphans_of('') == [], '선박코드 없으면 빈 목록')
 j = c.get('/api/dock_procure/lines?vsl_nm=BELGIUM+B').get_json()
 chk([x['req_no'] for x in (j.get('orphans') or [])] == ['S18'], 'lines 응답이 배너 데이터를 내려준다', j.get('orphans'))
 

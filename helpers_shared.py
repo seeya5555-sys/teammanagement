@@ -22,7 +22,7 @@ def login_required(f):
         if 'user_id' not in session:
             if request.path.startswith('/api/'):
                 return jsonify({'error': 'unauthorized'}), 401
-            return redirect(url_for('login', next=request.path))
+            return redirect(url_for('routes_core.login', next=request.path))
         return f(*args, **kwargs)
     return wrapped
 def admin_required(f):

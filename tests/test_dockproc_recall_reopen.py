@@ -23,6 +23,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -113,13 +114,13 @@ chk(res['updated'] == 1, 'changes 에 잡힘(link_only 로 새지 않음)', res)
 
 print('# 3) 🔴 게이트가 실제로 다시 열린다 (submitted draft 가 남아 있어도)')
 mkdraft(rid, 'TSTVME26073116')
-chk(A._dock_inq_blocked(row_of('R22')) is None,
-    '회수 후 견적요청 가능', A._dock_inq_blocked(row_of('R22')))
+chk(shared_ns._dock_inq_blocked(row_of('R22')) is None,
+    '회수 후 견적요청 가능', shared_ns._dock_inq_blocked(row_of('R22')))
 
 print("# 3-1) 대조군 — 회수 전(Quotation Inquiry) 에는 여전히 막힌다")
 mkrow('R23', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
       svms_req_no='TSTVME26073117')
-blocked = A._dock_inq_blocked(row_of('R23'))
+blocked = shared_ns._dock_inq_blocked(row_of('R23'))
 chk(blocked is not None, '견적요청 나간 상태는 차단 유지', blocked)
 
 print('# 4) 미지 라벨은 종전대로 link_only — 단계 보존(안전한 방향으로 실패)')
@@ -324,7 +325,7 @@ chk(d40['status'] == 'recalled', "submitted 이력 → 'recalled'", d40['status'
 chk('회수로 무효화' in (d40['result'] or ''), '무효화 사유가 result 에 남는다', d40['result'])
 chk(A.query("SELECT COUNT(*) n FROM dock_inquiry_draft WHERE rep_cd='TSTVME26073140'",
             one=True)['n'] == 1, '행은 지우지 않고 보존(append-only 이력)')
-chk(A._dock_inq_blocked(row_of('R40')) is None, '게이트도 열린 상태', A._dock_inq_blocked(row_of('R40')))
+chk(shared_ns._dock_inq_blocked(row_of('R40')) is None, '게이트도 열린 상태', shared_ns._dock_inq_blocked(row_of('R40')))
 
 print('# 13-1) failed 이력도 같이 무효화 — 회수 후엔 옛 실패표시도 실제와 무관')
 rid41 = mkrow('R41', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
@@ -343,7 +344,7 @@ for st in ('approved', 'submitting'):
     sync(rq, 'HQ Received', inq_no=rep)
     got = A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd=?", (rep,), one=True)['status']
     chk(got == st, f"'{st}' 큐는 그대로 유지", got)
-    blk = A._dock_inq_blocked(row_of(rq))
+    blk = shared_ns._dock_inq_blocked(row_of(rq))
     chk(blk is not None and '큐에 있음' in blk, f"'{st}' 는 '이미 큐에 있음'으로 계속 차단", blk)
 
 print('# 13-3) 되돌림이 아닌 경로(link_only / 정상 진행)는 이력을 건드리지 않는다')
@@ -431,7 +432,7 @@ if n.status_code == 200:
     left = A.query("SELECT COUNT(*) n FROM dock_inquiry_draft WHERE status='recalled'", one=True)['n']
     chk(left == 0, 'recalled 가 남지 않는다', left)
 else:
-    chk(A._DOCK_SUBMIT_DONE + ('recalled',) == ('submitted', 'failed', 'canceled', 'recalled'),
+    chk(shared_ns._DOCK_SUBMIT_DONE + ('recalled',) == ('submitted', 'failed', 'canceled', 'recalled'),
         "인증 없이 호출 불가 → 종료상태 집합으로 대신 확인")
 
 print('# 15) 🔴 구매 회수 2차 실사고(형 제보 BGBB S14) — 라벨 재해석·키·전이조건 3중 갭')
@@ -440,26 +441,26 @@ print('# 15) 🔴 구매 회수 2차 실사고(형 제보 BGBB S14) — 라벨 �
 # ① 화면이 'HQ Confirmed' 를 'confirmed' 부분일치로 '견적요청 이후'로 오판 → 실패 이력이 초록 ✓
 # ② 전이 조건이 '단계 전부 꺼짐' 이라 rank1(견적작성 잔존)인 구매 회수에 안 걸림
 # ③ 전이 SQL 의 키가 `svms_req_no` 뿐이라 구매 draft(rep_cd=REQ_NO)와 절대 안 맞음
-chk(A._dockproc_inq_posted('PCRQ', 'HQ Confirmed') is False,
+chk(shared_ns._dockproc_inq_posted('PCRQ', 'HQ Confirmed') is False,
     "구매 'HQ Confirmed' = 견적요청 **전**(denylist 부분일치보다 _DOCK_INQ_PRE 우선)")
-chk(A._dockproc_inq_posted('PCRQ', '  hq confirmed ') is False, '대소문자·공백 정규화')
-chk(A._dockproc_inq_posted('PCRQ', 'VSL Approved') is False, "구매 'VSL Approved' = 요청 전")
-chk(A._dockproc_inq_posted('MARP', 'HQ Confirmed') is True,
+chk(shared_ns._dockproc_inq_posted('PCRQ', '  hq confirmed ') is False, '대소문자·공백 정규화')
+chk(shared_ns._dockproc_inq_posted('PCRQ', 'VSL Approved') is False, "구매 'VSL Approved' = 요청 전")
+chk(shared_ns._dockproc_inq_posted('MARP', 'HQ Confirmed') is True,
     "수리는 종전 denylist 그대로 — 회수 라벨 미실측이라 확장하지 않음")
-chk(A._dockproc_inq_posted('PCRQ', 'Quotation Inquiry') is True, "'Quotation Inquiry' = 요청 이후")
-chk(A._dockproc_inq_posted('PCRQ', 'Ordered') is True, "'Ordered' = 요청 이후")
-chk(A._dockproc_inq_posted('PCRQ', '') is False, '빈 라벨 = 판정 불가 → False(실패는 실패로 보인다)')
-chk(A._dockproc_inq_posted('PCRQ', None) is False, 'None 안전')
-chk(A._dockproc_inq_posted('', 'HQ Confirmed') is True,
+chk(shared_ns._dockproc_inq_posted('PCRQ', 'Quotation Inquiry') is True, "'Quotation Inquiry' = 요청 이후")
+chk(shared_ns._dockproc_inq_posted('PCRQ', 'Ordered') is True, "'Ordered' = 요청 이후")
+chk(shared_ns._dockproc_inq_posted('PCRQ', '') is False, '빈 라벨 = 판정 불가 → False(실패는 실패로 보인다)')
+chk(shared_ns._dockproc_inq_posted('PCRQ', None) is False, 'None 안전')
+chk(shared_ns._dockproc_inq_posted('', 'HQ Confirmed') is True,
     '문서종류 미상은 예외 없음 = 종전 denylist (닫힘 쪽)')
 
 print('# 15-1) `_dock_inq_prior` 리팩터 동등성 — 구매는 재개방, 수리는 계속 차단')
 mkdraft(999, 'TSTVES2607PRIOR', status='submitted')
-chk(A._dock_inq_prior('PCRQ', 'TSTVES2607PRIOR', 'HQ Confirmed') is None,
+chk(shared_ns._dock_inq_prior('PCRQ', 'TSTVES2607PRIOR', 'HQ Confirmed') is None,
     "구매 'HQ Confirmed' + submitted 이력 → 재개방")
-chk(A._dock_inq_prior('PCRQ', 'TSTVES2607PRIOR', 'Quotation Inquiry') is not None,
+chk(shared_ns._dock_inq_prior('PCRQ', 'TSTVES2607PRIOR', 'Quotation Inquiry') is not None,
     "요청 이후 라벨이면 계속 차단")
-chk(A._dock_inq_prior('MARP', 'TSTVES2607PRIOR', 'HQ Confirmed') is not None,
+chk(shared_ns._dock_inq_prior('MARP', 'TSTVES2607PRIOR', 'HQ Confirmed') is not None,
     "수리는 종전대로 차단(동등성)")
 A.execute("DELETE FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607PRIOR'")
 
@@ -479,8 +480,8 @@ chk(stages('S14') == (1, 0, 0, 0), '단계는 견적작성만 남는다(rank 1)'
 chk(A.query("SELECT status FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607B4'",
             one=True)['status'] == 'recalled',
     '견적요청 이력 → recalled (구매 키 `svms_pc_req_no` 로 매칭)')
-chk(A._dock_inq_blocked(row_of('S14')) is None, '재요청 게이트도 열려 있다',
-    A._dock_inq_blocked(row_of('S14')))
+chk(shared_ns._dock_inq_blocked(row_of('S14')) is None, '재요청 게이트도 열려 있다',
+    shared_ns._dock_inq_blocked(row_of('S14')))
 
 print("# 15-3) 형 지시 '초기화' — failed 이력도 같이 무효화한다(사유가 이미 낡았다)")
 rid_s15 = mkpc('S15', (1, 1, 0, 0), 'Quotation Inquiry', 'TSTVES2607B5')
@@ -550,8 +551,8 @@ chk(sorted(r['status'] for r in A.query(
 print("# 15-10) `_dock_inq_prior` 빈 라벨 직접 동등성 — 라벨 없으면 열어준다")
 mkdraft(998, 'TSTVES2607EMPTY', status='submitted')
 for _lbl in ('', '   ', None):
-    chk(A._dock_inq_prior('PCRQ', 'TSTVES2607EMPTY', _lbl) is None, f'빈 라벨({_lbl!r}) → 재개방')
-    chk(A._dock_inq_prior('MARP', 'TSTVES2607EMPTY', _lbl) is None, f'수리도 동일({_lbl!r})')
+    chk(shared_ns._dock_inq_prior('PCRQ', 'TSTVES2607EMPTY', _lbl) is None, f'빈 라벨({_lbl!r}) → 재개방')
+    chk(shared_ns._dock_inq_prior('MARP', 'TSTVES2607EMPTY', _lbl) is None, f'수리도 동일({_lbl!r})')
 A.execute("DELETE FROM dock_inquiry_draft WHERE rep_cd='TSTVES2607EMPTY'")
 
 print('# 15-11) 목록 API 가 `inq_posted` 를 실제로 내려준다(화면이 라벨을 다시 안 읽는 전제)')
@@ -621,8 +622,8 @@ sync('R40', 'HQ Received')                                      # 수리 회수 
 chk(stages('R40') == (0, 0, 0, 0), '수리 회수 전이는 종전대로 동작', stages('R40'))
 chk(row_of('R40')['svms_req_no'] == 'TSTVME2607D11',
     '수리 키는 보존(비우면 재요청 버튼이 죽는다)', row_of('R40')['svms_req_no'])
-chk(A._dock_inq_blocked(row_of('R40')) is None, '수리 재요청 게이트도 열려 있다',
-    A._dock_inq_blocked(row_of('R40')))
+chk(shared_ns._dock_inq_blocked(row_of('R40')) is None, '수리 재요청 게이트도 열려 있다',
+    shared_ns._dock_inq_blocked(row_of('R40')))
 
 print('# 16-3) 이번 sync 가 INQ_NO 를 실어오면(= SVMS 에 살아있음) 안 비운다')
 mkpc2('S32', (1, 1, 1, 0), 'Quotation Inquiry', 'TSTVES2607C3', 'TSTVES2607C31')

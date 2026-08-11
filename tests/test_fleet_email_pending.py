@@ -14,6 +14,7 @@ import time
 import unittest
 
 import app as appmod
+from source_bundle import shared_ns
 
 
 class FleetEmailPendingTests(unittest.TestCase):
@@ -22,19 +23,19 @@ class FleetEmailPendingTests(unittest.TestCase):
         self.old = {
             'db': appmod.DATABASE,
             'cfg': appmod.app.config['DATABASE'],
-            'map': appmod.FLEET_MAP_FILE,
-            'ovr': appmod.FLEET_OVERRIDE_FILE,
-            'watch': appmod.FLEET_EMAIL_WATCH_FILE,
-            'aisoff': appmod.FLEET_AIS_OFF_FILE,
+            'map': shared_ns.FLEET_MAP_FILE,
+            'ovr': shared_ns.FLEET_OVERRIDE_FILE,
+            'watch': shared_ns.FLEET_EMAIL_WATCH_FILE,
+            'aisoff': shared_ns.FLEET_AIS_OFF_FILE,
         }
         db = os.path.join(self.tmp.name, 'test.db')
         appmod.DATABASE = db
         appmod.app.config['DATABASE'] = db
         appmod.app.config['TESTING'] = True
-        appmod.FLEET_MAP_FILE = os.path.join(self.tmp.name, 'fleet_map.json')
-        appmod.FLEET_OVERRIDE_FILE = os.path.join(self.tmp.name, 'ovr.json')
-        appmod.FLEET_EMAIL_WATCH_FILE = os.path.join(self.tmp.name, 'watch.json')
-        appmod.FLEET_AIS_OFF_FILE = os.path.join(self.tmp.name, 'aisoff.json')
+        shared_ns.FLEET_MAP_FILE = os.path.join(self.tmp.name, 'fleet_map.json')
+        shared_ns.FLEET_OVERRIDE_FILE = os.path.join(self.tmp.name, 'ovr.json')
+        shared_ns.FLEET_EMAIL_WATCH_FILE = os.path.join(self.tmp.name, 'watch.json')
+        shared_ns.FLEET_AIS_OFF_FILE = os.path.join(self.tmp.name, 'aisoff.json')
         with appmod.app.app_context():
             appmod.init_db(False)
             # 대시보드는 supervisor_vessels 배정된 선박만 내려줌 → 픽스처도 배정해야 fleet 에 남음.
@@ -51,16 +52,16 @@ class FleetEmailPendingTests(unittest.TestCase):
     def tearDown(self):
         appmod.DATABASE = self.old['db']
         appmod.app.config['DATABASE'] = self.old['cfg']
-        appmod.FLEET_MAP_FILE = self.old['map']
-        appmod.FLEET_OVERRIDE_FILE = self.old['ovr']
-        appmod.FLEET_EMAIL_WATCH_FILE = self.old['watch']
-        appmod.FLEET_AIS_OFF_FILE = self.old['aisoff']
+        shared_ns.FLEET_MAP_FILE = self.old['map']
+        shared_ns.FLEET_OVERRIDE_FILE = self.old['ovr']
+        shared_ns.FLEET_EMAIL_WATCH_FILE = self.old['watch']
+        shared_ns.FLEET_AIS_OFF_FILE = self.old['aisoff']
         self.tmp.cleanup()
 
     # ── fixtures ──────────────────────────────────────────────
     def write_fleet(self, stale_ais=False):
-        ts = time.time() - (appmod.AIS_STALE_HOURS + 2) * 3600 if stale_ais else time.time()
-        with open(appmod.FLEET_MAP_FILE, 'w', encoding='utf-8') as f:
+        ts = time.time() - (shared_ns.AIS_STALE_HOURS + 2) * 3600 if stale_ais else time.time()
+        with open(shared_ns.FLEET_MAP_FILE, 'w', encoding='utf-8') as f:
             json.dump({'fleet': [{
                 'name': 'INDONESIA PROSPERITY', 'imo': '9999999',
                 'lat': 25.0, 'lng': 56.0,
@@ -73,11 +74,11 @@ class FleetEmailPendingTests(unittest.TestCase):
             json.dump(obj, f)
 
     def watch_on(self):
-        self.write_json(appmod.FLEET_EMAIL_WATCH_FILE,
+        self.write_json(shared_ns.FLEET_EMAIL_WATCH_FILE,
                         {'indonesia prosperity': {'vessel': 'INDONESIA PROSPERITY'}})
 
     def override_on(self):
-        self.write_json(appmod.FLEET_OVERRIDE_FILE, {'indonesia prosperity': {
+        self.write_json(shared_ns.FLEET_OVERRIDE_FILE, {'indonesia prosperity': {
             'vessel': 'INDONESIA PROSPERITY', 'lat': 26.36833, 'lng': 56.27333,
             'course': None, 'speed': None, 'source': 'email',
             'reported_at': '2026-08-08T12:15', 'until': None,

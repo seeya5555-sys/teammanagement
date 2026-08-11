@@ -17,7 +17,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as appmod
-from source_bundle import APP_SOURCE_PATHS
+from source_bundle import APP_SOURCE_PATHS, shared_ns
 
 ACTIVE_LOCKING = "/api/ext/aor/approved"   # 대조군: 조회하면서 락 거는 기존 엔드포인트
 URL = "/api/ext/aor/reingest-statuses"
@@ -32,13 +32,13 @@ class AORStatusesTests(unittest.TestCase):
         appmod.DATABASE = test_db
         appmod.app.config["DATABASE"] = test_db
         # 첨부 preview 부수효과를 검사하려면 실제 instance/aor_pdfs 를 건드리면 안 된다 — 임시로 격리.
-        self.old_pdf_dir = appmod.AOR_PDF_DIR
-        appmod.AOR_PDF_DIR = os.path.join(self.tmp.name, "aor_pdfs")
-        os.makedirs(appmod.AOR_PDF_DIR, exist_ok=True)
+        self.old_pdf_dir = shared_ns.AOR_PDF_DIR
+        shared_ns.AOR_PDF_DIR = os.path.join(self.tmp.name, "aor_pdfs")
+        os.makedirs(shared_ns.AOR_PDF_DIR, exist_ok=True)
         with appmod.app.app_context():
             appmod.init_db(drop=False)
             appmod._ensure_api_table()
-            appmod.execute(
+            shared_ns.execute(
                 "INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)",
                 ("secret",),
             )
@@ -46,7 +46,7 @@ class AORStatusesTests(unittest.TestCase):
     def tearDown(self):
         appmod.app.config["DATABASE"] = self.old_db
         appmod.DATABASE = self.old_database_constant
-        appmod.AOR_PDF_DIR = self.old_pdf_dir
+        shared_ns.AOR_PDF_DIR = self.old_pdf_dir
         self.tmp.cleanup()
 
     # ---- helpers ----
@@ -158,7 +158,7 @@ class AORStatusesTests(unittest.TestCase):
         #    프로덕션과 **같은 해독기**로 읽는다.
         vals = set()
         for tok in m.group(1).split(","):
-            v = appmod._sql_literal_value(tok)
+            v = shared_ns._sql_literal_value(tok)
             self.assertIsNotNone(v, f"predicate 항목 해독 실패: {tok!r} / {row[0]}")
             vals.add(v)
         return vals
@@ -171,7 +171,7 @@ class AORStatusesTests(unittest.TestCase):
         누가 predicate 에서 상태를 하나 빼면 그 순간 false-skip 이 가능해지므로 여기서 깨뜨린다.
         """
         pred = self._index_predicate()
-        missing = (set(appmod.AOR_REINGEST_NOOP_STATUSES) | {"pending", "hold"}) - pred
+        missing = (set(shared_ns.AOR_REINGEST_NOOP_STATUSES) | {"pending", "hold"}) - pred
         self.assertEqual(set(), missing,
                          f"index predicate 에서 빠진 상태={sorted(missing)} — false-skip 가능해짐")
 
@@ -181,7 +181,7 @@ class AORStatusesTests(unittest.TestCase):
         이게 성립해야 "MAX(id) 가 skip 상태 = 유일 active 행" 이라는 추론이 참이 된다.
         (기존엔 approved+pending 한 조합만 봤음 — 올마이트 R5)
         """
-        for i, noop in enumerate(appmod.AOR_REINGEST_NOOP_STATUSES):
+        for i, noop in enumerate(shared_ns.AOR_REINGEST_NOOP_STATUSES):
             for k, other in enumerate(("pending", "hold")):
                 for order in (0, 1):
                     cd = f"X{i}{k}{order}607220001"
@@ -193,7 +193,7 @@ class AORStatusesTests(unittest.TestCase):
 
     def test_all_noop_status_pairs_are_mutually_exclusive(self):
         """skip 상태끼리도 같은 aor_cd 로 둘 다 active 일 수 없어야 한다."""
-        noops = list(appmod.AOR_REINGEST_NOOP_STATUSES)
+        noops = list(shared_ns.AOR_REINGEST_NOOP_STATUSES)
         for i, a in enumerate(noops):
             for j, b in enumerate(noops):
                 if i >= j:
@@ -273,8 +273,8 @@ class AORStatusesTests(unittest.TestCase):
             db.row_factory = sqlite3.Row
             rows = [dict(r) for r in db.execute("SELECT * FROM aor_draft ORDER BY id")]
         files = {}
-        for name in sorted(os.listdir(appmod.AOR_PDF_DIR)):
-            with open(os.path.join(appmod.AOR_PDF_DIR, name), "rb") as fh:
+        for name in sorted(os.listdir(shared_ns.AOR_PDF_DIR)):
+            with open(os.path.join(shared_ns.AOR_PDF_DIR, name), "rb") as fh:
                 files[name] = fh.read()
         return rows, files
 
@@ -296,11 +296,11 @@ class AORStatusesTests(unittest.TestCase):
         아니면 여기서 깨진다. 클라이언트는 이 상수를 응답으로 받아 자기 skip 집합을 좁히므로,
         이 테스트가 cross-repo drift 의 실질 가드다.
         """
-        self.assertTrue(appmod.AOR_REINGEST_NOOP_STATUSES, "no-op 상태 목록이 비어 있음")
-        for i, st in enumerate(appmod.AOR_REINGEST_NOOP_STATUSES):
+        self.assertTrue(shared_ns.AOR_REINGEST_NOOP_STATUSES, "no-op 상태 목록이 비어 있음")
+        for i, st in enumerate(shared_ns.AOR_REINGEST_NOOP_STATUSES):
             cd = f"Z26072200{i:02d}"
             did = self._insert(cd, st, proposed_comment="원본", vsl_nm="원래배", amt=100)
-            pdf = appmod._aor_pdf_path(did, 0)
+            pdf = shared_ns._aor_pdf_path(did, 0)
             os.makedirs(os.path.dirname(pdf), exist_ok=True)
             with open(pdf, "wb") as fh:
                 fh.write(b"%PDF-1.4 original")
@@ -318,12 +318,12 @@ class AORStatusesTests(unittest.TestCase):
 
     def test_noop_list_excludes_pending_and_hold(self):
         """pending 은 갱신 대상, hold 는 러너가 첨부를 재업로드하므로 no-op 이 아니다."""
-        self.assertNotIn("pending", appmod.AOR_REINGEST_NOOP_STATUSES)
-        self.assertNotIn("hold", appmod.AOR_REINGEST_NOOP_STATUSES)
+        self.assertNotIn("pending", shared_ns.AOR_REINGEST_NOOP_STATUSES)
+        self.assertNotIn("hold", shared_ns.AOR_REINGEST_NOOP_STATUSES)
 
         # pending 은 실제로 갱신 + 기존 preview 삭제되어야 한다(그래서 skip 하면 안 됨)
         did = self._insert("Z2607220099", "pending", proposed_comment="원본")
-        pdf = appmod._aor_pdf_path(did, 0)
+        pdf = shared_ns._aor_pdf_path(did, 0)
         os.makedirs(os.path.dirname(pdf), exist_ok=True)
         with open(pdf, "wb") as fh:
             fh.write(b"%PDF-1.4 original")
@@ -334,12 +334,12 @@ class AORStatusesTests(unittest.TestCase):
 
     def test_response_advertises_noop_statuses(self):
         body = self._get().get_json()
-        self.assertEqual(list(appmod.AOR_REINGEST_NOOP_STATUSES), body["noop_statuses"])
+        self.assertEqual(list(shared_ns.AOR_REINGEST_NOOP_STATUSES), body["noop_statuses"])
 
     def test_response_advertises_terminal_statuses(self):
         """러너가 실제로 skip 할 수 있는 absorbing 부분집합도 서버가 정본으로 내려준다."""
         body = self._get().get_json()
-        self.assertEqual(list(appmod.AOR_REINGEST_TERMINAL_STATUSES), body["terminal_statuses"])
+        self.assertEqual(list(shared_ns.AOR_REINGEST_TERMINAL_STATUSES), body["terminal_statuses"])
 
     def test_terminal_statuses_omitted_whenever_noop_is(self):
         """둘은 항상 같이 나가거나 같이 빠진다.
@@ -500,14 +500,14 @@ class AORStatusesTests(unittest.TestCase):
 
     def test_sql_literal_decoder_semantics(self):
         """해독기 자체 단위검사 — 여기서 틀리면 위 통합검사들이 우연히 맞는 것뿐이다."""
-        self.assertEqual("approved", appmod._sql_literal_value("'approved'"))
-        self.assertEqual("approved", appmod._sql_literal_value("  'approved' "))
-        self.assertEqual("'approved'", appmod._sql_literal_value("'''approved'''"))
-        self.assertEqual("it's", appmod._sql_literal_value("'it''s'"))
-        self.assertEqual("", appmod._sql_literal_value("''"))
+        self.assertEqual("approved", shared_ns._sql_literal_value("'approved'"))
+        self.assertEqual("approved", shared_ns._sql_literal_value("  'approved' "))
+        self.assertEqual("'approved'", shared_ns._sql_literal_value("'''approved'''"))
+        self.assertEqual("it's", shared_ns._sql_literal_value("'it''s'"))
+        self.assertEqual("", shared_ns._sql_literal_value("''"))
         for bad in ('"approved"', "approved", "'approved", "approved'",
                     "'", "", "x'6162'", "1", "'a'b'"):
-            self.assertIsNone(appmod._sql_literal_value(bad), bad)
+            self.assertIsNone(shared_ns._sql_literal_value(bad), bad)
 
     def test_index_check_accepts_the_real_index(self):
         """가드가 너무 빡빡해 정상 index 까지 막으면 최적화가 영영 안 돈다 — 양성 확인.
@@ -515,7 +515,7 @@ class AORStatusesTests(unittest.TestCase):
         음성 케이스만 있으면 "항상 False" 인 가드도 전부 통과한다.
         """
         with appmod.app.app_context():
-            self.assertTrue(appmod._aor_index_predicate_covers_noop())
+            self.assertTrue(shared_ns._aor_index_predicate_covers_noop())
 
     # (같은 이름의 escaped-quote 테스트가 위 424 줄에 있다. 중복 정의는 Python 이 뒤엣것으로
     #  덮어써서 앞 테스트가 조용히 사라지므로 하나만 남긴다 — 올마이트 R10.)
@@ -539,19 +539,19 @@ class AORStatusesTests(unittest.TestCase):
         그래서 여기선 인증을 우회해 분기 자체만 검증한다 — 도달 불가라도 방어는 남겨둔다.
         """
         self._insert("ATGRCA2607220003", "approved")
-        real_check = appmod._check_api_key
-        appmod._check_api_key = lambda: True
+        real_check = shared_ns._check_api_key
+        shared_ns._check_api_key = lambda: True
         try:
             with appmod.app.test_request_context(headers={"X-API-Key": "secret"}):
-                db = appmod.get_db()
+                db = shared_ns.get_db()
                 db.execute("BEGIN")
                 self.assertTrue(db.in_transaction, "선행 조건이 안 잡혔으면 테스트가 무의미")
                 try:
-                    body = appmod.api_ext_aor_reingest_statuses().get_json()
+                    body = shared_ns.api_ext_aor_reingest_statuses().get_json()
                 finally:
                     db.rollback()
         finally:
-            appmod._check_api_key = real_check
+            shared_ns._check_api_key = real_check
         self.assertNotIn("noop_statuses", body)
         # 목록 자체는 정상 반환 — 최적화만 끄고 기능은 유지
         self.assertEqual(1, body["count"])
@@ -563,10 +563,10 @@ class AORStatusesTests(unittest.TestCase):
         endpoint가 fail-open으로 skip만 끄는 별도 테스트가 담당한다.
         """
         with appmod.app.test_request_context(headers={"X-API-Key": "secret"}):
-            db = appmod.get_db()
+            db = shared_ns.get_db()
             db.execute("BEGIN")
             self.assertTrue(db.in_transaction)
-            self.assertTrue(appmod._check_api_key())
+            self.assertTrue(shared_ns._check_api_key())
             self.assertTrue(db.in_transaction,
                             "인증 경로가 caller transaction을 commit하면 안 됨")
             db.rollback()
@@ -574,7 +574,7 @@ class AORStatusesTests(unittest.TestCase):
     def test_begin_failure_disables_skip_instead_of_500(self):
         """BEGIN 이 실패해도 500 이 아니라 'skip off' 로 수렴해야 한다."""
         self._insert("ATGRCA2607220003", "approved")
-        real_get_db = appmod.get_db
+        real_get_db = shared_ns.get_db
 
         class _NoBegin:
             def __init__(self, db):
@@ -587,17 +587,17 @@ class AORStatusesTests(unittest.TestCase):
             def __getattr__(self, n):
                 return getattr(self._db, n)
 
-        appmod.get_db = lambda: _NoBegin(real_get_db())
+        shared_ns.get_db = lambda: _NoBegin(real_get_db())
         try:
             r = self._get()
         finally:
-            appmod.get_db = real_get_db
+            shared_ns.get_db = real_get_db
         self.assertEqual(200, r.status_code)
         self.assertNotIn("noop_statuses", r.get_json())
 
     def test_rollback_failure_does_not_turn_a_good_response_into_500(self):
         self._insert("ATGRCA2607220003", "approved")
-        real_get_db = appmod.get_db
+        real_get_db = shared_ns.get_db
 
         class _BadRollback:
             def __init__(self, db):
@@ -608,11 +608,11 @@ class AORStatusesTests(unittest.TestCase):
             def __getattr__(self, n):
                 return getattr(self._db, n)
 
-        appmod.get_db = lambda: _BadRollback(real_get_db())
+        shared_ns.get_db = lambda: _BadRollback(real_get_db())
         try:
             r = self._get()
         finally:
-            appmod.get_db = real_get_db
+            shared_ns.get_db = real_get_db
         self.assertEqual(200, r.status_code)
         self.assertIn("noop_statuses", r.get_json())
 
@@ -747,18 +747,18 @@ class AORStatusesTests(unittest.TestCase):
     def test_ensure_api_table_is_not_repeated_per_request(self):
         """API 키 요청마다 DDL+commit 을 때리던 낭비가 사라졌는지 — 호출 횟수로 고정한다."""
         calls = []
-        real = appmod.execute
+        real = shared_ns.execute
 
         def spy(sql, params=()):
             calls.append(" ".join(sql.split()))
             return real(sql, params)
 
-        appmod.execute = spy
+        shared_ns.execute = spy
         try:
             for _ in range(3):
                 self.assertEqual(200, self._get().status_code)
         finally:
-            appmod.execute = real
+            shared_ns.execute = real
         ddl = [c for c in calls if "CREATE TABLE IF NOT EXISTS api_settings" in c]
         self.assertEqual([], ddl, f"읽기전용 요청이 아직 DDL 을 침: {ddl}")
 
@@ -920,8 +920,8 @@ class AbsorbingStatusInvariantTests(unittest.TestCase):
             f"UPDATE 스캔이 예상보다 적게 잡음({len(hits)}) — 정규식이 SQL 형태 변화를 놓쳤을 수 있음")
 
     def test_terminal_is_subset_of_noop(self):
-        self.assertTrue(set(appmod.AOR_REINGEST_TERMINAL_STATUSES)
-                        <= set(appmod.AOR_REINGEST_NOOP_STATUSES),
+        self.assertTrue(set(shared_ns.AOR_REINGEST_TERMINAL_STATUSES)
+                        <= set(shared_ns.AOR_REINGEST_NOOP_STATUSES),
                         "absorbing 인데 no-op 이 아닌 상태가 있음 — 계약 모순")
 
     @classmethod
@@ -991,7 +991,7 @@ class AbsorbingStatusInvariantTests(unittest.TestCase):
         # 기준은 **행 단위** absorbing 상수다. 러너 skip 계약(`AOR_REINGEST_TERMINAL_STATUSES`)은
         # 2026-07-30 에 비워졌지만(SVMS 가 같은 aor_cd 를 다시 결재대기로 되돌리므로),
         # "상신 이력행을 사후 편집하지 않는다"는 불변식은 그대로 지킨다.
-        term = set(appmod.AOR_ROW_ABSORBING_STATUSES)
+        term = set(shared_ns.AOR_ROW_ABSORBING_STATUSES)
         for path, lineno, sql, analyzable in self._scan():
             where = f"{os.path.relpath(path)}:{lineno}"
             # allowlist 는 **정적분석 가능한 .py 소스에만** 적용한다. .sql 파일은 파일 전체가
@@ -1015,7 +1015,7 @@ class AbsorbingTriggerTests(unittest.TestCase):
         with appmod.app.app_context():
             appmod.init_db(drop=False)
             appmod._ensure_api_table()
-            appmod.execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)",
+            shared_ns.execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)",
                            ("secret",))
 
     def tearDown(self):
@@ -1039,8 +1039,8 @@ class AbsorbingTriggerTests(unittest.TestCase):
         self.assertIsNotNone(row, "init_db 가 absorbing trigger 를 안 만듦")
 
     def test_leaving_a_terminal_status_is_rejected_by_the_db(self):
-        self.assertTrue(appmod.AOR_ROW_ABSORBING_STATUSES, "행 absorbing 목록이 비어 있음")
-        for term in appmod.AOR_ROW_ABSORBING_STATUSES:
+        self.assertTrue(shared_ns.AOR_ROW_ABSORBING_STATUSES, "행 absorbing 목록이 비어 있음")
+        for term in shared_ns.AOR_ROW_ABSORBING_STATUSES:
             with self.subTest(status=term):
                 with sqlite3.connect(self.path) as db:
                     db.execute("DELETE FROM aor_draft")
@@ -1207,7 +1207,7 @@ class AbsorbingTriggerTests(unittest.TestCase):
             db.commit()
         with appmod.app.app_context():
             appmod.init_db(drop=False)
-            self.assertTrue(appmod._aor_absorbing_trigger_ok(),
+            self.assertTrue(shared_ns._aor_absorbing_trigger_ok(),
                             "옛 trigger 가 그대로 남음 — DROP/CREATE 교체가 안 됨")
         self.assertIn('terminal_statuses', self._body())
 
@@ -1233,12 +1233,12 @@ class AbsorbingTriggerTests(unittest.TestCase):
     def test_stale_trigger_definition_disables_skip(self):
         """상수를 넓혀도 `IF NOT EXISTS` 라 기존 trigger 는 안 바뀐다 → 불일치면 꺼야 한다."""
         self._seed('submitted')
-        orig = appmod.AOR_ROW_ABSORBING_STATUSES
+        orig = shared_ns.AOR_ROW_ABSORBING_STATUSES
         try:
-            appmod.AOR_ROW_ABSORBING_STATUSES = orig + ('rejected',)
+            shared_ns.AOR_ROW_ABSORBING_STATUSES = orig + ('rejected',)
             self.assertNotIn('terminal_statuses', self._body())
         finally:
-            appmod.AOR_ROW_ABSORBING_STATUSES = orig
+            shared_ns.AOR_ROW_ABSORBING_STATUSES = orig
 
 
 class TestSuiteIntegrityTests(unittest.TestCase):

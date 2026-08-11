@@ -1,5 +1,106 @@
+"""routes_calendar_dock — converted to a real imported module with Blueprint("routes_calendar_dock") on 2026-08-11.
 
-@app.route('/api/cal/events', methods=['GET'])
+Previously executed in the app namespace by ``_load_extracted_module``.
+Dependencies are now the explicit imports below and nothing else — every
+name comes from ``app`` (whose namespace includes everything
+``helpers_shared.py`` executed into it).  Contract enforced by
+``test_converted_modules_are_self_contained``: zero unresolved names, and
+no sibling boundary imports.
+"""
+from flask import Blueprint
+
+from app import (
+    AOR_PDF_DIR,
+    AUTOMATION_TASKS_BASE,
+    BytesIO,
+    CAL_VALID_COLORS,
+    FUNDREQ_FILE_DIR,
+    GEMINI_API_KEY,
+    HTTPException,
+    INVOICE_PDF_DIR,
+    RETIRED_RUNNER_KEYS,
+    SOA_CATEGORY_OWNER,
+    STT_AUDIO_DIR,
+    STT_AUDIO_EXT,
+    STT_LEASE_SEC,
+    STT_MAX_ATTEMPTS,
+    STT_MAX_BYTES,
+    UPLOAD_DIR,
+    _AOR_ACTIVE_STATUSES,
+    _FUNDREQ_ATT_INLINE,
+    _FUNDREQ_ATT_MAX,
+    _FUNDREQ_ATT_MIME,
+    _HEALTH_ORDER,
+    _NON_STT_UPLOAD_MAX,
+    _annotate_drafts_with_vessel,
+    _aor_absorbing_trigger_sql,
+    _aor_status_list_sql,
+    _automation_enabled,
+    _automation_health_summary,
+    _cls_handle_files,
+    _dock_sync_flag_bump,
+    _dockproc_adopt_svms,
+    _dockproc_subject_from_svms,
+    _ensure_api_table,
+    _ensure_summary_table,
+    _ext_allowed,
+    _fundreq_att_ext,
+    _fundreq_att_sniff_ok,
+    _gemini_call_json,
+    _get_api_key,
+    _issue_write_scope,
+    _match_vessel_by_name,
+    _model_for,
+    _reqgen_build_subj,
+    _reqgen_vsl_prefix,
+    _run_summary_generate,
+    _safe_filename,
+    _soa_group_members,
+    _soa_groups_load,
+    _soa_owner_map,
+    _soa_review_attachment_path,
+    _soa_review_case_unlock,
+    _vetting_pick,
+    _vkey,
+    abort,
+    admin_required,
+    api_key_required,
+    app,
+    datetime,
+    execute,
+    execute_rc,
+    g,
+    get_db,
+    hashlib,
+    hmac,
+    json,
+    jsonify,
+    login_required,
+    make_response,
+    math,
+    mimetypes,
+    os,
+    query,
+    re,
+    render_template,
+    request,
+    secrets,
+    secure_filename,
+    send_file,
+    send_from_directory,
+    session,
+    soa_task_key,
+    sqlite3,
+    timedelta,
+    url_for,
+    uuid,
+)
+
+bp = Blueprint("routes_calendar_dock", __name__)
+
+
+
+@bp.route('/api/cal/events', methods=['GET'])
 @login_required
 def api_cal_events_list():
     """기간 내 일정 조회.
@@ -29,7 +130,7 @@ def api_cal_events_list():
     return jsonify([dict(r) for r in rows])
 
 
-@app.route('/api/cal/events/find', methods=['GET'])
+@bp.route('/api/cal/events/find', methods=['GET'])
 @login_required
 def api_cal_event_find():
     """source_type + source_id 로 기존 일정 조회 (중복 체크용).
@@ -45,7 +146,7 @@ def api_cal_event_find():
     return jsonify(dict(r) if r else None)
 
 
-@app.route('/api/cal/events', methods=['POST'])
+@bp.route('/api/cal/events', methods=['POST'])
 @login_required
 def api_cal_event_create():
     d = request.get_json() or {}
@@ -87,7 +188,7 @@ def api_cal_event_create():
     return jsonify({'id': new_id}), 201
 
 
-@app.route('/api/cal/events/<int:eid>', methods=['GET'])
+@bp.route('/api/cal/events/<int:eid>', methods=['GET'])
 @login_required
 def api_cal_event_get(eid):
     r = query('SELECT * FROM calendar_events WHERE id=?', (eid,), one=True)
@@ -96,7 +197,7 @@ def api_cal_event_get(eid):
     return jsonify(dict(r))
 
 
-@app.route('/api/cal/events/<int:eid>', methods=['PUT'])
+@bp.route('/api/cal/events/<int:eid>', methods=['PUT'])
 @login_required
 def api_cal_event_update(eid):
     if not query('SELECT id FROM calendar_events WHERE id=?', (eid,), one=True):
@@ -124,7 +225,7 @@ def api_cal_event_update(eid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/cal/events/<int:eid>', methods=['DELETE'])
+@bp.route('/api/cal/events/<int:eid>', methods=['DELETE'])
 @login_required
 def api_cal_event_delete(eid):
     execute('DELETE FROM calendar_events WHERE id=?', (eid,))
@@ -205,7 +306,7 @@ def _require_dock_edit_via_block(bid):
     return None
 
 
-@app.route('/api/dock-reports', methods=['GET'])
+@bp.route('/api/dock-reports', methods=['GET'])
 @login_required
 def api_dock_list():
     """목록 조회 — 필터: vessel_id, status, is_template, q"""
@@ -252,7 +353,7 @@ def api_dock_list():
     return jsonify(out)
 
 
-@app.route('/api/dock-reports', methods=['POST'])
+@bp.route('/api/dock-reports', methods=['POST'])
 @login_required
 def api_dock_create():
     d = request.get_json(silent=True) or {}
@@ -310,7 +411,7 @@ def api_dock_create():
     return jsonify({'id': new_id, 'ok': True}), 201
 
 
-@app.route('/api/dock-reports/<int:rid>', methods=['GET'])
+@bp.route('/api/dock-reports/<int:rid>', methods=['GET'])
 @login_required
 def api_dock_get(rid):
     """보고서 상세 — 메타 + 섹션 트리 + 블록 모두 포함"""
@@ -364,7 +465,7 @@ def api_dock_get(rid):
     return jsonify(out)
 
 
-@app.route('/api/dock-reports/<int:rid>', methods=['PUT'])
+@bp.route('/api/dock-reports/<int:rid>', methods=['PUT'])
 @login_required
 def api_dock_update(rid):
     """메타 정보 수정"""
@@ -399,7 +500,7 @@ def api_dock_update(rid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/dock-reports/<int:rid>', methods=['DELETE'])
+@bp.route('/api/dock-reports/<int:rid>', methods=['DELETE'])
 @login_required
 def api_dock_delete(rid):
     err = _require_dock_edit(rid)
@@ -431,7 +532,7 @@ def _block_report_id(bid):
 
 
 # ─── Sections ─────────────────────────────────────────────────
-@app.route('/api/dock-reports/<int:rid>/sections', methods=['POST'])
+@bp.route('/api/dock-reports/<int:rid>/sections', methods=['POST'])
 @login_required
 def api_dock_section_create(rid):
     err = _require_dock_edit(rid)
@@ -464,7 +565,7 @@ def api_dock_section_create(rid):
     return jsonify({'id': new_id, 'ok': True}), 201
 
 
-@app.route('/api/dock-sections/<int:sid>', methods=['PUT'])
+@bp.route('/api/dock-sections/<int:sid>', methods=['PUT'])
 @login_required
 def api_dock_section_update(sid):
     err = _require_dock_edit_via_section(sid)
@@ -482,7 +583,7 @@ def api_dock_section_update(sid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/dock-sections/<int:sid>', methods=['DELETE'])
+@bp.route('/api/dock-sections/<int:sid>', methods=['DELETE'])
 @login_required
 def api_dock_section_delete(sid):
     err = _require_dock_edit_via_section(sid)
@@ -497,7 +598,7 @@ def api_dock_section_delete(sid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/dock-sections/<int:sid>/move', methods=['POST'])
+@bp.route('/api/dock-sections/<int:sid>/move', methods=['POST'])
 @login_required
 def api_dock_section_move(sid):
     """같은 부모 아래에서 위/아래로 한 칸 이동"""
@@ -540,7 +641,7 @@ def api_dock_section_move(sid):
     return jsonify({'ok': True, 'moved': True})
 
 
-@app.route('/api/dock-sections/<int:sid>/reparent', methods=['POST'])
+@bp.route('/api/dock-sections/<int:sid>/reparent', methods=['POST'])
 @login_required
 def api_dock_section_reparent(sid):
     """섹션을 다른 부모로 이동.
@@ -638,7 +739,7 @@ def _default_block_content(block_type):
     return {}
 
 
-@app.route('/api/dock-sections/<int:sid>/blocks', methods=['POST'])
+@bp.route('/api/dock-sections/<int:sid>/blocks', methods=['POST'])
 @login_required
 def api_dock_block_create(sid):
     err = _require_dock_edit_via_section(sid)
@@ -667,7 +768,7 @@ def api_dock_block_create(sid):
     return jsonify({'id': new_id, 'ok': True, 'content': content}), 201
 
 
-@app.route('/api/dock-blocks/<int:bid>', methods=['PUT'])
+@bp.route('/api/dock-blocks/<int:bid>', methods=['PUT'])
 @login_required
 def api_dock_block_update(bid):
     err = _require_dock_edit_via_block(bid)
@@ -686,7 +787,7 @@ def api_dock_block_update(bid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/dock-blocks/<int:bid>', methods=['DELETE'])
+@bp.route('/api/dock-blocks/<int:bid>', methods=['DELETE'])
 @login_required
 def api_dock_block_delete(bid):
     err = _require_dock_edit_via_block(bid)
@@ -700,7 +801,7 @@ def api_dock_block_delete(bid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/dock-blocks/<int:bid>/move', methods=['POST'])
+@bp.route('/api/dock-blocks/<int:bid>/move', methods=['POST'])
 @login_required
 def api_dock_block_move(bid):
     err = _require_dock_edit_via_block(bid)
@@ -820,7 +921,7 @@ def _process_uploaded_image(file_storage, dest_path,
         return dest_path, original_size, len(raw_bytes)
 
 
-@app.route('/api/dock-reports/<int:rid>/upload-image', methods=['POST'])
+@bp.route('/api/dock-reports/<int:rid>/upload-image', methods=['POST'])
 @login_required
 def api_dock_upload_image(rid):
     err = _require_dock_edit(rid)
@@ -916,7 +1017,7 @@ def _get_full_report_data(rid):
 
 
 
-@app.route('/api/dock-reports/<int:rid>/export/docx')
+@bp.route('/api/dock-reports/<int:rid>/export/docx')
 @login_required
 def api_dock_export_docx(rid):
     try:
@@ -947,7 +1048,7 @@ def api_dock_export_docx(rid):
     )
 
 
-@app.route('/api/dock-reports/<int:rid>/export/pdf')
+@bp.route('/api/dock-reports/<int:rid>/export/pdf')
 @login_required
 def api_dock_export_pdf(rid):
     try:
@@ -1089,7 +1190,7 @@ def _brep_to_dict(row):
 
 
 # ─── Boarding Report — 보고서 메타 CRUD ─────────────────────────
-@app.route('/api/boarding-reports', methods=['GET'])
+@bp.route('/api/boarding-reports', methods=['GET'])
 @login_required
 def api_brep_list():
     conds, params = ['1=1'], []
@@ -1134,7 +1235,7 @@ def api_brep_list():
     return jsonify(out)
 
 
-@app.route('/api/boarding-reports', methods=['POST'])
+@bp.route('/api/boarding-reports', methods=['POST'])
 @login_required
 def api_brep_create():
     d = request.get_json(silent=True) or {}
@@ -1206,7 +1307,7 @@ def api_brep_create():
     return jsonify({'id': new_id, 'ok': True}), 201
 
 
-@app.route('/api/boarding-reports/<int:rid>', methods=['GET'])
+@bp.route('/api/boarding-reports/<int:rid>', methods=['GET'])
 @login_required
 def api_brep_get(rid):
     r = query('''
@@ -1258,7 +1359,7 @@ def api_brep_get(rid):
     return jsonify(out)
 
 
-@app.route('/api/boarding-reports/<int:rid>', methods=['PUT'])
+@bp.route('/api/boarding-reports/<int:rid>', methods=['PUT'])
 @login_required
 def api_brep_update(rid):
     err = _require_brep_edit(rid)
@@ -1293,7 +1394,7 @@ def api_brep_update(rid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/boarding-reports/<int:rid>', methods=['DELETE'])
+@bp.route('/api/boarding-reports/<int:rid>', methods=['DELETE'])
 @login_required
 def api_brep_delete(rid):
     err = _require_brep_edit(rid)
@@ -1304,7 +1405,7 @@ def api_brep_delete(rid):
 
 
 # ─── Boarding Report — 섹션 CRUD ────────────────────────────────
-@app.route('/api/boarding-reports/<int:rid>/sections', methods=['POST'])
+@bp.route('/api/boarding-reports/<int:rid>/sections', methods=['POST'])
 @login_required
 def api_brep_section_create(rid):
     err = _require_brep_edit(rid)
@@ -1335,7 +1436,7 @@ def api_brep_section_create(rid):
     return jsonify({'id': new_id, 'ok': True}), 201
 
 
-@app.route('/api/boarding-sections/<int:sid>', methods=['PUT'])
+@bp.route('/api/boarding-sections/<int:sid>', methods=['PUT'])
 @login_required
 def api_brep_section_update(sid):
     err = _require_brep_edit_via_section(sid)
@@ -1351,7 +1452,7 @@ def api_brep_section_update(sid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/boarding-sections/<int:sid>', methods=['DELETE'])
+@bp.route('/api/boarding-sections/<int:sid>', methods=['DELETE'])
 @login_required
 def api_brep_section_delete(sid):
     err = _require_brep_edit_via_section(sid)
@@ -1363,7 +1464,7 @@ def api_brep_section_delete(sid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/boarding-sections/<int:sid>/move', methods=['POST'])
+@bp.route('/api/boarding-sections/<int:sid>/move', methods=['POST'])
 @login_required
 def api_brep_section_move(sid):
     err = _require_brep_edit_via_section(sid)
@@ -1403,7 +1504,7 @@ def api_brep_section_move(sid):
     return jsonify({'ok': True, 'moved': True})
 
 
-@app.route('/api/boarding-sections/<int:sid>/reparent', methods=['POST'])
+@bp.route('/api/boarding-sections/<int:sid>/reparent', methods=['POST'])
 @login_required
 def api_brep_section_reparent(sid):
     """섹션을 다른 부모로 이동.
@@ -1499,7 +1600,7 @@ def _brep_default_block_content(block_type):
     return {}
 
 
-@app.route('/api/boarding-sections/<int:sid>/blocks', methods=['POST'])
+@bp.route('/api/boarding-sections/<int:sid>/blocks', methods=['POST'])
 @login_required
 def api_brep_block_create(sid):
     err = _require_brep_edit_via_section(sid)
@@ -1526,7 +1627,7 @@ def api_brep_block_create(sid):
     return jsonify({'id': new_id, 'ok': True, 'content': content}), 201
 
 
-@app.route('/api/boarding-blocks/<int:bid>', methods=['PUT'])
+@bp.route('/api/boarding-blocks/<int:bid>', methods=['PUT'])
 @login_required
 def api_brep_block_update(bid):
     err = _require_brep_edit_via_block(bid)
@@ -1543,7 +1644,7 @@ def api_brep_block_update(bid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/boarding-blocks/<int:bid>', methods=['DELETE'])
+@bp.route('/api/boarding-blocks/<int:bid>', methods=['DELETE'])
 @login_required
 def api_brep_block_delete(bid):
     err = _require_brep_edit_via_block(bid)
@@ -1555,7 +1656,7 @@ def api_brep_block_delete(bid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/boarding-blocks/<int:bid>/move', methods=['POST'])
+@bp.route('/api/boarding-blocks/<int:bid>/move', methods=['POST'])
 @login_required
 def api_brep_block_move(bid):
     err = _require_brep_edit_via_block(bid)
@@ -1594,7 +1695,7 @@ def api_brep_block_move(bid):
 
 # ─── Boarding Report — 이미지 업로드 ────────────────────────────
 # (dock/ 폴더와 분리하기 위해 별도 boarding/ 폴더 사용)
-@app.route('/api/boarding-reports/<int:rid>/upload-image', methods=['POST'])
+@bp.route('/api/boarding-reports/<int:rid>/upload-image', methods=['POST'])
 @login_required
 def api_brep_upload_image(rid):
     err = _require_brep_edit(rid)
@@ -1681,7 +1782,7 @@ def _get_full_brep_data(rid):
     return out
 
 
-@app.route('/api/boarding-reports/<int:rid>/export/docx')
+@bp.route('/api/boarding-reports/<int:rid>/export/docx')
 @login_required
 def api_brep_export_docx(rid):
     try:
@@ -1710,7 +1811,7 @@ def api_brep_export_docx(rid):
     )
 
 
-@app.route('/api/boarding-reports/<int:rid>/export/pdf')
+@bp.route('/api/boarding-reports/<int:rid>/export/pdf')
 @login_required
 def api_brep_export_pdf(rid):
     try:
@@ -1773,7 +1874,7 @@ def api_brep_export_pdf(rid):
 
 
 
-@app.route('/api/issues/<int:iid>/attachments', methods=['POST'])
+@bp.route('/api/issues/<int:iid>/attachments', methods=['POST'])
 @login_required
 def api_attachment_upload(iid):
     _issue_write_scope(iid)
@@ -1804,7 +1905,7 @@ def api_attachment_upload(iid):
     }), 201
 
 
-@app.route('/api/attachments/<int:aid>')
+@bp.route('/api/attachments/<int:aid>')
 @login_required
 def api_attachment_download(aid):
     a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
@@ -1907,7 +2008,7 @@ def _msg_preview_data(a):
             pass
 
 
-@app.route('/api/attachments/<int:aid>/msg-preview')
+@bp.route('/api/attachments/<int:aid>/msg-preview')
 @login_required
 def api_attachment_msg_preview(aid):
     a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
@@ -1920,7 +2021,7 @@ def api_attachment_msg_preview(aid):
     return jsonify({'ok': True, 'message': data})
 
 
-@app.route('/api/attachments/<int:aid>/msg-preview/attachments/<int:index>')
+@bp.route('/api/attachments/<int:aid>/msg-preview/attachments/<int:index>')
 @login_required
 def api_attachment_msg_preview_file(aid, index):
     a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
@@ -1956,7 +2057,7 @@ def api_attachment_msg_preview_file(aid, index):
             pass
 
 
-@app.route('/api/attachments/<int:aid>', methods=['DELETE'])
+@bp.route('/api/attachments/<int:aid>', methods=['DELETE'])
 @login_required
 def api_attachment_delete(aid):
     a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
@@ -2060,13 +2161,13 @@ def _parse_amount(v):
 
 
 # ─── Pages ───────────────────────────────────────────────────
-@app.route('/expenses')
+@bp.route('/expenses')
 @login_required
 def expenses_page():
     return render_template('expenses.html')
 
 
-@app.route('/expenses/<int:tid>')
+@bp.route('/expenses/<int:tid>')
 @login_required
 def expense_detail_page(tid):
     t = query('SELECT id FROM biz_trips WHERE id=?', (tid,), one=True)
@@ -2076,7 +2177,7 @@ def expense_detail_page(tid):
 
 
 # ─── API : 출장 카드 ─────────────────────────────────────────
-@app.route('/api/biz-trips', methods=['GET'])
+@bp.route('/api/biz-trips', methods=['GET'])
 @login_required
 def api_trips_list():
     conds, params = ['1=1'], []
@@ -2109,7 +2210,7 @@ def api_trips_list():
     return jsonify(out)
 
 
-@app.route('/api/biz-trips', methods=['POST'])
+@bp.route('/api/biz-trips', methods=['POST'])
 @login_required
 def api_trips_create():
     d = request.get_json(silent=True) or {}
@@ -2134,7 +2235,7 @@ def api_trips_create():
     return jsonify({'id': new_id, 'ok': True}), 201
 
 
-@app.route('/api/biz-trips/<int:tid>', methods=['GET'])
+@bp.route('/api/biz-trips/<int:tid>', methods=['GET'])
 @login_required
 def api_trip_get(tid):
     t = query('''SELECT t.*, s.name AS supervisor_name
@@ -2153,7 +2254,7 @@ def api_trip_get(tid):
     return jsonify(d)
 
 
-@app.route('/api/biz-trips/<int:tid>', methods=['PUT'])
+@bp.route('/api/biz-trips/<int:tid>', methods=['PUT'])
 @login_required
 def api_trip_update(tid):
     t, err = _get_trip_for_edit(tid)
@@ -2179,7 +2280,7 @@ def api_trip_update(tid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/biz-trips/<int:tid>', methods=['DELETE'])
+@bp.route('/api/biz-trips/<int:tid>', methods=['DELETE'])
 @login_required
 def api_trip_delete(tid):
     t, err = _get_trip_for_edit(tid)
@@ -2193,7 +2294,7 @@ def api_trip_delete(tid):
 
 
 # ─── API : 영수증 이미지 업로드 ──────────────────────────────
-@app.route('/api/biz-trips/<int:tid>/upload-receipt', methods=['POST'])
+@bp.route('/api/biz-trips/<int:tid>/upload-receipt', methods=['POST'])
 @login_required
 def api_receipt_upload(tid):
     t, err = _get_trip_for_edit(tid)
@@ -2221,7 +2322,7 @@ def api_receipt_upload(tid):
                     'final_kb': round(final / 1024, 1)}), 201
 
 
-@app.route('/api/biz-trips/<int:tid>/receipts/upload', methods=['POST'])
+@bp.route('/api/biz-trips/<int:tid>/receipts/upload', methods=['POST'])
 @login_required
 def api_receipt_create_with_file(tid):
     """영수증 사진 + 입력값을 **한 요청**으로 저장(앱 오프라인 보관함 전용 경로).
@@ -2338,7 +2439,7 @@ def _gemini_vision_extract(image_path):
         return {'error': 'PARSE_FAILED', 'raw': text}
 
 
-@app.route('/api/biz-trips/<int:tid>/extract', methods=['POST'])
+@bp.route('/api/biz-trips/<int:tid>/extract', methods=['POST'])
 @login_required
 def api_receipt_extract(tid):
     t, err = _get_trip_for_edit(tid)
@@ -2380,7 +2481,7 @@ def api_receipt_extract(tid):
 
 
 # ─── API : 영수증 (표의 한 줄) ───────────────────────────────
-@app.route('/api/biz-trips/<int:tid>/receipts', methods=['POST'])
+@bp.route('/api/biz-trips/<int:tid>/receipts', methods=['POST'])
 @login_required
 def api_receipt_create(tid):
     t, err = _get_trip_for_edit(tid)
@@ -2405,7 +2506,7 @@ def api_receipt_create(tid):
     return jsonify({'ok': True, 'receipt': dict(r)}), 201
 
 
-@app.route('/api/biz-receipts/<int:rid>', methods=['PUT'])
+@bp.route('/api/biz-receipts/<int:rid>', methods=['PUT'])
 @login_required
 def api_receipt_update(rid):
     r = query('SELECT * FROM biz_receipts WHERE id=?', (rid,), one=True)
@@ -2431,7 +2532,7 @@ def api_receipt_update(rid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/biz-receipts/<int:rid>', methods=['DELETE'])
+@bp.route('/api/biz-receipts/<int:rid>', methods=['DELETE'])
 @login_required
 def api_receipt_delete(rid):
     r = query('SELECT * FROM biz_receipts WHERE id=?', (rid,), one=True)
@@ -2477,7 +2578,7 @@ def _ref(kind, ident):
 
 
 # ---- 내부(로그인) : 키 조회/재발급 ----
-@app.route('/api/ext/key', methods=['GET'])
+@bp.route('/api/ext/key', methods=['GET'])
 @admin_required
 def api_ext_key_get():
     response = jsonify({'api_key': _get_api_key(),
@@ -2489,7 +2590,7 @@ def api_ext_key_get():
 # 네이티브 앱용 조회 전용 별칭. _bearer_auth 훅이 /api/ext/ 를 통째로 제외하므로
 # 앱(Bearer)에서는 위 /api/ext/key 를 부를 수 없다 → /api/ 스코프에 admin 전용 read 창구를 둔다.
 # 재발급(POST)은 기존 자동화 키를 즉시 무효화하는 파괴적 동작이라 웹에만 남기고 앱에는 열지 않는다.
-@app.route('/api/admin/ext-key', methods=['GET'])
+@bp.route('/api/admin/ext-key', methods=['GET'])
 @admin_required
 def api_admin_ext_key_get():
     response = jsonify({'api_key': _get_api_key(),
@@ -2500,7 +2601,7 @@ def api_admin_ext_key_get():
 
 # 배포 확인용 — 맥에서 push 한 커밋이 실제로 서버에 올라갔는지 SSH 없이 확인한다.
 # autodeploy.sh 가 배포 성공 시 APP_DIR/.deployed_sha 에 SHA 를 남김. 읽기 전용, api_key 게이트.
-@app.route('/api/ext/version', methods=['GET'])
+@bp.route('/api/ext/version', methods=['GET'])
 @api_key_required
 def api_ext_version():
     here = os.path.dirname(os.path.abspath(__file__))
@@ -2518,7 +2619,7 @@ def api_ext_version():
     return jsonify({'ok': True, 'sha': sha, 'deployed_at': deployed_at})
 
 
-@app.route('/api/ext/key/regenerate', methods=['POST'])
+@bp.route('/api/ext/key/regenerate', methods=['POST'])
 @admin_required
 def api_ext_key_regen():
     _ensure_api_table()
@@ -2605,13 +2706,13 @@ def _stt_to_dict(r, include_body=True):
     return d
 
 
-@app.route('/meeting')
+@bp.route('/meeting')
 @login_required
 def meeting_page():
     return render_template('meeting.html')
 
 
-@app.route('/api/stt/jobs', methods=['GET'])
+@bp.route('/api/stt/jobs', methods=['GET'])
 @login_required
 def api_stt_jobs_list():
     rows = query("SELECT * FROM stt_job WHERE owner=? ORDER BY id DESC LIMIT 100",
@@ -2619,7 +2720,7 @@ def api_stt_jobs_list():
     return jsonify([_stt_to_dict(r, include_body=False) for r in rows])
 
 
-@app.route('/api/stt/jobs', methods=['POST'])
+@bp.route('/api/stt/jobs', methods=['POST'])
 @login_required
 def api_stt_jobs_create():
     cl = request.content_length
@@ -2671,7 +2772,7 @@ def api_stt_jobs_create():
     return jsonify({'id': jid, 'status': 'pending'}), 201
 
 
-@app.route('/api/stt/jobs/<int:jid>', methods=['GET'])
+@bp.route('/api/stt/jobs/<int:jid>', methods=['GET'])
 @login_required
 def api_stt_job_get(jid):
     r = query("SELECT * FROM stt_job WHERE id=? AND owner=?", (jid, _stt_owner()), one=True)
@@ -2680,7 +2781,7 @@ def api_stt_job_get(jid):
     return jsonify(_stt_to_dict(r))
 
 
-@app.route('/api/stt/jobs/<int:jid>', methods=['PUT'])
+@bp.route('/api/stt/jobs/<int:jid>', methods=['PUT'])
 @login_required
 def api_stt_job_edit(jid):
     r = query("SELECT * FROM stt_job WHERE id=? AND owner=?", (jid, _stt_owner()), one=True)
@@ -2702,7 +2803,7 @@ def api_stt_job_edit(jid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/stt/jobs/<int:jid>', methods=['DELETE'])
+@bp.route('/api/stt/jobs/<int:jid>', methods=['DELETE'])
 @login_required
 def api_stt_job_delete(jid):
     r = query("SELECT * FROM stt_job WHERE id=? AND owner=?", (jid, _stt_owner()), one=True)
@@ -2729,7 +2830,7 @@ def api_stt_job_delete(jid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/stt/jobs/<int:jid>/audio', methods=['GET'])
+@bp.route('/api/stt/jobs/<int:jid>/audio', methods=['GET'])
 @login_required
 def api_stt_job_audio_get(jid):
     """웹 미디어 플레이어용 오디오 서빙 — owner-scoped. send_from_directory는
@@ -2753,7 +2854,7 @@ def api_stt_job_audio_get(jid):
     return send_from_directory(STT_AUDIO_DIR, r['stored_name'], conditional=True)
 
 
-@app.route('/api/stt/jobs/<int:jid>/audio', methods=['DELETE'])
+@bp.route('/api/stt/jobs/<int:jid>/audio', methods=['DELETE'])
 @login_required
 def api_stt_job_audio_delete(jid):
     """원본 오디오만 서버서 완전삭제(용량 회수). transcript 텍스트·row는 보존.
@@ -2782,7 +2883,7 @@ def api_stt_job_audio_delete(jid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/stt/jobs/<int:jid>/summarize', methods=['POST'])
+@bp.route('/api/stt/jobs/<int:jid>/summarize', methods=['POST'])
 @login_required
 def api_stt_job_summarize(jid):
     """요약(우라라카) 요청 — 요청 시에만 큐잉(GPT 토큰 절감). transcript 있는 done job만.
@@ -2814,7 +2915,7 @@ def api_stt_job_summarize(jid):
     return jsonify({'ok': True, 'summary_status': 'pending'})
 
 
-@app.route('/api/ext/stt/jobs/summary_pending', methods=['GET'])
+@bp.route('/api/ext/stt/jobs/summary_pending', methods=['GET'])
 @api_key_required
 def api_ext_stt_summary_pending():
     """워커: 요약 대기(또는 lease 만료된 processing) 1건 claim → transcript 반환."""
@@ -2842,7 +2943,7 @@ def api_ext_stt_summary_pending():
                             'claim_token': token}})
 
 
-@app.route('/api/ext/stt/jobs/<int:jid>/summary_result', methods=['POST'])
+@bp.route('/api/ext/stt/jobs/<int:jid>/summary_result', methods=['POST'])
 @api_key_required
 def api_ext_stt_summary_result(jid):
     """워커: 요약 결과 반영. status done → minutes_json 저장, error → summary_error."""
@@ -2872,7 +2973,7 @@ def api_ext_stt_summary_result(jid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/ext/stt/jobs/pending', methods=['GET'])
+@bp.route('/api/ext/stt/jobs/pending', methods=['GET'])
 @api_key_required
 def api_ext_stt_pending():
     row = query("""SELECT id, status, attempts, claim_token FROM stt_job
@@ -2907,7 +3008,7 @@ def api_ext_stt_pending():
                             'claim_token': token}})
 
 
-@app.route('/api/ext/stt/jobs/<int:jid>/audio', methods=['GET'])
+@bp.route('/api/ext/stt/jobs/<int:jid>/audio', methods=['GET'])
 @api_key_required
 def api_ext_stt_audio(jid):
     r = query("SELECT stored_name FROM stt_job WHERE id=?", (jid,), one=True)
@@ -2916,7 +3017,7 @@ def api_ext_stt_audio(jid):
     return send_from_directory(STT_AUDIO_DIR, r['stored_name'], as_attachment=True)
 
 
-@app.route('/api/ext/stt/jobs/<int:jid>/result', methods=['POST'])
+@bp.route('/api/ext/stt/jobs/<int:jid>/result', methods=['POST'])
 @api_key_required
 def api_ext_stt_result(jid):
     d = request.get_json(silent=True) or {}
@@ -2953,7 +3054,7 @@ def api_ext_stt_result(jid):
 
 
 
-@app.route('/api/ext/automation/health', methods=['POST'])
+@bp.route('/api/ext/automation/health', methods=['POST'])
 @api_key_required
 def api_ext_automation_health():
     """맥측 하트비트 ingest. body: {"runners":[{key,status,ran_at,note,next_run}]}.
@@ -2985,7 +3086,7 @@ def api_ext_automation_health():
     return jsonify({'ok': True, 'count': count})
 
 
-@app.route('/api/automation/health', methods=['GET'])
+@bp.route('/api/automation/health', methods=['GET'])
 @admin_required
 def api_automation_health():
     """헬스 보드 read (admin). 러너 최신상태+14 히스토리+요약 카운트."""
@@ -2993,14 +3094,14 @@ def api_automation_health():
     return jsonify({'runners': runners, 'counts': counts})
 
 
-@app.route('/health')
+@bp.route('/health')
 @admin_required
 def health_page():
     return render_template('health.html')
 
 
 # ─── KR-Con 룰 검색 (KR선급 KR-CON: 클래스룰·IMO·SOLAS·코드) ───────────
-@app.route('/krcon')
+@bp.route('/krcon')
 @admin_required
 def krcon_page():
     return render_template('krcon.html')
@@ -3069,7 +3170,7 @@ def _krcon_smart_search(q, limit=50):
             'total': len(merged), 'returned': len(merged), 'results': merged}
 
 
-@app.route('/krcon/search')
+@bp.route('/krcon/search')
 @admin_required
 def krcon_search():
     q = (request.args.get('q') or '').strip()
@@ -3086,7 +3187,7 @@ def krcon_search():
     return jsonify(_krcon_smart_search(q, limit=limit))
 
 
-@app.route('/krcon/view/<doc_id>')
+@bp.route('/krcon/view/<doc_id>')
 @admin_required
 def krcon_view(doc_id):
     if not doc_id.isdigit():
@@ -3104,7 +3205,7 @@ def _krcon_clean_body(txt):
     return txt.strip()
 
 
-@app.route('/krcon/ai', methods=['POST'])
+@bp.route('/krcon/ai', methods=['POST'])
 @admin_required
 def krcon_ai():
     data = request.get_json(silent=True) or {}
@@ -3511,13 +3612,13 @@ def _ext_vetting_digests():
 
 
 # ---- 공개(키 보호) 데이터 엔드포인트 ----
-@app.route('/api/ext/issues')
+@bp.route('/api/ext/issues')
 @api_key_required
 def api_ext_issues():
     return jsonify(_ext_issues())
 
 
-@app.route('/api/ext/summary-generate', methods=['POST'])
+@bp.route('/api/ext/summary-generate', methods=['POST'])
 @api_key_required
 def api_ext_summary_generate():
     """스케줄러용(맥 launchd, 매일 18시): 전체 업무요약 생성·갱신. API 키 인증."""
@@ -3526,43 +3627,43 @@ def api_ext_summary_generate():
                     'total': counts.get('all', len(rows)), 'counts': counts})
 
 
-@app.route('/api/ext/surveys')
+@bp.route('/api/ext/surveys')
 @api_key_required
 def api_ext_surveys():
     return jsonify(_ext_surveys())
 
 
-@app.route('/api/ext/vettings')
+@bp.route('/api/ext/vettings')
 @api_key_required
 def api_ext_vettings():
     return jsonify(_ext_vettings())
 
 
-@app.route('/api/ext/vetting-digests')
+@bp.route('/api/ext/vetting-digests')
 @api_key_required
 def api_ext_vetting_digests():
     return jsonify(_ext_vetting_digests())
 
 
-@app.route('/api/ext/dock-reports')
+@bp.route('/api/ext/dock-reports')
 @api_key_required
 def api_ext_dock():
     return jsonify(_ext_dock_reports())
 
 
-@app.route('/api/ext/boarding-reports')
+@bp.route('/api/ext/boarding-reports')
 @api_key_required
 def api_ext_boarding():
     return jsonify(_ext_boarding_reports())
 
 
-@app.route('/api/ext/calendar')
+@bp.route('/api/ext/calendar')
 @api_key_required
 def api_ext_calendar():
     return jsonify(_ext_calendar())
 
 
-@app.route('/api/ext/vessels')
+@bp.route('/api/ext/vessels')
 @api_key_required
 def api_ext_vessels():
     # ?supervisor=<name> / ?supervisor_id=<id> 주면 해당 감독 담당선박만 (BV Push 등 외부 동기화용)
@@ -3570,7 +3671,7 @@ def api_ext_vessels():
     return jsonify(_ext_vessels(sup_id))
 
 
-@app.route('/api/ext/roster')
+@bp.route('/api/ext/roster')
 @api_key_required
 def api_ext_roster():
     """선박 로스터 SSOT(P0) — 자동화 pull 접점 (설계 §2-3).
@@ -3654,7 +3755,7 @@ def _soa_groups_invariants(groups):
     return bad
 
 
-@app.route('/api/ext/soa/groups')
+@bp.route('/api/ext/soa/groups')
 @api_key_required
 def api_ext_soa_groups():
     """SOA 그룹 설정 pull (맥 러너 sync 잡용).
@@ -3677,7 +3778,7 @@ def api_ext_soa_groups():
     })
 
 
-@app.route('/api/ext/soa/vessel-owners', methods=['GET', 'POST'])
+@bp.route('/api/ext/soa/vessel-owners', methods=['GET', 'POST'])
 @api_key_required
 def api_ext_soa_vessel_owners():
     """SVMS My Vessel owner 맵 스냅샷 — 표시 전용.
@@ -3789,7 +3890,7 @@ def _soa_assert_active_invariants(db):
         raise ValueError(' / '.join(bad[:5]))
 
 
-@app.route('/api/automation/soa/groups', methods=['GET', 'POST'])
+@bp.route('/api/automation/soa/groups', methods=['GET', 'POST'])
 @admin_required
 def api_automation_soa_groups():
     if request.method == 'GET':
@@ -3823,7 +3924,7 @@ def api_automation_soa_groups():
     return jsonify({'ok': True, 'config_version': _soa_groups_version()}), 201
 
 
-@app.route('/api/automation/soa/groups/<group_key>', methods=['PUT'])
+@bp.route('/api/automation/soa/groups/<group_key>', methods=['PUT'])
 @admin_required
 def api_automation_soa_group_update(group_key):
     key = str(group_key or '').strip().upper()
@@ -3857,7 +3958,7 @@ def api_automation_soa_group_update(group_key):
     return jsonify({'ok': True, 'config_version': _soa_groups_version()})
 
 
-@app.route('/api/automation/soa/groups/<group_key>', methods=['DELETE'])
+@bp.route('/api/automation/soa/groups/<group_key>', methods=['DELETE'])
 @admin_required
 def api_automation_soa_group_delete(group_key):
     """그룹 완전 삭제(비활성화와 별개). 실행 이력(automation_run)은 task 문자열이라 그대로 남음.
@@ -3937,7 +4038,7 @@ def _vsl_cd_sane(code):
     return None
 
 
-@app.route('/api/ext/vessels/<int:vid>/identifiers', methods=['PUT'])
+@bp.route('/api/ext/vessels/<int:vid>/identifiers', methods=['PUT'])
 @api_key_required
 def api_ext_vessel_identifiers(vid):
     """자동화 write-back 접점(설계 §3) — 선박 식별자 메타 부분 갱신.
@@ -4043,19 +4144,19 @@ def api_ext_vessel_identifiers(vid):
                     'changed': changed, 'noop': noop})
 
 
-@app.route('/api/ext/summaries')
+@bp.route('/api/ext/summaries')
 @api_key_required
 def api_ext_summaries():
     return jsonify(_ext_summaries())
 
 
-@app.route('/api/ext/class-status')
+@bp.route('/api/ext/class-status')
 @api_key_required
 def api_ext_class_status():
     return jsonify(_ext_class_status())
 
 
-@app.route('/api/ext/class-status/push-flag')
+@bp.route('/api/ext/class-status/push-flag')
 @api_key_required
 def api_ext_class_status_push_flag():
     """맥 러너 폴링용 — 'BV Pushing' 버튼이 찍은 플래그 시각 반환."""
@@ -4063,7 +4164,7 @@ def api_ext_class_status_push_flag():
     return jsonify({'flag': r['v'] if r else None})
 
 
-@app.route('/api/roster-sync/trigger', methods=['POST'])
+@bp.route('/api/roster-sync/trigger', methods=['POST'])
 @admin_required
 def api_roster_sync_trigger():
     """'선박 로스터 동기화' 버튼(admin) — cls-push 플래그 패턴 그대로.
@@ -4078,7 +4179,7 @@ def api_roster_sync_trigger():
     return jsonify({'ok': True, 'flagged_at': now})
 
 
-@app.route('/api/roster-sync/status')
+@bp.route('/api/roster-sync/status')
 @admin_required
 def api_roster_sync_status():
     """버튼 UI 상태표시용 — 현재 pending 여부 + 마지막 완료시각.
@@ -4100,7 +4201,7 @@ def api_roster_sync_status():
     })
 
 
-@app.route('/api/ext/roster-sync/pending')
+@bp.route('/api/ext/roster-sync/pending')
 @api_key_required
 def api_ext_roster_sync_pending():
     """맥 flag-watcher 폴링용 — pending flag 시각 반환(cls push-flag 미러).
@@ -4111,7 +4212,7 @@ def api_ext_roster_sync_pending():
     return jsonify({'flag': r['v'] if r else None})
 
 
-@app.route('/api/ext/roster-sync/done', methods=['POST'])
+@bp.route('/api/ext/roster-sync/done', methods=['POST'])
 @api_key_required
 def api_ext_roster_sync_done():
     """맥 flag-watcher 완료 콜 — 처리한 flag 시각과 결과요약을 기록(flag clear).
@@ -4131,14 +4232,14 @@ def api_ext_roster_sync_done():
 
 
 
-@app.route('/api/dock_procure/sync/trigger', methods=['POST'])
+@bp.route('/api/dock_procure/sync/trigger', methods=['POST'])
 @login_required
 def api_dockproc_sync_trigger():
     """'SVMS 발주 새로고침' 버튼 — 시각 flag. 맥 dock-sync watcher(~1분 폴링)가 감지→dock_sync.sh --live→done."""
     return jsonify({'ok': True, 'flagged_at': _dock_sync_flag_bump()})
 
 
-@app.route('/api/dock_procure/sync/status')
+@bp.route('/api/dock_procure/sync/status')
 @login_required
 def api_dockproc_sync_status():
     """버튼 UI 상태 — flag>done 이면 pending."""
@@ -4161,7 +4262,7 @@ def api_dockproc_sync_status():
                     'flagged_at': flag, 'done_at': done, 'last_result': (dr['v'] if dr else None)})
 
 
-@app.route('/api/ext/dock_procure/sync/pending')
+@bp.route('/api/ext/dock_procure/sync/pending')
 @api_key_required
 def api_ext_dockproc_sync_pending():
     """맥 watcher 폴링용 — flag>done(실제 pending)일 때만 flag 반환(.state 유실 시 과거 flag 재실행 방지)."""
@@ -4172,7 +4273,7 @@ def api_ext_dockproc_sync_pending():
     return jsonify({'flag': flag if (flag and (not done or done < flag)) else None})
 
 
-@app.route('/api/ext/dock_procure/sync/done', methods=['POST'])
+@bp.route('/api/ext/dock_procure/sync/done', methods=['POST'])
 @api_key_required
 def api_ext_dockproc_sync_done():
     """맥 watcher 완료 콜 — 처리 flag+결과 기록(flag clear)."""
@@ -4187,7 +4288,7 @@ def api_ext_dockproc_sync_done():
 # ===== vlcc-sire 푸시(SIRE 지적상세 + COC 수리상세 → vlcc-sire.vercel.app) — dock_procure 패턴 =====
 # 버튼(admin) → flag. 맥 vlcc-push watcher(~1분 폴링)가 감지 → push.py --commit → done.
 # 스케줄(13/18시)은 맥 launchd 가 push.py 직접 실행(버튼 무관).
-@app.route('/api/vlcc-push/trigger', methods=['POST'])
+@bp.route('/api/vlcc-push/trigger', methods=['POST'])
 @admin_required
 def api_vlcc_push_trigger():
     """'VLCC-SIRE 푸시' 버튼(admin) — 시각 flag. 맥 watcher 가 감지→push.py→done."""
@@ -4197,7 +4298,7 @@ def api_vlcc_push_trigger():
     return jsonify({'ok': True, 'flagged_at': now})
 
 
-@app.route('/api/vlcc-push/status')
+@bp.route('/api/vlcc-push/status')
 @admin_required
 def api_vlcc_push_status():
     """버튼 UI 상태 — flag>done 이면 pending."""
@@ -4213,7 +4314,7 @@ def api_vlcc_push_status():
                     'last_push_at': (lp['v'] if lp else None)})
 
 
-@app.route('/api/ext/vlcc-push/pending')
+@bp.route('/api/ext/vlcc-push/pending')
 @api_key_required
 def api_ext_vlcc_push_pending():
     """맥 watcher 폴링용 — flag>done(실제 pending)일 때만 flag 반환(과거 flag 재실행 방지)."""
@@ -4224,7 +4325,7 @@ def api_ext_vlcc_push_pending():
     return jsonify({'flag': flag if (flag and (not done or done < flag)) else None})
 
 
-@app.route('/api/ext/vlcc-push/done', methods=['POST'])
+@bp.route('/api/ext/vlcc-push/done', methods=['POST'])
 @api_key_required
 def api_ext_vlcc_push_done():
     """맥 watcher 완료 콜 — 처리 flag+결과 기록(flag clear)."""
@@ -4236,7 +4337,7 @@ def api_ext_vlcc_push_done():
     return jsonify({'ok': True, 'done_at': d.get('flag') or now})
 
 
-@app.route('/api/ext/vlcc-push/mark', methods=['POST'])
+@bp.route('/api/ext/vlcc-push/mark', methods=['POST'])
 @api_key_required
 def api_ext_vlcc_push_mark():
     """push.py 성공 실행 완료 콜(자동 스케줄·수동 버튼 공통) — 마지막 푸시 시각 기록.
@@ -4249,7 +4350,7 @@ def api_ext_vlcc_push_mark():
 
 
 # ===== SVMS Dock SP_SET 푸싱(draft) — 수동 버튼 + 맥 스케줄러(토큰0). Submit은 항상 형(자동 안 함) =====
-@app.route('/api/dock_procure/set-dkcd', methods=['POST'])
+@bp.route('/api/dock_procure/set-dkcd', methods=['POST'])
 @login_required
 def api_dockproc_set_dkcd():
     """선박↔SVMS Dock No(DK_CD) 매핑 저장. 푸싱 대상 + 매일 자동푸싱 opt-in 키."""
@@ -4277,7 +4378,7 @@ def _push_req():
         return None
 
 
-@app.route('/api/dock_procure/push/trigger', methods=['POST'])
+@bp.route('/api/dock_procure/push/trigger', methods=['POST'])
 @login_required
 def api_dockproc_push_trigger():
     """'SVMS Dock 푸싱' 버튼 — 대상 선박 요청을 **단일 원자 row(dock_push_req JSON)**로 기록
@@ -4298,7 +4399,7 @@ def api_dockproc_push_trigger():
     return jsonify({'ok': True, 'flagged_at': now, 'vsl_nm': vsl_nm})
 
 
-@app.route('/api/dock_procure/push/status')
+@bp.route('/api/dock_procure/push/status')
 @login_required
 def api_dockproc_push_status():
     _ensure_api_table()
@@ -4311,7 +4412,7 @@ def api_dockproc_push_status():
                     'flagged_at': flag, 'done_at': done, 'last_result': (dr['v'] if dr else None)})
 
 
-@app.route('/api/ext/dock_procure/push/pending')
+@bp.route('/api/ext/dock_procure/push/pending')
 @api_key_required
 def api_ext_dockproc_push_pending():
     """맥 push-watcher 폴링용 — pending(ts>done)일 때만 원자 스냅샷(vsl_cd/dk_cd) 반환."""
@@ -4325,7 +4426,7 @@ def api_ext_dockproc_push_pending():
     return jsonify({'flag': None, 'vsl_cd': None, 'dk_cd': None})
 
 
-@app.route('/api/ext/dock_procure/push/done', methods=['POST'])
+@bp.route('/api/ext/dock_procure/push/done', methods=['POST'])
 @api_key_required
 def api_ext_dockproc_push_done():
     _ensure_api_table()
@@ -4340,7 +4441,7 @@ def api_ext_dockproc_push_done():
     return jsonify({'ok': True, 'done_at': fl})
 
 
-@app.route('/api/ext/dock_procure/push-targets')
+@bp.route('/api/ext/dock_procure/push-targets')
 @api_key_required
 def api_ext_dockproc_push_targets():
     """맥 매일 스케줄러용 — DK_CD 설정된(opt-in) 선박만 자동푸싱 대상."""
@@ -4349,7 +4450,7 @@ def api_ext_dockproc_push_targets():
     return jsonify({'targets': [dict(r) for r in rows]})
 
 
-@app.route('/api/ext/class-status/upload', methods=['POST'])
+@bp.route('/api/ext/class-status/upload', methods=['POST'])
 @api_key_required
 def api_ext_class_status_upload():
     """맥 러너가 BV에서 받은 Ship Status PDF 업로드 → 기존 AI추출·매칭·저장 파이프라인."""
@@ -4361,7 +4462,7 @@ def api_ext_class_status_upload():
     return jsonify({'ok': any(r.get('ok') for r in results), 'results': results})
 
 
-@app.route('/api/ext/all')
+@bp.route('/api/ext/all')
 @api_key_required
 def api_ext_all():
     from datetime import datetime as _dt
@@ -4406,14 +4507,14 @@ def _resolve_supervisor_id(d):
     return None
 
 
-@app.route('/api/ext/supervisors')
+@bp.route('/api/ext/supervisors')
 @api_key_required
 def api_ext_supervisors():
     return jsonify([dict(r) for r in
                     query('SELECT id, name, color FROM supervisors ORDER BY name')])
 
 
-@app.route('/api/ext/issues', methods=['POST'])
+@bp.route('/api/ext/issues', methods=['POST'])
 @api_key_required
 def api_ext_issue_create():
     from datetime import date as _date
@@ -4450,7 +4551,7 @@ def api_ext_issue_create():
     return jsonify({'id': iid, 'ref': _ref('issue', iid)}), 201
 
 
-@app.route('/api/ext/issues/<int:iid>', methods=['PUT'])
+@bp.route('/api/ext/issues/<int:iid>', methods=['PUT'])
 @api_key_required
 def api_ext_issue_update(iid):
     if not query('SELECT id FROM issues WHERE id=?', (iid,), one=True):
@@ -4502,7 +4603,7 @@ def _norm_subject(s):
     return _re_s.sub(r'\s+', ' ', t).strip().lower()
  
  
-@app.route('/api/ext/issues/match')
+@bp.route('/api/ext/issues/match')
 @api_key_required
 def api_ext_issue_match():
     subject = request.args.get('subject', '')
@@ -4548,7 +4649,7 @@ def api_ext_issue_match():
                     'matches': matches})
  
  
-@app.route('/api/ext/issues/<int:iid>/actions', methods=['POST'])
+@bp.route('/api/ext/issues/<int:iid>/actions', methods=['POST'])
 @api_key_required
 def api_ext_issue_add_action(iid):
     from datetime import date as _date
@@ -4577,7 +4678,7 @@ def api_ext_issue_add_action(iid):
                     'actions_count': len(actions)})
  
  
-@app.route('/api/ext/issues/<int:iid>/email-key', methods=['POST'])
+@bp.route('/api/ext/issues/<int:iid>/email-key', methods=['POST'])
 @api_key_required
 def api_ext_issue_set_email_key(iid):
     if not query('SELECT id FROM issues WHERE id=?', (iid,), one=True):
@@ -4872,7 +4973,7 @@ def _soa_review_case_payload(case_row, *, detail=False):
                 'expires_at': att_m['expires_at'],
                 'ttl_seconds_left': att_m['ttl_seconds_left'],
                 'has_pdf': att_m['has_pdf'],
-                'download_url': (url_for('api_soa_review_attachment_pdf', aid=att_m['id'])
+                'download_url': (url_for('routes_calendar_dock.api_soa_review_attachment_pdf', aid=att_m['id'])
                                  if att_m['has_pdf'] else None),
             })
         payload['lines'] = []
@@ -5077,7 +5178,7 @@ def _soa_review_ingest_snapshot(d):
             'draft_version': query('SELECT draft_version FROM soa_review_case WHERE id=?', (case_id,), one=True)['draft_version']}
 
 
-@app.route('/api/automation/soa/reviews')
+@bp.route('/api/automation/soa/reviews')
 @admin_required
 def api_soa_review_list():
     rows = query("SELECT * FROM soa_review_case ORDER BY CASE status WHEN 'S' THEN 0 WHEN 'D' THEN 1 ELSE 2 END, updated_at DESC")
@@ -5085,7 +5186,7 @@ def api_soa_review_list():
                     'schema_degraded': SOA_REVIEW_SCHEMA_DEGRADED})
 
 
-@app.route('/api/automation/soa/reviews/<sx_cd>')
+@bp.route('/api/automation/soa/reviews/<sx_cd>')
 @admin_required
 def api_soa_review_detail(sx_cd):
     row = query('SELECT * FROM soa_review_case WHERE sx_cd=?', (str(sx_cd).upper(),), one=True)
@@ -5094,7 +5195,7 @@ def api_soa_review_detail(sx_cd):
     return jsonify({'ok': True, 'case': _soa_review_case_payload(row, detail=True)})
 
 
-@app.route('/api/automation/soa/reviews/<sx_cd>/draft', methods=['PUT'])
+@bp.route('/api/automation/soa/reviews/<sx_cd>/draft', methods=['PUT'])
 @admin_required
 def api_soa_review_draft(sx_cd):
     d = request.get_json(silent=True) or {}
@@ -5148,7 +5249,7 @@ def api_soa_review_draft(sx_cd):
         db.rollback(); raise
 
 
-@app.route('/api/automation/soa/reviews/<sx_cd>/action', methods=['POST'])
+@bp.route('/api/automation/soa/reviews/<sx_cd>/action', methods=['POST'])
 @admin_required
 def api_soa_review_action(sx_cd):
     d = request.get_json(silent=True) or {}
@@ -5194,7 +5295,7 @@ def api_soa_review_action(sx_cd):
         db.rollback(); raise
 
 
-@app.route('/api/automation/soa/reviews/attachments/<int:aid>/pdf')
+@bp.route('/api/automation/soa/reviews/attachments/<int:aid>/pdf')
 @admin_required
 def api_soa_review_attachment_pdf(aid):
     row = query('SELECT * FROM soa_review_attachment WHERE id=?', (aid,), one=True)
@@ -5209,7 +5310,7 @@ def api_soa_review_attachment_pdf(aid):
     return resp
 
 
-@app.route('/api/ext/soa/reviews/open')
+@bp.route('/api/ext/soa/reviews/open')
 @api_key_required
 def api_ext_soa_review_open():
     """Mac runner reconcile 대상: SVMS 종결 여부를 다시 확인할 비종결 case 목록."""
@@ -5219,7 +5320,7 @@ def api_ext_soa_review_open():
     ) or []
     return jsonify({'ok': True, 'cases': [dict(r) for r in rows]})
 
-@app.route('/api/ext/soa/reviews/snapshot', methods=['POST'])
+@bp.route('/api/ext/soa/reviews/snapshot', methods=['POST'])
 @api_key_required
 def api_ext_soa_review_snapshot():
     d = request.get_json(silent=True) or {}
@@ -5232,7 +5333,7 @@ def api_ext_soa_review_snapshot():
         return jsonify({'error': str(e)}), 400
 
 
-@app.route('/api/ext/soa/reviews/<sx_cd>/command')
+@bp.route('/api/ext/soa/reviews/<sx_cd>/command')
 @api_key_required
 def api_ext_soa_review_command(sx_cd):
     action = request.args.get('action')
@@ -5260,7 +5361,7 @@ def api_ext_soa_review_command(sx_cd):
                     'owner_comp_id': row['owner_comp_id'], 'source_lines': source, 'draft_lines': drafts})
 
 
-@app.route('/api/ext/soa/reviews/<sx_cd>/result', methods=['POST'])
+@bp.route('/api/ext/soa/reviews/<sx_cd>/result', methods=['POST'])
 @api_key_required
 def api_ext_soa_review_result(sx_cd):
     d = request.get_json(silent=True) or {}
@@ -5317,7 +5418,7 @@ def _aor_pdf_delete(did):
     return deleted
 
 
-@app.route('/api/aor/drafts/<int:did>/attachments/<int:idx>')
+@bp.route('/api/aor/drafts/<int:did>/attachments/<int:idx>')
 @admin_required
 def api_aor_attachment_pdf(did, idx):
     if idx < 0 or idx > 49 or not query('SELECT id FROM aor_draft WHERE id=?', (did,), one=True):
@@ -5328,7 +5429,7 @@ def api_aor_attachment_pdf(did, idx):
                      download_name='aor_%d_%d.pdf' % (did, idx), conditional=True)
 
 
-@app.route('/api/ext/aor/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
+@bp.route('/api/ext/aor/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
 @api_key_required
 def api_ext_aor_attachment_upload(did, idx):
     MAX = 25 * 1024 * 1024
@@ -5351,13 +5452,13 @@ def api_ext_aor_attachment_upload(did, idx):
     return jsonify({'id': did, 'index': idx, 'stored': True, 'bytes': len(data)})
 
 
-@app.route('/aor')
+@bp.route('/aor')
 @admin_required
 def aor_page():
     return render_template('aor.html')
 
 
-@app.route('/api/aor/drafts')
+@bp.route('/api/aor/drafts')
 @admin_required
 def api_aor_list():
     status = (request.args.get('status') or 'pending').strip()
@@ -5379,7 +5480,7 @@ def api_aor_list():
                     'crew_at': (at['v'] if at else None), 'drafts': drafts})
 
 
-@app.route('/api/ext/aor/drafts', methods=['POST'])
+@bp.route('/api/ext/aor/drafts', methods=['POST'])
 @api_key_required
 def api_ext_aor_create():
     """prep 엔진 ingest: Submitted AOR 카드 적재. 같은 aor_cd 가 pending이면 갱신(중복 방지)."""
@@ -5475,7 +5576,7 @@ def _queue_aor(task, user, fresh_if_running=False):
     return rid
 
 
-@app.route('/api/aor/drafts/<int:did>/approve', methods=['POST'])
+@bp.route('/api/aor/drafts/<int:did>/approve', methods=['POST'])
 @admin_required
 def api_aor_approve(did):
     """승인 = 상신 지시. 본문 수정값(comment·app_no) 반영 후 status='approved' + 상신큐 적재."""
@@ -5506,7 +5607,7 @@ def api_aor_approve(did):
                     'message': '승인됨 — 맥 러너가 곧 SVMS 상신(최대 1~2분)'})
 
 
-@app.route('/api/aor/drafts/<int:did>/reject', methods=['POST'])
+@bp.route('/api/aor/drafts/<int:did>/reject', methods=['POST'])
 @admin_required
 def api_aor_reject(did):
     """리젝 = SVMS STATUS=R + 관리사 통보메일. 맥 러너가 처리(automation_run aor_reject 큐)."""
@@ -5533,7 +5634,7 @@ def api_aor_reject(did):
                     'message': '리젝 접수 — 맥 러너가 곧 SVMS 리젝+통보메일(최대 1~2분)'})
 
 
-@app.route('/api/aor/drafts/<int:did>/hold', methods=['POST'])
+@bp.route('/api/aor/drafts/<int:did>/hold', methods=['POST'])
 @admin_required
 def api_aor_hold(did):
     """보류 — TRMT 카드만 hold 로 이동(SVMS 무영향). 나중에 unhold 로 검토 복귀."""
@@ -5546,7 +5647,7 @@ def api_aor_hold(did):
     return jsonify({'id': did, 'status': 'hold'})
 
 
-@app.route('/api/aor/drafts/<int:did>/unhold', methods=['POST'])
+@bp.route('/api/aor/drafts/<int:did>/unhold', methods=['POST'])
 @admin_required
 def api_aor_unhold(did):
     """보류 해제 — 다시 검토 대기(pending)로. SVMS 무영향."""
@@ -5557,7 +5658,7 @@ def api_aor_unhold(did):
     return jsonify({'id': did, 'status': 'pending'})
 
 
-@app.route('/api/aor/drafts/<int:did>', methods=['DELETE'])
+@bp.route('/api/aor/drafts/<int:did>', methods=['DELETE'])
 @admin_required
 def api_aor_delete(did):
     if not query('SELECT id FROM aor_draft WHERE id=?', (did,), one=True):
@@ -5567,7 +5668,7 @@ def api_aor_delete(did):
     return jsonify({'id': did, 'deleted': True})
 
 
-@app.route('/api/aor/drafts/bulk-delete', methods=['POST'])
+@bp.route('/api/aor/drafts/bulk-delete', methods=['POST'])
 @admin_required
 def api_aor_bulk_delete():
     """체크박스 다중선택 삭제 — 미처리(pending) 건만 허용(진행중·완료건 보호).
@@ -5584,7 +5685,7 @@ def api_aor_bulk_delete():
     return jsonify({'ok': True, 'deleted': n, 'requested': len(ids)})
 
 
-@app.route('/api/aor/drafts/decided', methods=['DELETE'])
+@bp.route('/api/aor/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_aor_clear_decided():
     """처리완료 일괄 삭제 — 명시 허용리스트(fundreq/invoice와 동일 패턴).
@@ -5595,7 +5696,7 @@ def api_aor_clear_decided():
 
 
 # ---- ext (맥 러너: 상신 실행) ----
-@app.route('/api/ext/aor/approved')
+@bp.route('/api/ext/aor/approved')
 @api_key_required
 def api_ext_aor_approved():
     """맥 러너가 상신할 approved 건 목록을 가져가며 status='submitting'으로 락."""
@@ -5622,7 +5723,7 @@ def api_ext_aor_approved():
     return jsonify({'count': len(out), 'drafts': out})
 
 
-@app.route('/api/ext/aor/drafts/<int:did>/result', methods=['POST'])
+@bp.route('/api/ext/aor/drafts/<int:did>/result', methods=['POST'])
 @api_key_required
 def api_ext_aor_result(did):
     """Submission result; successful completion removes TRMT preview cache only."""
@@ -5635,7 +5736,7 @@ def api_ext_aor_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
-@app.route('/api/ext/aor/rejecting')
+@bp.route('/api/ext/aor/rejecting')
 @api_key_required
 def api_ext_aor_rejecting():
     """맥 러너가 리젝할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
@@ -5669,7 +5770,7 @@ def api_ext_aor_rejecting():
     return jsonify({'count': len(out), 'drafts': out})
 
 
-@app.route('/api/ext/aor/drafts/<int:did>/reject-result', methods=['POST'])
+@bp.route('/api/ext/aor/drafts/<int:did>/reject-result', methods=['POST'])
 @api_key_required
 def api_ext_aor_reject_result(did):
     d = request.get_json(silent=True) or {}
@@ -5834,7 +5935,7 @@ def _aor_index_predicate_covers_noop():
         return False
 
 
-@app.route('/api/ext/aor/reingest-statuses')
+@bp.route('/api/ext/aor/reingest-statuses')
 @api_key_required
 def api_ext_aor_reingest_statuses():
     """prep 엔진 skip 판정용 읽기전용 (aor_cd, status) 목록.
@@ -5967,7 +6068,7 @@ def _aor_reingest_statuses_body(allow_noop=True):
     return jsonify(out)
 
 
-@app.route('/api/ext/aor/stats', methods=['POST'])
+@bp.route('/api/ext/aor/stats', methods=['POST'])
 @api_key_required
 def api_ext_aor_stats():
     """prep 실행 시 부가 통계(예: Crew dept submitted 건수) 갱신 — 참고 표시용."""
@@ -6051,7 +6152,7 @@ def _fundreq_att_delete(did, only_idx=None, keep_ext=None):
     return deleted
 
 
-@app.route('/api/fundreq/drafts/<int:did>/attachments/<int:idx>')
+@bp.route('/api/fundreq/drafts/<int:did>/attachments/<int:idx>')
 @admin_required
 def api_fundreq_attachment(did, idx):
     """SVMS 첨부 원본 미리보기(읽기전용). 금전효과 없음."""
@@ -6069,7 +6170,7 @@ def api_fundreq_attachment(did, idx):
     return resp
 
 
-@app.route('/api/ext/fundreq/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
+@bp.route('/api/ext/fundreq/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
 @api_key_required
 def api_ext_fundreq_attachment_upload(did, idx):
     """맥 러너가 SVMS 첨부 원본을 preview cache 로 적재. ?ext= 없으면 ?name= 확장자, 둘 다 없으면 pdf."""
@@ -6108,13 +6209,13 @@ def api_ext_fundreq_attachment_upload(did, idx):
     return jsonify({'id': did, 'index': idx, 'ext': ext, 'stored': True, 'bytes': len(data)})
 
 
-@app.route('/fundreq')
+@bp.route('/fundreq')
 @admin_required
 def fundreq_page():
     return render_template('fundreq.html')
 
 
-@app.route('/api/fundreq/drafts')
+@bp.route('/api/fundreq/drafts')
 @admin_required
 def api_fundreq_list():
     status = request.args.get('status')
@@ -6131,7 +6232,7 @@ def api_fundreq_list():
                     'enabled': _automation_enabled()})
 
 
-@app.route('/api/ext/fundreq/drafts/pending-attachments')
+@bp.route('/api/ext/fundreq/drafts/pending-attachments')
 @api_key_required
 def api_ext_fundreq_pending_attachments():
     """러너 self-heal용: pending 카드 중 아직 캐시되지 않은 첨부 index만 반환.
@@ -6150,7 +6251,7 @@ def api_ext_fundreq_pending_attachments():
     return jsonify({'drafts': out, 'count': len(out)})
 
 
-@app.route('/api/ext/fundreq/drafts', methods=['POST'])
+@bp.route('/api/ext/fundreq/drafts', methods=['POST'])
 @api_key_required
 def api_ext_fundreq_create():
     """review 엔진 ingest: 검토결과 카드 적재. 같은 opex_cd 가 pending이면 갱신(중복 방지)."""
@@ -6186,7 +6287,7 @@ def api_ext_fundreq_create():
     return jsonify({'id': did, 'status': 'pending'}), 201
 
 
-@app.route('/api/fundreq/drafts/<int:did>/approve', methods=['POST'])
+@bp.route('/api/fundreq/drafts/<int:did>/approve', methods=['POST'])
 @admin_required
 def api_fundreq_approve(did):
     """승인 마킹 — status='approved'. 실제 상신은 [자동상신] 버튼이 맥 러너로 실행."""
@@ -6205,7 +6306,7 @@ def api_fundreq_approve(did):
     return jsonify({'id': did, 'status': 'approved'})
 
 
-@app.route('/api/fundreq/drafts/<int:did>/reject', methods=['POST'])
+@bp.route('/api/fundreq/drafts/<int:did>/reject', methods=['POST'])
 @admin_required
 def api_fundreq_reject(did):
     """리젝 마킹(사유 필수) — status='rejecting'. 실제 리젝+통보메일은 [자동상신] 버튼이 맥 러너로 실행."""
@@ -6228,7 +6329,7 @@ def api_fundreq_reject(did):
     return jsonify({'id': did, 'status': 'rejecting'})
 
 
-@app.route('/api/fundreq/drafts/<int:did>/reset', methods=['POST'])
+@bp.route('/api/fundreq/drafts/<int:did>/reset', methods=['POST'])
 @admin_required
 def api_fundreq_reset(did):
     """결정 취소 — 실행 전(approved/rejecting)만 pending 으로 되돌림."""
@@ -6240,7 +6341,7 @@ def api_fundreq_reset(did):
     return jsonify({'id': did, 'status': 'pending'})
 
 
-@app.route('/api/fundreq/drafts/<int:did>', methods=['DELETE'])
+@bp.route('/api/fundreq/drafts/<int:did>', methods=['DELETE'])
 @admin_required
 def api_fundreq_delete(did):
     if not query('SELECT id FROM fundreq_draft WHERE id=?', (did,), one=True):
@@ -6250,7 +6351,7 @@ def api_fundreq_delete(did):
     return jsonify({'id': did, 'deleted': True})
 
 
-@app.route('/api/fundreq/drafts/decided', methods=['DELETE'])
+@bp.route('/api/fundreq/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_fundreq_clear_decided():
     """처리완료 일괄 삭제 — 대기(pending)·결정대기(approved/rejecting)·진행중(submitting)은 보존."""
@@ -6263,7 +6364,7 @@ def api_fundreq_clear_decided():
 
 
 # ---- ext (맥 러너) ----
-@app.route('/api/ext/fundreq/approved')
+@bp.route('/api/ext/fundreq/approved')
 @api_key_required
 def api_ext_fundreq_approved():
     """맥 러너가 상신할 approved 건 → status='submitting' 락(조건부)."""
@@ -6287,7 +6388,7 @@ def api_ext_fundreq_approved():
     return jsonify({'count': len(out), 'drafts': out})
 
 
-@app.route('/api/ext/fundreq/rejecting')
+@bp.route('/api/ext/fundreq/rejecting')
 @api_key_required
 def api_ext_fundreq_rejecting():
     """맥 러너가 리젝할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
@@ -6320,7 +6421,7 @@ def api_ext_fundreq_rejecting():
     return jsonify({'count': len(out), 'drafts': out})
 
 
-@app.route('/api/ext/fundreq/drafts/<int:did>/result', methods=['POST'])
+@bp.route('/api/ext/fundreq/drafts/<int:did>/result', methods=['POST'])
 @api_key_required
 def api_ext_fundreq_result(did):
     """상신 결과: ok=True → submitted, else failed."""
@@ -6332,7 +6433,7 @@ def api_ext_fundreq_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
-@app.route('/api/ext/fundreq/drafts/<int:did>/reject-result', methods=['POST'])
+@bp.route('/api/ext/fundreq/drafts/<int:did>/reject-result', methods=['POST'])
 @api_key_required
 def api_ext_fundreq_reject_result(did):
     """리젝 결과: ok=True → rejected, else reject_failed."""
@@ -6350,7 +6451,7 @@ def api_ext_fundreq_reject_result(did):
 #   · prep 엔진(맥)이 SVMS 인보이스 카드(선박/벤더/금액·PDF대조·교정내역·라인)를 POST /api/ext/invoice/drafts (카드 적재)
 #   · 사람이 /invoice 탭서 카드마다 opt-out 승인(approved) / 리젝(rejecting, 사유) 결정 (gate=PASS 디폴트 승인)
 #   · [자동상신] 버튼 → 맥 invoice_confirm 러너가 approved=PIC/SUP/Remit 교정+컨펌 / rejecting=보류
-@app.route('/invoice')
+@bp.route('/invoice')
 @admin_required
 def invoice_page():
     return render_template('invoice.html')
@@ -6425,7 +6526,7 @@ def _invoice_merge_pending_manual_inv_dt(existing_row, cols):
     return cols
 
 
-@app.route('/api/invoice/drafts')
+@bp.route('/api/invoice/drafts')
 @admin_required
 def api_invoice_list():
     status = request.args.get('status')
@@ -6442,7 +6543,7 @@ def api_invoice_list():
                     'enabled': _automation_enabled()})
 
 
-@app.route('/api/invoice/drafts/<int:did>/pdf')
+@bp.route('/api/invoice/drafts/<int:did>/pdf')
 @admin_required
 def api_invoice_pdf(did):
     """컨펌대기 인보이스 원본 PDF 미리보기(inline). 컨펌/리젝되면 파일이 삭제돼 404."""
@@ -6453,7 +6554,7 @@ def api_invoice_pdf(did):
                      download_name='invoice_%d.pdf' % did, conditional=True)
 
 
-@app.route('/api/ext/invoice/drafts', methods=['POST'])
+@bp.route('/api/ext/invoice/drafts', methods=['POST'])
 @api_key_required
 def api_ext_invoice_create():
     """prep 엔진 ingest: 인보이스 카드 적재. 같은 inv_cd 가 pending이면 갱신(중복 방지)."""
@@ -6522,7 +6623,7 @@ def api_ext_invoice_create():
     return jsonify({'id': did, 'status': 'pending', 'reopened_from': reopened_from}), 201
 
 
-@app.route('/api/ext/invoice/drafts/by-inv/<inv_cd>')
+@bp.route('/api/ext/invoice/drafts/by-inv/<inv_cd>')
 @api_key_required
 def api_ext_invoice_lookup(inv_cd):
     """백필용 조회(읽기전용): inv_cd로 현재 draft의 id/status/has_pdf 반환. DB write·금전효과 없음.
@@ -6540,7 +6641,7 @@ def api_ext_invoice_lookup(inv_cd):
                     'has_pdf': os.path.exists(_invoice_pdf_path(row['id']))})
 
 
-@app.route('/api/ext/invoice/drafts/<int:did>/pdf', methods=['POST'])
+@bp.route('/api/ext/invoice/drafts/<int:did>/pdf', methods=['POST'])
 @api_key_required
 def api_ext_invoice_pdf_upload(did):
     """prep 엔진이 3자 대조된 원본 PDF를 적재(미리보기용). raw body 또는 multipart 'pdf'.
@@ -6572,7 +6673,7 @@ def api_ext_invoice_pdf_upload(did):
     return jsonify({'id': did, 'stored': True, 'bytes': len(data)})
 
 
-@app.route('/api/invoice/drafts/<int:did>/approve', methods=['POST'])
+@bp.route('/api/invoice/drafts/<int:did>/approve', methods=['POST'])
 @admin_required
 def api_invoice_approve(did):
     """승인 마킹 — status='approved'. 실제 컨펌은 [자동상신] 버튼이 맥 러너로 실행."""
@@ -6591,7 +6692,7 @@ def api_invoice_approve(did):
     return jsonify({'id': did, 'status': 'approved'})
 
 
-@app.route('/api/invoice/drafts/approve-bulk', methods=['POST'])
+@bp.route('/api/invoice/drafts/approve-bulk', methods=['POST'])
 @admin_required
 def api_invoice_approve_bulk():
     """체크된 카드(ids 배열) 일괄 승인 — opt-out 한 방에. raw_card 없거나 이미 결정된 건은 skip."""
@@ -6610,7 +6711,7 @@ def api_invoice_approve_bulk():
     return jsonify({'approved': len(approved), 'skipped': len(skipped), 'approved_ids': approved})
 
 
-@app.route('/api/invoice/expense-codes')
+@bp.route('/api/invoice/expense-codes')
 @admin_required
 def api_invoice_expense_codes():
     """EXP_CD 마스터(편집 picker용). q 있으면 코드/국문/영문 부분검색."""
@@ -6625,7 +6726,7 @@ def api_invoice_expense_codes():
     return jsonify({'codes': [dict(r) for r in rows], 'count': len(rows)})
 
 
-@app.route('/api/ext/invoice/expense-codes', methods=['POST'])
+@bp.route('/api/ext/invoice/expense-codes', methods=['POST'])
 @api_key_required
 def api_ext_invoice_expense_codes():
     """맥이 SVMS SP_GET_EXP 적재(upsert). payload={codes:[{code,name,name_en,grp}]}."""
@@ -6647,7 +6748,7 @@ def api_ext_invoice_expense_codes():
     return jsonify({'upserted': n})
 
 
-@app.route('/api/invoice/drafts/<int:did>/edit', methods=['POST'])
+@bp.route('/api/invoice/drafts/<int:did>/edit', methods=['POST'])
 @admin_required
 def api_invoice_edit(did):
     """적요(subject)·expense(exp_cd/exp_nm)·INV_DT 사람 교정 — prep 오선택/날짜오입력 방지.
@@ -6715,7 +6816,7 @@ def api_invoice_edit(did):
                     'exp_cd': rc.get('exp_cd'), 'exp_nm': rc.get('exp_nm')})
 
 
-@app.route('/api/invoice/drafts/<int:did>/reject', methods=['POST'])
+@bp.route('/api/invoice/drafts/<int:did>/reject', methods=['POST'])
 @admin_required
 def api_invoice_reject(did):
     """리젝 마킹(사유 필수) — status='rejecting'. 실제 보류는 [자동상신] 버튼이 맥 러너로 실행."""
@@ -6738,7 +6839,7 @@ def api_invoice_reject(did):
     return jsonify({'id': did, 'status': 'rejecting'})
 
 
-@app.route('/api/invoice/drafts/<int:did>/reset', methods=['POST'])
+@bp.route('/api/invoice/drafts/<int:did>/reset', methods=['POST'])
 @admin_required
 def api_invoice_reset(did):
     """결정 취소 — 실행 전(approved/rejecting)만 pending 으로 되돌림."""
@@ -6750,7 +6851,7 @@ def api_invoice_reset(did):
     return jsonify({'id': did, 'status': 'pending'})
 
 
-@app.route('/api/invoice/drafts/<int:did>', methods=['DELETE'])
+@bp.route('/api/invoice/drafts/<int:did>', methods=['DELETE'])
 @admin_required
 def api_invoice_delete(did):
     if not query('SELECT id FROM invoice_draft WHERE id=?', (did,), one=True):
@@ -6760,7 +6861,7 @@ def api_invoice_delete(did):
     return jsonify({'id': did, 'deleted': True})
 
 
-@app.route('/api/invoice/drafts/decided', methods=['DELETE'])
+@bp.route('/api/invoice/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_invoice_clear_decided():
     """처리완료 일괄 삭제 — 대기(pending)·결정대기(approved/rejecting)·진행중(submitting)은 보존."""
@@ -6773,7 +6874,7 @@ def api_invoice_clear_decided():
 
 
 # ---- ext (맥 러너) ----
-@app.route('/api/ext/invoice/approved')
+@bp.route('/api/ext/invoice/approved')
 @api_key_required
 def api_ext_invoice_approved():
     """맥 러너가 컨펌할 approved 건 → status='submitting' 락(조건부)."""
@@ -6795,7 +6896,7 @@ def api_ext_invoice_approved():
     return jsonify({'count': len(out), 'drafts': out})
 
 
-@app.route('/api/ext/invoice/rejecting')
+@bp.route('/api/ext/invoice/rejecting')
 @api_key_required
 def api_ext_invoice_rejecting():
     """맥 러너가 보류할 rejecting 건 → status='reject_submitting' 락(조건부 claim).
@@ -6824,7 +6925,7 @@ def api_ext_invoice_rejecting():
     return jsonify({'count': len(out), 'drafts': out})
 
 
-@app.route('/api/ext/invoice/drafts/<int:did>/result', methods=['POST'])
+@bp.route('/api/ext/invoice/drafts/<int:did>/result', methods=['POST'])
 @api_key_required
 def api_ext_invoice_result(did):
     """컨펌 결과: ok=True → submitted, else failed."""
@@ -6838,7 +6939,7 @@ def api_ext_invoice_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
-@app.route('/api/ext/invoice/drafts/<int:did>/reject-result', methods=['POST'])
+@bp.route('/api/ext/invoice/drafts/<int:did>/reject-result', methods=['POST'])
 @api_key_required
 def api_ext_invoice_reject_result(did):
     """리젝(보류) 결과: ok=True → rejected, else reject_failed."""
@@ -6854,7 +6955,7 @@ def api_ext_invoice_reject_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
-@app.route('/api/ext/invoice/open')
+@bp.route('/api/ext/invoice/open')
 @api_key_required
 def api_ext_invoice_open():
     """열려 있는(사람 판단대기) 카드 목록 — 읽기전용. DB write·금전효과 0.
@@ -6872,7 +6973,7 @@ def api_ext_invoice_open():
 _INV_EXT_CLOSE = {'A': ('submitted', '컨펌'), 'R': ('rejected', '반려')}
 
 
-@app.route('/api/ext/invoice/reconcile', methods=['POST'])
+@bp.route('/api/ext/invoice/reconcile', methods=['POST'])
 @api_key_required
 def api_ext_invoice_reconcile():
     """사람이 SVMS 에서 직접 처리한 건의 카드 종결. payload={items:[{id, inv_cd, svms_status, note?}]}.
@@ -7151,13 +7252,13 @@ def _reqgen_parse_workbook(stream, vsl_cd, vsl_nm=None):
     return vsl_nm, out, skipped_mgr
 
 
-@app.route('/reqgen')
+@bp.route('/reqgen')
 @login_required
 def reqgen_page():
     return render_template('reqgen.html')
 
 
-@app.route('/api/reqgen/upload', methods=['POST'])
+@bp.route('/api/reqgen/upload', methods=['POST'])
 @login_required
 def api_reqgen_upload():
     """엑셀 업로드 → S/ST 시트 파싱 → reqgen_draft 카드 적재(status=pending). SVMS 무영향."""
@@ -7222,7 +7323,7 @@ def api_reqgen_upload():
                     'skipped_manager': skipped_mgr, 'skipped_quote': skipped_quote}), 201
 
 
-@app.route('/api/reqgen/drafts')
+@bp.route('/api/reqgen/drafts')
 @login_required
 def api_reqgen_list():
     status = request.args.get('status')
@@ -7236,7 +7337,7 @@ def api_reqgen_list():
                     'enabled': _automation_enabled()})
 
 
-@app.route('/api/reqgen/drafts/<int:did>', methods=['PATCH'])
+@bp.route('/api/reqgen/drafts/<int:did>', methods=['PATCH'])
 @login_required
 def api_reqgen_patch(did):
     """카드 개별 설정 저장(수리 Stock of Spare 등). pending 상태만."""
@@ -7271,7 +7372,7 @@ def api_reqgen_patch(did):
     return jsonify({'id': did, 'noop': True})
 
 
-@app.route('/api/reqgen/drafts/<int:did>/approve', methods=['POST'])
+@bp.route('/api/reqgen/drafts/<int:did>/approve', methods=['POST'])
 @login_required
 def api_reqgen_approve(did):
     """승인 = SVMS 저장 지시. Voyage/Port/Date 를 헤더에 반영 후 status='approved' + 저장큐 적재."""
@@ -7319,7 +7420,7 @@ def api_reqgen_approve(did):
                     'message': '승인됨 — 맥 러너가 곧 SVMS DRAFT 저장(최대 1~2분)'})
 
 
-@app.route('/api/reqgen/approve-all', methods=['POST'])
+@bp.route('/api/reqgen/approve-all', methods=['POST'])
 @login_required
 def api_reqgen_approve_all():
     """일괄 승인 — 공통 Voyage/Port/Date 를 모든 pending 카드 헤더에 반영 후 approved + 저장큐 1회.
@@ -7390,7 +7491,7 @@ def api_reqgen_approve_all():
                     'save_run': rid, 'message': msg})
 
 
-@app.route('/api/reqgen/drafts/<int:did>/reset', methods=['POST'])
+@bp.route('/api/reqgen/drafts/<int:did>/reset', methods=['POST'])
 @login_required
 def api_reqgen_reset(did):
     """승인 취소(approved→pending) · 실패 재시도(failed→approved+저장큐).
@@ -7428,7 +7529,7 @@ def api_reqgen_reset(did):
                     'status': cur['status'] if cur else '?'}), 409
 
 
-@app.route('/api/reqgen/drafts/<int:did>', methods=['DELETE'])
+@bp.route('/api/reqgen/drafts/<int:did>', methods=['DELETE'])
 @login_required
 def api_reqgen_delete(did):
     if not query('SELECT id FROM reqgen_draft WHERE id=?', (did,), one=True):
@@ -7437,7 +7538,7 @@ def api_reqgen_delete(did):
     return jsonify({'id': did, 'deleted': True})
 
 
-@app.route('/api/reqgen/drafts/decided', methods=['DELETE'])
+@bp.route('/api/reqgen/drafts/decided', methods=['DELETE'])
 @login_required
 def api_reqgen_clear_decided():
     """처리완료(saved/failed) 일괄 삭제 — pending/approved/saving 보존."""
@@ -7445,7 +7546,7 @@ def api_reqgen_clear_decided():
     return jsonify({'ok': True, 'deleted': n})
 
 
-@app.route('/api/reqgen/drafts/all', methods=['DELETE'])
+@bp.route('/api/reqgen/drafts/all', methods=['DELETE'])
 @login_required
 def api_reqgen_clear_all():
     """전체 카드 삭제 — TRMT 카드 목록만 비움(SVMS에 저장된 청구서는 영향 없음)."""
@@ -7454,7 +7555,7 @@ def api_reqgen_clear_all():
 
 
 # ---- ext (맥 러너: SVMS DRAFT 저장 실행) ----
-@app.route('/api/ext/reqgen/approved')
+@bp.route('/api/ext/reqgen/approved')
 @api_key_required
 def api_ext_reqgen_approved():
     """맥 러너가 저장할 approved 건 → status='saving' 락(조건부)."""
@@ -7476,7 +7577,7 @@ def api_ext_reqgen_approved():
     return jsonify({'count': len(out), 'drafts': out})
 
 
-@app.route('/api/ext/reqgen/drafts/<int:did>/result', methods=['POST'])
+@bp.route('/api/ext/reqgen/drafts/<int:did>/result', methods=['POST'])
 @api_key_required
 def api_ext_reqgen_result(did):
     """저장 결과: ok=True → saved(+req_no), else failed(사람 재검토). 성공건은 발주현황에 자동적재."""

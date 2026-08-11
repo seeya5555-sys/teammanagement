@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 import app as appmod
+from source_bundle import shared_ns
 
 PDF = b'%PDF-1.4\ninvoice\n%%EOF'
 XLSX = b'PK\x03\x04' + b'\x00' * 40          # OOXML(zip) 매직만 맞춘 최소 바이트
@@ -15,12 +16,12 @@ class FundreqAttachmentPreviewTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.old_db = appmod.DATABASE
         self.old_cfg = appmod.app.config['DATABASE']
-        self.old_dir = appmod.FUNDREQ_FILE_DIR
+        self.old_dir = shared_ns.FUNDREQ_FILE_DIR
         db = os.path.join(self.tmp.name, 'test.db')
         appmod.DATABASE = db
         appmod.app.config['DATABASE'] = db
-        appmod.FUNDREQ_FILE_DIR = os.path.join(self.tmp.name, 'fundreq_files')
-        os.makedirs(appmod.FUNDREQ_FILE_DIR)
+        shared_ns.FUNDREQ_FILE_DIR = os.path.join(self.tmp.name, 'fundreq_files')
+        os.makedirs(shared_ns.FUNDREQ_FILE_DIR)
         with appmod.app.app_context():
             appmod.init_db(False)
             appmod._ensure_api_table()
@@ -34,7 +35,7 @@ class FundreqAttachmentPreviewTests(unittest.TestCase):
     def tearDown(self):
         appmod.DATABASE = self.old_db
         appmod.app.config['DATABASE'] = self.old_cfg
-        appmod.FUNDREQ_FILE_DIR = self.old_dir
+        shared_ns.FUNDREQ_FILE_DIR = self.old_dir
         self.tmp.cleanup()
 
     # ── helpers ──
@@ -93,7 +94,7 @@ class FundreqAttachmentPreviewTests(unittest.TestCase):
     def test_reupload_replaces_other_ext_at_same_index(self):
         self.assertEqual(200, self.upload(0, XLSX, 'xlsx').status_code)
         self.assertEqual(200, self.upload(0, PNG, 'png').status_code)
-        stored = sorted(os.listdir(appmod.FUNDREQ_FILE_DIR))
+        stored = sorted(os.listdir(shared_ns.FUNDREQ_FILE_DIR))
         self.assertEqual(['%d_0.png' % self.did], stored)
         self.assertEqual([0], self.indices())
 
@@ -118,13 +119,13 @@ class FundreqAttachmentPreviewTests(unittest.TestCase):
     def test_delete_and_clear_decided_remove_files(self):
         self.assertEqual(200, self.upload(0, PDF, 'pdf').status_code)
         self.client.delete('/api/fundreq/drafts/%d' % self.did)
-        self.assertEqual([], os.listdir(appmod.FUNDREQ_FILE_DIR))
+        self.assertEqual([], os.listdir(shared_ns.FUNDREQ_FILE_DIR))
         did2 = self.ingest()
         self.assertEqual(200, self.upload(0, PDF, 'pdf', did=did2).status_code)
         with appmod.app.app_context():
             appmod.execute("UPDATE fundreq_draft SET status='submitted' WHERE id=?", (did2,))
         self.client.delete('/api/fundreq/drafts/decided')
-        self.assertEqual([], os.listdir(appmod.FUNDREQ_FILE_DIR))
+        self.assertEqual([], os.listdir(shared_ns.FUNDREQ_FILE_DIR))
 
     def test_failed_upload_keeps_existing_preview(self):
         # 거부되는 업로드(내용·확장자 불일치)가 이미 안착한 preview 를 지우면 안 된다

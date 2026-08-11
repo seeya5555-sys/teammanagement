@@ -1,14 +1,77 @@
+"""routes_core — converted to a real imported module with Blueprint("routes_core") on 2026-08-11.
+
+Previously executed in the app namespace by ``_load_extracted_module``.
+Dependencies are now the explicit imports below and nothing else — every
+name comes from ``app`` (whose namespace includes everything
+``helpers_shared.py`` executed into it).  Contract enforced by
+``test_converted_modules_are_self_contained``: zero unresolved names, and
+no sibling boundary imports.
+"""
+from flask import Blueprint
+
+from app import (
+    INSTANCE_DIR,
+    SOA_REVIEW_PDF_DIR,
+    UPLOAD_DIR,
+    VETTING_TYPES,
+    _DUMMY_PW_HASH,
+    _TOKEN_MAXAGE,
+    _automation_health_summary,
+    _dashboard_ctx,
+    _ensure_summary_table,
+    _fleet_visible_auto_vessels,
+    _issue_to_dict,
+    _issue_token,
+    _issue_write_scope,
+    _run_summary_generate,
+    _safe_filename,
+    _soa_review_attachment_path,
+    _token_note_fail,
+    _token_rate_limited,
+    _token_reset_fails,
+    _translate_rows_en,
+    _vetting_pick,
+    _vkey,
+    abort,
+    admin_required,
+    app,
+    check_password_hash,
+    date,
+    datetime,
+    execute,
+    execute_rc,
+    g,
+    generate_password_hash,
+    get_db,
+    json,
+    jsonify,
+    login_required,
+    make_response,
+    os,
+    query,
+    re,
+    redirect,
+    render_template,
+    request,
+    session,
+    timedelta,
+    url_for,
+)
+
+bp = Blueprint("routes_core", __name__)
+
+
 
 
 
 # ═════════════════════════════════════════════════════════════════
 #  Pages
 # ═════════════════════════════════════════════════════════════════
-@app.route('/login', methods=['GET', 'POST'])
+@bp.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
         if 'user_id' in session:
-            return redirect(url_for('dashboard'))
+            return redirect(url_for('routes_core.dashboard'))
         return render_template('login.html')
 
     username = (request.form.get('username') or '').strip()
@@ -32,20 +95,20 @@ def login():
     execute('UPDATE users SET last_login_at=datetime("now","localtime") WHERE id=?',
             (u['id'],))
 
-    nxt = request.args.get('next') or url_for('dashboard')
+    nxt = request.args.get('next') or url_for('routes_core.dashboard')
     # 외부 URL 리다이렉트 방지 ('//evil.com' 같은 프로토콜-상대 URL 포함)
     if not nxt.startswith('/') or nxt.startswith('//'):
-        nxt = url_for('dashboard')
+        nxt = url_for('routes_core.dashboard')
     return redirect(nxt)
 
 
-@app.route('/logout')
+@bp.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('login'))
+    return redirect(url_for('routes_core.login'))
 
 
-@app.route('/api/auth/token', methods=['POST'])
+@bp.route('/api/auth/token', methods=['POST'])
 def api_auth_token():
     """네이티브 앱 로그인: username/password → Bearer 토큰."""
     d = request.get_json(silent=True)
@@ -81,7 +144,7 @@ def api_auth_token():
     return resp
 
 
-@app.route('/dashboard')
+@bp.route('/dashboard')
 @login_required
 def dashboard():
     """Fleet Map — 지도 기반 대시보드(SVMS noon 선위 + TRMT 현황 조인).
@@ -96,7 +159,7 @@ def dashboard():
     return response
 
 
-@app.route('/mobile')
+@bp.route('/mobile')
 @login_required
 def mobile_app():
     """Mobile-first TRMT shell backed by the existing server and session."""
@@ -105,7 +168,7 @@ def mobile_app():
 
 
 
-@app.route('/api/dashboard/cockpit')
+@bp.route('/api/dashboard/cockpit')
 @login_required
 def api_dashboard_cockpit():
     """대시보드 '오늘의 조종석' 스트립 데이터.
@@ -236,43 +299,43 @@ def api_dashboard_cockpit():
                     'is_admin': is_admin})
 
 
-@app.route('/')
+@bp.route('/')
 @login_required
 def index():
     return render_template('index.html')
 
 
-@app.route('/condition-survey')
+@bp.route('/condition-survey')
 @login_required
 def condition_survey():
     return render_template('condition_survey.html')
 
 
-@app.route('/vetting-status')
+@bp.route('/vetting-status')
 @login_required
 def vetting_status():
     return render_template('vetting_status.html')
 
 
-@app.route('/class-status')
+@bp.route('/class-status')
 @login_required
 def class_status_page():
     return render_template('class_status.html')
 
 
-@app.route('/calendar')
+@bp.route('/calendar')
 @login_required
 def calendar_page():
     return render_template('calendar.html')
 
 
-@app.route('/dry-dock')
+@bp.route('/dry-dock')
 @login_required
 def dry_dock_page():
     return render_template('dry_dock.html')
 
 
-@app.route('/dry-dock/<int:rid>/edit')
+@bp.route('/dry-dock/<int:rid>/edit')
 @login_required
 def dry_dock_edit_page(rid):
     r = query('SELECT id FROM dock_reports WHERE id=?', (rid,), one=True)
@@ -281,13 +344,13 @@ def dry_dock_edit_page(rid):
     return render_template('dry_dock_edit.html', report_id=rid)
 
 
-@app.route('/boarding')
+@bp.route('/boarding')
 @login_required
 def boarding_page():
     return render_template('boarding.html')
 
 
-@app.route('/boarding/<int:rid>/edit')
+@bp.route('/boarding/<int:rid>/edit')
 @login_required
 def boarding_edit_page(rid):
     r = query('SELECT id FROM boarding_reports WHERE id=?', (rid,), one=True)
@@ -299,7 +362,7 @@ def boarding_edit_page(rid):
 # ═════════════════════════════════════════════════════════════════
 #  API — me / password
 # ═════════════════════════════════════════════════════════════════
-@app.route('/api/me')
+@bp.route('/api/me')
 @login_required
 def api_me():
     out = {
@@ -322,7 +385,7 @@ def api_me():
     return jsonify(out)
 
 
-@app.route('/api/drydock/mobile-entry')
+@bp.route('/api/drydock/mobile-entry')
 @admin_required
 def api_drydock_mobile_entry():
     """네이티브 앱 Bearer를 동일 도메인 Dock Manager browser session으로 1회 교환."""
@@ -335,7 +398,7 @@ def api_drydock_mobile_entry():
     response.headers['Cache-Control'] = 'no-store'
     return response
 
-@app.route('/api/me/password', methods=['POST'])
+@bp.route('/api/me/password', methods=['POST'])
 @login_required
 def api_me_password():
     d = request.get_json(silent=True) or {}
@@ -355,7 +418,7 @@ def api_me_password():
 # ═════════════════════════════════════════════════════════════════
 #  API — supervisors
 # ═════════════════════════════════════════════════════════════════
-@app.route('/api/supervisors')
+@bp.route('/api/supervisors')
 @login_required
 def api_supervisors():
     rows = query('''
@@ -383,7 +446,7 @@ def api_supervisors():
 # ═════════════════════════════════════════════════════════════════
 #  API — vessels
 # ═════════════════════════════════════════════════════════════════
-@app.route('/api/vessels')
+@bp.route('/api/vessels')
 @login_required
 def api_vessels():
     sup = request.args.get('supervisor_id', type=int)
@@ -400,7 +463,7 @@ def api_vessels():
 
 
 # Daily 사이드바 선박 커스텀 순서 (유저별, 드래그앤드롭). 빈 배열 = 기본정렬(디펙트순).
-@app.route('/api/vessel-order', methods=['GET', 'POST'])
+@bp.route('/api/vessel-order', methods=['GET', 'POST'])
 @login_required
 def api_vessel_order():
     uid = session.get('user_id')
@@ -426,7 +489,7 @@ def api_vessel_order():
 # 선박별 활성(Open + InProgress) 이슈 수 — Daily 필터 드롭다운용
 #   · 다른 화면 필터(감독, 검색, 우선순위, 선종)는 적용
 #   · 선박 필터 자체는 무시 (드롭다운 라벨용이므로)
-@app.route('/api/vessels/active-counts')
+@bp.route('/api/vessels/active-counts')
 @login_required
 def api_vessel_active_counts():
     conds = ["i.status IN ('Open', 'InProgress')"]
@@ -467,7 +530,7 @@ def api_vessel_active_counts():
 # ═════════════════════════════════════════════════════════════════
 #  API — issues (list / get / create / update / delete)
 # ═════════════════════════════════════════════════════════════════
-@app.route('/api/issues')
+@bp.route('/api/issues')
 @login_required
 def api_issue_list():
     conds, params = ['1=1'], []
@@ -517,7 +580,7 @@ def api_issue_list():
 
 
 
-@app.route('/api/mobile/issues')
+@bp.route('/api/mobile/issues')
 @login_required
 def api_mobile_issue_list():
     """Mobile Daily card feed with server-enforced supervisor scope.
@@ -562,7 +625,7 @@ def api_mobile_issue_list():
 #     서버·클라 양쪽에 집계 로직이 이중화되지 않는다.
 #   🔴 스코프는 기존 화면과 **같은 규칙**을 쓴다 — 숫자가 웹/앱과 어긋나면 형이 못 믿는다.
 # ─────────────────────────────────────────────────────────────────
-@app.route('/api/widget/issues')
+@bp.route('/api/widget/issues')
 @login_required
 def api_widget_issues():
     """위젯 Daily 현안 페이지용. 미완 이슈의 5개 필드만(스코프 = /api/mobile/issues 와 동일)."""
@@ -592,7 +655,7 @@ WIDGET_FLEET_FIELDS = ('name', 'color', 'cls', 'cls_due_date', 'cls_due_days',
                        'coc', 'urgent', 'issues_open')
 
 
-@app.route('/api/widget/fleet')
+@bp.route('/api/widget/fleet')
 @login_required
 def api_widget_fleet():
     """위젯 선대 현황 · 선급 만기 페이지용.
@@ -606,7 +669,7 @@ def api_widget_fleet():
     return jsonify({'fleet': fleet})
 
 
-@app.route('/api/widget/vetting')
+@bp.route('/api/widget/vetting')
 @login_required
 def api_widget_vetting():
     """위젯 SIRE 현황용. **선박당 1행**, 지적 본문은 싣지 않는다.
@@ -667,7 +730,7 @@ def api_widget_vetting():
 #   · 컬럼 헤더 행에 AutoFilter 적용 → 선박명 등 자유롭게 필터
 #   · 현재 화면 필터(상태/우선순위/선박/선종/검색어/서브탭) 그대로 반영
 # ─────────────────────────────────────────────────────────────────
-@app.route('/api/issues/export')
+@bp.route('/api/issues/export')
 @login_required
 def api_issue_export():
     from io import BytesIO
@@ -961,7 +1024,7 @@ def _summary_scope():
     return str(sid) if sid else 'all'
 
 
-@app.route('/api/issues/summary', methods=['GET'])
+@bp.route('/api/issues/summary', methods=['GET'])
 @login_required
 def api_issue_summary_get():
     _ensure_summary_table()
@@ -979,7 +1042,7 @@ def api_issue_summary_get():
 
 
 
-@app.route('/api/issues/summary-generate', methods=['POST'])
+@bp.route('/api/issues/summary-generate', methods=['POST'])
 @login_required
 def api_issue_summary_generate():
     sid = request.args.get('supervisor_id') or None
@@ -987,7 +1050,7 @@ def api_issue_summary_generate():
     return jsonify({'rows': rows, 'generated_at': gen_at, 'counts': counts})
 
 
-@app.route('/api/issues/summary-counts', methods=['GET'])
+@bp.route('/api/issues/summary-counts', methods=['GET'])
 @login_required
 def api_issue_summary_counts():
     _ensure_summary_table()
@@ -1001,7 +1064,7 @@ def api_issue_summary_counts():
     return jsonify(out)
 
 
-@app.route('/api/issues/summary-export')
+@bp.route('/api/issues/summary-export')
 @login_required
 def api_issue_summary_export():
     """현재 탭(대분류)의 저장된 요약(요약 탭 내용)을 엑셀로 추출 — AI 미사용."""
@@ -1120,7 +1183,7 @@ def api_issue_summary_export():
 
 
 
-@app.route('/api/issues/<int:iid>')
+@bp.route('/api/issues/<int:iid>')
 @login_required
 def api_issue_get(iid):
     _issue_write_scope(iid)
@@ -1144,7 +1207,7 @@ def api_issue_get(iid):
     return jsonify(out)
 
 
-@app.route('/api/issues', methods=['POST'])
+@bp.route('/api/issues', methods=['POST'])
 @login_required
 def api_issue_create():
     d = request.get_json(silent=True) or {}
@@ -1177,7 +1240,7 @@ def api_issue_create():
     return jsonify({'id': iid}), 201
 
 
-@app.route('/api/issues/<int:iid>', methods=['PUT'])
+@bp.route('/api/issues/<int:iid>', methods=['PUT'])
 @login_required
 def api_issue_update(iid):
     current = _issue_write_scope(iid)
@@ -1216,7 +1279,7 @@ def api_issue_update(iid):
     return jsonify({'id': iid})
 
 
-@app.route('/api/issues/<int:iid>/actions', methods=['POST'])
+@bp.route('/api/issues/<int:iid>/actions', methods=['POST'])
 @login_required
 def api_issue_action_append(iid):
     """진행 경과 1건 **원자적 추가**(앱 오프라인 보관함 전용 경로이자, 일반 추가의 안전판).
@@ -1274,7 +1337,7 @@ def api_issue_action_append(iid):
     return jsonify({'error': '다른 곳에서 동시에 변경 중입니다. 잠시 후 다시 시도하세요.'}), 409
 
 
-@app.route('/api/issues/<int:iid>/actions/<int:idx>', methods=['PATCH'])
+@bp.route('/api/issues/<int:iid>/actions/<int:idx>', methods=['PATCH'])
 @login_required
 def api_issue_action_patch(iid, idx):
     """진행 경과 1건만 수정 — 내용·발생일·중요표시(모바일 인라인 편집용).
@@ -1366,7 +1429,7 @@ def api_issue_action_patch(iid, idx):
     return jsonify({'id': iid, 'actions': actions})
 
 
-@app.route('/api/issues/<int:iid>', methods=['DELETE'])
+@bp.route('/api/issues/<int:iid>', methods=['DELETE'])
 @login_required
 def api_issue_delete(iid):
     _issue_write_scope(iid)
@@ -1384,7 +1447,7 @@ def api_issue_delete(iid):
 # ═════════════════════════════════════════════════════════════════
 
 # ----- 감독 (CREATE / UPDATE / DELETE) -----
-@app.route('/api/supervisors', methods=['POST'])
+@bp.route('/api/supervisors', methods=['POST'])
 @admin_required
 def api_supervisor_create():
     d = request.get_json(silent=True) or {}
@@ -1404,7 +1467,7 @@ def api_supervisor_create():
     return jsonify({'id': sid}), 201
 
 
-@app.route('/api/supervisors/<int:sid>', methods=['PUT'])
+@bp.route('/api/supervisors/<int:sid>', methods=['PUT'])
 @admin_required
 def api_supervisor_update(sid):
     if not query('SELECT id FROM supervisors WHERE id=?', (sid,), one=True):
@@ -1422,7 +1485,7 @@ def api_supervisor_update(sid):
     return jsonify({'id': sid})
 
 
-@app.route('/api/supervisors/<int:sid>', methods=['DELETE'])
+@bp.route('/api/supervisors/<int:sid>', methods=['DELETE'])
 @admin_required
 def api_supervisor_delete(sid):
     # 이슈 있으면 soft delete 만 수행
@@ -1439,7 +1502,7 @@ def api_supervisor_delete(sid):
 
 
 # ----- 선박 (CREATE / UPDATE / DELETE / 전체 조회) -----
-@app.route('/api/vessels/all')
+@bp.route('/api/vessels/all')
 @login_required
 def api_vessels_all():
     """관리 UI용 — 담당 감독 함께."""
@@ -1464,7 +1527,7 @@ def api_vessels_all():
     return jsonify(out)
 
 
-@app.route('/api/vessels', methods=['POST'])
+@bp.route('/api/vessels', methods=['POST'])
 @login_required
 def api_vessel_create():
     d = request.get_json(silent=True) or {}
@@ -1501,7 +1564,7 @@ def api_vessel_create():
     return jsonify({'id': vid}), 201
 
 
-@app.route('/api/vessels/<int:vid>', methods=['PUT'])
+@bp.route('/api/vessels/<int:vid>', methods=['PUT'])
 @login_required
 def api_vessel_update(vid):
     if not query('SELECT id FROM vessels WHERE id=?', (vid,), one=True):
@@ -1736,7 +1799,7 @@ def _vessel_purge_scan(vid):
             'files': sorted({f for f in files if _purge_file_allowed(f)})}
 
 
-@app.route('/api/vessels/<int:vid>/delete-impact')
+@bp.route('/api/vessels/<int:vid>/delete-impact')
 @admin_required
 def api_vessel_delete_impact(vid):
     """삭제 확인창에 보여줄 '함께 지워질 데이터' 건수."""
@@ -1751,7 +1814,7 @@ def api_vessel_delete_impact(vid):
     })
 
 
-@app.route('/api/vessels/<int:vid>', methods=['DELETE'])
+@bp.route('/api/vessels/<int:vid>', methods=['DELETE'])
 @login_required
 def api_vessel_delete(vid):
     v = query('SELECT id FROM vessels WHERE id=?', (vid,), one=True)
@@ -1860,7 +1923,7 @@ def api_vessel_delete(vid):
 
 
 # ----- 사용자 (admin 전용 CRUD) -----
-@app.route('/api/users')
+@bp.route('/api/users')
 @admin_required
 def api_users_list():
     rows = query('''
@@ -1874,7 +1937,7 @@ def api_users_list():
     return jsonify([dict(r) for r in rows])
 
 
-@app.route('/api/users', methods=['POST'])
+@bp.route('/api/users', methods=['POST'])
 @admin_required
 def api_user_create():
     d = request.get_json(silent=True) or {}
@@ -1899,7 +1962,7 @@ def api_user_create():
     return jsonify({'id': uid}), 201
 
 
-@app.route('/api/users/<int:uid>', methods=['PUT'])
+@bp.route('/api/users/<int:uid>', methods=['PUT'])
 @admin_required
 def api_user_update(uid):
     if not query('SELECT id FROM users WHERE id=?', (uid,), one=True):
@@ -1917,7 +1980,7 @@ def api_user_update(uid):
     return jsonify({'id': uid})
 
 
-@app.route('/api/users/<int:uid>', methods=['DELETE'])
+@bp.route('/api/users/<int:uid>', methods=['DELETE'])
 @admin_required
 def api_user_delete(uid):
     if uid == session.get('user_id'):
@@ -1935,7 +1998,7 @@ def api_user_delete(uid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/users/<int:uid>/password', methods=['POST'])
+@bp.route('/api/users/<int:uid>/password', methods=['POST'])
 @admin_required
 def api_user_reset_password(uid):
     d = request.get_json(silent=True) or {}
@@ -1994,7 +2057,7 @@ def _cs_survey_with_counts(s):
     return d
 
 
-@app.route('/api/cs/surveys')
+@bp.route('/api/cs/surveys')
 @login_required
 def api_cs_surveys_list():
     """연도 + (선택)감독별 모든 선박의 분기별 서베이 목록.
@@ -2054,7 +2117,7 @@ def api_cs_surveys_list():
     return jsonify(out)
 
 
-@app.route('/api/cs/surveys', methods=['POST'])
+@bp.route('/api/cs/surveys', methods=['POST'])
 @login_required
 def api_cs_survey_create():
     """헤더(분기 셀) 생성 또는 upsert."""
@@ -2086,7 +2149,7 @@ def api_cs_survey_create():
     return jsonify({'id': sid}), 201
 
 
-@app.route('/api/cs/surveys/<int:sid>', methods=['GET'])
+@bp.route('/api/cs/surveys/<int:sid>', methods=['GET'])
 @login_required
 def api_cs_survey_get(sid):
     s = query('SELECT * FROM cs_surveys WHERE id=?', (sid,), one=True)
@@ -2100,7 +2163,7 @@ def api_cs_survey_get(sid):
     return jsonify(d)
 
 
-@app.route('/api/cs/surveys/<int:sid>', methods=['PUT'])
+@bp.route('/api/cs/surveys/<int:sid>', methods=['PUT'])
 @login_required
 def api_cs_survey_update(sid):
     if not query('SELECT id FROM cs_surveys WHERE id=?', (sid,), one=True):
@@ -2122,7 +2185,7 @@ def api_cs_survey_update(sid):
     return jsonify({'id': sid})
 
 
-@app.route('/api/cs/surveys/<int:sid>', methods=['DELETE'])
+@bp.route('/api/cs/surveys/<int:sid>', methods=['DELETE'])
 @login_required
 def api_cs_survey_delete(sid):
     execute('DELETE FROM cs_surveys WHERE id=?', (sid,))
@@ -2139,7 +2202,7 @@ def _next_finding_no(survey_id, category):
     return r['n']
 
 
-@app.route('/api/cs/surveys/<int:sid>/findings', methods=['POST'])
+@bp.route('/api/cs/surveys/<int:sid>/findings', methods=['POST'])
 @login_required
 def api_cs_finding_create(sid):
     """단건 또는 배치(엑셀 붙여넣기) 추가.
@@ -2180,7 +2243,7 @@ def api_cs_finding_create(sid):
     return jsonify({'ids': created_ids, 'count': len(created_ids)}), 201
 
 
-@app.route('/api/cs/findings/<int:fid>', methods=['PUT'])
+@bp.route('/api/cs/findings/<int:fid>', methods=['PUT'])
 @login_required
 def api_cs_finding_update(fid):
     cur = query('SELECT survey_id, status FROM cs_findings WHERE id=?', (fid,), one=True)
@@ -2207,7 +2270,7 @@ def api_cs_finding_update(fid):
     return jsonify({'id': fid})
 
 
-@app.route('/api/cs/findings/<int:fid>', methods=['DELETE'])
+@bp.route('/api/cs/findings/<int:fid>', methods=['DELETE'])
 @login_required
 def api_cs_finding_delete(fid):
     f = query('SELECT survey_id, category, no FROM cs_findings WHERE id=?', (fid,), one=True)

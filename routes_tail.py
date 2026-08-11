@@ -1,5 +1,66 @@
+"""routes_tail — converted to a real imported module with Blueprint("routes_tail") on 2026-08-11.
+
+Previously executed in the app namespace by ``_load_extracted_module``.
+Dependencies are now the explicit imports below and nothing else — every
+name comes from ``app`` (whose namespace includes everything
+``helpers_shared.py`` executed into it).  Contract enforced by
+``test_converted_modules_are_self_contained``: zero unresolved names, and
+no sibling boundary imports.
+"""
+from flask import Blueprint
+
+from app import (
+    BASE_DIR,
+    FLEET_MAP_FILE,
+    INSTANCE_DIR,
+    PUSH_KINDS,
+    PUSH_KIND_KEYS,
+    _cls_handle_files,
+    _dashboard_ctx,
+    _ensure_api_table,
+    _findings_workbook,
+    _fleet_apply_code_first_next_port,
+    _fleet_extract_next_port_code,
+    _fleet_port_catalog,
+    _fleet_route_to_destination,
+    _fleet_visible_auto_vessels,
+    _norm_locode,
+    _norm_port_text,
+    _push_dispatch,
+    _push_module,
+    _push_prefs,
+    _re_cls,
+    _vkey,
+    abort,
+    admin_required,
+    api_key_required,
+    app,
+    datetime,
+    execute,
+    execute_rc,
+    get_db,
+    http,
+    json,
+    jsonify,
+    login_required,
+    os,
+    query,
+    re,
+    render_template,
+    request,
+    session,
+    threading,
+    time,
+    timedelta,
+    urllib,
+    uuid,
+)
+
+bp = Blueprint("routes_tail", __name__)
+
+
 # ---- ext (맥 push_cards.py / apply_decisions.py) ----
-@app.route('/api/ext/shipwiki/push', methods=['POST'])
+@bp.route('/api/ext/shipwiki/push', methods=['POST'])
 @api_key_required
 def api_ext_shipwiki_push():
     """맥이 pending/wiki 노트를 적재(upsert by slug+fname). 사람 결정(decision/card_status)이
@@ -518,7 +579,7 @@ def _overlay_trmtdb_positions(fleet, override_keys):
             'upstream_vessels': len(upstream), 'cached': cached, 'error': error}
 
 
-@app.route('/api/ext/fleet-map/push', methods=['POST'])
+@bp.route('/api/ext/fleet-map/push', methods=['POST'])
 @api_key_required
 def api_ext_fleet_map_push():
     """맥 스케줄러(run.sh)가 SVMS noon+TRMT 조인한 fleet_enriched.json 적재.
@@ -555,7 +616,7 @@ def api_ext_fleet_map_push():
 FLEET_OVERRIDE_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_overrides.json')
 
 
-@app.route('/api/ext/fleet-map/override', methods=['POST'])
+@bp.route('/api/ext/fleet-map/override', methods=['POST'])
 @api_key_required
 def api_ext_fleet_map_override():
     """특정 선박 선위를 외부 소스(예: Master 이메일 보고)로 임시 override.
@@ -593,7 +654,7 @@ def api_ext_fleet_map_override():
 FLEET_WIND_FILE = os.path.join(INSTANCE_DIR, 'fleet_wind.json')
 
 
-@app.route('/api/ext/fleet-map/wind', methods=['POST'])
+@bp.route('/api/ext/fleet-map/wind', methods=['POST'])
 @api_key_required
 def api_ext_fleet_map_wind_push():
     """맥 wind_gfs.py 가 NOAA GFS 10m 바람을 leaflet-velocity 포맷으로 적재.
@@ -623,7 +684,7 @@ def api_ext_fleet_map_wind_push():
     return jsonify({'ok': True, 'points': len(grid[0]['data']), 'generated_at': out['generated_at']})
 
 
-@app.route('/api/fleet-map/wind')
+@bp.route('/api/fleet-map/wind')
 @login_required
 def api_fleet_map_wind():
     """대시보드 '바람' 토글용 — leaflet-velocity 그리드(GFS 10m)."""
@@ -659,7 +720,7 @@ def _load_ais_off():
         return {}
 
 
-@app.route('/api/fleet-map/email-watch', methods=['POST'])
+@bp.route('/api/fleet-map/email-watch', methods=['POST'])
 @login_required
 def api_fleet_map_email_watch_set():
     """대시보드 토글 — 선박을 '이메일 선위' watch에 등록/해제(AIS off 대응).
@@ -700,7 +761,7 @@ def api_fleet_map_email_watch_set():
     return jsonify({'ok': True, 'enabled': bool(d.get('enabled')), 'count': len(w)})
 
 
-@app.route('/api/ext/fleet-map/email-watch')
+@bp.route('/api/ext/fleet-map/email-watch')
 @api_key_required
 def api_ext_fleet_map_email_watch_get():
     """워처(맥)용 — 현재 이메일 선위 watch 켜진 선박 목록."""
@@ -708,7 +769,7 @@ def api_ext_fleet_map_email_watch_get():
     return jsonify({'ok': True, 'vessels': list(w.values()), 'keys': list(w.keys())})
 
 
-@app.route('/api/fleet-map/pos-source', methods=['POST'])
+@bp.route('/api/fleet-map/pos-source', methods=['POST'])
 @login_required
 def api_fleet_map_pos_source_set():
     """대시보드 선박별 선위 소스 토글(상호배타 3택):
@@ -758,7 +819,7 @@ def api_fleet_map_pos_source_set():
     return jsonify({'ok': True, 'source': source, 'vessel': vessel})
 
 
-@app.route('/api/ext/fleet-map/ais-off')
+@bp.route('/api/ext/fleet-map/ais-off')
 @api_key_required
 def api_ext_fleet_map_ais_off_get():
     """워처(맥 vt_overlay)용 — 수동 'SVMS 고정'(AIS off) 선박 목록. 키=선명 strip+lower."""
@@ -766,7 +827,7 @@ def api_ext_fleet_map_ais_off_get():
     return jsonify({'ok': True, 'vessels': list(off.values()), 'keys': list(off.keys())})
 
 
-@app.route('/api/fleet-map/next-port-override', methods=['POST'])
+@bp.route('/api/fleet-map/next-port-override', methods=['POST'])
 @login_required
 def api_fleet_map_next_port_override_set():
     """Dashboard write endpoint: save per-vessel manual Next Port override."""
@@ -821,7 +882,7 @@ def api_fleet_map_next_port_override_set():
     }})
 
 
-@app.route('/api/fleet-map/next-port-override', methods=['DELETE'])
+@bp.route('/api/fleet-map/next-port-override', methods=['DELETE'])
 @login_required
 def api_fleet_map_next_port_override_delete():
     """Dashboard write endpoint: clear per-vessel manual Next Port override."""
@@ -843,7 +904,7 @@ def api_fleet_map_next_port_override_delete():
     return jsonify({'ok': True, 'vessel': vessel.strip()})
 
 
-@app.route('/api/fleet-map/eta-override', methods=['POST'])
+@bp.route('/api/fleet-map/eta-override', methods=['POST'])
 @login_required
 def api_fleet_map_eta_override_set():
     """Dashboard write endpoint: noon ETA 누락 선박에 수동 ETA 기입."""
@@ -888,7 +949,7 @@ def api_fleet_map_eta_override_set():
     return jsonify({'ok': True, 'vessel': v.get('name') or vessel.strip(), 'eta': norm, 'manual': True})
 
 
-@app.route('/api/fleet-map/eta-override', methods=['DELETE'])
+@bp.route('/api/fleet-map/eta-override', methods=['DELETE'])
 @login_required
 def api_fleet_map_eta_override_delete():
     """Dashboard write endpoint: 수동 ETA 기입 삭제(noon 자동값으로 복귀)."""
@@ -909,7 +970,7 @@ def api_fleet_map_eta_override_delete():
     return jsonify({'ok': True, 'vessel': vessel.strip()})
 
 
-@app.route('/api/fleet-map/data')
+@bp.route('/api/fleet-map/data')
 @login_required
 def api_fleet_map_data():
     """대시보드 맵 데이터. 감독 연결 사용자는 본인 담당선박만(admin/미연결=전체)."""
@@ -1085,7 +1146,7 @@ def api_fleet_map_data():
     return jsonify(data)
 
 
-@app.route('/api/fleet-map/track')
+@bp.route('/api/fleet-map/track')
 @login_required
 def api_fleet_map_track():
     """선택·권한범위 내 선박의 TRMT DB AIS 이전 항적만 반환한다."""
@@ -1118,14 +1179,14 @@ def api_fleet_map_track():
     })
 
 
-@app.route('/dashboard/classic')
+@bp.route('/dashboard/classic')
 @login_required
 def dashboard_classic():
     """구 대시보드(카드형) — Fleet Map 도입 후 백업 경로."""
     return render_template('dashboard_classic.html', **_dashboard_ctx())
 
 
-@app.route('/api/ext/shipwiki/decided')
+@bp.route('/api/ext/shipwiki/decided')
 @api_key_required
 def api_ext_shipwiki_decided():
     """맥 apply_decisions.py 가 적용할 결정건 → card_status='applying' 락(조건부).
@@ -1142,7 +1203,7 @@ def api_ext_shipwiki_decided():
     return jsonify({'count': len(out), 'cards': out})
 
 
-@app.route('/api/ext/shipwiki/<int:cid>/result', methods=['POST'])
+@bp.route('/api/ext/shipwiki/<int:cid>/result', methods=['POST'])
 @api_key_required
 def api_ext_shipwiki_result(cid):
     """적용 결과: ok=True → applied(+result 파일경로), else failed(사람 재검토)."""
@@ -1194,7 +1255,7 @@ def _cls_snapshot_dict(cs_row, items_by_cs):
 
 
 
-@app.route('/api/class-status', methods=['GET'])
+@bp.route('/api/class-status', methods=['GET'])
 @login_required
 def api_class_status_list():
     """매칭 선박별 스냅샷 + 미매칭 버킷.
@@ -1254,7 +1315,7 @@ def api_class_status_list():
 
 
 
-@app.route('/api/class-status/upload', methods=['POST'])
+@bp.route('/api/class-status/upload', methods=['POST'])
 @login_required
 def api_class_status_upload():
     files = request.files.getlist('files') or (
@@ -1265,7 +1326,7 @@ def api_class_status_upload():
     return jsonify({'ok': any(r.get('ok') for r in results), 'results': results})
 
 
-@app.route('/api/class-status/push', methods=['POST'])
+@bp.route('/api/class-status/push', methods=['POST'])
 @admin_required
 def api_class_status_push():
     """'BV에서 Pushing' 버튼 — 맥 러너가 폴링해서 BV→Class Status 동기화하도록 플래그."""
@@ -1275,7 +1336,7 @@ def api_class_status_push():
     return jsonify({'ok': True, 'flagged_at': now})
 
 
-@app.route('/api/class-status/items/<int:iid>', methods=['PUT'])
+@bp.route('/api/class-status/items/<int:iid>', methods=['PUT'])
 @login_required
 def api_class_status_item_update(iid):
     row = query('SELECT * FROM class_status_items WHERE id=?', (iid,), one=True)
@@ -1297,7 +1358,7 @@ def api_class_status_item_update(iid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/class-status/<int:cs_id>', methods=['DELETE'])
+@bp.route('/api/class-status/<int:cs_id>', methods=['DELETE'])
 @login_required
 def api_class_status_delete(cs_id):
     if not query('SELECT id FROM class_status WHERE id=?', (cs_id,), one=True):
@@ -1306,7 +1367,7 @@ def api_class_status_delete(cs_id):
     return jsonify({'ok': True})
 
 
-@app.route('/api/class-status/<int:cs_id>/assign', methods=['POST'])
+@bp.route('/api/class-status/<int:cs_id>/assign', methods=['POST'])
 @login_required
 def api_class_status_assign(cs_id):
     """미매칭 스냅샷을 특정 선박에 수동 배정(기존 선박 스냅샷은 교체)."""
@@ -1326,7 +1387,7 @@ def api_class_status_assign(cs_id):
     return jsonify({'ok': True})
 
 
-@app.route('/api/class-status/<int:cs_id>/export')
+@bp.route('/api/class-status/<int:cs_id>/export')
 @login_required
 def api_class_status_export(cs_id):
     from flask import send_file
@@ -1363,7 +1424,7 @@ def api_class_status_export(cs_id):
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@app.route('/api/class-status/<int:cs_id>/file')
+@bp.route('/api/class-status/<int:cs_id>/file')
 @login_required
 def api_class_status_file(cs_id):
     """선박별 보관된 최신 Class Status 원본 파일. 기본 inline(브라우저 미리보기), ?dl=1 이면 다운로드."""
@@ -1381,7 +1442,7 @@ def api_class_status_file(cs_id):
     return send_file(full, mimetype=mime, as_attachment=dl, download_name=name)
 
 
-@app.route('/api/class-status/export-all')
+@bp.route('/api/class-status/export-all')
 @login_required
 def api_class_status_export_all():
     """전체 선박 Class Status 엑셀 (선박별 COC/기국 지적 전부, 1시트). 감독 필터 지원."""
@@ -1454,7 +1515,7 @@ def _class_export_vessels(sup_id=None):
     return out
 
 
-@app.route('/api/class-status/managers')
+@bp.route('/api/class-status/managers')
 @login_required
 def api_class_status_managers():
     """관리사 목록 + 선박수(지적 있는 선박만). supervisor_id 주면 그 감독 담당선박만 집계."""
@@ -1468,7 +1529,7 @@ def api_class_status_managers():
     return jsonify({'managers': managers})
 
 
-@app.route('/api/class-status/export-by-manager')
+@bp.route('/api/class-status/export-by-manager')
 @login_required
 def api_class_status_export_by_manager():
     """관리사 선택 → 그 관리사 선박 Class Status 지적 엑셀 일괄 추출 (영문, 지적없는선박 제외).
@@ -1522,7 +1583,7 @@ def api_class_status_export_by_manager():
 
 
 # ---- 앱(Bearer) : 디바이스 등록/해제 ----
-@app.route('/api/ios/device', methods=['POST'])
+@bp.route('/api/ios/device', methods=['POST'])
 @login_required
 def api_ios_device_register():
     d = request.get_json(silent=True) or {}
@@ -1556,7 +1617,7 @@ def api_ios_device_register():
     return jsonify({'ok': True})
 
 
-@app.route('/api/ios/device', methods=['DELETE'])
+@bp.route('/api/ios/device', methods=['DELETE'])
 @login_required
 def api_ios_device_unregister():
     d = request.get_json(silent=True) or {}
@@ -1570,7 +1631,7 @@ def api_ios_device_unregister():
 
 
 # ---- 앱(Bearer) : 알림 종류 on/off ----
-@app.route('/api/ios/notify-prefs', methods=['GET'])
+@bp.route('/api/ios/notify-prefs', methods=['GET'])
 @login_required
 def api_ios_prefs_get():
     rows = query("SELECT * FROM ios_device WHERE user_id=? AND active=1 "
@@ -1586,7 +1647,7 @@ def api_ios_prefs_get():
     })
 
 
-@app.route('/api/ios/notify-prefs', methods=['PUT'])
+@bp.route('/api/ios/notify-prefs', methods=['PUT'])
 @login_required
 def api_ios_prefs_put():
     d = request.get_json(silent=True) or {}
@@ -1601,7 +1662,7 @@ def api_ios_prefs_put():
 
 
 # ---- 앱(Bearer) : 상태 확인 + 테스트 발송 ----
-@app.route('/api/ios/push/status', methods=['GET'])
+@bp.route('/api/ios/push/status', methods=['GET'])
 @login_required
 def api_ios_push_status():
     ap = _push_module()
@@ -1631,7 +1692,7 @@ def api_ios_push_status():
     })
 
 
-@app.route('/api/ios/push/log/clear', methods=['POST'])
+@bp.route('/api/ios/push/log/clear', methods=['POST'])
 @login_required
 def api_ios_push_log_clear():
     """최근 발송 기록 감추기.
@@ -1651,7 +1712,7 @@ def api_ios_push_log_clear():
     return jsonify({'ok': True, 'hidden': n})
 
 
-@app.route('/api/ios/push/test', methods=['POST'])
+@bp.route('/api/ios/push/test', methods=['POST'])
 @login_required
 def api_ios_push_test():
     """형이 앱에서 눌러 실제로 알림이 뜨는지 확인 — 카나리 검증 수단.
@@ -1667,7 +1728,7 @@ def api_ios_push_test():
 
 
 # ---- 자동화(X-API-Key) : 이벤트 → 알림 ----
-@app.route('/api/ext/push', methods=['POST'])
+@bp.route('/api/ext/push', methods=['POST'])
 @api_key_required
 def api_ext_push():
     """맥 워커/자동화가 상태변화를 알릴 때 호출.
@@ -1765,7 +1826,7 @@ def _calendar_daily_body(rows, limit=300):
         n -= 1
 
 
-@app.route('/api/ext/push/calendar-daily', methods=['POST'])
+@bp.route('/api/ext/push/calendar-daily', methods=['POST'])
 @api_key_required
 def api_ext_push_calendar_daily():
     """맥 launchd 가 10시·14시에 호출. 일정 계산은 전부 서버가 한다(러너는 트리거일 뿐).

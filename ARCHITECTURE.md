@@ -4,17 +4,20 @@
 
 `app.py` remains the Flask application and WSGI compatibility surface.  It owns
 configuration, the Flask instance, database primitives, authentication hooks,
-and the historical public helper names.  The implementation loaded into that
-namespace is split into five focused boundaries:
+and the historical public helper names.  Since 2026-08-11 all five route
+boundaries are **real imported modules with Blueprints**; the only file still
+executed into the `app` namespace is `helpers_shared.py`.
 
 Boundary contents below are measured from the route decorators actually present
-in each file, not from intent.  Counts are `@app.route` declarations.
+in each file, not from intent.  Counts are `@bp.route` declarations.
 
-- `helpers_shared.py` (0 routes, loaded first): every helper or constant that
+- `helpers_shared.py` (0 routes, exec'd first): every helper or constant that
   two or more boundaries consume, or that `app.py` itself consumes — auth
   decorators (`login_required`, `admin_required`, `api_key_required`), Gemini
   call/config, dock-procure and SOA helpers, fleet/push helpers, automation
-  task metadata.  Nothing route-shaped lives here;
+  task metadata.  Nothing route-shaped lives here.  It stays exec'd (not
+  imported) so its names land in the `app` module namespace, which is what the
+  route modules' `from app import ...` lines rely on;
 - `routes_core.py` (59 routes): login/logout/auth, dashboard, issues, vessels,
   users/supervisors, widget, condition-survey CRUD (`/api/cs/surveys`), and the
   `/calendar`, `/condition-survey`, `/vetting-status`, `/dry-dock` **pages**;
@@ -111,15 +114,39 @@ a Blueprint conversion can now proceed one boundary at a time, importing only
 prefixes, `url_for` call sites, the 396-entry contract snapshot) remains the
 open cost and is a per-boundary, reviewable change.
 
-`ai_gemini.py` is the first converted boundary (2026-08-11).  The conversion
-recipe it establishes: measure `url_for`/`request.endpoint`/test references to
-the boundary's endpoint names first (here: zero), add explicit imports for
-exactly the module's free names (derived with `symtable`, not by hand), swap
-`@app.route` → `@bp.route`, and replace the loader line with
-`import <mod>; app.register_blueprint(<mod>.bp)`.  A converted module leaves
-the exec graph and is instead held to the stronger self-containment contract;
-the snapshot diff must be exactly the endpoint renames of that boundary and
-nothing else (verified programmatically, not by eyeballing the diff).
+All five boundaries were converted on 2026-08-11 (ai_gemini as the canary,
+then the remaining four in one reviewed batch).  The conversion recipe:
+measure `url_for`/`request.endpoint`/test references to the boundary's
+endpoint names first, add explicit imports for exactly the module's free names
+(derived with `symtable`, not by hand), swap `@app.route` → `@bp.route`, and
+replace the loader line with `import <mod>; app.register_blueprint(<mod>.bp)`.
+A converted module leaves the exec graph and is instead held to the stronger
+self-containment contract; the snapshot diff must be exactly the endpoint
+renames of that boundary and nothing else (verified programmatically, not by
+eyeballing the diff).
+
+Three hazards found and closed during the batch, worth knowing before touching
+this area again:
+
+- **Endpoint names are data, not just decorators.**  `base.html` builds the
+  nav from endpoint-name lists and compares `request.endpoint` against them,
+  and its help-manual JS is keyed by endpoint name.  All template endpoint
+  strings carry the blueprint prefix now; the JS normalises with
+  `request.endpoint.split('.').pop()` so manual keys stay short.
+- **Cross-module mutable state must be written on its owning module.**
+  `SOA_REVIEW_SCHEMA_DEGRADED` (the R-status ingest fail-closed gate) lives in
+  `routes_calendar_dock`; `_auto_migrate` in `app.py` used to clear it via
+  `globals()[...]`, which after the conversion would have updated only the
+  `app` module and left ingest permanently fail-closed in production.  It now
+  writes `routes_calendar_dock.SOA_REVIEW_SCHEMA_DEGRADED` explicitly.  This
+  was the only dynamic-globals write in the codebase (measured); a new one is
+  a red flag in review.
+- **Tests that monkeypatch shared primitives** (`app.execute`, `app.query`,
+  fleet/push constants…) no longer reach route modules through the `app`
+  attribute — `from app import X` binds by value.  `tests/source_bundle.py`
+  provides `shared_ns`, a proxy that reads from the owning module and writes
+  to every module holding the name (old shared-namespace semantics), plus
+  `shared_ns.patch(...)` as the `mock.patch.object` replacement.
 
 ## Database and persistent state
 

@@ -27,6 +27,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -66,7 +67,7 @@ def mkissue(actions=BASE):
 
 
 def acts_of(iid):
-    raw = A.query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)['actions']
+    raw = shared_ns.query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)['actions']
     return json.loads(raw) if raw else []
 
 
@@ -98,7 +99,7 @@ chk(got[-1]['progress'] == '기내에서 적어둔 진행', '내 진행은 맨 �
 
 print('\n[3] 읽고 쓰는 사이 변경 — CAS 재시도로 흡수, 계속 밀리면 409')
 iid = mkissue()
-orig_query = A.query
+orig_query = shared_ns.query
 state = {'n': 0}
 
 
@@ -113,11 +114,11 @@ def racing_query(sql, args=(), one=False):
     return row
 
 
-A.query = racing_query
+shared_ns.query = racing_query
 try:
     r = post(iid, {'progress': '재시도로 붙는 진행', 'date': '2026-08-07'})
 finally:
-    A.query = orig_query
+    shared_ns.query = orig_query
 got = acts_of(iid)
 chk(r.status_code == 200, '재시도 1회는 흡수 → 200', r.status_code)
 chk(any(a['progress'] == '끼어든 진행' for a in got), '끼어든 진행 보존', got)
@@ -137,11 +138,11 @@ def always_racing(sql, args=(), one=False):
     return row
 
 
-A.query = always_racing
+shared_ns.query = always_racing
 try:
     r = post(iid, {'progress': '영원히 밀리는 진행'})
 finally:
-    A.query = orig_query
+    shared_ns.query = orig_query
 chk(r.status_code == 409, '계속 밀리면 409(무한루프 없음)', r.status_code)
 chk(not any(a['progress'] == '영원히 밀리는 진행' for a in acts_of(iid)), '409 면 DB 무변경')
 

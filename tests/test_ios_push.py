@@ -24,6 +24,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -83,15 +84,15 @@ class Stub:
 
 
 stub = Stub()
-_real_module = A._push_module
+_real_module = shared_ns._push_module
 
 
 def use_stub():
-    A._push_module = lambda: stub
+    shared_ns._push_module = lambda: stub
 
 
 def use_missing():
-    A._push_module = lambda: None
+    shared_ns._push_module = lambda: None
 
 
 def logrow(ekey):
@@ -99,7 +100,7 @@ def logrow(ekey):
 
 
 print('# 1) 키 미설정 — 정직하게 실패하고 원장을 더럽히지 않음')
-A._push_module = lambda: type('X', (), {
+shared_ns._push_module = lambda: type('X', (), {
     'load_conf': staticmethod(lambda: (_ for _ in ()).throw(RuntimeError('no key'))),
     'configured': staticmethod(lambda: False)})()
 r = A._push_dispatch('test', 'ek-noconf', 'T', 'B')
@@ -205,7 +206,7 @@ chk(A.query("SELECT active FROM ios_device WHERE token=?", (TOK,), one=True)['ac
     '해제하면 active=0')
 
 print('# 12) apns_push 모듈 자체 — 미설정 판정 · payload 모양')
-A._push_module = _real_module
+shared_ns._push_module = _real_module
 import apns_push
 chk(apns_push.HOSTS['production'] == 'api.push.apple.com', 'production 호스트')
 chk(apns_push.HOSTS['sandbox'] == 'api.sandbox.push.apple.com', 'sandbox 호스트')
@@ -246,8 +247,8 @@ apns_push.provider_jwt = _real_jwt
 apns_push.subprocess.run = _real_run
 
 print('# 14) 🔴 cap 은 prefs 필터 뒤에 — 상위 N 대가 껐다고 켠 기기가 묻히면 안 됨')
-_cap = A._PUSH_DEVICE_CAP
-A._PUSH_DEVICE_CAP = 2
+_cap = shared_ns._PUSH_DEVICE_CAP
+shared_ns._PUSH_DEVICE_CAP = 2
 CAPTOKS = [('c' * 64, '2026-08-06 10:00:00', '{"dock_quote": 0}'),
            ('d' * 64, '2026-08-06 09:00:00', '{"dock_quote": 0}'),
            ('e' * 64, '2026-08-06 08:00:00', '{"dock_quote": 1}')]
@@ -259,7 +260,7 @@ toks = [r['token'] for r in rows]
 chk(toks == ['e' * 64], '켜둔 기기가 cap 밖으로 밀려나지 않음(LIMIT 먼저 자르면 0건)', toks)
 chk(len(A._push_devices([UID], kind='test')) == 2, 'cap 자체는 여전히 적용됨',
     len(A._push_devices([UID], kind='test')))
-A._PUSH_DEVICE_CAP = _cap
+shared_ns._PUSH_DEVICE_CAP = _cap
 A.execute("DELETE FROM ios_device WHERE token IN (?,?,?)", tuple(t for t, _u, _p in CAPTOKS))
 
 print('# 15) 🔴 재설치(토큰 변경) 시 기존 계정 prefs 승계 · 소유자 바뀌면 초기화')

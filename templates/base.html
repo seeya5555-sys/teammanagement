@@ -73,7 +73,7 @@
   {% block nav %}
   <header class="topnav">
     <div class="topnav-inner">
-      <a class="brand" href="{{ url_for('dashboard') }}">
+      <a class="brand" href="{{ url_for('routes_core.dashboard') }}">
         <span class="brand-mark">T3</span>
         <span class="brand-text">
           <span class="brand-name">TRMT3</span>
@@ -81,28 +81,28 @@
         </span>
       </a>
 
-      {% set survey_eps = ['class_status_page','condition_survey','vetting_status'] %}
-      {% set report_eps = ['dry_dock_page','dry_dock_edit_page','boarding_page','boarding_edit_page'] %}
-      {% set auto_eps = ['automation_page','aor_page','fundreq_page','invoice_page','health_page'] %}
-      {% set dockprep_eps = ['reqgen_page','dock_procure_page'] %}
-      {% set expense_eps = ['expenses_page','expense_detail_page'] %}
+      {% set survey_eps = ['routes_core.class_status_page','routes_core.condition_survey','routes_core.vetting_status'] %}
+      {% set report_eps = ['routes_core.dry_dock_page','routes_core.dry_dock_edit_page','routes_core.boarding_page','routes_core.boarding_edit_page'] %}
+      {% set auto_eps = ['routes_dock_submit.automation_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_calendar_dock.health_page'] %}
+      {% set dockprep_eps = ['routes_calendar_dock.reqgen_page','routes_dock_submit.dock_procure_page'] %}
+      {% set expense_eps = ['routes_calendar_dock.expenses_page','routes_calendar_dock.expense_detail_page'] %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
       {% macro nlink(ep, label, eps=None, icon=None) -%}
         <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}">{% if icon %}<svg class="nav-ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}{{ label }}</a>
       {%- endmacro %}
       <nav class="main-nav">
-        {{ nlink('dashboard', '대시보드', icon='dashboard') }}
-        {{ nlink('index', 'Daily 업무관리', icon='clipboard') }}
+        {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
+        {{ nlink('routes_core.index', 'Daily 업무관리', icon='clipboard') }}
 
         <div class="nav-group {% if request.endpoint in auto_eps %}active{% endif %}">
           <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
           <div class="nav-submenu">
             {% if session.role == 'admin' %}
-            {{ nlink('automation_page', '자동화 허브') }}
-            {{ nlink('health_page', '자동화 상태') }}
-            {{ nlink('aor_page', 'AOR') }}
-            {{ nlink('fundreq_page', '비용청구') }}
-            {{ nlink('invoice_page', '인보이스') }}
+            {{ nlink('routes_dock_submit.automation_page', '자동화 허브') }}
+            {{ nlink('routes_calendar_dock.health_page', '자동화 상태') }}
+            {{ nlink('routes_calendar_dock.aor_page', 'AOR') }}
+            {{ nlink('routes_calendar_dock.fundreq_page', '비용청구') }}
+            {{ nlink('routes_calendar_dock.invoice_page', '인보이스') }}
             {% endif %}
           </div>
         </div>
@@ -110,33 +110,33 @@
         <div class="nav-group {% if request.endpoint in survey_eps %}active{% endif %}">
           <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-search-check"/></svg>Survey<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
           <div class="nav-submenu">
-            {{ nlink('class_status_page', 'Class Status') }}
-            {{ nlink('condition_survey', 'Condition Survey') }}
-            {{ nlink('vetting_status', 'Vetting Status') }}
+            {{ nlink('routes_core.class_status_page', 'Class Status') }}
+            {{ nlink('routes_core.condition_survey', 'Condition Survey') }}
+            {{ nlink('routes_core.vetting_status', 'Vetting Status') }}
           </div>
         </div>
 
         <div class="nav-group {% if request.endpoint in report_eps %}active{% endif %}">
           <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-file-text"/></svg>Report<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
           <div class="nav-submenu">
-            {{ nlink('dry_dock_page', 'Dry Dock Report', report_eps) }}
-            {{ nlink('boarding_page', 'Boarding Report', report_eps) }}
+            {{ nlink('routes_core.dry_dock_page', 'Dry Dock Report', report_eps) }}
+            {{ nlink('routes_core.boarding_page', 'Boarding Report', report_eps) }}
           </div>
         </div>
 
         <div class="nav-group {% if request.endpoint in dockprep_eps %}active{% endif %}">
           <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-anchor"/></svg>입거 준비<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
           <div class="nav-submenu">
-            {{ nlink('reqgen_page', '도크 자재/수리') }}
-            {{ nlink('dock_procure_page', 'Dock 발주현황') }}
+            {{ nlink('routes_calendar_dock.reqgen_page', '도크 자재/수리') }}
+            {{ nlink('routes_dock_submit.dock_procure_page', 'Dock 발주현황') }}
             {% if session.role == 'admin' %}<a href="/drydock" class="nav-link">Dock Manager</a>{% endif %}
           </div>
         </div>
 
-        {% if session.role == 'admin' %}{{ nlink('krcon_page', '룰 검색', icon='book-open') }}{% endif %}
-        {{ nlink('meeting_page', '회의록', icon='file-text') }}
-        {{ nlink('calendar_page', 'Calendar', icon='calendar') }}
-        {{ nlink('expenses_page', 'Expenses', expense_eps, icon='wallet') }}
+        {% if session.role == 'admin' %}{{ nlink('routes_calendar_dock.krcon_page', '룰 검색', icon='book-open') }}{% endif %}
+        {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
+        {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
+        {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
       </nav>
 
       <button type="button" class="nav-burger" id="nav-burger" aria-label="메뉴 열기" aria-expanded="false">
@@ -183,7 +183,7 @@
             비밀번호 변경
           </button>
           <div class="dropdown-sep"></div>
-          <a class="dropdown-item danger" href="{{ url_for('logout') }}">
+          <a class="dropdown-item danger" href="{{ url_for('routes_core.logout') }}">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
               <polyline points="16 17 21 12 16 7"/>
@@ -196,9 +196,9 @@
     </div>
     {# 모바일에서는 핵심 업무 탭을 항상 노출하고 나머지는 햄버거 메뉴로 제공. #}
     <nav class="mobile-tabbar" aria-label="핵심 메뉴">
-      {{ nlink('dashboard', '대시보드', icon='dashboard') }}
-      {{ nlink('index', 'Daily', icon='clipboard') }}
-      {{ nlink('calendar_page', 'Calendar', icon='calendar') }}
+      {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
+      {{ nlink('routes_core.index', 'Daily', icon='clipboard') }}
+      {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
     </nav>
   </header>
 
@@ -212,47 +212,47 @@
         <button type="button" class="nav-link mm-close" aria-label="메뉴 닫기"><svg class="nav-ic" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
       <div class="mm-body">
-        {{ nlink('dashboard', '대시보드', icon='dashboard') }}
-        {{ nlink('index', 'Daily 업무관리', icon='clipboard') }}
+        {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
+        {{ nlink('routes_core.index', 'Daily 업무관리', icon='clipboard') }}
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화</div>
         {% if session.role == 'admin' %}
         <div class="mm-sub-group">
-          {{ nlink('automation_page', '자동화 허브') }}
-          {{ nlink('health_page', '자동화 상태') }}
-          {{ nlink('aor_page', 'AOR') }}
-          {{ nlink('fundreq_page', '비용청구') }}
-          {{ nlink('invoice_page', '인보이스') }}
+          {{ nlink('routes_dock_submit.automation_page', '자동화 허브') }}
+          {{ nlink('routes_calendar_dock.health_page', '자동화 상태') }}
+          {{ nlink('routes_calendar_dock.aor_page', 'AOR') }}
+          {{ nlink('routes_calendar_dock.fundreq_page', '비용청구') }}
+          {{ nlink('routes_calendar_dock.invoice_page', '인보이스') }}
         </div>
         {% endif %}
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-search-check"/></svg>Survey</div>
         <div class="mm-sub-group">
-          {{ nlink('class_status_page', 'Class Status') }}
-          {{ nlink('condition_survey', 'Condition Survey') }}
-          {{ nlink('vetting_status', 'Vetting Status') }}
+          {{ nlink('routes_core.class_status_page', 'Class Status') }}
+          {{ nlink('routes_core.condition_survey', 'Condition Survey') }}
+          {{ nlink('routes_core.vetting_status', 'Vetting Status') }}
         </div>
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-file-text"/></svg>Report</div>
         <div class="mm-sub-group">
-          {{ nlink('dry_dock_page', 'Dry Dock Report', report_eps) }}
-          {{ nlink('boarding_page', 'Boarding Report', report_eps) }}
+          {{ nlink('routes_core.dry_dock_page', 'Dry Dock Report', report_eps) }}
+          {{ nlink('routes_core.boarding_page', 'Boarding Report', report_eps) }}
         </div>
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-anchor"/></svg>입거 준비</div>
         <div class="mm-sub-group">
-          {{ nlink('reqgen_page', '도크 자재/수리') }}
-          {{ nlink('dock_procure_page', 'Dock 발주현황') }}
+          {{ nlink('routes_calendar_dock.reqgen_page', '도크 자재/수리') }}
+          {{ nlink('routes_dock_submit.dock_procure_page', 'Dock 발주현황') }}
           {% if session.role == 'admin' %}<a href="/drydock" class="nav-link">Dock Manager</a>{% endif %}
         </div>
         <div class="mm-section"></div>
         <button type="button" class="mm-manual" id="btn-page-manual-mobile"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>현재 탭 설명서</button>
-        {% if session.role == 'admin' %}{{ nlink('krcon_page', '룰 검색', icon='book-open') }}{% endif %}
-        {{ nlink('meeting_page', '회의록', icon='file-text') }}
-        {{ nlink('calendar_page', 'Calendar', icon='calendar') }}
-        {{ nlink('expenses_page', 'Expenses', expense_eps, icon='wallet') }}
+        {% if session.role == 'admin' %}{{ nlink('routes_calendar_dock.krcon_page', '룰 검색', icon='book-open') }}{% endif %}
+        {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
+        {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
+        {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
       </div>
       {# 드로어 푸터 — 모바일에서 사용자 확인·로그아웃 접근성 확보 #}
       <div class="mm-foot">
         <span class="mm-avatar">{{ (session.display_name or session.username or '?')[:1] }}</span>
         <span class="mm-user"><b>{{ session.display_name or session.username }}</b><span>{{ session.role }}</span></span>
-        <a class="mm-logout" href="{{ url_for('logout') }}"><svg class="nav-ic" aria-hidden="true"><use href="#i-logout"/></svg>로그아웃</a>
+        <a class="mm-logout" href="{{ url_for('routes_core.logout') }}"><svg class="nav-ic" aria-hidden="true"><use href="#i-logout"/></svg>로그아웃</a>
       </div>
     </nav>
   </div>
@@ -651,7 +651,9 @@
 
 <script>
 (function () {
-  const endpoint = {{ request.endpoint|tojson }};
+  // Blueprint 전환으로 endpoint 는 'routes_core.dashboard' 꼴 — manuals 키는
+  // 짧은 이름을 유지하므로 마지막 조각으로 정규화한다.
+  const endpoint = (({{ request.endpoint|tojson }}) || '').split('.').pop();
   const manuals = {
     dashboard: {
       title: '대시보드 설명서',

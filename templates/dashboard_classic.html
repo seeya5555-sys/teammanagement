@@ -59,7 +59,7 @@
   <div class="dash-grid">
 
     {# 1) 현안 요약 #}
-    <a class="dash-card {% if not stats.issues_open %}dash-zero{% endif %}" href="{{ url_for('index') }}">
+    <a class="dash-card {% if not stats.issues_open %}dash-zero{% endif %}" href="{{ url_for('routes_core.index') }}">
       <div class="dash-card-head"><span><svg class="ic-svg" aria-hidden="true"><use href="#i-clipboard"/></svg>현안 (Open Issues)</span><span class="arrow">→</span></div>
       <div class="dash-main"><span class="dash-num">{{ stats.issues_open }}</span><span class="dash-unit">건 진행 중</span></div>
       <div class="dash-sub">
@@ -71,14 +71,14 @@
     </a>
 
     {# 4) Class 만기 임박 #}
-    <a class="dash-card {% if not stats.class_due %}dash-zero{% endif %}" href="{{ url_for('class_status_page') }}">
+    <a class="dash-card {% if not stats.class_due %}dash-zero{% endif %}" href="{{ url_for('routes_core.class_status_page') }}">
       <div class="dash-card-head"><span><svg class="ic-svg" aria-hidden="true"><use href="#i-search-check"/></svg>Class 만기 임박</span><span class="arrow">→</span></div>
       <div class="dash-main"><span class="dash-num">{{ stats.class_due }}</span><span class="dash-unit">건 (D-30 이내)</span></div>
       <div class="dash-sub"><span class="dash-empty">선급/기국 지적 due_date 기준</span></div>
     </a>
 
     {# 3) Vetting 미해결 #}
-    <a class="dash-card {% if not stats.vetting_open %}dash-zero{% endif %}" href="{{ url_for('vetting_status') }}">
+    <a class="dash-card {% if not stats.vetting_open %}dash-zero{% endif %}" href="{{ url_for('routes_core.vetting_status') }}">
       <div class="dash-card-head"><span><svg class="ic-svg" aria-hidden="true"><use href="#i-shield"/></svg>Vetting 미해결</span><span class="arrow">→</span></div>
       <div class="dash-main"><span class="dash-num">{{ stats.vetting_open }}</span><span class="dash-unit">건 Open observation</span></div>
       <div class="dash-sub">
@@ -89,7 +89,7 @@
 
     {% if is_admin %}
     {# 2) AOR 대기 #}
-    <a class="dash-card {% if not stats.aor_pending %}dash-zero{% endif %}" href="{{ url_for('aor_page') }}">
+    <a class="dash-card {% if not stats.aor_pending %}dash-zero{% endif %}" href="{{ url_for('routes_calendar_dock.aor_page') }}">
       <div class="dash-card-head"><span><svg class="ic-svg" aria-hidden="true"><use href="#i-inbox"/></svg>AOR 대기</span><span class="arrow">→</span></div>
       <div class="dash-main"><span class="dash-num">{{ stats.aor_pending }}</span><span class="dash-unit">건 pending</span></div>
       <div class="dash-sub">
@@ -101,7 +101,7 @@
     {% endif %}
 
     {# 5) 다가오는 일정 #}
-    <a class="dash-card" href="{{ url_for('calendar_page') }}" style="grid-column: span 1;">
+    <a class="dash-card" href="{{ url_for('routes_core.calendar_page') }}" style="grid-column: span 1;">
       <div class="dash-card-head"><span><svg class="ic-svg" aria-hidden="true"><use href="#i-calendar"/></svg>다가오는 일정 (7일)</span><span class="arrow">→</span></div>
       {% if events %}
       <div class="dash-ev">

@@ -69,12 +69,12 @@ def scanned_sources() -> list:
     자동으로 따라온다. 목록을 이 파일에 손으로 박으면 새 모듈에 추가된 돈경로가
     조용히 미검사로 남는다.
     """
-    main = ROOT / "app.py"
-    sources = [main]
-    for name in re.findall(r"_load_extracted_module\(\s*[\"']([^\"']+)[\"']\s*\)",
-                           main.read_text(encoding="utf-8")):
-        sources.append(ROOT / name)
-    return sources
+    # source_bundle 이 exec 경계와 Blueprint 전환 모듈을 모두 AST 로 도출한다.
+    # 여기서 regex 를 따로 두면 두 목록이 어긋나는 순간 이 파일만 조용히
+    # 좁은 범위를 스캔하게 된다 — 정본 하나를 공유한다.
+    from source_bundle import APP_SOURCE_PATHS
+
+    return list(APP_SOURCE_PATHS)
 
 
 def money_pairs() -> list:
@@ -101,7 +101,12 @@ def current_policy_matrix() -> dict:
 
 
 def route_decorators(node: ast.FunctionDef) -> list:
-    """(index, rule) 목록 — @app.route('<rule>', ...) 데코레이터만."""
+    """(index, rule) 목록 — @app.route / @bp.route('<rule>', ...) 데코레이터.
+
+    Blueprint 전환 모듈은 @bp.route 를 쓴다. 여기서 app 만 인정하면 전환된
+    돈경로가 전부 미검출이 되는데, 그때는 test_source_and_url_map_agree 가
+    크게 터지도록 설계돼 있다(조용한 미검사 방지). 둘 다 인정한다.
+    """
     found = []
     for idx, dec in enumerate(node.decorator_list):
         if not isinstance(dec, ast.Call):
@@ -109,7 +114,7 @@ def route_decorators(node: ast.FunctionDef) -> list:
         func = dec.func
         if not (isinstance(func, ast.Attribute) and func.attr == "route"):
             continue
-        if not (isinstance(func.value, ast.Name) and func.value.id == "app"):
+        if not (isinstance(func.value, ast.Name) and func.value.id in ("app", "bp")):
             continue
         if dec.args and isinstance(dec.args[0], ast.Constant) and isinstance(dec.args[0].value, str):
             found.append((idx, dec.args[0].value))

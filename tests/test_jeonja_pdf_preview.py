@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 import app as appmod
+from source_bundle import shared_ns
 
 
 class JeonjaPdfPreviewTests(unittest.TestCase):
@@ -10,12 +11,12 @@ class JeonjaPdfPreviewTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.old_db = appmod.DATABASE
         self.old_cfg_db = appmod.app.config["DATABASE"]
-        self.old_pdf_dir = appmod.JEONJA_PDF_DIR
+        self.old_pdf_dir = shared_ns.JEONJA_PDF_DIR
         db = os.path.join(self.tmp.name, "test.db")
         appmod.DATABASE = db
         appmod.app.config["DATABASE"] = db
-        appmod.JEONJA_PDF_DIR = os.path.join(self.tmp.name, "jeonja_pdfs")
-        os.makedirs(appmod.JEONJA_PDF_DIR, exist_ok=True)
+        shared_ns.JEONJA_PDF_DIR = os.path.join(self.tmp.name, "jeonja_pdfs")
+        os.makedirs(shared_ns.JEONJA_PDF_DIR, exist_ok=True)
         with appmod.app.app_context():
             appmod.init_db(drop=False)
             appmod._ensure_api_table()
@@ -28,7 +29,7 @@ class JeonjaPdfPreviewTests(unittest.TestCase):
     def tearDown(self):
         appmod.DATABASE = self.old_db
         appmod.app.config["DATABASE"] = self.old_cfg_db
-        appmod.JEONJA_PDF_DIR = self.old_pdf_dir
+        shared_ns.JEONJA_PDF_DIR = self.old_pdf_dir
         self.tmp.cleanup()
 
     def review(self, bucket="pass"):

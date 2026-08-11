@@ -24,7 +24,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
-from source_bundle import read_app_sources
+from source_bundle import read_app_sources, shared_ns
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -161,28 +161,28 @@ r = row('S', pc='TSTPC001')
 #    아직 확실히 닫힌 라벨('HQ Rejected')로 바꾼다.
 A.execute("UPDATE dock_procure SET svms_status='HQ Rejected' WHERE id=?", (r['id'],))
 r = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
-b = A._dock_inq_blocked(r)
+b = shared_ns._dock_inq_blocked(r)
 chk(b is not None and 'HQ Rejected' in b, '단계 게이트가 API 경로에서도 실제로 막는다', str(b))
 # 반대편 — 구매 VSL Approved 는 API 경로에서도 열려야 한다(Confirm 대행이 붙은 뒤의 정상 경로)
 A.execute("UPDATE dock_procure SET svms_status='VSL Approved' WHERE id=?", (r['id'],))
 rv = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
-chk(A._dock_inq_blocked(rv) is None,
+chk(shared_ns._dock_inq_blocked(rv) is None,
     '구매 VSL Approved 는 API 경로에서도 열림(워커 Confirm 대행 전제)')
 A.execute("UPDATE dock_procure SET svms_status='HQ Rejected' WHERE id=?", (r['id'],))
 # 큐에 활성 초안이 있으면 그 사유가 먼저 나와야 한다(단계 문구로 덮이면 사용자가 큐를 못 찾는다)
 A.execute("INSERT INTO dock_inquiry_draft(rid, rep_cd, doc_type, vndr_json, status) "
           "VALUES(?,?,'PCRQ','[]','approved')", (r['id'], 'TSTPC001'))
-b2 = A._dock_inq_blocked(r)
+b2 = shared_ns._dock_inq_blocked(r)
 chk(b2 is not None and '큐' in b2, '활성 큐 사유가 단계 사유보다 우선', str(b2))
 A.execute("DELETE FROM dock_inquiry_draft WHERE rep_cd='TSTPC001'")
 # 단계가 맞으면(HQ Confirmed) 통과 — 게이트가 구매를 통째로 막아버리는 회귀 방지
 A.execute("UPDATE dock_procure SET svms_status='HQ Confirmed' WHERE id=?", (r['id'],))
 r2 = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
-chk(A._dock_inq_blocked(r2) is None, '구매 HQ Confirmed 는 끝까지 통과(요청 가능 상태)')
+chk(shared_ns._dock_inq_blocked(r2) is None, '구매 HQ Confirmed 는 끝까지 통과(요청 가능 상태)')
 # 라벨이 비어도 통과 — fail-open 이 API 경로에서도 유지되는지
 A.execute("UPDATE dock_procure SET svms_status=NULL WHERE id=?", (r['id'],))
 r3 = A.query('SELECT * FROM dock_procure WHERE id=?', (r['id'],), one=True)
-chk(A._dock_inq_blocked(r3) is None, '라벨 미관측 행은 API 경로에서도 열려 있음')
+chk(shared_ns._dock_inq_blocked(r3) is None, '라벨 미관측 행은 API 경로에서도 열려 있음')
 
 print()
 if fails:

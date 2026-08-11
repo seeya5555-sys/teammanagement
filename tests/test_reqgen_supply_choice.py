@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import app as appmod
+from source_bundle import shared_ns
 
 
 class ReqGenSupplyChoiceTests(unittest.TestCase):
@@ -42,7 +43,8 @@ class ReqGenSupplyChoiceTests(unittest.TestCase):
             'header': {'VSL_NM': 'TEST VESSEL', 'CATE_NM': 'MAIN ENGINE', 'EQ_NM': 'MAIN ENGINE'},
             'lines': [{'scope': 'Renew test component', 'unit': 'JOB', 'qty': 1, 'remark': ''}],
         }], 0)
-        with patch.object(appmod, '_reqgen_parse_workbook', return_value=parsed):
+        from unittest import mock as _mock
+        with shared_ns.patch('_reqgen_parse_workbook', _mock.Mock(return_value=parsed)):
             upload = self.client.post('/api/reqgen/upload', data={
                 'file': (io.BytesIO(b'test workbook'), 'dock.xlsx'),
                 'vsl_cd': 'TEST',

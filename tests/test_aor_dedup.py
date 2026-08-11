@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 import app as appmod
+from source_bundle import shared_ns
 
 
 class AORDedupTests(unittest.TestCase):
@@ -65,7 +66,7 @@ class AORDedupTests(unittest.TestCase):
         first = self._post()
         self.assertEqual(201, first.status_code)
 
-        real_query = appmod.query
+        real_query = shared_ns.query
         skipped_precheck = False
 
         def force_stale_precheck(sql, params=(), one=False):
@@ -77,7 +78,7 @@ class AORDedupTests(unittest.TestCase):
                 return None
             return real_query(sql, params, one)
 
-        with mock.patch.object(appmod, "query", side_effect=force_stale_precheck):
+        with shared_ns.patch("query", mock.Mock(side_effect=force_stale_precheck)):
             response = self._post()
 
         self.assertTrue(skipped_precheck)

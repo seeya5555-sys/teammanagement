@@ -26,6 +26,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -88,7 +89,7 @@ mkev('공용 일정', TODAY, sup_id=None)
 mkev('내일 일정', TOM, sup_id=1)
 
 print('# 1) 항목 선별 — 완료 제외 · 멀티데이 포함 · 스코프')
-items = A._calendar_daily_items(1, TODAY)
+items = shared_ns._calendar_daily_items(1, TODAY)
 titles = [r['title'] for r in items]
 chk('완료된 일정' not in titles, '완료(completed=1) 제외', titles)
 chk('미완료 종일' in titles, '미완료 포함')
@@ -98,16 +99,16 @@ chk('남의 감독 일정' not in titles, '다른 감독 일정 제외', titles)
 chk('내일 일정' not in titles, '오늘 아닌 일정 제외')
 chk(titles[0] == '시각 일정', '시각 있는 일정이 맨 앞', titles)
 
-pub = [r['title'] for r in A._calendar_daily_items(None, TODAY)]
+pub = [r['title'] for r in shared_ns._calendar_daily_items(None, TODAY)]
 chk(pub == ['공용 일정'], 'supervisor 없는 계정 = 공용만(fail-closed)', pub)
 
 print('\n# 2) 본문 조립')
-body = A._calendar_daily_body(items)
+body = shared_ns._calendar_daily_body(items)
 chk(body.startswith('10:00 시각 일정'), '시각 표기 HH:MM', body)
 chk('종일 미완료 종일' in body, '종일 표기', body)
-many = A._calendar_daily_items(1, TODAY) * 3          # 12건
-b2 = A._calendar_daily_body(many)
-chk('외 %d건' % (len(many) - A._CAL_PUSH_MAX_ITEMS) in b2, '상한 초과분은 "외 N건"', b2)
+many = shared_ns._calendar_daily_items(1, TODAY) * 3          # 12건
+b2 = shared_ns._calendar_daily_body(many)
+chk('외 %d건' % (len(many) - shared_ns._CAL_PUSH_MAX_ITEMS) in b2, '상한 초과분은 "외 N건"', b2)
 chk(len(b2) <= 300, '본문 300자 이내', len(b2))
 
 print('\n# 3) 라우트 — 인증·슬롯 검증')
@@ -152,8 +153,8 @@ A.execute("UPDATE calendar_events SET completed=0 WHERE title!='완료된 일정
 
 # 실행 시각이 슬롯 창 밖이면(지금이 09시대면) 라우트가 정당하게 skip 한다.
 # 6번은 발송 계약을 보는 절이라 창을 열어두고, 창 자체는 6-b 에서 원본 함수로 검증한다.
-_REAL_WINDOW = A._cal_slot_window_ok
-A._cal_slot_window_ok = lambda slot, now_hour: True
+_REAL_WINDOW = shared_ns._cal_slot_window_ok
+shared_ns._cal_slot_window_ok = lambda slot, now_hour: True
 
 print('\n# 6) 실발송 경로 — 대상·딥링크·중복차단 (APNs 는 스텁, 실제 발송 안 함)')
 # 🔴 개발맥엔 진짜 APNs 키가 있다. 스텁을 안 물리면 이 테스트가 애플로 실제 요청을 쏜다.
@@ -192,13 +193,13 @@ chk(not _REAL_WINDOW('10', 9), '🔴 09시 조기실행 차단(부팅 직후 mis
 chk(not _REAL_WINDOW('10', 13), '13시(+3h)는 폐기 — 경계 포함')
 chk(_REAL_WINDOW('14', 14) and not _REAL_WINDOW('14', 17), '14시판도 같은 규칙')
 chk(not _REAL_WINDOW('14', 10), '14시판이 10시에 나가지 않음')
-A._cal_slot_window_ok = lambda slot, now_hour: False
+shared_ns._cal_slot_window_ok = lambda slot, now_hour: False
 lj = c.post('/api/ext/push/calendar-daily', headers=H, json={'slot': '10'}).get_json()
 chk(lj.get('skipped') == 'out_of_window' and lj.get('ok'),
     '창 밖 실행은 발송 없이 skip 으로 드러남(실패 아님)', lj)
 chk(c.post('/api/ext/push/calendar-daily', headers=H,
            json={'slot': '10', 'dry': 1}).get_json()['ok'], 'dry 는 창 검사 안 함(점검용)')
-A._cal_slot_window_ok = lambda slot, now_hour: True
+shared_ns._cal_slot_window_ok = lambda slot, now_hour: True
 
 print('\n# 6-c) dry 는 문자열 거짓값을 참으로 보지 않는다')
 d0 = c.post('/api/ext/push/calendar-daily', headers=H,
@@ -210,7 +211,7 @@ chk(c.post('/api/ext/push/calendar-daily', headers=H,
 
 print('\n# 6-d) 본문 길이 초과 — 꼬리("외 N건")를 지키고 항목을 줄인다')
 long_rows = [{'title': '아주 긴 제목 ' * 12, 'all_day': 1, 'start_time': None}] * 20
-lb = A._calendar_daily_body(long_rows)
+lb = shared_ns._calendar_daily_body(long_rows)
 chk(len(lb) <= 300, '300자 이내', len(lb))
 chk('외 ' in lb and lb.endswith('건'), '🔴 꼬리 "외 N건" 이 살아남음', lb)
 

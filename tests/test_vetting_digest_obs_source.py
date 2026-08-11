@@ -20,6 +20,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -68,7 +69,7 @@ chk(latest['observation_count'] == PLAN['obs'] and latest['open_count'] == PLAN[
 chk(len(enr) == 2 and enr[0]['id'] == latest['id'], '_vetting_pick: enr[0] == latest')
 
 # ---- 2) ext 요약(/api/ext/vetting-digests 본체) ----
-row = next((d for d in A._ext_vetting_digests() if d['vessel_name'] == VNAME), None)
+row = next((d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == VNAME), None)
 chk(row is not None, 'ext digest: 대상 선박 존재')
 if row:
     chk(row['obs_total'] == PLAN['obs'], 'ext digest: obs_total = 계획행 값', str(row['obs_total']))
@@ -115,7 +116,7 @@ chk(only['valid'] == 'Last Result' and only['observation_count'] == PREV['obs']
 # ---- 5) Report 가 아예 없고 계획만 있을 때 — report_* 는 상단행으로 폴백(구 동작과 동일) ----
 A.execute("DELETE FROM vettings WHERE vessel_id=?", (VID,))
 add_vetting('Next Plan', '', 'BP', 'SINGAPORE', 7, 4, 3)
-row2 = next((d for d in A._ext_vetting_digests() if d['vessel_name'] == VNAME), None)
+row2 = next((d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == VNAME), None)
 chk(row2 is not None and row2['report_obs_total'] == PLAN['obs']
     and row2['report_obs_open'] == PLAN['open'],
     '계획만 있을 때 report_* 는 그 행으로 폴백')

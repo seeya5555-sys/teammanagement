@@ -7,6 +7,7 @@ sys.path.insert(0, os.getcwd())
 DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB; A.app.config['DATABASE'] = DB; A.app.config['TESTING'] = True
 A.init_db(drop=False); A._auto_migrate(); A.app.app_context().push()
 c = A.app.test_client()
@@ -259,7 +260,7 @@ chk(c.post('/api/ext/soa/reviews/snapshot',json=gsnap('C',[gline('0001'),gline('
     'reconcile 아닌 낡은 실패기록은 snapshot ingest가 정리함')
 
 # ── pre-write 판정은 형식이 조금이라도 어긋나면 fail-closed ─────────────────
-_PW=A._soa_review_action_pre_write
+_PW=shared_ns._soa_review_action_pre_write
 chk(_PW('{"action":"approve","status":"stale","applied_seqs":[]}'),'정상 pre-write 결과만 True')
 chk(not _PW('{"status":"stale","applied_seqs":[]}'),'action 누락이면 pre-write 아님')
 chk(not _PW('{"action":"push","status":"stale","applied_seqs":[]}'),'다른 action이면 pre-write 아님')
@@ -299,14 +300,14 @@ chk(_con.execute("SELECT status,last_action_result FROM soa_review_case").fetcho
     and "IN ('C','T','D','S')" in _con.execute(
         "SELECT sql FROM sqlite_master WHERE name='soa_review_case'").fetchone()[0],
     '마이그레이션 중간 실패 시 원본 테이블·자식행 그대로 롤백')
-chk(A.SOA_REVIEW_SCHEMA_DEGRADED is True,'마이그레이션 실패하면 degraded 플래그로 드러남')
+chk(shared_ns.SOA_REVIEW_SCHEMA_DEGRADED is True,'마이그레이션 실패하면 degraded 플래그로 드러남')
 _con.execute('DROP VIEW soa_review_case__new'); _con.commit(); _con.close()
 _saved_db=A.DATABASE
 try:
     A.DATABASE=OLD_DB; A._auto_migrate(); A._auto_migrate()   # idempotent
 finally:
     A.DATABASE=_saved_db
-chk(A.SOA_REVIEW_SCHEMA_DEGRADED is False,'마이그레이션 성공하면 degraded 해제')
+chk(shared_ns.SOA_REVIEW_SCHEMA_DEGRADED is False,'마이그레이션 성공하면 degraded 해제')
 _con=_sq.connect(OLD_DB); _con.execute('PRAGMA foreign_keys=ON')
 chk(_con.execute("SELECT status,draft_version,last_action_result FROM soa_review_case "
                  "WHERE sx_cd='MIGRCX2600000001'").fetchone()==('S',3,'keep-me'),'마이그레이션 후 기존 case 보존')

@@ -24,6 +24,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -62,7 +63,7 @@ def mkissue(actions=None):
 
 
 def acts_of(iid):
-    raw = A.query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)['actions']
+    raw = shared_ns.query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)['actions']
     return json.loads(raw) if raw else []
 
 
@@ -103,7 +104,7 @@ chk((r.get_json() or {}).get('actions') == before, '409 본문에 서버 정본 
 
 print('④ 읽고 쓰는 사이 다른 write = 409 (lost-update 차단)')
 iid = mkissue()
-orig_query = A.query
+orig_query = shared_ns.query
 state = {'raced': False}
 
 
@@ -119,12 +120,12 @@ def racing_query(sql, params=(), one=False):
 
 
 orig_execute = A.execute
-A.query = racing_query
+shared_ns.query = racing_query
 try:
     r = patch(iid, 1, {'progress': '둘째 진행(수정)',
                        'prev': {'date': '2026-08-03', 'progress': '둘째 진행'}})
 finally:
-    A.query = orig_query
+    shared_ns.query = orig_query
 a = acts_of(iid)
 chk(r.status_code == 409, 'CAS 실패 = 409', f'got {r.status_code}')
 chk(len(a) == 4 and a[3]['progress'] == '웹에서 추가된 진행',

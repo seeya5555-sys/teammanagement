@@ -26,6 +26,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -71,7 +72,7 @@ me = r.get_json() or {}
 exp = me.get('token_expires_at')
 chk(isinstance(exp, int), 'token_expires_at 는 정수 epoch', repr(exp))
 # 발급 직후라 t0 기준 ±5초 안에 들어와야 한다(테스트 실행 지연 허용).
-want = t0 + A._TOKEN_MAXAGE
+want = t0 + shared_ns._TOKEN_MAXAGE
 chk(isinstance(exp, int) and abs(exp - want) <= 5,
     '만료 = 발급시각 + _TOKEN_MAXAGE', f'exp={exp} want≈{want}')
 chk(me.get('user_id') == UID and me.get('username') == 'offlinetest', '기존 필드 유지(Bearer)',
@@ -97,14 +98,14 @@ chk(r.status_code == 401, '훼손 토큰 401', f'got {r.status_code}')
 print('④ 만료된 토큰 — 401 이고 만료시각도 안 흘린다')
 # `return_timestamp=True` 로 바꾸면서 만료 검사가 무뎌지지 않았는지 본다
 # (앱의 오프라인 진입 판정이 전부 이 만료값 위에 서 있어서, 여기가 무르면 전부 무르다).
-_saved = A._TOKEN_MAXAGE
+_saved = shared_ns._TOKEN_MAXAGE
 try:
-    A._TOKEN_MAXAGE = -1          # 발급 즉시 만료된 것으로 취급
+    shared_ns._TOKEN_MAXAGE = -1          # 발급 즉시 만료된 것으로 취급
     r = c.get('/api/me', headers={'Authorization': f'Bearer {tok}'})
     chk(r.status_code == 401, '만료 토큰 401', f'got {r.status_code}')
     chk('token_expires_at' not in (r.get_json() or {}), '만료 응답에 만료시각 없음')
 finally:
-    A._TOKEN_MAXAGE = _saved
+    shared_ns._TOKEN_MAXAGE = _saved
 r = c.get('/api/me', headers={'Authorization': f'Bearer {tok}'})
 chk(r.status_code == 200, '원복 후 다시 200', f'got {r.status_code}')
 

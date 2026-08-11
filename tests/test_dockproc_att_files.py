@@ -23,11 +23,12 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
-A.DOCKATT_FILE_DIR = tempfile.mkdtemp(prefix='dockatt-')     # 실제 캐시 디렉터리를 건드리지 않는다
+shared_ns.DOCKATT_FILE_DIR = tempfile.mkdtemp(prefix='dockatt-')     # 실제 캐시 디렉터리를 건드리지 않는다
 A.init_db(drop=False)
 A._auto_migrate()
 
@@ -230,11 +231,11 @@ print('# stale cache — GC 가 실패해도 오열람은 없어야 함')
 rid6 = mkrow('R6', att_files=json.dumps([F1], sort_keys=True, separators=(',', ':')),
              svms_req_no='TSTVME26073106')
 upload(rid6, 0, PDF, 'pdf')
-before = os.listdir(A.DOCKATT_FILE_DIR)
-_gc, A._dockatt_gc = A._dockatt_gc, lambda *a, **k: 0     # GC 가 통째로 실패한 상황 재현
+before = os.listdir(shared_ns.DOCKATT_FILE_DIR)
+_gc, shared_ns._dockatt_gc = shared_ns._dockatt_gc, lambda *a, **k: 0     # GC 가 통째로 실패한 상황 재현
 sync('R6', files=[F2])                                    # 목록이 F2 로 교체됐지만 옛 파일은 디스크에 남음
-A._dockatt_gc = _gc
-chk(len(os.listdir(A.DOCKATT_FILE_DIR)) == len(before), '  (전제) 옛 캐시 파일이 실제로 남아있음')
+shared_ns._dockatt_gc = _gc
+chk(len(os.listdir(shared_ns.DOCKATT_FILE_DIR)) == len(before), '  (전제) 옛 캐시 파일이 실제로 남아있음')
 r = c.get('/api/dock_procure/%d/attachments/0' % rid6)
 chk(r.status_code == 404, 'stale 파일이 남아도 지문 불일치로 404 (다른 업체 견적서 노출 차단)', r.status_code)
 r.close()
@@ -248,9 +249,9 @@ print('# 목록이 비워진 뒤 직접 URL')
 rid7 = mkrow('R7', att_files=json.dumps([F1], sort_keys=True, separators=(',', ':')),
              svms_req_no='TSTVME26073107')
 upload(rid7, 0, PDF, 'pdf')
-A._dockatt_gc, _gc2 = (lambda *a, **k: 0), A._dockatt_gc
+shared_ns._dockatt_gc, _gc2 = (lambda *a, **k: 0), shared_ns._dockatt_gc
 sync('R7', files=[])                                      # 첨부 0건으로 clear
-A._dockatt_gc = _gc2
+shared_ns._dockatt_gc = _gc2
 r = c.get('/api/dock_procure/%d/attachments/0' % rid7)
 chk(r.status_code == 404, '목록이 비었으면 캐시가 남아도 404 (idx 범위 재검증)', r.status_code)
 r.close()
@@ -292,12 +293,12 @@ rid9 = mkrow('R9', att_files=json.dumps([F1, F2], sort_keys=True, separators=(',
              svms_req_no='TSTVME26073109')
 upload(rid9, 0, PDF, 'pdf')
 upload(rid9, 1, PDF, 'pdf')
-n_before = len([x for x in os.listdir(A.DOCKATT_FILE_DIR) if x.startswith('%d_' % rid9)])
+n_before = len([x for x in os.listdir(shared_ns.DOCKATT_FILE_DIR) if x.startswith('%d_' % rid9)])
 sync('R9', files=[F1, F2])
-n_after = len([x for x in os.listdir(A.DOCKATT_FILE_DIR) if x.startswith('%d_' % rid9)])
+n_after = len([x for x in os.listdir(shared_ns.DOCKATT_FILE_DIR) if x.startswith('%d_' % rid9)])
 chk(n_before == 2 and n_after == 2, '목록 그대로면 GC 가 아무것도 안 지움', (n_before, n_after))
 sync('R9', files=[F1])
-n_gc = len([x for x in os.listdir(A.DOCKATT_FILE_DIR) if x.startswith('%d_' % rid9)])
+n_gc = len([x for x in os.listdir(shared_ns.DOCKATT_FILE_DIR) if x.startswith('%d_' % rid9)])
 chk(n_gc == 1, '참조 안 되는 파일은 GC 가 회수', n_gc)
 
 print()

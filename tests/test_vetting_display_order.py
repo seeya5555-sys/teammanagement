@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import app as appmod  # noqa: E402
-from source_bundle import read_app_sources  # noqa: E402
+from source_bundle import read_app_sources, shared_ns  # noqa: E402
 
 APP_SRC = read_app_sources()
 VT_JS = (ROOT / "static" / "js" / "vt.js").read_text()
@@ -81,8 +81,8 @@ class VettingPickInvariantTests(unittest.TestCase):
     """
 
     def _pick(self, rows):
-        with mock.patch.object(appmod, "query", return_value=rows), \
-             mock.patch.object(appmod, "_vetting_with_counts", side_effect=lambda r: dict(r)):
+        with shared_ns.patch("query", mock.Mock(return_value=rows)), \
+             shared_ns.patch("_vetting_with_counts", mock.Mock(side_effect=lambda r: dict(r))):
             return appmod._vetting_pick(1)
 
     def test_latest_is_dateless_next_plan_and_is_first_row(self):

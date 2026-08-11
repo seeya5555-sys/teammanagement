@@ -222,7 +222,7 @@
     <div class="ckpt-body" id="ckAppBody"></div>
   </div>
   <div class="ckpt-card" id="ckAuto" hidden>
-    <div class="ckpt-h"><svg class="svic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화 상태 <a class="ckpt-hlink" href="{{ url_for('health_page') }}">헬스 보드 →</a></div>
+    <div class="ckpt-h"><svg class="svic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화 상태 <a class="ckpt-hlink" href="{{ url_for('routes_calendar_dock.health_page') }}">헬스 보드 →</a></div>
     <div class="ckpt-body" id="ckAutoBody"></div>
     {% if is_admin %}
     <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-subtle);display:flex;justify-content:flex-start">
@@ -244,13 +244,13 @@
       <span title="Class/Flag 만기 임박·초과 선박은 마커가 펄스로 깜빡임"><svg class="svic" aria-hidden="true"><use href="#i-activity"/></svg>펄스=Class/Flag 만기</span>
     </div>
     <div class="fm-spacer"></div>
-    <a class="fm-updated" href="{{ url_for('dashboard_classic') }}" style="text-decoration:none">카드형 전체 →</a>
+    <a class="fm-updated" href="{{ url_for('routes_tail.dashboard_classic') }}" style="text-decoration:none">카드형 전체 →</a>
     <span class="fm-updated" id="fmUpdated">로딩…</span>
   </div>
 
   {# KPI 스트립 — 구 대시보드 집계(_dashboard_ctx)를 맵 위 한 줄 칩으로. 클릭=해당 탭. #}
   <div class="fm-kpi">
-    <a class="{% if stats.issues_open %}{% if stats.issues_urgent or stats.issues_coc %}hot{% endif %}{% else %}zero{% endif %}" href="{{ url_for('index') }}">
+    <a class="{% if stats.issues_open %}{% if stats.issues_urgent or stats.issues_coc %}hot{% endif %}{% else %}zero{% endif %}" href="{{ url_for('routes_core.index') }}">
       <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-clipboard"/></svg></span>
       <span class="meta"><span class="lbl">현안 (Open)</span><span class="num">{{ stats.issues_open }}<small>건</small></span></span>
       {% if stats.issues_urgent or stats.issues_coc or stats.issues_dd %}
@@ -260,23 +260,23 @@
         {% if stats.issues_dd %}<span class="fl blue">DD {{ stats.issues_dd }}</span>{% endif %}
       </span>{% endif %}
     </a>
-    <a class="{% if stats.class_due %}warn{% else %}zero{% endif %}" href="{{ url_for('class_status_page') }}">
+    <a class="{% if stats.class_due %}warn{% else %}zero{% endif %}" href="{{ url_for('routes_core.class_status_page') }}">
       <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-search-check"/></svg></span>
       <span class="meta"><span class="lbl">Class 만기 (D-30)</span><span class="num">{{ stats.class_due }}<small>건</small></span></span>
     </a>
-    <a class="{% if stats.vetting_open %}{% if stats.vetting_pri %}hot{% else %}warn{% endif %}{% else %}zero{% endif %}" href="{{ url_for('vetting_status') }}">
+    <a class="{% if stats.vetting_open %}{% if stats.vetting_pri %}hot{% else %}warn{% endif %}{% else %}zero{% endif %}" href="{{ url_for('routes_core.vetting_status') }}">
       <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-shield"/></svg></span>
       <span class="meta"><span class="lbl">Vetting Open</span><span class="num">{{ stats.vetting_open }}<small>건</small></span></span>
       {% if stats.vetting_pri %}<span class="flags"><span class="fl red">우선 {{ stats.vetting_pri }}</span></span>{% endif %}
     </a>
     {% if is_admin %}
-    <a class="{% if not stats.aor_pending %}zero{% endif %}" href="{{ url_for('aor_page') }}">
+    <a class="{% if not stats.aor_pending %}zero{% endif %}" href="{{ url_for('routes_calendar_dock.aor_page') }}">
       <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-inbox"/></svg></span>
       <span class="meta"><span class="lbl">AOR 대기</span><span class="num">{{ stats.aor_pending }}<small>건</small></span></span>
       {% if stats.aor_crew_submitted %}<span class="flags"><span class="fl blue">Crew {{ stats.aor_crew_submitted }}</span></span>{% endif %}
     </a>
     {% endif %}
-    <a id="todaySchedChip" class="{% if not today_count %}zero{% endif %}" href="{{ url_for('calendar_page') }}"
+    <a id="todaySchedChip" class="{% if not today_count %}zero{% endif %}" href="{{ url_for('routes_core.calendar_page') }}"
        onclick="return toggleTodaySched(event)"
        {% if today_events %}aria-haspopup="true" aria-expanded="false"{% endif %}>
       <span class="ico"><svg class="svic" aria-hidden="true"><use href="#i-calendar"/></svg></span>
@@ -288,7 +288,7 @@
 
   {% if today_events %}
   <div id="todaySchedPop" aria-label="오늘 일정 상세">
-    <div class="tsp-hd"><span><svg class="svic" aria-hidden="true" style="vertical-align:-2px"><use href="#i-calendar"/></svg> 오늘 일정 · {{ today_count }}건</span><a href="{{ url_for('calendar_page') }}">캘린더 →</a></div>
+    <div class="tsp-hd"><span><svg class="svic" aria-hidden="true" style="vertical-align:-2px"><use href="#i-calendar"/></svg> 오늘 일정 · {{ today_count }}건</span><a href="{{ url_for('routes_core.calendar_page') }}">캘린더 →</a></div>
     {% for e in today_events %}
     <div class="tsp-row">
       <span class="tsp-t{% if not e['start_time'] %} allday{% endif %}">{{ e['start_time'] or '종일' }}</span>
@@ -323,8 +323,8 @@
   const wrap=document.getElementById('ckpt');
   if(!wrap) return;
   const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  const TAB={fundreq:"{{ url_for('fundreq_page') }}",aor:"{{ url_for('aor_page') }}",
-             invoice:"{{ url_for('invoice_page') }}"};
+  const TAB={fundreq:"{{ url_for('routes_calendar_dock.fundreq_page') }}",aor:"{{ url_for('routes_calendar_dock.aor_page') }}",
+             invoice:"{{ url_for('routes_calendar_dock.invoice_page') }}"};
   function dchip(d){
     let cls='blue',lbl='D-'+d;
     if(d<0){cls='red';lbl='D+'+(-d);}
@@ -457,7 +457,7 @@
     if(windOn){ if(windLayer) map.removeLayer(windLayer); windLayer=null; windOn=false; btn.classList.remove('on'); return; }
     if(windData){ addWind(windData,btn); return; }
     windLoading=true; btn.innerHTML='<span style="font:12px/1 ui-monospace,monospace">···</span>';
-    fetch('{{ url_for("api_fleet_map_wind") }}').then(r=>r.json()).then(d=>{
+    fetch('{{ url_for("routes_tail.api_fleet_map_wind") }}').then(r=>r.json()).then(d=>{
       if(!d.grid){ alert('바람 데이터 아직 없음 — 맥 스케줄러 첫 동기화 대기'); return; }
       windData=d.grid; addWind(windData,btn);
     }).catch(()=>{ alert('바람 데이터 로드 실패'); })
@@ -487,7 +487,7 @@
   }
 
   function loadFleet(){
-  return fetch('{{ url_for("api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
+  return fetch('{{ url_for("routes_tail.api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
     // 서버는 upstream(33.5MB)을 요청 경로에서 기다리지 않고 10분 TTL 캐시본을 즉시 준다
     // (stale-while-revalidate). upstream 자체가 정시 단위 배치라 30초 polling 은 그대로 둔다.
     markers.forEach(o=>{map.removeLayer(o.m);map.removeLayer(o.tt);}); markers=[];
@@ -624,7 +624,7 @@
     '</div>';
   }
   window.fmSetPosSource=function(vessel,source){
-    fetch('{{ url_for("api_fleet_map_pos_source_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+    fetch('{{ url_for("routes_tail.api_fleet_map_pos_source_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({vessel:vessel,source:source})})
       .then(r=>r.json()).then(res=>{
         if(!res.ok){alert('선위 소스 변경 실패: '+(res.error||''));return;}
@@ -650,14 +650,14 @@
     if(save){
       const input=document.querySelector('.fm-nextport-input[data-vessel="'+CSS.escape(vessel)+'"]');
       const port=input?input.value.trim():'';
-      fetch('{{ url_for("api_fleet_map_next_port_override_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+      fetch('{{ url_for("routes_tail.api_fleet_map_next_port_override_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({vessel:vessel,port:port})})
         .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
           if(!ok||!j.ok){alert('Next Port 저장 실패: '+(j.error||''));return;}
           refreshFleetPanel(vessel);
         }).catch(()=>alert('Next Port 저장 요청 실패'));
     }else{
-      fetch('{{ url_for("api_fleet_map_next_port_override_delete") }}',{method:'DELETE',headers:{'Content-Type':'application/json'},
+      fetch('{{ url_for("routes_tail.api_fleet_map_next_port_override_delete") }}',{method:'DELETE',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({vessel:vessel})})
         .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
           if(!ok||!j.ok){alert('Next Port reset 실패: '+(j.error||''));return;}
@@ -682,14 +682,14 @@
     if(save){
       const input=document.querySelector('.fm-eta-input[data-vessel="'+CSS.escape(vessel)+'"]');
       const eta=input?input.value.trim():'';
-      fetch('{{ url_for("api_fleet_map_eta_override_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+      fetch('{{ url_for("routes_tail.api_fleet_map_eta_override_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({vessel:vessel,eta:eta})})
         .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
           if(!ok||!j.ok){alert('ETA 저장 실패: '+(j.error||''));return;}
           refreshFleetPanel(vessel);
         }).catch(()=>alert('ETA 저장 요청 실패'));
     }else{
-      fetch('{{ url_for("api_fleet_map_eta_override_delete") }}',{method:'DELETE',headers:{'Content-Type':'application/json'},
+      fetch('{{ url_for("routes_tail.api_fleet_map_eta_override_delete") }}',{method:'DELETE',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({vessel:vessel})})
         .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
           if(!ok||!j.ok){alert('ETA reset 실패: '+(j.error||''));return;}
@@ -734,7 +734,7 @@
     trackController=new AbortController();
     if(b){b.disabled=true;b.textContent='조회 중';}
     setTrackState('AIS 이전 항적 조회 중…');
-    fetch('{{ url_for("api_fleet_map_track") }}?'+new URLSearchParams({vessel:vessel}), {signal:trackController.signal})
+    fetch('{{ url_for("routes_tail.api_fleet_map_track") }}?'+new URLSearchParams({vessel:vessel}), {signal:trackController.signal})
       .then(r=>r.json().then(d=>({ok:r.ok,d:d})))
       .then(res=>{
         if(requestId!==trackRequest || trackVessel!==vessel || !document.getElementById('fmPanel').classList.contains('open'))return;

@@ -6,7 +6,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "index",
+  "endpoint": "routes_core.index",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -17,7 +17,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "aor_page",
+  "endpoint": "routes_calendar_dock.aor_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -28,7 +28,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_admin_ext_key_get",
+  "endpoint": "routes_calendar_dock.api_admin_ext_key_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -39,7 +39,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_aor_list",
+  "endpoint": "routes_calendar_dock.api_aor_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -49,7 +49,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_aor_delete",
+  "endpoint": "routes_calendar_dock.api_aor_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -59,7 +59,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_aor_approve",
+  "endpoint": "routes_calendar_dock.api_aor_approve",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -70,7 +70,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_aor_attachment_pdf",
+  "endpoint": "routes_calendar_dock.api_aor_attachment_pdf",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -80,7 +80,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_aor_hold",
+  "endpoint": "routes_calendar_dock.api_aor_hold",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -90,7 +90,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_aor_reject",
+  "endpoint": "routes_calendar_dock.api_aor_reject",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -100,7 +100,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_aor_unhold",
+  "endpoint": "routes_calendar_dock.api_aor_unhold",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -110,7 +110,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_aor_bulk_delete",
+  "endpoint": "routes_calendar_dock.api_aor_bulk_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -120,7 +120,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_aor_clear_decided",
+  "endpoint": "routes_calendar_dock.api_aor_clear_decided",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -130,7 +130,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_attachment_delete",
+  "endpoint": "routes_calendar_dock.api_attachment_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -141,7 +141,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_attachment_download",
+  "endpoint": "routes_calendar_dock.api_attachment_download",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -152,7 +152,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_attachment_msg_preview",
+  "endpoint": "routes_calendar_dock.api_attachment_msg_preview",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -163,7 +163,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_attachment_msg_preview_file",
+  "endpoint": "routes_calendar_dock.api_attachment_msg_preview_file",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -173,7 +173,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_auth_token",
+  "endpoint": "routes_core.api_auth_token",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -184,7 +184,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_automation_health",
+  "endpoint": "routes_calendar_dock.api_automation_health",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -194,7 +194,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_automation_jeonja_exclude",
+  "endpoint": "routes_dock_submit.api_automation_jeonja_exclude",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -205,7 +205,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_automation_jeonja_items",
+  "endpoint": "routes_dock_submit.api_automation_jeonja_items",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -216,7 +216,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_automation_jeonja_pdf",
+  "endpoint": "routes_dock_submit.api_automation_jeonja_pdf",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -226,7 +226,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_automation_killswitch",
+  "endpoint": "routes_dock_submit.api_automation_killswitch",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -236,7 +236,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_automation_run",
+  "endpoint": "routes_dock_submit.api_automation_run",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -247,7 +247,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_automation_runs",
+  "endpoint": "routes_dock_submit.api_automation_runs",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -257,7 +257,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_automation_runs_clear",
+  "endpoint": "routes_dock_submit.api_automation_runs_clear",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -269,7 +269,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_automation_soa_groups",
+  "endpoint": "routes_calendar_dock.api_automation_soa_groups",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -279,7 +279,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_automation_soa_group_delete",
+  "endpoint": "routes_calendar_dock.api_automation_soa_group_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -289,7 +289,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_automation_soa_group_update",
+  "endpoint": "routes_calendar_dock.api_automation_soa_group_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -300,7 +300,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_soa_review_list",
+  "endpoint": "routes_calendar_dock.api_soa_review_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -311,7 +311,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_soa_review_detail",
+  "endpoint": "routes_calendar_dock.api_soa_review_detail",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -321,7 +321,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_soa_review_action",
+  "endpoint": "routes_calendar_dock.api_soa_review_action",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -331,7 +331,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_soa_review_draft",
+  "endpoint": "routes_calendar_dock.api_soa_review_draft",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -342,7 +342,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_soa_review_attachment_pdf",
+  "endpoint": "routes_calendar_dock.api_soa_review_attachment_pdf",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -352,7 +352,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_receipt_delete",
+  "endpoint": "routes_calendar_dock.api_receipt_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -362,7 +362,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_receipt_update",
+  "endpoint": "routes_calendar_dock.api_receipt_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -372,7 +372,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_trips_create",
+  "endpoint": "routes_calendar_dock.api_trips_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -383,7 +383,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_trips_list",
+  "endpoint": "routes_calendar_dock.api_trips_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -393,7 +393,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_trip_delete",
+  "endpoint": "routes_calendar_dock.api_trip_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -404,7 +404,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_trip_get",
+  "endpoint": "routes_calendar_dock.api_trip_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -414,7 +414,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_trip_update",
+  "endpoint": "routes_calendar_dock.api_trip_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -424,7 +424,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_receipt_extract",
+  "endpoint": "routes_calendar_dock.api_receipt_extract",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -434,7 +434,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_receipt_create",
+  "endpoint": "routes_calendar_dock.api_receipt_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -444,7 +444,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_receipt_create_with_file",
+  "endpoint": "routes_calendar_dock.api_receipt_create_with_file",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -454,7 +454,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_receipt_upload",
+  "endpoint": "routes_calendar_dock.api_receipt_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -464,7 +464,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_brep_block_delete",
+  "endpoint": "routes_calendar_dock.api_brep_block_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -474,7 +474,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_brep_block_update",
+  "endpoint": "routes_calendar_dock.api_brep_block_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -484,7 +484,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_brep_block_move",
+  "endpoint": "routes_calendar_dock.api_brep_block_move",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -494,7 +494,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_brep_create",
+  "endpoint": "routes_calendar_dock.api_brep_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -505,7 +505,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_brep_list",
+  "endpoint": "routes_calendar_dock.api_brep_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -515,7 +515,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_brep_delete",
+  "endpoint": "routes_calendar_dock.api_brep_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -526,7 +526,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_brep_get",
+  "endpoint": "routes_calendar_dock.api_brep_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -536,7 +536,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_brep_update",
+  "endpoint": "routes_calendar_dock.api_brep_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -547,7 +547,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_brep_export_docx",
+  "endpoint": "routes_calendar_dock.api_brep_export_docx",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -558,7 +558,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_brep_export_pdf",
+  "endpoint": "routes_calendar_dock.api_brep_export_pdf",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -568,7 +568,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_brep_section_create",
+  "endpoint": "routes_calendar_dock.api_brep_section_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -578,7 +578,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_brep_upload_image",
+  "endpoint": "routes_calendar_dock.api_brep_upload_image",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -588,7 +588,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_brep_section_delete",
+  "endpoint": "routes_calendar_dock.api_brep_section_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -598,7 +598,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_brep_section_update",
+  "endpoint": "routes_calendar_dock.api_brep_section_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -608,7 +608,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_brep_block_create",
+  "endpoint": "routes_calendar_dock.api_brep_block_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -618,7 +618,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_brep_section_move",
+  "endpoint": "routes_calendar_dock.api_brep_section_move",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -628,7 +628,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_brep_section_reparent",
+  "endpoint": "routes_calendar_dock.api_brep_section_reparent",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -638,7 +638,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_cal_event_create",
+  "endpoint": "routes_calendar_dock.api_cal_event_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -649,7 +649,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_cal_events_list",
+  "endpoint": "routes_calendar_dock.api_cal_events_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -659,7 +659,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_cal_event_delete",
+  "endpoint": "routes_calendar_dock.api_cal_event_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -670,7 +670,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_cal_event_get",
+  "endpoint": "routes_calendar_dock.api_cal_event_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -680,7 +680,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_cal_event_update",
+  "endpoint": "routes_calendar_dock.api_cal_event_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -691,7 +691,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_cal_event_find",
+  "endpoint": "routes_calendar_dock.api_cal_event_find",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -702,7 +702,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_class_status_list",
+  "endpoint": "routes_tail.api_class_status_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -712,7 +712,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_class_status_delete",
+  "endpoint": "routes_tail.api_class_status_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -722,7 +722,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_class_status_assign",
+  "endpoint": "routes_tail.api_class_status_assign",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -733,7 +733,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_class_status_export",
+  "endpoint": "routes_tail.api_class_status_export",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -744,7 +744,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_class_status_file",
+  "endpoint": "routes_tail.api_class_status_file",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -755,7 +755,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_class_status_export_all",
+  "endpoint": "routes_tail.api_class_status_export_all",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -766,7 +766,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_class_status_export_by_manager",
+  "endpoint": "routes_tail.api_class_status_export_by_manager",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -776,7 +776,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_class_status_item_update",
+  "endpoint": "routes_tail.api_class_status_item_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -787,7 +787,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_class_status_managers",
+  "endpoint": "routes_tail.api_class_status_managers",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -797,7 +797,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_class_status_push",
+  "endpoint": "routes_tail.api_class_status_push",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -807,7 +807,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_class_status_upload",
+  "endpoint": "routes_tail.api_class_status_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -838,7 +838,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_cs_finding_delete",
+  "endpoint": "routes_core.api_cs_finding_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -848,7 +848,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_cs_finding_update",
+  "endpoint": "routes_core.api_cs_finding_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -858,7 +858,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_cs_survey_create",
+  "endpoint": "routes_core.api_cs_survey_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -869,7 +869,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_cs_surveys_list",
+  "endpoint": "routes_core.api_cs_surveys_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -879,7 +879,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_cs_survey_delete",
+  "endpoint": "routes_core.api_cs_survey_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -890,7 +890,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_cs_survey_get",
+  "endpoint": "routes_core.api_cs_survey_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -900,7 +900,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_cs_survey_update",
+  "endpoint": "routes_core.api_cs_survey_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -952,7 +952,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_cs_finding_create",
+  "endpoint": "routes_core.api_cs_finding_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -963,7 +963,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dashboard_cockpit",
+  "endpoint": "routes_core.api_dashboard_cockpit",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -973,7 +973,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_block_delete",
+  "endpoint": "routes_calendar_dock.api_dock_block_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -983,7 +983,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_dock_block_update",
+  "endpoint": "routes_calendar_dock.api_dock_block_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -993,7 +993,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_block_move",
+  "endpoint": "routes_calendar_dock.api_dock_block_move",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1003,7 +1003,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_create",
+  "endpoint": "routes_calendar_dock.api_dock_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1014,7 +1014,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_list",
+  "endpoint": "routes_calendar_dock.api_dock_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1024,7 +1024,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_delete",
+  "endpoint": "routes_calendar_dock.api_dock_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1035,7 +1035,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_get",
+  "endpoint": "routes_calendar_dock.api_dock_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1045,7 +1045,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_dock_update",
+  "endpoint": "routes_calendar_dock.api_dock_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1056,7 +1056,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_export_docx",
+  "endpoint": "routes_calendar_dock.api_dock_export_docx",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1067,7 +1067,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_export_pdf",
+  "endpoint": "routes_calendar_dock.api_dock_export_pdf",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1077,7 +1077,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_section_create",
+  "endpoint": "routes_calendar_dock.api_dock_section_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1087,7 +1087,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_upload_image",
+  "endpoint": "routes_calendar_dock.api_dock_upload_image",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1097,7 +1097,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_section_delete",
+  "endpoint": "routes_calendar_dock.api_dock_section_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1107,7 +1107,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_dock_section_update",
+  "endpoint": "routes_calendar_dock.api_dock_section_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1117,7 +1117,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_block_create",
+  "endpoint": "routes_calendar_dock.api_dock_block_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1127,7 +1127,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_section_move",
+  "endpoint": "routes_calendar_dock.api_dock_section_move",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1137,7 +1137,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_section_reparent",
+  "endpoint": "routes_calendar_dock.api_dock_section_reparent",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1147,7 +1147,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_inquiry_create",
+  "endpoint": "routes_dock_submit.api_dock_inquiry_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1158,7 +1158,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_inquiry_list",
+  "endpoint": "routes_dock_submit.api_dock_inquiry_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1168,7 +1168,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_inquiry_cancel",
+  "endpoint": "routes_dock_submit.api_dock_inquiry_cancel",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1178,7 +1178,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_inquiry_push",
+  "endpoint": "routes_dock_submit.api_dock_inquiry_push",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1188,7 +1188,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_inquiry_clear_decided",
+  "endpoint": "routes_dock_submit.api_dock_inquiry_clear_decided",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1199,7 +1199,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_inquiry_preview",
+  "endpoint": "routes_dock_submit.api_dock_inquiry_preview",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1209,7 +1209,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_inquiry_vendor_search",
+  "endpoint": "routes_dock_submit.api_dock_inquiry_vendor_search",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1219,7 +1219,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_dockproc_delete",
+  "endpoint": "routes_dock_submit.api_dockproc_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1229,7 +1229,7 @@
    "OPTIONS",
    "PATCH"
   ],
-  "endpoint": "api_dockproc_patch",
+  "endpoint": "routes_dock_submit.api_dockproc_patch",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1239,7 +1239,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_link",
+  "endpoint": "routes_dock_submit.api_dockproc_link",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1249,7 +1249,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_prep",
+  "endpoint": "routes_dock_submit.api_dockproc_prep",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1259,7 +1259,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_stage",
+  "endpoint": "routes_dock_submit.api_dockproc_stage",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1270,7 +1270,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dockproc_att",
+  "endpoint": "routes_dock_submit.api_dockproc_att",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1280,7 +1280,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_add",
+  "endpoint": "routes_dock_submit.api_dockproc_add",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1290,7 +1290,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_adopt",
+  "endpoint": "routes_dock_submit.api_dockproc_adopt",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1301,7 +1301,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dockproc_lines",
+  "endpoint": "routes_dock_submit.api_dockproc_lines",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1312,7 +1312,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dockproc_push_status",
+  "endpoint": "routes_calendar_dock.api_dockproc_push_status",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1322,7 +1322,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_push_trigger",
+  "endpoint": "routes_calendar_dock.api_dockproc_push_trigger",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1332,7 +1332,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_set_dkcd",
+  "endpoint": "routes_calendar_dock.api_dockproc_set_dkcd",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1342,7 +1342,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_set_shipyard",
+  "endpoint": "routes_dock_submit.api_dockproc_set_shipyard",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1353,7 +1353,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dockproc_sync_status",
+  "endpoint": "routes_calendar_dock.api_dockproc_sync_status",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1363,7 +1363,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_sync_trigger",
+  "endpoint": "routes_calendar_dock.api_dockproc_sync_trigger",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1374,7 +1374,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dockproc_tmpl",
+  "endpoint": "routes_dock_submit.api_dockproc_tmpl",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1384,7 +1384,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_upload",
+  "endpoint": "routes_dock_submit.api_dockproc_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1394,7 +1394,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_vessel_create",
+  "endpoint": "routes_dock_submit.api_dockproc_vessel_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1404,7 +1404,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_dockproc_vessel_delete",
+  "endpoint": "routes_dock_submit.api_dockproc_vessel_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1414,7 +1414,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dockproc_vessel_code",
+  "endpoint": "routes_dock_submit.api_dockproc_vessel_code",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1425,7 +1425,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_submit_app_lines",
+  "endpoint": "routes_dock_submit.api_dock_submit_app_lines",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1435,7 +1435,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_submit_create",
+  "endpoint": "routes_dock_submit.api_dock_submit_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1446,7 +1446,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_submit_list",
+  "endpoint": "routes_dock_submit.api_dock_submit_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1456,7 +1456,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_submit_cancel",
+  "endpoint": "routes_dock_submit.api_dock_submit_cancel",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1466,7 +1466,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_submit_push",
+  "endpoint": "routes_dock_submit.api_dock_submit_push",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1476,7 +1476,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_submit_clear_decided",
+  "endpoint": "routes_dock_submit.api_dock_submit_clear_decided",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1486,7 +1486,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_submit_dismiss",
+  "endpoint": "routes_dock_submit.api_dock_submit_dismiss",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1497,7 +1497,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_submit_preview",
+  "endpoint": "routes_dock_submit.api_dock_submit_preview",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1508,7 +1508,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_yard_lines",
+  "endpoint": "routes_dock_submit.api_dock_yard_lines",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1518,7 +1518,7 @@
    "OPTIONS",
    "PATCH"
   ],
-  "endpoint": "api_dock_yard_patch",
+  "endpoint": "routes_dock_submit.api_dock_yard_patch",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1529,7 +1529,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_yard_profiles",
+  "endpoint": "routes_dock_submit.api_dock_yard_profiles",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1540,7 +1540,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_dock_yard_shipyards",
+  "endpoint": "routes_dock_submit.api_dock_yard_shipyards",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1550,7 +1550,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_dock_yard_upload",
+  "endpoint": "routes_dock_submit.api_dock_yard_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1561,7 +1561,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_drydock_mobile_entry",
+  "endpoint": "routes_core.api_drydock_mobile_entry",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1572,7 +1572,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_all",
+  "endpoint": "routes_calendar_dock.api_ext_all",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1583,7 +1583,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_aor_approved",
+  "endpoint": "routes_calendar_dock.api_ext_aor_approved",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1593,7 +1593,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_aor_create",
+  "endpoint": "routes_calendar_dock.api_ext_aor_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1603,7 +1603,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_aor_attachment_upload",
+  "endpoint": "routes_calendar_dock.api_ext_aor_attachment_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1613,7 +1613,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_aor_reject_result",
+  "endpoint": "routes_calendar_dock.api_ext_aor_reject_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1623,7 +1623,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_aor_result",
+  "endpoint": "routes_calendar_dock.api_ext_aor_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1634,7 +1634,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_aor_reingest_statuses",
+  "endpoint": "routes_calendar_dock.api_ext_aor_reingest_statuses",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1645,7 +1645,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_aor_rejecting",
+  "endpoint": "routes_calendar_dock.api_ext_aor_rejecting",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1655,7 +1655,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_aor_stats",
+  "endpoint": "routes_calendar_dock.api_ext_aor_stats",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1665,7 +1665,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_automation_done",
+  "endpoint": "routes_dock_submit.api_ext_automation_done",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1675,7 +1675,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_automation_progress",
+  "endpoint": "routes_dock_submit.api_ext_automation_progress",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1685,7 +1685,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_automation_claim",
+  "endpoint": "routes_dock_submit.api_ext_automation_claim",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1695,7 +1695,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_automation_enqueue",
+  "endpoint": "routes_dock_submit.api_ext_automation_enqueue",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1705,7 +1705,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_automation_health",
+  "endpoint": "routes_calendar_dock.api_ext_automation_health",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1716,7 +1716,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_boarding",
+  "endpoint": "routes_calendar_dock.api_ext_boarding",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1727,7 +1727,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_calendar",
+  "endpoint": "routes_calendar_dock.api_ext_calendar",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1738,7 +1738,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_class_status",
+  "endpoint": "routes_calendar_dock.api_ext_class_status",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1749,7 +1749,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_class_status_push_flag",
+  "endpoint": "routes_calendar_dock.api_ext_class_status_push_flag",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1759,7 +1759,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_class_status_upload",
+  "endpoint": "routes_calendar_dock.api_ext_class_status_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1770,7 +1770,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dock",
+  "endpoint": "routes_calendar_dock.api_ext_dock",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1781,7 +1781,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dock_push_data",
+  "endpoint": "routes_dock_submit.api_ext_dock_push_data",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1792,7 +1792,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dock_inquiry_approved",
+  "endpoint": "routes_dock_submit.api_ext_dock_inquiry_approved",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1802,7 +1802,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_dock_inquiry_result",
+  "endpoint": "routes_dock_submit.api_ext_dock_inquiry_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1812,7 +1812,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_dockproc_att_upload",
+  "endpoint": "routes_dock_submit.api_ext_dockproc_att_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1823,7 +1823,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dockproc_att_pending",
+  "endpoint": "routes_dock_submit.api_ext_dockproc_att_pending",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1834,7 +1834,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dockproc_links",
+  "endpoint": "routes_dock_submit.api_ext_dockproc_links",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1845,7 +1845,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dockproc_push_targets",
+  "endpoint": "routes_calendar_dock.api_ext_dockproc_push_targets",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1855,7 +1855,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_dockproc_push_done",
+  "endpoint": "routes_calendar_dock.api_ext_dockproc_push_done",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1866,7 +1866,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dockproc_push_pending",
+  "endpoint": "routes_calendar_dock.api_ext_dockproc_push_pending",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1877,7 +1877,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dockproc_quotes",
+  "endpoint": "routes_dock_submit.api_ext_dockproc_quotes",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1887,7 +1887,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_dockproc_sync",
+  "endpoint": "routes_dock_submit.api_ext_dockproc_sync",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1897,7 +1897,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_dockproc_sync_done",
+  "endpoint": "routes_calendar_dock.api_ext_dockproc_sync_done",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1908,7 +1908,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dockproc_sync_pending",
+  "endpoint": "routes_calendar_dock.api_ext_dockproc_sync_pending",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1919,7 +1919,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dockproc_vessels",
+  "endpoint": "routes_dock_submit.api_ext_dockproc_vessels",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1930,7 +1930,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_dock_submit_approved",
+  "endpoint": "routes_dock_submit.api_ext_dock_submit_approved",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1940,7 +1940,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_dock_submit_result",
+  "endpoint": "routes_dock_submit.api_ext_dock_submit_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1950,7 +1950,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_dock_yard_shipyards",
+  "endpoint": "routes_dock_submit.api_ext_dock_yard_shipyards",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1961,7 +1961,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_fleet_map_ais_off_get",
+  "endpoint": "routes_tail.api_ext_fleet_map_ais_off_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1972,7 +1972,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_fleet_map_email_watch_get",
+  "endpoint": "routes_tail.api_ext_fleet_map_email_watch_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1982,7 +1982,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_fleet_map_override",
+  "endpoint": "routes_tail.api_ext_fleet_map_override",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -1992,7 +1992,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_fleet_map_push",
+  "endpoint": "routes_tail.api_ext_fleet_map_push",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2002,7 +2002,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_fleet_map_wind_push",
+  "endpoint": "routes_tail.api_ext_fleet_map_wind_push",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2013,7 +2013,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_fundreq_approved",
+  "endpoint": "routes_calendar_dock.api_ext_fundreq_approved",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2023,7 +2023,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_fundreq_create",
+  "endpoint": "routes_calendar_dock.api_ext_fundreq_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2033,7 +2033,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_fundreq_attachment_upload",
+  "endpoint": "routes_calendar_dock.api_ext_fundreq_attachment_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2043,7 +2043,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_fundreq_reject_result",
+  "endpoint": "routes_calendar_dock.api_ext_fundreq_reject_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2053,7 +2053,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_fundreq_result",
+  "endpoint": "routes_calendar_dock.api_ext_fundreq_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2064,7 +2064,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_fundreq_pending_attachments",
+  "endpoint": "routes_calendar_dock.api_ext_fundreq_pending_attachments",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2075,7 +2075,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_fundreq_rejecting",
+  "endpoint": "routes_calendar_dock.api_ext_fundreq_rejecting",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2086,7 +2086,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_invoice_approved",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_approved",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2096,7 +2096,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_invoice_create",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2106,7 +2106,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_invoice_pdf_upload",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_pdf_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2116,7 +2116,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_invoice_reject_result",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_reject_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2126,7 +2126,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_invoice_result",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2137,7 +2137,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_invoice_lookup",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_lookup",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2147,7 +2147,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_invoice_expense_codes",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_expense_codes",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2158,7 +2158,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_invoice_open",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_open",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2168,7 +2168,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_invoice_reconcile",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_reconcile",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2179,7 +2179,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_invoice_rejecting",
+  "endpoint": "routes_calendar_dock.api_ext_invoice_rejecting",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2189,7 +2189,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_issue_create",
+  "endpoint": "routes_calendar_dock.api_ext_issue_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2200,7 +2200,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_issues",
+  "endpoint": "routes_calendar_dock.api_ext_issues",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2210,7 +2210,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_ext_issue_update",
+  "endpoint": "routes_calendar_dock.api_ext_issue_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2220,7 +2220,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_issue_add_action",
+  "endpoint": "routes_calendar_dock.api_ext_issue_add_action",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2230,7 +2230,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_issue_set_email_key",
+  "endpoint": "routes_calendar_dock.api_ext_issue_set_email_key",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2241,7 +2241,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_issue_match",
+  "endpoint": "routes_calendar_dock.api_ext_issue_match",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2252,7 +2252,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_jeonja_exclusions",
+  "endpoint": "routes_dock_submit.api_ext_jeonja_exclusions",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2262,7 +2262,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_jeonja_review",
+  "endpoint": "routes_dock_submit.api_ext_jeonja_review",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2272,7 +2272,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_jeonja_pdf_complete",
+  "endpoint": "routes_dock_submit.api_ext_jeonja_pdf_complete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2282,7 +2282,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_jeonja_pdf_upload",
+  "endpoint": "routes_dock_submit.api_ext_jeonja_pdf_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2293,7 +2293,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_key_get",
+  "endpoint": "routes_calendar_dock.api_ext_key_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2303,7 +2303,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_key_regen",
+  "endpoint": "routes_calendar_dock.api_ext_key_regen",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2313,7 +2313,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_push",
+  "endpoint": "routes_tail.api_ext_push",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2323,7 +2323,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_push_calendar_daily",
+  "endpoint": "routes_tail.api_ext_push_calendar_daily",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2334,7 +2334,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_reqgen_approved",
+  "endpoint": "routes_calendar_dock.api_ext_reqgen_approved",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2344,7 +2344,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_reqgen_result",
+  "endpoint": "routes_calendar_dock.api_ext_reqgen_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2355,7 +2355,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_roster",
+  "endpoint": "routes_calendar_dock.api_ext_roster",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2365,7 +2365,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_roster_sync_done",
+  "endpoint": "routes_calendar_dock.api_ext_roster_sync_done",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2376,7 +2376,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_roster_sync_pending",
+  "endpoint": "routes_calendar_dock.api_ext_roster_sync_pending",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2386,7 +2386,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_shipwiki_result",
+  "endpoint": "routes_tail.api_ext_shipwiki_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2397,7 +2397,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_shipwiki_decided",
+  "endpoint": "routes_tail.api_ext_shipwiki_decided",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2407,7 +2407,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_shipwiki_push",
+  "endpoint": "routes_tail.api_ext_shipwiki_push",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2418,7 +2418,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_soa_groups",
+  "endpoint": "routes_calendar_dock.api_ext_soa_groups",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2429,7 +2429,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_soa_review_command",
+  "endpoint": "routes_calendar_dock.api_ext_soa_review_command",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2439,7 +2439,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_soa_review_result",
+  "endpoint": "routes_calendar_dock.api_ext_soa_review_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2450,7 +2450,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_soa_review_open",
+  "endpoint": "routes_calendar_dock.api_ext_soa_review_open",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2460,7 +2460,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_soa_review_snapshot",
+  "endpoint": "routes_calendar_dock.api_ext_soa_review_snapshot",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2472,7 +2472,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_soa_vessel_owners",
+  "endpoint": "routes_calendar_dock.api_ext_soa_vessel_owners",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2483,7 +2483,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_stt_audio",
+  "endpoint": "routes_calendar_dock.api_ext_stt_audio",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2493,7 +2493,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_stt_result",
+  "endpoint": "routes_calendar_dock.api_ext_stt_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2503,7 +2503,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_stt_summary_result",
+  "endpoint": "routes_calendar_dock.api_ext_stt_summary_result",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2514,7 +2514,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_stt_pending",
+  "endpoint": "routes_calendar_dock.api_ext_stt_pending",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2525,7 +2525,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_stt_summary_pending",
+  "endpoint": "routes_calendar_dock.api_ext_stt_summary_pending",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2536,7 +2536,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_summaries",
+  "endpoint": "routes_calendar_dock.api_ext_summaries",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2546,7 +2546,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_summary_generate",
+  "endpoint": "routes_calendar_dock.api_ext_summary_generate",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2557,7 +2557,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_supervisors",
+  "endpoint": "routes_calendar_dock.api_ext_supervisors",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2568,7 +2568,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_surveys",
+  "endpoint": "routes_calendar_dock.api_ext_surveys",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2578,7 +2578,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_svms_app_lines",
+  "endpoint": "routes_dock_submit.api_ext_svms_app_lines",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2589,7 +2589,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_version",
+  "endpoint": "routes_calendar_dock.api_ext_version",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2600,7 +2600,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_vessels",
+  "endpoint": "routes_calendar_dock.api_ext_vessels",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2610,7 +2610,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_ext_vessel_identifiers",
+  "endpoint": "routes_calendar_dock.api_ext_vessel_identifiers",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2621,7 +2621,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_vetting_digests",
+  "endpoint": "routes_calendar_dock.api_ext_vetting_digests",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2632,7 +2632,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_vettings",
+  "endpoint": "routes_calendar_dock.api_ext_vettings",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2642,7 +2642,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_vlcc_push_done",
+  "endpoint": "routes_calendar_dock.api_ext_vlcc_push_done",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2652,7 +2652,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ext_vlcc_push_mark",
+  "endpoint": "routes_calendar_dock.api_ext_vlcc_push_mark",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2663,7 +2663,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ext_vlcc_push_pending",
+  "endpoint": "routes_calendar_dock.api_ext_vlcc_push_pending",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2674,7 +2674,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_fleet_map_data",
+  "endpoint": "routes_tail.api_fleet_map_data",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2684,7 +2684,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_fleet_map_email_watch_set",
+  "endpoint": "routes_tail.api_fleet_map_email_watch_set",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2694,7 +2694,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_fleet_map_eta_override_delete",
+  "endpoint": "routes_tail.api_fleet_map_eta_override_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2704,7 +2704,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_fleet_map_eta_override_set",
+  "endpoint": "routes_tail.api_fleet_map_eta_override_set",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2714,7 +2714,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_fleet_map_next_port_override_delete",
+  "endpoint": "routes_tail.api_fleet_map_next_port_override_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2724,7 +2724,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_fleet_map_next_port_override_set",
+  "endpoint": "routes_tail.api_fleet_map_next_port_override_set",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2734,7 +2734,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_fleet_map_pos_source_set",
+  "endpoint": "routes_tail.api_fleet_map_pos_source_set",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2745,7 +2745,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_fleet_map_track",
+  "endpoint": "routes_tail.api_fleet_map_track",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2756,7 +2756,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_fleet_map_wind",
+  "endpoint": "routes_tail.api_fleet_map_wind",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2767,7 +2767,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_fundreq_list",
+  "endpoint": "routes_calendar_dock.api_fundreq_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2777,7 +2777,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_fundreq_delete",
+  "endpoint": "routes_calendar_dock.api_fundreq_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2787,7 +2787,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_fundreq_approve",
+  "endpoint": "routes_calendar_dock.api_fundreq_approve",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2798,7 +2798,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_fundreq_attachment",
+  "endpoint": "routes_calendar_dock.api_fundreq_attachment",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2808,7 +2808,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_fundreq_reject",
+  "endpoint": "routes_calendar_dock.api_fundreq_reject",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2818,7 +2818,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_fundreq_reset",
+  "endpoint": "routes_calendar_dock.api_fundreq_reset",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2828,7 +2828,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_fundreq_clear_decided",
+  "endpoint": "routes_calendar_dock.api_fundreq_clear_decided",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2839,7 +2839,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_invoice_list",
+  "endpoint": "routes_calendar_dock.api_invoice_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2849,7 +2849,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_invoice_delete",
+  "endpoint": "routes_calendar_dock.api_invoice_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2859,7 +2859,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_invoice_approve",
+  "endpoint": "routes_calendar_dock.api_invoice_approve",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2869,7 +2869,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_invoice_edit",
+  "endpoint": "routes_calendar_dock.api_invoice_edit",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2880,7 +2880,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_invoice_pdf",
+  "endpoint": "routes_calendar_dock.api_invoice_pdf",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2890,7 +2890,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_invoice_reject",
+  "endpoint": "routes_calendar_dock.api_invoice_reject",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2900,7 +2900,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_invoice_reset",
+  "endpoint": "routes_calendar_dock.api_invoice_reset",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2910,7 +2910,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_invoice_approve_bulk",
+  "endpoint": "routes_calendar_dock.api_invoice_approve_bulk",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2920,7 +2920,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_invoice_clear_decided",
+  "endpoint": "routes_calendar_dock.api_invoice_clear_decided",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2931,7 +2931,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_invoice_expense_codes",
+  "endpoint": "routes_calendar_dock.api_invoice_expense_codes",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2941,7 +2941,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ios_device_register",
+  "endpoint": "routes_tail.api_ios_device_register",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2951,7 +2951,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_ios_device_unregister",
+  "endpoint": "routes_tail.api_ios_device_unregister",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2962,7 +2962,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ios_prefs_get",
+  "endpoint": "routes_tail.api_ios_prefs_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2972,7 +2972,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_ios_prefs_put",
+  "endpoint": "routes_tail.api_ios_prefs_put",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2982,7 +2982,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ios_push_log_clear",
+  "endpoint": "routes_tail.api_ios_push_log_clear",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -2993,7 +2993,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_ios_push_status",
+  "endpoint": "routes_tail.api_ios_push_status",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3003,7 +3003,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_ios_push_test",
+  "endpoint": "routes_tail.api_ios_push_test",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3013,7 +3013,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_issue_create",
+  "endpoint": "routes_core.api_issue_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3024,7 +3024,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_issue_list",
+  "endpoint": "routes_core.api_issue_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3034,7 +3034,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_issue_delete",
+  "endpoint": "routes_core.api_issue_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3045,7 +3045,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_issue_get",
+  "endpoint": "routes_core.api_issue_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3055,7 +3055,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_issue_update",
+  "endpoint": "routes_core.api_issue_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3065,7 +3065,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_issue_action_append",
+  "endpoint": "routes_core.api_issue_action_append",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3075,7 +3075,7 @@
    "OPTIONS",
    "PATCH"
   ],
-  "endpoint": "api_issue_action_patch",
+  "endpoint": "routes_core.api_issue_action_patch",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3085,7 +3085,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_attachment_upload",
+  "endpoint": "routes_calendar_dock.api_attachment_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3096,7 +3096,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_issue_export",
+  "endpoint": "routes_core.api_issue_export",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3107,7 +3107,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_issue_summary_get",
+  "endpoint": "routes_core.api_issue_summary_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3118,7 +3118,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_issue_summary_counts",
+  "endpoint": "routes_core.api_issue_summary_counts",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3129,7 +3129,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_issue_summary_export",
+  "endpoint": "routes_core.api_issue_summary_export",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3139,7 +3139,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_issue_summary_generate",
+  "endpoint": "routes_core.api_issue_summary_generate",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3150,7 +3150,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_me",
+  "endpoint": "routes_core.api_me",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3160,7 +3160,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_me_password",
+  "endpoint": "routes_core.api_me_password",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3171,7 +3171,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_mobile_issue_list",
+  "endpoint": "routes_core.api_mobile_issue_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3181,7 +3181,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_reqgen_approve_all",
+  "endpoint": "routes_calendar_dock.api_reqgen_approve_all",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3192,7 +3192,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_reqgen_list",
+  "endpoint": "routes_calendar_dock.api_reqgen_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3202,7 +3202,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_reqgen_delete",
+  "endpoint": "routes_calendar_dock.api_reqgen_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3212,7 +3212,7 @@
    "OPTIONS",
    "PATCH"
   ],
-  "endpoint": "api_reqgen_patch",
+  "endpoint": "routes_calendar_dock.api_reqgen_patch",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3222,7 +3222,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_reqgen_approve",
+  "endpoint": "routes_calendar_dock.api_reqgen_approve",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3232,7 +3232,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_reqgen_reset",
+  "endpoint": "routes_calendar_dock.api_reqgen_reset",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3242,7 +3242,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_reqgen_clear_all",
+  "endpoint": "routes_calendar_dock.api_reqgen_clear_all",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3252,7 +3252,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_reqgen_clear_decided",
+  "endpoint": "routes_calendar_dock.api_reqgen_clear_decided",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3262,7 +3262,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_reqgen_upload",
+  "endpoint": "routes_calendar_dock.api_reqgen_upload",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3273,7 +3273,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_roster_sync_status",
+  "endpoint": "routes_calendar_dock.api_roster_sync_status",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3283,7 +3283,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_roster_sync_trigger",
+  "endpoint": "routes_calendar_dock.api_roster_sync_trigger",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3294,7 +3294,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_shipwiki_cards",
+  "endpoint": "routes_dock_submit.api_shipwiki_cards",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3304,7 +3304,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_shipwiki_delete",
+  "endpoint": "routes_dock_submit.api_shipwiki_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3314,7 +3314,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_shipwiki_decide",
+  "endpoint": "routes_dock_submit.api_shipwiki_decide",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3324,7 +3324,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_shipwiki_reset",
+  "endpoint": "routes_dock_submit.api_shipwiki_reset",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3334,7 +3334,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_shipwiki_clear_applied",
+  "endpoint": "routes_dock_submit.api_shipwiki_clear_applied",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3344,7 +3344,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_stt_jobs_create",
+  "endpoint": "routes_calendar_dock.api_stt_jobs_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3355,7 +3355,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_stt_jobs_list",
+  "endpoint": "routes_calendar_dock.api_stt_jobs_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3365,7 +3365,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_stt_job_delete",
+  "endpoint": "routes_calendar_dock.api_stt_job_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3375,7 +3375,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_stt_job_edit",
+  "endpoint": "routes_calendar_dock.api_stt_job_edit",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3386,7 +3386,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_stt_job_get",
+  "endpoint": "routes_calendar_dock.api_stt_job_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3396,7 +3396,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_stt_job_audio_delete",
+  "endpoint": "routes_calendar_dock.api_stt_job_audio_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3407,7 +3407,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_stt_job_audio_get",
+  "endpoint": "routes_calendar_dock.api_stt_job_audio_get",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3417,7 +3417,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_stt_job_summarize",
+  "endpoint": "routes_calendar_dock.api_stt_job_summarize",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3427,7 +3427,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_supervisor_create",
+  "endpoint": "routes_core.api_supervisor_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3438,7 +3438,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_supervisors",
+  "endpoint": "routes_core.api_supervisors",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3448,7 +3448,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_supervisor_delete",
+  "endpoint": "routes_core.api_supervisor_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3458,7 +3458,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_supervisor_update",
+  "endpoint": "routes_core.api_supervisor_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3468,7 +3468,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_user_create",
+  "endpoint": "routes_core.api_user_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3479,7 +3479,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_users_list",
+  "endpoint": "routes_core.api_users_list",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3489,7 +3489,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_user_delete",
+  "endpoint": "routes_core.api_user_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3499,7 +3499,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_user_update",
+  "endpoint": "routes_core.api_user_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3509,7 +3509,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_user_reset_password",
+  "endpoint": "routes_core.api_user_reset_password",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3521,7 +3521,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_vessel_order",
+  "endpoint": "routes_core.api_vessel_order",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3531,7 +3531,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_vessel_create",
+  "endpoint": "routes_core.api_vessel_create",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3542,7 +3542,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_vessels",
+  "endpoint": "routes_core.api_vessels",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3552,7 +3552,7 @@
    "DELETE",
    "OPTIONS"
   ],
-  "endpoint": "api_vessel_delete",
+  "endpoint": "routes_core.api_vessel_delete",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3562,7 +3562,7 @@
    "OPTIONS",
    "PUT"
   ],
-  "endpoint": "api_vessel_update",
+  "endpoint": "routes_core.api_vessel_update",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3573,7 +3573,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_vessel_delete_impact",
+  "endpoint": "routes_core.api_vessel_delete_impact",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3584,7 +3584,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_vessel_active_counts",
+  "endpoint": "routes_core.api_vessel_active_counts",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3595,7 +3595,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_vessels_all",
+  "endpoint": "routes_core.api_vessels_all",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3720,7 +3720,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_vlcc_push_status",
+  "endpoint": "routes_calendar_dock.api_vlcc_push_status",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3730,7 +3730,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "api_vlcc_push_trigger",
+  "endpoint": "routes_calendar_dock.api_vlcc_push_trigger",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3782,7 +3782,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_widget_fleet",
+  "endpoint": "routes_core.api_widget_fleet",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3793,7 +3793,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_widget_issues",
+  "endpoint": "routes_core.api_widget_issues",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3804,7 +3804,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "api_widget_vetting",
+  "endpoint": "routes_core.api_widget_vetting",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3815,7 +3815,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "automation_page",
+  "endpoint": "routes_dock_submit.automation_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3826,7 +3826,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "boarding_page",
+  "endpoint": "routes_core.boarding_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3837,7 +3837,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "boarding_edit_page",
+  "endpoint": "routes_core.boarding_edit_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3848,7 +3848,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "calendar_page",
+  "endpoint": "routes_core.calendar_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3859,7 +3859,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "class_status_page",
+  "endpoint": "routes_core.class_status_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3870,7 +3870,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "condition_survey",
+  "endpoint": "routes_core.condition_survey",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3881,7 +3881,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "dashboard",
+  "endpoint": "routes_core.dashboard",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3892,7 +3892,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "dashboard_classic",
+  "endpoint": "routes_tail.dashboard_classic",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3903,7 +3903,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "dock_procure_page",
+  "endpoint": "routes_dock_submit.dock_procure_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3914,7 +3914,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "dockproc_tmpl_blank",
+  "endpoint": "routes_dock_submit.dockproc_tmpl_blank",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3925,7 +3925,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "dockproc_tmpl_example",
+  "endpoint": "routes_dock_submit.dockproc_tmpl_example",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3936,7 +3936,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "dry_dock_page",
+  "endpoint": "routes_core.dry_dock_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3947,7 +3947,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "dry_dock_edit_page",
+  "endpoint": "routes_core.dry_dock_edit_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3958,7 +3958,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "expenses_page",
+  "endpoint": "routes_calendar_dock.expenses_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3969,7 +3969,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "expense_detail_page",
+  "endpoint": "routes_calendar_dock.expense_detail_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3980,7 +3980,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "fundreq_page",
+  "endpoint": "routes_calendar_dock.fundreq_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -3991,7 +3991,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "health_page",
+  "endpoint": "routes_calendar_dock.health_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4002,7 +4002,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "invoice_page",
+  "endpoint": "routes_calendar_dock.invoice_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4013,7 +4013,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "krcon_page",
+  "endpoint": "routes_calendar_dock.krcon_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4023,7 +4023,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "krcon_ai",
+  "endpoint": "routes_calendar_dock.krcon_ai",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4034,7 +4034,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "krcon_search",
+  "endpoint": "routes_calendar_dock.krcon_search",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4045,7 +4045,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "krcon_view",
+  "endpoint": "routes_calendar_dock.krcon_view",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4057,7 +4057,7 @@
    "OPTIONS",
    "POST"
   ],
-  "endpoint": "login",
+  "endpoint": "routes_core.login",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4068,7 +4068,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "logout",
+  "endpoint": "routes_core.logout",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4079,7 +4079,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "meeting_page",
+  "endpoint": "routes_calendar_dock.meeting_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4090,7 +4090,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "mobile_app",
+  "endpoint": "routes_core.mobile_app",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4101,7 +4101,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "reqgen_page",
+  "endpoint": "routes_calendar_dock.reqgen_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4112,7 +4112,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "shipwiki_page",
+  "endpoint": "routes_dock_submit.shipwiki_page",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4134,7 +4134,7 @@
    "HEAD",
    "OPTIONS"
   ],
-  "endpoint": "vetting_status",
+  "endpoint": "routes_core.vetting_status",
   "strict_slashes": true,
   "defaults": {}
  }

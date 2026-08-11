@@ -19,6 +19,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -616,18 +617,18 @@ chk(d19 in (j.get('kept') or []) and dismissed_at(d19) is None,
 
 # ④ 소거가 터져도 재상신 큐잉(201)은 깨지지 않는다 — 형이 알아야 하는 건 "큐에 올라갔나"다.
 rid20, d20 = fail_draft('RA2', 'pre-read 검증 실패: 업체 없음', wrote=0)
-_orig_dismiss = A._dock_submit_dismiss
+_orig_dismiss = shared_ns._dock_submit_dismiss
 
 
 def _boom(*a, **k):
     raise RuntimeError('소거 폭발 테스트')
 
 
-A._dock_submit_dismiss = _boom
+shared_ns._dock_submit_dismiss = _boom
 try:
     r = create(rid20)
 finally:
-    A._dock_submit_dismiss = _orig_dismiss
+    shared_ns._dock_submit_dismiss = _orig_dismiss
 chk(r.status_code == 201 and r.get_json().get('dismissed') == [],
     '🔴 소거 예외가 재상신 201 을 500 으로 만들지 않는다')
 chk(d20 in drafts_seen(rid20), '소거 실패 시 이전 기록은 그대로 남는다(조용한 유실 없음)')

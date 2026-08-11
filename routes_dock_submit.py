@@ -1,3 +1,89 @@
+"""routes_dock_submit — converted to a real imported module with Blueprint("routes_dock_submit") on 2026-08-11.
+
+Previously executed in the app namespace by ``_load_extracted_module``.
+Dependencies are now the explicit imports below and nothing else — every
+name comes from ``app`` (whose namespace includes everything
+``helpers_shared.py`` executed into it).  Contract enforced by
+``test_converted_modules_are_self_contained``: zero unresolved names, and
+no sibling boundary imports.
+"""
+from flask import Blueprint
+
+from app import (
+    AUTOMATION_MODES,
+    GEMINI_API_KEY,
+    JEONJA_PDF_DIR,
+    _DOCKPROC_ATT_MAX,
+    _DOCKPROC_CAT_NM,
+    _DOCKPROC_PRE_INQUIRY,
+    _DOCK_INQ_DOC,
+    _FUNDREQ_ATT_INLINE,
+    _FUNDREQ_ATT_MAX,
+    _FUNDREQ_ATT_MIME,
+    _automation_enabled,
+    _dock_sync_flag_bump,
+    _dockatt_cached_idx,
+    _dockatt_disk_map,
+    _dockatt_find,
+    _dockatt_fp,
+    _dockatt_gc,
+    _dockatt_path,
+    _dockproc_adopt_svms,
+    _dockproc_cat_code,
+    _dockproc_files_of,
+    _dockproc_hard_n,
+    _dockproc_hash,
+    _dockproc_inq_stage_block,
+    _dockproc_inq_target,
+    _dockproc_norm_files,
+    _dockproc_norm_orders,
+    _dockproc_norm_quotes,
+    _dockproc_orders_of,
+    _dockproc_push_events,
+    _dockproc_source,
+    _dockproc_status_rank,
+    _dockproc_subject_from_svms,
+    _dockproc_submit_has_quotes,
+    _ensure_api_table,
+    _fundreq_att_ext,
+    _fundreq_att_sniff_ok,
+    _gemini_call_json,
+    _push_outbox_add,
+    _push_outbox_drain,
+    _reqgen_build_subj,
+    _reqgen_vsl_prefix,
+    _soa_review_case_unlock,
+    _soa_vessel_codes_from_params,
+    _soa_vessel_params,
+    abort,
+    admin_required,
+    api_key_required,
+    app,
+    automation_tasks,
+    execute,
+    execute_rc,
+    get_db,
+    hashlib,
+    json,
+    jsonify,
+    login_required,
+    math,
+    os,
+    query,
+    re,
+    render_template,
+    request,
+    send_file,
+    session,
+    socket,
+    sqlite3,
+    urllib,
+    uuid,
+)
+
+bp = Blueprint("routes_dock_submit", __name__)
+
+
 #   sync 가 부활시키고(삭제는 하드 DELETE), 옛 입거 잔상까지 끌어올 수 있어서다.
 _DOCKPROC_ORPHAN_KEY = 'dockproc_orphans'
 _DOCKPROC_ORPHAN_MAX = 50                                # 선박당 보관 상한
@@ -136,13 +222,13 @@ _DOCKPROC_ORDER = ("ORDER BY CASE cat_code WHEN 'R' THEN 0 WHEN 'S' THEN 1 "
                    "COALESCE(sort_no, 999999), id")
 
 
-@app.route('/dock_procure')
+@bp.route('/dock_procure')
 @login_required
 def dock_procure_page():
     return render_template('dock_procure.html')
 
 
-@app.route('/api/dock_procure/lines')
+@bp.route('/api/dock_procure/lines')
 @login_required
 def api_dockproc_lines():
     vsl = request.args.get('vsl_nm')
@@ -192,7 +278,7 @@ def api_dockproc_lines():
                     'orphans': orphans if vsl else []})
 
 
-@app.route('/api/dock_procure/vessel_code', methods=['POST'])
+@bp.route('/api/dock_procure/vessel_code', methods=['POST'])
 @login_required
 def api_dockproc_vessel_code():
     """선박 SVMS 코드(예: SAPS) 설정 — 정규 제목 생성·Phase2 역추적 매칭용. 선박헤더+모든 행에 반영."""
@@ -208,7 +294,7 @@ def api_dockproc_vessel_code():
     return jsonify({'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd})
 
 
-@app.route('/api/dock_procure/vessel', methods=['POST'])
+@bp.route('/api/dock_procure/vessel', methods=['POST'])
 @login_required
 def api_dockproc_vessel_create():
     """새 입거선박 등록 — INDEX 엑셀 없이 빈 선박을 직접 생성(여러 선박 동시 진행용).
@@ -235,7 +321,7 @@ def api_dockproc_vessel_create():
     return jsonify({'vsl_nm': vsl_nm, 'vsl_cd': vsl_cd, 'vtype': vtype}), 201
 
 
-@app.route('/api/dock_procure/vessel', methods=['DELETE'])
+@bp.route('/api/dock_procure/vessel', methods=['DELETE'])
 @login_required
 def api_dockproc_vessel_delete():
     """입거선박 삭제 — 선박 레코드 + 해당 선박의 모든 라인(dock_procure)·조선소(dock_yard) 데이터 일괄 삭제.
@@ -259,7 +345,7 @@ def api_dockproc_vessel_delete():
     return jsonify({'ok': True, 'vsl_nm': vsl_nm, 'deleted_lines': lines, 'deleted_yard': yard})
 
 
-@app.route('/api/dock_procure/upload', methods=['POST'])
+@bp.route('/api/dock_procure/upload', methods=['POST'])
 @login_required
 def api_dockproc_upload():
     """INDEX 엑셀 업로드 → 라인 큐 증분생성. dedup=(vsl_nm, req_no). 기존건은 skip(진행 보존)."""
@@ -361,7 +447,7 @@ def _dockproc_blank_workbook(wb):
     return wb
 
 
-@app.route('/dock_procure/template/example')
+@bp.route('/dock_procure/template/example')
 @login_required
 def dockproc_tmpl_example():
     from flask import send_file
@@ -372,7 +458,7 @@ def dockproc_tmpl_example():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@app.route('/dock_procure/template/blank')
+@bp.route('/dock_procure/template/blank')
 @login_required
 def dockproc_tmpl_blank():
     from flask import send_file
@@ -393,7 +479,7 @@ def dockproc_tmpl_blank():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@app.route('/api/dock_procure/template/<kind>')
+@bp.route('/api/dock_procure/template/<kind>')
 @login_required
 def api_dockproc_tmpl(kind):
     """iOS 앱용 alias.
@@ -409,7 +495,7 @@ def api_dockproc_tmpl(kind):
     return jsonify({'error': 'kind must be example or blank'}), 404
 
 
-@app.route('/api/dock_procure/<int:lid>/stage', methods=['POST'])
+@bp.route('/api/dock_procure/<int:lid>/stage', methods=['POST'])
 @login_required
 def api_dockproc_stage(lid):
     """4단계 체크 토글 + 종속 cascade(상위체크→하위완료, 하위해제→상위해제)."""
@@ -493,7 +579,7 @@ def api_dockproc_stage(lid):
                     'stg_confirm': f, 'stg_order': o, 'stg_manual': _man})
 
 
-@app.route('/api/dock_procure/add', methods=['POST'])
+@bp.route('/api/dock_procure/add', methods=['POST'])
 @login_required
 def api_dockproc_add():
     """라인 수동추가(주로 페인트 P/조선소 SY 메일견적)."""
@@ -520,7 +606,7 @@ def api_dockproc_add():
     return jsonify({'id': lid, 'req_no': req_no}), 201
 
 
-@app.route('/api/dock_procure/adopt', methods=['POST'])
+@bp.route('/api/dock_procure/adopt', methods=['POST'])
 @login_required
 def api_dockproc_adopt():
     """미적재 배너의 [적재] — SVMS 에만 있는 입거 청구를 발주현황 행으로 끌어온다.
@@ -570,7 +656,7 @@ def api_dockproc_adopt():
                     'created': bool(created), 'key_state': key_state}), (201 if created else 200)
 
 
-@app.route('/api/dock_procure/<int:lid>/prep', methods=['POST'])
+@bp.route('/api/dock_procure/<int:lid>/prep', methods=['POST'])
 @login_required
 def api_dockproc_prep(lid):
     """담당(OWNER↔MANAGER) 토글 — 견적출처 자동 동기화(MANAGER→AOR / OWNER→SVMS, P·SY=MAIL 고정)."""
@@ -587,7 +673,7 @@ def api_dockproc_prep(lid):
     return jsonify({'id': lid, 'prepared_by': nv, 'source': src})
 
 
-@app.route('/api/dock_procure/<int:lid>', methods=['PATCH'])
+@bp.route('/api/dock_procure/<int:lid>', methods=['PATCH'])
 @login_required
 def api_dockproc_patch(lid):
     d = request.get_json(silent=True) or {}
@@ -634,14 +720,14 @@ def api_dockproc_patch(lid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/dock_procure/<int:lid>', methods=['DELETE'])
+@bp.route('/api/dock_procure/<int:lid>', methods=['DELETE'])
 @login_required
 def api_dockproc_delete(lid):
     execute("DELETE FROM dock_procure WHERE id=?", (lid,))
     return jsonify({'ok': True})
 
 
-@app.route('/api/dock_procure/<int:lid>/link', methods=['POST'])
+@bp.route('/api/dock_procure/<int:lid>/link', methods=['POST'])
 @login_required
 def api_dockproc_link(lid):
     """Tier 3 — 제목규칙 안 지킨 수동 SVMS건을 Inq No 직접입력으로 연결(이후 폴러가 자동추적)."""
@@ -652,7 +738,7 @@ def api_dockproc_link(lid):
     return jsonify({'id': lid, 'svms_req_no': inq})
 
 
-@app.route('/api/ext/dock_procure/vessels')
+@bp.route('/api/ext/dock_procure/vessels')
 @api_key_required
 def api_ext_dockproc_vessels():
     """맥 폴러용 — SVMS코드(vsl_cd) 설정된 입거선박 목록(역동기화 대상)."""
@@ -661,7 +747,7 @@ def api_ext_dockproc_vessels():
     return jsonify({'vessels': [dict(r) for r in rows]})
 
 
-@app.route('/api/ext/dock_procure/quotes')
+@bp.route('/api/ext/dock_procure/quotes')
 @api_key_required
 def api_ext_dockproc_quotes():
     """SVMS Dock draft 봉투 조립용 — 발주완료(stg_order=1)+견적금액 있는 R/S/ST 라인.
@@ -680,7 +766,7 @@ def api_ext_dockproc_quotes():
     return jsonify({'vsl_cd': vc, 'quotes': [dict(r) for r in rows]})
 
 
-@app.route('/api/ext/dock/push_data')
+@bp.route('/api/ext/dock/push_data')
 @api_key_required
 def api_ext_dock_push_data():
     """④ SVMS Dock draft 조립기(맥 build_envelope.py DRY)용 통합 소스.
@@ -892,13 +978,13 @@ def _yard_parse_quote(fileobj, profile):
             "yard_name": profile.get("yard_name")}
 
 
-@app.route('/api/dock_yard/profiles')
+@bp.route('/api/dock_yard/profiles')
 @login_required
 def api_dock_yard_profiles():
     return jsonify({'profiles': _list_yard_profiles()})
 
 
-@app.route('/api/dock_yard/shipyards')
+@bp.route('/api/dock_yard/shipyards')
 @login_required
 def api_dock_yard_shipyards():
     """조선소 드롭다운 소스 — SVMS 벤더마스터(SYD_YN=Y) 캐시 + 로컬 프로파일 vndr_cd 매칭 표시."""
@@ -908,7 +994,7 @@ def api_dock_yard_shipyards():
     return jsonify({'shipyards': out, 'synced': bool(rows)})
 
 
-@app.route('/api/ext/dock_yard/shipyards', methods=['POST'])
+@bp.route('/api/ext/dock_yard/shipyards', methods=['POST'])
 @api_key_required
 def api_ext_dock_yard_shipyards():
     """맥 yard_vendors_sync.py 가 SVMS 조선소 벤더 목록 적재(full-replace)."""
@@ -940,7 +1026,7 @@ def api_ext_dock_yard_shipyards():
     return jsonify({'ok': True, 'count': len(rows)})
 
 
-@app.route('/api/dock_procure/shipyard', methods=['POST'])
+@bp.route('/api/dock_procure/shipyard', methods=['POST'])
 @login_required
 def api_dockproc_set_shipyard():
     """선박의 조선소 벤더 선택 저장(드롭다운) → dock 봉투 DR_CD/VNDR_CD/VNDR_NM 소스."""
@@ -962,7 +1048,7 @@ def api_dockproc_set_shipyard():
     return jsonify({'ok': True, 'vndr_cd': vndr_cd, 'vndr_nm': vndr_nm})
 
 
-@app.route('/api/dock_yard')
+@bp.route('/api/dock_yard')
 @login_required
 def api_dock_yard_lines():
     vsl = request.args.get('vsl_nm')
@@ -970,7 +1056,7 @@ def api_dock_yard_lines():
     return jsonify({'lines': [dict(r) for r in rows]})
 
 
-@app.route('/api/dock_yard/upload', methods=['POST'])
+@bp.route('/api/dock_yard/upload', methods=['POST'])
 @login_required
 def api_dock_yard_upload():
     """조선소 견적 xlsx 업로드 → 7카테고리 파싱 → dock_yard upsert(manual 잠금은 금액 보존)."""
@@ -1073,7 +1159,7 @@ def api_dock_yard_upload():
                     'final_total': final})
 
 
-@app.route('/api/dock_yard/<int:lid>', methods=['PATCH'])
+@bp.route('/api/dock_yard/<int:lid>', methods=['PATCH'])
 @login_required
 def api_dock_yard_patch(lid):
     if not query("SELECT id FROM dock_yard WHERE id=?", (lid,), one=True):
@@ -1110,7 +1196,7 @@ def api_dock_yard_patch(lid):
     return jsonify({'ok': True})
 
 
-@app.route('/api/ext/dock_procure/links')
+@bp.route('/api/ext/dock_procure/links')
 @api_key_required
 def api_ext_dockproc_links():
     """진단/폴러용 — 수동연결(svms_req_no 설정된) dock 행 목록."""
@@ -1124,7 +1210,7 @@ def api_ext_dockproc_links():
     return jsonify({'links': [dict(r) for r in rows]})
 
 
-@app.route('/api/ext/dock_procure/sync', methods=['POST'])
+@bp.route('/api/ext/dock_procure/sync', methods=['POST'])
 @api_key_required
 def api_ext_dockproc_sync():
     """Phase 2 역동기화 — 맥 폴러가 SVMS 수리/구매 목록을 보내면 Status→체크박스 자동전진 + 발주완료시 Vendor→Remark.
@@ -1524,7 +1610,7 @@ def api_ext_dockproc_sync():
 _DOCKATT_MAX_IDX = _DOCKPROC_ATT_MAX - 1
 
 
-@app.route('/api/ext/dock_procure/attachments/pending')
+@bp.route('/api/ext/dock_procure/attachments/pending')
 @api_key_required
 def api_ext_dockproc_att_pending():
     """폴러용 — 목록에는 있는데 preview cache 에 없는 견적서. 이미 받은 건 다시 안 받는다(콜·용량 절약).
@@ -1558,7 +1644,7 @@ def api_ext_dockproc_att_pending():
     return jsonify({'pending': out, 'truncated': False})
 
 
-@app.route('/api/ext/dock_procure/<int:rid>/attachments/<int:idx>', methods=['POST'])
+@bp.route('/api/ext/dock_procure/<int:rid>/attachments/<int:idx>', methods=['POST'])
 @api_key_required
 def api_ext_dockproc_att_upload(rid, idx):
     """맥 폴러가 NAS 에서 받은 견적서 원본을 preview cache 로 적재. body = 파일 바이트 그대로.
@@ -1608,7 +1694,7 @@ def api_ext_dockproc_att_upload(rid, idx):
     return jsonify({'id': rid, 'index': idx, 'fp': fp, 'ext': ext, 'stored': True, 'bytes': len(data)})
 
 
-@app.route('/api/dock_procure/<int:rid>/attachments/<int:idx>')
+@bp.route('/api/dock_procure/<int:rid>/attachments/<int:idx>')
 @login_required
 def api_dockproc_att(rid, idx):
     """견적서 원본 미리보기(읽기전용). `/api/` 경로라 앱 Bearer 도 세션 투명주입으로 그대로 열린다.
@@ -1831,7 +1917,7 @@ def _dock_submit_dismiss(rid=None, vsl_nm=None, force=False, who='web', ids=None
     return done, kept
 
 
-@app.route('/api/dock_submit/app_lines')
+@bp.route('/api/dock_submit/app_lines')
 @login_required
 def api_dock_submit_app_lines():
     """결재라인 드롭다운 소스 — 맥이 밀어준 캐시. 표시 전용(봉투는 워커가 재조회해 만든다)."""
@@ -1847,7 +1933,7 @@ def api_dock_submit_app_lines():
     return jsonify({'lines': out})
 
 
-@app.route('/api/ext/svms/app_lines', methods=['POST'])
+@bp.route('/api/ext/svms/app_lines', methods=['POST'])
 @api_key_required
 def api_ext_svms_app_lines():
     """맥이 SP_GET_USER_APP(+_D) 를 읽어 캐시를 올린다. 읽기 결과 적재라 SVMS write 0.
@@ -1881,7 +1967,7 @@ def api_ext_svms_app_lines():
     return jsonify({'ok': True, 'count': len(keep)})
 
 
-@app.route('/api/dock_submit/drafts')
+@bp.route('/api/dock_submit/drafts')
 @login_required
 def api_dock_submit_list():
     # 🔴 소거된 실패기록은 안 내린다 — 이 한 줄이 웹·iOS 양쪽 배지를 같이 끈다(앱 업데이트 없이도).
@@ -1901,7 +1987,7 @@ def api_dock_submit_list():
     return jsonify({'drafts': [_dock_submit_row_json(r) for r in rows]})
 
 
-@app.route('/api/dock_submit/drafts/dismiss', methods=['POST'])
+@bp.route('/api/dock_submit/drafts/dismiss', methods=['POST'])
 @admin_required
 def api_dock_submit_dismiss():
     """직전 상신 **실패기록**을 화면에서 내린다 — SVMS 는 건드리지 않는다(read/write 0).
@@ -1942,7 +2028,7 @@ def api_dock_submit_dismiss():
                              if kept else '')})
 
 
-@app.route('/api/dock_submit/preview')
+@bp.route('/api/dock_submit/preview')
 @login_required
 def api_dock_submit_preview():
     """컨펌 모달용 초안 요약 — 이 건에 상신 가능한 벤더 후보 + 결재라인. **write 0.**
@@ -2000,7 +2086,7 @@ def api_dock_submit_preview():
                     'subject': row['subject'], 'blocked': blocked, 'candidates': cands})
 
 
-@app.route('/api/dock_submit/drafts', methods=['POST'])
+@bp.route('/api/dock_submit/drafts', methods=['POST'])
 @admin_required
 def api_dock_submit_create():
     """🔴 형이 컨펌 버튼을 누르는 자리 = Phase ③ 의 **유일한 승인 게이트.**
@@ -2081,7 +2167,7 @@ def api_dock_submit_create():
                     'vndr_cd': vndr_cd, 'app_no': app_no, 'dismissed': dismissed}), 201
 
 
-@app.route('/api/dock_submit/drafts/<int:did>/cancel', methods=['POST'])
+@bp.route('/api/dock_submit/drafts/<int:did>/cancel', methods=['POST'])
 @admin_required
 def api_dock_submit_cancel(did):
     """워커가 집어가기 전(approved)만 취소. submitting 이후는 SVMS 에 이미 나갔을 수 있어 못 되돌린다."""
@@ -2096,7 +2182,7 @@ def api_dock_submit_cancel(did):
     return jsonify({'id': did, 'status': 'canceled'})
 
 
-@app.route('/api/dock_submit/drafts/<int:did>/push', methods=['POST'])
+@bp.route('/api/dock_submit/drafts/<int:did>/push', methods=['POST'])
 @admin_required
 def api_dock_submit_push(did):
     """🔴 [지금 전송] — 형이 누른 그 순간에만 1건이 SVMS 로 나간다. **스케줄러 없음.**
@@ -2155,7 +2241,7 @@ def api_dock_submit_push(did):
                     'result': st['result'] if st else None}), (200 if code == 200 else code)
 
 
-@app.route('/api/dock_submit/drafts/decided', methods=['DELETE'])
+@bp.route('/api/dock_submit/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_dock_submit_clear_decided():
     """처리완료 정리 — 진행중(approved/submitting)은 보존."""
@@ -2164,7 +2250,7 @@ def api_dock_submit_clear_decided():
 
 
 # ---- ext (맥 submit_watch) ----
-@app.route('/api/ext/dock_submit/approved')
+@bp.route('/api/ext/dock_submit/approved')
 @api_key_required
 def api_ext_dock_submit_approved():
     """맥 워커가 상신할 approved 건 → CAS claim 으로 submitting 락.
@@ -2213,7 +2299,7 @@ def api_ext_dock_submit_approved():
     return jsonify({'count': len(out), 'drafts': out, 'limit': limit})
 
 
-@app.route('/api/ext/dock_submit/drafts/<int:did>/result', methods=['POST'])
+@bp.route('/api/ext/dock_submit/drafts/<int:did>/result', methods=['POST'])
 @api_key_required
 def api_ext_dock_submit_result(did):
     """상신 결과 — ok=True → submitted, else failed. **판정 근거는 워커의 readback**
@@ -2368,7 +2454,7 @@ def _dock_inq_blocked(row):
     return _dockproc_inq_stage_block(doc, row['svms_status'])
 
 
-@app.route('/api/dock_inquiry/vendor_search', methods=['POST'])
+@bp.route('/api/dock_inquiry/vendor_search', methods=['POST'])
 @admin_required
 def api_dock_inquiry_vendor_search():
     """벤더 검색 — 맥 경유 **read-only**(`PKG_CM_VNDR.SP_GET_VNDR`, SVMS write 0).
@@ -2394,7 +2480,7 @@ def api_dock_inquiry_vendor_search():
                     'truncated': bool((body or {}).get('truncated'))})
 
 
-@app.route('/api/dock_inquiry/drafts')
+@bp.route('/api/dock_inquiry/drafts')
 @login_required
 def api_dock_inquiry_list():
     rows = query('SELECT * FROM dock_inquiry_draft ORDER BY id DESC LIMIT 200')
@@ -2406,7 +2492,7 @@ def api_dock_inquiry_list():
     return jsonify({'drafts': out})
 
 
-@app.route('/api/dock_inquiry/preview')
+@bp.route('/api/dock_inquiry/preview')
 @login_required
 def api_dock_inquiry_preview():
     """컨펌 모달용 요약 — **write 0.** 벤더 목록은 별도 검색 라우트에서 라이브로 받는다."""
@@ -2424,7 +2510,7 @@ def api_dock_inquiry_preview():
                     'max_vendor': _DOCK_INQ_MAX_VNDR, 'blocked': _dock_inq_blocked(row)})
 
 
-@app.route('/api/dock_inquiry/drafts', methods=['POST'])
+@bp.route('/api/dock_inquiry/drafts', methods=['POST'])
 @admin_required
 def api_dock_inquiry_create():
     """🔴 형이 컨펌하는 자리 = 이 단계의 **유일한 승인 게이트.** 여기 만들어진 approved 1행이
@@ -2502,7 +2588,7 @@ def api_dock_inquiry_create():
                     'vndr_cds': cds, 'vndr_names': names}), 201
 
 
-@app.route('/api/dock_inquiry/drafts/<int:did>/cancel', methods=['POST'])
+@bp.route('/api/dock_inquiry/drafts/<int:did>/cancel', methods=['POST'])
 @admin_required
 def api_dock_inquiry_cancel(did):
     rc = execute_rc("UPDATE dock_inquiry_draft SET status='canceled', done_at=datetime('now','localtime'), "
@@ -2516,7 +2602,7 @@ def api_dock_inquiry_cancel(did):
     return jsonify({'id': did, 'status': 'canceled'})
 
 
-@app.route('/api/dock_inquiry/drafts/<int:did>/push', methods=['POST'])
+@bp.route('/api/dock_inquiry/drafts/<int:did>/push', methods=['POST'])
 @admin_required
 def api_dock_inquiry_push(did):
     """🔴 [지금 전송] — 누른 그 순간에만 1건이 SVMS 로 나간다. **스케줄러 없음.**
@@ -2543,7 +2629,7 @@ def api_dock_inquiry_push(did):
                     'result': st['result'] if st else None}), (200 if code == 200 else code)
 
 
-@app.route('/api/dock_inquiry/drafts/decided', methods=['DELETE'])
+@bp.route('/api/dock_inquiry/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_dock_inquiry_clear_decided():
     # 🔴 `recalled` 도 종료상태다(2026-08-03). 안 넣으면 회수로 무효화된 이력이 '완료건 지우기'로
@@ -2556,7 +2642,7 @@ def api_dock_inquiry_clear_decided():
 
 
 # ---- ext (맥 inquiry_watch) ----
-@app.route('/api/ext/dock_inquiry/approved')
+@bp.route('/api/ext/dock_inquiry/approved')
 @api_key_required
 def api_ext_dock_inquiry_approved():
     """맥 워커가 처리할 approved 건 → CAS claim 으로 submitting 락. Phase ③ `/approved` 규약 동일:
@@ -2593,7 +2679,7 @@ def api_ext_dock_inquiry_approved():
     return jsonify({'count': len(out), 'drafts': out, 'limit': limit})
 
 
-@app.route('/api/ext/dock_inquiry/drafts/<int:did>/result', methods=['POST'])
+@bp.route('/api/ext/dock_inquiry/drafts/<int:did>/result', methods=['POST'])
 @api_key_required
 def api_ext_dock_inquiry_result(did):
     """견적요청 결과 — ok=True → submitted, else failed. 판정 근거는 워커의 readback
@@ -2623,13 +2709,13 @@ def api_ext_dock_inquiry_result(did):
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)})
 
 
-@app.route('/automation')
+@bp.route('/automation')
 @admin_required
 def automation_page():
     return render_template('automation.html')
 
 
-@app.route('/api/automation/run', methods=['POST'])
+@bp.route('/api/automation/run', methods=['POST'])
 @admin_required
 def api_automation_run():
     _ensure_api_table()
@@ -2686,7 +2772,7 @@ def api_automation_run():
     return jsonify({'ok': True, 'run_id': rid})
 
 
-@app.route('/api/automation/runs')
+@bp.route('/api/automation/runs')
 @admin_required
 def api_automation_runs():
     rows = query("SELECT run_id,task,mode,status,requested_at,started_at,finished_at,exit_code,summary,progress "
@@ -2708,7 +2794,7 @@ def api_automation_runs():
     })
 
 
-@app.route('/api/automation/runs', methods=['DELETE'])
+@bp.route('/api/automation/runs', methods=['DELETE'])
 @admin_required
 def api_automation_runs_clear():
     """완료/실패 로그만 삭제(진행중 보존). 삭제 행위 자체는 api_settings 에 기록."""
@@ -2721,7 +2807,7 @@ def api_automation_runs_clear():
     return jsonify({'ok': True, 'deleted': n})
 
 
-@app.route('/api/automation/killswitch', methods=['POST'])
+@bp.route('/api/automation/killswitch', methods=['POST'])
 @admin_required
 def api_automation_killswitch():
     _ensure_api_table()
@@ -2733,7 +2819,7 @@ def api_automation_killswitch():
 
 
 # ---- ext (맥미니 launchd 폴링) ----
-@app.route('/api/ext/automation/enqueue', methods=['POST'])
+@bp.route('/api/ext/automation/enqueue', methods=['POST'])
 @api_key_required
 def api_ext_automation_enqueue():
     """무인 스케줄러(launchd)가 task 를 큐에 적재. ⚠️ 안전상 verify(읽기전용)만 허용 —
@@ -2758,7 +2844,7 @@ def api_ext_automation_enqueue():
     return jsonify({'ok': True, 'run_id': rid})
 
 
-@app.route('/api/ext/automation/claim', methods=['POST'])
+@bp.route('/api/ext/automation/claim', methods=['POST'])
 @api_key_required
 def api_ext_automation_claim():
     if not _automation_enabled():
@@ -2797,7 +2883,7 @@ def api_ext_automation_claim():
     return jsonify({'run': {'run_id': row['run_id'], 'task': row['task'], 'mode': row['mode'], 'params': _params}})
 
 
-@app.route('/api/ext/automation/<run_id>/progress', methods=['POST'])
+@bp.route('/api/ext/automation/<run_id>/progress', methods=['POST'])
 @api_key_required
 def api_ext_automation_progress(run_id):
     """러너 중간보고. 화면에서 '굳음'과 '도는중'을 구분하기 위한 표시 전용 필드.
@@ -2812,7 +2898,7 @@ def api_ext_automation_progress(run_id):
     return jsonify({'ok': True})
 
 
-@app.route('/api/ext/automation/<run_id>/done', methods=['POST'])
+@bp.route('/api/ext/automation/<run_id>/done', methods=['POST'])
 @api_key_required
 def api_ext_automation_done(run_id):
     d = request.get_json(silent=True) or {}
@@ -2857,7 +2943,7 @@ def _jeonja_pdf_delete(ref):
     return False
 
 
-@app.route('/api/automation/jeonja/items/<ref>/pdf')
+@bp.route('/api/automation/jeonja/items/<ref>/pdf')
 @admin_required
 def api_automation_jeonja_pdf(ref):
     """Reviewed invoice/DN cache preview. Completed/removed items naturally 404."""
@@ -2874,7 +2960,7 @@ def api_automation_jeonja_pdf(ref):
                      download_name='jeonja_%s.pdf' % safe, conditional=True)
 
 
-@app.route('/api/ext/jeonja/review/<ref>/pdf', methods=['POST'])
+@bp.route('/api/ext/jeonja/review/<ref>/pdf', methods=['POST'])
 @api_key_required
 def api_ext_jeonja_pdf_upload(ref):
     """Review runner uploads only the invoice/DN PDF actually used for judgment."""
@@ -2908,7 +2994,7 @@ def api_ext_jeonja_pdf_upload(ref):
     return jsonify({'ref': safe, 'stored': True, 'bytes': len(data)})
 
 
-@app.route('/api/ext/jeonja/review/<ref>/complete', methods=['POST'])
+@bp.route('/api/ext/jeonja/review/<ref>/complete', methods=['POST'])
 @api_key_required
 def api_ext_jeonja_pdf_complete(ref):
     """Confirmed submission cleanup. Held rows are never deletable through this path."""
@@ -2923,7 +3009,7 @@ def api_ext_jeonja_pdf_complete(ref):
     return jsonify({'ref': safe, 'row_deleted': row_deleted, 'pdf_deleted': pdf_deleted})
 
 
-@app.route('/api/ext/jeonja/review', methods=['POST'])
+@bp.route('/api/ext/jeonja/review', methods=['POST'])
 @api_key_required
 def api_ext_jeonja_review():
     """Store current review set atomically and reset preview cache for fresh upload."""
@@ -2974,7 +3060,7 @@ def api_ext_jeonja_review():
     return jsonify({'ok': True, 'count': n, 'kept_excluded': kept, 'invalid_refs': invalid})
 
 
-@app.route('/api/automation/jeonja/items')
+@bp.route('/api/automation/jeonja/items')
 @admin_required
 def api_automation_jeonja_items():
     """Review checklist plus read-only preview availability."""
@@ -2994,7 +3080,7 @@ def api_automation_jeonja_items():
                     'reviewed_at': rows[0]['reviewed_at'] if rows else None})
 
 
-@app.route('/api/automation/jeonja/exclude', methods=['POST'])
+@bp.route('/api/automation/jeonja/exclude', methods=['POST'])
 @admin_required
 def api_automation_jeonja_exclude():
     """항목별 '자동상신 제외(보류)' 토글. 검증 통과건이어도 excluded=1 이면 live 가 skip."""
@@ -3007,7 +3093,7 @@ def api_automation_jeonja_exclude():
     return jsonify({'ok': bool(rc), 'ref': ref, 'excluded': bool(excluded)})
 
 
-@app.route('/api/ext/jeonja/exclusions')
+@bp.route('/api/ext/jeonja/exclusions')
 @api_key_required
 def api_ext_jeonja_exclusions():
     """맥 live(jeonja_approve) 가 자동상신 직전 호출 — 보류 ref 는 상신에서 제외."""
@@ -3027,13 +3113,13 @@ SHIPWIKI_TIERS = ('pending', 'auto', 'confirmed')
 SHIPWIKI_DECISIONS = ('promote', 'reject', 'split_flag', 'upgrade')
 
 
-@app.route('/shipwiki')
+@bp.route('/shipwiki')
 @admin_required
 def shipwiki_page():
     return render_template('shipwiki.html')
 
 
-@app.route('/api/shipwiki/cards')
+@bp.route('/api/shipwiki/cards')
 @admin_required
 def api_shipwiki_cards():
     """탭 카드 목록 + 선박/tier/상태 통계. 기본 정렬: 미결(open) 우선, tier(pending>auto>confirmed), 신뢰도 낮은 순."""
@@ -3063,7 +3149,7 @@ def api_shipwiki_cards():
                     'enabled': _automation_enabled()})
 
 
-@app.route('/api/shipwiki/cards/<int:cid>/decide', methods=['POST'])
+@bp.route('/api/shipwiki/cards/<int:cid>/decide', methods=['POST'])
 @admin_required
 def api_shipwiki_decide(cid):
     """사람 결정 기록 → card_status='decided'(맥 apply 대기). 자동적재물 확정 = 100% 여기서만."""
@@ -3096,7 +3182,7 @@ def api_shipwiki_decide(cid):
     return jsonify({'id': cid, 'decision': decision, 'card_status': new_status})
 
 
-@app.route('/api/shipwiki/cards/<int:cid>/reset', methods=['POST'])
+@bp.route('/api/shipwiki/cards/<int:cid>/reset', methods=['POST'])
 @admin_required
 def api_shipwiki_reset(cid):
     """결정 취소 → open. 적용완료(applied)/진행중(applying)은 되돌리지 않음(파일 이미 생성)."""
@@ -3111,7 +3197,7 @@ def api_shipwiki_reset(cid):
     return jsonify({'id': cid, 'card_status': 'open'})
 
 
-@app.route('/api/shipwiki/cards/<int:cid>', methods=['DELETE'])
+@bp.route('/api/shipwiki/cards/<int:cid>', methods=['DELETE'])
 @admin_required
 def api_shipwiki_delete(cid):
     """카드 1건 삭제(TRMT 목록만 — 맥 파일엔 무영향). 다음 push 때 다시 적재될 수 있음."""
@@ -3119,7 +3205,7 @@ def api_shipwiki_delete(cid):
     return jsonify({'id': cid, 'deleted': True})
 
 
-@app.route('/api/shipwiki/cards/applied', methods=['DELETE'])
+@bp.route('/api/shipwiki/cards/applied', methods=['DELETE'])
 @admin_required
 def api_shipwiki_clear_applied():
     n = execute_rc("DELETE FROM shipwiki_card WHERE card_status='applied'")

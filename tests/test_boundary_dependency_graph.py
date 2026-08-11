@@ -336,6 +336,23 @@ class BoundaryDependencyGraphTests(unittest.TestCase):
                 f"{filename}: import 없이 참조되는 이름(호출 시점 NameError): {unresolved}",
             )
 
+    def test_endpoint_short_names_are_unique(self):
+        """endpoint 의 마지막 조각(함수명)은 앱 전체에서 유일해야 한다.
+
+        base.html 설명서 JS 는 `request.endpoint.split('.').pop()` 으로 정규화해
+        짧은 키의 manuals 를 조회한다. 서로 다른 Blueprint 에 같은 함수명이
+        생기면 그 정규화가 두 화면을 한 키로 합쳐 버린다 — 여기서 유일성을
+        얼려서 그런 충돌이 리뷰 없이 못 들어오게 한다.
+        """
+        import app as appmod
+        from collections import defaultdict
+
+        shorts = defaultdict(list)
+        for rule in appmod.app.url_map.iter_rules():
+            shorts[rule.endpoint.split(".")[-1]].append(rule.endpoint)
+        dups = {k: sorted(set(v)) for k, v in shorts.items() if len(set(v)) > 1}
+        self.assertEqual({}, dups, f"short endpoint 이름 충돌(JS 설명서 키 오염): {dups}")
+
     def test_recorded_boundary_paths_match_loader(self):
         """app.py 가 reloader 에 넘기는 경로 목록이 실제 로드 목록과 같은지.
 

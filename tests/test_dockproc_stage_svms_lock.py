@@ -26,6 +26,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -134,7 +135,7 @@ chk(A._dockproc_status_rank(None) == 0 and A._dockproc_status_rank('') == 0, 'No
 print('⑦ 낙관적 락 — SELECT 와 UPDATE 사이 sync 가 끼어들면 덮어쓰지 않는다')
 #   게이트를 통과하는 요청(상향)이라도, 그 사이 단계가 바뀌었으면 stale 값으로 쓰면 안 된다.
 lid = mkrow('S8', (1, 0, 0, 0), 'HQ Confirmed')
-_orig_rc = A.execute_rc
+_orig_rc = shared_ns.execute_rc
 
 
 def _racing_rc(sql, params=()):
@@ -145,11 +146,11 @@ def _racing_rc(sql, params=()):
     return _orig_rc(sql, params)
 
 
-A.execute_rc = _racing_rc
+shared_ns.execute_rc = _racing_rc
 try:
     r = post(lid, 'vendor', 1)
 finally:
-    A.execute_rc = _orig_rc
+    shared_ns.execute_rc = _orig_rc
 chk(r.status_code == 409, '스냅샷이 어긋나면 409', f'got {r.status_code}')
 chk(stages_of(lid) == (1, 1, 1, 1), '끼어든 sync 결과가 살아남는다(덮어쓰기 없음)', str(stages_of(lid)))
 

@@ -8,6 +8,7 @@ SVMS 실측 경계: PUNIT_CD 4자까지 허용, 5자부터 거절(코드마스�
 import unittest
 
 import app as appmod
+from source_bundle import shared_ns
 
 
 class ReqGenUnitCodeTests(unittest.TestCase):
@@ -22,16 +23,16 @@ class ReqGenUnitCodeTests(unittest.TestCase):
             'Sheet': 'SHT',
         }
         for raw, code in cases.items():
-            self.assertEqual(appmod._reqgen_unit_cd(raw), code, raw)
+            self.assertEqual(shared_ns._reqgen_unit_cd(raw), code, raw)
 
     def test_blank_is_none_and_unknown_is_kept_verbatim(self):
-        self.assertIsNone(appmod._reqgen_unit_cd(None))
-        self.assertIsNone(appmod._reqgen_unit_cd('   '))
+        self.assertIsNone(shared_ns._reqgen_unit_cd(None))
+        self.assertIsNone(shared_ns._reqgen_unit_cd('   '))
         # 모르는 값을 조용히 4자로 자르면 뜻이 바뀐 단위가 발주까지 흘러간다 → 원문 유지하고 러너가 막는다.
-        self.assertEqual(appmod._reqgen_unit_cd('Nozzle'), 'Nozzle')
+        self.assertEqual(shared_ns._reqgen_unit_cd('Nozzle'), 'Nozzle')
 
     def test_every_mapped_code_fits_svms_limit(self):
-        too_long = sorted({v for v in appmod._REQGEN_UNIT_MAP.values() if len(v) > 4})
+        too_long = sorted({v for v in shared_ns._REQGEN_UNIT_MAP.values() if len(v) > 4})
         self.assertEqual(too_long, [], f'4자 초과 코드는 ORA-06502 유발: {too_long}')
 
 
