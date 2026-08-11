@@ -1,99 +1,50 @@
 """routes_calendar_dock — converted to a real imported module with Blueprint("routes_calendar_dock") on 2026-08-11.
 
 Previously executed in the app namespace by ``_load_extracted_module``.
-Dependencies are now the explicit imports below and nothing else — every
-name comes from ``app`` (whose namespace includes everything
-``helpers_shared.py`` executed into it).  Contract enforced by
+Dependencies are now the explicit imports below and nothing else, and since
+2026-08-12 each import names the module that actually *defines* the symbol
+(``app_core`` for config/db primitives, ``helpers_shared`` for shared helpers,
+``app`` only for what app.py itself defines) instead of routing everything
+through ``app``.  Contract enforced by
 ``test_converted_modules_are_self_contained``: zero unresolved names, and
 no sibling boundary imports.
 """
 from flask import Blueprint
 
-from app import (
-    AOR_PDF_DIR,
-    AUTOMATION_TASKS_BASE,
-    BytesIO,
-    CAL_VALID_COLORS,
-    FUNDREQ_FILE_DIR,
-    GEMINI_API_KEY,
-    HTTPException,
-    INVOICE_PDF_DIR,
-    RETIRED_RUNNER_KEYS,
-    SOA_CATEGORY_OWNER,
-    STT_AUDIO_DIR,
-    STT_AUDIO_EXT,
-    STT_LEASE_SEC,
-    STT_MAX_ATTEMPTS,
-    STT_MAX_BYTES,
-    UPLOAD_DIR,
-    _AOR_ACTIVE_STATUSES,
-    _FUNDREQ_ATT_INLINE,
-    _FUNDREQ_ATT_MAX,
-    _FUNDREQ_ATT_MIME,
-    _HEALTH_ORDER,
-    _NON_STT_UPLOAD_MAX,
-    _annotate_drafts_with_vessel,
-    _aor_absorbing_trigger_sql,
-    _aor_status_list_sql,
-    _automation_enabled,
-    _automation_health_summary,
-    _cls_handle_files,
-    _dock_sync_flag_bump,
-    _dockproc_adopt_svms,
-    _dockproc_subject_from_svms,
-    _ensure_api_table,
-    _ensure_summary_table,
-    _ext_allowed,
-    _fundreq_att_ext,
-    _fundreq_att_sniff_ok,
-    _gemini_call_json,
-    _get_api_key,
-    _issue_write_scope,
-    _match_vessel_by_name,
-    _model_for,
-    _reqgen_build_subj,
-    _reqgen_vsl_prefix,
-    _run_summary_generate,
-    _safe_filename,
-    _soa_group_members,
-    _soa_groups_load,
-    _soa_owner_map,
-    _soa_review_attachment_path,
-    _soa_review_case_unlock,
-    _vetting_pick,
-    _vkey,
-    abort,
-    admin_required,
-    api_key_required,
-    app,
-    datetime,
-    execute,
-    execute_rc,
-    g,
-    get_db,
-    hashlib,
-    hmac,
-    json,
-    jsonify,
-    login_required,
-    make_response,
-    math,
-    mimetypes,
-    os,
-    query,
-    re,
-    render_template,
-    request,
-    secrets,
-    secure_filename,
-    send_file,
-    send_from_directory,
-    session,
-    soa_task_key,
-    sqlite3,
-    timedelta,
-    url_for,
-    uuid,
+import hashlib
+import hmac
+import json
+import math
+import os
+import secrets
+import sqlite3
+import uuid
+from datetime import datetime, timedelta
+from flask import abort, g, jsonify, make_response, render_template, request, send_from_directory, session, url_for
+from werkzeug.exceptions import HTTPException
+from werkzeug.utils import secure_filename
+import mimetypes
+import re
+from flask import send_file
+from io import BytesIO
+from app_core import (
+    AOR_PDF_DIR, FUNDREQ_FILE_DIR, INVOICE_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT,
+    STT_LEASE_SEC, STT_MAX_ATTEMPTS, STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, app,
+    execute, execute_rc, get_db, query,
+)
+from helpers_shared import (
+    AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, RETIRED_RUNNER_KEYS,
+    SOA_CATEGORY_OWNER, _AOR_ACTIVE_STATUSES, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
+    _FUNDREQ_ATT_MIME, _HEALTH_ORDER, _annotate_drafts_with_vessel,
+    _aor_absorbing_trigger_sql, _aor_status_list_sql, _automation_enabled,
+    _automation_health_summary, _cls_handle_files, _dock_sync_flag_bump,
+    _dockproc_adopt_svms, _dockproc_subject_from_svms, _ensure_api_table,
+    _ensure_summary_table, _ext_allowed, _fundreq_att_ext, _fundreq_att_sniff_ok,
+    _gemini_call_json, _get_api_key, _issue_write_scope, _match_vessel_by_name, _model_for,
+    _reqgen_build_subj, _reqgen_vsl_prefix, _run_summary_generate, _safe_filename,
+    _soa_group_members, _soa_groups_load, _soa_owner_map, _soa_review_attachment_path,
+    _soa_review_case_unlock, _vetting_pick, _vkey, admin_required, api_key_required,
+    login_required, soa_task_key,
 )
 
 bp = Blueprint("routes_calendar_dock", __name__)

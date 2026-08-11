@@ -158,7 +158,7 @@ shared_ns._cal_slot_window_ok = lambda slot, now_hour: True
 
 print('\n# 6) 실발송 경로 — 대상·딥링크·중복차단 (APNs 는 스텁, 실제 발송 안 함)')
 # 🔴 개발맥엔 진짜 APNs 키가 있다. 스텁을 안 물리면 이 테스트가 애플로 실제 요청을 쏜다.
-ap = A._push_module()
+ap = shared_ns._push_module()
 assert ap is not None, 'apns_push 모듈 없음'
 calls = []
 ap.load_conf = lambda: {'stub': True}
@@ -224,8 +224,8 @@ j3 = c.post('/api/ext/push/calendar-daily', headers=H, json={'slot': '10', 'dry'
 chk(j3['results'] == [], '비활성 계정 제외', j3['results'])
 
 print('\n# 8) 알림 종류 등록 — 앱 설정화면이 이 목록을 그린다')
-chk('calendar_daily' in A.PUSH_KIND_KEYS, 'calendar_daily 가 PUSH_KINDS 에 있음')
-chk(A._push_dispatch('calendar_daily_x', 'k', 't', 'b')['reason'] == 'unknown_kind',
+chk('calendar_daily' in shared_ns.PUSH_KIND_KEYS, 'calendar_daily 가 PUSH_KINDS 에 있음')
+chk(shared_ns._push_dispatch('calendar_daily_x', 'k', 't', 'b')['reason'] == 'unknown_kind',
     '미등록 종류는 발송 거부')
 
 print()

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 import app as appmod
+from source_bundle import shared_ns  # noqa: E402
 
 
 class AutomationProgressTests(unittest.TestCase):
@@ -24,7 +25,7 @@ class AutomationProgressTests(unittest.TestCase):
         appmod.app.config["DATABASE"] = db
         with appmod.app.app_context():
             appmod.init_db(drop=False)
-            appmod._ensure_api_table()
+            shared_ns._ensure_api_table()
             appmod.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('api_key',?)", ("secret",))
         self.client = appmod.app.test_client()
         with self.client.session_transaction() as sess:

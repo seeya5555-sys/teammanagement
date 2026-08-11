@@ -45,7 +45,7 @@ A.app.app_context().push()
 c = A.app.test_client()
 
 KEY = 'testkey-dockproc-reject'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 
@@ -93,11 +93,11 @@ def mkdraft(rid, rep_cd, status='submitted'):
 
 
 print('# 1) rank 자체 — 반려는 벤더제출(2), 결재진행은 벤더컨펌(3)')
-chk(A._DOCKPROC_STATUS_RANK.get('HQ REJECTED') == 2,
-    "rank('HQ REJECTED') == 2 → 벤더제출 단계", A._DOCKPROC_STATUS_RANK.get('HQ REJECTED'))
-chk(A._DOCKPROC_STATUS_RANK.get('HQ PROGRESSING') == 3,
-    "rank('HQ PROGRESSING') == 3 → 벤더컨펌 단계", A._DOCKPROC_STATUS_RANK.get('HQ PROGRESSING'))
-chk(A._dockproc_status_rank('HQ Rejected') == 2, "대소문자 무관 rank 2", A._dockproc_status_rank('HQ Rejected'))
+chk(shared_ns._DOCKPROC_STATUS_RANK.get('HQ REJECTED') == 2,
+    "rank('HQ REJECTED') == 2 → 벤더제출 단계", shared_ns._DOCKPROC_STATUS_RANK.get('HQ REJECTED'))
+chk(shared_ns._DOCKPROC_STATUS_RANK.get('HQ PROGRESSING') == 3,
+    "rank('HQ PROGRESSING') == 3 → 벤더컨펌 단계", shared_ns._DOCKPROC_STATUS_RANK.get('HQ PROGRESSING'))
+chk(shared_ns._dockproc_status_rank('HQ Rejected') == 2, "대소문자 무관 rank 2", shared_ns._dockproc_status_rank('HQ Rejected'))
 
 print('# 2) 🔴 sync 가 단계를 벤더제출로 되돌린다 (벤더컨펌 켜져 있던 행)')
 rid = mkrow('A2', stages_on=(1, 1, 1, 0), svms_status='HQ Progressing', svms_req_no='TSTVES2608A21')
@@ -183,22 +183,32 @@ chk('sbmRejected' in tpl, '웹 템플릿에 반려 판정 헬퍼 존재')
 chk('dp-sbmtag rej' in tpl, '반려 배지 클래스 사용')
 chk("SBM_REJ_LABELS = ['hq rejected']" in tpl, '웹 판정 = 라벨 allowlist 정확일치', 'allowlist 없음')
 chk('/reject/i' not in tpl, '부분일치 정규식은 제거됨')
+# 🔴 iOS 소스는 **파일 하나가 아니라 DockProcure* 묶음 전체**를 읽는다.
+# 2026-08-11 F9(대형 SwiftUI View 분할)가 DPLineCard·배지를 DockProcureCards/
+# Components/Sheets.swift 로 옮기면서, 파일명을 박아둔 이 검사들이 조용히 눈이 멀어
+# 빨개졌다. 파일 분할은 앞으로도 일어나므로 glob 로 묶어 분할에 면역시킨다.
+def _dp_sources(root):
+    import glob
+    paths = sorted(glob.glob(root + 'DockProcure*.swift'))
+    assert paths, 'DockProcure*.swift 를 못 찾음 — 경로가 바뀌었는지 확인할 것'
+    return '\n'.join(open(p, encoding='utf-8').read() for p in paths)
+
 ios = os.path.expanduser('~/.openclaw/workspace/trmt-mobile/ios/TRMT/Sources/Features/More/')
 vmsrc = open(ios + 'DockProcureViewModel.swift', encoding='utf-8').read()
-vwsrc = open(ios + 'DockProcureView.swift', encoding='utf-8').read()
+vwsrc = _dp_sources(ios)
 chk('rejectedLabels: Set<String> = ["hq rejected"]' in vmsrc, 'iOS 도 같은 allowlist', 'allowlist 없음')
 chk('.contains("reject")' not in vmsrc, 'iOS 부분일치 제거됨')
 chk('submitRejected' in vwsrc and 'rejected: vm.isRejected(line)' in vwsrc,
     'iOS 카드가 vm 판정을 그대로 쓴다(두 화면 어긋남 방지)')
 #   🔴 rank 맵에 있는 reject 라벨이 새로 생기면 화면 allowlist 도 같이 늘려야 한다 — 그걸 여기서 잡는다.
-rank_rej = {k for k in A._DOCKPROC_STATUS_RANK if 'REJECT' in k}
+rank_rej = {k for k in shared_ns._DOCKPROC_STATUS_RANK if 'REJECT' in k}
 chk(rank_rej == {'HQ REJECTED'},
     "서버 rank 맵의 reject 라벨은 'HQ REJECTED' 하나 — 늘었으면 웹/iOS allowlist 도 갱신", rank_rej)
 
 print('# 7-1) 미지/유사 라벨은 반려로 보지 않는다 (rank 도 0 이라 단계를 안 건드림)')
 for lab in ('Rejected', 'HQ Reject', 'Approval Rejected', 'VSL Rejected'):
-    chk(A._dockproc_status_rank(lab) != 2,
-        f"'{lab}' 은 rank 2 가 아니다 → 화면도 반려라고 말하면 안 됨", A._dockproc_status_rank(lab))
+    chk(shared_ns._dockproc_status_rank(lab) != 2,
+        f"'{lab}' 은 rank 2 가 아니다 → 화면도 반려라고 말하면 안 됨", shared_ns._dockproc_status_rank(lab))
 
 print()
 print(('❌ FAIL: ' + ', '.join(fails)) if fails else '✅ 전부 통과')

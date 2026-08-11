@@ -1,61 +1,35 @@
 """routes_core — converted to a real imported module with Blueprint("routes_core") on 2026-08-11.
 
 Previously executed in the app namespace by ``_load_extracted_module``.
-Dependencies are now the explicit imports below and nothing else — every
-name comes from ``app`` (whose namespace includes everything
-``helpers_shared.py`` executed into it).  Contract enforced by
+Dependencies are now the explicit imports below and nothing else, and since
+2026-08-12 each import names the module that actually *defines* the symbol
+(``app_core`` for config/db primitives, ``helpers_shared`` for shared helpers,
+``app`` only for what app.py itself defines) instead of routing everything
+through ``app``.  Contract enforced by
 ``test_converted_modules_are_self_contained``: zero unresolved names, and
 no sibling boundary imports.
 """
 from flask import Blueprint
 
+import json
+import os
+import re
+from datetime import date, timedelta
+from flask import abort, g, jsonify, make_response, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
+from datetime import datetime
+from app_core import (
+    INSTANCE_DIR, SOA_REVIEW_PDF_DIR, UPLOAD_DIR, app, execute, execute_rc, get_db, query,
+)
 from app import (
-    INSTANCE_DIR,
-    SOA_REVIEW_PDF_DIR,
-    UPLOAD_DIR,
-    VETTING_TYPES,
-    _DUMMY_PW_HASH,
-    _TOKEN_MAXAGE,
-    _automation_health_summary,
-    _dashboard_ctx,
-    _ensure_summary_table,
-    _fleet_visible_auto_vessels,
-    _issue_to_dict,
-    _issue_token,
-    _issue_write_scope,
-    _run_summary_generate,
-    _safe_filename,
-    _soa_review_attachment_path,
-    _token_note_fail,
-    _token_rate_limited,
+    _DUMMY_PW_HASH, _TOKEN_MAXAGE, _issue_token, _token_note_fail, _token_rate_limited,
     _token_reset_fails,
-    _translate_rows_en,
-    _vetting_pick,
-    _vkey,
-    abort,
-    admin_required,
-    app,
-    check_password_hash,
-    date,
-    datetime,
-    execute,
-    execute_rc,
-    g,
-    generate_password_hash,
-    get_db,
-    json,
-    jsonify,
-    login_required,
-    make_response,
-    os,
-    query,
-    re,
-    redirect,
-    render_template,
-    request,
-    session,
-    timedelta,
-    url_for,
+)
+from helpers_shared import (
+    VETTING_TYPES, _automation_health_summary, _dashboard_ctx, _ensure_summary_table,
+    _fleet_visible_auto_vessels, _issue_to_dict, _issue_write_scope, _run_summary_generate,
+    _safe_filename, _soa_review_attachment_path, _translate_rows_en, _vetting_pick, _vkey,
+    admin_required, login_required,
 )
 
 bp = Blueprint("routes_core", __name__)

@@ -127,10 +127,10 @@ r = post(lid, 'vendor', 0)
 chk(r.status_code == 409, '그 아래로는 막힌다', f'got {r.status_code}')
 
 print('⑥ 미지·대소문자·공백 라벨의 rank 판정')
-chk(A._dockproc_status_rank('ordered') == 4, '소문자도 rank4 (upper 정규화)')
-chk(A._dockproc_status_rank('  Ordered  ') == 4, '앞뒤 공백도 rank4 (strip)')
-chk(A._dockproc_status_rank('Ordreed') == 0, '오탈자 라벨은 rank0 = fail-open')
-chk(A._dockproc_status_rank(None) == 0 and A._dockproc_status_rank('') == 0, 'None/빈값은 rank0')
+chk(shared_ns._dockproc_status_rank('ordered') == 4, '소문자도 rank4 (upper 정규화)')
+chk(shared_ns._dockproc_status_rank('  Ordered  ') == 4, '앞뒤 공백도 rank4 (strip)')
+chk(shared_ns._dockproc_status_rank('Ordreed') == 0, '오탈자 라벨은 rank0 = fail-open')
+chk(shared_ns._dockproc_status_rank(None) == 0 and shared_ns._dockproc_status_rank('') == 0, 'None/빈값은 rank0')
 
 print('⑦ 낙관적 락 — SELECT 와 UPDATE 사이 sync 가 끼어들면 덮어쓰지 않는다')
 #   게이트를 통과하는 요청(상향)이라도, 그 사이 단계가 바뀌었으면 stale 값으로 쓰면 안 된다.

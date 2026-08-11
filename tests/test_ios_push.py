@@ -45,7 +45,7 @@ A.app.app_context().push()
 c = A.app.test_client()
 
 KEY = 'testkey-ios-push'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 
@@ -103,17 +103,17 @@ print('# 1) 키 미설정 — 정직하게 실패하고 원장을 더럽히지 �
 shared_ns._push_module = lambda: type('X', (), {
     'load_conf': staticmethod(lambda: (_ for _ in ()).throw(RuntimeError('no key'))),
     'configured': staticmethod(lambda: False)})()
-r = A._push_dispatch('test', 'ek-noconf', 'T', 'B')
+r = shared_ns._push_dispatch('test', 'ek-noconf', 'T', 'B')
 chk(r['ok'] is False and r['reason'] == 'not_configured', '미설정은 not_configured', r)
 chk(logrow('ek-noconf') is None, '미설정이면 push_log claim 안 함')
 
 use_missing()
-r = A._push_dispatch('test', 'ek-nomod', 'T', 'B')
+r = shared_ns._push_dispatch('test', 'ek-nomod', 'T', 'B')
 chk(r['ok'] is False and r['reason'] == 'module_missing', '모듈 없으면 module_missing', r)
 
 print('# 2) 등록된 종류만 허용')
 use_stub()
-r = A._push_dispatch('nope_kind', 'ek-badkind', 'T', 'B')
+r = shared_ns._push_dispatch('nope_kind', 'ek-badkind', 'T', 'B')
 chk(r['ok'] is False and r['reason'] == 'unknown_kind', '미등록 kind 거부', r)
 
 print('# 3) 디바이스 등록 — 검증 · upsert')
@@ -132,8 +132,8 @@ chk(A.query("SELECT env FROM ios_device WHERE token=?", (TOK,), one=True)['env']
 
 print('# 4) dedup — 같은 event_key 는 1회만')
 stub.result = (True, 200, '')
-r1 = A._push_dispatch('test', 'ek-dup', 'T', 'B', user_ids=[UID])
-r2 = A._push_dispatch('test', 'ek-dup', 'T', 'B', user_ids=[UID])
+r1 = shared_ns._push_dispatch('test', 'ek-dup', 'T', 'B', user_ids=[UID])
+r2 = shared_ns._push_dispatch('test', 'ek-dup', 'T', 'B', user_ids=[UID])
 chk(r1['ok'] and r1['sent'] == 1, '1회차 발송 1건', r1)
 chk(r2['ok'] and r2.get('dup') and r2['sent'] == 0, '2회차는 dup·발송 0', r2)
 chk(A.query("SELECT COUNT(*) n FROM push_log WHERE event_key='ek-dup'", one=True)['n'] == 1,
@@ -141,23 +141,23 @@ chk(A.query("SELECT COUNT(*) n FROM push_log WHERE event_key='ek-dup'", one=True
 
 print('# 5) 🔴 전부 실패 → claim 해제(재시도 가능)')
 stub.result = (False, 503, 'ServiceUnavailable')
-r = A._push_dispatch('test', 'ek-fail', 'T', 'B', user_ids=[UID])
+r = shared_ns._push_dispatch('test', 'ek-fail', 'T', 'B', user_ids=[UID])
 chk(r['ok'] is False and r['reason'] == 'all_failed', '전부 실패는 ok=False', r)
 chk(logrow('ek-fail') is None, 'claim 이 풀려 다음 폴링에 재시도 가능')
 stub.result = (True, 200, '')
-r = A._push_dispatch('test', 'ek-fail', 'T', 'B', user_ids=[UID])
+r = shared_ns._push_dispatch('test', 'ek-fail', 'T', 'B', user_ids=[UID])
 chk(r['ok'] and r['sent'] == 1, '같은 event_key 로 재시도하면 이번엔 발송됨', r)
 chk(A.query("SELECT active FROM ios_device WHERE token=?", (TOK,), one=True)['active'] == 1,
     '일시 실패(503)로는 디바이스를 끄지 않음')
 
 print('# 6) 디바이스 0대 → claim 유지(과거 이벤트 폭주 방지)')
-r = A._push_dispatch('test', 'ek-nodev', 'T', 'B', user_ids=[999999])
+r = shared_ns._push_dispatch('test', 'ek-nodev', 'T', 'B', user_ids=[999999])
 chk(r['ok'] and r['sent'] == 0 and r.get('devices') == 0, '대상 0대면 발송 0·ok', r)
 chk(logrow('ek-nodev') is not None, '대상 0대면 claim 유지')
 
 print('# 7) 영구 사망 사유만 디바이스 비활성')
 stub.result = (False, 410, 'Unregistered')
-A._push_dispatch('test', 'ek-dead', 'T', 'B', user_ids=[UID])
+shared_ns._push_dispatch('test', 'ek-dead', 'T', 'B', user_ids=[UID])
 chk(A.query("SELECT active, dead_reason FROM ios_device WHERE token=?", (TOK,), one=True)['active'] == 0,
     '410 Unregistered → 비활성')
 c.post('/api/ios/device', json={'token': TOK, 'env': 'production'})
@@ -170,13 +170,13 @@ r = c.get('/api/ios/notify-prefs')
 j = r.get_json()
 chk(r.status_code == 200 and j['configured'] is True, 'prefs 조회 200 + configured', j)
 chk(all(k['enabled'] for k in j['kinds']), '기본은 전부 on')
-chk({k['key'] for k in j['kinds']} == A.PUSH_KIND_KEYS, '종류 목록이 서버 레지스트리와 일치')
+chk({k['key'] for k in j['kinds']} == shared_ns.PUSH_KIND_KEYS, '종류 목록이 서버 레지스트리와 일치')
 r = c.put('/api/ios/notify-prefs', json={'prefs': {'test': False, 'bogus': True}})
 chk(r.status_code == 200 and r.get_json()['prefs'] == {'test': 0}, '미등록 키는 버림', r.get_json())
 before = len(stub.calls)
-r = A._push_dispatch('test', 'ek-off', 'T', 'B', user_ids=[UID])
+r = shared_ns._push_dispatch('test', 'ek-off', 'T', 'B', user_ids=[UID])
 chk(r['ok'] and r['sent'] == 0 and len(stub.calls) == before, '끈 종류는 발송 안 함', r)
-r = A._push_dispatch('dock_ordered', 'ek-on', 'T', 'B', user_ids=[UID])
+r = shared_ns._push_dispatch('dock_ordered', 'ek-on', 'T', 'B', user_ids=[UID])
 chk(r['ok'] and r['sent'] == 1, '안 끈 종류는 정상 발송', r)
 
 print('# 9) /api/ext/push — 자동화 창구')
@@ -255,11 +255,11 @@ CAPTOKS = [('c' * 64, '2026-08-06 10:00:00', '{"dock_quote": 0}'),
 for t, upd, pr in CAPTOKS:
     A.execute("INSERT INTO ios_device (token, user_id, env, active, prefs, updated_at) "
               "VALUES (?,?,'production',1,?,?)", (t, UID, pr, upd))
-rows = A._push_devices([UID], kind='dock_quote')
+rows = shared_ns._push_devices([UID], kind='dock_quote')
 toks = [r['token'] for r in rows]
 chk(toks == ['e' * 64], '켜둔 기기가 cap 밖으로 밀려나지 않음(LIMIT 먼저 자르면 0건)', toks)
-chk(len(A._push_devices([UID], kind='test')) == 2, 'cap 자체는 여전히 적용됨',
-    len(A._push_devices([UID], kind='test')))
+chk(len(shared_ns._push_devices([UID], kind='test')) == 2, 'cap 자체는 여전히 적용됨',
+    len(shared_ns._push_devices([UID], kind='test')))
 shared_ns._PUSH_DEVICE_CAP = _cap
 A.execute("DELETE FROM ios_device WHERE token IN (?,?,?)", tuple(t for t, _u, _p in CAPTOKS))
 

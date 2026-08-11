@@ -42,14 +42,14 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "next_port": {"name": "ALGER (ALGIERS), ALGERIA", "cd": "DZALG", "xy": [40.7, -83.8333]},
             "route_legs": [[[1.0, 2.0], [40.7, -83.8333]]],
         }
-        appmod._fleet_apply_code_first_next_port(vessel)
+        shared_ns._fleet_apply_code_first_next_port(vessel)
         self.assertEqual(vessel["next_port"]["name"], "ALGER (ALGIERS), ALGERIA")
         self.assertEqual(vessel["next_port"]["xy"], [36.75, 3.05])
         self.assertEqual(vessel["route_legs"], [[[1.0, 2.0], [36.75, 3.05]]])
 
     def test_code_extraction_skips_malformed_candidate(self):
         vessel = {"next_port": {"cd": "not a code", "code": "DZALG"}}
-        self.assertEqual(appmod._fleet_extract_next_port_code(vessel), "DZALG")
+        self.assertEqual(shared_ns._fleet_extract_next_port_code(vessel), "DZALG")
 
     def test_code_first_builds_direct_route_when_route_legs_empty(self):
         vessel = {
@@ -59,7 +59,7 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "next_port": {"name": "Algiers", "cd": "DZALG", "xy": [40.7, -83.8333]},
             "route_legs": [],
         }
-        appmod._fleet_apply_code_first_next_port(vessel)
+        shared_ns._fleet_apply_code_first_next_port(vessel)
         self.assertEqual(vessel["route_legs"], [[[1.0, 2.0], [36.75, 3.05]]])
 
     def test_code_first_preserves_route_detail_and_replaces_terminal_point(self):
@@ -70,12 +70,12 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             "next_port": {"name": "Algiers", "cd": "DZALG", "xy": [40.7, -83.8333]},
             "route_legs": [[[1.0, 2.0], [4.0, 5.0], [40.7, -83.8333]]],
         }
-        appmod._fleet_apply_code_first_next_port(vessel)
+        shared_ns._fleet_apply_code_first_next_port(vessel)
         self.assertEqual(vessel["route_legs"], [[[1.0, 2.0], [4.0, 5.0], [36.75, 3.05]]])
 
     def test_esalg_and_algeciras_manual_resolution_use_packaged_catalog(self):
         missing = os.path.join(self.tmp.name, "missing")
-        pkg = appmod.FLEET_MAP_PACKAGED_DIR
+        pkg = shared_ns.FLEET_MAP_PACKAGED_DIR
         shared_ns.FLEET_LOCODE_FILES = (os.path.join(pkg, "locode.json"), os.path.join(missing, "locode.json"))
         shared_ns.FLEET_LOCODE_NAME_FILES = (os.path.join(pkg, "locode_name.json"), os.path.join(missing, "locode_name.json"))
         shared_ns.FLEET_COUNTRY_MAP_FILES = (os.path.join(pkg, "country_map.json"), os.path.join(missing, "country_map.json"))
@@ -114,7 +114,7 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         shared_ns.FLEET_COUNTRY_MAP_FILES = (country_file,)
         shared_ns.FLEET_LOCODE_LABEL_FILES = (label_file,)
         shared_ns._fleet_port_catalog_cache = None
-        cat = appmod._fleet_port_catalog()
+        cat = shared_ns._fleet_port_catalog()
         self.assertNotIn("XXNAN", cat["locodes"])
         self.assertNotIn("XXINF", cat["locodes"])
         self.assertNotIn("XXBAD", cat["locodes"])
@@ -249,7 +249,7 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         self.assertNotIn("manual", vessel["next_port"])
 
     def test_external_push_route_invalidates_active_override(self):
-        appmod._ensure_api_table()
+        shared_ns._ensure_api_table()
         appmod.execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)", ("secret",))
         shared_ns._ensure_fleet_next_port_override_table()
         appmod.execute(

@@ -27,6 +27,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns  # noqa: E402
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -56,7 +57,7 @@ def mkrow(req_no, cat_code, prepared_by):
         "INSERT INTO dock_procure(vsl_nm, vsl_cd, req_no, cat_code, subject, prepared_by, source) "
         "VALUES('TEST VESSEL','TSTV',?,?,?,?,?)",
         (req_no, cat_code, f'[DOCK][TSTV {req_no}]subject', prepared_by,
-         A._dockproc_source(cat_code, prepared_by)))
+         shared_ns._dockproc_source(cat_code, prepared_by)))
     return A.query("SELECT * FROM dock_procure WHERE req_no=? AND vsl_nm='TEST VESSEL'",
                    (req_no,), one=True)['id']
 
@@ -126,13 +127,23 @@ chk(".querySelectorAll('.dp-prep')" in tpl, '웹 태그 클릭 토글 유지')
 
 #   ⚠️ iOS 정본은 이 repo 밖(ws repo)에 있다 — 다른 머신엔 없을 수 있어 없으면 크게 SKIP 을 찍고
 #      웹 검사만 한다. 있는데 내용이 틀리면 정상적으로 FAIL 한다(조용히 통과시키지 않는다).
+# 🔴 iOS 소스는 **파일 하나가 아니라 DockProcure* 묶음 전체**를 읽는다.
+# 2026-08-11 F9(대형 SwiftUI View 분할)가 DPLineCard·배지를 DockProcureCards/
+# Components/Sheets.swift 로 옮기면서, 파일명을 박아둔 이 검사들이 조용히 눈이 멀어
+# 빨개졌다. 파일 분할은 앞으로도 일어나므로 glob 로 묶어 분할에 면역시킨다.
+def _dp_sources(root):
+    import glob
+    paths = sorted(glob.glob(root + 'DockProcure*.swift'))
+    assert paths, 'DockProcure*.swift 를 못 찾음 — 경로가 바뀌었는지 확인할 것'
+    return '\n'.join(open(p, encoding='utf-8').read() for p in paths)
+
 ios = os.path.expanduser('~/.openclaw/workspace/trmt-mobile/ios/TRMT/Sources/Features/More/')
 if not os.path.isdir(ios):
     print('  ⚠️ SKIP — iOS 소스 경로 없음(%s). 이 머신에선 웹 계약만 검사함.' % ios)
     print()
     print(('❌ FAIL: ' + ', '.join(fails)) if fails else '✅ 전부 통과(iOS 검사 SKIP)')
     sys.exit(1 if fails else 0)
-vwsrc = open(ios + 'DockProcureView.swift', encoding='utf-8').read()
+vwsrc = _dp_sources(ios)
 chk('struct DPPrepBadge' in vwsrc, 'iOS 발주주체 배지 컴포넌트 존재')
 #   🔴 미지값을 초록(OWNER 색)으로 칠하면 이상 데이터가 정상처럼 보인다 — 회색 폴백을 고정한다.
 chk('default:        return (Theme.surface3, Theme.textSecondary, Theme.borderSubtle)' in vwsrc,

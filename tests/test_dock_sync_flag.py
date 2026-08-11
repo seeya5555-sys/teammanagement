@@ -43,7 +43,7 @@ A.app.app_context().push()
 c = A.app.test_client()
 
 KEY = 'testkey-dock-sync-flag'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 shared_ns.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 

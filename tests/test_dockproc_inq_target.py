@@ -54,7 +54,7 @@ def row(cat, rep=None, pc=None):
     return A.query("SELECT * FROM dock_procure WHERE vsl_nm='TEST VESSEL'", one=True)
 
 
-T = A._dockproc_inq_target
+T = shared_ns._dockproc_inq_target
 
 print('# 1) 수리(R) — 키는 svms_req_no(REP_CD)')
 chk(T(row('R', rep='BGBBME26073116')) == ('MARP', 'BGBBME26073116'), 'R → MARP + REP_CD')
@@ -110,7 +110,7 @@ print('# 9) 단계 라벨 게이트 `_dockproc_inq_stage_block()` — 버튼 회
 # 아님(STATUS=N / VSL Approved)". 버튼이 멀쩡히 파랬기 때문에 누를 수밖에 없었다.
 # 🔴 정본은 워커 pre-read 다. 이 게이트는 그 거부를 **미리 화면에 비추는** 표시층이라,
 #    확실히 아닌 라벨만 닫고 모르는 라벨은 연다(반대로 하면 가능한 건이 영구히 막힌다).
-S = A._dockproc_inq_stage_block
+S = shared_ns._dockproc_inq_stage_block
 # 🔴 2026-08-03 형 요청("컨펌 버튼 누르는 기능까지 포함")으로 **이 판정이 뒤집혔다.**
 #    어제는 "구매 VSL Approved → 회색"이 정답이었고 그렇게 못박아 뒀지만, 이제 워커가 견적요청
 #    직전에 SVMS Confirm(`SP_SET_REQ_INFO`+STATUS='C', 화면 `fnConfirm` verbatim)을 대신 누른다.

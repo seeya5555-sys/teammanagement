@@ -36,67 +36,13 @@ from werkzeug.exceptions import HTTPException
 import hmac, hashlib
 from itsdangerous import URLSafeTimedSerializer, BadData
 
-# ═════════════════════════════════════════════════════════════════
-#  Config
-# ═════════════════════════════════════════════════════════════════
-BASE_DIR     = os.path.abspath(os.path.dirname(__file__))
-INSTANCE_DIR = os.path.join(BASE_DIR, 'instance')
-UPLOAD_DIR   = os.path.join(BASE_DIR, 'static', 'uploads')
-INVOICE_PDF_DIR = os.path.join(INSTANCE_DIR, 'invoice_pdfs')  # 인보이스 미리보기 PDF(컨펌/리젝 시 자동삭제)
-JEONJA_PDF_DIR = os.path.join(INSTANCE_DIR, 'jeonja_pdfs')    # 전자결재 검토 invoice/DN 미리보기 cache
-AOR_PDF_DIR = os.path.join(INSTANCE_DIR, 'aor_pdfs')          # AOR 첨부 견적서 preview cache
-FUNDREQ_FILE_DIR = os.path.join(INSTANCE_DIR, 'fundreq_files')  # 비용청구 SVMS 첨부(인보이스·증빙) preview cache
-SOA_REVIEW_PDF_DIR = os.path.join(INSTANCE_DIR, 'soa_review_pdfs')  # SOA 수동검토 첨부 PDF cache
-DOCKATT_FILE_DIR = os.path.join(INSTANCE_DIR, 'dockproc_files')  # Dock 발주현황 벤더 견적서(SVMS MAOE) preview cache
-STT_AUDIO_DIR = os.path.join(INSTANCE_DIR, 'stt_audio')       # 회의록 STT 원본 오디오 cache
-os.makedirs(INSTANCE_DIR, exist_ok=True)
-os.makedirs(UPLOAD_DIR,   exist_ok=True)
-os.makedirs(INVOICE_PDF_DIR, exist_ok=True)
-os.makedirs(JEONJA_PDF_DIR, exist_ok=True)
-os.makedirs(AOR_PDF_DIR, exist_ok=True)
-os.makedirs(FUNDREQ_FILE_DIR, exist_ok=True)
-os.makedirs(SOA_REVIEW_PDF_DIR, exist_ok=True)
-os.makedirs(DOCKATT_FILE_DIR, exist_ok=True)
-os.makedirs(STT_AUDIO_DIR, exist_ok=True)
-# 회의록 STT Phase 0a 상수
-STT_AUDIO_EXT = {'m4a', 'wav', 'mp3', 'aac', 'caf', 'webm', 'ogg', 'mp4', 'aiff', 'flac'}
-STT_MAX_BYTES = 200 * 1024 * 1024   # 200MB 상한
-STT_LEASE_SEC = 1800                # processing lease 30분 — 초과 시 stale로 재큐(whisper turbo 실시간 10-30x)
-STT_MAX_ATTEMPTS = 5                # 재시도 상한 — 초과 시 error 확정
-
-DATABASE        = os.path.join(INSTANCE_DIR, 'trmt.db')
-SCHEMA_FILE     = os.path.join(BASE_DIR, 'schema.sql')
-SEED_FILE       = os.path.join(BASE_DIR, 'seed.sql')
-SECRET_KEY_FILE = os.path.join(INSTANCE_DIR, '.secret_key')
-
-ALLOWED_EXT = {
-    'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp',
-    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'msg'
-}
-
-def _load_or_create_secret_key():
-    if os.path.exists(SECRET_KEY_FILE):
-        with open(SECRET_KEY_FILE, 'rb') as f:
-            return f.read()
-    key = secrets.token_bytes(32)
-    with open(SECRET_KEY_FILE, 'wb') as f:
-        f.write(key)
-    return key
-
-app = Flask(__name__)
-app.config.update(
-    SECRET_KEY=_load_or_create_secret_key(),
-    DATABASE=DATABASE,
-    UPLOAD_FOLDER=UPLOAD_DIR,
-    MAX_CONTENT_LENGTH=STT_MAX_BYTES + (1 << 20),  # 상한=회의록 오디오 200MB. 그 외 업로드는 before_request서 20MB로 조임
-    PERMANENT_SESSION_LIFETIME=timedelta(days=7),
-    JSON_AS_ASCII=False,
-    SESSION_COOKIE_SAMESITE='Lax',
-    SEND_FILE_MAX_AGE_DEFAULT=0,                   # static(css/js) 매번 재검증 — 모바일 캐시 stale 방지
+from app_core import (
+    ALLOWED_EXT, AOR_PDF_DIR, BASE_DIR, DATABASE, DOCKATT_FILE_DIR, FUNDREQ_FILE_DIR,
+    INSTANCE_DIR, INVOICE_PDF_DIR, JEONJA_PDF_DIR, SCHEMA_FILE, SECRET_KEY_FILE, SEED_FILE,
+    SOA_REVIEW_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT, STT_LEASE_SEC, STT_MAX_ATTEMPTS,
+    STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, _SOA_REVIEW_SNAPSHOT_MAX,
+    _load_or_create_secret_key, app, close_db, execute, execute_rc, get_db, query,
 )
-
-_NON_STT_UPLOAD_MAX = 20 * 1024 * 1024             # 회의록 외 업로드(사진·엑셀 등) 상한 20MB
-_SOA_REVIEW_SNAPSHOT_MAX = 100 * 1024 * 1024        # API-key Mac runner가 예외 인보이스 PDF 묶음을 동기화
 
 
 @app.before_request
@@ -201,54 +147,6 @@ def _add_static_version(endpoint, values):
             app.logger.debug('add-static-version: static mtime miss', exc_info=True)
 
 
-# ═════════════════════════════════════════════════════════════════
-#  DB helpers
-# ═════════════════════════════════════════════════════════════════
-def get_db():
-    if 'db' not in g:
-        g.db = sqlite3.connect(app.config['DATABASE'])
-        g.db.row_factory = sqlite3.Row
-        g.db.execute('PRAGMA foreign_keys = ON')
-        # 동시성: WAL 은 읽기/쓰기가 서로 안 막음. busy_timeout 으로 잠금 대기 재시도.
-        g.db.execute('PRAGMA journal_mode = WAL')
-        g.db.execute('PRAGMA busy_timeout = 5000')
-        g.db.execute('PRAGMA synchronous = NORMAL')
-    return g.db
-
-@app.teardown_appcontext
-def close_db(e=None):
-    db = g.pop('db', None)
-    if db is not None:
-        db.close()
-
-def query(sql, params=(), one=False):
-    cur = get_db().execute(sql, params)
-    rows = cur.fetchall()
-    cur.close()
-    return (rows[0] if rows else None) if one else rows
-
-def execute(sql, params=()):
-    db = get_db()
-    cur = db.execute(sql, params)
-    # 선박 purge는 여러 DELETE를 하나의 명시 transaction으로 묶는다.
-    # 그 밖의 기존 호출은 기존처럼 즉시 commit한다.
-    if not (getattr(g, '_vessel_purge_transaction', False)
-            or getattr(g, '_reqgen_result_transaction', False)):
-        db.commit()
-    last_id = cur.lastrowid
-    cur.close()
-    return last_id
-
-
-def execute_rc(sql, params=()):
-    """UPDATE/DELETE 영향 행수 반환 — 조건부(낙관적 락) 갱신 race 판정용."""
-    db = get_db()
-    cur = db.execute(sql, params)
-    if not getattr(g, '_reqgen_result_transaction', False):
-        db.commit()
-    rc = cur.rowcount
-    cur.close()
-    return rc
 
 def init_db(drop=False):
     """schema + seed 실행, 기본 admin 계정 자동 생성.
@@ -1496,28 +1394,23 @@ def _idem_mark_unknown(exc=None):
 # ═════════════════════════════════════════════════════════════════
 #  Extracted implementation boundaries
 # ═════════════════════════════════════════════════════════════════
-EXTRACTED_BOUNDARY_PATHS = []
-
-
-def _load_extracted_module(filename):
-    """Load a boundary in the application namespace.
-
-    This keeps the historical ``import app`` and WSGI surface intact while
-    letting route/helper implementations live in focused files.  Decorators
-    therefore register on this same Flask app and existing helper aliases stay
-    available to callers.
-
-    The loaded path is recorded because these files never enter ``sys.modules``:
-    the development reloader watches imported modules only, so without an
-    explicit ``extra_files`` list an edit to a boundary would not restart the
-    dev server ("fixed it but nothing changed").  Production runs under gunicorn
-    and is unaffected either way.
-    """
-    _path = os.path.join(BASE_DIR, filename)
-    EXTRACTED_BOUNDARY_PATHS.append(_path)
-    with open(_path, encoding='utf-8') as _source:
-        exec(compile(_source.read(), _path, 'exec'), globals(), globals())
-_load_extracted_module("helpers_shared.py")
+# helpers_shared is a real imported module since 2026-08-12; the ``exec`` loader
+# that used to run it inside this namespace is gone.  It could only exist because
+# the two files needed each other: see ``app_core.py`` for how lowering the
+# borrowed primitives removed that cycle.
+#
+# The consequence worth keeping in mind: the import list below is now the *only*
+# statement of what this file needs from the helpers, and a typo in it fails at
+# import time instead of surfacing as a NameError mid-request.
+#
+# Nothing here is exec'd any more, so the development reloader watches every
+# boundary on its own — the old ``extra_files`` bookkeeping was deleted with the
+# loader rather than left behind as an empty list that looks meaningful.
+import helpers_shared
+from helpers_shared import (
+    _AOR_ACTIVE_STATUSES, _API_TABLE_READY, _aor_absorbing_trigger_install,
+    _aor_active_index_install, _aor_status_list_sql,
+)
 # The five route boundaries are real imported modules since 2026-08-11.  Their
 # `from app import ...` works because these lines run after helpers_shared and
 # every app.py primitive they need is already bound.
@@ -1926,7 +1819,7 @@ if __name__ == '__main__':
     # 기본 off. 로컬 개발 시 TRMT_DEBUG=1 로 실행.
     debug = os.environ.get('TRMT_DEBUG') == '1'
     # threaded: 요청을 스레드로 병렬 처리(개발서버 단일요청 병목 해소, 임시 조치).
-    # extra_files: 추출 경계는 sys.modules 에 없어 reloader 기본 감시 대상이 아니다.
-    # debug=False 면 reloader 자체가 안 돌아 이 인자는 무해하다.
-    app.run(host='0.0.0.0', port=5000, debug=debug, threaded=True,
-            extra_files=EXTRACTED_BOUNDARY_PATHS)
+    # extra_files 는 더 필요 없다 — 모든 경계가 진짜 모듈이라 sys.modules 에 들어가고
+    # reloader 가 기본으로 감시한다. exec 경계가 다시 생기면 그때 이 인자도 같이 살아나야
+    # 하는데, 그런 일이 없도록 test_boundary_dependency_graph 가 exec 경계 0 을 고정한다.
+    app.run(host='0.0.0.0', port=5000, debug=debug, threaded=True)

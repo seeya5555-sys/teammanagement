@@ -17,6 +17,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns  # noqa: E402
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -36,7 +37,7 @@ A.app.app_context().push()
 c = A.app.test_client()
 
 KEY = 'testkey-dockproc-evidence'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 
@@ -71,15 +72,15 @@ def stages(req_no):
     return (row['stg_quote'], row['stg_vendor'], row['stg_confirm'], row['stg_order']), row['quote_amt'], row['quote_src']
 
 print('# 1) 상태맵 — Submit/결재진행은 벤더컨펌(3), 실발주만 4')
-chk(A._dockproc_status_rank('Submit') == 3, "rank('Submit') == 3", A._dockproc_status_rank('Submit'))
-chk(A._dockproc_status_rank('HQ Ordered') == 4, "rank('HQ Ordered') == 4")
-chk(A._dockproc_status_rank('Ordered') == 4, "rank('Ordered') == 4")
-chk(A._dockproc_status_rank('Vendor confirmed') == 4, "rank('Vendor confirmed') == 4")
-chk(A._dockproc_status_rank('Approval(Procssing)') == 3, "rank('Approval(Procssing)') == 3")
-chk(A._dockproc_status_rank('HQ Progressing') == 3, "rank('HQ Progressing') == 3")
-chk(A._dockproc_status_rank('Quotation Inquiry') == 2, "rank('Quotation Inquiry') == 2")
-chk(A._dockproc_status_rank('HQ Rejected') == 2, "rank('HQ Rejected') == 2")
-chk(A._dockproc_status_rank('HQ Canceled') == 0, "rank('HQ Canceled') == 0(무시)")
+chk(shared_ns._dockproc_status_rank('Submit') == 3, "rank('Submit') == 3", shared_ns._dockproc_status_rank('Submit'))
+chk(shared_ns._dockproc_status_rank('HQ Ordered') == 4, "rank('HQ Ordered') == 4")
+chk(shared_ns._dockproc_status_rank('Ordered') == 4, "rank('Ordered') == 4")
+chk(shared_ns._dockproc_status_rank('Vendor confirmed') == 4, "rank('Vendor confirmed') == 4")
+chk(shared_ns._dockproc_status_rank('Approval(Procssing)') == 3, "rank('Approval(Procssing)') == 3")
+chk(shared_ns._dockproc_status_rank('HQ Progressing') == 3, "rank('HQ Progressing') == 3")
+chk(shared_ns._dockproc_status_rank('Quotation Inquiry') == 2, "rank('Quotation Inquiry') == 2")
+chk(shared_ns._dockproc_status_rank('HQ Rejected') == 2, "rank('HQ Rejected') == 2")
+chk(shared_ns._dockproc_status_rank('HQ Canceled') == 0, "rank('HQ Canceled') == 0(무시)")
 
 print('# 2) Submit = 발주완료 안 켜지고 금액도 안 들어감 (형이 신고한 그 케이스)')
 mkrow('R19')

@@ -757,7 +757,7 @@ def _render_image(doc, content, base_indent):
 
 def _contain_in_static(candidate):
     """candidate 경로가 static 디렉터리 밖(경로순회 ../)이면 None 반환."""
-    from app import app
+    from app_core import app
     root = os.path.realpath(app.static_folder)
     real = os.path.realpath(candidate)
     if real == root or real.startswith(root + os.sep):
@@ -769,10 +769,10 @@ def _resolve_brep_image_path(url, filename):
     """boarding/ 폴더에 저장된 이미지 경로 해결 (static 디렉터리 밖 접근 차단)"""
     if url and url.startswith('/static/'):
         rel = url[len('/static/'):]
-        from app import app
+        from app_core import app
         return _contain_in_static(os.path.join(app.static_folder, rel))
     if filename:
-        from app import app
+        from app_core import app
         return _contain_in_static(
             os.path.join(app.static_folder, 'uploads', 'boarding', filename))
     return None

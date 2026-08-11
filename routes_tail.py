@@ -1,59 +1,38 @@
 """routes_tail — converted to a real imported module with Blueprint("routes_tail") on 2026-08-11.
 
 Previously executed in the app namespace by ``_load_extracted_module``.
-Dependencies are now the explicit imports below and nothing else — every
-name comes from ``app`` (whose namespace includes everything
-``helpers_shared.py`` executed into it).  Contract enforced by
+Dependencies are now the explicit imports below and nothing else, and since
+2026-08-12 each import names the module that actually *defines* the symbol
+(``app_core`` for config/db primitives, ``helpers_shared`` for shared helpers,
+``app`` only for what app.py itself defines) instead of routing everything
+through ``app``.  Contract enforced by
 ``test_converted_modules_are_self_contained``: zero unresolved names, and
 no sibling boundary imports.
 """
 from flask import Blueprint
 
-from app import (
-    BASE_DIR,
-    FLEET_MAP_FILE,
-    INSTANCE_DIR,
-    PUSH_KINDS,
-    PUSH_KIND_KEYS,
-    _cls_handle_files,
-    _dashboard_ctx,
-    _ensure_api_table,
-    _findings_workbook,
-    _fleet_apply_code_first_next_port,
-    _fleet_extract_next_port_code,
-    _fleet_port_catalog,
-    _fleet_route_to_destination,
-    _fleet_visible_auto_vessels,
-    _norm_locode,
-    _norm_port_text,
-    _push_dispatch,
-    _push_module,
-    _push_prefs,
-    _re_cls,
-    _vkey,
-    abort,
-    admin_required,
-    api_key_required,
-    app,
-    datetime,
-    execute,
-    execute_rc,
-    get_db,
-    http,
-    json,
-    jsonify,
-    login_required,
-    os,
-    query,
-    re,
-    render_template,
-    request,
-    session,
-    threading,
-    time,
-    timedelta,
-    urllib,
-    uuid,
+import http.client
+import json
+import os
+import re
+import re as _re_cls
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from datetime import datetime, timedelta
+from flask import abort, jsonify, render_template, request, session
+from app_core import (
+    BASE_DIR, INSTANCE_DIR, app, execute, execute_rc, get_db, query,
+)
+from helpers_shared import (
+    FLEET_MAP_FILE, PUSH_KINDS, PUSH_KIND_KEYS, _cls_handle_files, _dashboard_ctx,
+    _ensure_api_table, _findings_workbook, _fleet_apply_code_first_next_port,
+    _fleet_extract_next_port_code, _fleet_port_catalog, _fleet_route_to_destination,
+    _fleet_visible_auto_vessels, _norm_locode, _norm_port_text, _push_dispatch,
+    _push_module, _push_prefs, _vkey, admin_required, api_key_required, login_required,
 )
 
 bp = Blueprint("routes_tail", __name__)

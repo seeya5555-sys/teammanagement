@@ -1,15 +1,16 @@
 """Source-level contract helpers for the split Flask application.
 
-Runtime compatibility intentionally keeps every extracted boundary in the
-``app`` module namespace.  Tests that inspect source must therefore inspect the
-whole executable bundle instead of assuming every function still lives in
-``app.py``.
+The application is no longer one file: it is a layered set of modules
+(``app_core`` → ``helpers_shared`` → ``app`` → the Blueprint modules).  Tests
+that inspect source must therefore inspect the whole bundle instead of assuming
+every function still lives in ``app.py``.
 
-The boundary list is derived from the ``_load_extracted_module`` calls in
-``app.py`` rather than hard-coded: a hard-coded list silently loses coverage
-the moment a new boundary is added (this actually happened when
+The bundle is derived rather than hard-coded: a hard-coded list silently loses
+coverage the moment a new module is added (this actually happened when
 ``helpers_shared.py`` was extracted — source contracts kept passing while no
-longer reading the code they were written to constrain).
+longer reading the code they were written to constrain).  The derivation walks
+``app.py``'s local imports transitively and adds every registered Blueprint, so
+both the layers below and the layers above are covered.
 """
 import ast
 from pathlib import Path
@@ -18,74 +19,60 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _loaded_boundaries():
-    # 최상위 Expr(Call) 만 실제 로더로 인정한다: ast.walk 전체를 세면 함수 안이나
-    # 죽은 분기의 호출까지 로드된 경계로 오인한다 (올마이트 2026-08-11 지적).
-    #
-    # 번들은 두 종류의 경계를 모두 포함해야 한다:
-    #   · exec 로 로드되는 경계  — _load_extracted_module("<file>.py")
-    #   · Blueprint 로 전환된 실제 모듈 — app.register_blueprint(<mod>.bp)
-    # 전환된 모듈을 빼먹으면 소스 계약 테스트가 그 코드를 더는 읽지 않는데도
-    # 초록으로 남는다 (helpers_shared 추출 때 실제로 벌어진 사각지대와 동형).
-    tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
-    names = []
-    for stmt in tree.body:
-        node = stmt.value if isinstance(stmt, ast.Expr) else None
-        if not isinstance(node, ast.Call):
+def _local_imports(name):
+    """모듈이 import 하는 로컬(우리 저장소) 모듈 이름."""
+    local = {p.stem for p in ROOT.glob("*.py")}
+    tree = ast.parse((ROOT / f"{name}.py").read_text(encoding="utf-8"))
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found += [a.name.split(".")[0] for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            found.append(node.module.split(".")[0])
+    return [n for n in found if n in local and n != name]
+
+
+def _bundle_modules():
+    # app.py 에서 시작해 로컬 import 를 추이적으로 따라간다. Blueprint 모듈은
+    # app.py 가 등록하려고 import 하므로 이 순회에 자연히 포함되고, 그 모듈들이
+    # 다시 import 하는 아래층(app_core·helpers_shared)도 함께 잡힌다.
+    order, seen, stack = [], set(), ["app"]
+    while stack:
+        name = stack.pop(0)
+        if name in seen:
             continue
-        if (isinstance(node.func, ast.Name) and node.func.id == "_load_extracted_module"
-                and node.args and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)):
-            names.append(node.args[0].value)
-        elif (isinstance(node.func, ast.Attribute) and node.func.attr == "register_blueprint"
-                and node.args and isinstance(node.args[0], ast.Attribute)
-                and isinstance(node.args[0].value, ast.Name)):
-            names.append(node.args[0].value.id + ".py")
-    if not names:
-        raise AssertionError("app.py 에서 경계 로드(_load_extracted_module/register_blueprint)를 못 찾음 — 번들이 비게 된다")
-    return names
+        seen.add(name)
+        order.append(name)
+        stack += _local_imports(name)
+    if len(order) < 2:
+        raise AssertionError("app.py 에서 로컬 모듈 import 를 못 찾음 — 번들이 app.py 하나뿐이 된다")
+    return order
 
 
-APP_SOURCE_PATHS = (ROOT / "app.py",) + tuple(ROOT / name for name in _loaded_boundaries())
+APP_SOURCE_PATHS = tuple(ROOT / f"{name}.py" for name in _bundle_modules())
 
 
 def read_app_sources():
     return "\n".join(path.read_text(encoding="utf-8") for path in APP_SOURCE_PATHS)
 
 
-def _converted_names():
-    # register_blueprint(<mod>.bp) 만 — exec 경계(helpers_shared)는 모듈 객체가 없다.
-    tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
-    names = []
-    for stmt in tree.body:
-        node = stmt.value if isinstance(stmt, ast.Expr) else None
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "register_blueprint"
-                and node.args and isinstance(node.args[0], ast.Attribute)
-                and isinstance(node.args[0].value, ast.Name)):
-            names.append(node.args[0].value.id)
-    return names
-
-
 class _SharedNamespace:
     """옛 exec 공유 네임스페이스의 의미론을 테스트에서 재현하는 프록시.
 
-    Blueprint 전환 후 각 라우트 모듈은 `from app import X` 로 이름을 **값으로**
-    물었다. 그래서 테스트가 `app.X = fake` 로 몽키패치해도 라우트에는 안 닿고
-    (스테일 바인딩), 반대로 라우트 모듈이 소유한 심볼은 app 에 더는 없다.
+    모듈 분리 후 각 모듈은 `from <owner> import X` 로 이름을 **값으로** 물어 간다.
+    그래서 테스트가 `app.X = fake` 로 몽키패치해도 소비 모듈에는 안 닿고
+    (스테일 바인딩), 반대로 소비 모듈이 소유한 심볼은 app 에 없을 수도 있다.
 
-    - 읽기: app → 전환 모듈 순으로 실제 소유자를 찾아 돌려준다.
-    - 쓰기: 그 이름을 가진 **모든** 곳(app + 전환 모듈 전부)에 같은 값을 심는다
-      — 공유 전역이던 시절과 동일한 관측 효과. teardown 에서 원본을 같은
-      방식으로 되돌리면 복원도 완전하다. mock.patch.object 와도 호환된다.
+    - 읽기: 번들 전체에서 실제 소유자를 찾아 돌려준다.
+    - 쓰기: 그 이름을 가진 **모든** 모듈에 같은 값을 심는다 — 공유 전역이던
+      시절과 동일한 관측 효과. teardown 에서 원본을 같은 방식으로 되돌리면
+      복원도 완전하다.
     """
 
     def _modules(self):
         import importlib
 
-        return [importlib.import_module("app")] + [
-            importlib.import_module(n) for n in _converted_names()
-        ]
+        return [importlib.import_module(p.stem) for p in APP_SOURCE_PATHS]
 
     def __getattr__(self, name):
         # 같은 이름이 서로 다른 객체로 여러 모듈에 있으면 "어느 것" 인지가

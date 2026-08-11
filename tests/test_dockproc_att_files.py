@@ -45,7 +45,7 @@ A.app.app_context().push()
 c = A.app.test_client()
 
 KEY = 'testkey-dockproc-attfiles'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 A.execute("INSERT INTO dock_procure_vessel(vsl_nm, vsl_cd) VALUES('TEST VESSEL','TSTV')")
@@ -90,8 +90,8 @@ def fp_of(rid, idx):
     row = A.query("SELECT att_files FROM dock_procure WHERE id=?", (rid,), one=True)
     if not row:                                   # 없는 행 케이스 — 지문을 만들 수 없다
         return 'none'
-    files = A._dockproc_files_of(row['att_files'])
-    return A._dockatt_fp(files[idx]) if idx < len(files) else 'none'
+    files = shared_ns._dockproc_files_of(row['att_files'])
+    return shared_ns._dockatt_fp(files[idx]) if idx < len(files) else 'none'
 
 
 def upload(rid, idx, data=PDF, ext='pdf', fp=None):

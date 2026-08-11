@@ -22,6 +22,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns  # noqa: E402
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -133,7 +134,7 @@ chk(r['recent'] == [], '목록에서 사라짐', r['recent'])
 print('\n# 5) 🔴 지운 뒤에도 중복발송 차단이 살아있는가(이 테스트의 존재 이유)')
 # 실제 발송 경로를 태우되 APNs 를 때리지 않게 스텁. (개발맥엔 진짜 .p8 이 있어서
 # 스텁 없이 돌리면 정크 토큰으로 애플에 실요청이 나간다.)
-ap = A._push_module()
+ap = shared_ns._push_module()
 _real_conf, _real_send = ap.load_conf, ap.send
 sent_calls = []
 ap.load_conf = lambda: {'stub': True}
@@ -142,12 +143,12 @@ ap.send = lambda token, payload, env='production', conf=None, collapse_id=None: 
 A.execute("INSERT INTO ios_device (user_id, token, env, active) VALUES (?,?,?,1)",
           (U_ADMIN, 'tok-clear-test', 'production'))
 try:
-    res = A._push_dispatch('test', 'ev:1', '첫 알림 재시도', 'b')
+    res = shared_ns._push_dispatch('test', 'ev:1', '첫 알림 재시도', 'b')
     chk(res.get('reason') == 'already_sent',
         '감춘 event_key 재발송 시도 = already_sent (재발송 안 됨)', res)
     chk(sent_calls == [], 'APNs 호출 0건', sent_calls)
 
-    res2 = A._push_dispatch('test', 'ev:new', '새 알림', 'b')
+    res2 = shared_ns._push_dispatch('test', 'ev:new', '새 알림', 'b')
     chk(res2.get('sent') == 1, '새 event_key 는 정상 발송', res2)
     r = c.get('/api/ios/push/status').get_json()
     chk([x['title'] for x in r['recent']] == ['새 알림'],

@@ -27,6 +27,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns  # noqa: E402
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -192,7 +193,7 @@ if HAVE_WS:
         chk(by[cd]['gap_n'] == len(gate),
             f'[{cd}] 화면 스냅샷 gap_n == 게이트 판정 건수', f"snapshot={by[cd]['gap_n']} gate={len(gate)}")
     #   sync → 서버 정규화 → preview 까지 값이 살아서 도달하는지(중간 whitelist 층에서 죽는 게 실제 위험)
-    e2e = json.loads(A._dockproc_norm_quotes(qs))
+    e2e = json.loads(shared_ns._dockproc_norm_quotes(qs))
     chk(next(q for q in e2e if q['cd'] == 'V1')['gap_n'] == 1,
         'sync 산출물이 서버 정규화를 통과해도 gap_n 이 남는다')
 
@@ -223,39 +224,39 @@ print('# 6) 🔴 서버 정규화가 gap_n/gaps 를 버리지 않는다 (whiteli
 Q = [{'nm': 'DINTECH', 'cd': 'V1', 'amt': 1000, 'cur': 'USD', 'st': 'Submitted',
       'gap_n': 5, 'hard_n': 0,
       'gaps': [{'seq': '0040', 'why': 'zero_price', 'hard': False, 'label': 'item 0040번 GASKET 견적 0'}]}]
-norm = json.loads(A._dockproc_norm_quotes(Q))
+norm = json.loads(shared_ns._dockproc_norm_quotes(Q))
 chk(norm[0].get('gap_n') == 5, 'gap_n 통과', norm[0])
 chk(norm[0].get('hard_n') == 0 and norm[0]['gaps'][0]['hard'] is False, 'hard_n/hard 통과', norm[0])
 #   🔴 hard_n 을 안 보내는 폴러(구버전)라도 라벨의 hard 플래그로 복원 — 0 이면 화면이 "통과" 라고 거짓말한다.
-hn = json.loads(A._dockproc_norm_quotes([{
+hn = json.loads(shared_ns._dockproc_norm_quotes([{
     'nm': 'A', 'cd': 'V1', 'amt': 1, 'cur': 'USD', 'st': 'Submitted', 'gap_n': 2,
     'gaps': [{'seq': '0010', 'why': 'zero_qty', 'hard': True, 'label': 'x'},
              {'seq': '0020', 'why': 'zero_price', 'hard': False, 'label': 'y'}]}]))[0]
 chk(hn['hard_n'] == 1, 'hard_n 미전송 시 라벨 hard 로 복원(fail-safe 방향)', hn)
-chk(json.loads(A._dockproc_norm_quotes([dict(Q[0], hard_n=99)]))[0]['hard_n'] == 5,
+chk(json.loads(shared_ns._dockproc_norm_quotes([dict(Q[0], hard_n=99)]))[0]['hard_n'] == 5,
     'hard_n 은 gap_n 을 넘지 못한다')
-legacy = json.loads(A._dockproc_norm_quotes([{'nm': 'V1', 'gap_n': 1,
+legacy = json.loads(shared_ns._dockproc_norm_quotes([{'nm': 'V1', 'gap_n': 1,
                                                'gaps': [{'seq': '0010', 'label': 'item 0010번 A 견적 미제출'}]}]))
 chk(legacy[0]['hard_n'] == 1 and legacy[0]['gaps'][0]['hard'] is False,
     '구버전 hard 필드 없음은 서버에서 fail-closed hard_n 으로 복원', legacy)
-typed = json.loads(A._dockproc_norm_quotes([{'nm': 'V1', 'gap_n': 1, 'hard_n': 0,
+typed = json.loads(shared_ns._dockproc_norm_quotes([{'nm': 'V1', 'gap_n': 1, 'hard_n': 0,
                                                'gaps': [{'seq': '0010', 'hard': 'false', 'label': 'x'}]}]))
 chk(typed[0]['hard_n'] == 0 and typed[0]['gaps'][0]['hard'] is False,
     'hard 문자열 false는 true로 오인하지 않음', typed)
 chk(norm[0].get('gaps') and norm[0]['gaps'][0]['seq'] == '0040', 'gaps 통과', norm[0].get('gaps'))
-chk(json.loads(A._dockproc_norm_quotes(
+chk(json.loads(shared_ns._dockproc_norm_quotes(
     [{'nm': 'A', 'cd': 'V1', 'amt': 1, 'cur': 'USD', 'st': 'Submitted'}]))[0]['gap_n'] == 0,
     '구버전 폴러(키 없음)는 gap_n=0 — 경고 안 뜸(하위호환)')
-big = json.loads(A._dockproc_norm_quotes([dict(Q[0], gap_n=99, gaps=[
+big = json.loads(shared_ns._dockproc_norm_quotes([dict(Q[0], gap_n=99, gaps=[
     {'seq': str(i), 'why': 'zero_price', 'label': 'x' * 400} for i in range(20)])]))[0]
 chk(len(big['gaps']) == 5, '표시 줄 수 상한 5(전체 건수는 gap_n 이 말한다)', len(big['gaps']))
 chk(len(big['gaps'][0]['label']) == 200, '라벨 길이 캡 200')
 chk(big['gap_n'] == 99, '캡은 표시 줄만 — 전체 건수는 보존')
-odd = json.loads(A._dockproc_norm_quotes([dict(Q[0], gap_n='junk')]))[0]
+odd = json.loads(shared_ns._dockproc_norm_quotes([dict(Q[0], gap_n='junk')]))[0]
 chk(odd['gap_n'] == 1, '쓰레기 gap_n 은 0 으로 떨어지되 라벨 수(1)까지는 올라간다("외 −1건" 방지)', odd)
-chk(json.loads(A._dockproc_norm_quotes([dict(Q[0], gaps='notalist')]))[0]['gaps'] == [],
+chk(json.loads(shared_ns._dockproc_norm_quotes([dict(Q[0], gaps='notalist')]))[0]['gaps'] == [],
     'gaps 가 리스트가 아니면 빈 배열')
-zero = json.loads(A._dockproc_norm_quotes([dict(Q[0], gap_n=0, gaps=[])]))[0]
+zero = json.loads(shared_ns._dockproc_norm_quotes([dict(Q[0], gap_n=0, gaps=[])]))[0]
 chk(zero['gap_n'] == 0 and zero['gaps'] == [], '결함 없음은 gap_n=0 + 빈 배열')
 
 print()
@@ -297,12 +298,22 @@ chk('const gapVs = qs.filter(q=>qGapN(q)>0)' in tpl and 'gapVs.map(qGapLine)' in
 gapbody = tpl.split('const gapRows')[1].split('const opts')[0]
 chk('disabled' not in gapbody, '🔴 gapRows 가 라디오를 비활성하지 않는다(인폼만)', gapbody[:200])
 
+# 🔴 iOS 소스는 **파일 하나가 아니라 DockProcure* 묶음 전체**를 읽는다.
+# 2026-08-11 F9(대형 SwiftUI View 분할)가 DPLineCard·배지를 DockProcureCards/
+# Components/Sheets.swift 로 옮기면서, 파일명을 박아둔 이 검사들이 조용히 눈이 멀어
+# 빨개졌다. 파일 분할은 앞으로도 일어나므로 glob 로 묶어 분할에 면역시킨다.
+def _dp_sources(root):
+    import glob
+    paths = sorted(glob.glob(root + 'DockProcure*.swift'))
+    assert paths, 'DockProcure*.swift 를 못 찾음 — 경로가 바뀌었는지 확인할 것'
+    return '\n'.join(open(p, encoding='utf-8').read() for p in paths)
+
 ios = os.path.expanduser('~/.openclaw/workspace/trmt-mobile/ios/TRMT/Sources/')
 if not os.path.isdir(ios):
     print('  ⚠️ SKIP — iOS 소스 경로 없음(%s). 이 머신에선 서버/웹 계약만 검사함.' % ios)
 else:
     m = open(ios + 'Models/DockProcure.swift', encoding='utf-8').read()
-    v = open(ios + 'Features/More/DockProcureView.swift', encoding='utf-8').read()
+    v = _dp_sources(ios + 'Features/More/')
     chk('struct DockQuoteGap' in m, 'iOS 결함 모델 존재')
     chk('let gap_n: Int?' in m and 'let gaps: [DockQuoteGap]?' in m, 'iOS 가 gap_n/gaps 를 디코드한다')
     chk(m.count('let hard_n: Int?') >= 2 and 'let hard: Bool?' in m,

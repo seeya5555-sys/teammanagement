@@ -1,47 +1,52 @@
-"""경계 간 의존 그래프 — 3단계(Blueprint 전환)의 1순위 선행조건.
+"""모듈 간 의존 그래프 + 층위 계약.
 
 왜 필요한가
 ----------
-`app.py` 는 추출 경계 5개를 `exec(..., globals(), globals())` 로 로드한다.
-그래서 경계들은 서로의 심볼을 **import 선언 없이** 자유변수로 쓴다. 결과:
+2026-08-12 이전 `app.py` 는 `helpers_shared.py` 를 `exec(..., globals(), globals())`
+로 로드했다. `app.py` 와 `helpers_shared.py` 가 서로를 필요로 하는 **순환** 이라
+import 로 표현할 수 없었기 때문이다. 대가는 두 가지였다.
 
-  · 어느 경계가 어느 심볼에 의존하는지가 **소스 어디에도 적혀 있지 않다.**
+  · 어느 파일이 어느 심볼에 의존하는지가 **소스 어디에도 적혀 있지 않다.**
   · 오타 난 헬퍼 이름은 import 시점에 안 걸리고, 그 코드경로가 실행되는
-    **요청 시점에 NameError** 로만 드러난다. (일반 모듈이면 정적분석이 잡아준다)
+    **요청 시점에 NameError** 로만 드러난다.
 
-Blueprint 전환은 이 자유변수들을 explicit import 로 바꾸는 작업이다. 그래서
-전환 전에 그래프를 **명시화하고 고정**한다. 이 파일이 그 역할을 한다.
+바닥 층 `app_core.py`(config · Flask 인스턴스 · DB 원시)를 떼어 그 순환을 끊고
+나서는 모든 파일이 평범한 import 모듈이다. 그래서 이 게이트의 역할이 바뀌었다:
+**잃어버린 의존 정보를 복원하는 것**에서 **선언된 의존을 얼리고 방향을 강제하는
+것**으로. 프리즈가 없으면 결합이 슬금슬금 늘어나도 아무도 모른다.
 
 스코프 정확도 — 이 파일의 핵심 전제
 ----------------------------------
 이름 해석은 반드시 **스코프를 구분**해야 한다. 초판은 `ast.walk` 로 파일 전체의
-바인딩을 한 집합에 뭉갰는데, 그러면 *다른 함수의 로컬 변수·인자*가 module
-provider 로 오인된다. 어느 함수에 `qeury` 라는 로컬이 하나라도 있으면 딴 곳의
-진짜 오타 `qeury(...)` 가 "바인딩됨" 으로 통과한다 = 과소검출.
-(2026-08-11 올마이트 지적, `changes-needed`. 그 상태면 이 게이트가 정적분석
-대체물로 성립하지 않는다.)
+바인딩을 한 집합에 뭉갰는데, 그러면 *다른 함수의 로컬 변수·인자*가 provider 로
+오인된다. 어느 함수에 `qeury` 라는 로컬이 하나라도 있으면 딴 곳의 진짜 오타
+`qeury(...)` 가 "바인딩됨" 으로 통과한다 = 과소검출. (2026-08-11 올마이트 지적,
+`changes-needed`.)
 
 그래서 표준 라이브러리 `symtable` 을 쓴다. CPython 이 컴파일에 쓰는 것과 같은
-스코프 분석이라, 함수/클래스/comprehension 로컬·closure free variable·
-`global` 선언을 전부 정확히 구분한다. 새 의존성은 없다.
+스코프 분석이라, 함수/클래스/comprehension 로컬·closure free variable·`global`
+선언을 전부 정확히 구분한다. 새 의존성은 없다.
 
-  provider  = 모듈 스코프 바인딩(대입·import·def/class) + 함수 안 `global x; x=…`
-  consumer  = 각 스코프에서 **전역 조회**로 컴파일된 참조(is_global)
-              → 로컬·인자·closure·comprehension 변수는 애초에 후보가 아니다
+또 하나 — **정의(define)와 재수출(re-export)을 구분**한다. 이제 모든 파일이
+`os`·`request` 같은 이름을 각자 import 하므로, `is_imported()` 를 소유로 세면
+provider 충돌이 수십 건 쏟아지고 소유 판정이 무의미해진다. 소유 = 그 파일이
+**대입·def·class 로 만든** 이름뿐이다.
 
-세 가지를 본다
-  ① 미해결 이름 0 — 어떤 경계도 아무도 제공하지 않는 이름을 참조하지 않는다.
-     exec 구조가 잃어버린 "정의되지 않은 이름" 검사를 되돌려 놓는 것.
-  ② provider 충돌 0 — 같은 최상위 이름을 두 경계가 제공하지 않는다.
-     충돌이 있으면 실제 승자는 **로드 순서상 마지막** 이라, 그래프의
-     "어느 경계에 의존" 자체가 모호해진다. 그래서 모호함을 허용하지 않는다.
-  ③ 의존 그래프 고정 — 경계 간 결합이 늘거나 방향이 바뀌면 fixture diff 로
-     드러나고 리뷰 대상이 된다.
+여섯 가지를 본다
+  ① 미해결 이름 0 — 어느 모듈도 import 없이 이름을 참조하지 않는다.
+     (요청 시점 NameError 후보를 정적으로 잡는 검사)
+  ② 척추 정의 충돌 0 — app_core·helpers_shared·app 이 같은 이름을 두 번 정의하면
+     아래층을 안 쓰고 재구현한 것이다.
+  ③ 의존 그래프 고정 — 결합이 늘거나 방향이 바뀌면 fixture diff 로 드러난다.
+  ④ 층위 — 아래층만 참조한다. 형제 참조(꼬리물기) 금지.
+  ⑤ Blueprint 상향 예외는 등록 목적으로만 — `app.py` 가 Blueprint 에서 심볼을
+     빌려 쓰거나 `bp` 외 속성을 만지기 시작하면 그건 진짜 순환이다.
+  ⑥ import 한 이름 재정의 0 — 소유 판정이 그림자에 가려지는 사각지대 트립와이어.
+  ⑦ exec 경계 0 — 옛 로더가 어떤 형태로도 돌아오지 않는다.
 
 한계 (정직하게)
-  · load-time 참조와 request-time 참조를 구분하지 않는다. 그래서 이 그래프는
-    "필요한 import 목록" 이지 "import 해도 순환이 안 난다" 는 보증이 아니다.
   · 동적 접근(`globals()['name']`, `getattr`)은 보이지 않는다.
+  · import 문의 존재만 보므로 "쓰지 않는 import" 는 걸러내지 않는다.
 
 fixture 갱신:  python -m tests.test_boundary_dependency_graph --update
 (의도적으로 결합을 바꾼 변경에서만 갱신하고, diff 를 리뷰에 첨부할 것)
@@ -61,47 +66,25 @@ BUILTIN_NAMES = set(dir(builtins)) | {
     "__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__loader__", "__package__",
 }
 
-
-def boundary_files():
-    """app.py + app.py 가 exec 로 로드하는 경계 전부 (로드 순서 유지).
-
-    목록은 AST 로 뽑는다. regex 로 소스를 긁으면 주석·문자열·죽은 코드 안의
-    호출까지 경계로 오인하고, 반대로 조건부 호출은 형태가 달라 놓친다.
-    """
-    main = ROOT / "app.py"
-    tree = ast.parse(main.read_text(encoding="utf-8"), filename=str(main))
-    loaded, bad = [], []
-    # 최상위 Expr(Call) 만 실제 로더다. ast.walk 전체를 세면 함수 안이나 죽은
-    # 분기의 호출을 로드된 경계로 오인한다 — 그런 호출은 발견 즉시 실패시킨다
-    # (조용히 무시하면 그 경계가 분석 범위에서 빠진 채 초록이 된다).
-    top_level_calls = {
-        id(stmt.value) for stmt in tree.body
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
-    }
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == "_load_extracted_module"):
-            continue
-        if id(node) not in top_level_calls:
-            bad.append(f"L{node.lineno}: 최상위 문장이 아닌 로더 호출")
-        elif node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-            loaded.append(node.args[0].value)
-        else:
-            bad.append(f"L{node.lineno}: 인자가 리터럴이 아님 — 정적 분석 불가")
-    if bad:
-        raise AssertionError(
-            "경계 로드 호출이 정적 분석 계약을 벗어남 — 이 게이트가 조용히 범위를 잃는다: "
-            + "; ".join(bad)
-        )
-    return [main] + [ROOT / name for name in loaded]
+# 층위 계약. 숫자가 작을수록 아래층이고, 모듈은 **자기보다 아래층만** import 한다.
+# Blueprint 모듈은 최상층이며 여기 적지 않는다(등록에서 자동 도출 — 수동 목록은
+# 다음 전환 때 등재 누락으로 검사가 조용히 빠진다).
+LAYERS = {"app_core": 0, "helpers_shared": 1, "app": 2}
+BLUEPRINT_LAYER = 3
+# 지원 라이브러리(APNs 전송, docx 생성, KR 포털 클라이언트 …) — `app_core` 바로 위.
+# 목록을 손으로 들지 않고 "누가 import 하는데 층위표에도 Blueprint 에도 없는 로컬
+# 모듈" 로 도출한다. `app_core`(설정·Flask 인스턴스) 는 봐도 되지만 그 위 애플리케이션
+# 층은 못 본다 — 아래 층위 검사가 그 선을 강제한다.
+LEAF_LAYER = 0.5
 
 
-def converted_modules():
-    """Blueprint 로 전환된 실제 모듈 목록 — app.py 의 register_blueprint 에서 도출.
+def _local_module_names():
+    """저장소 최상위의 우리 소스 모듈 이름 — import 대상이 로컬인지 판별용."""
+    return {p.stem for p in ROOT.glob("*.py")}
 
-    수동 목록은 다음 전환 때 등록 누락으로 검사가 조용히 빠진다. 최상위
-    `app.register_blueprint(<mod>.bp)` 형태만 인정한다.
-    """
+
+def registered_blueprints():
+    """app.py 의 `app.register_blueprint(<mod>.bp)` 에서 도출한 Blueprint 모듈."""
     tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
     names = []
     for stmt in tree.body:
@@ -110,36 +93,92 @@ def converted_modules():
                 and node.func.attr == "register_blueprint"
                 and node.args and isinstance(node.args[0], ast.Attribute)
                 and isinstance(node.args[0].value, ast.Name)):
-            names.append(node.args[0].value.id + ".py")
+            names.append(node.args[0].value.id)
+    if not names:
+        raise AssertionError("register_blueprint 호출을 못 찾음 — 분석 범위가 비게 된다")
     return names
 
 
-def _table(path):
-    source = path.read_text(encoding="utf-8")
-    return symtable.symtable(source, str(path), "exec")
+def module_imports(path, local):
+    """이 모듈이 import 하는 **로컬 모듈** → 가져오는 이름들.
 
-
-def module_provides(top):
-    """실행되면 애플리케이션 namespace 에 올라가는 이름.
-
-    모듈 스코프의 대입·import·def/class 와, 함수 안에서 `global x` 로 선언하고
-    대입하는 경우를 포함한다(후자도 런타임에 전역을 만든다).
+    `import X` 는 이름 목록이 없으므로 빈 리스트로 남는다(간선 자체는 기록).
+    최상위가 아닌 import(함수 안 지연 import)도 결합이므로 똑같이 센다.
     """
-    provides = set()
-    for sym in top.get_symbols():
-        if sym.is_assigned() or sym.is_imported() or sym.is_namespace():
-            provides.add(sym.get_name())
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    edges = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in local:
+                    edges.setdefault(root, set())
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            root = node.module.split(".")[0]
+            if root in local:
+                edges.setdefault(root, set()).update(a.name for a in node.names)
+    return {mod: sorted(names) for mod, names in edges.items()}
+
+
+def leaf_modules():
+    """층위표·Blueprint 어디에도 없는데 우리 모듈이 import 하는 로컬 모듈."""
+    local = _local_module_names()
+    known = set(LAYERS) | set(registered_blueprints())
+    leaves = set()
+    for name in sorted(known):
+        leaves |= set(module_imports(ROOT / f"{name}.py", local)) - known
+    return sorted(leaves)
+
+
+def analysed_modules():
+    """분석 대상 = 층위표 모듈 + 등록된 Blueprint + 그들이 쓰는 leaf 라이브러리."""
+    names = list(LAYERS) + registered_blueprints() + leaf_modules()
+    seen, out = set(), []
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        path = ROOT / f"{name}.py"
+        if not path.is_file():
+            raise AssertionError(f"분석 대상 모듈이 실제 파일이 아님: {path}")
+        out.append(path)
+    return out
+
+
+def _table(path):
+    return symtable.symtable(path.read_text(encoding="utf-8"), str(path), "exec")
+
+
+def module_defines(top):
+    """이 파일이 **만든** 최상위 이름 — import 로 들여온 이름은 제외한다.
+
+    함수 안에서 `global x` 로 선언하고 대입하는 경우도 런타임에 전역을 만드므로
+    포함한다.
+    """
+    imported = {s.get_name() for s in top.get_symbols() if s.is_imported()}
+    defines = {
+        s.get_name() for s in top.get_symbols()
+        if (s.is_assigned() or s.is_namespace()) and s.get_name() not in imported
+    }
 
     def scan(table):
         for sym in table.get_symbols():
             if sym.is_global() and sym.is_assigned():
-                provides.add(sym.get_name())
+                defines.add(sym.get_name())
         for child in table.get_children():
             scan(child)
 
     for child in top.get_children():
         scan(child)
-    return provides
+    return defines
+
+
+def module_bindings(top):
+    """이 파일에 실제로 바인딩된 최상위 이름 전부(정의 + import)."""
+    return {
+        s.get_name() for s in top.get_symbols()
+        if s.is_assigned() or s.is_imported() or s.is_namespace()
+    }
 
 
 def global_lookups(top):
@@ -164,33 +203,29 @@ def global_lookups(top):
 
 
 def analyze():
-    tables, provides, lookups = {}, {}, {}
-    for path in boundary_files():
+    local = _local_module_names()
+    graph, defines, unresolved = {}, {}, {}
+    for path in analysed_modules():
         top = _table(path)
-        tables[path.name] = top
-        provides[path.name] = module_provides(top)
-        lookups[path.name] = global_lookups(top)
+        defines[path.name] = module_defines(top)
+        unresolved[path.name] = sorted(global_lookups(top) - module_bindings(top) - BUILTIN_NAMES)
+        graph[path.name] = {
+            f"{mod}.py": names for mod, names in sorted(module_imports(path, local).items())
+        }
 
+    # 충돌 판정은 **공유 척추(app_core·helpers_shared·app)** 안에서만 본다.
+    # exec 시절엔 모든 동명 심볼이 로드 순서로 승자가 갈려 전부 위험했지만, 지금은
+    # import 문에 모듈명이 같이 적히므로 동명 자체는 모호하지 않다. 남은 위험은
+    # 하나 — 아래층에 이미 있는 헬퍼를 위층이 다시 구현하는 것. 그건 척추에서만
+    # 의미가 있고, Blueprint 모듈의 `bp` 나 docx 라이브러리들의 `build_docx` 처럼
+    # 모듈마다 하나씩 있는 게 정상인 이름까지 세면 검사가 늘 빨개져 무시하게 된다
+    # — 무시되는 게이트는 없는 게이트다.
+    spine = [f"{name}.py" for name in LAYERS]
     conflicts = {}
-    for name in sorted(set().union(*provides.values()) if provides else set()):
-        owners = sorted(f for f, syms in provides.items() if name in syms)
+    for name in sorted(set().union(*(defines[f] for f in spine))):
+        owners = sorted(f for f in spine if name in defines[f])
         if len(owners) > 1:
             conflicts[name] = owners
-
-    graph, unresolved = {}, {}
-    for name in tables:
-        cross, missing = {}, set()
-        for used in sorted(lookups[name]):
-            if used in BUILTIN_NAMES or used in provides[name]:
-                continue
-            owners = sorted(o for o in provides if o != name and used in provides[o])
-            if owners:
-                for owner in owners:
-                    cross.setdefault(owner, []).append(used)
-            else:
-                missing.add(used)
-        graph[name] = {provider: sorted(syms) for provider, syms in sorted(cross.items())}
-        unresolved[name] = sorted(missing)
     return graph, unresolved, conflicts
 
 
@@ -200,28 +235,28 @@ class BoundaryDependencyGraphTests(unittest.TestCase):
         cls.graph, cls.unresolved, cls.conflicts = analyze()
 
     def test_no_unresolved_names(self):
-        """아무 경계도 제공하지 않는 이름을 참조하면 요청 시점 NameError 다."""
+        """import 없이 참조되는 이름은 그 코드경로가 도는 순간 NameError 다."""
         offenders = {f: names for f, names in self.unresolved.items() if names}
         self.assertEqual(
             {}, offenders,
-            "제공자가 없는 이름 참조(런타임 NameError 후보):\n"
+            "import 없이 참조되는 이름(런타임 NameError 후보):\n"
             + "\n".join(f"  {f}: {names}" for f, names in offenders.items()),
         )
 
-    def test_no_provider_conflicts(self):
-        """같은 최상위 이름을 두 경계가 제공하면 실제 승자는 로드 순서상 마지막이다.
+    def test_no_definition_conflicts(self):
+        """공유 척추 3층이 같은 이름을 두 번 정의하면 아래층을 안 쓰고 재구현한 것이다.
 
-        그 상태에서는 "어느 경계에 의존하는가" 가 정의되지 않으므로 그래프도,
-        Blueprint 전환의 import 목록도 신뢰할 수 없다. 모호함 자체를 금지한다.
+        재수출(import 로 들여온 이름)은 소유가 아니므로 세지 않는다 — 그걸 세면
+        `os`·`request` 같은 흔한 이름이 전부 충돌로 잡혀 검사가 무의미해진다.
         """
         self.assertEqual(
             {}, self.conflicts,
-            "최상위 이름이 여러 경계에서 제공됨(로드 순서에 의존 = 그래프 모호):\n"
+            "같은 이름을 여러 모듈이 정의함(어느 구현인지 모호):\n"
             + "\n".join(f"  {n}: {owners}" for n, owners in self.conflicts.items()),
         )
 
     def test_dependency_graph_is_frozen(self):
-        """경계 간 결합 변화는 리뷰 대상이다 — Blueprint 전환의 explicit import 목록."""
+        """모듈 간 결합 변화는 리뷰 대상이다."""
         self.assertTrue(
             FIXTURE.exists(),
             f"fixture 없음: {FIXTURE} — "
@@ -230,111 +265,174 @@ class BoundaryDependencyGraphTests(unittest.TestCase):
         expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
         self.assertEqual(expected, self.graph)
 
-    def test_every_boundary_is_covered(self):
-        """새 경계가 추가되면 fixture 에도 등재돼야 한다 — 미분석 경계 방지.
+    def test_every_module_is_covered(self):
+        """새 모듈이 생기면 fixture 에도 등재돼야 한다 — 미분석 모듈 방지.
 
         비교 대상은 **fixture** 다. 분석 결과(`self.graph`)와 비교하면 양변이 같은
-        `boundary_files()` 에서 나오므로 항진명제가 되어 새 경계를 절대 못 잡는다
+        `analysed_modules()` 에서 나오므로 항진명제가 되어 새 모듈을 절대 못 잡는다
         (2026-08-11 negative control 로 실제 미검출 확인 후 수정).
         """
         self.assertTrue(FIXTURE.exists(), f"fixture 없음: {FIXTURE}")
         recorded = set(json.loads(FIXTURE.read_text(encoding="utf-8")))
         self.assertEqual(
-            {p.name for p in boundary_files()},
+            {p.name for p in analysed_modules()},
             recorded,
-            "app.py 의 로드 목록과 fixture 등재 경계가 다름 — "
+            "분석 대상과 fixture 등재 모듈이 다름 — "
             "`python -m tests.test_boundary_dependency_graph --update` 로 갱신하고 diff 를 리뷰할 것",
         )
 
-    def test_layering_no_sibling_dependencies(self):
-        """경계 층위 계약: 형제 경계 참조(꼬리물기)가 조용히 돌아오는 것을 금지한다.
+    def test_layering_is_downward_only(self):
+        """층위 계약: 모듈은 자기보다 **아래층만** import 한다.
 
-        2026-08-11 helpers_shared.py 추출 후 허용되는 의존 방향은 세 가지뿐이다
-        (app.py ↔ helpers_shared.py 상호참조는 의도된 예외 — 둘이 foundation
-        층 하나로 묶이며, 양방향 모두 호출 시점 참조뿐임을 실측함. "DAG" 가
-        아니라 "형제 참조 금지" 가 이 계약의 정확한 이름이다):
-          · helpers_shared.py → app.py
-          · 그 외 경계        → app.py, helpers_shared.py
-          · app.py            → helpers_shared.py
-        경계가 형제 경계를 다시 참조하기 시작하면 (공용이면) helpers_shared.py 로
-        옮기거나 (아니면) 자기 파일 안에 두어야 한다 — 형제 참조 자체가 위반이다.
-        이 검사가 없으면 frozen fixture 를 --update 로 갱신하는 순간 순환이
-        "리뷰된 변경" 처럼 통과한다.
+            app_core  ←  support/*  ←  helpers_shared  ←  app  ←  routes_*/ai_gemini
+
+        형제 참조(routes_* → routes_*)와 상향 참조(helpers_shared → app 등)를
+        금지한다. 상향이 하나라도 들어오면 그게 곧 옛 순환이고, 순환이 생기면
+        `exec` 로 되돌아가는 것 말고는 표현할 방법이 없어진다.
+
+        지원 라이브러리(APNs 전송·docx 생성·KR 포털 클라이언트)는 최하층이라
+        `app_core` 위로는 아무것도 못 본다. 서로는 참조해도 되지만 그건 아래
+        `test_support_libraries_are_acyclic` 이 순환만 막는다 — 이들 사이에 억지로
+        전순서를 매기면 파일 하나 추가할 때마다 숫자를 손보게 되고, 그런 계약은
+        지켜지지 않는다.
+
+        예외는 딱 하나 — `app.py` 가 Blueprint 모듈을 import 하는 것. Flask 등록
+        패턴상 상위층을 끌어와야 하므로 구조적으로 불가피하고, `app.py` 맨 아래
+        등록 블록에서만 일어난다. 그래서 "DAG" 가 아니라 **"등록 1건을 뺀 하향
+        단방향"** 이 이 계약의 정확한 이름이다. 그 예외를 아래 별도 검사가
+        등록 블록으로 묶어 둔다.
         """
-        allowed = {
-            "helpers_shared.py": {"app.py"},
-            "app.py": {"helpers_shared.py"},
-        }
-        default_allowed = {"app.py", "helpers_shared.py"}
-        violations = {
-            src: sorted(set(deps) - allowed.get(src, default_allowed))
-            for src, deps in self.graph.items()
-            if set(deps) - allowed.get(src, default_allowed)
-        }
+        blueprints = set(registered_blueprints())
+        support = set(leaf_modules())
+        layer = {name: LEAF_LAYER for name in support}
+        layer.update(LAYERS)
+        layer.update({name: BLUEPRINT_LAYER for name in blueprints})
+
+        violations = {}
+        for src, deps in self.graph.items():
+            src_name = src[:-3]
+            for dep in deps:
+                dep_name = dep[:-3]
+                self.assertIn(dep_name, layer, f"{src}: 층위 미등재 모듈 import — {dep}")
+                if src_name == "app" and dep_name in blueprints:
+                    continue                      # Blueprint 등록 예외 (아래 검사가 담당)
+                if src_name in support and dep_name in support:
+                    continue                      # 지원 라이브러리끼리 — 순환만 금지
+                if layer[dep_name] >= layer[src_name]:
+                    violations.setdefault(src, []).append(dep)
         self.assertEqual(
             {}, violations,
-            "경계 층위 위반(형제 경계 참조 — 공용이면 helpers_shared.py 로 옮길 것):\n"
+            "층위 위반(형제·상향 참조 — 공용이면 아래층으로 내릴 것):\n"
             + "\n".join(f"  {s} → {d}" for s, d in violations.items()),
         )
 
-    def test_converted_modules_are_self_contained(self):
-        """Blueprint 로 전환된 실제 모듈의 계약: 모든 전역 참조는 명시 import 다.
+    def test_support_libraries_are_acyclic(self):
+        """지원 라이브러리끼리는 참조해도 되지만 **순환은 안 된다**.
 
-        exec 경계는 공유 네임스페이스라 그래프 분석이 필요했지만, 전환된 모듈은
-        더 강한 계약을 직접 검증할 수 있다 — 모듈 안에서 참조하는 모든 이름이
-        그 모듈의 import/def/대입으로 바인딩돼 있어야 한다(미해결 이름 0).
-        미해결 이름이 하나라도 있으면 그 라우트는 호출 시점 NameError 다.
-
-        검사 대상은 손으로 관리하지 않고 app.py 의 register_blueprint 호출에서
-        자동 도출한다(올마이트 2026-08-11: 수동 목록은 다음 전환 때 등록 누락
-        가능). 아울러 import 대상도 계약이다: 형제 routes_* 경계나 exec 경계인
-        helpers_shared 를 import 하면 층위 위반이므로 여기서 함께 금지한다 —
-        허용은 stdlib/서드파티/app 뿐.
+        순환이 생기면 import 시점에 반쯤 초기화된 모듈이 보이고, 증상이 "가끔
+        AttributeError" 로 나와 원인 추적이 어렵다. 층위 숫자를 매기는 대신
+        여기서 순환만 막는 이유는 위 docstring 에 적었다.
         """
-        converted = converted_modules()
-        self.assertTrue(converted, "전환 모듈 자동 도출 실패 — register_blueprint 호출을 못 찾음")
-        boundary_names = {p.stem for p in boundary_files()} - {"app"}
-        for filename in converted:
-            tree = ast.parse((ROOT / filename).read_text(encoding="utf-8"), filename=filename)
-            banned = []
-            for node in ast.walk(tree):
-                mods = []
-                if isinstance(node, ast.Import):
-                    mods = [a.name.split(".")[0] for a in node.names]
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    mods = [node.module.split(".")[0]]
-                banned += [m for m in mods if m in boundary_names or m in {Path(c).stem for c in converted if c != filename}]
-            self.assertEqual(
-                [], banned,
-                f"{filename}: 형제 경계 import 금지 위반 — 공용이면 helpers_shared(즉 app 경유)로: {banned}",
-            )
-        for filename in converted:
-            path = ROOT / filename
+        support = set(leaf_modules())
+        edges = {
+            src[:-3]: [d[:-3] for d in deps if d[:-3] in support]
+            for src, deps in self.graph.items() if src[:-3] in support
+        }
+        state, cycle = {}, []
+
+        def visit(node, path):
+            if state.get(node) == "done":
+                return
+            if state.get(node) == "open":
+                cycle.append(" → ".join(path[path.index(node):] + [node]))
+                return
+            state[node] = "open"
+            for nxt in edges.get(node, []):
+                visit(nxt, path + [node])
+            state[node] = "done"
+
+        for name in sorted(support):
+            visit(name, [])
+        self.assertEqual([], cycle, f"지원 라이브러리 간 순환: {cycle}")
+
+    def test_blueprint_imports_are_only_for_registration(self):
+        """app.py 가 Blueprint 모듈을 끌어오는 건 **등록 때문에만** 허용된다.
+
+        등록과 무관하게 상위층을 쓰기 시작하면 그건 진짜 순환이고, 위 층위 검사의
+        예외가 구멍으로 바뀐다. 그래서 import 된 Blueprint 모듈 집합과 등록된
+        집합이 정확히 같은지, 그리고 app.py 가 그 모듈들에서 `bp` 말고 다른 이름을
+        가져오지 않는지 본다.
+        """
+        blueprints = set(registered_blueprints())
+        imported = {d[:-3] for d in self.graph["app.py"]} & blueprints
+        self.assertEqual(
+            blueprints, imported,
+            "등록된 Blueprint 와 app.py 가 import 한 Blueprint 가 불일치",
+        )
+        borrowed = {
+            dep: names for dep, names in self.graph["app.py"].items()
+            if dep[:-3] in blueprints and names
+        }
+        self.assertEqual(
+            {}, borrowed,
+            f"app.py 가 Blueprint 모듈에서 심볼을 직접 가져옴(등록 목적 외 상향 결합): {borrowed}",
+        )
+        # import 이름 목록만 보면 `import routes_core` 뒤에 `routes_core.foo()` 를
+        # 쓰는 경로가 통째로 안 보인다(가져온 이름이 0개라 위 검사를 그냥 통과).
+        # 속성 접근까지 봐야 예외가 "등록만" 으로 좁혀진다. (2026-08-12 올마이트 지적)
+        tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
+        used = {}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                    and node.value.id in blueprints and node.attr != "bp"):
+                used.setdefault(node.value.id, set()).add(node.attr)
+        self.assertEqual(
+            {}, {k: sorted(v) for k, v in used.items()},
+            f"app.py 가 Blueprint 모듈의 `bp` 외 속성을 사용함(상향 결합): {used}",
+        )
+
+    def test_no_import_then_rebind(self):
+        """import 해 온 이름을 같은 파일이 다시 정의하지 않는다.
+
+        `module_defines()` 는 소유에서 import 이름을 **뺀다**(재수출을 소유로 세면
+        `os`·`request` 가 전 파일 충돌이라 판정이 무의미해지므로). 그런데 어떤 파일이
+        `from x import foo` 한 뒤 `def foo()` 로 덮으면, `symtable` 에서 그 이름은
+        imported 이자 assigned 라 소유에서 **빠진다** — 진짜 소유자가 그림자에 가려
+        provider 충돌 검사와 소유 판정이 동시에 눈이 먼다. (2026-08-12 올마이트 지적)
+
+        현재 해당 사례 0. 그러니 이 검사는 "고치는" 게 아니라 그 사각지대가 생기는
+        순간 조용히 통과하지 말고 **크게 실패**하게 만드는 트립와이어다.
+        """
+        offenders = {}
+        for path in analysed_modules():
             top = _table(path)
-            provided = {
+            both = sorted(
                 s.get_name() for s in top.get_symbols()
-                if s.is_assigned() or s.is_imported() or s.is_namespace()
-            }
-            referenced = set()
-
-            def scan(table, is_module):
-                for sym in table.get_symbols():
-                    if not sym.is_referenced():
-                        continue
-                    if is_module:
-                        if not (sym.is_assigned() or sym.is_imported() or sym.is_namespace()):
-                            referenced.add(sym.get_name())
-                    elif sym.is_global():
-                        referenced.add(sym.get_name())
-                for child in table.get_children():
-                    scan(child, False)
-
-            scan(top, True)
-            unresolved = sorted(referenced - provided - BUILTIN_NAMES)
-            self.assertEqual(
-                [], unresolved,
-                f"{filename}: import 없이 참조되는 이름(호출 시점 NameError): {unresolved}",
+                if s.is_imported() and (s.is_assigned() or s.is_namespace())
             )
+            if both:
+                offenders[path.name] = both
+        self.assertEqual(
+            {}, offenders,
+            f"import 한 이름을 재정의함 — 소유 판정이 이 이름들에서 눈이 멂: {offenders}",
+        )
+
+    def test_no_exec_boundary_loading(self):
+        """옛 exec 로더가 어떤 형태로도 돌아오지 않는다.
+
+        `exec(src, globals(), globals())` 는 의존을 소스에서 지우고 오타를 요청
+        시점 NameError 로 미루는 구조 그 자체였다. 되돌아오면 위 검사들이 전부
+        무의미해지므로(참조가 어느 파일 것인지 정적으로 알 수 없게 된다) 여기서
+        원천 차단한다.
+        """
+        offenders = []
+        for path in analysed_modules():
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                        and node.func.id in {"exec", "compile"}):
+                    offenders.append(f"{path.name}:L{node.lineno} {node.func.id}()")
+        self.assertEqual([], offenders, f"exec/compile 기반 로딩 부활: {offenders}")
 
     def test_endpoint_short_names_are_unique(self):
         """endpoint 의 마지막 조각(함수명)은 앱 전체에서 유일해야 한다.
@@ -353,19 +451,6 @@ class BoundaryDependencyGraphTests(unittest.TestCase):
         dups = {k: sorted(set(v)) for k, v in shorts.items() if len(set(v)) > 1}
         self.assertEqual({}, dups, f"short endpoint 이름 충돌(JS 설명서 키 오염): {dups}")
 
-    def test_recorded_boundary_paths_match_loader(self):
-        """app.py 가 reloader 에 넘기는 경로 목록이 실제 로드 목록과 같은지.
-
-        `EXTRACTED_BOUNDARY_PATHS` 가 비거나 어긋나면 개발 reloader 가 경계를
-        감시하지 못하고 "고쳤는데 안 바뀜" 이 조용히 돌아온다.
-        """
-        import app as appmod
-
-        recorded = [Path(p) for p in appmod.EXTRACTED_BOUNDARY_PATHS]
-        self.assertEqual([p for p in boundary_files() if p.name != "app.py"], recorded)
-        for path in recorded:
-            self.assertTrue(path.is_file(), f"reloader 감시 경로가 실제 파일이 아님: {path}")
-
 
 if __name__ == "__main__":
     if "--update" in sys.argv:
@@ -374,13 +459,13 @@ if __name__ == "__main__":
             print(f"미해결 이름이 있어 갱신 중단: {unresolved}", file=sys.stderr)
             sys.exit(1)
         if conflicts:
-            print(f"provider 충돌이 있어 갱신 중단: {conflicts}", file=sys.stderr)
+            print(f"정의 충돌이 있어 갱신 중단: {conflicts}", file=sys.stderr)
             sys.exit(1)
         FIXTURE.parent.mkdir(parents=True, exist_ok=True)
         FIXTURE.write_text(json.dumps(graph, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
                            encoding="utf-8")
         edges = sum(len(v) for v in graph.values())
         symbols = sum(len(s) for v in graph.values() for s in v.values())
-        print(f"갱신 완료: {FIXTURE} — 경계 {len(graph)}개 · 간선 {edges}개 · 심볼 {symbols}개")
+        print(f"갱신 완료: {FIXTURE} — 모듈 {len(graph)}개 · 간선 {edges}개 · 심볼 {symbols}개")
     else:
         unittest.main()

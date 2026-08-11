@@ -7,8 +7,8 @@ explicit imports below and nothing else, so a misspelled helper fails at
 import time instead of as a request-time ``NameError``.
 
 Import contract (enforced by ``test_converted_modules_are_self_contained``):
-only stdlib, Flask, and ``app`` (which includes everything ``helpers_shared.py``
-executed into it) — never a sibling ``routes_*`` boundary.
+only stdlib, Flask, and the layers below it (``app_core``, ``helpers_shared``,
+``app``) — never a sibling ``routes_*`` boundary.
 
 Endpoints are prefixed ``ai_gemini.`` by the Blueprint; the URLs themselves are
 unchanged and no template or Python code referenced the old endpoint names
@@ -22,24 +22,13 @@ import uuid
 from flask import abort, jsonify, request, send_from_directory, session
 from flask import Blueprint
 
-from app import (
-    GEMINI_API_KEY,
-    UPLOAD_DIR,
-    VETTING_TYPES,
-    _MARITIME_TERMS,
-    _coerce_translation_items,
-    _ext_allowed,
-    _findings_workbook,
-    _gemini_call_json,
-    _model_for,
-    _safe_filename,
-    _vetting_display_order,
-    _vetting_with_counts,
-    _xlsx_to_text,
-    app,
-    execute,
-    login_required,
-    query,
+from app_core import (
+    UPLOAD_DIR, app, execute, query,
+)
+from helpers_shared import (
+    GEMINI_API_KEY, VETTING_TYPES, _MARITIME_TERMS, _coerce_translation_items,
+    _ext_allowed, _findings_workbook, _gemini_call_json, _model_for, _safe_filename,
+    _vetting_display_order, _vetting_with_counts, _xlsx_to_text, login_required,
 )
 
 bp = Blueprint("ai_gemini", __name__)

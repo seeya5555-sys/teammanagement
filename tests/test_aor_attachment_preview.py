@@ -2,13 +2,14 @@ import os
 import tempfile
 import unittest
 import app as appmod
+from source_bundle import shared_ns  # noqa: E402
 
 class AorAttachmentPreviewTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.old_db=appmod.DATABASE; self.old_cfg=appmod.app.config['DATABASE']; self.old_dir=appmod.AOR_PDF_DIR
         db=os.path.join(self.tmp.name,'test.db'); appmod.DATABASE=db; appmod.app.config['DATABASE']=db; appmod.AOR_PDF_DIR=os.path.join(self.tmp.name,'aor_pdfs'); os.makedirs(appmod.AOR_PDF_DIR)
         with appmod.app.app_context():
-            appmod.init_db(False); appmod._ensure_api_table(); appmod.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('api_key',?)",('secret',));
+            appmod.init_db(False); shared_ns._ensure_api_table(); appmod.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('api_key',?)",('secret',));
             self.did=appmod.execute("INSERT INTO aor_draft(aor_cd,status,attach_files) VALUES(?,?,?)",('INPSCA2607230001','pending','[\"quote.pdf\"]'))
         self.client=appmod.app.test_client()
         with self.client.session_transaction() as s: s['user_id']=1; s['role']='admin'

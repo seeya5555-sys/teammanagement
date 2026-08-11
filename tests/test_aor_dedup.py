@@ -20,7 +20,7 @@ class AORDedupTests(unittest.TestCase):
         appmod.app.config["DATABASE"] = test_db
         with appmod.app.app_context():
             appmod.init_db(drop=False)
-            appmod._ensure_api_table()
+            shared_ns._ensure_api_table()
             appmod.execute(
                 "INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)",
                 ("secret",),

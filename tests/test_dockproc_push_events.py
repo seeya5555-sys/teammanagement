@@ -73,71 +73,71 @@ def mkrow(vsl_nm, vsl_cd, req_no, cat='S', **kw):
 
 
 print('# 1) submit 파서 — 미지 형식은 None(모르는 값으로 알림 안 만듦)')
-chk(A._dockproc_submit_pair('2/5') == (2, 5), '"2/5" → (2,5)')
-chk(A._dockproc_submit_pair('(0/4)') == (0, 4), '괄호꼴 "(0/4)" → (0,4)')
-chk(A._dockproc_submit_pair(' 3 / 3 ') == (3, 3), '공백 허용')
+chk(shared_ns._dockproc_submit_pair('2/5') == (2, 5), '"2/5" → (2,5)')
+chk(shared_ns._dockproc_submit_pair('(0/4)') == (0, 4), '괄호꼴 "(0/4)" → (0,4)')
+chk(shared_ns._dockproc_submit_pair(' 3 / 3 ') == (3, 3), '공백 허용')
 for bad in (None, '', 'x', '3/', '(0/1', '1/2/3'):
-    chk(A._dockproc_submit_pair(bad) is None, f'미지 형식 → None: {bad!r}')
+    chk(shared_ns._dockproc_submit_pair(bad) is None, f'미지 형식 → None: {bad!r}')
 
 print('\n# 2) dock_quote — 분자 증가에서만, 라벨은 안 봄')
 rid = mkrow('TEST VESSEL', 'TSTV', 'S1', svms_submit='1/3', svms_status='Quotation Inquiry')
 r = row_of(rid)
-ev = A._dockproc_push_events(r, 'Quotation Inquiry', 0, '2/3', None, None, None)
+ev = shared_ns._dockproc_push_events(r, 'Quotation Inquiry', 0, '2/3', None, None, None)
 chk([e['kind'] for e in ev] == ['dock_quote'], '1/3 → 2/3 = 견적제출 1건', [e['kind'] for e in ev])
 chk(ev[0]['event_key'] == f"dock_quote:{rid}:{r['updated_at']}:2/3",
     'event_key = 행+전이회차+제출수', ev[0]['event_key'])
 chk('2/3' in ev[0]['body'] and 'TEST VESSEL' in ev[0]['title'], '본문/제목에 선박·수치', ev[0])
-chk(A._dockproc_push_events(r, 'Quotation Inquiry', 0, '1/3', None, None, None) == [],
+chk(shared_ns._dockproc_push_events(r, 'Quotation Inquiry', 0, '1/3', None, None, None) == [],
     '같은 수치는 이벤트 없음')
-chk(A._dockproc_push_events(r, 'Quotation Inquiry', 0, '0/3', None, None, None) == [],
+chk(shared_ns._dockproc_push_events(r, 'Quotation Inquiry', 0, '0/3', None, None, None) == [],
     '분자 감소(회수)는 알림 안 함')
 # 🔴 올마이트 블로커: 2→1→2 재증가. 키가 수치뿐이면 두 번째 2/3 이 dup 으로 묻혔다.
 k1 = ev[0]['event_key']
 A.execute("UPDATE dock_procure SET svms_submit='1/3', "
           "updated_at=datetime('now','localtime','+1 second') WHERE id=?", (rid,))
-ev_re = A._dockproc_push_events(row_of(rid), 'Quotation Inquiry', 0, '2/3', None, None, None)
+ev_re = shared_ns._dockproc_push_events(row_of(rid), 'Quotation Inquiry', 0, '2/3', None, None, None)
 chk(len(ev_re) == 1 and ev_re[0]['event_key'] != k1,
     '🔴 감소 후 같은 수치로 재증가 = 새 키로 다시 나감', (k1, ev_re and ev_re[0]['event_key']))
-chk(A._dockproc_push_events(r, 'Submit', 0, None, None, None, None) == [],
+chk(shared_ns._dockproc_push_events(r, 'Submit', 0, None, None, None, None) == [],
     '제출수 미전송(상세조회 실패)은 알림 안 함 — 모르면 조용히')
 r0 = row_of(mkrow('TEST VESSEL', 'TSTV', 'S2', svms_status='Quotation Inquiry'))
-chk([e['kind'] for e in A._dockproc_push_events(r0, 'Quotation Inquiry', 0, '1/2', None, None, None)]
+chk([e['kind'] for e in shared_ns._dockproc_push_events(r0, 'Quotation Inquiry', 0, '1/2', None, None, None)]
     == ['dock_quote'], '기존값 NULL + 첫 제출 = 알림')
 
 print('\n# 3) dock_ordered — stg_order 0→1 에서만')
 r1 = row_of(mkrow('TEST VESSEL', 'TSTV', 'S3', svms_status='Approval(Procssing)'))
-ev = A._dockproc_push_events(r1, 'Ordered', 1, None, '에버런스', 12345.6, 'USD')
+ev = shared_ns._dockproc_push_events(r1, 'Ordered', 1, None, '에버런스', 12345.6, 'USD')
 chk([e['kind'] for e in ev] == ['dock_ordered'], '발주완료 1건', [e['kind'] for e in ev])
 chk('에버런스' in ev[0]['body'] and 'USD 12,346' in ev[0]['body'], '업체·금액 표기', ev[0]['body'])
 chk(ev[0]['event_key'] == f"dock_ordered:{r1['id']}:{r1['updated_at']}",
     'event_key = 행+전이회차', ev[0]['event_key'])
 r2 = row_of(mkrow('TEST VESSEL', 'TSTV', 'S4', stg_order=1, svms_status='Ordered'))
-chk(A._dockproc_push_events(r2, 'Ordered', 1, None, '에버런스', 1.0, 'USD') == [],
+chk(shared_ns._dockproc_push_events(r2, 'Ordered', 1, None, '에버런스', 1.0, 'USD') == [],
     '이미 발주완료면 재발송 안 함')
-ev = A._dockproc_push_events(r1, 'Ordered', 1, None, None, None, None)
+ev = shared_ns._dockproc_push_events(r1, 'Ordered', 1, None, None, None, None)
 chk(len(ev) == 1 and '업체 미상' in ev[0]['body'] and 'None' not in ev[0]['body'],
     '업체·금액 없어도 본문에 None 이 새지 않음', ev[0]['body'])
 
 print('\n# 4) dock_reject — 라벨 정확일치, 진입 시 1회')
 r3 = row_of(mkrow('TEST VESSEL', 'TSTV', 'S5', svms_status='Approval(Procssing)'))
-_ev_rej = A._dockproc_push_events(r3, 'HQ Rejected', 0, None, None, None, None)
+_ev_rej = shared_ns._dockproc_push_events(r3, 'HQ Rejected', 0, None, None, None, None)
 chk([e['kind'] for e in _ev_rej] == ['dock_reject'], '결재 반려 진입 = 알림')
 k_rej = _ev_rej[0]['event_key'] if _ev_rej else None
 r4 = row_of(mkrow('TEST VESSEL', 'TSTV', 'S6', svms_status='HQ Rejected'))
-chk(A._dockproc_push_events(r4, 'HQ Rejected', 0, None, None, None, None) == [],
+chk(shared_ns._dockproc_push_events(r4, 'HQ Rejected', 0, None, None, None, None) == [],
     '이미 반려면 재발송 안 함')
-chk(A._dockproc_push_events(r3, 'HQ Rejected(2)', 0, None, None, None, None) == [],
+chk(shared_ns._dockproc_push_events(r3, 'HQ Rejected(2)', 0, None, None, None, None) == [],
     '🔴 부분일치 금지 — 라벨 정확일치 아니면 반려 아님')
 # 🔴 올마이트 블로커: 같은 날 2차 반려. 키가 날짜였을 땐 두 번째가 통째로 묻혔다.
 A.execute("UPDATE dock_procure SET svms_status='Submit', "
           "updated_at=datetime('now','localtime','+1 second') WHERE id=?", (r3['id'],))
-ev2 = A._dockproc_push_events(row_of(r3['id']), 'HQ Rejected', 0, None, None, None, None)
+ev2 = shared_ns._dockproc_push_events(row_of(r3['id']), 'HQ Rejected', 0, None, None, None, None)
 chk(len(ev2) == 1 and ev2[0]['event_key'] != k_rej,
     '🔴 재상신→재반려(같은 날)는 새 키로 다시 나감 — 묻히지 않음', (k_rej, ev2 and ev2[0]['event_key']))
 
 print('\n# 5) 여러 이벤트가 한 전이에 동시 발생하면 둘 다 나감')
 r5 = row_of(mkrow('TEST VESSEL', 'TSTV', 'S7', svms_submit='0/2', svms_status='Quotation Inquiry'))
-ev = A._dockproc_push_events(r5, 'Ordered', 1, '2/2', '딘텍', 100.0, 'USD')
+ev = shared_ns._dockproc_push_events(r5, 'Ordered', 1, '2/2', '딘텍', 100.0, 'USD')
 chk(sorted(e['kind'] for e in ev) == ['dock_ordered', 'dock_quote'], '견적제출+발주완료 동시', ev)
 chk(len({e['collapse'] for e in ev}) == 2, 'collapse_id 가 서로 달라 알림이 안 덮임')
 
@@ -209,8 +209,8 @@ chk(A.query("SELECT * FROM push_outbox") == [], '성공하면 대기함에서 �
 # 무한재시도 금지 — 한도 넘으면 버리고 로그만 남긴다(형에게 늦은 알림은 오보에 가깝다).
 shared_ns._push_dispatch = lambda *a, **k: {'ok': False, 'reason': 'all_failed', 'sent': 0, 'failed': 1}
 A.execute("INSERT INTO push_outbox (event_key, kind, title, body, tries) VALUES "
-          "('dock_quote:zombie', 'dock_quote', 't', 'b', ?)", (A._PUSH_OUTBOX_MAX_TRIES,))
-out = A._push_outbox_drain()
+          "('dock_quote:zombie', 'dock_quote', 't', 'b', ?)", (shared_ns._PUSH_OUTBOX_MAX_TRIES,))
+out = shared_ns._push_outbox_drain()
 shared_ns._push_dispatch = _real
 chk([o['reason'] for o in out] == ['dropped'] and A.query("SELECT * FROM push_outbox") == [],
     '한도 초과건은 포기하고 대기함에서 제거', out)

@@ -43,7 +43,7 @@ A.app.app_context().push()
 c = A.app.test_client()
 
 KEY = 'testkey-dockproc-recall'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 
@@ -93,15 +93,15 @@ def mkdraft(rid, rep_cd, status='submitted'):
 
 
 print('# 1) allowlist 자체 — 실측된 pre-inquiry 라벨만 들어있고 빈 라벨은 없다')
-chk('HQ RECEIVED' in A._DOCKPROC_PRE_INQUIRY, "'HQ RECEIVED' 등재(회수가 돌아오는 라벨)")
-chk('VSL APPROVED' in A._DOCKPROC_PRE_INQUIRY,
+chk('HQ RECEIVED' in shared_ns._DOCKPROC_PRE_INQUIRY, "'HQ RECEIVED' 등재(회수가 돌아오는 라벨)")
+chk('VSL APPROVED' in shared_ns._DOCKPROC_PRE_INQUIRY,
     "'VSL APPROVED' 등재 — 2026-08-04 구매 회수 실측(B41 회수 → REQ B4 가 STATUS='N' 로 복귀)")
-chk(A._DOCKPROC_PRE_INQUIRY == {'HQ RECEIVED', 'VSL APPROVED'},
+chk(shared_ns._DOCKPROC_PRE_INQUIRY == {'HQ RECEIVED', 'VSL APPROVED'},
     "실측 라벨 2개만 — 'Approved' 는 회수 경로 미확인이라 여전히 제외",
-    A._DOCKPROC_PRE_INQUIRY)
-chk('' not in A._DOCKPROC_PRE_INQUIRY, "빈 라벨은 미등재(수동관리 행 보호)")
-chk('QUOTATION INQUIRY' not in A._DOCKPROC_PRE_INQUIRY, "rank>=1 라벨은 미등재")
-chk(A._dockproc_status_rank('HQ Received') == 0, "rank('HQ Received') == 0")
+    shared_ns._DOCKPROC_PRE_INQUIRY)
+chk('' not in shared_ns._DOCKPROC_PRE_INQUIRY, "빈 라벨은 미등재(수동관리 행 보호)")
+chk('QUOTATION INQUIRY' not in shared_ns._DOCKPROC_PRE_INQUIRY, "rank>=1 라벨은 미등재")
+chk(shared_ns._dockproc_status_rank('HQ Received') == 0, "rank('HQ Received') == 0")
 
 print('# 2) 🔴 실사고 재현 — 회수(HQ Received)가 단계를 되돌린다')
 rid = mkrow('R22', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry',
@@ -185,9 +185,9 @@ for _raw, _want, _why in (
         ('-1/2', True, '음수 = fail-closed(정규식 미매칭)'),
         ('( 0 / 4 )', False, '괄호쌍+공백은 정상 형식으로 인정'),
         ('10/12', True, '두자리 분자 > 0')):
-    chk(A._dockproc_submit_has_quotes(_raw) is _want,
+    chk(shared_ns._dockproc_submit_has_quotes(_raw) is _want,
         f'_dockproc_submit_has_quotes({_raw!r}) is {_want} — {_why}',
-        A._dockproc_submit_has_quotes(_raw))
+        shared_ns._dockproc_submit_has_quotes(_raw))
 
 print('# 7-1b) e2e — 제출 0("0/0") 회수건은 되돌아가고, 제출 있는 행은 그대로 막힌다')
 mkrow('R47', stages_on=(1, 1, 0, 0), svms_status='Quotation Inquiry')
@@ -601,8 +601,8 @@ r30 = row_of('S30')
 chk((r30['svms_req_no'] or '') == '', '구매 회수 → 죽은 INQ_NO 비움', r30['svms_req_no'])
 chk(r30['svms_pc_req_no'] == 'TSTVES2607C1',
     '요청키(`svms_pc_req_no`)는 보존 — 이게 없으면 재요청 버튼이 죽는다', r30['svms_pc_req_no'])
-chk(A._dockproc_inq_target(row_of('S30')) == ('PCRQ', 'TSTVES2607C1'),
-    '견적요청 대상 판정 그대로', A._dockproc_inq_target(row_of('S30')))
+chk(shared_ns._dockproc_inq_target(row_of('S30')) == ('PCRQ', 'TSTVES2607C1'),
+    '견적요청 대상 판정 그대로', shared_ns._dockproc_inq_target(row_of('S30')))
 
 print('# 16-1) 🔴 이 수정의 목적 — 재요청으로 나온 **새 INQ_NO** 가 실제로 적재된다')
 sync('S30', 'Quotation Inquiry', inq_no='TSTVES2607C12')        # 재요청 → SVMS 가 새 번호 발급

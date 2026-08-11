@@ -27,6 +27,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns  # noqa: E402
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -47,7 +48,7 @@ A.app.app_context().push()
 c = A.app.test_client()
 
 KEY = 'testkey-dockproc-ordvendors'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 A.execute("INSERT INTO dock_procure_vessel(vsl_nm, vsl_cd) VALUES('TEST VESSEL','TSTV')")
@@ -90,16 +91,16 @@ S1 = [{'odr_no': 'BGBBES2607A11B', 'nm': 'EVERLLENCE KOREA', 'cd': '86378', 'st'
        'amt': None, 'cur': None, 'ordered': False}]
 
 print('# 1) 정규화 함수 단위 — 형태 방어')
-chk(A._dockproc_norm_orders(None) is None, '리스트 아니면 None')
-chk(A._dockproc_norm_orders('x') is None, '문자열이면 None')
-chk(A._dockproc_norm_orders([]) is None, '빈 리스트는 None(호출부가 clear 로 해석)')
-chk(A._dockproc_norm_orders([1, 'a', None]) is None, 'dict 아닌 원소만이면 None')
-chk(A._dockproc_norm_orders([{'nm': 'X', 'amt': 5}]) is None, 'ODR_NO 없으면 버림 → None')
+chk(shared_ns._dockproc_norm_orders(None) is None, '리스트 아니면 None')
+chk(shared_ns._dockproc_norm_orders('x') is None, '문자열이면 None')
+chk(shared_ns._dockproc_norm_orders([]) is None, '빈 리스트는 None(호출부가 clear 로 해석)')
+chk(shared_ns._dockproc_norm_orders([1, 'a', None]) is None, 'dict 아닌 원소만이면 None')
+chk(shared_ns._dockproc_norm_orders([{'nm': 'X', 'amt': 5}]) is None, 'ODR_NO 없으면 버림 → None')
 
-v = json.loads(A._dockproc_norm_orders([{'odr_no': 'a1', 'nm': 'X'}, {'odr_no': 'A1', 'nm': 'Y'}]))
+v = json.loads(shared_ns._dockproc_norm_orders([{'odr_no': 'a1', 'nm': 'X'}, {'odr_no': 'A1', 'nm': 'Y'}]))
 chk(len(v) == 1 and v[0]['odr_no'] == 'A1', 'ODR_NO 대문자화 + 중복 1건으로 축약', v)
 
-v = json.loads(A._dockproc_norm_orders([
+v = json.loads(shared_ns._dockproc_norm_orders([
     {'odr_no': 'X1', 'amt': '1,234.5', 'cur': 'usd', 'cd': 'ab-12', 'ordered': 'true'},
     {'odr_no': 'X2', 'amt': 0, 'cur': 'DOLLAR', 'ordered': 1},
     {'odr_no': 'X3', 'amt': -5, 'ordered': True},
@@ -113,17 +114,17 @@ chk(by['X2']['amt'] is None and by['X3']['amt'] is None and by['X4']['amt'] is N
     '0·음수·비숫자 금액은 None(미확정 — 0원 발주 표시 방지)', by)
 chk(by['X2']['cur'] is None, '3글자 아닌 통화는 None', by['X2'])
 
-big = A._dockproc_norm_orders([{'odr_no': f'N{i}', 'nm': 'x'} for i in range(30)])
-chk(len(json.loads(big)) == A._DOCKPROC_ORDER_MAX, f'개수 캡 {A._DOCKPROC_ORDER_MAX}', len(json.loads(big)))
+big = shared_ns._dockproc_norm_orders([{'odr_no': f'N{i}', 'nm': 'x'} for i in range(30)])
+chk(len(json.loads(big)) == shared_ns._DOCKPROC_ORDER_MAX, f'개수 캡 {shared_ns._DOCKPROC_ORDER_MAX}', len(json.loads(big)))
 
-a = A._dockproc_norm_orders(S1)
-b = A._dockproc_norm_orders(list(reversed(S1)))
+a = shared_ns._dockproc_norm_orders(S1)
+b = shared_ns._dockproc_norm_orders(list(reversed(S1)))
 chk(a == b, '🔴 순서가 뒤바뀐 같은 내용 → 같은 문자열(canonical = 멱등의 근거)')
 
 print('# 2) 저장값 읽기(_dockproc_orders_of)')
-chk(A._dockproc_orders_of(a) and len(A._dockproc_orders_of(a)) == 2, 'JSON → 2건')
-chk(A._dockproc_orders_of('{bad') == [], '깨진 JSON 은 빈 목록(카드 전체를 죽이지 않음)')
-chk(A._dockproc_orders_of(None) == [] and A._dockproc_orders_of('[1,2]') == [],
+chk(shared_ns._dockproc_orders_of(a) and len(shared_ns._dockproc_orders_of(a)) == 2, 'JSON → 2건')
+chk(shared_ns._dockproc_orders_of('{bad') == [], '깨진 JSON 은 빈 목록(카드 전체를 죽이지 않음)')
+chk(shared_ns._dockproc_orders_of(None) == [] and shared_ns._dockproc_orders_of('[1,2]') == [],
     'None·dict 아닌 원소는 빈 목록')
 
 print('# 3) 3상태 계약')

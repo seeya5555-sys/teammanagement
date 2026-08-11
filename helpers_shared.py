@@ -8,9 +8,31 @@ enforced by ``tests/test_boundary_dependency_graph.py``.
 
 Sections preserve the original per-file order, and the file order matches the
 old loader order, so every load-time reference that worked before the
-extraction still resolves.  Like the other boundaries this file is executed in
-the application namespace by ``_load_extracted_module`` — it is not imported.
+extraction still resolves.  Since 2026-08-12 this file is a real imported
+module: it takes its primitives from ``app_core`` (config, the Flask app and
+the DB helpers), which is what removed the ``app.py`` ↔ helpers cycle that
+forced the old ``exec`` loading.
 """
+
+import json
+import math
+import os
+import re
+import secrets
+import sqlite3
+import threading
+import uuid
+from datetime import date, datetime, timedelta
+from functools import wraps
+
+from flask import abort, jsonify, redirect, request, session, url_for
+from werkzeug.utils import secure_filename
+
+from app_core import (
+    ALLOWED_EXT, BASE_DIR, DATABASE, DOCKATT_FILE_DIR, INSTANCE_DIR,
+    SOA_REVIEW_PDF_DIR, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, app,
+    execute, get_db, query,
+)
 
 
 # ══════════════════════════════════════════════════════════════════

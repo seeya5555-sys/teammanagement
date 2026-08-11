@@ -875,7 +875,7 @@ _GLOBAL_TEMP_FILES = []
 
 def _contain_in_static(candidate):
     """candidate 경로가 static 디렉터리 밖(경로순회 ../)이면 None 반환."""
-    from app import app
+    from app_core import app
     root = os.path.realpath(app.static_folder)
     real = os.path.realpath(candidate)
     if real == root or real.startswith(root + os.sep):
@@ -889,11 +889,11 @@ def _resolve_image_path(url, filename):
     if url and url.startswith('/static/'):
         rel = url[len('/static/'):]
         # static 디렉터리 위치 — app 모듈에서 가져옴
-        from app import app
+        from app_core import app
         return _contain_in_static(os.path.join(app.static_folder, rel))
     # 직접 filename으로 fallback
     if filename:
-        from app import app
+        from app_core import app
         return _contain_in_static(
             os.path.join(app.static_folder, 'uploads', 'dock', filename))
     return None

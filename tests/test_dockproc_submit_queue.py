@@ -41,7 +41,7 @@ with c.session_transaction() as s:
     s['user_id'] = 1; s['username'] = 'smoke'; s['role'] = 'admin'
 
 KEY = 'testkey-dock-submit'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 

@@ -31,14 +31,14 @@ class VettingDisplayOrderTests(unittest.TestCase):
             {"id": 1, "inspection_date": "2026-05-01", "valid": "Last Result"},
             {"id": 2, "inspection_date": "", "valid": "Next Plan"},
         ]
-        self.assertEqual(ids(appmod._vetting_display_order(rows)), [2, 1])
+        self.assertEqual(ids(shared_ns._vetting_display_order(rows)), [2, 1])
 
     def test_dated_next_plan_also_stays_on_top(self):
         rows = [
             {"id": 1, "inspection_date": "2026-05-01", "valid": "Last Result"},
             {"id": 2, "inspection_date": "2026-01-09", "valid": "Next Plan"},
         ]
-        self.assertEqual(ids(appmod._vetting_display_order(rows)), [2, 1])
+        self.assertEqual(ids(shared_ns._vetting_display_order(rows)), [2, 1])
 
     def test_multiple_next_plans_newest_id_first(self):
         rows = [
@@ -46,7 +46,7 @@ class VettingDisplayOrderTests(unittest.TestCase):
             {"id": 9, "inspection_date": "", "valid": "Next Plan"},
             {"id": 3, "inspection_date": "2026-05-01", "valid": "Last Result"},
         ]
-        self.assertEqual(ids(appmod._vetting_display_order(rows)), [9, 5, 3])
+        self.assertEqual(ids(shared_ns._vetting_display_order(rows)), [9, 5, 3])
 
     def test_reports_keep_date_desc_then_id_desc(self):
         rows = [
@@ -55,7 +55,7 @@ class VettingDisplayOrderTests(unittest.TestCase):
             {"id": 7, "inspection_date": "2026-05-01", "valid": "Last Result"},
             {"id": 2, "inspection_date": "", "valid": "Last Result"},
         ]
-        self.assertEqual(ids(appmod._vetting_display_order(rows)), [7, 4, 1, 2])
+        self.assertEqual(ids(shared_ns._vetting_display_order(rows)), [7, 4, 1, 2])
 
     def test_blank_status_is_not_treated_as_next_plan(self):
         # 새로 추가한 빈 행(상태 미정)은 계획으로 승격되지 않는다 — 'Next Plan' 으로
@@ -64,10 +64,10 @@ class VettingDisplayOrderTests(unittest.TestCase):
             {"id": 1, "inspection_date": "2026-05-01", "valid": "Last Result"},
             {"id": 2, "inspection_date": None, "valid": None},
         ]
-        self.assertEqual(ids(appmod._vetting_display_order(rows)), [1, 2])
+        self.assertEqual(ids(shared_ns._vetting_display_order(rows)), [1, 2])
 
     def test_empty(self):
-        self.assertEqual(appmod._vetting_display_order([]), [])
+        self.assertEqual(shared_ns._vetting_display_order([]), [])
 
 
 class VettingPickInvariantTests(unittest.TestCase):
@@ -83,7 +83,7 @@ class VettingPickInvariantTests(unittest.TestCase):
     def _pick(self, rows):
         with shared_ns.patch("query", mock.Mock(return_value=rows)), \
              shared_ns.patch("_vetting_with_counts", mock.Mock(side_effect=lambda r: dict(r))):
-            return appmod._vetting_pick(1)
+            return shared_ns._vetting_pick(1)
 
     def test_latest_is_dateless_next_plan_and_is_first_row(self):
         latest, enr = self._pick([

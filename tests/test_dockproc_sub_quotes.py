@@ -23,6 +23,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns  # noqa: E402
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -43,7 +44,7 @@ A.app.app_context().push()
 c = A.app.test_client()
 
 KEY = 'testkey-dockproc-subquotes'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 A.execute("INSERT INTO dock_procure_vessel(vsl_nm, vsl_cd) VALUES('TEST VESSEL','TSTV')")
@@ -76,11 +77,11 @@ def subq(req_no):
 
 
 print('# 1) 정규화 함수 단위 — 형태 방어')
-chk(A._dockproc_norm_quotes(None) is None, '리스트 아니면 None')
-chk(A._dockproc_norm_quotes('x') is None, '문자열이면 None')
-chk(A._dockproc_norm_quotes([]) is None, '빈 리스트면 None')
-chk(A._dockproc_norm_quotes(['x', 3, None]) is None, 'dict 아닌 원소만 있으면 None')
-one = json.loads(A._dockproc_norm_quotes(
+chk(shared_ns._dockproc_norm_quotes(None) is None, '리스트 아니면 None')
+chk(shared_ns._dockproc_norm_quotes('x') is None, '문자열이면 None')
+chk(shared_ns._dockproc_norm_quotes([]) is None, '빈 리스트면 None')
+chk(shared_ns._dockproc_norm_quotes(['x', 3, None]) is None, 'dict 아닌 원소만 있으면 None')
+one = json.loads(shared_ns._dockproc_norm_quotes(
     [{'nm': 'A CO', 'cd': 'a1jfj', 'amt': '15,800', 'usd': 15800, 'cur': 'usd',
       'gross_amt': '16,000', 'dc_rate': 45, 'final_amt': '8,800', 'final_usd': 8800,
       'att': '2', 'st': 'Submitted'}]))
@@ -91,7 +92,7 @@ chk(one == [{'nm': 'A CO', 'cd': 'A1JFJ', 'amt': 15800.0, 'usd': 15800.0,
              'cur': 'USD', 'att': 2, 'gap_n': 0, 'hard_n': 0, 'gaps': [],
              'st': 'Submitted', 'best': 1}],
     'DC전/할인/DC후 금액·통화·첨부·업체코드 정규화(+단독이면 best)', one)
-bad = json.loads(A._dockproc_norm_quotes([{'nm': 'B', 'amt': 'abc', 'cur': 'kr', 'att': 'x', 'st': ''}]))
+bad = json.loads(shared_ns._dockproc_norm_quotes([{'nm': 'B', 'amt': 'abc', 'cur': 'kr', 'att': 'x', 'st': ''}]))
 chk(bad == [{'nm': 'B', 'cd': None, 'amt': None, 'usd': None,
              'gross_amt': None, 'dc_rate': None, 'final_amt': None, 'final_usd': None,
              'cur': None, 'att': 0, 'gap_n': 0, 'hard_n': 0, 'gaps': [], 'st': ''}],
@@ -99,30 +100,30 @@ chk(bad == [{'nm': 'B', 'cd': None, 'amt': None, 'usd': None,
 
 print('# 1b) cd = SVMS VNDR_CD (Phase 3 SELETED_VDR 의 정본 식별자)')
 def _cd(v):
-    return json.loads(A._dockproc_norm_quotes([{'nm': 'X', 'cd': v}]))[0]['cd']
+    return json.loads(shared_ns._dockproc_norm_quotes([{'nm': 'X', 'cd': v}]))[0]['cd']
 chk(_cd(None) is None, 'cd 미전송(구버전 폴러) → None (상신 대상에서 제외됨)')
 chk(_cd('') is None, 'cd 빈문자 → None')
 chk(_cd('  a1jfj ') == 'A1JFJ', '공백 제거 + 대문자화', _cd('  a1jfj '))
 chk(_cd('A1-JF') is None, "형식 위반(하이픈) → None — 봉투에 쓰레기 코드가 안 들어감", _cd('A1-JF'))
 chk(_cd('한글업체') is None, '비ASCII → None', _cd('한글업체'))
 chk(_cd('A' * 30) == 'A' * 20, '길이 캡 20 (잘린 값이 형식검증을 통과)', _cd('A' * 30))
-inf = json.loads(A._dockproc_norm_quotes([{'nm': 'C', 'amt': float('inf'), 'usd': float('nan')}]))
+inf = json.loads(shared_ns._dockproc_norm_quotes([{'nm': 'C', 'amt': float('inf'), 'usd': float('nan')}]))
 chk(inf[0]['amt'] is None and inf[0]['usd'] is None, 'inf/nan 은 None(JSON 직렬화 불가 방지)', inf)
-mix = json.loads(A._dockproc_norm_quotes(
+mix = json.loads(shared_ns._dockproc_norm_quotes(
     [{'nm': 'KR', 'amt': 35421000, 'usd': 24794, 'cur': 'KRW'},
      {'nm': 'US', 'amt': 23480, 'usd': 23480, 'cur': 'USD'}]))
 chk(min(mix, key=lambda x: x['usd'])['nm'] == 'US',
     '통화 혼재 시 최저가 판단 근거(usd)가 보존됨 — 원화 숫자로 비교하면 오답', mix)
-cap = json.loads(A._dockproc_norm_quotes([{'nm': f'V{i}', 'amt': i} for i in range(40)]))
-chk(len(cap) == A._DOCKPROC_QUOTE_MAX, f'개수 캡 {A._DOCKPROC_QUOTE_MAX}', len(cap))
-clamp = json.loads(A._dockproc_norm_quotes([{'nm': 'D', 'att': 500}, {'nm': 'E', 'att': -3}]))
+cap = json.loads(shared_ns._dockproc_norm_quotes([{'nm': f'V{i}', 'amt': i} for i in range(40)]))
+chk(len(cap) == shared_ns._DOCKPROC_QUOTE_MAX, f'개수 캡 {shared_ns._DOCKPROC_QUOTE_MAX}', len(cap))
+clamp = json.loads(shared_ns._dockproc_norm_quotes([{'nm': 'D', 'att': 500}, {'nm': 'E', 'att': -3}]))
 chk([x['att'] for x in clamp] == [99, 0], 'att 0~99 clamp', clamp)
-chk(A._dockproc_norm_quotes([{'nm': 'x' * 300}])[:20].startswith('[{"amt"'), 'canonical=키 정렬(sort_keys)')
-chk(len(json.loads(A._dockproc_norm_quotes([{'nm': 'x' * 300}]))[0]['nm']) == 120, '업체명 120자 절단')
+chk(shared_ns._dockproc_norm_quotes([{'nm': 'x' * 300}])[:20].startswith('[{"amt"'), 'canonical=키 정렬(sort_keys)')
+chk(len(json.loads(shared_ns._dockproc_norm_quotes([{'nm': 'x' * 300}]))[0]['nm']) == 120, '업체명 120자 절단')
 
 print("# 1b) '최저' 판정(best 플래그) — 통화 혼재 오답 차단 (JS 대신 여기서 판정)")
 def _best(lst):
-    return [x['nm'] for x in json.loads(A._dockproc_norm_quotes(lst)) if x.get('best')]
+    return [x['nm'] for x in json.loads(shared_ns._dockproc_norm_quotes(lst)) if x.get('best')]
 chk(_best([{'nm': 'KR', 'amt': 35421000, 'usd': 24794, 'cur': 'KRW'},
            {'nm': 'US', 'amt': 23480, 'usd': 23480, 'cur': 'USD'}]) == ['US'],
     '전원 usd 보유 → usd 기준 최저(원화 숫자 크기로 비교하면 KR 오답)')
@@ -144,7 +145,7 @@ chk(q and q[0]['amt'] == 15800.0 and q[0]['att'] == 1, '제출견적 저장됨',
 chk(qamt is None, '🔴 제출견적은 발주금액(quote_amt)을 건드리지 않음', qamt)
 
 print('# 3) 키 미전송(상세조회 실패) = 기존값 유지')
-prev = A._dockproc_norm_quotes([{'nm': 'KEEP', 'amt': 1, 'cur': 'USD'}])
+prev = shared_ns._dockproc_norm_quotes([{'nm': 'KEEP', 'amt': 1, 'cur': 'USD'}])
 mkrow('R41', sub_quotes=prev)
 sync('R41', 'Submit')                                    # quotes 키 없음
 q, _, raw = subq('R41')

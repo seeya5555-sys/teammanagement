@@ -16,6 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import app as appmod
+from source_bundle import shared_ns  # noqa: E402
 
 
 # 500 경로(뷰가 예외로 죽는 상황)를 실제로 태우기 위한 테스트 전용 라우트.
@@ -24,7 +25,7 @@ _BOOM_PATH = '/api/_test_idem_boom'
 _BOOM_OK = True
 try:
     @appmod.app.route(_BOOM_PATH, methods=['POST'])
-    @appmod.login_required
+    @shared_ns.login_required
     def _test_idem_boom():                       # pragma: no cover - 예외 유발 전용
         appmod.execute("INSERT INTO calendar_events (title,start_date,all_day) VALUES ('부분커밋','2026-01-01',1)")
         raise RuntimeError('boom')

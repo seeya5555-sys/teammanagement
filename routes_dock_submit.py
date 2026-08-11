@@ -1,84 +1,46 @@
 """routes_dock_submit — converted to a real imported module with Blueprint("routes_dock_submit") on 2026-08-11.
 
 Previously executed in the app namespace by ``_load_extracted_module``.
-Dependencies are now the explicit imports below and nothing else — every
-name comes from ``app`` (whose namespace includes everything
-``helpers_shared.py`` executed into it).  Contract enforced by
+Dependencies are now the explicit imports below and nothing else, and since
+2026-08-12 each import names the module that actually *defines* the symbol
+(``app_core`` for config/db primitives, ``helpers_shared`` for shared helpers,
+``app`` only for what app.py itself defines) instead of routing everything
+through ``app``.  Contract enforced by
 ``test_converted_modules_are_self_contained``: zero unresolved names, and
 no sibling boundary imports.
 """
 from flask import Blueprint
 
-from app import (
-    AUTOMATION_MODES,
-    GEMINI_API_KEY,
-    JEONJA_PDF_DIR,
-    _DOCKPROC_ATT_MAX,
-    _DOCKPROC_CAT_NM,
-    _DOCKPROC_PRE_INQUIRY,
-    _DOCK_INQ_DOC,
-    _FUNDREQ_ATT_INLINE,
-    _FUNDREQ_ATT_MAX,
-    _FUNDREQ_ATT_MIME,
-    _automation_enabled,
-    _dock_sync_flag_bump,
-    _dockatt_cached_idx,
-    _dockatt_disk_map,
-    _dockatt_find,
-    _dockatt_fp,
-    _dockatt_gc,
-    _dockatt_path,
-    _dockproc_adopt_svms,
-    _dockproc_cat_code,
-    _dockproc_files_of,
-    _dockproc_hard_n,
-    _dockproc_hash,
-    _dockproc_inq_stage_block,
-    _dockproc_inq_target,
-    _dockproc_norm_files,
-    _dockproc_norm_orders,
-    _dockproc_norm_quotes,
-    _dockproc_orders_of,
-    _dockproc_push_events,
-    _dockproc_source,
-    _dockproc_status_rank,
-    _dockproc_subject_from_svms,
-    _dockproc_submit_has_quotes,
-    _ensure_api_table,
-    _fundreq_att_ext,
-    _fundreq_att_sniff_ok,
-    _gemini_call_json,
-    _push_outbox_add,
-    _push_outbox_drain,
-    _reqgen_build_subj,
-    _reqgen_vsl_prefix,
-    _soa_review_case_unlock,
-    _soa_vessel_codes_from_params,
-    _soa_vessel_params,
-    abort,
-    admin_required,
-    api_key_required,
-    app,
-    automation_tasks,
-    execute,
-    execute_rc,
-    get_db,
-    hashlib,
-    json,
-    jsonify,
-    login_required,
-    math,
-    os,
-    query,
-    re,
-    render_template,
-    request,
-    send_file,
-    session,
-    socket,
-    sqlite3,
-    urllib,
-    uuid,
+import hashlib
+import json
+import math
+import os
+import socket
+import sqlite3
+import urllib.error
+import urllib.parse
+import urllib.request
+from flask import abort, jsonify, render_template, request, session
+import re
+import uuid
+from flask import send_file
+from app_core import (
+    JEONJA_PDF_DIR, app, execute, execute_rc, get_db, query,
+)
+from helpers_shared import (
+    AUTOMATION_MODES, GEMINI_API_KEY, _DOCKPROC_ATT_MAX, _DOCKPROC_CAT_NM,
+    _DOCKPROC_PRE_INQUIRY, _DOCK_INQ_DOC, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
+    _FUNDREQ_ATT_MIME, _automation_enabled, _dock_sync_flag_bump, _dockatt_cached_idx,
+    _dockatt_disk_map, _dockatt_find, _dockatt_fp, _dockatt_gc, _dockatt_path,
+    _dockproc_adopt_svms, _dockproc_cat_code, _dockproc_files_of, _dockproc_hard_n,
+    _dockproc_hash, _dockproc_inq_stage_block, _dockproc_inq_target, _dockproc_norm_files,
+    _dockproc_norm_orders, _dockproc_norm_quotes, _dockproc_orders_of,
+    _dockproc_push_events, _dockproc_source, _dockproc_status_rank,
+    _dockproc_subject_from_svms, _dockproc_submit_has_quotes, _ensure_api_table,
+    _fundreq_att_ext, _fundreq_att_sniff_ok, _gemini_call_json, _push_outbox_add,
+    _push_outbox_drain, _reqgen_build_subj, _reqgen_vsl_prefix, _soa_review_case_unlock,
+    _soa_vessel_codes_from_params, _soa_vessel_params, admin_required, api_key_required,
+    automation_tasks, login_required,
 )
 
 bp = Blueprint("routes_dock_submit", __name__)

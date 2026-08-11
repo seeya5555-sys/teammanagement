@@ -19,7 +19,7 @@ class JeonjaPdfPreviewTests(unittest.TestCase):
         os.makedirs(shared_ns.JEONJA_PDF_DIR, exist_ok=True)
         with appmod.app.app_context():
             appmod.init_db(drop=False)
-            appmod._ensure_api_table()
+            shared_ns._ensure_api_table()
             appmod.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('api_key',?)", ("secret",))
         self.client = appmod.app.test_client()
         with self.client.session_transaction() as sess:

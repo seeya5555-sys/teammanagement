@@ -13,6 +13,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import shared_ns  # noqa: E402
 A.DATABASE = DB            # init_db 는 모듈 전역을 씀(app.config 아님)
 A.app.config['DATABASE'] = DB
 A.app.config['TESTING'] = True
@@ -40,7 +41,7 @@ g1 = next(g for g in j['groups'] if g['key'] == 'G1')
 chk(g1['vessels'] == ['ATBG', 'ATGR', 'ATGV', 'ATMT'], 'G1 시드 선박', g1['vessels'])
 chk(j['config_version'] == 1, 'config_version=1', j['config_version'])
 # 편집 모달이 pool·예약키를 서버에서 받아 쓴다(프론트 하드코딩 금지)
-chk(j.get('category_owner') == A.SOA_CATEGORY_OWNER, 'category_owner 내려줌', j.get('category_owner'))
+chk(j.get('category_owner') == shared_ns.SOA_CATEGORY_OWNER, 'category_owner 내려줌', j.get('category_owner'))
 chk('VESSEL' in (j.get('reserved_keys') or []) and 'RESEND' in j['reserved_keys'],
     'reserved_keys 내려줌', j.get('reserved_keys'))
 chk(all(k not in (j.get('reserved_keys') or []) for k in ('G1', 'SKRT')),
@@ -48,7 +49,7 @@ chk(all(k not in (j.get('reserved_keys') or []) for k in ('G1', 'SKRT')),
 chk(isinstance(j.get('owners'), dict), 'owners 맵 내려줌')
 
 # 2) task 목록이 그룹에서 파생되는지
-tasks = A.automation_tasks()
+tasks = shared_ns.automation_tasks()
 chk(list(tasks)[:4] == ['soa_g1', 'soa_g2', 'soa_g3', 'soa_skrt'], 'task 파생', list(tasks)[:4])
 chk('jeonja' in tasks and 'soa_vessel' in tasks, '정적 task 보존')
 
@@ -70,7 +71,7 @@ skrt = next(g for g in r.get_json()['groups'] if g['key'] == 'SKRT')
 chk(skrt['current_members'] == ['BGBB', 'CPPS', 'GNPS'], 'SKRT 현재 편입 표시', skrt['current_members'])
 g3 = next(g for g in r.get_json()['groups'] if g['key'] == 'G3')
 chk(g3['owner_mismatch'] == ['PCBS', 'PCMC'], 'G3 owner 불일치 표면화', g3['owner_mismatch'])
-chk('BGBB·CPPS·GNPS' in A.automation_tasks()['soa_skrt'], 'SKRT 라벨에 편입선 노출', A.automation_tasks()['soa_skrt'])
+chk('BGBB·CPPS·GNPS' in shared_ns.automation_tasks()['soa_skrt'], 'SKRT 라벨에 편입선 노출', shared_ns.automation_tasks()['soa_skrt'])
 
 # 4) 신규 그룹 생성
 r = c.post('/api/automation/soa/groups',
@@ -78,7 +79,7 @@ r = c.post('/api/automation/soa/groups',
                  'mode': 'explicit', 'vessels': 'pcnw, atnw', 'sort_order': 35, 'active': True})
 chk(r.status_code == 201, 'G4 생성 201', r.get_data(as_text=True)[:160])
 chk(r.get_json()['config_version'] == 2, 'version bump=2', r.get_json())
-chk('soa_g4' in A.automation_tasks(), 'soa_g4 task 등장')
+chk('soa_g4' in shared_ns.automation_tasks(), 'soa_g4 task 등장')
 g4 = next(g for g in c.get('/api/automation/soa/groups').get_json()['groups'] if g['key'] == 'G4')
 chk(g4['vessels'] == ['ATNW', 'PCNW'], '소문자 입력 → 대문자 정규화', g4['vessels'])
 
@@ -114,7 +115,7 @@ r = c.post('/api/automation/soa/groups',
            json={'key': 'SKRT2', 'label': '장금2', 'category': 'skrt',
                  'mode': 'dynamic_owner', 'vessels': '', 'sort_order': 50, 'active': False})
 chk(r.status_code == 201, '비활성 dynamic 은 허용', r.get_data(as_text=True)[:160])
-chk('soa_skrt2' not in A.automation_tasks(), '비활성 그룹은 task 미노출')
+chk('soa_skrt2' not in shared_ns.automation_tasks(), '비활성 그룹은 task 미노출')
 # 재활성화 시 다시 검증
 r = c.put('/api/automation/soa/groups/SKRT2',
           json={'label': '장금2', 'mode': 'dynamic_owner', 'vessels': '', 'sort_order': 50, 'active': True})
@@ -170,7 +171,7 @@ for rk in ('VESSEL', 'RESEND'):
                      'mode': 'explicit', 'vessels': '', 'sort_order': 90})
     chk(r.status_code == 422 and '예약' in r.get_json()['error'], f'예약 key 거부: {rk}',
         r.get_data(as_text=True)[:140])
-chk(A.automation_tasks()['soa_vessel'] == A.AUTOMATION_TASKS_BASE['soa_vessel'],
+chk(shared_ns.automation_tasks()['soa_vessel'] == shared_ns.AUTOMATION_TASKS_BASE['soa_vessel'],
     '정적 soa_vessel 라벨 보존')
 
 # 14) 감사 흔적 — 누가 언제 고쳤나
@@ -218,7 +219,7 @@ c.put('/api/automation/soa/groups/G1', json={'label': 'SOA 실버 G1', 'mode': '
 r = c.post('/api/automation/soa/groups', json={'key': 'G9', 'label': '삭제 테스트', 'category': 'silver',
            'mode': 'explicit', 'vessels': 'ATMT', 'sort_order': 95})
 chk(r.get_json().get('ok') is True, 'G9 생성', r.get_data(as_text=True)[:140])
-chk('soa_g9' in A.automation_tasks(), '삭제 전 task 존재')
+chk('soa_g9' in shared_ns.automation_tasks(), '삭제 전 task 존재')
 # version 대조는 반드시 삭제 *직전* 값으로(앞선 PUT/POST bump 로 가짜 통과하지 않게 — 올마이트 R2)
 v_before = c.get('/api/automation/soa/groups').get_json()['config_version']
 r = c.delete('/api/automation/soa/groups/G9')
@@ -230,7 +231,7 @@ chk(j['config_version'] == v_before + 1, '삭제도 config_version bump(직전 �
 gj = c.get('/api/automation/soa/groups').get_json()
 chk(all(g['key'] != 'G9' for g in gj['groups']), '목록에서 제거(비활성 아님)',
     [g['key'] for g in gj['groups']])
-chk('soa_g9' not in A.automation_tasks(), '파생 task 제거')
+chk('soa_g9' not in shared_ns.automation_tasks(), '파생 task 제거')
 chk(A.query("SELECT COUNT(*) n FROM soa_group_vessel WHERE group_id NOT IN "
             "(SELECT id FROM soa_group)", one=True)['n'] == 0, '멤버십 고아행 없음')
 r = c.get('/api/ext/soa/groups', headers={'X-API-Key': apikey})

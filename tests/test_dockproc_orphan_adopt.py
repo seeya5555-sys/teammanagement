@@ -59,7 +59,7 @@ with c.session_transaction() as s:
     s['user_id'] = 1; s['username'] = 'smoke'; s['role'] = 'admin'
 
 KEY = 'testkey-dockproc-orphan'
-A._ensure_api_table()
+shared_ns._ensure_api_table()
 A.execute("INSERT OR REPLACE INTO api_settings(k, v) VALUES('api_key', ?)", (KEY,))
 HDR = {'X-API-Key': KEY}
 
@@ -168,7 +168,7 @@ print()
 print('# 5) 🔴 R/S/ST 아닌 시트는 3-tuple 로 조용히 거절한다 (500·ValueError 금지)')
 #   `_dockproc_adopt_svms` 가 2-tuple 로 나가면 reqgen 결과 트랜잭션이 rollback 되어
 #   SVMS 엔 저장됐는데 카드는 saving→(6h)→failed 로 죽는다. 형이 "저장 실패"로 보게 되는 경로.
-got = A._dockproc_adopt_svms('BELGIUM B', 'BGBB', 'P3', 'PAINT', None, 'PC', 'K9')
+got = shared_ns._dockproc_adopt_svms('BELGIUM B', 'BGBB', 'P3', 'PAINT', None, 'PC', 'K9')
 chk(isinstance(got, tuple) and len(got) == 3 and got == (None, False, 'none'),
     '반환은 항상 3-tuple, 비대상은 (None, False, "none")', got)
 A.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('dockproc_orphans',?)",

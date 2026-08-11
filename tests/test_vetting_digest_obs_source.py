@@ -61,7 +61,7 @@ PLAN = dict(obs=7, open=4, closed=3, company='BP', port='SINGAPORE')
 PREV = dict(obs=5, open=2)
 
 # ---- 1) 서버 정본 helper ----
-latest, enr = A._vetting_pick(VID)
+latest, enr = shared_ns._vetting_pick(VID)
 chk(latest['valid'] == 'Next Plan', '_vetting_pick: 상단 = Next Plan')
 chk(latest['observation_count'] == PLAN['obs'] and latest['open_count'] == PLAN['open'],
     '_vetting_pick: 상단행 자체 수치',
@@ -108,7 +108,7 @@ if wrow:
 
 # ---- 4) 계획이 없으면 기존과 동일(직전 Report 가 그대로 상단) ----
 A.execute("DELETE FROM vettings WHERE vessel_id=? AND valid='Next Plan'", (VID,))
-only, _enr = A._vetting_pick(VID)
+only, _enr = shared_ns._vetting_pick(VID)
 chk(only['valid'] == 'Last Result' and only['observation_count'] == PREV['obs']
     and only['open_count'] == PREV['open'],
     'Next Plan 없으면 Report 수치 그대로(현행 동일)')

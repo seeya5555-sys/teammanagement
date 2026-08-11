@@ -37,7 +37,7 @@ class AORStatusesTests(unittest.TestCase):
         os.makedirs(shared_ns.AOR_PDF_DIR, exist_ok=True)
         with appmod.app.app_context():
             appmod.init_db(drop=False)
-            appmod._ensure_api_table()
+            shared_ns._ensure_api_table()
             shared_ns.execute(
                 "INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)",
                 ("secret",),
@@ -734,7 +734,7 @@ class AORStatusesTests(unittest.TestCase):
         pred = self._index_predicate()
         self.assertEqual(set(appmod._AOR_ACTIVE_STATUSES), pred)
         self.assertIn(appmod._aor_status_list_sql(appmod._AOR_ACTIVE_STATUSES),
-                      appmod._aor_active_index_sql())
+                      shared_ns._aor_active_index_sql())
 
     # ---- api_settings DDL 캐시 (2026-07-27) ----
     def test_api_settings_exists_without_calling_ensure(self):
@@ -769,7 +769,7 @@ class AORStatusesTests(unittest.TestCase):
         appmod.app.config["DATABASE"] = other
         try:
             with appmod.app.app_context():
-                appmod._ensure_api_table()
+                shared_ns._ensure_api_table()
         finally:
             appmod.app.config["DATABASE"] = old
         with sqlite3.connect(other) as db:
@@ -1014,7 +1014,7 @@ class AbsorbingTriggerTests(unittest.TestCase):
         appmod.app.config["DATABASE"] = self.path
         with appmod.app.app_context():
             appmod.init_db(drop=False)
-            appmod._ensure_api_table()
+            shared_ns._ensure_api_table()
             shared_ns.execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)",
                            ("secret",))
 
