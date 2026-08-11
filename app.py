@@ -8922,6 +8922,8 @@ def _ext_vetting_digests():
         latest, enr = _vetting_pick(ve['id'])
         if not latest:
             continue
+        # 실제로 받은 최신 Report(= 계획이 아닌 행). 없으면 상단행으로 폴백 = 종전과 같은 값.
+        report = next((v for v in enr if (v.get('valid') or '') != 'Next Plan'), None)
         detail = '\n\n'.join(
             (v.get('overall_remark') or '').strip()
             for v in enr
@@ -8943,6 +8945,13 @@ def _ext_vetting_digests():
             'oil_major': latest.get('inspection_company') or '',
             'obs_total': latest.get('observation_count') or 0,
             'obs_open': latest.get('open_count') or 0,
+            # 🔴 위 obs_* = 화면 요약행(상단행 그 자체)이고, 아래 report_* = **직전에 실제로 받은
+            #    Report** 의 수치다. 둘을 합치지 마라 — 하류 미러(automation/vlcc-sire-push →
+            #    vlcc-sire.vercel.app 카드, automation/fleet-map)는 "지난 수검 지적이 몇 건이냐"를
+            #    묻는 것이라, 계획행이 상단에 오면 값이 0 으로 덮여 카드가 지워진다.
+            #    2026-08-11 요약행 규칙을 바꾸면서 그 미러들의 의미를 보존하려고 분리했다.
+            'report_obs_total': (report or latest).get('observation_count') or 0,
+            'report_obs_open': (report or latest).get('open_count') or 0,
             'detail': detail,
             'latest_vetting_ref': _ref('vetting', latest.get('id')),
         })

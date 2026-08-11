@@ -77,6 +77,11 @@ if row:
         'ext digest: 직전 Report 수치가 아님')
     chk(row['status'] == 'Next Plan' and row['oil_major'] == PLAN['company'],
         'ext digest: 상태·오일메이저도 같은 행')
+    # 🔴 하류 미러(vlcc-sire-push → vercel 카드, fleet-map)는 "지난 수검 지적 건수"를 묻는다.
+    #    요약행이 계획으로 바뀌었다고 그 카드가 0 으로 덮이면 안 된다(형: "그외는 현행동일").
+    chk(row['report_obs_total'] == PREV['obs'] and row['report_obs_open'] == PREV['open'],
+        'ext digest: report_obs_* = 직전 Report 값',
+        f"{row.get('report_obs_total')}/{row.get('report_obs_open')}")
 
 # ---- 3) 위젯(/api/widget/vetting) — iOS 앱/위젯이 그리는 값 ----
 UID = A.query('SELECT id FROM users ORDER BY id LIMIT 1', one=True)['id']
@@ -104,6 +109,14 @@ only, _enr = A._vetting_pick(VID)
 chk(only['valid'] == 'Last Result' and only['observation_count'] == PREV['obs']
     and only['open_count'] == PREV['open'],
     'Next Plan 없으면 Report 수치 그대로(현행 동일)')
+
+# ---- 5) Report 가 아예 없고 계획만 있을 때 — report_* 는 상단행으로 폴백(구 동작과 동일) ----
+A.execute("DELETE FROM vettings WHERE vessel_id=?", (VID,))
+add_vetting('Next Plan', '', 'BP', 'SINGAPORE', 7, 4, 3)
+row2 = next((d for d in A._ext_vetting_digests() if d['vessel_name'] == VNAME), None)
+chk(row2 is not None and row2['report_obs_total'] == PLAN['obs']
+    and row2['report_obs_open'] == PLAN['open'],
+    '계획만 있을 때 report_* 는 그 행으로 폴백')
 
 print()
 if fails:
