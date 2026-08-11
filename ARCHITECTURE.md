@@ -160,14 +160,15 @@ mutate production files.
 
 ## Deployment and rollback
 
-Web delivery is `automation/oneshot/ship.sh web "message" [paths]`, which
-pushes, waits for the server artifact SHA, and performs live verification.
-The server autodeploy timer consumes the committed archive; it is not a Git
-checkout.  Rollback is performed by the repository rollback tooling and keeps
-`deploy/` out of application rollback payloads so an old deployer cannot undo
-the safety gate.  A deployment is not complete until the live SHA and health
-response are observed.  This implementation task deliberately does not
-commit, push, deploy, or send external messages.
+Web delivery is implemented by the repository's `deploy/autodeploy.sh`, invoked
+by `deploy/trmt-autodeploy.timer`; it consumes the committed archive and is not
+a Git checkout. Initial service/timer installation is `deploy/install.sh`.
+Rollback is `deploy/rollback.sh`, which keeps `deploy/` out of application
+rollback payloads so an old deployer cannot undo the safety gate. A deployment
+is not complete until the live SHA and health response are observed. The
+repository also contains `deploy/backup.sh` and `deploy/restore-check.sh` for
+database backup and restore verification. This implementation task deliberately
+does not commit, push, deploy, or send external messages.
 
 ## External imports and side effects
 
