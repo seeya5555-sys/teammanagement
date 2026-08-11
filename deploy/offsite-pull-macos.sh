@@ -113,6 +113,34 @@ case "$PAIRED" in
   *) echo "$(ts) WARN: files manifest 에 db_backup 이 없음 — paired DB 미확보" >>"$LOG" ;;
 esac
 
+# 2-c) drydock(Dock Manager) DB 도 off-host 로 내린다.
+# 서버 backup.sh 가 fleet.db 를 뜨긴 하지만 그건 서버 안에만 있다 = 서버가 통째로 죽으면 같이 죽는다.
+# 229MB 라 매번 받지 않고, 로컬에 같은 이름이 없을 때만 받는다(fleet.db 는 거의 안 바뀜).
+DRYDIR="$BKROOT/trmt-drydock"
+KEEP_DRYDOCK="${TRMT_OFFSITE_KEEP_DRYDOCK:-2}"
+mkdir -p "$DRYDIR"
+RDRY="$("${SSH[@]}" "find /home/opc/backups/trmt/db -maxdepth 1 -name 'fleet-*.db.gz' -printf '%T@ %f\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-" || true)"
+case "$RDRY" in
+  fleet-*.db.gz)
+    if [ ! -f "$DRYDIR/$RDRY" ]; then
+      D_TMP="$DRYDIR/$RDRY.partial"; TMP+=("$D_TMP")
+      rm -f "$D_TMP"
+      if "${SCP[@]}" "$A1:/home/opc/backups/trmt/db/$RDRY" "$D_TMP" 2>/dev/null && gzip -t "$D_TMP" 2>/dev/null; then
+        mv "$D_TMP" "$DRYDIR/$RDRY"
+        "${SCP[@]}" "$A1:/home/opc/backups/trmt/db/${RDRY%.db.gz}.manifest.json" \
+          "$DRYDIR/${RDRY%.db.gz}.manifest.json" 2>/dev/null || true
+        echo "$(ts) OK drydock=$RDRY/$(du -h "$DRYDIR/$RDRY" | cut -f1)" >>"$LOG"
+      else
+        # 여기서 죽이지 않는다 — TRMT 백업은 이미 성공적으로 내려왔고, 그걸 drydock 때문에
+        # 실패로 만들면 진짜 TRMT 실패와 구분이 안 된다. 대신 반드시 로그에 남긴다.
+        echo "$(ts) WARN: drydock DB $RDRY 확보 실패" >>"$LOG"
+      fi
+    fi
+    ls -1t "$DRYDIR"/fleet-*.db.gz 2>/dev/null | tail -n +$((KEEP_DRYDOCK+1)) \
+      | while IFS= read -r f; do rm -f "$f" "${f%.db.gz}.manifest.json"; done ;;
+  *) echo "$(ts) WARN: 서버에 drydock 백업 없음 — backup.sh 의 drydock 구간 확인 필요" >>"$LOG" ;;
+esac
+
 # files archive 가 너무 오래됐으면 알린다. 서버 backup.sh 가 죽어도 여기서는 "가장 최신"을
 # 계속 성공적으로 받아오므로, 신선도를 안 보면 영원히 OK 로 보인다(false green).
 FILES_MAX_DAYS="${TRMT_OFFSITE_FILES_MAX_DAYS:-8}"
