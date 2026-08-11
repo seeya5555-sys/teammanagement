@@ -11,6 +11,7 @@ class FleetNextPortOverrideTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.old_db = appmod.app.config["DATABASE"]
+        self.old_secret_key = appmod.app.config["SECRET_KEY"]
         self.old_locode_files = shared_ns.FLEET_LOCODE_FILES
         self.old_locode_name_files = shared_ns.FLEET_LOCODE_NAME_FILES
         self.old_country_map_files = shared_ns.FLEET_COUNTRY_MAP_FILES
@@ -18,6 +19,10 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         self.old_catalog_cache = shared_ns._fleet_port_catalog_cache
         self.old_fleet_map_file = shared_ns.FLEET_MAP_FILE
         appmod.app.config["DATABASE"] = os.path.join(self.tmp.name, "test.db")
+        # Production entry points call init_runtime() before serving.  This test
+        # swaps only the DB, so provide an explicit test key instead of relying
+        # on the now-forbidden import-time random key.
+        appmod.app.config["SECRET_KEY"] = b"fleet-next-port-test-key"
         shared_ns.FLEET_MAP_FILE = os.path.join(self.tmp.name, "fleet_map.json")
         self.ctx = appmod.app.app_context()
         self.ctx.push()
@@ -26,6 +31,7 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         appmod.close_db()
         self.ctx.pop()
         appmod.app.config["DATABASE"] = self.old_db
+        appmod.app.config["SECRET_KEY"] = self.old_secret_key
         shared_ns.FLEET_LOCODE_FILES = self.old_locode_files
         shared_ns.FLEET_LOCODE_NAME_FILES = self.old_locode_name_files
         shared_ns.FLEET_COUNTRY_MAP_FILES = self.old_country_map_files

@@ -22,7 +22,8 @@ class RuntimeHardeningTests(unittest.TestCase):
                 [sys.executable, '-c', (
                     'import app_core, json, os; '
                     'print(json.dumps({"instance": os.path.exists(app_core.INSTANCE_DIR), '
-                    '"secret": os.path.exists(app_core.SECRET_KEY_FILE)}))'
+                    '"secret": os.path.exists(app_core.SECRET_KEY_FILE), '
+                    '"configured_key": app_core.app.config["SECRET_KEY"] is not None}))'
                 )],
                 cwd=td,
                 env={**os.environ, 'PYTHONPATH': td},
@@ -30,7 +31,24 @@ class RuntimeHardeningTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual({'instance': False, 'secret': False}, json.loads(probe.stdout))
+            self.assertEqual(
+                {'instance': False, 'secret': False, 'configured_key': False},
+                json.loads(probe.stdout),
+            )
+
+    def test_uninitialized_entry_point_fails_closed(self):
+        import app_core
+
+        old_key = app_core.app.config['SECRET_KEY']
+        old_testing = app_core.app.config.get('TESTING', False)
+        app_core.app.config['SECRET_KEY'] = None
+        app_core.app.config['TESTING'] = True
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'runtime is not initialized'):
+                app_core.app.test_client().get('/health-probe')
+        finally:
+            app_core.app.config['SECRET_KEY'] = old_key
+            app_core.app.config['TESTING'] = old_testing
 
     def test_runtime_initializer_creates_dirs_and_stable_key(self):
         import app_core
@@ -118,13 +136,18 @@ class RuntimeHardeningTests(unittest.TestCase):
     def test_api_oversize_uses_json_413_handler(self):
         import app
 
-        response = app.app.test_client().post(
-            '/api/auth/token',
-            data=b'x' * (app._NON_STT_UPLOAD_MAX + 1),
-            headers={'Content-Type': 'application/json'},
-        )
-        self.assertEqual(413, response.status_code)
-        self.assertEqual({'error': '파일 크기는 20MB 이하여야 합니다.'}, response.get_json())
+        old_key = app.app.config['SECRET_KEY']
+        app.app.config['SECRET_KEY'] = b'test-runtime-key'
+        try:
+            response = app.app.test_client().post(
+                '/api/auth/token',
+                data=b'x' * (app._NON_STT_UPLOAD_MAX + 1),
+                headers={'Content-Type': 'application/json'},
+            )
+            self.assertEqual(413, response.status_code)
+            self.assertEqual({'error': '파일 크기는 20MB 이하여야 합니다.'}, response.get_json())
+        finally:
+            app.app.config['SECRET_KEY'] = old_key
 
 
 if __name__ == '__main__':

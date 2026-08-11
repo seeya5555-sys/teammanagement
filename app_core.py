@@ -110,9 +110,10 @@ initialize_runtime = init_runtime
 
 app = Flask(__name__)
 app.config.update(
-    # A fresh import needs a usable key for Flask's session machinery, but must
-    # not create instance/.secret_key until an explicit runtime initializer runs.
-    SECRET_KEY=secrets.token_bytes(32),
+    # Import must remain side-effect free, and an entry point that forgot
+    # init_runtime() must fail closed.  A random import-time key looks usable
+    # but forks per worker and causes intermittent session/token failures.
+    SECRET_KEY=None,
     DATABASE=DATABASE,
     UPLOAD_FOLDER=UPLOAD_DIR,
     MAX_CONTENT_LENGTH=STT_MAX_BYTES + (1 << 20),  # 상한=회의록 오디오 200MB. 그 외 업로드는 before_request서 20MB로 조임
@@ -121,6 +122,14 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
     SEND_FILE_MAX_AGE_DEFAULT=0,                   # static(css/js) 매번 재검증 — 모바일 캐시 stale 방지
 )
+
+
+@app.before_request
+def _require_runtime_initialization():
+    """Reject requests from unsupported entry points that skipped init_runtime()."""
+    if app.config.get('SECRET_KEY') is None:
+        raise RuntimeError(
+            'TRMT runtime is not initialized; use wsgi:application or call init_runtime()')
 
 _NON_STT_UPLOAD_MAX = 20 * 1024 * 1024             # 회의록 외 업로드(사진·엑셀 등) 상한 20MB
 _SOA_REVIEW_SNAPSHOT_MAX = 100 * 1024 * 1024        # API-key Mac runner가 예외 인보이스 PDF 묶음을 동기화
