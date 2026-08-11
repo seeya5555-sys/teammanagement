@@ -294,13 +294,12 @@ function vettingDigest(item) {
   const status = latest.valid || '';
   const statusCls = status === 'Next Plan' ? 'vt-dg-next'
     : status === 'Last Result' ? 'vt-dg-last' : '';
-  // OBS(전체/잔여): 최신이 'Next Plan'이면 그 이전(Next Plan 아닌 최신) Report 수치 사용
-  let obsSrc = latest;
-  if (status === 'Next Plan') {
-    obsSrc = vts.find(v => (v.valid || '') !== 'Next Plan') || latest;
-  }
-  const total = (obsSrc.observation_count != null) ? obsSrc.observation_count : 0;
-  const openCnt = (obsSrc.open_count != null) ? obsSrc.open_count : 0;
+  // OBS(전체/잔여)도 상단행 그 자체의 수치다 — 상태·항구·DATE·OIL MAJOR 와 같은 한 건.
+  // 🔴 'Next Plan'일 때만 직전 Report 수치를 끌어오던 폴백은 2026-08-11 형 지시로 폐기했다
+  //    (상태는 계획인데 숫자는 지난 수검 것이라 한 줄 안에서 출처가 갈렸음).
+  //    서버 정본은 app.py `_vetting_pick` — 여기 규칙을 바꾸면 앱/위젯과 숫자가 갈린다.
+  const total = (latest.observation_count != null) ? latest.observation_count : 0;
+  const openCnt = (latest.open_count != null) ? latest.open_count : 0;
 
   // 지적 상세: Open 항목이 있는 모든 Report의 Overall Remark, 최신순, 빈 줄 구분
   let detail = vts

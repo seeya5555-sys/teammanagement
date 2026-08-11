@@ -2288,7 +2288,7 @@ def api_widget_vetting():
 
     out = []
     for ve in query(sql, tuple(params)):
-        latest, obs_src, _enr = _vetting_pick(ve['id'])
+        latest, _enr = _vetting_pick(ve['id'])
         if not latest:
             continue                        # 수검 이력이 아예 없는 선박은 그릴 게 없다
         out.append({
@@ -2297,14 +2297,15 @@ def api_widget_vetting():
             'oil_major': latest.get('inspection_company') or '',
             'date': latest.get('inspection_date') or '',         # Next Plan 은 미입력일 수 있음
             'port': latest.get('port') or '',
-            'obs_total': obs_src.get('observation_count') or 0,
-            'obs_open': obs_src.get('open_count') or 0,
-            'obs_closed': obs_src.get('close_count') or 0,
-            # Open 수치는 obs_src(Next Plan 이면 직전 Report) 기준이므로,
-            # 행의 보조 메타도 같은 수검 건에서만 가져온다. 상단 계획의
-            # 오일메이저·날짜를 섞으면 Open 지적의 출처가 틀어져 보인다.
-            'obs_oil_major': obs_src.get('inspection_company') or '',
-            'obs_date': obs_src.get('inspection_date') or '',
+            'obs_total': latest.get('observation_count') or 0,
+            'obs_open': latest.get('open_count') or 0,
+            'obs_closed': latest.get('close_count') or 0,
+            # obs_* 는 전부 상단행 한 건에서만 나온다(`_vetting_pick` 정본). 아래 두 키는
+            # 구 폴백 시절 "수치의 출처"를 따로 알리려고 둔 것이고 지금은 위 oil_major/date 와
+            # 같은 값이다. 위젯(WidgetModel)이 아직 읽고 있어 **키는 유지**한다 — 지우면
+            # 구버전 앱 화면의 부제가 조용히 빈다.
+            'obs_oil_major': latest.get('inspection_company') or '',
+            'obs_date': latest.get('inspection_date') or '',
         })
     return jsonify({'vetting': out})
 
@@ -4670,26 +4671,27 @@ def _vetting_display_order(rows):
 
 
 def _vetting_pick(vessel_id):
-    """선박 1척의 vetting 중 (상단표시 기준, OBS 수치 출처, 전체) 를 고른다.
+    """선박 1척의 vetting 중 (상단표시 기준 행, 전체) 를 고른다.
 
     🔴 이 선정 규칙은 **정본이 1곳이어야 한다** — 웹 프론트 `vt.js vettingDigest`,
        `/api/ext/vetting-digests`, 위젯이 서로 다른 숫자를 보여주면 형이 못 믿는다.
-       ① 'Next Plan'(계획된 다음 검사)이 있으면 검사일 미입력이어도 그것을 상단으로.
-          여러 개면 새로 만든 것(id 최신) 우선.
-       ② 상단이 Next Plan 이면 OBS 수치는 그 이전(Next Plan 아닌 최신) Report 에서 가져온다
-          — 계획 행에는 지적이 아직 없어서 0/0 으로 보이면 오판을 부른다.
-    반환: (latest, obs_src, enr). vetting 이 없으면 (None, None, []).
+       'Next Plan'(계획된 다음 검사)이 있으면 검사일 미입력이어도 그것을 상단으로.
+       여러 개면 새로 만든 것(id 최신) 우선.
+
+    🔴 요약행의 모든 값(OBS/OPEN 포함)은 **상단행 그 자체**에서 나온다 — 손유석 지시
+       2026-08-11("Next Plan 일 경우 해당 Next Plan 의 OBS 및 OPEN 숫자가 표시되게").
+       상단이 Next Plan 일 때 OBS 만 직전 Report 에서 끌어오던 `obs_src` 폴백은 이때
+       폐기했다. 상태는 계획인데 숫자는 지난 수검 것이라 한 줄 안에서 출처가 갈렸고,
+       형이 화면에서 그걸 오독으로 지목했다. **되살리지 말 것** — 살리려면 요약행을
+       두 줄로 나누는 설계부터 다시 받아야 한다.
+    반환: (latest, enr). vetting 이 없으면 (None, []).
     """
     vts = query("SELECT * FROM vettings WHERE vessel_id=? "
                 "ORDER BY inspection_date DESC, id DESC", (vessel_id,))
     if not vts:
-        return None, None, []
+        return None, []
     enr = _vetting_display_order([_vetting_with_counts(v) for v in vts])
-    latest = enr[0]
-    obs_src = latest
-    if (latest.get('valid') or '') == 'Next Plan':
-        obs_src = next((v for v in enr if (v.get('valid') or '') != 'Next Plan'), latest)
-    return latest, obs_src, enr
+    return enr[0], enr
 
 
 # ----- Vettings (vessel별 그룹) -----
@@ -8917,7 +8919,7 @@ def _ext_vetting_digests():
     out = []
     for ve in query("SELECT id, name, imo FROM vessels ORDER BY name"):
         # 선정 규칙은 `_vetting_pick()` 이 정본(위젯 엔드포인트와 공유 — 숫자 불일치 차단).
-        latest, obs_src, enr = _vetting_pick(ve['id'])
+        latest, enr = _vetting_pick(ve['id'])
         if not latest:
             continue
         detail = '\n\n'.join(
@@ -8939,8 +8941,8 @@ def _ext_vetting_digests():
             'port': latest.get('port') or '',
             'inspection_date': latest.get('inspection_date') or '',
             'oil_major': latest.get('inspection_company') or '',
-            'obs_total': obs_src.get('observation_count') or 0,
-            'obs_open': obs_src.get('open_count') or 0,
+            'obs_total': latest.get('observation_count') or 0,
+            'obs_open': latest.get('open_count') or 0,
             'detail': detail,
             'latest_vetting_ref': _ref('vetting', latest.get('id')),
         })
