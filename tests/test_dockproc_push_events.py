@@ -26,6 +26,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import read_app_sources
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -215,7 +216,7 @@ chk([o['reason'] for o in out] == ['dropped'] and A.query("SELECT * FROM push_ou
     '한도 초과건은 포기하고 대기함에서 제거', out)
 
 print('\n# 10) 딥링크는 앱 allowlist 에 있는 값만 쓴다')
-src = open('app.py').read()
+src = read_app_sources()
 chk("link='trmt://dock'" in src, "sync 푸시 링크 = trmt://dock")
 ios = os.path.expanduser('~/.openclaw/workspace/trmt-mobile/ios/TRMT/Sources/Intents/TRMTAppIntents.swift')
 if os.path.exists(ios):

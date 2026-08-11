@@ -15,8 +15,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import app as appmod  # noqa: E402
+from source_bundle import read_app_sources  # noqa: E402
 
-APP_SRC = (ROOT / "app.py").read_text()
+APP_SRC = read_app_sources()
 VT_JS = (ROOT / "static" / "js" / "vt.js").read_text()
 
 

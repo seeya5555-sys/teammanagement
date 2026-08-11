@@ -17,6 +17,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as appmod
+from source_bundle import APP_SOURCE_PATHS
 
 ACTIVE_LOCKING = "/api/ext/aor/approved"   # 대조군: 조회하면서 락 거는 기존 엔드포인트
 URL = "/api/ext/aor/reingest-statuses"
@@ -870,45 +871,45 @@ class AbsorbingStatusInvariantTests(unittest.TestCase):
         allowlist 는 "안전하다고 주장"만 할 뿐이라 주장 자체를 기계로 확인한다.
         `cols` 에 status 가 추가되면(또는 **kwargs 로 불투명해지면) 여기서 깨진다.
         """
-        src = open(os.path.abspath(appmod.__file__), encoding='utf-8').read()
-        tree = ast.parse(src)
         checked = 0
-        for fn in ast.walk(tree):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            joined = [n for n in ast.walk(fn) if isinstance(n, ast.JoinedStr) and any(
-                isinstance(v, ast.Constant) and isinstance(v.value, str)
-                and 'UPDATE aor_draft SET' in v.value for v in n.values)]
-            if not joined:
-                continue
-            dicts = [n.value for n in ast.walk(fn)
-                     if isinstance(n, ast.Assign)
-                     and any(isinstance(t, ast.Name) and t.id == 'cols' for t in n.targets)
-                     and isinstance(n.value, ast.Call)
-                     and isinstance(n.value.func, ast.Name) and n.value.func.id == 'dict']
-            self.assertTrue(dicts, f"{fn.name}: `cols = dict(...)` 리터럴을 못 찾음 — "
-                                   f"allowlist 근거가 성립하는지 확인 불가")
-            for call in dicts:
-                names = [kw.arg for kw in call.keywords]
-                self.assertNotIn(None, names, f"{fn.name}: cols 에 **kwargs — 불투명")
-                self.assertNotIn('status', names, f"{fn.name}: cols 가 status 를 씀 — "
-                                                  f"allowlist 근거 무효")
-                self.assertFalse(call.args, f"{fn.name}: cols 에 positional arg — 불투명")
-            # 초기값만 보면 `cols['status']=...` / `cols.update(...)` 로 나중에 넣는 걸 놓친다
-            # (올마이트 R18 test gap). 리터럴 dict 이후의 어떤 변형도 허용하지 않는다.
-            for n in ast.walk(fn):
-                if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) \
-                   and n.value.id == 'cols' and isinstance(n.ctx, (ast.Store, ast.Del)):
-                    self.fail(f"{fn.name}: cols 를 subscript 로 변형 — allowlist 근거 무효")
-                if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) \
-                   and n.value.id == 'cols':
-                    self.assertIn(n.attr, ('values', 'keys', 'items'),
-                                  f"{fn.name}: cols.{n.attr}() 호출 — 변형 가능성, 근거 무효")
-                # alias(`c = cols`) 로 우회하는 것도 막는다
-                if isinstance(n, ast.Assign) and isinstance(n.value, ast.Name) \
-                   and n.value.id == 'cols':
-                    self.fail(f"{fn.name}: cols 를 다른 이름에 대입 — 추적 불가, 근거 무효")
-            checked += 1
+        for source_path in APP_SOURCE_PATHS:
+            tree = ast.parse(source_path.read_text(encoding='utf-8'), filename=str(source_path))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                joined = [n for n in ast.walk(fn) if isinstance(n, ast.JoinedStr) and any(
+                    isinstance(v, ast.Constant) and isinstance(v.value, str)
+                    and 'UPDATE aor_draft SET' in v.value for v in n.values)]
+                if not joined:
+                    continue
+                dicts = [n.value for n in ast.walk(fn)
+                         if isinstance(n, ast.Assign)
+                         and any(isinstance(t, ast.Name) and t.id == 'cols' for t in n.targets)
+                         and isinstance(n.value, ast.Call)
+                         and isinstance(n.value.func, ast.Name) and n.value.func.id == 'dict']
+                self.assertTrue(dicts, f"{fn.name}: `cols = dict(...)` 리터럴을 못 찾음 — "
+                                       f"allowlist 근거가 성립하는지 확인 불가")
+                for call in dicts:
+                    names = [kw.arg for kw in call.keywords]
+                    self.assertNotIn(None, names, f"{fn.name}: cols 에 **kwargs — 불투명")
+                    self.assertNotIn('status', names, f"{fn.name}: cols 가 status 를 씀 — "
+                                                      f"allowlist 근거 무효")
+                    self.assertFalse(call.args, f"{fn.name}: cols 에 positional arg — 불투명")
+                # 초기값만 보면 `cols['status']=...` / `cols.update(...)` 로 나중에 넣는 걸 놓친다
+                # (올마이트 R18 test gap). 리터럴 dict 이후의 어떤 변형도 허용하지 않는다.
+                for n in ast.walk(fn):
+                    if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) \
+                       and n.value.id == 'cols' and isinstance(n.ctx, (ast.Store, ast.Del)):
+                        self.fail(f"{fn.name}: cols 를 subscript 로 변형 — allowlist 근거 무효")
+                    if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) \
+                       and n.value.id == 'cols':
+                        self.assertIn(n.attr, ('values', 'keys', 'items'),
+                                      f"{fn.name}: cols.{n.attr}() 호출 — 변형 가능성, 근거 무효")
+                    # alias(`c = cols`) 로 우회하는 것도 막는다
+                    if isinstance(n, ast.Assign) and isinstance(n.value, ast.Name) \
+                       and n.value.id == 'cols':
+                        self.fail(f"{fn.name}: cols 를 다른 이름에 대입 — 추적 불가, 근거 무효")
+                checked += 1
         self.assertEqual(1, checked, "대상 f-string UPDATE 가 1개가 아님 — 스캔 전제 변경됨")
 
     def test_scan_actually_finds_the_known_updates(self):

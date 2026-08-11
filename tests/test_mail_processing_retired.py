@@ -2,9 +2,11 @@ from pathlib import Path
 import sys
 import unittest
 
+from source_bundle import read_app_sources
+
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "app.py").read_text()
+APP = read_app_sources()
 SCHEMA = (ROOT / "schema.sql").read_text()
 TEMPLATES = {
     path.name: path.read_text()

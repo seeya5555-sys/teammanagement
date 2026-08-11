@@ -24,6 +24,7 @@ DB = tempfile.mktemp(suffix='.db')
 os.environ['TRMT_DB'] = DB
 
 import app as A
+from source_bundle import read_app_sources
 
 A.DATABASE = DB
 A.app.config['DATABASE'] = DB
@@ -94,7 +95,7 @@ chk(T({'cat_code': 'R', 'svms_req_no': 'D2', 'svms_pc_req_no': None}) == ('MARP'
 
 print()
 print('# 7) 목록 API 가 판정 결과를 실제로 실어보낸다(프론트가 이 두 키만 본다)')
-src = open('app.py', encoding='utf-8').read()
+src = read_app_sources()
 chk("r['inq_doc'], r['inq_key'] = _dockproc_inq_target(r)" in src,
     'api_dockproc_lines 가 inq_doc/inq_key 를 채움')
 
