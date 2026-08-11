@@ -78,6 +78,98 @@ cp -rf "teammanagement-${REMOTE}/." "$APP_DIR/"     # 코드 갱신, instance/ �
 rm -rf "teammanagement-${REMOTE}"
 cd "$APP_DIR"
 
+# ── 삭제 전파 ────────────────────────────────────────────────────────────────
+# cp -rf 는 "repo 에서 지워진 파일"을 서버에서 지우지 않는다. 그래서 파일을 분할하거나
+# 이름을 바꾸면 옛 .py 가 서버에 영구 잔존하고, repo 와 서버가 조용히 갈라진다.
+# (모듈 추출 리팩터링에서 특히 위험: 옛 모듈이 import 가능한 채로 남아 어느 쪽이 도는지 모호해짐)
+#
+# 🔴 기준은 반드시 "직전 릴리스 zip ∖ 새 릴리스 zip" 이다. "서버 실파일 ∖ zip" 으로 잡으면
+#    zip 에 애초에 없는 운영 자산 — wsgi.py·drydock_integration.py(서버 수동 배치),
+#    static/uploads/*(사용자 업로드), instance/(DB) — 이 전부 삭제 대상이 되어 서비스가 죽는다.
+#    zip 두 개의 차집합만 보면 그런 파일은 애초에 후보에 오르지 않는다.
+PREV_ZIP="$REL_DIR/${LOCAL}.zip"
+PEND_FILE="$APP_DIR/.deploy_deletions_pending"   # 이번에 못 지운 것 — 다음 배포에서 재시도
+APP_REAL=$(cd "$APP_DIR" && pwd -P)
+
+_sha_ok() { printf '%s' "${1:-}" | grep -qE '^[0-9a-f]{40}$'; }
+
+# zip 의 파일 목록을 root prefix 를 벗겨 $3 에 쓴다.
+# 🔴 하나라도 예상 root(teammanagement-<sha>/) 밖에 있으면 실패시킨다. prefix 가 안 벗겨지면
+#    prev.list 는 "teammanagement-X/app.py", new.list 는 "app.py" 가 되어 차집합이 통째로
+#    부풀고, 살아있는 파일까지 삭제 후보가 된다(GitHub 이 archive 구조를 바꾸면 실제로 발생).
+_zip_list() {
+  local z="$1" root="teammanagement-$2/" out="$3" all
+  all=$(unzip -Z1 "$z") || return 1
+  printf '%s\n' "$all" | grep -v "^${root}" | grep -q . && return 2
+  printf '%s\n' "$all" | sed "s|^${root}||" | grep -v '/$' | grep -v '^$' | sort -u > "$out"
+}
+
+# 삭제 후보 = (직전 릴리스 ∪ 지난번에 못 지운 pending) ∖ 새 릴리스.
+# ⚠️ 파이프로 엮지 말 것: pipefail 하에서 PEND_FILE 부재 시 cat 이 실패하면 파이프라인 전체가
+#    실패로 판정되어 삭제가 통째로 생략된다(조용한 무동작).
+_build_cand() {
+  cp "$_d/prev.list" "$_d/cand.raw" || return 1
+  if [ -s "$PEND_FILE" ]; then cat "$PEND_FILE" >> "$_d/cand.raw" || return 1; fi
+  sort -u "$_d/cand.raw" > "$_d/cand.list" || return 1
+  comm -23 "$_d/cand.list" "$_d/new.list" > "$_d/gone.list" || return 1
+}
+
+del_ok=1
+_d=$(mktemp -d /tmp/trmt_del.XXXXXX)
+if [ "$LOCAL" = "none" ] || ! _sha_ok "$LOCAL" || ! _sha_ok "$REMOTE"; then
+  echo "$(date '+%F %T') WARN: SHA 형식 이상(.deployed_sha 손상 의심) — 삭제 전파 생략"; del_ok=0
+elif [ ! -f "$PREV_ZIP" ]; then
+  echo "$(date '+%F %T') WARN: 직전 릴리스 zip 없음 — 삭제 전파 생략(사라진 파일이 서버에 남을 수 있음)"; del_ok=0
+elif ! _zip_list "$PREV_ZIP" "$LOCAL" "$_d/prev.list" || ! _zip_list "${NEW_ZIP}.part" "$REMOTE" "$_d/new.list"; then
+  echo "$(date '+%F %T') WARN: zip 판독 실패 또는 archive root 규칙 불일치 — 삭제 전파 생략"; del_ok=0
+elif ! _build_cand; then
+  # `|| true` 로 삼키면 부분 목록으로 삭제할 수 있다 — 실패는 실패로 다룬다.
+  echo "$(date '+%F %T') WARN: 삭제 목록 계산 실패 — 삭제 전파 생략"; del_ok=0
+fi
+
+if [ "$del_ok" = 1 ]; then
+  MAX_DEL="${TRMT_MAX_DELETE:-50}"
+  printf '%s' "$MAX_DEL" | grep -qE '^[0-9]+$' || MAX_DEL=50   # 빈값·비수치면 상한 우회됨
+  gone_n=$(grep -cv '^$' "$_d/gone.list" || true)
+  : > "$_d/pend.new"
+  if [ "${gone_n:-0}" -eq 0 ]; then
+    :
+  elif [ "$gone_n" -gt "$MAX_DEL" ]; then
+    # 급증은 zip 손상·경로 규칙 변경 같은 사고일 가능성이 높다. 지우지 말고 크게 알린다.
+    # 다만 그냥 넘기면 누락이 영구화되므로(다음 회차는 LOCAL=REMOTE 로 조기종료) pending 에 남긴다.
+    echo "$(date '+%F %T') WARN: 삭제 대상 ${gone_n}건 > 상한 ${MAX_DEL} — 이번 삭제 생략(수동 확인 필요, 다음 배포에서 재시도)"
+    head -20 "$_d/gone.list" | sed 's/^/    /'
+    cp "$_d/gone.list" "$_d/pend.new"
+  else
+    echo "$(date '+%F %T') repo 에서 사라진 파일 ${gone_n}건 제거"
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$f" in
+        /*|../*|*/../*|*/..|..) echo "$(date '+%F %T') WARN: $f — 경로 탈출 의심, 건너뜀"; continue ;;
+        instance/*|venv/*|uploads/*|static/uploads/*) continue ;;
+      esac
+      # 정상 문자만 자동 삭제한다. 개행·따옴표·역슬래시가 든 이름은 라인 기반 처리로 안전하지
+      # 않으므로 사람이 보게 남긴다(우리 repo 엔 없다).
+      printf '%s' "$f" | grep -qE '^[A-Za-z0-9._/-]+$' \
+        || { echo "$(date '+%F %T') WARN: 비정상 문자 파일명 — 건너뜀"; continue; }
+      t="$APP_DIR/$f"
+      [ -e "$t" ] || [ -L "$t" ] || continue          # 이미 없음
+      [ -L "$t" ] && { echo "$(date '+%F %T') WARN: $f 가 심볼릭 링크 — 건너뜀"; printf '%s\n' "$f" >> "$_d/pend.new"; continue; }
+      [ -d "$t" ] && { echo "$(date '+%F %T') WARN: $f 가 디렉토리 — 건너뜀"; printf '%s\n' "$f" >> "$_d/pend.new"; continue; }
+      # 중간 경로가 심볼릭 링크면 $APP_DIR 밖 파일을 지울 수 있다 — 실경로로 확인한다.
+      p=$(cd "$(dirname "$t")" 2>/dev/null && pwd -P) || { printf '%s\n' "$f" >> "$_d/pend.new"; continue; }
+      case "$p/" in "$APP_REAL"/*) : ;; *) echo "$(date '+%F %T') WARN: $f 가 앱 디렉토리 밖 — 건너뜀"; continue ;; esac
+      rm -f "$t" && echo "    - $f" || printf '%s\n' "$f" >> "$_d/pend.new"
+    done < "$_d/gone.list"
+    # 지워진 .py 의 컴파일 캐시가 남아 import 가 계속 성공하는 걸 막는다.
+    # 운영 자산(venv·instance·업로드) 내부는 건드리지 않는다.
+    find "$APP_DIR" \( -path "$APP_DIR/venv" -o -path "$APP_DIR/instance" -o -path "$APP_DIR/static/uploads" \) -prune \
+      -o -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+  fi
+  if [ -s "$_d/pend.new" ]; then sort -u "$_d/pend.new" > "$PEND_FILE"; else rm -f "$PEND_FILE"; fi
+fi
+rm -rf "$_d"
+
 source venv/bin/activate
 # gunicorn 없으면 설치(venv 재구축/신규 서버 대비). 있으면 즉시 skip.
 python3 -c "import gunicorn" 2>/dev/null || pip install "gunicorn>=21,<24"
