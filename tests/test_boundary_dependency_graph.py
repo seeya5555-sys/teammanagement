@@ -70,19 +70,28 @@ def boundary_files():
     """
     main = ROOT / "app.py"
     tree = ast.parse(main.read_text(encoding="utf-8"), filename=str(main))
-    loaded, dynamic = [], []
+    loaded, bad = [], []
+    # 최상위 Expr(Call) 만 실제 로더다. ast.walk 전체를 세면 함수 안이나 죽은
+    # 분기의 호출을 로드된 경계로 오인한다 — 그런 호출은 발견 즉시 실패시킨다
+    # (조용히 무시하면 그 경계가 분석 범위에서 빠진 채 초록이 된다).
+    top_level_calls = {
+        id(stmt.value) for stmt in tree.body
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+    }
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == "_load_extracted_module"):
             continue
-        if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+        if id(node) not in top_level_calls:
+            bad.append(f"L{node.lineno}: 최상위 문장이 아닌 로더 호출")
+        elif node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
             loaded.append(node.args[0].value)
         else:
-            dynamic.append(ast.dump(node))
-    if dynamic:
+            bad.append(f"L{node.lineno}: 인자가 리터럴이 아님 — 정적 분석 불가")
+    if bad:
         raise AssertionError(
-            "경계 로드가 리터럴이 아니라 정적 분석 불가 — 이 게이트가 조용히 범위를 잃는다: "
-            + "; ".join(dynamic)
+            "경계 로드 호출이 정적 분석 계약을 벗어남 — 이 게이트가 조용히 범위를 잃는다: "
+            + "; ".join(bad)
         )
     return [main] + [ROOT / name for name in loaded]
 
@@ -217,6 +226,37 @@ class BoundaryDependencyGraphTests(unittest.TestCase):
             recorded,
             "app.py 의 로드 목록과 fixture 등재 경계가 다름 — "
             "`python -m tests.test_boundary_dependency_graph --update` 로 갱신하고 diff 를 리뷰할 것",
+        )
+
+    def test_layering_no_sibling_dependencies(self):
+        """경계 층위 계약: 형제 경계 참조(꼬리물기)가 조용히 돌아오는 것을 금지한다.
+
+        2026-08-11 helpers_shared.py 추출 후 허용되는 의존 방향은 세 가지뿐이다
+        (app.py ↔ helpers_shared.py 상호참조는 의도된 예외 — 둘이 foundation
+        층 하나로 묶이며, 양방향 모두 호출 시점 참조뿐임을 실측함. "DAG" 가
+        아니라 "형제 참조 금지" 가 이 계약의 정확한 이름이다):
+          · helpers_shared.py → app.py
+          · 그 외 경계        → app.py, helpers_shared.py
+          · app.py            → helpers_shared.py
+        경계가 형제 경계를 다시 참조하기 시작하면 (공용이면) helpers_shared.py 로
+        옮기거나 (아니면) 자기 파일 안에 두어야 한다 — 형제 참조 자체가 위반이다.
+        이 검사가 없으면 frozen fixture 를 --update 로 갱신하는 순간 순환이
+        "리뷰된 변경" 처럼 통과한다.
+        """
+        allowed = {
+            "helpers_shared.py": {"app.py"},
+            "app.py": {"helpers_shared.py"},
+        }
+        default_allowed = {"app.py", "helpers_shared.py"}
+        violations = {
+            src: sorted(set(deps) - allowed.get(src, default_allowed))
+            for src, deps in self.graph.items()
+            if set(deps) - allowed.get(src, default_allowed)
+        }
+        self.assertEqual(
+            {}, violations,
+            "경계 층위 위반(형제 경계 참조 — 공용이면 helpers_shared.py 로 옮길 것):\n"
+            + "\n".join(f"  {s} → {d}" for s, d in violations.items()),
         )
 
     def test_recorded_boundary_paths_match_loader(self):

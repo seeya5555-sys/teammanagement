@@ -1517,6 +1517,7 @@ def _load_extracted_module(filename):
     EXTRACTED_BOUNDARY_PATHS.append(_path)
     with open(_path, encoding='utf-8') as _source:
         exec(compile(_source.read(), _path, 'exec'), globals(), globals())
+_load_extracted_module("helpers_shared.py")
 _load_extracted_module("routes_core.py")
 _load_extracted_module("ai_gemini.py")
 _load_extracted_module("routes_calendar_dock.py")

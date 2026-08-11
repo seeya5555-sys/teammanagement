@@ -62,26 +62,6 @@ def api_ext_shipwiki_push():
                     'purged': (purged if purge and slug else 0)})
 
 
-# ───────────────────────── Fleet Map (대시보드) ─────────────────────────
-FLEET_MAP_FILE = os.path.join(INSTANCE_DIR, 'fleet_map.json')
-FLEET_MAP_PACKAGED_DIR = os.path.join(BASE_DIR, 'data', 'fleet_map')
-FLEET_MAP_AUTOMATION_DIR = os.path.abspath(os.path.join(BASE_DIR, '..', '..', 'automation', 'fleet-map'))
-FLEET_LOCODE_FILES = (
-    os.path.join(FLEET_MAP_PACKAGED_DIR, 'locode.json'),
-    os.path.join(FLEET_MAP_AUTOMATION_DIR, 'locode.json'),
-)
-FLEET_LOCODE_NAME_FILES = (
-    os.path.join(FLEET_MAP_PACKAGED_DIR, 'locode_name.json'),
-    os.path.join(FLEET_MAP_AUTOMATION_DIR, 'locode_name.json'),
-)
-FLEET_COUNTRY_MAP_FILES = (
-    os.path.join(FLEET_MAP_PACKAGED_DIR, 'country_map.json'),
-    os.path.join(FLEET_MAP_AUTOMATION_DIR, 'country_map.json'),
-)
-FLEET_LOCODE_LABEL_FILES = (
-    os.path.join(FLEET_MAP_PACKAGED_DIR, 'locode_labels.json'),
-)
-_fleet_port_catalog_cache = None
 
 # Fleet Map 위치는 기존 SVMS/VesselTracker 적재본을 fallback으로 유지하되, 화면 조회 시
 # TRMT DB의 최신 ship-position으로 덮어쓴다. 키는 반드시 systemd EnvironmentFile에만 둔다.
@@ -103,100 +83,16 @@ _fleet_next_port_lock = threading.RLock()
 _fleet_eta_lock = threading.RLock()
 
 
-def _norm_port_text(s):
-    return re.sub(r'[^A-Z0-9]+', '', str(s or '').upper())
 
 
-def _norm_locode(s):
-    code = _norm_port_text(s)
-    return code if re.fullmatch(r'[A-Z]{2}[A-Z0-9]{3}', code or '') else ''
 
 
-def _valid_latlng_pair(xy):
-    if not (isinstance(xy, (list, tuple)) and len(xy) == 2):
-        return None
-    try:
-        lat, lng = float(xy[0]), float(xy[1])
-    except (TypeError, ValueError):
-        return None
-    if not (math.isfinite(lat) and math.isfinite(lng)):
-        return None
-    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
-        return None
-    return [lat, lng]
 
 
-def _load_json_first(paths):
-    for path in paths:
-        try:
-            with open(path, encoding='utf-8') as f:
-                return json.load(f)
-        except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError):
-            continue
-    return None
 
 
-def _fleet_port_catalog():
-    """Read-only deterministic port catalog used by Fleet Map correction/overrides."""
-    global _fleet_port_catalog_cache
-    if _fleet_port_catalog_cache is not None:
-        return _fleet_port_catalog_cache
-    locodes, by_name, countries, labels = {}, {}, {}, {}
-    raw = _load_json_first(FLEET_LOCODE_FILES)
-    if isinstance(raw, dict):
-        for code, xy in raw.items():
-            point = _valid_latlng_pair(xy)
-            if isinstance(code, str) and point:
-                locodes[_norm_port_text(code)] = point
-    raw_countries = _load_json_first(FLEET_COUNTRY_MAP_FILES)
-    if isinstance(raw_countries, dict):
-        countries = {str(k).upper(): str(v).upper() for k, v in raw_countries.items()}
-    raw_labels = _load_json_first(FLEET_LOCODE_LABEL_FILES)
-    if isinstance(raw_labels, dict):
-        labels = {_norm_locode(k): str(v).strip() for k, v in raw_labels.items()
-                  if _norm_locode(k) and str(v).strip()}
-    idx = _load_json_first(FLEET_LOCODE_NAME_FILES)
-    if isinstance(idx, dict):
-        for key, xy in (idx.get('by') or {}).items():
-            if not (isinstance(key, str) and '|' in key and isinstance(xy, list) and len(xy) == 2):
-                continue
-            point = _valid_latlng_pair(xy)
-            if not point:
-                continue
-            point = (round(point[0], 6), round(point[1], 6))
-            iso, name_key = key.split('|', 1)
-            by_name.setdefault(name_key, set()).add(point)
-            by_name.setdefault(iso + '|' + name_key, set()).add(point)
-    for code, label in labels.items():
-        xy = locodes.get(code)
-        if not xy:
-            continue
-        point = (round(float(xy[0]), 6), round(float(xy[1]), 6))
-        name_key = _norm_port_text(label)
-        by_name.setdefault(name_key, set()).add(point)
-        by_name.setdefault(code[:2] + '|' + name_key, set()).add(point)
-    _fleet_port_catalog_cache = {
-        'locodes': locodes,
-        'by_name': by_name,
-        'countries': countries,
-        'labels': labels,
-    }
-    return _fleet_port_catalog_cache
 
 
-def _fleet_extract_next_port_code(v):
-    port = v.get('next_port') if isinstance(v, dict) else None
-    candidates = []
-    if isinstance(port, dict):
-        candidates.extend(port.get(key) for key in ('cd', 'code', 'locode', 'unlocode'))
-    if not isinstance(v, dict):
-        return ''
-    candidates.extend((v.get('next_port_cd'), v.get('dest_cd')))
-    for candidate in candidates:
-        code = _norm_locode(candidate)
-        if code:
-            return code
-    return ''
 
 
 def _fleet_auto_next_port_identity(v):
@@ -247,52 +143,8 @@ def _fleet_resolve_port_input(value):
     return {'label': label, 'code': None, 'xy': [float(lat), float(lng)]}, None
 
 
-def _fleet_apply_code_first_next_port(v):
-    """Correct automatic Next Port coordinates when an explicit code is present."""
-    if not isinstance(v, dict):
-        return
-    code = _fleet_extract_next_port_code(v)
-    if not code:
-        return
-    xy = _fleet_port_catalog()['locodes'].get(code)
-    if not xy:
-        return
-    port = v.get('next_port')
-    if not isinstance(port, dict):
-        port = {}
-    port['cd'] = code
-    port['xy'] = [float(xy[0]), float(xy[1])]
-    if not port.get('name'):
-        port['name'] = _fleet_port_catalog()['labels'].get(code) or code
-    v['next_port'] = port
-    v['dest_xy'] = port['xy']
-    v['dest_port'] = port.get('name') or v.get('dest_port')
-    v['next_port_source'] = 'code'
-    v['route_legs'] = _fleet_route_to_destination(v, port['xy'])
 
 
-def _fleet_route_to_destination(v, dest_xy):
-    dest = _valid_latlng_pair(dest_xy)
-    if not dest:
-        return []
-    legs = v.get('route_legs') if isinstance(v, dict) else None
-    if isinstance(legs, list):
-        valid_legs = []
-        for leg in legs:
-            if not isinstance(leg, list):
-                continue
-            pts = []
-            for point in leg:
-                pt = _valid_latlng_pair(point)
-                if pt:
-                    pts.append(pt)
-            if len(pts) >= 2:
-                valid_legs.append(pts)
-        if valid_legs:
-            valid_legs[-1][-1] = dest
-            return valid_legs
-    here = _valid_latlng_pair([v.get('lat'), v.get('lng')]) if isinstance(v, dict) else None
-    return [[here, dest]] if here else []
 
 
 def _ensure_fleet_next_port_override_table():
@@ -492,37 +344,6 @@ def _fleet_invalidate_next_port_overrides_from_push(fleet, actor='fleet-push'):
     return len(updates)
 
 
-def _fleet_visible_auto_vessels():
-    """Fleet items visible to the current UI user, with corrected automatic next port only."""
-    try:
-        with open(FLEET_MAP_FILE, encoding='utf-8') as f:
-            data = json.load(f)
-    except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError):
-        return []
-    fleet = data.get('fleet') or []
-    for v in fleet:
-        _fleet_apply_code_first_next_port(v)
-    vsup = {_vkey(r['vname']): r['sname'] for r in
-            query("SELECT v.name AS vname, s.name AS sname FROM supervisor_vessels sv "
-                  "JOIN vessels v ON v.id=sv.vessel_id JOIN supervisors s ON s.id=sv.supervisor_id")}
-    for v in fleet:
-        v['supervisor'] = vsup.get(_vkey(v.get('name')))
-    fleet = [v for v in fleet if v.get('supervisor')]
-    is_admin = (session.get('role') == 'admin')
-    sup_id = session.get('supervisor_id')
-    if sup_id and not is_admin:
-        srow = query("SELECT name FROM supervisors WHERE id=?", (sup_id,), one=True)
-        sup_name = srow['name'] if srow else None
-        allowed = {(_vkey(r['name'])) for r in
-                   query("SELECT v.name FROM supervisor_vessels sv "
-                         "JOIN vessels v ON v.id=sv.vessel_id WHERE sv.supervisor_id=?", (sup_id,))}
-        if allowed:
-            fleet = [v for v in fleet if _vkey(v.get('name')) in allowed]
-        elif sup_name:
-            fleet = [v for v in fleet if v.get('supervisor') == sup_name]
-        else:
-            fleet = []
-    return fleet
 
 
 def _trmtdb_positions_refresh(api_key):
@@ -1333,226 +1154,22 @@ def api_ext_shipwiki_result(cid):
     return jsonify({'id': cid, 'ok': ok, 'applied': bool(rc)})
 
 
-# ═════════════════════════════════════════════════════════════════
-#  CLASS STATUS (선급 Class Status Report 업로드/추출/매칭)
-# ═════════════════════════════════════════════════════════════════
-import re as _re_cls
 
 
-def _norm_vessel_name(name):
-    """선명 정규화: 대문자, M/T·M/V 접두 제거, 공백 단일화."""
-    if not name:
-        return ''
-    s = str(name).upper().strip()
-    s = _re_cls.sub(r'^(M[\./]?\s*[TV][\./]?|MT|MV)\s+', '', s)  # M/T, M.V., MT, MV ...
-    s = _re_cls.sub(r'[^A-Z0-9 ]+', ' ', s)
-    s = _re_cls.sub(r'\s+', ' ', s).strip()
-    return s
 
 
-def _match_vessel_by_name(name):
-    """보고서 선명 → vessels 행 매칭. 정확 일치 우선, 없으면 부분포함. 실패 시 None."""
-    target = _norm_vessel_name(name)
-    if not target:
-        return None
-    rows = query('SELECT * FROM vessels WHERE active=1')
-    norm = [(v, _norm_vessel_name(v['name'])) for v in rows]
-    for v, n in norm:
-        if n == target:
-            return v
-    # 부분 포함 (한쪽이 다른 쪽을 포함)
-    for v, n in norm:
-        if n and (n in target or target in n):
-            return v
-    return None
 
 
-def _annotate_drafts_with_vessel(drafts):
-    """P4 표시전용(read-only): 각 draft 행에 matched_vessel:{id,name,in_my_roster} 부가.
-
-    돈 파이프라인·draft 원본·status·금액 무변경. money 테이블 write 없음(읽기시점 계산).
-    매칭 순서: vessels.vsl_cd 정확일치 우선 → 없으면 선명 정규화(_match_vessel_by_name).
-    in_my_roster = 매칭 선박이 현재 세션 감독의 supervisor_vessels 에 포함되는지
-      (supervisor_id 미설정 admin은 전체 로스터로 간주 → 매칭되면 True).
-    각 draft dict 에 'matched_vessel' 키만 추가(없으면 None). 리스트 그대로 반환.
-    """
-    if not drafts:
-        return drafts
-    try:
-        vrows = query('SELECT id, name, vsl_cd FROM vessels WHERE active=1')
-    except Exception:
-        # 조회 실패 시 표시기능만 조용히 생략 — 목록 응답 자체는 절대 깨지 않는다.
-        for d in drafts:
-            d.setdefault('matched_vessel', None)
-        return drafts
-    # 매칭 블록 전체를 방어적으로 감싼다 — supervisor_vessels 조회나 선명매칭이
-    # 어떤 이유로 예외를 던져도 목록 API(500)를 깨지 않고 표시기능만 조용히 생략.
-    try:
-        by_cd = {}
-        for v in vrows:
-            cd = (v['vsl_cd'] or '').strip().upper()
-            if cd:
-                by_cd.setdefault(cd, v)
-        # 내 로스터(현재 세션 감독) 선박 id 집합. 감독 미설정이면 None(=전체 로스터).
-        sup_id = session.get('supervisor_id')
-        my_ids = None
-        if sup_id:
-            my_ids = {r['vessel_id'] for r in
-                      query('SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?', (sup_id,))}
-        for d in drafts:
-            mv = None
-            cd = (d.get('vsl_cd') or '').strip().upper()
-            v = by_cd.get(cd) if cd else None
-            if v is None:
-                v = _match_vessel_by_name(d.get('vsl_nm') or d.get('vsl_cd'))
-            if v is not None:
-                in_roster = True if my_ids is None else (v['id'] in my_ids)
-                mv = {'id': v['id'], 'name': v['name'], 'in_my_roster': bool(in_roster)}
-            d['matched_vessel'] = mv
-    except Exception:
-        for d in drafts:
-            d.setdefault('matched_vessel', None)
-    return drafts
 
 
-def _class_status_prompt():
-    return (
-        "다음은 선박 선급(Classification Society)의 'Class Status Report' 또는 "
-        "'Survey Status Report'다. (선급 예: DNV, BV, KR, ABS, LR, NK 등 — 포맷이 다를 수 있다.)\n"
-        "아래 정보를 추출해 지정한 JSON으로만 답하라.\n"
-        "■ 공통 정보\n"
-        "- vessel_name: 보고서의 선명(Name of vessel / Ship name). 대문자 원문.\n"
-        "- class_society: 발행 선급 약어 (DNV / BV / KR / ABS / LR / NK 중 하나, 식별 가능하면).\n"
-        "- report_date: 보고서 발행일/생성일 (Date of issue / Generated on). 가능하면 YYYY-MM-DD.\n"
-        "■ 추출 대상 — 'Open(미해소)' 상태인 항목만:\n"
-        "  (1) coc  = Condition of Class / 선급지적. 선급별 명칭 예:\n"
-        "      DNV 'Conditions related to class', BV 'Conditions of Class', "
-        "ABS 'Conditions of Class / Outstanding', LR 'Conditions of Class(COC)', "
-        "또한 BV 'Planned Inspection Items'의 Recommendation(R)/Condition of Class 도 포함.\n"
-        "  (2) statutory = Condition of Statutory / 기국(법정)사항. 예:\n"
-        "      DNV 'Conditions related to statutory certificates', "
-        "BV 'Statutory Recommendations' 및 'Planned Inspection Items'의 Statutory Condition/Recommendation 항목. "
-        "⚠️ 단, Type이 'Observation'(Obs)인 행은 statutory에도 coc에도 절대 넣지 마라(아래 제외 규칙).\n"
-        "■ 제외(절대 추출 금지): 단순 Survey 예정표(1-Year Planner/Surveys 목록), 인증서 목록, "
-        "**모든 Observation 항목 — Type/VS 칸이 'Obs' 또는 'Observation'인 행(특히 'Planned Inspection Items'의 Obs 행, "
-        "예: 'STS plan to be approved and placed on board', 'BWMP to be approved …')은 due date가 있어도 절대 추출하지 마라**, "
-        "그리고 **Memoranda 섹션 전체**. 제목에 'Memoranda(메모란다)'가 들어간 표·섹션 — "
-        "'Class Memoranda', 'Statutory Memoranda', 'Description of (Class/Statutory) Memoranda' 등 — 의 항목은 "
-        "내용이 지적·기국처럼 보여도(예: 'Engine Power Limitation (SHaPoLi) approved, limiting … kW') 절대 추출하지 마라. "
-        "⚠️ 'Statutory Memoranda'는 'Statutory Recommendations'와 전혀 다른 별개 섹션이다 — 'Statutory' 단어가 같다고 혼동 금지. "
-        "메모란다는 단순 정보성 기록(approved/완료 통보 등)이라 미해소 조치사항이 아니다. "
-        "이미 Closed/Cleared/Deleted 되었거나 조치 확인 완료된 항목도 제외. 'None'이면 빈 배열.\n"
-        "■ 각 항목 필드:\n"
-        "- issued_date: 발행/기재일 (가능하면 YYYY-MM-DD, 없으면 빈 문자열)\n"
-        "- description: 지적/기국 본문을 원문 그대로 복사(영문이면 영문 그대로). 요약·변형 금지.\n"
-        "- due_date: 마감/처리기한 (Due/Limit date, 가능하면 YYYY-MM-DD, 없으면 빈 문자열). "
-        "⚠️ **연장(postpone/extend)된 경우 반드시 최종(연장된) 날짜를 due_date로 한다.** "
-        "보고서에 원래 기한과 연장 기한이 함께 있거나(예: 'Original due 2025-04-26, postponed to 2026-04-26', "
-        "'Limit date revised/extended to …', 'New limit date …', 'Postponed until …'), "
-        "여러 날짜가 보이면 **가장 나중(최신) 유효 기한**을 due_date로 쓴다. 원래(이른) 날짜를 쓰지 마라.\n"
-        "- remark: description의 핵심을 한국어 1~2문장으로 간결히 요약(전체 직역 금지). "
-        "문장은 '~함/~됨/~음' 음슴체(개조식). 기술 명칭·장비명·약어·인증명(예: COC, SEEMP, IHM, "
-        "BNWAS, Load Line, Plimsoll Mark, EGCS, BWTS)은 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
-        "없는 내용을 지어내지 말 것.\n"
-        '형식: {"vessel_name":"","class_society":"","report_date":"",'
-        '"coc":[{"issued_date":"","description":"","due_date":"","remark":""}],'
-        '"statutory":[{"issued_date":"","description":"","due_date":"","remark":""}]}'
-    )
 
 
-def _cls_item(it):
-    if not isinstance(it, dict):
-        return None
-    rec = {
-        'issued_date': (it.get('issued_date') or '').strip(),
-        'description': (it.get('description') or '').strip(),
-        'due_date':    (it.get('due_date') or '').strip(),
-        'remark':      (it.get('remark') or '').strip(),
-    }
-    return rec if rec['description'] else None
 
 
-def _normalize_class_status(parsed):
-    if not isinstance(parsed, dict):
-        return None
-    def lst(key):
-        out = []
-        for it in (parsed.get(key) or []):
-            r = _cls_item(it)
-            if r:
-                out.append(r)
-        return out
-    return {
-        'vessel_name':   (parsed.get('vessel_name') or '').strip(),
-        'class_society': (parsed.get('class_society') or '').strip().upper(),
-        'report_date':   (parsed.get('report_date') or '').strip(),
-        'coc':           lst('coc'),
-        'statutory':     lst('statutory'),
-    }
 
 
-def _xlsx_to_text(raw_bytes):
-    import io
-    from openpyxl import load_workbook
-    wb = load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
-    lines = []
-    for ws in wb.worksheets:
-        for r in ws.iter_rows(values_only=True):
-            cells = ['' if c is None else str(c).strip() for c in r]
-            if any(cells):
-                lines.append('\t'.join(cells))
-            if len(lines) > 600:
-                break
-    return '\n'.join(lines)
 
 
-def _extract_class_status_from_upload(f):
-    """업로드 FileStorage → (data, err). data = _normalize_class_status 결과."""
-    name = (f.filename or '').lower()
-    ext = name.rsplit('.', 1)[-1] if '.' in name else ''
-    raw = f.read()
-    size_mb = len(raw) / (1024 * 1024)
-    prompt = _class_status_prompt()
-
-    if ext == 'pdf':
-        if size_mb > 15:
-            return None, {'reason': 'TOO_LARGE',
-                          'message': f'PDF가 너무 큽니다({size_mb:.1f}MB). 15MB 이하로 줄여주세요.'}
-        b64 = __import__('base64').standard_b64encode(raw).decode()
-        parsed = _gemini_call_json([
-            {'inline_data': {'mime_type': 'application/pdf', 'data': b64}},
-            {'text': prompt},
-        ], model=_model_for('findings'))
-    elif ext in ('png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'):
-        if size_mb > 15:
-            return None, {'reason': 'TOO_LARGE', 'message': f'이미지가 너무 큽니다({size_mb:.1f}MB).'}
-        import mimetypes
-        media = mimetypes.guess_type(name)[0] or 'image/jpeg'
-        b64 = __import__('base64').standard_b64encode(raw).decode()
-        parsed = _gemini_call_json([
-            {'inline_data': {'mime_type': media, 'data': b64}},
-            {'text': prompt},
-        ], model=_model_for('findings'))
-    elif ext in ('xlsx', 'xls'):
-        try:
-            txt = _xlsx_to_text(raw)
-        except Exception as e:
-            app.logger.exception('extract-class-status-from-upload')
-            return None, {'reason': 'XLSX_PARSE_FAILED', 'message': f'엑셀을 읽지 못했습니다: {e}'}
-        parsed = _gemini_call_json([{'text': prompt + '\n\n[보고서 표 내용]\n' + txt}],
-                                   model=_model_for('findings'))
-    else:
-        return None, {'reason': 'BAD_TYPE', 'message': 'PDF · 이미지 · 엑셀(xlsx) 파일만 지원합니다.'}
-
-    if isinstance(parsed, dict) and parsed.get('error') == 'NO_API_KEY':
-        return None, {'reason': 'no_api_key', 'message': 'AI 자동추출이 설정되지 않았습니다(키 미설정).'}
-    if isinstance(parsed, dict) and parsed.get('error'):
-        return None, {'reason': parsed['error'], 'message': '자동 추출에 실패했습니다.',
-                      'detail': parsed.get('detail') or parsed.get('raw')}
-    data = _normalize_class_status(parsed)
-    if data is None:
-        return None, {'reason': 'PARSE_FAILED', 'message': '추출 결과를 해석하지 못했습니다.'}
-    return data, None
 
 
 def _cls_snapshot_dict(cs_row, items_by_cs):
@@ -1573,64 +1190,8 @@ def _cls_snapshot_dict(cs_row, items_by_cs):
     }
 
 
-def _cls_delete_file(path):
-    """보관 파일 삭제(교체 시 이전 파일 자동삭제). 경로가 업로드 폴더 내일 때만."""
-    if not path:
-        return
-    try:
-        full = os.path.join(BASE_DIR, path) if not os.path.isabs(path) else path
-        if os.path.commonpath([os.path.realpath(full), os.path.realpath(UPLOAD_DIR)]) == os.path.realpath(UPLOAD_DIR) \
-                and os.path.isfile(full):
-            os.remove(full)
-    except Exception as e:
-        print(f'[cls] old file remove skip: {e}')
 
 
-def _cls_save_snapshot(vessel_id, vessel_name_raw, data, filename, source_path=None):
-    """선박 스냅샷 교체(최신만 유지). 이전 스냅샷의 보관파일도 자동삭제.
-    vessel_id None 이면 미매칭으로 저장(같은 정규화 선명의 기존 미매칭 제거 후 삽입)."""
-    conn = get_db()
-    user = session.get('username')
-    _ndesc = lambda s: ' '.join((s or '').strip().lower().split())
-    preserved = {}   # (category, 정규화 description) -> action_taken — 스냅샷 교체에도 손유석 조치사항 유지
-    if vessel_id is not None:
-        try:
-            for r in conn.execute(
-                "SELECT i.category, i.description, i.action_taken "
-                "FROM class_status_items i JOIN class_status c ON c.id = i.cs_id "
-                "WHERE c.vessel_id = ? AND IFNULL(i.action_taken,'') <> ''", (vessel_id,)).fetchall():
-                preserved[(r['category'], _ndesc(r['description']))] = r['action_taken']
-        except Exception:
-            app.logger.exception('cls-save-snapshot')
-            preserved = {}
-        for r in conn.execute('SELECT source_path FROM class_status WHERE vessel_id=?', (vessel_id,)).fetchall():
-            _cls_delete_file(r['source_path'])
-        conn.execute('DELETE FROM class_status WHERE vessel_id=?', (vessel_id,))
-    else:
-        # 같은 (정규화) 선명의 기존 미매칭 스냅샷 제거
-        tgt = _norm_vessel_name(vessel_name_raw)
-        for r in conn.execute('SELECT id, vessel_name_raw, source_path FROM class_status WHERE vessel_id IS NULL').fetchall():
-            if _norm_vessel_name(r['vessel_name_raw']) == tgt:
-                _cls_delete_file(r['source_path'])
-                conn.execute('DELETE FROM class_status WHERE id=?', (r['id'],))
-    cur = conn.execute(
-        '''INSERT INTO class_status
-             (vessel_id, vessel_name_raw, class_society, report_date, source_filename, source_path, uploaded_by)
-           VALUES (?,?,?,?,?,?,?)''',
-        (vessel_id, vessel_name_raw, data.get('class_society'),
-         data.get('report_date'), filename, source_path, user))
-    cs_id = cur.lastrowid
-    for cat, key in (('COC', 'coc'), ('STATUTORY', 'statutory')):
-        for n, it in enumerate(data.get(key) or [], start=1):
-            act = preserved.get((cat, _ndesc(it.get('description'))), '')
-            conn.execute(
-                '''INSERT INTO class_status_items
-                     (cs_id, category, no, issued_date, description, due_date, remark, action_taken)
-                   VALUES (?,?,?,?,?,?,?,?)''',
-                (cs_id, cat, n, it.get('issued_date'), it.get('description'),
-                 it.get('due_date'), it.get('remark'), act))
-    conn.commit()
-    return cs_id
 
 
 @app.route('/api/class-status', methods=['GET'])
@@ -1691,49 +1252,6 @@ def api_class_status_list():
     return jsonify({'vessels': vessel_out, 'unmatched': unmatched})
 
 
-def _cls_handle_files(files):
-    """업로드 파일들 → AI추출 → 선박매칭 → 저장. 원본파일도 선박별 최신만 보관. (UI·BV Pushing 공용)"""
-    cls_dir = os.path.join(UPLOAD_DIR, 'class_status')
-    os.makedirs(cls_dir, exist_ok=True)
-    results = []
-    for f in [x for x in files if x and x.filename]:
-        fname = f.filename
-        # 원본 바이트 보관(추출이 스트림을 소비하므로 추출 전에 읽고 seek 리셋)
-        raw = None
-        try:
-            f.stream.seek(0); raw = f.read(); f.stream.seek(0)
-        except Exception as _e:
-            app.logger.warning('cls-handle-files: %s', _e)
-            raw = None
-        data, err = _extract_class_status_from_upload(f)
-        if err:
-            results.append({'filename': fname, 'ok': False, **err})
-            continue
-        vname = data.get('vessel_name') or ''
-        v = _match_vessel_by_name(vname)
-        vessel_id = v['id'] if v else None
-        src_rel = None
-        if raw:
-            uniq = uuid.uuid4().hex[:8] + '_' + datetime.now().strftime('%Y%m%d%H%M%S%f') + '_' + (secure_filename(fname) or 'report')
-            try:
-                with open(os.path.join(cls_dir, uniq), 'wb') as out:
-                    out.write(raw)
-                src_rel = os.path.join('static', 'uploads', 'class_status', uniq)
-            except Exception as e:
-                print(f'[cls] file save skip: {e}')
-        _cls_save_snapshot(vessel_id, vname, data, fname, src_rel)
-        results.append({
-            'filename': fname, 'ok': True,
-            'vessel_name': vname,
-            'matched': bool(v),
-            'vessel_id': vessel_id,
-            'matched_name': v['name'] if v else None,
-            'class_society': data.get('class_society'),
-            'report_date': data.get('report_date'),
-            'coc_count': len(data.get('coc') or []),
-            'statutory_count': len(data.get('statutory') or []),
-        })
-    return results
 
 
 @app.route('/api/class-status/upload', methods=['POST'])
@@ -1985,172 +1503,22 @@ def api_class_status_export_by_manager():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-# ═════════════════════════════════════════════════════════════════
-#  iOS 푸시알림 (APNs) — 디바이스 등록 · 발송 · 종류별 on/off
-# ═════════════════════════════════════════════════════════════════
-# 발송 자체는 apns_push.py(curl --http2 + ES256 JWT). 키가 없으면 라우트는 살아 있고
-# 'not_configured' 를 정직하게 반환한다 — 조용히 성공으로 위장하지 않는다.
-#
-# 알림 종류. 앱 설정화면이 이 목록을 그대로 그리므로 키를 바꾸면 기존 저장값이 끊긴다.
-PUSH_KINDS = [
-    ('dock_quote',       'Dock 견적 제출',      '업체가 견적을 올렸을 때'),
-    ('dock_ordered',     'Dock 발주완료',       '발주가 전부 완료됐을 때'),
-    ('dock_reject',      'Dock 결재반려',       '상신이 반려돼 단계가 되돌아갔을 때'),
-    ('dock_submit_fail', 'Dock 상신 실패',      'SVMS 상신이 실패로 끝났을 때'),
-    ('auto_fail',        '자동화 실패',         '러너 실패·killswitch·차단'),
-    ('approval_new',     '승인 대기 신규',      '전자결재/Fund Request 신규 대기'),
-    ('issue_urgent',     '긴급 현안',           '긴급으로 등록된 현안'),
-    ('class_due',        '선급·증서 만료',      'D-30/D-7 요약'),
-    ('calendar_daily',   '오늘 일정 요약',      '매일 10시·14시, 미완료 일정만'),
-    ('test',             '테스트 알림',         '설정 확인용'),
-]
-PUSH_KIND_KEYS = {k for k, _l, _d in PUSH_KINDS}
-_PUSH_DEVICE_CAP = 20        # 단일 요청에서 발송할 디바이스 상한(폭주 방지)
 
 
-def _push_module():
-    """apns_push 지연 import — 모듈이 없어도 앱 전체가 죽지 않게."""
-    try:
-        import apns_push
-        return apns_push
-    except Exception as e:
-        print(f'[push] apns_push import 실패: {e}')
-        return None
 
 
-def _push_prefs(row):
-    try:
-        p = json.loads(row['prefs'] or '{}')
-    except Exception:
-        p = {}
-    return p if isinstance(p, dict) else {}
 
 
-def _push_kind_enabled(row, kind):
-    """미설정 = 켜짐(기본 on). 형이 명시적으로 끈 것만 뺀다."""
-    return bool(_push_prefs(row).get(kind, 1))
 
 
-def _push_devices(user_ids=None, kind=None):
-    """발송 대상 기기. `user_ids=None` = 전체 브로드캐스트(호출측이 의도적으로 None 을 줄 때만).
-
-    🔴 cap 은 **prefs 필터 뒤에** 적용한다(올마이트 지적). SQL LIMIT 으로 먼저 자르면
-       상위 N 대가 그 종류를 껐을 때 켜둔 기기가 영구히 미발송된다 — 조용한 미탐.
-    """
-    sql = "SELECT * FROM ios_device WHERE active=1"
-    params = []
-    if user_ids:
-        sql += " AND user_id IN (%s)" % ','.join('?' * len(user_ids))
-        params += list(user_ids)
-    sql += " ORDER BY updated_at DESC"
-    rows = query(sql, tuple(params))
-    if kind:
-        rows = [r for r in rows if _push_kind_enabled(r, kind)]
-    return rows[:_PUSH_DEVICE_CAP]
 
 
-def _push_dispatch(kind, event_key, title, body, link=None,
-                   user_ids=None, collapse_id=None):
-    """알림 1건 발송. 반환 dict(ok/sent/failed/reason).
-
-    🔴 2단 커밋(BV 감시 교훈): event_key 를 먼저 claim 해 중복을 막되, **디바이스가 있었는데
-       전부 발송 실패**면 claim 을 풀어 다음 폴링에 재시도되게 한다. 안 풀면 일시적 네트워크
-       오류 1회가 그 이벤트를 영구 미탐으로 만든다.
-       디바이스가 0대면 claim 을 유지한다(배달할 곳이 없는 과거 이벤트가 나중에 폭주하는 것 방지).
-    """
-    if kind not in PUSH_KIND_KEYS:
-        return {'ok': False, 'reason': 'unknown_kind', 'sent': 0, 'failed': 0}
-    ap = _push_module()
-    if ap is None:
-        return {'ok': False, 'reason': 'module_missing', 'sent': 0, 'failed': 0}
-    try:
-        conf = ap.load_conf()
-    except Exception as e:
-        return {'ok': False, 'reason': 'not_configured', 'detail': str(e),
-                'sent': 0, 'failed': 0}
-
-    try:                                     # ── claim (중복발송 차단)
-        execute("INSERT INTO push_log (event_key, kind, title, body, link) "
-                "VALUES (?,?,?,?,?)", (event_key, kind, title, body, link))
-    except sqlite3.IntegrityError:
-        return {'ok': True, 'dup': True, 'reason': 'already_sent',
-                'sent': 0, 'failed': 0}
-
-    targets = _push_devices(user_ids, kind=kind)
-    sent, failed, detail = 0, 0, []
-    for d in targets:
-        payload = ap.alert_payload(title, body, link=link, kind=kind)
-        ok, st, reason = ap.send(d['token'], payload, env=(d['env'] or 'production'),
-                                 conf=conf, collapse_id=collapse_id)
-        if ok:
-            sent += 1
-            execute("UPDATE ios_device SET last_push_at=datetime('now','localtime') "
-                    "WHERE id=?", (d['id'],))
-        else:
-            failed += 1
-            detail.append(f"dev{d['id']}:{st}:{reason}")
-            if ap.is_dead(st, reason):       # 영구 사망 사유만 비활성(일시실패로는 안 끔)
-                execute("UPDATE ios_device SET active=0, dead_reason=?, "
-                        "updated_at=datetime('now','localtime') WHERE id=?",
-                        (f'{st}:{reason}', d['id']))
-
-    if targets and sent == 0:                # 전부 실패 → claim 해제(재시도 가능하게)
-        execute("DELETE FROM push_log WHERE event_key=? AND sent_n=0", (event_key,))
-        return {'ok': False, 'reason': 'all_failed', 'sent': 0,
-                'failed': failed, 'detail': '; '.join(detail)[:500]}
-
-    execute("UPDATE push_log SET sent_n=?, fail_n=?, detail=? WHERE event_key=?",
-            (sent, failed, '; '.join(detail)[:500] or None, event_key))
-    return {'ok': True, 'sent': sent, 'failed': failed,
-            'devices': len(targets), 'detail': '; '.join(detail)[:500]}
 
 
-_PUSH_OUTBOX_MAX_TRIES = 6      # 15분 폴 기준 약 1.5시간 재시도
-_PUSH_OUTBOX_MAX_AGE_H = 24     # 그보다 늙은 알림은 형에게 가치가 없다(늦은 알림 = 오보에 가깝다)
 
 
-def _push_outbox_add(kind, event_key, title, body, link=None, collapse_id=None):
-    """발송 예정 이벤트를 durable 하게 적재. 이미 있으면(=같은 전이 재관측) 조용히 통과.
-
-    🔴 반드시 **상태 UPDATE 보다 먼저** 부른다 — 순서가 뒤집히면 그 사이에 죽었을 때
-       "행은 갱신됐는데 알림은 없는" 영구 미탐이 남는다(schema.sql push_outbox 주석 참조).
-    """
-    execute("INSERT OR IGNORE INTO push_outbox (event_key, kind, title, body, link, collapse_id) "
-            "VALUES (?,?,?,?,?,?)",
-            (event_key, kind, title, body, link, collapse_id))
 
 
-def _push_outbox_drain(limit=20):
-    """대기함 발송. 성공·중복이면 삭제, 실패면 tries+1 하고 남긴다. 결과 목록 반환.
-
-    ⚠️`sent=0` 은 실패가 아니다 — 등록된 기기가 0대면 보낼 곳이 없을 뿐이고 `_push_dispatch` 가
-      claim 을 유지하므로 여기서도 지운다(안 지우면 기기 등록 순간 과거 알림이 폭주한다).
-    """
-    rows = query("SELECT * FROM push_outbox ORDER BY created_at LIMIT ?", (limit,))
-    out = []
-    for r in rows:
-        key = r['event_key']
-        old = query("SELECT CAST((julianday('now','localtime') - julianday(?)) * 24 AS REAL) h",
-                    (r['created_at'],), one=True)
-        if r['tries'] >= _PUSH_OUTBOX_MAX_TRIES or (old and (old['h'] or 0) > _PUSH_OUTBOX_MAX_AGE_H):
-            execute("DELETE FROM push_outbox WHERE event_key=?", (key,))
-            app.logger.warning('push outbox 포기 key=%s tries=%s', key, r['tries'])
-            out.append({'kind': r['kind'], 'key': key, 'ok': False, 'sent': 0, 'reason': 'dropped'})
-            continue
-        try:
-            res = _push_dispatch(r['kind'], key, r['title'] or '', r['body'] or '',
-                                 link=r['link'], collapse_id=r['collapse_id'])
-        except Exception as e:
-            app.logger.exception('push outbox 발송 예외 key=%s', key)
-            res = {'ok': False, 'reason': 'exception', 'detail': str(e)[:200]}
-        if res.get('ok'):
-            execute("DELETE FROM push_outbox WHERE event_key=?", (key,))
-        else:
-            execute("UPDATE push_outbox SET tries=tries+1, last_error=? WHERE event_key=?",
-                    ((res.get('reason') or '')[:200], key))
-        out.append({'kind': r['kind'], 'key': key, 'ok': bool(res.get('ok')),
-                    'sent': res.get('sent', 0), 'reason': res.get('reason')})
-    return out
 
 
 # ---- 앱(Bearer) : 디바이스 등록/해제 ----

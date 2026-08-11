@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from source_bundle import read_app_sources
+from source_bundle import function_source, read_app_sources
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +49,9 @@ class MailProcessingRetirementTests(unittest.TestCase):
             self.assertNotIn(text, ALL_TEMPLATE_TEXT)
 
     def test_dashboard_no_longer_queries_mail_card_runtime_queue(self):
-        dashboard_context = APP[APP.index("def _dashboard_ctx"):APP.index("@app.route('/api/dashboard/cockpit')")]
+        # 텍스트 인덱스 슬라이스는 함수가 다른 경계 파일로 이사하면 깨진다
+        # (helpers_shared.py 추출 때 실제로 깨짐) — AST 로 함수 본문만 집는다.
+        dashboard_context = function_source("_dashboard_ctx")
         self.assertNotIn("mail_card", dashboard_context)
         self.assertNotIn("mail_active", dashboard_context)
 

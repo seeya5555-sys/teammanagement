@@ -1,22 +1,4 @@
-def login_required(f):
-    @wraps(f)
-    def wrapped(*args, **kwargs):
-        if 'user_id' not in session:
-            if request.path.startswith('/api/'):
-                return jsonify({'error': 'unauthorized'}), 401
-            return redirect(url_for('login', next=request.path))
-        return f(*args, **kwargs)
-    return wrapped
 
-def admin_required(f):
-    @wraps(f)
-    def wrapped(*args, **kwargs):
-        if 'user_id' not in session:
-            return jsonify({'error': 'unauthorized'}), 401
-        if session.get('role') != 'admin':
-            return jsonify({'error': 'forbidden'}), 403
-        return f(*args, **kwargs)
-    return wrapped
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -121,133 +103,6 @@ def mobile_app():
     return render_template('mobile.html', **_dashboard_ctx())
 
 
-def _dashboard_ctx():
-    """대시보드 집계 컨텍스트(stats/events/scope) — Fleet Map 상단 KPI 스트립과
-    구 카드형(/dashboard/classic) 양쪽에서 공유."""
-    today   = date.today().isoformat()
-    horizon = (date.today() + timedelta(days=30)).isoformat()
-    cal_end = (date.today() + timedelta(days=7)).isoformat()
-    is_admin = (session.get('role') == 'admin')
-
-    sup_id = session.get('supervisor_id')
-    scoped = bool(sup_id)
-    sup_name = None
-    vessel_ids = []
-    if scoped:
-        srow = query("SELECT name FROM supervisors WHERE id=?", (sup_id,), one=True)
-        sup_name = srow['name'] if srow else None
-        vessel_ids = [r['vessel_id'] for r in
-                      query("SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?", (sup_id,))]
-
-    def vin(col):
-        """담당선박 IN 절. 미연결=전체(1=1), 연결+선박없음=0건(0=1)."""
-        if not scoped:
-            return ("1=1", [])
-        if not vessel_ids:
-            return ("0=1", [])
-        return (f"{col} IN ({','.join('?' * len(vessel_ids))})", list(vessel_ids))
-
-    # 1) 현안 요약 — 감독 연결 시 그 감독 이슈만(issues.supervisor_id)
-    iss_where = "WHERE supervisor_id=?" if scoped else ""
-    iss_params = (sup_id,) if scoped else ()
-    iss = query(
-        "SELECT "
-        "SUM(CASE WHEN status!='Closed' THEN 1 ELSE 0 END) open_cnt, "
-        "SUM(CASE WHEN status!='Closed' AND priority='Urgent' THEN 1 ELSE 0 END) urgent_cnt, "
-        "SUM(CASE WHEN status!='Closed' AND priority='COC & Flag' THEN 1 ELSE 0 END) coc_cnt, "
-        "SUM(CASE WHEN status!='Closed' AND priority='Next DD' THEN 1 ELSE 0 END) dd_cnt "
-        f"FROM issues {iss_where}", iss_params, one=True)
-
-    # 2) Class 만기 임박 (due_date D-30, 담당선박)
-    cvf, cvp = vin("cs.vessel_id")
-    class_due = query(
-        "SELECT COUNT(*) c FROM class_status_items i JOIN class_status cs ON cs.id=i.cs_id "
-        "WHERE i.due_date IS NOT NULL AND i.due_date != '' "
-        f"AND i.due_date >= ? AND i.due_date <= ? AND {cvf}",
-        (today, horizon, *cvp), one=True)['c']
-
-    # 3) Vetting 미해결 (Open observation, 담당선박)
-    vvf, vvp = vin("vt.vessel_id")
-    vrow = query(
-        "SELECT "
-        "SUM(CASE WHEN f.status='Open' THEN 1 ELSE 0 END) open_cnt, "
-        "SUM(CASE WHEN f.status='Open' AND f.priority=1 THEN 1 ELSE 0 END) pri_cnt "
-        "FROM vt_findings f JOIN vettings vt ON vt.id=f.vetting_id "
-        f"WHERE {vvf}", (*vvp,), one=True)
-
-    # 4) 다가오는 일정 (7일) — 담당선박/본인/공용
-    if scoped:
-        evf, evp = vin("vessel_id")
-        events = query(
-            "SELECT title, start_date, category, color, completed FROM calendar_events "
-            "WHERE start_date >= ? AND start_date <= ? "
-            f"AND (supervisor_id=? OR supervisor_id IS NULL OR {evf}) "
-            "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
-            (today, cal_end, sup_id, *evp))
-    else:
-        events = query(
-            "SELECT title, start_date, category, color, completed FROM calendar_events "
-            "WHERE start_date >= ? AND start_date <= ? "
-            "ORDER BY start_date ASC, COALESCE(start_time,'') ASC LIMIT 8",
-            (today, cal_end))
-
-    # 7일 일정 총건수(KPI 스트립용) — events 는 LIMIT 8 미리보기라 카운트와 분리.
-    if scoped:
-        evf2, evp2 = vin("vessel_id")
-        events_count = query(
-            "SELECT COUNT(*) c FROM calendar_events WHERE start_date >= ? AND start_date <= ? "
-            f"AND (supervisor_id=? OR supervisor_id IS NULL OR {evf2})",
-            (today, cal_end, sup_id, *evp2), one=True)['c']
-    else:
-        events_count = query(
-            "SELECT COUNT(*) c FROM calendar_events WHERE start_date >= ? AND start_date <= ?",
-            (today, cal_end), one=True)['c']
-
-    # 오늘 일정(KPI 스트립 = 당일 요약, 손유석 지시 2026-06-29). start_date=오늘만.
-    if scoped:
-        evf3, evp3 = vin("vessel_id")
-        today_events = query(
-            "SELECT title, category, start_time, completed FROM calendar_events WHERE start_date = ? "
-            f"AND (supervisor_id=? OR supervisor_id IS NULL OR {evf3}) "
-            "ORDER BY COALESCE(start_time,'') ASC", (today, sup_id, *evp3))
-    else:
-        today_events = query(
-            "SELECT title, category, start_time, completed FROM calendar_events WHERE start_date = ? "
-            "ORDER BY COALESCE(start_time,'') ASC", (today,))
-    today_count = len(today_events)
-
-    stats = {
-        'issues_open':   (iss['open_cnt']   or 0) if iss else 0,
-        'issues_urgent': (iss['urgent_cnt'] or 0) if iss else 0,
-        'issues_coc':    (iss['coc_cnt']    or 0) if iss else 0,
-        'issues_dd':     (iss['dd_cnt']     or 0) if iss else 0,
-        'class_due':     class_due,
-        'vetting_open':  (vrow['open_cnt'] or 0) if vrow else 0,
-        'vetting_pri':   (vrow['pri_cnt']  or 0) if vrow else 0,
-        'aor_pending':   0,
-        'aor_crew_submitted': 0,
-    }
-    # 자동화 위젯은 admin 만 (탭 자체가 admin 전용) — 전사 큐라 감독 스코프 무관
-    if is_admin:
-        ap = query("SELECT COUNT(*) c FROM aor_draft WHERE status='pending'", one=True)
-        stats['aor_pending'] = ap['c'] if ap else 0
-        try:
-            r = query("SELECT v FROM api_settings WHERE k='aor_crew_submitted'", one=True)
-            stats['aor_crew_submitted'] = int(r['v'] or 0) if r else 0
-        except sqlite3.Error:
-            pass
-
-    vlcc_last_push = None
-    if is_admin:
-        try:
-            r = query("SELECT v FROM api_settings WHERE k='vlcc_last_push_at'", one=True)
-            vlcc_last_push = r['v'] if r else None
-        except sqlite3.Error:
-            pass
-
-    return dict(stats=stats, events=events, events_count=events_count,
-                today_events=today_events, today_count=today_count, is_admin=is_admin,
-                scoped=scoped, sup_name=sup_name, vlcc_last_push=vlcc_last_push)
 
 
 @app.route('/api/dashboard/cockpit')
@@ -660,14 +515,6 @@ def api_issue_list():
     return jsonify(rows)
 
 
-def _issue_to_dict(row):
-    d = dict(row)
-    try:
-        d['actions'] = json.loads(d['actions']) if d.get('actions') else []
-    except Exception as e:
-        app.logger.warning('issue-to-dict: %s', e)
-        d['actions'] = []
-    return d
 
 
 @app.route('/api/mobile/issues')
@@ -1105,58 +952,8 @@ def api_issue_export():
     )
 
 
-def _gen_summary_rows(supervisor_id=None):
-    """해당 스코프(특정 감독 또는 전체)의 모든 이슈(진행중+완료)를 Gemini 요약하여
-    [{no, vessel_name, issue, priority, status}] 반환."""
-    conds, params = ['1=1'], []
-    if supervisor_id:
-        conds.append('i.supervisor_id = ?'); params.append(supervisor_id)
-    sql = f'''
-        SELECT i.*, s.display_order AS sv_order, v.name AS vessel_name,
-               v.vessel_type AS vessel_type
-          FROM issues i
-          JOIN supervisors s ON s.id = i.supervisor_id
-          JOIN vessels     v ON v.id = i.vessel_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY s.display_order ASC, s.id ASC, i.issue_date ASC, i.id ASC
-    '''
-    rows = [_issue_to_dict(r) for r in query(sql, params)]
-    payload = [{'i': idx,
-                'description': r.get('description') or '',
-                'action': _latest_action_progress(r.get('actions'))}
-               for idx, r in enumerate(rows)]
-    summaries = _gen_issue_summaries(payload)
-    STAT = {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'}
-    out = []
-    for idx, r in enumerate(rows):
-        s = summaries.get(idx, {})
-        desc = s.get('desc') or (r.get('description') or '').strip().split('\n')[0]
-        ad, araw = _latest_action(r.get('actions'))
-        action = s.get('action') or araw
-        head = f"{_md_label(r.get('issue_date') or '')} {r.get('item_topic') or ''}".strip()
-        lines = [head]
-        if desc:
-            lines.append(f'1) {desc}')
-        if action:
-            md = _md_label(ad)
-            lines.append(f'2) {md} {action}'.strip() if md else f'2) {action}')
-        out.append({'no': idx + 1,
-                    'issue_id': r.get('id'),
-                    'item': r.get('item_topic') or '',
-                    'supervisor_id': r.get('supervisor_id'),
-                    'vessel_id': r.get('vessel_id'),
-                    'vessel_name': r.get('vessel_name') or '',
-                    'vessel_type': r.get('vessel_type') or '',
-                    'issue': '\n'.join(lines),
-                    'priority': r.get('priority') or '',
-                    'status_raw': r.get('status') or '',
-                    'status': STAT.get(r.get('status'), r.get('status') or '')})
-    return out
 
 
-def _ensure_summary_table():
-    execute("""CREATE TABLE IF NOT EXISTS issue_summaries (
-                 scope TEXT PRIMARY KEY, data TEXT, generated_at TEXT )""")
 
 
 def _summary_scope():
@@ -1180,35 +977,6 @@ def api_issue_summary_get():
     return jsonify({'rows': rows, 'generated_at': row['generated_at'], 'count': len(rows)})
 
 
-def _run_summary_generate(sid=None):
-    """업무요약 생성+저장 코어 (UI 버튼·API키 스케줄러 공용). (rows, gen_at, counts) 반환."""
-    from datetime import datetime
-    _ensure_summary_table()
-    rows = _gen_summary_rows(sid)
-    gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
-
-    def _save(scope, scope_rows):
-        # scope 내에서 No. 재넘버링
-        renum = []
-        for i, r in enumerate(scope_rows, start=1):
-            rr = dict(r); rr['no'] = i; renum.append(rr)
-        execute("INSERT OR REPLACE INTO issue_summaries (scope, data, generated_at) VALUES (?, ?, ?)",
-                (scope, json.dumps(renum, ensure_ascii=False), gen_at))
-        return len(renum)
-
-    counts = {}
-    if sid:
-        counts[str(sid)] = _save(str(sid), rows)
-    else:
-        counts['all'] = _save('all', rows)
-        # 감독별로 분리 저장 (각 감독 탭의 요약도 동시 갱신)
-        by_sv = {}
-        for r in rows:
-            by_sv.setdefault(r.get('supervisor_id'), []).append(r)
-        all_sv = [s['id'] for s in query('SELECT id FROM supervisors')]
-        for sv_id in all_sv:
-            counts[str(sv_id)] = _save(str(sv_id), by_sv.get(sv_id, []))
-    return rows, gen_at, counts
 
 
 @app.route('/api/issues/summary-generate', methods=['POST'])
@@ -1350,34 +1118,6 @@ def api_issue_summary_export():
         as_attachment=True, download_name=fname)
 
 
-def _issue_write_scope(iid=None, payload=None):
-    """Return a scoped issue row or raise 403 for non-admin cross-supervisor writes."""
-    if session.get('role') == 'admin':
-        if not iid:
-            return None
-        row = query('SELECT id, supervisor_id, vessel_id FROM issues WHERE id=?', (iid,), one=True)
-        if not row:
-            abort(404)
-        return row
-    sup_id = session.get('supervisor_id')
-    if not sup_id:
-        abort(403)
-    if iid:
-        row = query('SELECT id, supervisor_id, vessel_id FROM issues WHERE id=?', (iid,), one=True)
-        if not row:
-            abort(404)
-        if row['supervisor_id'] != sup_id:
-            abort(403)
-        return row
-    if payload is not None:
-        # The browser cannot choose another supervisor, and the vessel must belong to it.
-        if int(payload.get('supervisor_id') or 0) != sup_id:
-            abort(403)
-        vessel_id = int(payload.get('vessel_id') or 0)
-        if not query('SELECT 1 FROM supervisor_vessels WHERE supervisor_id=? AND vessel_id=?',
-                     (sup_id, vessel_id), one=True):
-            abort(403)
-    return None
 
 
 @app.route('/api/issues/<int:iid>')

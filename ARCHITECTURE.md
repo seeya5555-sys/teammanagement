@@ -10,6 +10,11 @@ namespace is split into five focused boundaries:
 Boundary contents below are measured from the route decorators actually present
 in each file, not from intent.  Counts are `@app.route` declarations.
 
+- `helpers_shared.py` (0 routes, loaded first): every helper or constant that
+  two or more boundaries consume, or that `app.py` itself consumes — auth
+  decorators (`login_required`, `admin_required`, `api_key_required`), Gemini
+  call/config, dock-procure and SOA helpers, fleet/push helpers, automation
+  task metadata.  Nothing route-shaped lives here;
 - `routes_core.py` (59 routes): login/logout/auth, dashboard, issues, vessels,
   users/supervisors, widget, condition-survey CRUD (`/api/cs/surveys`), and the
   `/calendar`, `/condition-survey`, `/vetting-status`, `/dry-dock` **pages**;
@@ -65,20 +70,40 @@ undeclared — no `import` line records them.  Two consequences are handled by
   binding would be whichever file loads last, and "which boundary does this
   depend on" would stop being well defined;
 - the dependency graph is frozen in
-  `tests/fixtures/boundary_dependency_graph.json` (22 edges, 232 symbols) and is
-  the concrete import list a Blueprint conversion has to satisfy.  It is a list of
-  required imports, not a proof that those imports are acyclic: load-time and
-  request-time references are not distinguished, and dynamic access through
-  `globals()` or `getattr` is invisible to it.
+  `tests/fixtures/boundary_dependency_graph.json` (12 edges, 305 symbol uses)
+  and is the concrete import list a Blueprint conversion has to satisfy.
+  Load-time and request-time references are not distinguished, and dynamic
+  access through `globals()` or `getattr` is invisible to it.
 
-The measured graph is **cyclic**: every boundary depends on at least one other,
-`routes_dock_submit.py` consumes 43 symbols from `routes_calendar_dock.py`, and
-`app.py` itself consumes 5 symbols from `routes_calendar_dock.py`.  This does not
-make a Blueprint conversion impossible — a façade, dependency inversion, or a
-temporary compatibility import can each carry a gradual move.  What it does mean
-is that **the boundaries are not independently movable as they stand**, so an
-explicit dependency plan (which shared helpers move out of the cycle first, and
-by which mechanism) is a prerequisite rather than part of the move itself.
+The graph used to be **cyclic** (every boundary depended on a sibling;
+`routes_dock_submit.py` consumed 43 symbols from `routes_calendar_dock.py`).
+The `helpers_shared.py` extraction resolved that: the transitive closure of
+every cross-consumed symbol (146 module-level definitions) moved into one
+shared file that loads before the other boundaries.  The resulting contract is
+**sibling-free layering**, enforced by `test_layering_no_sibling_dependencies`:
+
+- `helpers_shared.py` may depend only on `app.py`;
+- every other boundary may depend only on `app.py` and `helpers_shared.py`;
+- `app.py` may depend only on `helpers_shared.py`.
+
+This is deliberately not called a DAG: `app.py` and `helpers_shared.py`
+reference each other (shared helpers use `app.py` primitives; `init_db` and
+`_auto_migrate` in `app.py` call five AOR helpers).  Both directions are
+call-time-only and every module-level statement in `helpers_shared.py` is a
+pure binding (constants, env reads, `threading.Lock()` — measured, no I/O), so
+the pair behaves as one foundation layer.  Splitting a true foundation module
+out of `app.py` would remove the mutual edge but is not required for the
+per-boundary Blueprint move.
+
+A boundary that starts referencing a sibling again fails the gate — the fix is
+to move the shared helper into `helpers_shared.py` (if it is genuinely shared)
+or keep it private to the consuming file.  Without this test, refreshing the
+frozen fixture with `--update` would let a new cycle through as an apparently
+reviewed change.  With the cycle gone, each boundary is independently movable:
+a Blueprint conversion can now proceed one boundary at a time, importing only
+`app.py` primitives and `helpers_shared` — the endpoint-rename churn (`bp.name`
+prefixes, `url_for` call sites, the 396-entry contract snapshot) remains the
+open cost and is a per-boundary, reviewable change.
 
 ## Database and persistent state
 

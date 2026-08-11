@@ -914,12 +914,6 @@ def _get_full_report_data(rid):
     return out
 
 
-def _safe_filename(s):
-    """파일명에서 OS 비호환 문자 제거"""
-    import re
-    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', s)
-    s = s.strip().strip('.')
-    return s[:80] or 'report'
 
 
 @app.route('/api/dock-reports/<int:rid>/export/docx')
@@ -1777,11 +1771,6 @@ def api_brep_export_pdf(rid):
     )
 
 
-# ═════════════════════════════════════════════════════════════════
-#  API — attachments
-# ═════════════════════════════════════════════════════════════════
-def _ext_allowed(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXT
 
 
 @app.route('/api/issues/<int:iid>/attachments', methods=['POST'])
@@ -1986,29 +1975,9 @@ def api_attachment_delete(aid):
 # ═════════════════════════════════════════════════════════════════
 RECEIPT_IMAGE_MAX_LONG_SIDE = 1568   # 영수증 작은 글씨 가독성 위해 dock(1280)보다 크게
 RECEIPT_IMAGE_JPEG_QUALITY  = 88
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
-GEMINI_MODEL   = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash-lite')
-
-# 용도별 모델 — /etc/trmt.env 에서 지정 (미지정 시 GEMINI_MODEL 사용)
-#   MODEL_SUMMARY  : 요약        (텍스트)
-#   MODEL_TRANSLATE: 영문 번역    (텍스트)
-#   MODEL_FINDINGS : 리포트 추출  (멀티모달 필요)
-#   MODEL_REMARK   : 리마크 요약  (텍스트)
-#   MODEL_RECEIPT  : 영수증 비전  (멀티모달 필수)
-_MODEL_ENV = {
-    'summary':   'MODEL_SUMMARY',
-    'translate': 'MODEL_TRANSLATE',
-    'findings':  'MODEL_FINDINGS',
-    'remark':    'MODEL_REMARK',
-    'receipt':   'MODEL_RECEIPT',
-    'krcon':     'MODEL_KRCON',
-}
 
 
-def _model_for(purpose):
-    """용도별 모델 ID 반환 (환경변수 우선, 없으면 기본 GEMINI_MODEL)."""
-    env = _MODEL_ENV.get(purpose)
-    return (os.environ.get(env) if env else None) or GEMINI_MODEL
+
 
 
 def _trip_owned(t):
@@ -2490,65 +2459,14 @@ def _not_found(e):
     return render_template('404.html'), 404
 
 
-# ═════════════════════════════════════════════════════════════════
-#  외부 연동용 데이터 API (읽기 전용, API 키 보호)
-#  · 출장 경비(biz_*) 제외 — 그 외 전체 탭 공개
-# ═════════════════════════════════════════════════════════════════
-#: `_ensure_api_table()` 를 이미 끝낸 DB 파일 경로들(프로세스 로컬 캐시).
-#: 경로를 키로 쓰는 이유는 테스트가 `app.config['DATABASE']` 를 임시 파일로 바꿔치기해서다
-#: — 단순 bool 플래그면 새 임시 DB 에서 테이블 없이 진행해 조용히 깨진다.
-_API_TABLE_READY = {}  # path -> (device, inode): DB 파일 교체 감지(정상 DB 쓰기는 cache 무효화 안 함)
-_API_TABLE_LOCK = threading.Lock()
 
 
-def _ensure_api_table():
-    """`api_settings` 존재 보장 — **프로세스당 DB 경로별 1회만**.
-
-    예전엔 API 키가 붙은 **모든 요청**마다 `CREATE TABLE IF NOT EXISTS` + `commit()` 이 돌았다
-    (`_check_api_key` → `_get_api_key` → 여기). no-op DDL 이라도 `execute()` 가 커밋을 하므로
-    요청마다 쓰기 트랜잭션이 열렸다 — 순수 낭비이고, 읽기전용 API 가 writer lock 을 잡는
-    부작용까지 있었다. 테이블 자체는 `init_db()` 가 이미 만든다(위 api_settings 블록).
-    """
-    path = app.config.get('DATABASE', DATABASE)
-    with _API_TABLE_LOCK:
-        try:
-            st = os.stat(path)
-            sig = (st.st_dev, st.st_ino)
-        except OSError:
-            sig = None
-        if _API_TABLE_READY.get(path) == sig and sig is not None:
-            return
-        execute("""CREATE TABLE IF NOT EXISTS api_settings (
-                     k TEXT PRIMARY KEY, v TEXT )""")
-        st = os.stat(path)
-        _API_TABLE_READY[path] = (st.st_dev, st.st_ino)
 
 
-def _get_api_key(create=True):
-    _ensure_api_table()
-    row = query("SELECT v FROM api_settings WHERE k='api_key'", one=True)
-    if row and row['v']:
-        return row['v']
-    if not create:
-        return None
-    key = secrets.token_hex(24)
-    execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)", (key,))
-    return key
 
 
-def _check_api_key():
-    provided = (request.headers.get('X-API-Key')
-                or request.args.get('key') or '').strip()
-    if not provided:
-        return False
-    real = _get_api_key(create=False)
-    if not real:
-        return False
-    return secrets.compare_digest(provided, real)
 
 
-def _vkey(name):
-    return (name or '').strip().lower()
 
 
 def _ref(kind, ident):
@@ -2556,14 +2474,6 @@ def _ref(kind, ident):
     return f'{kind}:{ident}' if ident is not None else None
 
 
-def api_key_required(fn):
-    @wraps(fn)
-    def wrapper(*a, **k):
-        if not _check_api_key():
-            return jsonify({'error': 'unauthorized',
-                            'message': 'valid API key required (X-API-Key header or ?key=)'}), 401
-        return fn(*a, **k)
-    return wrapper
 
 
 # ---- 내부(로그인) : 키 조회/재발급 ----
@@ -3039,70 +2949,8 @@ def api_ext_stt_result(jid):
     return jsonify({'ok': True})
 
 
-# ═════════════════════════════════════════════════════════════════
-#  자동화 헬스 보드 (하트비트) — 맥측 health_push.py 가 POST, admin 이 /health 로 조회
-# ═════════════════════════════════════════════════════════════════
-# 러너 기술키 → (한글 표시명, 돈경로 여부). 미등록 키는 raw key 그대로 표시.
-AUTOMATION_LABELS = {
-    'fundreq-auto':    ('비용청구 자동상신',      True),
-    'jeonja-auto':     ('전자결재 자동상신',      True),
-    'soa-approve':     ('SOA 주말 자동승인',      True),
-    'invoice-auto':    ('인보이스 자동처리',      True),
-    'aor-prep':        ('AOR 준비 카드',          False),
-    'dock-sync':       ('입거 발주 SVMS 동기화',  False),
-    'fleet-map':       ('선박 위치지도 갱신',      False),
-    'fleet-map-crawl': ('선위 AIS 수집',          False),
-    'cls-push':        ('선급 검사현황 동기화',    False),
-    'shipwiki-ingest': ('선박 위키 수집',          False),
-    'trmt-summary':    ('현안 요약 생성',          False),
-    'money-watch':     ('돈경로 감시견',          False),
-    'git-backup':      ('작업 백업',              False),
-    'jeonja-verify':   ('전자결재 검증',          False),
-    'wfmail':          ('메일→현안 카드 수집',     False),
-    'logrotate':       ('로그 정리',              False),
-}
-# 은퇴한 러너 — 보드에서 숨긴다. 맥측 health_push 에서 빼도 automation_health 에 남은
-# 과거 행 때문에 카드가 계속 보이므로(그리고 갱신이 끊겨 unknown/fail 로 굳으므로) 여기서 차단한다.
-# 운영 DB 를 손으로 지우는 대신 코드 필터로 처리 — prune 규약(러너당 30행)상 잔존 행은 무해하다.
-RETIRED_RUNNER_KEYS = {
-    'mail-brief',   # 아침 메일 브리핑, 2026-07-31 폐기(형 지시)
-}
-# status 정렬 우선순위(fail 먼저, 그다음 warn, ok, unknown)
-_HEALTH_ORDER = {'fail': 0, 'warn': 1, 'ok': 2, 'unknown': 3}
 
 
-def _automation_health_summary():
-    """러너별 최신 관측 + 최근 14개 히스토리(oldest→newest)를 조립.
-    반환: (runners[list], counts[dict]). Feature1 read 와 Feature2 cockpit 이 공유."""
-    rows = query("SELECT id, runner_key, status, note, ran_at, next_run, reported_at "
-                 "FROM automation_health ORDER BY runner_key, reported_at, id")
-    by_key = {}
-    for r in rows:
-        if r['runner_key'] in RETIRED_RUNNER_KEYS:
-            continue
-        by_key.setdefault(r['runner_key'], []).append(r)
-
-    runners = []
-    counts = {'ok': 0, 'warn': 0, 'fail': 0, 'unknown': 0, 'total': 0}
-    for key, obs in by_key.items():
-        latest = obs[-1]
-        status = latest['status'] if latest['status'] in _HEALTH_ORDER else 'unknown'
-        label, money = AUTOMATION_LABELS.get(key, (key, False))
-        history = [(o['status'] if o['status'] in _HEALTH_ORDER else 'unknown')
-                   for o in obs[-14:]]
-        runners.append({
-            'key': key, 'label': label, 'money': money,
-            'status': status, 'note': latest['note'],
-            'ran_at': latest['ran_at'], 'next_run': latest['next_run'],
-            'reported_at': latest['reported_at'], 'history': history,
-        })
-        counts[status] = counts.get(status, 0) + 1
-        counts['total'] += 1
-
-    # fail → warn → ok → unknown, 동급이면 돈경로 먼저, 그다음 라벨
-    runners.sort(key=lambda x: (_HEALTH_ORDER.get(x['status'], 3),
-                                0 if x['money'] else 1, x['label']))
-    return runners, counts
 
 
 @app.route('/api/ext/automation/health', methods=['POST'])
@@ -3744,9 +3592,6 @@ def api_ext_roster():
 #  SOA 자동화 그룹 SSOT — 읽기 API (P0). 소비자는 맥 러너 sync 잡.
 # ═════════════════════════════════════════════════════════════════
 SOA_GROUPS_SCHEMA = 1
-# category → SVMS OW_COMP_ID. 돈 분기(Slip 출금상신·검증강도)의 근거라
-# 코드 상수로 격리 — DB·UI 어디서도 편집 불가.
-SOA_CATEGORY_OWNER = {'silver': '037', 'skrt': '001'}
 _SOA_KEY_RE = re.compile(r'^[A-Z0-9]{1,8}$')
 _SOA_VSL_RE = re.compile(r'^[A-Z0-9]{4}$')
 
@@ -3759,42 +3604,10 @@ def _soa_groups_version():
         return 0
 
 
-def _soa_groups_load(active_only=True):
-    """soa_group + membership → dict 리스트. vessels 는 항상 sorted."""
-    where = 'WHERE active=1' if active_only else ''
-    rows = query(f'SELECT id,key,label,category,mode,sort_order,active FROM soa_group '
-                 f'{where} ORDER BY sort_order, key')
-    out = []
-    for r in rows:
-        vs = [x['vsl_cd'] for x in query(
-            'SELECT vsl_cd FROM soa_group_vessel WHERE group_id=? ORDER BY vsl_cd', (r['id'],))]
-        out.append({
-            'key': r['key'], 'label': r['label'], 'category': r['category'],
-            'owner_comp_id': SOA_CATEGORY_OWNER.get(r['category']),
-            'mode': r['mode'], 'sort_order': r['sort_order'], 'active': r['active'],
-            'vessels': sorted(vs),
-        })
-    return out
 
 
-def _soa_owner_map():
-    """SVMS My Vessel owner 스냅샷(러너가 push). 표시 전용 — 실행 대상 판정 근거 아님."""
-    return {r['vsl_cd']: r['owner_comp_id']
-            for r in query('SELECT vsl_cd, owner_comp_id FROM soa_vessel_owner')}
 
 
-def _soa_group_members(g, owner_map=None):
-    """이 그룹에 지금 리스트업된 선박. explicit=명시 선박 ∩ owner, dynamic=owner 전체.
-    owner 스냅샷이 없으면 explicit 은 명시 선박 그대로, dynamic 은 빈 리스트."""
-    if owner_map is None:
-        owner_map = _soa_owner_map()
-    oc = SOA_CATEGORY_OWNER.get(g['category'])
-    pool = {v for v, o in owner_map.items() if o == oc}
-    if g['mode'] == 'dynamic_owner':
-        return sorted(pool)
-    if not pool:
-        return sorted(g['vessels'])
-    return sorted(v for v in g['vessels'] if v in pool)
 
 
 def _soa_groups_invariants(groups):
@@ -4316,63 +4129,6 @@ def api_ext_roster_sync_done():
     return jsonify({'ok': True, 'done_at': d.get('flag') or now})
 
 
-# ===== dock_procure 수동 SVMS 발주 새로고침(dock_sync 온디맨드 트리거) — roster-sync 패턴 =====
-def _dock_sync_flag_bump():
-    """dock_sync 온디맨드 트리거 flag 를 세우고 **실효 flag** 를 반환한다 — 단일 writer.
-
-    호출자 = ①'SVMS 발주 새로고침' 버튼 ②견적요청 성공 콜백(`api_ext_dock_inquiry_result`).
-    맥 watcher(launchd `ai.openclaw.dock-sync-watch`, 60s)가 `/api/ext/dock_procure/sync/pending`
-    (**flag>done 일 때만** flag 반환)을 폴링해 `dock_sync.sh --live` 를 1회 돌리고
-    `/api/ext/dock_procure/sync/done` 으로 flag+결과를 기록(=clear)한다. dock_sync 는 선박 전체를
-    다시 읽는 멱등 read-only 폴러라 flag 가 몇 번 세워져도 결과가 달라지지 않는다.
-
-    🔴 flag 는 **항상 전진**하고, `done` 보다도 **엄격히 크게** 만든다. 이유는 두 개의 조용한 유실:
-      · 같은 초에 done 이 이미 찍혀 있으면(버튼→sync→done 직후 견적요청 성공) `now == done` 이라
-        pending 이 false → 우리 요청이 아무 sync 도 못 일으키고 사라진다.
-      · watcher 가 flag=T1 을 들고 sync 를 **이미 시작한 뒤** 우리 write 가 들어오면, 그 sync 는
-        우리 변경 이전의 SVMS 를 읽고 done=T1 로 flag 를 닫는다. 그래서 pending 인 flag 를 보고
-        "이미 예약됨"으로 재사용하지 않고 새 시각으로 밀어 **우리 write 이후에 시작하는 sync** 를
-        보장한다. 최악의 대가 = 멱등 폴러 1회 더 실행(read-only).
-
-    🔴 write 는 **단일 SQL 의 조건부 upsert**(`WHERE excluded.v > api_settings.v`)로 한다 — 읽고
-       계산한 뒤 무조건 덮으면, 두 호출이 겹쳤을 때 늦게 도착한 쪽이 **더 작은 값으로 후퇴**시켜
-       앞선 요청이 조용히 유실될 수 있다(올마이트 지적 수용). 반환값은 upsert 후 실제 저장값이다.
-    🔴 파싱 불가한 쓰레기값(수동 DB 편집 등)은 **비교 대상에서 지운다.** 남겨두면
-       ①`max()` 가 'zzz' 같은 lexical high 값을 floor 로 골라 `+1 second` 가 NULL → now 폴백 →
-         `flag > done` 보장이 깨지고, ②조건부 upsert 도 `'2026-…' > 'zzz'` 가 false 라 영구 잠긴다.
-       특히 `dock_sync_done` 이 쓰레기면 pending 판정(`done < flag`)이 영구 false 라 **버튼·자동
-       반영 둘 다 죽는다** — 그래서 경고 로그를 남기고 지운다(done 은 기계가 쓰는 북마크일 뿐,
-       watcher 는 자기 `.state/sync_last_flag` 로 중복을 막으므로 지워도 재실행 1회가 최대 대가).
-
-    ⚠️ 반영 지연 가능성은 남는다: 폴러가 읽는 `SP_GET_INQ_LIST` 가 write 직후 즉시 최신인지는
-       미실측이다(워커의 성공 판정 readback 은 `SP_GET_REP_INFO`/부품그리드로 **다른 프로시저**).
-       여기서 "미반영이면 다시 flag" 같은 재시도 루프는 **일부러 넣지 않았다** — 종료조건이
-       SVMS 응답에 달려 무한 재트리거가 될 수 있다. 늦으면 기존 1시간 폴러가 결국 채운다
-       (= 최악이 이 수정 전 상태와 동일, 회귀 없음).
-    """
-    _ensure_api_table()
-    now = query("SELECT datetime('now','localtime') t", one=True)['t']
-    vals = {}
-    for k in ('dock_sync_flag', 'dock_sync_done'):
-        r = query("SELECT v FROM api_settings WHERE k=?", (k,), one=True)
-        v = (r['v'] if r else None) or ''
-        if v:
-            ok = query("SELECT datetime(?) t", (v,), one=True)
-            if not (ok and ok['t']):                       # sqlite 가 시각으로 못 읽는 값 = 쓰레기
-                app.logger.warning('api_settings.%s 가 시각이 아님(%r) — 비교 대상에서 제거', k, v[:40])
-                execute("DELETE FROM api_settings WHERE k=?", (k,))
-                v = ''
-        vals[k] = v
-    # 같은 'YYYY-MM-DD HH:MM:SS' 포맷이라 문자열 비교 = 시각 비교(기존 pending 판정과 동일 방식)
-    floor = max(vals['dock_sync_flag'], vals['dock_sync_done'])
-    flag = now
-    if floor >= now:
-        nxt = query("SELECT datetime(?, '+1 second') t", (floor,), one=True)
-        flag = (nxt['t'] if nxt else None) or now
-    execute("INSERT INTO api_settings (k, v) VALUES ('dock_sync_flag', ?) "
-            "ON CONFLICT(k) DO UPDATE SET v=excluded.v WHERE excluded.v > api_settings.v", (flag,))
-    eff = query("SELECT v FROM api_settings WHERE k='dock_sync_flag'", one=True)
-    return ((eff['v'] if eff else None) or flag)          # 경합 시 더 큰 쪽이 이긴 실효 flag
 
 
 @app.route('/api/dock_procure/sync/trigger', methods=['POST'])
@@ -4889,10 +4645,6 @@ def _soa_review_upload_key(value):
     return v if _SOA_REVIEW_UPLOAD_KEY_RE.fullmatch(v) else None
 
 
-def _soa_review_attachment_path(stored_name):
-    if not stored_name:
-        return None
-    return os.path.join(SOA_REVIEW_PDF_DIR, os.path.basename(stored_name))
 
 
 def _soa_review_attachment_expired(row):
@@ -5170,15 +4922,6 @@ def _soa_review_case_payload(case_row, *, detail=False):
     return payload
 
 
-def _soa_review_case_unlock(run_id, *, result=None):
-    rows = query('SELECT id FROM soa_review_case WHERE queued_run_id=?', (run_id,))
-    for r in rows:
-        execute(
-            "UPDATE soa_review_case SET queued_action=NULL, queued_run_id=NULL, queued_at=NULL, "
-            "last_action_at=datetime('now','localtime'), last_action_result=?, updated_at=datetime('now','localtime') "
-            "WHERE id=? AND queued_run_id=?",
-            (result, r['id'], run_id),
-        )
 
 
 def _soa_review_ingest_snapshot(d):
@@ -5979,67 +5722,12 @@ AOR_REINGEST_NOOP_STATUSES = ('approved', 'submitting',
 #:      즉 최악이 "탭에 카드 한 장 헛게 뜸"이고, 반대편(영구 누락)보다 훨씬 싸다.
 AOR_REINGEST_TERMINAL_STATUSES = ()
 
-#: **행 단위** absorbing — 이 상태의 행은 status/aor_cd 를 바꿀 수 없다(DB trigger 로 강제).
-#: 러너 skip 근거는 아니지만(위 참조), "상신 이력을 사후 편집하지 않는다"는 불변식 자체는 유효해
-#: 그대로 유지한다. 새 SVMS 사이클은 이 행을 고치지 않고 **새 행을 INSERT** 해서 표현한다.
-#: ⚠️ 여기에 상태를 추가하려면 **그 상태에서 나가는 전이가 하나도 없음**을 먼저 증명할 것.
-#:    회귀 가드 = tests/test_aor_statuses.py 의 absorbing 전이 소스 스캔.
-AOR_ROW_ABSORBING_STATUSES = ('submitted',)
 
 
-def _aor_status_list_sql(statuses):
-    """상태 튜플 → `'a','b'` SQL 리터럴 목록. 상태값을 SQL 에 박는 유일한 경로."""
-    return ','.join("'%s'" % s.replace("'", "''") for s in statuses)
 
 
-def _aor_absorbing_trigger_sql():
-    """absorbing 상태에서 **나가는 UPDATE 자체를 DB 가 거부**하게 하는 trigger 문.
-
-    소스 정적 스캔만으로는 부족하다(올마이트 R17): f-string SQL·소문자·`OR` 섞인 WHERE·
-    다른 모듈·마이그레이션·수동 SQL 을 못 잡는다. 상신 완료 이력을 되살려 재상신하는 경로가
-    생기면 SVMS 이중상신 위험이므로, 경로가 몇 개든 **DB 층에서 한 번** 막는다.
-    ⚠️ `IF NOT EXISTS` 라 상수를 나중에 넓혀도 기존 trigger 는 안 바뀐다 — 그래서
-       `_aor_absorbing_trigger_install()` 이 매 부팅 DROP 후 재생성하고,
-       `_aor_absorbing_trigger_ok()` 가 런타임에 실물과 대조한다.
-    ⚠️ 기준 상수는 `AOR_ROW_ABSORBING_STATUSES`(행 단위 불변식)다 —
-       `AOR_REINGEST_TERMINAL_STATUSES`(러너 skip 계약)와 갈라졌다(2026-07-30).
-    """
-    lst = _aor_status_list_sql(AOR_ROW_ABSORBING_STATUSES)
-    # 🔴 불변식의 단위는 **행**이다(2026-07-30 올마이트 지적으로 교정). 예전엔 "같은 canonical
-    #    key 를 대표하는 다른 absorbing 행이 남아 있으면 허용"하는 `NOT EXISTS` 예외가 있었다.
-    #    그건 불변식의 단위가 key 였을 때(= 러너 skip 집합의 key 가 aor_cd 였을 때) 성립하던
-    #    타협이고, init_db 중복정리가 'submitted' loser 를 'duplicate' 로 강등할 수 있게 하려고
-    #    뚫어둔 구멍이었다. 지금은 둘 다 사라졌다:
-    #      · skip 최적화 철회(`AOR_REINGEST_TERMINAL_STATUSES = ()`) → key 단위로 볼 이유 없음
-    #      · 'submitted' 가 활성군에서 빠져 중복정리 UPDATE 가 애초에 그 행을 건드리지 않음
-    #    반면 같은 aor_cd 의 'submitted' 이력행이 2개 이상 쌓이는 건 이제 **정상**(SVMS 리젝→
-    #    재상신 사이클 2회)이라, 예외를 남겨두면 그 순간 두 행 다 자유롭게 변경 가능해져
-    #    불변식이 통째로 무력화된다. 그래서 예외를 제거했다.
-    # ⚠️ init_db 의 `SET aor_cd=upper(trim(aor_cd))` 정규화는 canonical key 를 바꾸지 않으므로
-    #    아래 WHEN 조건에 걸리지 않는다(= 부팅이 ABORT 되지 않는다). 비교를 raw 가 아니라
-    #    canonical 로 하는 이유가 그것.
-    # `aor_cd` 도 감시 대상이다(올마이트 R18 blocker): absorbing 행의 canonical key 를 바꿔
-    # 다른 문서번호의 이력으로 이식하는 것도 막는다.
-    # `IS NOT` 사용: `<>` 는 한쪽이 NULL 이면 NULL 로 평가돼 trigger 가 안 뜬다(status 는 NOT NULL
-    # 이라 어차피 거부되지만, 방어를 제약 하나에 의존시키지 않는다).
-    return ("CREATE TRIGGER IF NOT EXISTS trg_aor_draft_absorbing "
-            "BEFORE UPDATE OF status, aor_cd ON aor_draft FOR EACH ROW "
-            "WHEN OLD.status IN ({lst}) "
-            "AND (NEW.status IS NOT OLD.status "
-            "OR upper(trim(NEW.aor_cd)) IS NOT upper(trim(OLD.aor_cd))) "
-            "BEGIN SELECT RAISE(ABORT, 'aor_draft: absorbing status transition denied'); "
-            "END".format(lst=lst))
 
 
-def _aor_absorbing_trigger_install(conn):
-    """trigger 를 **항상 현재 상수와 일치하게** 심는다.
-
-    `CREATE TRIGGER IF NOT EXISTS` 만 쓰면 정의를 바꿔도 옛 trigger 가 그대로 남고,
-    `_aor_absorbing_trigger_ok()` 가 불일치로 판단해 skip 이 영구 비활성된다
-    (안전하지만 최적화가 조용히 죽는다 — 올마이트 R19). DROP 후 재생성해 그 표류를 없앤다.
-    """
-    conn.execute("DROP TRIGGER IF EXISTS trg_aor_draft_absorbing")
-    conn.execute(_aor_absorbing_trigger_sql())
 
 
 def _aor_absorbing_trigger_ok():
@@ -6056,64 +5744,10 @@ def _aor_absorbing_trigger_ok():
         app.logger.exception('aor-absorbing-trigger: 확인 실패 — skip 비활성')
         return False
 
-#: `uq_aor_draft_active_cd` predicate 와 같은 상태군(= 동시에 하나만 존재할 수 있는 "활성" 상태).
-#: = "아직 처리가 끝나지 않아 사람/러너의 다음 액션을 기다리는" 카드. 이 안에서만 aor_cd 유일.
-#: ⛔ 'submitted' 는 활성이 아니다(2026-07-30) — SVMS 로 상신을 끝낸 **이력행**이다. SVMS 는
-#:    리젝→수정→재상신으로 같은 aor_cd 를 다시 결재대기(STATUS='S')로 되돌리므로, 이력행이
-#:    활성으로 남아 있으면 새 사이클의 카드 적재를 영구히 막는다(실측 ATGRCA2607220002 —
-#:    사유·이중상신 방어 근거는 `AOR_REINGEST_TERMINAL_STATUSES` 주석 참조).
-#: ⛔ 'rejected'/'failed'/'reject_failed'/'duplicate' 도 같은 이유로 활성이 아니다(원래부터).
-_AOR_ACTIVE_STATUSES = ('pending', 'hold', 'approved', 'submitting',
-                        'rejecting', 'reject_submitting')
 
 
-def _aor_active_index_sql(name='uq_aor_draft_active_cd'):
-    """활성행 유일성 index 문 — key 는 **canonical(`upper(trim(aor_cd))`)**.
-
-    예전엔 raw 컬럼 `aor_draft(aor_cd)` 에 걸려 있었다. 실제로 중복이 안 생긴 건 모든 writer 가
-    미리 `strip().upper()` 를 하기 때문인데, 그건 **관례**라 정규화를 빠뜨린 writer 가 하나만
-    생겨도 `'ABC'` 와 `' abc '` 가 동시에 활성으로 앉는다. 그러면 러너 skip 의 key 인 canonical
-    aor_cd 당 활성행이 2개가 되어 skip 판정 근거가 무너진다(런타임 가드가 그걸 잡아 skip 을 통째로
-    끄므로 결과는 안전하지만 최적화가 죽는다). 표현식 index 로 바꾸면 그 가정을 DB 가 강제한다.
-    """
-    return ("CREATE UNIQUE INDEX IF NOT EXISTS %s ON aor_draft(upper(trim(aor_cd))) "
-            "WHERE status IN (%s)" % (name, _aor_status_list_sql(_AOR_ACTIVE_STATUSES)))
 
 
-def _aor_active_index_install(conn):
-    """index 를 **항상 현재 정의와 일치하게** 심는다(raw 컬럼 구버전 포함 교체).
-
-    `IF NOT EXISTS` 만으로는 기존 배포에 남은 옛 raw-컬럼 index 가 영영 안 바뀐다.
-    ⚠️ DROP 을 먼저 하면 CREATE 가 실패했을 때 **index 가 아예 없는 상태**로 남는다 — 그건
-       지금보다 나쁘다. 그래서 교체를 깨뜨릴 유일한 원인(canonical 중복 활성행)을 **먼저**
-       확인하고, 있으면 손대지 않고 예외로 올린다(호출부가 판단).
-    """
-    want = ' '.join(_aor_active_index_sql().replace('IF NOT EXISTS ', '').split())
-    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
-                       ('uq_aor_draft_active_cd',)).fetchone()
-    got = ' '.join((row[0] or '').split()) if row and row[0] else None
-    if got == want:
-        return False
-    # 중복 점검·DROP·CREATE는 하나의 savepoint로 묶는다. CREATE 실패/동시 writer가
-    # 있어도 ROLLBACK TO로 기존 index를 보존한다.
-    conn.execute('SAVEPOINT aor_active_index_upgrade')
-    try:
-        dup = conn.execute(
-            "SELECT upper(trim(aor_cd)) k, COUNT(*) n FROM aor_draft "
-            "WHERE status IN (%s) GROUP BY k HAVING n > 1 LIMIT 1"
-            % _aor_status_list_sql(_AOR_ACTIVE_STATUSES)).fetchone()
-        if dup:
-            raise RuntimeError(
-                'aor_draft: canonical key %r 활성행이 %d 개 — 중복 정리 전에는 '
-                'uq_aor_draft_active_cd 를 교체할 수 없음' % (dup[0], dup[1]))
-        conn.execute("DROP INDEX IF EXISTS uq_aor_draft_active_cd")
-        conn.execute(_aor_active_index_sql())
-    except Exception:
-        conn.execute('ROLLBACK TO aor_active_index_upgrade')
-        conn.execute('RELEASE aor_active_index_upgrade')
-        raise
-    conn.execute('RELEASE aor_active_index_upgrade')
-    return True
 
 
 #: 안전한 index 의 **정확한** 형태. 느슨하게 보면 안 된다(올마이트 R8):
@@ -6349,42 +5983,9 @@ def api_ext_aor_stats():
     return jsonify({'ok': True, 'crew_submitted': n})
 
 
-# ═════════════════════════════════════════════════════════════════
-#  자동화 모음 (SOA/전자결재 온디맨드 버튼 → 맥미니 launchd 폴링 실행)
-# ═════════════════════════════════════════════════════════════════
-# task = 실행단위. mode: 'verify'(읽기전용 DRY) | 'live'(자동 승인/상신).
-# 맥미니가 task+mode를 스크립트+env로 매핑(서버는 명령어를 모름 — 안전).
-# ===== 비용청구(Fund Request) 2단게이트 =====
-#   · review 엔진(맥)이 장금 Technical Submitted 검토결과를 POST /api/ext/fundreq/drafts (카드 적재, [검증] 버튼)
-#   · 사람이 /fundreq 탭서 카드마다 승인(approved) / 리젝(rejecting, 사유) 결정
-#   · [자동상신] 버튼 → 맥 fundreq_exec 가 approved=SP_SET_OPEX 상신(STATUS=U) / rejecting=STATUS=R+통보메일
-# ---- SVMS 첨부(인보이스·증빙) 미리보기 cache ----
-#   맥 fundreq_review 가 SP_GET_FILE 로 받은 첨부를 카드 적재 직후 idx 순서대로 업로드.
-#   idx = attach_files JSON 배열의 위치(=웹/앱 목록 순서)라 이름·순서가 항상 1:1 로 맞는다.
-#   읽기는 admin 세션(웹)·Bearer(앱) 전용. 파일명은 did/idx/확장자만으로 만들어 경로주입 불가.
-_FUNDREQ_ATT_MIME = {
-    'pdf':  'application/pdf',
-    'jpg':  'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif',
-    'heic': 'image/heic', 'heif': 'image/heif', 'webp': 'image/webp', 'bmp': 'image/bmp',
-    'tif':  'image/tiff', 'tiff': 'image/tiff',
-    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'xls':  'application/vnd.ms-excel',
-    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'doc':  'application/msword',
-    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'ppt':  'application/vnd.ms-powerpoint',
-}
-# 브라우저가 렌더할 수 있는 것만 inline. Office 는 어차피 못 그리니 다운로드로 넘긴다
-# (앱 QuickLook 은 Content-Disposition 과 무관하게 바이트만 받아 확장자로 판별).
-_FUNDREQ_ATT_INLINE = {'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}
-_FUNDREQ_ATT_MAX = _NON_STT_UPLOAD_MAX   # before_request 가 비-STT 업로드를 조이는 값과 일치(초과분은 거기서 413)
 _FUNDREQ_ATT_MAX_IDX = 49
 
 
-def _fundreq_att_ext(name):
-    """확장자 정규화 — 허용목록에 없으면 None(= 업로드/서빙 거부)."""
-    ext = str(name or '').rsplit('.', 1)[-1].strip().lower()
-    return ext if ext in _FUNDREQ_ATT_MIME else None
 
 
 def _fundreq_att_names(raw):
@@ -6400,29 +6001,6 @@ def _fundreq_att_names(raw):
     return [str(x) for x in raw if str(x or '').strip()][:_FUNDREQ_ATT_MAX_IDX + 1]
 
 
-def _fundreq_att_sniff_ok(ext, data):
-    """확장자와 실제 바이트가 같은 계열인지 확인 — 위장 업로드로 inline 서빙 되는 걸 막는다."""
-    if ext == 'pdf':
-        return data[:5] == b'%PDF-'
-    if ext in ('jpg', 'jpeg'):
-        return data[:3] == b'\xff\xd8\xff'
-    if ext == 'png':
-        return data[:8] == b'\x89PNG\r\n\x1a\n'
-    if ext == 'gif':
-        return data[:6] in (b'GIF87a', b'GIF89a')
-    if ext == 'bmp':
-        return data[:2] == b'BM'
-    if ext == 'webp':
-        return data[:4] == b'RIFF' and data[8:12] == b'WEBP'
-    if ext in ('heic', 'heif'):
-        return data[4:8] == b'ftyp'
-    if ext in ('tif', 'tiff'):
-        return data[:4] in (b'II*\x00', b'MM\x00*')
-    if ext in ('xlsx', 'docx', 'pptx'):
-        return data[:4] == b'PK\x03\x04'          # OOXML = zip
-    if ext in ('xls', 'doc', 'ppt'):
-        return data[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'   # 레거시 OLE
-    return False
 
 
 def _fundreq_att_path(did, idx, ext):
@@ -7417,12 +6995,6 @@ def _reqgen_cell(ws, coord):
     return v
 
 
-def _reqgen_vsl_prefix(vtype):
-    """선종 텍스트 → 선명 접두어. 컨테이너=M/V, 그 외(VLCC·탱커)=M/T(기본)."""
-    t = (vtype or '').upper()
-    if 'CONT' in t or 'BOX' in t:
-        return 'M/V'
-    return 'M/T'
 
 
 def _reqgen_index_vessel_type(wb):
@@ -7442,16 +7014,6 @@ def _reqgen_index_vessel_type(wb):
     return None
 
 
-def _reqgen_build_subj(vsl_cd, sheet, vnm, prefix, subject):
-    """SVMS 제목 = [DOCK][<VSL_CD> <sheet>]<M/T> <선명> - <제목>. 수리(R)와 동일 규칙.
-    선명에 이미 M/T·MT 등 접두어가 박혀있으면 제거 후 재부착(중복 방지)."""
-    import re as _re
-    nm = _re.sub(r'^(M/?[TV])\s+', '', vnm.strip(), flags=_re.I) if vnm else None
-    tag = f"[{vsl_cd} {sheet}]" if vsl_cd else f"[{sheet}]"
-    core = tag + (f"{prefix} {nm}" if nm else prefix)
-    if subject:
-        core += f" - {subject}"
-    return f"[DOCK]{core}"
 
 
 def _reqgen_parse_sheet(ws, vsl_cd, vsl_nm, vsl_prefix='M/T'):
@@ -7967,734 +7529,84 @@ def _reqgen_dock_autoload(did):
             'key_state': key_state}
 
 
-AUTOMATION_TASKS_BASE = {
-    'jeonja':   '전자결재 자동상신',
-    'fundreq':  '비용청구(Fund Request) 자동상신 — 장금·Technical·Submitted',
-    'invoice_confirm': '인보이스 자동컨펌 — PIC/SUP/Remit 교정 + SVMS 컨펌 (승인 건만 처리)',
-    'soa_resend': '리젝 통보메일 재발송 (실패분)',
-    'aor_prep':   'AOR(Technical) prep — Submitted AOR 카드화 (/aor 큐 적재)',
-    'aor_submit': 'AOR 상신 — 승인된 건 SVMS 제출 (approve 시 자동큐)',
-    'aor_reject': 'AOR 리젝 — STATUS=R + 관리사 통보메일 (reject 시 자동큐)',
-    'reqgen_save': '구매청구 DRAFT 저장 — 승인된 입거 requisition 시트 SVMS 저장 (approve 시 자동큐)',
-    'shipwiki_ingest': '선박 위키 신규수집 — 범주 메일 최근 7일 크롤·분류·적재 (외부 발송·승인 0)',
-    'soa_vessel': '선박별 SOA 검증 — 선박코드 입력 (검증단계까지만: 체크박스+리젝리마크, 승인·출금·제출·메일 안 함)',
-}
-# verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일 / remark_cleanup=컨펌된 라인 잔존 RJT_RMK 삭제(SVMS UI버그 보정)
-AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit', 'remark_cleanup')
-
-
-def soa_task_key(group_key):
-    """그룹키(G1/SKRT) → 자동화 task 키(soa_g1/soa_skrt). 러너도 같은 규칙으로 역변환."""
-    return 'soa_' + str(group_key).lower()
-
-
-def _soa_task_label(g, owner_map=None):
-    """허브 버튼에 뜰 문구. dynamic_owner 는 owner 스냅샷 기준 현재 편입 선박을 노출."""
-    if g['mode'] == 'dynamic_owner':
-        mem = _soa_group_members(g, owner_map)
-        body = ('·'.join(mem) + ' · 신규선 자동편입') if mem else '전체·신규선 자동편입(현재 편입 미확인)'
-    else:
-        body = '·'.join(g['vessels']) if g['vessels'] else '선박 미지정'
-    tail = ' +출금상신' if g['category'] == 'skrt' else ''
-    return f"{g['label']} ({body}){tail}"
-
-
-def automation_tasks():
-    """정적 task + DB soa_group 파생 task 병합(SOA 그룹이 앞). 화면·검증 공용 SSOT."""
-    out = {}
-    try:
-        owner_map = _soa_owner_map()
-        for g in _soa_groups_load(active_only=True):
-            out[soa_task_key(g['key'])] = _soa_task_label(g, owner_map)
-    except sqlite3.Error:
-        pass          # DB 미초기화 등 → 정적 task 만. 그룹 버튼은 안 뜨고, 실행도 거부(fail-closed)
-    out.update(AUTOMATION_TASKS_BASE)
-    return out
-
-
-def _automation_enabled():
-    row = query("SELECT v FROM api_settings WHERE k='automation_enabled'", one=True)
-    return (row['v'] if row else '1') != '0'
-
-
-def _soa_vessel_codes_from_params(p):
-    raw = p.get('vsl_cds')
-    if raw is None:
-        raw = p.get('vsl_cd')
-    if isinstance(raw, str):
-        candidates = re.split(r'[\s,;/]+', raw.strip().upper())
-    elif isinstance(raw, list):
-        candidates = [str(x or '').strip().upper() for x in raw]
-    else:
-        candidates = []
-    out = []
-    seen = set()
-    for code in candidates:
-        if not code:
-            continue
-        if not re.match(r'^[A-Z]{4}$', code):
-            raise ValueError('선박코드(VSL_CD 4자 영문)를 정확히 입력하세요.')
-        if code not in seen:
-            out.append(code)
-            seen.add(code)
-    if not out:
-        raise ValueError('선박코드(VSL_CD 4자 영문)를 정확히 입력하세요.')
-    if len(out) > 5:
-        raise ValueError('선박별 SOA 검증은 한 번에 최대 5척까지 실행합니다.')
-    return out
-
-
-def _soa_vessel_params(p, vsl):
-    fm, to, sl = (str(p.get(k) or '').strip() for k in ('fm_dm', 'to_dm', 'sl_tp'))
-    def _ym(v): return bool(re.match(r'^[0-9]{6}$', v)) and '01' <= v[4:] <= '12'
-    if (fm and not _ym(fm)) or (to and not _ym(to)) or (fm and to and fm > to):
-        raise ValueError('기간(YYYYMM, 시작<=끝)을 확인하세요.')
-    if sl and sl not in ('04', '05'):
-        raise ValueError('부서는 05(Technical)/04(Crew)만.')
-    review_model = str(p.get('review_model') or 'auto').strip()
-    if review_model not in ('auto', 'claude-haiku-4-5', 'openai/gpt-5.4-mini'):
-        raise ValueError('검증모델 선택값이 올바르지 않습니다.')
-    pp = {'vsl_cd': vsl}
-    if fm: pp['fm_dm'] = fm
-    if to: pp['to_dm'] = to
-    if sl: pp['sl_tp'] = sl
-    pp['review_model'] = review_model
-    return pp
-
-
-# ===================== Dock Procurement (입거 발주현황 트래커) =====================
-_DOCKPROC_CAT_NM = {'R': 'SHORE REPAIR', 'S': 'SPARE', 'ST': 'STORE',
-                    'P': 'PAINT', 'SY': 'SHIPYARD'}
-
-
-def _dockproc_cat_code(req_no):
-    import re as _re
-    m = _re.match(r'^(SY|ST|R|S|P)\d+$', (req_no or '').strip().upper())
-    return m.group(1) if m else None
-
-
-def _dockproc_source(code, prepared_by):
-    """견적출처 결정: 페인트P·조선소SY=MAIL(메일견적) / MANAGER=AOR / OWNER(R·S·ST)=SVMS."""
-    if code in ('P', 'SY'):
-        return 'MAIL'
-    if (prepared_by or '').strip().upper() == 'MANAGER':
-        return 'AOR'
-    return 'SVMS'
-
-
-# Phase 2 역동기화: SVMS Status → 진행단계 rank(누적). HQ Canceled=무시(맵 없음→0).
-_DOCKPROC_STATUS_RANK = {
-    # 1=견적작성 / 2=벤더제출 / 3=벤더컨펌·결재상신 / 4=발주완료 (누적).
-    # HQ Canceled·미등재=무시(rank0).
-    'HQ CONFIRMED': 1,          # 견적작성 (수리·구매 공통)
-    'QUOTATION INQUIRY': 2,     # 벤더제출(견적의뢰)
-    # 구매 결재 반려는 견적/업체선택 데이터가 살아 있는 재상신 가능 단계다.
-    # 2026-08-03 BGBB S10 실측: 상세 STATUS=X, STATUS_NM='HQ Rejected'.
-    'HQ REJECTED': 2,           # 벤더제출로 복귀(수정 후 다시 업체선택·상신 가능)
-    # 'Submit'은 발주가 아니라 **업체 선택 후 결재 상신** 단계. 벤더 견적제출(VNDR_STATS='Submitted')과
-    # 구분되지만 발주서 미발행(ODR_YN='N')이라 발주완료로 올리면 안 된다.
-    # 반면 실발주건(SAPS)은 헤더 'HQ Ordered' + 벤더 'Ordered' + ODR_YN='Y'.
-    # 4로 두면 "발주완료인데 금액 —" 이 구조적으로 발생함(dock_sync._repair_order 는 'Ordered'만 읽음).
-    'SUBMIT': 3,                # 벤더컨펌 (수리 — 업체 선택 후 결재 상신)
-    'HQ ORDERED': 4,            # 발주완료 (수리 — 실발주)
-    'ORDERED': 4,               # 발주완료 (구매 발주)
-    'VENDOR CONFIRMED': 4,      # 발주완료 (구매 — 업체확정 완료)
-    # 'Approval(Procssing)' 도 발주완료가 아니다 — 업체 선택 후 결재 진행 중인 rank3.
-    # 근거: BELGIUM B S10(BGBBES2607B11) PC_PRO 행이 스스로 밝힘 —
-    #   ODR_STEP = "[Order] Order is Progressing (Not Approved)" · ODR_STATUS_CD='A'
-    #   ODR_NO 는 이미 발급('BGBBES2607B11A')인데 SP_GET_ODR_LIST(BGBB)=0행 → 금액 소스에 아직 없음.
-    # 4로 두면 "발주완료인데 금액 —"이 또 구조적으로 발생함(실제로 이 행 1건이 그렇게 떴다).
-    # ⚠️ODR_NO 존재만으로는 구매 발주근거가 약하다는 반례이기도 함(승인 전에도 번호가 붙음).
-    'APPROVAL(PROCSSING)': 3,   # 벤더컨펌 (구매 — 업체 선택 후 발주 승인 진행 중)
-    # 같은 BGBB S10을 HQ Rejected에서 재상신한 직후 라이브 상태.
-    'HQ PROGRESSING': 3,        # 벤더컨펌 (구매 — HQ 결재 진행 중)
-}
-
-
-def _dockproc_status_rank(status):
-    return _DOCKPROC_STATUS_RANK.get((status or '').strip().upper(), 0)
-
-
-# 🔴 rank 0 중에서도 **되돌림을 허용하는 '견적의뢰 이전' 라벨 allowlist**(2026-08-03 실사고로 신설).
-#   rank 0 은 원래 통째로 `link_only`(단계 미변경)라, 상신/견적요청이 나간 건이 SVMS 에서 **회수**돼
-#   헤더가 rank 0 라벨로 되돌아오면 `stg_*` 가 영구히 켜진 채 남아 재요청 게이트가 영구 잠겼다.
-#   실사고: BGBBME26073116([BGBB R22]) 견적요청 LIVE 성공(18:05) → 형이 SVMS 에서 회수 →
-#     SVMS 는 목록·상세 모두 STATUS='AP'(HQ Received)·벤더그리드 0행인데 DB 는 `stg_vendor=1` +
-#     `svms_status='Quotation Inquiry'`(`api_ext_dock_inquiry_result` 의 낙관적 표시)로 고착 →
-#     `_dock_inq_blocked` 가 '이미 벤더제출 이후 단계'로 409 → 큐 재적재 불가.
-#   ⚠️기존 주석은 "반려는 헤더가 'RE'(rank 2)로 돌아오니 갱신 경로에 걸린다"고 전제했는데 **틀렸다** —
-#     회수는 'AP'(HQ Received, rank 0)로 돌아온다. 그래서 그 안전장치가 발동하지 않았다.
-#   allowlist 로 좁히는 이유: 미지의 rank 0 라벨까지 되돌리면 처음 보는 상태 하나로 단계가 조용히
-#     꺼진다. 여기 등재된 **확인된 pre-inquiry 라벨만** 되돌리고 나머지는 종전대로 link_only 다.
-#   ⚠️빈 라벨('')은 절대 넣지 않는다 — SVMS 미연결 수동관리 행이고(2026-08-03 라이브 73행 중 50행이
-#     사람이 켠 단계 보유) 넣으면 그 수동 체크를 sync 가 지운다.
-#   🔴 **실측된 라벨만** 넣는다(올마이트 지적 수용). 'Approved'(라이브 1행, 단계 0)는 구매/수리 의미
-#     충돌이 확인 안 돼 여전히 넣지 않는다 — 효과 0 · 위험 잠재.
-#   🔴 2026-08-04 추가: **'VSL Approved' 도 회수 경로로 실측됐다.** 구매 INQ `BGBBES2607B41` 을
-#     `PKG_PC_INQ.SP_SET_INQ_RTN` 으로 회수한 직후 REQ `BGBBES2607B4` 헤더가 `STATUS='C'(HQ Confirmed)`
-#     → **`STATUS='N'(VSL Approved)`·CFM_DT=null** 로 돌아갔다(화면 회수 안내문 "청구서 컨펌이전
-#     상태로 됩니다" 그대로). 즉 구매 회수의 도착지는 상황에 따라 'HQ Confirmed'(2026-08-03 실측)
-#     **또는 'VSL Approved'** 다. 넣지 않으면 그 회수건이 `link_only` 로 빠져 위 BGBBME26073116 과
-#     **똑같이 영구 잠긴다**. 라이브 영향은 0 — 이 라벨 10행 전원 `stg_*` 0 이라 no-op 이고,
-#     되돌림 대상은 방금 회수된 행뿐이다. (구 주석의 "회수 경로로 실측된 라벨은 'HQ Received' 하나"는
-#     이 실측으로 폐기.)
-#   ⚠️ stale·순서역전 sync 가 이 라벨을 실어와 진행 중 행을 되돌릴 위험은 **'HQ RECEIVED' 와 동일한
-#     기존 위험**이고 새로 생긴 게 아니다(올마이트 지적). freshness 로 걸러내고 싶어도 dock_procure
-#     sync payload 에는 시각·리비전 필드가 아예 없다(실측: `status`/`inq_no`/`amt`/`quotes`/`files`/
-#     `ordered_evidence` 뿐) ⇒ 방어선은 아래 fail-closed 가드(발주완료·발주금액·제출수>0)와 워커
-#     pre-read 게이트 두 겹뿐이다. 라벨을 하나 늘릴 때마다 이 가드가 유일한 안전선임을 기억할 것.
-_DOCKPROC_PRE_INQUIRY = {
-    'HQ RECEIVED',              # 본선 요청이 HQ 에 접수된 상태 = 견적의뢰 전. 회수 시 여기로 돌아온다.
-    'VSL APPROVED',             # 본선 승인·본사확인 전. 구매 회수가 컨펌을 풀면 여기로 돌아온다(실측).
-}
-
-
-def _dockproc_submit_has_quotes(raw):
-    """`svms_submit`(SVMS `SUBMIT` = "제출수/요청수") 가 **실제 견적 제출 흔적**인가 — 순수함수.
-
-    🔴 왜 필요한가(2026-08-04 실측): 되돌림 fail-closed 가드가 `svms_submit` 을 **존재하기만 하면**
-       발주흔적으로 봤다. 그런데 견적요청이 나가면 이 칸은 곧바로 `"0/0"`·`"0/1"` 처럼 **제출 0** 값으로
-       채워진다 ⇒ 회수된 행은 언제나 이 가드에 걸려 `link_only` 로 빠지고, allowlist 를 고쳐도 단계가
-       영구히 켜진 채 남는다(S14 `BGBBES2607B4`=`"0/0"`, 정상 회수건도 `"0/1"` 이라 같은 결과).
-    ⇒ 판정을 **분자(제출수) > 0** 으로 좁힌다. 제출된 견적이 있으면 하류 데이터(금액·첨부)가 존재할 수
-       있으니 종전대로 보호하고, 제출 0 이면 지울 이력이 없으므로 회수 되돌림을 허용한다.
-    ⚠️**파싱 실패는 흔적 있음(True)** — 처음 보는 형식 하나로 이력을 조용히 지우지 않는다(닫힘 쪽 실패).
-       괄호도 **쌍으로만** 인정한다(`"(0/1"` 같은 반쪽은 미지 형식 → True). 올마이트 지적 수용.
-    🔴 `sub_quotes`/`att_files` 는 **여기서 보지 않는다**(올마이트 대안 반대 — 근거 실측):
-       그 두 칸은 폴러 payload 의 3상태 계약이 정본이라 **키 없음=기존 유지 / `[]`=0건 확정 → clear** 로
-       이미 보호된다. 즉 저장된 값은 "지금 SVMS 에 견적이 있다"는 증거가 아니라 지난 sync 의 스냅샷이다.
-       이걸 되돌림 가드에 넣으면 회수건이 옛 스냅샷 때문에 다시 영구 잠기는 **똑같은 부류의 버그**가
-       다른 칸에서 재발한다(#12 R39 = `quotes:[]` 로 회수와 정합하게 clear 되는 경로가 그 반례).
-       라이브 실측(2026-08-04, 161행): 제출0/NULL + 하류데이터 보유 + 발주흔적 없음 조합 = **0행**.
-    """
-    s = (raw or '').strip()
-    if not s:
-        return False                                   # 값 없음 = 흔적 없음
-    if len(s) >= 2 and s[0] == '(' and s[-1] == ')':   # SVMS 목록 `SUBMIT` 은 "(0/4)" 꼴, DB 는 "0/4" 꼴
-        s = s[1:-1].strip()
-    m = re.fullmatch(r'(\d+)\s*/\s*\d+', s)
-    if not m:
-        return True                                    # 미지 형식 = fail-closed
-    return int(m.group(1)) > 0
-
-
-def _dockproc_submit_pair(raw):
-    """`svms_submit`("3/5"·"(3/5)") → (제출수, 요청수). 미지 형식은 None.
-
-    ⚠️`_dockproc_submit_has_quotes` 와 **판정 목적이 다르다** — 저건 되돌림 가드용이라 미지 형식을
-      True(흔적 있음)로 fail-closed 하지만, 여기는 푸시 트리거라 미지 형식이면 **아무 것도 안 한다**
-      (모르는 값으로 알림을 만들면 형에게 틀린 숫자가 간다).
-    """
-    s = (raw or '').strip()
-    if len(s) >= 2 and s[0] == '(' and s[-1] == ')':
-        s = s[1:-1].strip()
-    m = re.fullmatch(r'(\d+)\s*/\s*(\d+)', s)
-    return (int(m.group(1)), int(m.group(2))) if m else None
-
-
-# 결재반려 라벨 — 웹 `SBM_REJ_LABELS`·iOS `rejectedLabels` 와 1:1. 부분일치 금지(정확일치).
-_DOCKPROC_REJ_LABELS = {'HQ REJECTED'}
-
-
-def _dockproc_push_events(row, status, ordered, submit, vendor, amt, cur):
-    """Dock 단계전이 → 푸시 이벤트 목록. **판정만 하고 발송은 안 한다**(테스트 가능하게 분리).
-
-    🔴 `event_key` 설계 = "중복 1건 < 미탐 1건"(BV 감시 교훈)이되 폭주는 막는다.
-       키에 **직전 `updated_at`(전이 직전 행 상태의 지문)** 을 넣는다 — SVMS 에는 회차 번호가 없고,
-       상태값만으로 키를 만들면 **되풀이되는 전이가 첫 번째 것과 충돌해 두 번째부터 영구히 묻힌다**
-       (올마이트 지적: 제출수 3→2→3 재증가, 같은 날 2차 반려). `updated_at` 은 전이가 일어날 때마다
-       sync 가 새로 찍으므로 회차 대용으로 쓸 수 있고, **시계가 아니라 데이터에서 나오므로**
-       fast/full 이 같은 변화를 동시에 봐도 두 프로세스가 같은 키를 만든다(= 중복발송 안 남).
-       · `dock_quote`  : 제출수까지 넣어 제출이 늘 때마다 1번.
-       · `dock_ordered`: 발주완료 1번(되돌렸다 다시 완료되면 그건 새 전이라 다시 1번).
-       · `dock_reject` : 반려 1번. 재상신→재반려는 그 사이에 `updated_at` 이 바뀌므로 또 온다.
-    🔴 제출수 증가는 **목록 라벨이 그대로여도 일어난다**('Quotation Inquiry' 유지). 그래서 라벨 전이로는
-       절대 못 잡고, 이 판정에는 상세조회로 채운 `submit` 이 반드시 있어야 한다(fast 폴러가 견적진행
-       중인 행을 항상 상세조회하는 이유).
-    """
-    ev = []
-    _g = (lambda k: (row[k] if k in row.keys() else None))
-    rid = _g('id')
-    seq = (_g('updated_at') or '').strip() or '0'     # 전이 회차 대용(위 docstring)
-    head = ('[%s] %s' % ((_g('vsl_nm') or '').strip(), (_g('req_no') or '').strip())).strip()
-    subj = (_g('subject') or '').strip()
-    tail = (' · ' + subj[:60]) if subj else ''
-    # ① 벤더 견적제출 = 분자 증가.
-    was = _dockproc_submit_pair(_g('svms_submit'))
-    now = _dockproc_submit_pair(submit)
-    if now and now[0] > (was[0] if was else 0):
-        ev.append({'kind': 'dock_quote', 'collapse': 'dq%s' % rid,
-                   'event_key': 'dock_quote:%s:%s:%s/%s' % (rid, seq, now[0], now[1]),
-                   'title': '%s 견적 제출' % head,
-                   'body': '%s/%s개 업체 제출%s' % (now[0], now[1], tail)})
-    # ② 발주완료. 분할발주는 **전 업체 승인**돼야 여기 온다(상류 부분완료 게이트가 이미 rank 를 내림).
-    #   ⚠️`not stg_order` 때문에 **사람이 먼저 발주완료를 켜둔 행은 SVMS 추인 때 푸시가 안 간다**
-    #     (올마이트 2026-08-07 지적 → 실측 판정: 의도된 억제, `stg_manual` floor 도입 전과 동일 동작).
-    #     사람이 직접 켠 상태를 SVMS 가 뒤늦게 따라오는 건 형에게 새 정보가 아니다.
-    if ordered and not _g('stg_order'):
-        money = ''
-        if isinstance(amt, (int, float)):
-            money = ' · %s %s' % ((cur or '').strip(), format(amt, ',.0f'))
-        ev.append({'kind': 'dock_ordered', 'collapse': 'do%s' % rid,
-                   'event_key': 'dock_ordered:%s:%s' % (rid, seq),
-                   'title': '%s 발주완료' % head,
-                   'body': '%s%s%s' % ((vendor or '업체 미상'), money, tail)})
-    # ③ 결재 반려 — 라벨 정확일치. 이미 반려 상태였으면 재발송 안 함.
-    cu = (status or '').strip().upper()
-    pv = (_g('svms_status') or '').strip().upper()
-    if cu in _DOCKPROC_REJ_LABELS and pv not in _DOCKPROC_REJ_LABELS:
-        ev.append({'kind': 'dock_reject', 'collapse': 'dr%s' % rid,
-                   'event_key': 'dock_reject:%s:%s' % (rid, seq),
-                   'title': '%s 결재 반려' % head,
-                   'body': '%s%s' % ((status or '').strip(), tail)})
-    return ev
-
-
-# 견적요청(벤더 Submit)이 쓰는 SVMS 문서종류 — cat_code 기준. 페인트(P)/기타(SY)는 봉투 자체가 없다.
-_DOCK_INQ_DOC = {'R': 'MARP', 'S': 'PCRQ', 'ST': 'PCRQ'}
-
-
-def _dockproc_inq_target(row):
-    """그 행의 견적요청 대상 = (문서종류, SVMS 키). 키가 빈 문자열이면 '연결 안 됨'.
-
-    🔴 키가 컬럼마다 다르다 — 수리는 `svms_req_no`(=REP_CD)지만 **구매는 `svms_pc_req_no`(=REQ_NO)** 다.
-       구매의 `svms_req_no` 는 견적요청이 나간 **뒤에** 발급되는 INQ_NO 라서 요청 전에는 항상 NULL 이고
-       (실측 2026-08-03 라이브 87행), 그 칸을 REQ_NO 로 덮으면 Phase ③ 상신이 INQ_NO 를 잃는다.
-    """
-    g = (row.get if isinstance(row, dict)
-         else (lambda k, d=None: (row[k] if k in row.keys() else d)))
-    doc = _DOCK_INQ_DOC.get((g('cat_code') or '').strip().upper())
-    if not doc:
-        return '', ''
-    return doc, ((g('svms_req_no') if doc == 'MARP' else g('svms_pc_req_no')) or '').strip()
-
-
-# 견적요청이 열리는 SVMS 헤더 라벨 — 워커 pre-read(`inquiry_watch.py`)의 코드 게이트와 1:1 대응이다.
-#   수리 `OPEN_STATUS=('AP','RC')`                    = 'HQ Received' / 'HQ Confirmed'
-#   구매 `PC_OPEN_STATUS=('C',)` + `PC_CONFIRM_STATUS=('N',)` = 'HQ Confirmed' / 'VSL Approved'
-# 🔴 'VSL APPROVED'(=구매 `STATUS='N'`) 추가 근거(2026-08-03 형 요청 "컨펌 버튼 누르는 기능까지 포함"):
-#    워커가 견적요청 **직전에** SVMS Confirm(`SP_SET_REQ_INFO`+STATUS='C')을 대신 눌러 'C' 로 올린 뒤
-#    요청한다. 그래서 이 라벨은 더 이상 '헛클릭'이 아니다. 수리(MARP)에는 추가하지 않는다 —
-#    수리 쪽 대응 코드가 미실측이고, 워커도 수리 Confirm 은 `AP`/`RC` 에서만 한다.
-_DOCK_INQ_STAGE_OK = {'MARP': ('HQ RECEIVED', 'HQ CONFIRMED'),
-                      'PCRQ': ('HQ CONFIRMED', 'VSL APPROVED')}
-# 그 단계가 **아님이 실측된** 라벨만 미리 회색처리한다(2026-08-03 라이브 전수 + 폴러 관측값).
-# 🔴 allowlist 반전(=OK 아니면 전부 차단)을 쓰지 않는 이유: 아직 못 본 라벨과 폴러가 못 채운 빈
-#    라벨까지 닫혀 **실제로 가능한 건이 영구히 막힌다**. 최종 안전선은 워커 pre-read 이고(SVMS
-#    실시간 재조회 · 불일치면 write 0 으로 거부), 이 게이트는 헛클릭을 줄이는 표시층이다.
-_DOCK_INQ_STAGE_BLOCK = {
-    # 🔴 구매(PCRQ)는 이 라벨을 **더 이상 차단하지 않는다** — `_DOCK_INQ_STAGE_OK['PCRQ']` 가 먼저
-    #    통과시키고, 워커가 견적요청 직전에 SVMS Confirm 을 대신 누른다(2026-08-03).
-    #    여기 남겨두는 건 **수리(MARP) 등 다른 문서종류**에서 같은 라벨이 나올 때를 위한 사유다.
-    'VSL APPROVED':      '본선 승인 단계 — 이 문서종류는 HQ 확인 후에만 견적요청 가능',
-    'HQ REJECTED':       'HQ 반려됨',
-    'QUOTATION INQUIRY': '이미 견적요청된 건',
-    'VENDOR CONFIRMED':  '이미 벤더 확정 이후 단계',
-    'ORDERED':           '이미 발주 이후 단계',
-    'HQ ORDERED':        '이미 발주 이후 단계',
-}
-
-
-def _dockproc_inq_stage_block(doc, svms_status):
-    """SVMS 단계 라벨만 보는 견적요청 게이트 — 사유(문자열) 또는 None(=열어둠).
-
-    쿼리 0 인 순수 함수라 목록 API 가 행마다 불러도 비용이 없다. 웹·iOS 가 이 결과(`inq_block`)만
-    보고 버튼을 회색처리하므로 두 클라이언트가 각자 라벨을 해석하다 어긋나는 일이 없다."""
-    lbl = str(svms_status or '').strip()
-    if not lbl or not doc:
-        return None                      # 라벨 미관측 = 판단 보류(워커 pre-read 가 최종 판정)
-    if lbl.upper() in _DOCK_INQ_STAGE_OK.get(doc, ()):
-        return None
-    why = _DOCK_INQ_STAGE_BLOCK.get(lbl.upper())
-    if not why:
-        return None                      # 처음 보는 라벨 — 추측으로 닫지 않는다
-    # 라벨은 폴러가 채운 스냅샷이라 SVMS 가 방금 움직였으면 낡을 수 있다 — 영구 차단으로 오해하지
-    # 않도록 해소 경로를 사유에 같이 적는다(`_dock_inq_prior` 의 '동기화 후 다시 열림'과 같은 규약).
-    return 'SVMS 단계가 %s — %s (동기화 후 단계가 바뀌면 다시 열림)' % (lbl, why)
-
-
-_DOCKPROC_QUOTE_MAX = 20            # 한 건에 붙는 벤더 수 상한(표시전용 스냅샷이라 넉넉하되 무한 아님)
-_DOCKPROC_GAP_MAX = 5               # 업체당 보여줄 결함 품목 줄 수 상한(전체 건수는 gap_n 이 따로 말한다)
-
-
-def _dockproc_hard_n(q, gap_n=None):
-    """업체 견적 스냅샷 한 건의 **상신을 막는 결함 수**. 읽기 규칙을 여기 한 곳만 둔다.
-
-    정규화(적재)와 상신 preview(조회)가 각자 계산하면 같은 행을 놓고 화면이 서로 다른 말을 한다.
-    🔴 `hard_n` 도 `gaps[].hard` 도 없는 스냅샷(hard/soft 분리 이전 폴러가 적재한 행)은 차단 여부를
-       **모른다**. 그때는 0 이 아니라 `gap_n` 으로 본다 — 모르는 걸 "상신 가능" 이라고 말하면 형이
-       버튼을 누른 뒤 실패하고, 반대 방향은 한 번 더 확인하는 것뿐이다. 다음 sync 에서 새 폴러
-       값이 들어오면 자동 해소된다(올마이트 2026-08-04 지적 반영).
-    """
-    def _c(v):
-        try:
-            return int(v or 0)
-        except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError
-            return 0
-    gaps = [g for g in (q.get('gaps') if isinstance(q.get('gaps'), list) else []) if isinstance(g, dict)]
-    n = _c(q.get('gap_n')) if gap_n is None else gap_n
-    n = max(0, min(999, n), len(gaps))
-    if q.get('hard_n') is None and not any('hard' in g for g in gaps):
-        return n
-    return min(n, max(0, _c(q.get('hard_n')), sum(1 for g in gaps if g.get('hard') is True)))
-
-
-def _dockproc_norm_quotes(raw):
-    """폴러가 보낸 **벤더 제출견적** 목록 → canonical JSON 문자열(쓸 값이 없으면 None).
-    발주금액(quote_amt)과 다른 값이다 — 제출견적은 아직 발주가 아니므로 절대 섞지 않는다.
-    `cd`(SVMS VNDR_CD)는 Phase ③ 상신에서 `SELETED_VDR` 로 쓰는 업체코드다. 표시용 `nm` 과 달리
-      **정본 식별자**이므로 형식검증(대문자·숫자 1~20)을 통과하지 못하면 None 으로 떨군다.
-    표시전용이라 값 신뢰보다 형태 방어가 우선: 개수 캡·타입 강제·통화 3글자 검증.
-
-    canonical 두 겹(멱등 목적):
-      · 원소 키 정렬(sort_keys) + 고정 separators — dict 순서·공백 흔들림 흡수
-      · **리스트 자체를 정렬** — 벤더 배열 순서는 의미가 없는데 SVMS 가 순서를 바꿔 주면 같은 견적
-        집합이 '변경'으로 잡혀 매 폴링마다 UPDATE 가 돈다(올마이트 지적).
-
-    '최저' 판정도 여기서 한다(`best:1` 플래그). 프런트에서 하면 JS 테스트 target 이 없어 검증 공백이
-    생기고 통화 혼재 비교 버그가 조용히 살아난다 — 그래서 테스트되는 층으로 끌어내렸다.
-    비교 규칙: 금액 있는 견적 **전원이 usd 를 가질 때만** usd 로 비교. 하나라도 없으면 통화가 전부
-      같을 때만 원표시금액으로 비교하고, 통화가 섞였으면 비교를 포기한다(best 없음 → 화면에 '최저' 안 씀).
-      부분집합만 비교하면 usd 없는 견적이 조용히 후보에서 빠져 오답이 된다."""
-    if not isinstance(raw, list):
-        return None
-    out = []
-    def _num(v):
-        try:
-            n = None if v in (None, '') else float(str(v).replace(',', ''))
-        except (TypeError, ValueError):
-            return None
-        return n if (n is None or math.isfinite(n)) else None   # inf/nan 은 JSON 직렬화도 못 함
-
-    for q in raw[:_DOCKPROC_QUOTE_MAX]:
-        if not isinstance(q, dict):
-            continue
-        try:
-            att = int(q.get('att') or 0)
-        except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError (올마이트 지적)
-            att = 0
-        cur = str(q.get('cur') or '').strip().upper()
-        cd = str(q.get('cd') or '').strip().upper()[:20]
-        # 품목 견적 결함(견적 미제출 · 단가 0 …). 🔴 판정은 맥 워커가 **상신 게이트와 같은 함수**
-        #   (`dock_items.item_gaps`)로 이미 했다 — 여기서는 형태만 방어한다(개수·길이 캡). 서버가
-        #   다시 판정하면 두 판정이 갈려서 "화면은 조용한데 상신만 실패" 가 재발한다.
-        #   구버전 폴러는 이 키를 안 보내 gap_n=0 이 되고, 화면은 경고를 안 띄운다(하위호환).
-        #   ⚠️ 키가 항상 있으므로 배포 후 첫 sync 에서 기존 S/ST 행은 canonical 문자열이 달라져
-        #      한 번 UPDATE 된다(값 변화 없음, 멱등은 그 다음 sync 부터 복귀).
-        #   `hard_n` = 그 중 상신을 실제로 막는 건수. 단가 0 은 hard 가 아니다(형 지시 = 인폼만).
-        def _cnt(v):
-            try:
-                return int(v or 0)
-            except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError
-                return 0
-        gap_n = _cnt(q.get('gap_n'))
-        gaps = []
-        for g in (q.get('gaps') if isinstance(q.get('gaps'), list) else [])[:_DOCKPROC_GAP_MAX]:
-            if not isinstance(g, dict):
-                continue
-            gaps.append({'seq': str(g.get('seq') or '').strip()[:20],
-                         'why': str(g.get('why') or '').strip()[:20],
-                         'hard': g.get('hard') is True,
-                         'label': str(g.get('label') or '').strip()[:200]})
-        # 라벨이 건수보다 많으면(캡·이상값) 건수를 라벨 수로 올린다 — "외 −1건" 같은 표시 방지.
-        gap_n = max(0, min(999, gap_n), len(gaps))
-        # hard 는 전체를 넘을 수 없다. 폴러가 hard_n 을 안 보내도(구버전) 라벨의 hard 플래그로 복원하고,
-        # 그것마저 없으면 gap_n 으로 본다 — 규칙 정본은 `_dockproc_hard_n` 한 곳(조회 경로와 공유).
-        hard_n = _dockproc_hard_n(q, gap_n)
-        out.append({'nm': str(q.get('nm') or '').strip()[:120],
-                    'gap_n': gap_n,
-                    'hard_n': hard_n if gap_n else 0,
-                    'gaps': gaps if gap_n else [],
-                    # cd = SVMS VNDR_CD. Phase ③ 상신 봉투의 SELETED_VDR 가 이 값이다.
-                    # 구버전 폴러는 안 보내므로 None 가능 — 그 경우 상신 대상에서 제외(fail-closed).
-                    'cd': cd if re.fullmatch(r'[A-Z0-9]{1,20}', cd) else None,
-                    'amt': _num(q.get('amt')),
-                    'usd': _num(q.get('usd')),           # 달러환산액 — 통화 혼재 시 '최저' 비교는 이걸로만
-                    # 구매(S/ST) 표시용: amt/gross=P_RS_VNDR.TAMT(승인 스냅샷 정본),
-                    # dc_rate=P_RS_VNDR.DIS_RATE, final=P_RS_ODR.TAMT/USD_TAMT.
-                    # 수리(R)·구버전 폴러는 이 키가 없어 모두 None 이며 기존 UI/승인 계약 유지.
-                    'gross_amt': _num(q.get('gross_amt')),
-                    'dc_rate': _num(q.get('dc_rate')),
-                    'final_amt': _num(q.get('final_amt')),
-                    'final_usd': _num(q.get('final_usd')),
-                    'cur': cur if re.fullmatch(r'[A-Z]{3}', cur) else None,
-                    'att': max(0, min(99, att)),
-                    'st': str(q.get('st') or '').strip()[:20]})
-    if not out:
-        return None
-    out.sort(key=lambda q: (q['nm'], q['cd'] or '', q['cur'] or '',
-                            q['amt'] is None, q['amt'] or 0.0, q['st']))
-    priced = [q for q in out if q['amt'] is not None]
-    best = None
-    if priced:
-        if all(q['usd'] is not None for q in priced):
-            best = min(priced, key=lambda q: q['usd'])
-        elif len({q['cur'] for q in priced}) == 1:
-            best = min(priced, key=lambda q: q['amt'])
-    if best is not None:
-        best['best'] = 1
-    return json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-
-
-_DOCKPROC_ATT_MAX = 20              # 한 건에 붙는 견적서 파일 수 상한(실측 BGBB 최대 2 — 넉넉하되 무한 아님)
-
-
-def _dockproc_norm_files(raw):
-    """폴러가 보낸 **벤더 견적서 첨부 목록** → canonical JSON 문자열(쓸 값이 없으면 None).
-    원소 = {nm 파일명, kb 크기, vndr 업체코드, vnm 업체명, dt 업로드일, sv SVMS 저장명}.
-
-    ⚠️`kb` 는 SVMS `FILE_SIZE` 원값이고 **단위가 KB 지 bytes 가 아니다**(실측: 362 → 실제
-      370,998 bytes). bytes 로 읽어서 화면에 쓰면 371KB 파일이 '362B' 로 보인다.
-
-    **배열 위치(idx)가 preview cache 파일명**이 되므로 정렬을 서버가 못박는다 — SVMS 응답 순서가
-    흔들리면 같은 파일이 다른 idx 로 옮겨가 캐시된 PDF 와 목록의 이름이 어긋난다(= 형이 A업체
-    견적서를 열었는데 B업체 파일이 뜨는 사고). 정렬키 1순위는 SVMS 저장명(`sv`)으로, 이름이
-    같은 두 파일도 구분된다.
-    canonical JSON(키 정렬·고정 separators)은 sub_quotes 와 같은 이유 — 멱등 비교용."""
-    if not isinstance(raw, list):
-        return None
-    out = []
-    for f in raw[:_DOCKPROC_ATT_MAX]:
-        if not isinstance(f, dict):
-            continue
-        nm = str(f.get('nm') or '').strip()[:160]
-        if not nm:
-            continue                                     # 이름 없는 첨부는 열 수도 표시할 수도 없다
-        try:
-            kb = int(float(str(f.get('kb') or 0).replace(',', '')))
-        except (TypeError, ValueError, OverflowError):    # int(float('inf'))=OverflowError
-            kb = 0
-        out.append({'nm': nm,
-                    'kb': max(0, min(99_999_999, kb)),
-                    'vndr': str(f.get('vndr') or '').strip()[:20],
-                    'vnm': str(f.get('vnm') or '').strip()[:120],
-                    'dt': str(f.get('dt') or '').strip()[:20],
-                    'sv': str(f.get('sv') or '').strip()[:160]})
-    if not out:
-        return None
-    out.sort(key=lambda f: (f['sv'], f['nm'], f['vndr']))
-    return json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-
-
-_DOCKPROC_ORDER_MAX = 10            # 한 청구를 나눠 발주할 수 있는 업체 수 상한(실측 2 — 넉넉하되 무한 아님)
-
-
-def _dockproc_norm_orders(raw):
-    """폴러가 보낸 **발주서(ODR_NO)별 업체·금액** 목록 → canonical JSON 문자열(쓸 값 없으면 None).
-
-    왜 별도 칸(`ord_vendors`)인가: `quote_amt` 는 값이 **하나**뿐이고 `remark` 도 업체명 한 칸이다.
-      자재(S)·스토어(ST)는 한 청구를 업체 2곳으로 나눠 발주할 수 있어서(실측 2026-08-05 [BGBB S1]
-      = 딘텍 KRW 14,700,100 + 에버런스 USD 42,523.32) 단일 칸으로는 한쪽이 통째로 사라진다.
-      게다가 통화가 섞이면 합계 자체가 성립하지 않는다 ⇒ **합치지 않고 업체별로 그대로 보관**한다.
-    `sub_quotes`(제출견적) 와 섞지 말 것 — 그건 '누가 얼마에 제출했나'고 이건 '누구에게 실제로
-      발주가 나갔나'다. 섞으면 발주 안 된 업체가 발주완료로 보인다.
-    표시전용이라 값 신뢰보다 형태 방어가 우선: 개수 캡·타입 강제·통화 3글자 검증(`sub_quotes` 동일).
-    🔴 `amt=None` 은 **0 이 아니라 '아직 확정 안 됨'** 이다(결재 중인 발주서는 ODR_LIST 에 없다).
-      0·음수·inf 도 None 으로 떨군다 — 화면이 '0원 발주'로 그리면 형이 무료 발주로 읽는다.
-    canonical 두 겹(원소 키 정렬 + 리스트 정렬)은 `sub_quotes` 와 같은 이유 — SVMS 응답 순서가
-      흔들려도 같은 집합이 '변경'으로 잡혀 매 폴링 UPDATE 가 돌지 않게. 정렬 1순위는 유일 식별자
-      `odr_no` 다.
-    """
-    if not isinstance(raw, list):
-        return None
-    out = []
-    seen = set()
-    for o in raw[:_DOCKPROC_ORDER_MAX]:
-        if not isinstance(o, dict):
-            continue
-        odr = str(o.get('odr_no') or '').strip().upper()[:40]
-        if not odr or odr in seen:
-            continue                     # 번호 없음 = '발주'라 말할 수 없음 / 중복 = 같은 발주서 두 줄 표시 방지
-        seen.add(odr)
-        try:
-            amt = None if o.get('amt') in (None, '') else float(str(o.get('amt')).replace(',', ''))
-        except (TypeError, ValueError):
-            amt = None
-        if amt is not None and (not math.isfinite(amt) or amt <= 0):
-            amt = None                                   # 금액 미확정으로 본다(0원 발주 표시 방지)
-        cur = str(o.get('cur') or '').strip().upper()
-        cd = str(o.get('cd') or '').strip().upper()[:20]
-        out.append({'odr_no': odr,
-                    'nm': str(o.get('nm') or '').strip()[:120],
-                    'cd': cd if re.fullmatch(r'[A-Z0-9]{1,20}', cd) else None,
-                    'st': str(o.get('st') or '').strip()[:40],
-                    'amt': amt,
-                    'cur': cur if re.fullmatch(r'[A-Z]{3}', cur) else None,
-                    # 🔴 `is True` — 폴러가 문자열 'false'/1 을 보내도 발주완료로 읽지 않는다(닫힘 쪽 실패).
-                    'ordered': o.get('ordered') is True})
-    if not out:
-        return None
-    out.sort(key=lambda o: (o['odr_no'], o['nm']))
-    return json.dumps(out, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-
-
-def _dockproc_orders_of(raw):
-    """저장된 `ord_vendors` JSON → 리스트(깨진 값은 빈 목록). 서버 내부 판정·테스트용."""
-    if isinstance(raw, str):
-        try:
-            v = json.loads(raw or '[]')
-        except (ValueError, TypeError):
-            return []
-        return [o for o in v if isinstance(o, dict)] if isinstance(v, list) else []
-    return []
-
-
-def _dockproc_files_of(raw):
-    """저장된 att_files JSON → 리스트(깨진 값은 빈 목록). 서버 내부 비교·검증용."""
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (ValueError, TypeError):
-            return []
-    if not isinstance(raw, list):
-        return []
-    return [f for f in raw if isinstance(f, dict)][:_DOCKPROC_ATT_MAX]
-
-
-# ---- 벤더 견적서 preview cache (fundreq 첨부 cache 와 같은 규약: 확장자 allowlist + magic-byte) ----
-#   경로는 row id/idx/지문/확장자만으로 만들어 경로주입 불가. 읽기는 세션(웹)·Bearer(앱).
-#
-# 🔴 왜 캐시 파일명에 **지문**을 박는가 (올마이트 2026-07-31 지적 반영):
-#   처음엔 `{rid}_{idx}.{ext}` 였다. 그런데 idx 는 '목록의 몇 번째'일 뿐이라서, 목록이 바뀌면
-#   (앞 첨부가 SVMS 에서 삭제되면 뒤가 앞으로 밀린다) **같은 idx 가 다른 파일을 가리킨다.**
-#   그 상태에서 옛 캐시가 남아 있거나(무효화 실패·프로세스 중단), 폴러가 pending 을 받은 뒤 목록이
-#   바뀐 다음 업로드하면 → 형이 A업체 견적서 자리에서 **B업체 파일**을 열게 된다.
-#   경로에 지문이 있으면 현재 목록과 안 맞는 파일은 **애초에 찾아지지 않는다**(fail-closed).
-#   덕분에 무효화(GC)는 '정확성'이 아니라 '용량'만 담당하게 되어, 실패해도 오열람이 없다.
-def _dockatt_fp(f):
-    """첨부 신원 지문 = (SVMS 저장명, 파일명, 크기). 서버가 이 공식의 **단일 정본**이다 —
-    폴러는 pending 으로 받은 지문을 그대로 되돌려주기만 한다(공식 중복구현 금지).
-    크기를 넣는 이유: SVMS 가 같은 저장명으로 내용을 바꿔치면 지문이 달라져 다시 받는다."""
-    import hashlib as _hl
-    s = '%s|%s|%s' % (f.get('sv') or '', f.get('nm') or '', f.get('kb') or 0)
-    return _hl.sha1(s.encode('utf-8')).hexdigest()[:12]
-
-
-def _dockatt_path(rid, idx, fp, ext):
-    return os.path.join(DOCKATT_FILE_DIR, '%d_%d_%s.%s' % (int(rid), int(idx), str(fp)[:12], ext))
-
-
-def _dockatt_find(rid, idx, fp):
-    """(경로, 확장자) — 지문까지 일치하는 캐시만. 없으면 (None, None)."""
-    for ext in _FUNDREQ_ATT_MIME:
-        p = _dockatt_path(rid, idx, fp, ext)
-        if os.path.exists(p):
-            return p, ext
-    return None, None
-
-
-def _dockatt_disk_map():
-    """디스크 1회 스캔 → {row_id: {(idx, fp): ext}}.
-    행마다 listdir 하면 목록 API 가 O(행수) 로 느려진다."""
-    out = {}
-    try:
-        names = os.listdir(DOCKATT_FILE_DIR)
-    except OSError:
-        return out
-    for name in names:
-        stem, _, ext = name.rpartition('.')
-        if ext.lower() not in _FUNDREQ_ATT_MIME:
-            continue
-        parts = stem.split('_')
-        if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
-            continue
-        out.setdefault(int(parts[0]), {})[(int(parts[1]), parts[2])] = ext.lower()
-    return out
-
-
-def _dockatt_cached_idx(files, disk_row):
-    """현재 목록 기준으로 **실제로 열 수 있는** idx 목록(지문 일치분만)."""
-    return [i for i, f in enumerate(files) if (i, _dockatt_fp(f)) in (disk_row or {})]
-
-
-def _dockatt_gc(rid, files, disk_row=None):
-    """현재 목록이 참조하지 않는 캐시 파일 정리. **용량 회수용이고 정확성 담보가 아니다** —
-    실패하거나 아예 안 돌아도 서빙은 지문 불일치로 이미 막힌다(그래서 예외를 삼켜도 안전)."""
-    if disk_row is None:
-        disk_row = _dockatt_disk_map().get(int(rid), {})
-    live = {(i, _dockatt_fp(f)) for i, f in enumerate(files)}
-    dropped = 0
-    for (idx, fp), ext in list(disk_row.items()):
-        if (idx, fp) in live:
-            continue
-        try:
-            os.remove(_dockatt_path(rid, idx, fp, ext)); dropped += 1
-        except OSError:
-            app.logger.exception('dockatt-gc')     # 남아도 오열람 없음 — 다음 GC 에서 다시 시도
-    return dropped
-
-
-def _dockproc_hash(equipment, subject):
-    import hashlib as _hl
-    s = f"{(equipment or '').strip().upper()}|{(subject or '').strip().upper()}"
-    return _hl.md5(s.encode('utf-8')).hexdigest()[:16]
-
-
-def _dockproc_subject_from_svms(subj):
-    """SVMS 제목 → 트래커 `subject`. `_reqgen_build_subj` 의 역함수.
-
-    '[DOCK][BGBB S33]M/T BELGIUM B - AUXILIARY BOILER SPARE PARTS' → 'AUXILIARY BOILER SPARE PARTS'.
-    ' - ' 가 없는 수동작성 제목은 태그만 떼고 남은 전체를 쓴다(비우는 것보다 낫다).
-    """
-    import re as _re
-    s = (subj or '').strip()
-    s = _re.sub(r'^\s*\[DOCK\]\s*', '', s, flags=_re.I)
-    s = _re.sub(r'^\s*\[[^\]]*\]\s*', '', s)             # [BGBB S33]
-    head, sep, tail = s.partition(' - ')
-    return ((tail if sep else head).strip() or None)
-
-
-def _dockproc_fill_key(row, doc, svms_key):
-    """SVMS 문서번호를 **문서종류에 맞는 칸**에 채운다(비어 있을 때만).
-
-    🔴 키 분리 규약: 수리=`svms_req_no`(REP_CD) / 구매=`svms_pc_req_no`(REQ_NO).
-       섞으면 Phase ③ 상신이 INQ_NO 를 잃는다(`_dockproc_inq_target` 주석 참조).
-    """
-    key = (svms_key or '').strip()
-    if not key or row is None:
-        return 'none'
-    col = 'svms_req_no' if (doc or '').strip().upper() in ('MA', 'MARP') else 'svms_pc_req_no'
-    keys = row.keys() if hasattr(row, 'keys') else ()
-    if col not in keys:                                  # 마이그레이션 전 DB — 닫힘 쪽 실패(키만 안 채움)
-        return 'none'
-    if ((row[col] or '').strip()):
-        return 'same' if row[col].strip() == key else 'conflict'
-    execute(f"UPDATE dock_procure SET {col}=?, updated_at=datetime('now','localtime') WHERE id=?",
-            (key, row['id']))
-    return 'filled'
-
-
-def _dockproc_adopt_svms(vsl_nm, vsl_cd, req_no, subject, equipment, doc, svms_key):
-    """SVMS 에 **이미 존재하는** 입거 청구 1건을 발주현황 행으로 적재. 반환 (row_id, created, key_state).
-
-    발주현황 행은 종전에 INDEX 엑셀 업로드로만 생겼고 역동기화는 update-only 였다 →
-    엑셀에 없는 시트번호로 청구가 나가면 붙을 행이 없어 `unmatched` 로 조용히 버려졌다
-    (2026-08-05 실측: BGBB S2·S18·S21~S24·S33 = 7건이 SVMS 에만 있고 화면엔 없었음).
-    ⚠️청구 존재가 확인된 건에만 쓴다 — 추측으로 행을 만들지 않는다.
-    ⚠️P(페인트)·SY(조선소)는 메일견적이라 SVMS 청구가 아니다 → 자동적재 대상에서 제외.
-    """
-    code = _dockproc_cat_code(req_no)
-    if code not in ('R', 'S', 'ST'):
-        # 🔴 반드시 3-tuple 로 반환한다 — 호출부가 `lid, created, key_state` 로 언패킹한다.
-        #    2-tuple 로 나가면 `ValueError` 가 `api_ext_reqgen_result` 의 트랜잭션을 rollback 시켜
-        #    **SVMS 에는 저장됐는데 카드는 `saving` 에 갇히고 6h 뒤 failed** 가 된다(형이 실패로 봄).
-        #    도달 경로: 시트명이 `R\d+/S\d+/ST\d+` 형식이 아닐 때(P·SY 시트, `S33A` 같은 변형).
-        return None, False, 'none'
-    rq = (req_no or '').strip().upper()
-    ex = query("SELECT * FROM dock_procure WHERE vsl_nm=? AND UPPER(req_no)=?", (vsl_nm, rq), one=True)
-    if ex:                                               # 이미 있으면 만들지 않고 키만 채운다(멱등)
-        key_state = _dockproc_fill_key(ex, doc, svms_key)
-        return ex['id'], False, key_state
-    nxt = query("SELECT COALESCE(MAX(sort_no),0)+1 n FROM dock_procure WHERE vsl_nm=?",
-                (vsl_nm,), one=True)['n']                # 목록 맨 뒤(NULL 이면 정렬 맨 앞으로 튄다)
-    lid = execute(
-        "INSERT INTO dock_procure (vsl_nm, vsl_cd, req_no, cat_code, category, equipment, subject, "
-        "prepared_by, source, content_hash, sort_no, remark) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        (vsl_nm, vsl_cd, rq, code, _DOCKPROC_CAT_NM.get(code), equipment, subject,
-         'OWNER', _dockproc_source(code, 'OWNER'), _dockproc_hash(equipment, subject), nxt,
-         'SVMS 청구 자동적재'))
-    key_state = _dockproc_fill_key(query("SELECT * FROM dock_procure WHERE id=?", (lid,), one=True), doc, svms_key)
-    return lid, True, key_state
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ---- 미적재 청구(orphan) 보관: 태그는 맞는데 발주현황에 행이 없는 SVMS 청구 ----

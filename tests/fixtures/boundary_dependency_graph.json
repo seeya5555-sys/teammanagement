@@ -14,23 +14,25 @@
       "session",
       "uuid"
     ],
-    "routes_calendar_dock.py": [
+    "helpers_shared.py": [
       "GEMINI_API_KEY",
-      "GEMINI_MODEL",
+      "VETTING_TYPES",
+      "_MARITIME_TERMS",
+      "_coerce_translation_items",
       "_ext_allowed",
+      "_findings_workbook",
+      "_gemini_call_json",
       "_model_for",
-      "_safe_filename"
-    ],
-    "routes_core.py": [
-      "login_required"
-    ],
-    "routes_tail.py": [
       "_re_cls",
-      "_xlsx_to_text"
+      "_safe_filename",
+      "_vetting_display_order",
+      "_vetting_with_counts",
+      "_xlsx_to_text",
+      "login_required"
     ]
   },
   "app.py": {
-    "routes_calendar_dock.py": [
+    "helpers_shared.py": [
       "_AOR_ACTIVE_STATUSES",
       "_API_TABLE_READY",
       "_aor_absorbing_trigger_install",
@@ -38,22 +40,48 @@
       "_aor_status_list_sql"
     ]
   },
-  "routes_calendar_dock.py": {
-    "ai_gemini.py": [
-      "CAL_VALID_COLORS",
-      "_gemini_call_json",
-      "_vetting_pick"
-    ],
+  "helpers_shared.py": {
     "app.py": [
       "ALLOWED_EXT",
-      "AOR_PDF_DIR",
-      "BytesIO",
+      "BASE_DIR",
       "DATABASE",
       "DOCKATT_FILE_DIR",
+      "INSTANCE_DIR",
+      "SOA_REVIEW_PDF_DIR",
+      "UPLOAD_DIR",
+      "_NON_STT_UPLOAD_MAX",
+      "abort",
+      "app",
+      "date",
+      "datetime",
+      "execute",
+      "get_db",
+      "json",
+      "jsonify",
+      "math",
+      "os",
+      "query",
+      "re",
+      "redirect",
+      "request",
+      "secrets",
+      "secure_filename",
+      "session",
+      "sqlite3",
+      "threading",
+      "timedelta",
+      "url_for",
+      "uuid",
+      "wraps"
+    ]
+  },
+  "routes_calendar_dock.py": {
+    "app.py": [
+      "AOR_PDF_DIR",
+      "BytesIO",
       "FUNDREQ_FILE_DIR",
       "HTTPException",
       "INVOICE_PDF_DIR",
-      "SOA_REVIEW_PDF_DIR",
       "STT_AUDIO_DIR",
       "STT_AUDIO_EXT",
       "STT_LEASE_SEC",
@@ -86,35 +114,58 @@
       "send_from_directory",
       "session",
       "sqlite3",
-      "threading",
       "timedelta",
       "url_for",
-      "uuid",
-      "wraps"
+      "uuid"
     ],
-    "routes_core.py": [
-      "_ensure_summary_table",
-      "_issue_write_scope",
-      "_run_summary_generate",
-      "admin_required",
-      "login_required"
-    ],
-    "routes_tail.py": [
+    "helpers_shared.py": [
+      "AUTOMATION_TASKS_BASE",
+      "CAL_VALID_COLORS",
+      "GEMINI_API_KEY",
+      "RETIRED_RUNNER_KEYS",
+      "SOA_CATEGORY_OWNER",
+      "_AOR_ACTIVE_STATUSES",
+      "_FUNDREQ_ATT_INLINE",
+      "_FUNDREQ_ATT_MAX",
+      "_FUNDREQ_ATT_MIME",
+      "_HEALTH_ORDER",
       "_annotate_drafts_with_vessel",
+      "_aor_absorbing_trigger_sql",
+      "_aor_status_list_sql",
+      "_automation_enabled",
+      "_automation_health_summary",
       "_cls_handle_files",
-      "_match_vessel_by_name"
+      "_dock_sync_flag_bump",
+      "_dockproc_adopt_svms",
+      "_dockproc_subject_from_svms",
+      "_ensure_api_table",
+      "_ensure_summary_table",
+      "_ext_allowed",
+      "_fundreq_att_ext",
+      "_fundreq_att_sniff_ok",
+      "_gemini_call_json",
+      "_get_api_key",
+      "_issue_write_scope",
+      "_match_vessel_by_name",
+      "_model_for",
+      "_reqgen_build_subj",
+      "_reqgen_vsl_prefix",
+      "_run_summary_generate",
+      "_safe_filename",
+      "_soa_group_members",
+      "_soa_groups_load",
+      "_soa_owner_map",
+      "_soa_review_attachment_path",
+      "_soa_review_case_unlock",
+      "_vetting_pick",
+      "_vkey",
+      "admin_required",
+      "api_key_required",
+      "login_required",
+      "soa_task_key"
     ]
   },
   "routes_core.py": {
-    "ai_gemini.py": [
-      "VETTING_TYPES",
-      "_gen_issue_summaries",
-      "_latest_action",
-      "_latest_action_progress",
-      "_md_label",
-      "_translate_rows_en",
-      "_vetting_pick"
-    ],
     "app.py": [
       "INSTANCE_DIR",
       "SOA_REVIEW_PDF_DIR",
@@ -145,25 +196,28 @@
       "render_template",
       "request",
       "session",
-      "sqlite3",
       "timedelta",
-      "url_for",
-      "wraps"
+      "url_for"
     ],
-    "routes_calendar_dock.py": [
+    "helpers_shared.py": [
+      "VETTING_TYPES",
       "_automation_health_summary",
+      "_dashboard_ctx",
+      "_ensure_summary_table",
+      "_fleet_visible_auto_vessels",
+      "_issue_to_dict",
+      "_issue_write_scope",
+      "_run_summary_generate",
       "_safe_filename",
       "_soa_review_attachment_path",
-      "_vkey"
-    ],
-    "routes_tail.py": [
-      "_fleet_visible_auto_vessels"
+      "_translate_rows_en",
+      "_vetting_pick",
+      "_vkey",
+      "admin_required",
+      "login_required"
     ]
   },
   "routes_dock_submit.py": {
-    "ai_gemini.py": [
-      "_gemini_call_json"
-    ],
     "app.py": [
       "JEONJA_PDF_DIR",
       "abort",
@@ -187,7 +241,7 @@
       "urllib",
       "uuid"
     ],
-    "routes_calendar_dock.py": [
+    "helpers_shared.py": [
       "AUTOMATION_MODES",
       "GEMINI_API_KEY",
       "_DOCKPROC_ATT_MAX",
@@ -224,33 +278,24 @@
       "_ensure_api_table",
       "_fundreq_att_ext",
       "_fundreq_att_sniff_ok",
+      "_gemini_call_json",
+      "_push_outbox_add",
+      "_push_outbox_drain",
       "_reqgen_build_subj",
       "_reqgen_vsl_prefix",
       "_soa_review_case_unlock",
       "_soa_vessel_codes_from_params",
       "_soa_vessel_params",
-      "api_key_required",
-      "automation_tasks"
-    ],
-    "routes_core.py": [
       "admin_required",
+      "api_key_required",
+      "automation_tasks",
       "login_required"
-    ],
-    "routes_tail.py": [
-      "_push_outbox_add",
-      "_push_outbox_drain"
     ]
   },
   "routes_tail.py": {
-    "ai_gemini.py": [
-      "_MARITIME_TERMS",
-      "_findings_workbook",
-      "_gemini_call_json"
-    ],
     "app.py": [
       "BASE_DIR",
       "INSTANCE_DIR",
-      "UPLOAD_DIR",
       "abort",
       "app",
       "datetime",
@@ -260,30 +305,40 @@
       "http",
       "json",
       "jsonify",
-      "math",
       "os",
       "query",
       "re",
       "render_template",
       "request",
-      "secure_filename",
       "session",
-      "sqlite3",
       "threading",
       "time",
       "timedelta",
       "urllib",
       "uuid"
     ],
-    "routes_calendar_dock.py": [
-      "_ensure_api_table",
-      "_model_for",
-      "_vkey",
-      "api_key_required"
-    ],
-    "routes_core.py": [
+    "helpers_shared.py": [
+      "FLEET_MAP_FILE",
+      "PUSH_KINDS",
+      "PUSH_KIND_KEYS",
+      "_cls_handle_files",
       "_dashboard_ctx",
+      "_ensure_api_table",
+      "_findings_workbook",
+      "_fleet_apply_code_first_next_port",
+      "_fleet_extract_next_port_code",
+      "_fleet_port_catalog",
+      "_fleet_route_to_destination",
+      "_fleet_visible_auto_vessels",
+      "_norm_locode",
+      "_norm_port_text",
+      "_push_dispatch",
+      "_push_module",
+      "_push_prefs",
+      "_re_cls",
+      "_vkey",
       "admin_required",
+      "api_key_required",
       "login_required"
     ]
   }
