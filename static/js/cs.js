@@ -1369,6 +1369,7 @@ function csAttachItemEl(a) {
   const thumb = el('div', { class: 'attach-thumb' });
   const isImg = /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(a.filename);
   const isPdf = /\.pdf$/i.test(a.filename);
+  const isMsg = /\.msg$/i.test(a.filename);
   if (isImg) {
     thumb.append(el('img', {
       src: `/api/cs/attachments/${a.id}?inline=1`,
@@ -1382,11 +1383,14 @@ function csAttachItemEl(a) {
 
   const meta = el('div', { class: 'attach-meta' },
     el('a', {
-      href: `/api/cs/attachments/${a.id}` + (isImg || isPdf ? '?inline=1' : ''),
-      target: (isImg || isPdf) ? '_blank' : '_self',
+      href: isMsg ? `/msg-preview?source=cs&aid=${a.id}` : `/api/cs/attachments/${a.id}` + (isImg || isPdf ? '?inline=1' : ''),
+      target: (isImg || isPdf || isMsg) ? '_blank' : '_self',
       class: 'attach-name',
     }, a.filename),
     el('span', { class: 'attach-size' }, formatFileSize(a.file_size)),
+    ...(isMsg ? [el('a', {
+      href: `/api/cs/attachments/${a.id}`, class: 'attach-size', title: '원본 MSG 다운로드',
+    }, '원본 다운로드')] : []),
   );
   item.append(meta);
 

@@ -1965,11 +1965,12 @@ function attachItemEl(a) {
     `${formatFileSize(a.file_size || 0)} · ${(a.uploaded_at || '').slice(0, 10)}`));
 
   const actions = el('div', { class: 'attach-actions' });
-  // 미리보기 (이미지 + PDF)
-  if (isImageFile(a.filename) || /\.pdf$/i.test(a.filename)) {
+  // 미리보기 (이미지 + PDF + Outlook MSG)
+  if (isImageFile(a.filename) || /\.(pdf|msg)$/i.test(a.filename)) {
+    const isMsg = /\.msg$/i.test(a.filename);
     const prevBtn = el('button', {
       class: 'icon-btn', title: '미리보기 (새 탭)',
-      onclick: () => window.open(`/api/attachments/${a.id}?inline=1`, '_blank'),
+      onclick: () => window.open(isMsg ? `/msg-preview?source=issue&aid=${a.id}` : `/api/attachments/${a.id}?inline=1`, '_blank'),
     });
     prevBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>

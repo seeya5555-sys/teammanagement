@@ -3173,6 +3173,28 @@
   ],
   "endpoint": "routes_core.api_mobile_issue_list",
   "strict_slashes": true,
+ "defaults": {}
+ },
+ {
+  "rule": "/api/msg-preview/<string:source>/<int:aid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_calendar_dock.api_msg_preview",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/msg-preview/<string:source>/<int:aid>/attachments/<int:index>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_calendar_dock.api_msg_preview_file",
+  "strict_slashes": true,
   "defaults": {}
  },
  {
@@ -4091,6 +4113,17 @@
    "OPTIONS"
   ],
   "endpoint": "routes_core.mobile_app",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/msg-preview",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_calendar_dock.msg_preview_page",
   "strict_slashes": true,
   "defaults": {}
  },

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Outlook 메일 미리보기</title>
+  <style>
+    :root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{margin:0;background:#f4f6f8;color:#172033}main{max-width:900px;margin:auto;padding:20px}
+    .card{background:#fff;border:1px solid #dfe4ea;border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 2px 8px #1020300a}
+    h1{font-size:21px;margin:0 0 14px}.row{display:grid;grid-template-columns:76px 1fr;gap:8px;margin:6px 0;font-size:14px}.label{color:#687386}
+    pre{font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+    a{color:#1769aa;text-decoration:none}.file{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #e7ebef}.file:first-of-type{border-top:0}
+    .muted{color:#687386;font-size:13px}@media(prefers-color-scheme:dark){body{background:#11151b;color:#eef2f7}.card{background:#1a2029;border-color:#303846}.label,.muted{color:#a9b4c3}.file{border-color:#303846}a{color:#6cb6ff}}
+  </style>
+</head>
+<body><main id="root"><section class="card"><h1>Outlook 메일</h1><div class="muted">메일 불러오는 중…</div></section></main>
+<script>
+(() => {
+  const root=document.getElementById('root'), q=new URLSearchParams(location.search);
+  const source=q.get('source')||'', aid=q.get('aid')||'';
+  const add=(parent,tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;parent.append(n);return n};
+  const card=title=>{const c=add(root,'section','card');add(c,'h1','',title);return c};
+  const row=(c,label,value)=>{const r=add(c,'div','row');add(r,'span','label',label);add(r,'span','',value||'-')};
+  async function load(){
+    if(!['issue','cs','vetting'].includes(source)||!/^[1-9]\d*$/.test(aid)) throw new Error('잘못된 미리보기 주소입니다.');
+    const res=await fetch(`/api/msg-preview/${source}/${aid}`,{credentials:'same-origin'}), data=await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error||`메일을 불러오지 못했습니다 (${res.status})`);
+    const m=data.message; root.innerHTML=''; document.title=m.subject||'Outlook 메일 미리보기';
+    const h=card(m.subject||'(제목 없음)');row(h,'보낸사람',m.sender);row(h,'받는사람',m.to);if(m.cc)row(h,'참조',m.cc);row(h,'일시',m.date);
+    const b=card('본문');add(b,'pre','',m.body||'본문 없음');
+    const files=card('메일 내 첨부');
+    if(!m.attachments.length)add(files,'div','muted','미리보기 가능한 PDF·사진 첨부 없음');
+    for(const f of m.attachments){const a=add(files,'a','file');a.target='_blank';a.rel='noopener';a.href=`/api/msg-preview/${source}/${aid}/attachments/${f.index}`;add(a,'span','',f.filename);add(a,'span','muted',`${(f.size/1024).toFixed(1)} KB · 미리보기`)}
+  }
+  load().catch(e=>{root.innerHTML='';const c=card('메일을 열 수 없음');add(c,'div','muted',e.message)});
+})();
+</script></body></html>

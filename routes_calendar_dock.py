@@ -1877,6 +1877,27 @@ def api_attachment_download(aid):
 _MSG_PREVIEW_EXT = {'pdf', 'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp'}
 _MSG_PREVIEW_MAX_ATTACHMENTS = 40
 _MSG_PREVIEW_MAX_BODY_CHARS = 120_000
+_MSG_PREVIEW_SOURCES = {
+    'issue': ('attachments', 'issue_id'),
+    'cs': ('cs_attachments', 'survey_id'),
+    'vetting': ('vt_attachments', 'vetting_id'),
+}
+
+
+def _msg_preview_source(source, aid):
+    """Resolve one of the 3 user-upload attachment stores without accepting SQL identifiers from input."""
+    spec = _MSG_PREVIEW_SOURCES.get(source)
+    if not spec:
+        abort(404)
+    table, owner_col = spec
+    a = query(f'SELECT * FROM {table} WHERE id=?', (aid,), one=True)
+    if not a:
+        abort(404)
+    # Issue attachments are supervisor-scoped. CS/Vetting downloads are login-scoped today;
+    # preview deliberately preserves the exact same authorization boundary as their download routes.
+    if source == 'issue':
+        _issue_write_scope(a[owner_col])
+    return a
 
 
 def _msg_preview_attachment_name(att, index):
@@ -1962,10 +1983,7 @@ def _msg_preview_data(a):
 @bp.route('/api/attachments/<int:aid>/msg-preview')
 @login_required
 def api_attachment_msg_preview(aid):
-    a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
-    if not a:
-        abort(404)
-    _issue_write_scope(a['issue_id'])
+    a = _msg_preview_source('issue', aid)
     data, error, status = _msg_preview_data(a)
     if error:
         return error, status
@@ -1975,10 +1993,36 @@ def api_attachment_msg_preview(aid):
 @bp.route('/api/attachments/<int:aid>/msg-preview/attachments/<int:index>')
 @login_required
 def api_attachment_msg_preview_file(aid, index):
-    a = query('SELECT * FROM attachments WHERE id=?', (aid,), one=True)
-    if not a:
-        abort(404)
-    _issue_write_scope(a['issue_id'])
+    a = _msg_preview_source('issue', aid)
+    return _msg_preview_file_response(a, aid, index)
+
+
+@bp.route('/api/msg-preview/<string:source>/<int:aid>')
+@login_required
+def api_msg_preview(source, aid):
+    a = _msg_preview_source(source, aid)
+    data, error, status = _msg_preview_data(a)
+    if error:
+        return error, status
+    return jsonify({'ok': True, 'message': data})
+
+
+@bp.route('/api/msg-preview/<string:source>/<int:aid>/attachments/<int:index>')
+@login_required
+def api_msg_preview_file(source, aid, index):
+    a = _msg_preview_source(source, aid)
+    return _msg_preview_file_response(a, aid, index)
+
+
+@bp.route('/msg-preview')
+@login_required
+def msg_preview_page():
+    # Fixed route keeps this normal authenticated HTML page smoke-testable. The API below
+    # validates source/id and returns text-only data; the browser never renders MSG HTML.
+    return render_template('msg_preview.html')
+
+
+def _msg_preview_file_response(a, aid, index):
     if index < 0:
         abort(404)
     msg, error, status = _open_msg_attachment(a)

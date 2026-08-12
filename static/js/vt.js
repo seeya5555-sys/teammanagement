@@ -1390,6 +1390,7 @@ function vtAttachItemEl(a) {
   const thumb = el('div', { class: 'attach-thumb' });
   const isImg = /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(a.filename);
   const isPdf = /\.pdf$/i.test(a.filename);
+  const isMsg = /\.msg$/i.test(a.filename);
   if (isImg) {
     thumb.append(el('img', {
       src: `/api/vt-attachments/${a.id}?inline=1`,
@@ -1404,11 +1405,14 @@ function vtAttachItemEl(a) {
   // 메타 (파일명 + 크기) — flex:1로 가운데 늘어나서 삭제 버튼 오른쪽 끝으로
   const meta = el('div', { class: 'attach-meta' },
     el('a', {
-      href: `/api/vt-attachments/${a.id}` + (isImg || isPdf ? '?inline=1' : ''),
-      target: (isImg || isPdf) ? '_blank' : '_self',
+      href: isMsg ? `/msg-preview?source=vetting&aid=${a.id}` : `/api/vt-attachments/${a.id}` + (isImg || isPdf ? '?inline=1' : ''),
+      target: (isImg || isPdf || isMsg) ? '_blank' : '_self',
       class: 'attach-name',
     }, a.filename),
     el('span', { class: 'attach-size' }, formatFileSize(a.file_size)),
+    ...(isMsg ? [el('a', {
+      href: `/api/vt-attachments/${a.id}`, class: 'attach-size', title: '원본 MSG 다운로드',
+    }, '원본 다운로드')] : []),
   );
   item.append(meta);
 
