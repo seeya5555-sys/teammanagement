@@ -3408,55 +3408,14 @@ function wireEvents() {
     e.target.value = '';
   });
 
-  // 전역 ESC
+  // Daily 페이지 전용 ESC (공용 관리/편집 모달은 wireCommon에서 처리)
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
-    // 2차 모달(편집) 먼저 체크
-    if ($('#vessel-edit-modal') && !$('#vessel-edit-modal').hidden) { closeVesselEdit(); return; }
-    if ($('#supervisor-edit-modal') && !$('#supervisor-edit-modal').hidden) { closeSupervisorEdit(); return; }
-    if ($('#user-edit-modal') && !$('#user-edit-modal').hidden) { closeUserEdit(); return; }
-    // 1차 모달
     if (!$('#issue-modal').hidden) closeModal();
     else if (!$('#attach-modal').hidden) closeAttach();
     else if (!$('#myves-modal').hidden) closeMyVessels();
-    else if (!$('#password-modal').hidden) closePasswordModal();
-    else if ($('#admin-modal') && !$('#admin-modal').hidden) closeAdminModal();
     else if (S.inlineAdd) cancelInlineAdd();
   });
-
-  // ───── 선박 편집 모달 (admin 전용) ─────
-  const vEditModal = $('#vessel-edit-modal');
-  if (vEditModal) {
-    vEditModal.addEventListener('click', (ev) => {
-      if (ev.target.dataset.closeVesedit === '1') closeVesselEdit();
-    });
-    $('#btn-vedit-save').addEventListener('click', saveVesselEdit);
-  }
-
-  // ───── 감독 편집 모달 (admin 전용) ─────
-  const sEditModal = $('#supervisor-edit-modal');
-  if (sEditModal) {
-    sEditModal.addEventListener('click', (ev) => {
-      if (ev.target.dataset.closeSupedit === '1') closeSupervisorEdit();
-    });
-    $('#btn-sedit-save').addEventListener('click', saveSupervisorEdit);
-    $('#sedit-colors').addEventListener('click', (ev) => {
-      const sw = ev.target.closest('.color-swatch');
-      if (!sw) return;
-      SEDIT.selectedColor = sw.dataset.color;
-      document.querySelectorAll('#sedit-colors .color-swatch')
-        .forEach(x => x.classList.toggle('selected', x === sw));
-    });
-  }
-
-  // ───── 사용자 편집 모달 (admin 전용) ─────
-  const uEditModal = $('#user-edit-modal');
-  if (uEditModal) {
-    uEditModal.addEventListener('click', (ev) => {
-      if (ev.target.dataset.closeUseredit === '1') closeUserEdit();
-    });
-    $('#btn-uedit-save').addEventListener('click', saveUserEdit);
-  }
 
   // ───── 담당 선박 모달 ─────
   $('#myves-modal').addEventListener('click', (ev) => {
@@ -3492,6 +3451,14 @@ function wireCommon() {
   });
   $('#password-form').addEventListener('submit', submitPasswordChange);
 
+  // 선박 편집은 admin의 관리 모달과 member의 담당 선박 모달에서 모두 열린다.
+  // adminBtn 존재 여부와 무관하게 모든 role에서 항상 연결한다.
+  const vEditModal = $('#vessel-edit-modal');
+  vEditModal.addEventListener('click', (ev) => {
+    if (ev.target.dataset.closeVesedit === '1') closeVesselEdit();
+  });
+  $('#btn-vedit-save').addEventListener('click', saveVesselEdit);
+
   // ───── Admin Modal ─────
   const adminBtn = $('#btn-open-admin');
   if (adminBtn) {
@@ -3521,7 +3488,43 @@ function wireCommon() {
     $('#btn-ves-add').addEventListener('click', addVessel);
     // 사용자 추가
     $('#btn-user-add').addEventListener('click', addUser);
+
+    // admin 전용 2차 편집 모달도 base.html 공용 UI이므로 모든 페이지에서 와이어링한다.
+    // Daily 전용 wireEvents()에 두면 다른 탭에서는 모달만 열리고 저장이 동작하지 않는다.
+    const sEditModal = $('#supervisor-edit-modal');
+    sEditModal.addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeSupedit === '1') closeSupervisorEdit();
+    });
+    $('#btn-sedit-save').addEventListener('click', saveSupervisorEdit);
+    $('#sedit-colors').addEventListener('click', (ev) => {
+      const sw = ev.target.closest('.color-swatch');
+      if (!sw) return;
+      SEDIT.selectedColor = sw.dataset.color;
+      document.querySelectorAll('#sedit-colors .color-swatch')
+        .forEach(x => x.classList.toggle('selected', x === sw));
+    });
+
+    const uEditModal = $('#user-edit-modal');
+    uEditModal.addEventListener('click', (ev) => {
+      if (ev.target.dataset.closeUseredit === '1') closeUserEdit();
+    });
+    $('#btn-uedit-save').addEventListener('click', saveUserEdit);
   }
+
+  // 공용 모달 ESC는 Daily 페이지 이벤트보다 먼저 등록된다. 2차 모달을 닫은
+  // 같은 keydown이 이어서 바로 1차 모달까지 닫지 않도록 즉시 전파를 멈춘다.
+  const modalIsOpen = (selector) => {
+    const modal = $(selector);
+    return !!modal && !modal.hidden;
+  };
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    if (modalIsOpen('#vessel-edit-modal')) { closeVesselEdit(); ev.stopImmediatePropagation(); return; }
+    if (modalIsOpen('#supervisor-edit-modal')) { closeSupervisorEdit(); ev.stopImmediatePropagation(); return; }
+    if (modalIsOpen('#user-edit-modal')) { closeUserEdit(); ev.stopImmediatePropagation(); return; }
+    if (modalIsOpen('#password-modal')) { closePasswordModal(); ev.stopImmediatePropagation(); return; }
+    if (modalIsOpen('#admin-modal')) { closeAdminModal(); ev.stopImmediatePropagation(); }
+  });
 }
 
 // ───────────── Init ─────────────
