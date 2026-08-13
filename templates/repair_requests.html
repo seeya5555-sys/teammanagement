@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}수리신청서 · TRMT{% endblock %}
+{% block content %}
+<style>
+.rr-wrap{max-width:1180px;margin:0 auto;padding:22px}.rr-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:16px}.rr-grid{display:grid;grid-template-columns:390px 1fr;gap:16px}.rr-panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px}.rr-form{display:grid;grid-template-columns:1fr 1fr;gap:10px}.rr-form label{font-size:11px;color:var(--text-secondary);font-weight:700}.rr-form input,.rr-form select,.rr-form textarea{width:100%;margin-top:4px;border:1px solid var(--border-strong);border-radius:8px;padding:8px;background:var(--surface);color:var(--text)}.rr-full{grid-column:1/-1}.rr-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.rr-card{border:1px solid var(--border);border-radius:11px;padding:13px;margin-bottom:10px}.rr-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rr-card h3{font-size:14px;margin:0;flex:1}.rr-badge{font-size:10px;font-weight:800;border-radius:999px;padding:4px 7px;background:var(--surface-subtle)}.rr-meta{font-size:11px;color:var(--text-secondary);margin-top:6px}.rr-detail{white-space:pre-wrap;font-size:12px;line-height:1.5;margin-top:8px}.rr-empty{text-align:center;color:var(--text-tertiary);padding:50px 8px}@media(max-width:850px){.rr-wrap{padding:12px}.rr-grid{grid-template-columns:1fr}.rr-form{grid-template-columns:1fr}.rr-full{grid-column:1}}
+</style>
+<div class="rr-wrap">
+  <div class="rr-head"><div><h1 style="margin:0">수리신청서</h1><p class="text-secondary">일반수리·Dock 수리 작성 → SVMS DRAFT → 견적·전자결재</p></div><button class="btn" id="rr-new">새 신청서</button></div>
+  <div class="rr-grid">
+    <section class="rr-panel"><h2 id="rr-form-title" style="font-size:16px">신규 작성</h2>
+      <form id="rr-form" class="rr-form">
+        <input type="hidden" id="rr-id"><input type="hidden" id="rr-version" value="1">
+        <label class="rr-full">선박<select id="rr-vessel" required></select></label>
+        <label class="rr-full">제목<input id="rr-subject" required maxlength="300"></label>
+        <label>Category<input id="rr-category" required></label><label>Equipment<input id="rr-equipment" required></label>
+        <label>Maker<input id="rr-maker"></label><label>Type<input id="rr-type"></label>
+        <label>Voyage<input id="rr-voy" required></label><label>Port Code<input id="rr-port" required placeholder="CNZOS"></label>
+        <label>예정일<input id="rr-date" type="date" required></label><label>Stock<select id="rr-stock"><option value="vendor">Vendor Supply</option><option value="owner">Owner Supply</option></select></label>
+        <label>Reason Code<input id="rr-reason" value="P" required></label><label>Department Code<input id="rr-dept" value="E" required></label>
+        <label class="rr-full">Cause of Defect<textarea id="rr-cause" rows="3" required></textarea></label>
+        <label class="rr-full">Ship's Inspection Result<textarea id="rr-inspection" rows="3" required></textarea></label>
+        <label class="rr-full">Detail / Job Scope<textarea id="rr-detail" rows="8" required></textarea></label>
+        <label><input id="rr-dock" type="checkbox" style="width:auto"> Dock 수리</label><label><input id="rr-urgent" type="checkbox" style="width:auto"> Urgent</label>
+        <label><input id="rr-critical" type="checkbox" style="width:auto"> Critical</label>
+      </form>
+      <div class="rr-actions"><button class="btn btn-primary" id="rr-save">초안 저장</button><button class="btn" id="rr-cancel" hidden>편집 취소</button></div>
+      <p class="text-secondary" style="font-size:11px;margin-top:10px">SVMS 저장 후에는 TRMT에서 수정할 수 없음. Dock 체크 시에만 [DOCK] 제목·R번호를 사용함.</p>
+    </section>
+    <section class="rr-panel"><div class="rr-row" style="margin-bottom:12px"><h2 style="font-size:16px;margin:0;flex:1">신청 목록</h2><button class="btn" id="rr-refresh">새로고침</button></div><div id="rr-list"></div></section>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s); let rows=[],saveBusy=false,createCid='rr-web-'+crypto.randomUUID();
+async function api(method,path,body){const o={method,headers:{Accept:'application/json'}};if(body!==undefined){o.headers['Content-Type']='application/json';o.body=JSON.stringify(body)}const r=await fetch(path,o),j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||`HTTP ${r.status}`);return j}
+function payload(){return {client_request_id:createCid,vessel_id:+$('#rr-vessel').value,subject:$('#rr-subject').value,category:$('#rr-category').value,equipment:$('#rr-equipment').value,maker:$('#rr-maker').value,type_nm:$('#rr-type').value,app_voy:$('#rr-voy').value,app_port_cd:$('#rr-port').value,app_dt:$('#rr-date').value,cause:$('#rr-cause').value,inspection:$('#rr-inspection').value,detail:$('#rr-detail').value,stock:$('#rr-stock').value,reason_cd:$('#rr-reason').value,dept_cd:$('#rr-dept').value,dock_yn:$('#rr-dock').checked,urgent_yn:$('#rr-urgent').checked,critical_yn:$('#rr-critical').checked,version:+$('#rr-version').value}}
+function reset(){ $('#rr-form').reset();$('#rr-id').value='';$('#rr-version').value='1';$('#rr-reason').value='P';$('#rr-dept').value='E';$('#rr-form-title').textContent='신규 작성';$('#rr-cancel').hidden=true;createCid='rr-web-'+crypto.randomUUID() }
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function edit(id){const r=rows.find(x=>x.id===id);if(!r)return;for(const [k,v] of Object.entries({subject:r.subject,category:r.category,equipment:r.equipment,maker:r.maker,type:r.type_nm,voy:r.app_voy,port:r.app_port_cd,cause:r.cause,inspection:r.inspection,detail:r.detail,reason:r.reason_cd,dept:r.dept_cd}))$('#rr-'+k).value=v||'';$('#rr-vessel').value=r.vessel_id;$('#rr-date').value=(r.app_dt||'').replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3');$('#rr-stock').value=r.stock;$('#rr-dock').checked=r.dock_yn==='Y';$('#rr-urgent').checked=r.urgent_yn==='Y';$('#rr-critical').checked=r.critical_yn==='Y';$('#rr-id').value=id;$('#rr-version').value=r.version;$('#rr-form-title').textContent='초안 편집 #'+id;$('#rr-cancel').hidden=false;scrollTo({top:0,behavior:'smooth'})}
+async function load(){const j=await api('GET','/api/repair-requests');rows=j.requests||[];$('#rr-list').innerHTML=rows.length?rows.map(r=>`<article class="rr-card"><div class="rr-row"><span class="rr-badge">${r.dock_yn==='Y'?'DOCK '+esc(r.req_no):'일반수리'}</span><h3>${esc(r.subject)}</h3><span class="rr-badge">${esc(r.status)}</span></div><div class="rr-meta">${esc(r.vsl_nm)} · ${esc(r.equipment)} · ${esc(r.rep_cd||'SVMS 미저장')} · ${esc(r.svms_status||'')}</div><div class="rr-detail">${esc(r.detail)}</div><div class="rr-actions">${['pending','failed'].includes(r.status)&&!r.rep_cd?`<button class="btn" onclick="edit(${r.id})">수정</button><button class="btn btn-primary" onclick="approve(${r.id})">SVMS DRAFT 저장</button><button class="btn" onclick="del(${r.id})">삭제</button>`:''}${r.status==='saving'||(r.status==='failed'&&r.rep_cd)?`<button class="btn" onclick="resolveRepair(${r.id})">저장상태 복구</button>`:''}${r.rep_cd?`<button class="btn btn-primary" onclick="goProcure(${r.id})">견적·업체선정·전자결재</button>`:''}</div>${r.result?`<div class="rr-meta">${esc(r.result)}</div>`:''}</article>`).join(''):'<div class="rr-empty">작성된 수리신청서 없음</div>'}
+async function approve(id){if(!confirm('이 내용을 SVMS 수리 DRAFT로 저장할까요? 저장 후 TRMT 수정은 불가합니다.'))return;try{await api('POST',`/api/repair-requests/${id}/approve`,{});await load()}catch(e){alert(e.message)}}
+async function del(id){if(!confirm('이 초안을 삭제할까요?'))return;try{await api('DELETE',`/api/repair-requests/${id}`);await load()}catch(e){alert(e.message)}}
+function goProcure(id){const r=rows.find(x=>x.id===id);if(r)location.href='/dock_procure?vsl_nm='+encodeURIComponent(r.vsl_nm)}
+async function resolveRepair(id){const rep=(prompt('SVMS에서 확인한 REP_CD를 입력하세요. 문서가 생성되지 않은 것을 확인했다면 빈칸으로 확인을 누르세요.')||'').trim();try{if(rep){if(!confirm(`REP_CD ${rep}로 저장 완료 처리할까요?`))return;await api('POST',`/api/repair-requests/${id}/resolve`,{action:'mark_saved',rep_cd:rep,confirmation:'SVMS확인'})}else{if(!confirm('SVMS에 이 수리신청서가 생성되지 않았음을 직접 확인했습니까? 확인 시 재시도 가능 상태로 돌립니다.'))return;await api('POST',`/api/repair-requests/${id}/resolve`,{action:'release',confirmation:'SVMS미생성확인'})}await load()}catch(e){alert(e.message)}}
+$('#rr-save').onclick=async()=>{if(saveBusy||!$('#rr-form').reportValidity())return;saveBusy=true;$('#rr-save').disabled=true;try{const id=$('#rr-id').value,p=payload();if(id){delete p.client_request_id;await api('PATCH',`/api/repair-requests/${id}`,p)}else await api('POST','/api/repair-requests',p);reset();await load()}catch(e){alert(e.message)}finally{saveBusy=false;$('#rr-save').disabled=false}};
+$('#rr-new').onclick=reset;$('#rr-cancel').onclick=reset;$('#rr-refresh').onclick=load;
+Promise.all([api('GET','/api/vessels'),load()]).then(([vs])=>{$('#rr-vessel').innerHTML=vs.map(v=>`<option value="${v.id}">${esc(v.name)} · ${esc(v.vsl_cd||'SVMS코드 없음')}</option>`).join('')}).catch(e=>alert(e.message));
+</script>
+{% endblock %}

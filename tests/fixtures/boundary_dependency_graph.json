@@ -66,6 +66,7 @@
     "routes_calendar_dock.py": [],
     "routes_core.py": [],
     "routes_dock_submit.py": [],
+    "routes_repair_request.py": [],
     "routes_tail.py": [],
     "token_auth.py": [
       "_DUMMY_PW_HASH",
@@ -284,6 +285,20 @@
       "admin_required",
       "api_key_required",
       "automation_tasks",
+      "login_required"
+    ]
+  },
+  "routes_repair_request.py": {
+    "app_core.py": [
+      "execute",
+      "execute_rc",
+      "get_db",
+      "query"
+    ],
+    "helpers_shared.py": [
+      "_automation_enabled",
+      "admin_required",
+      "api_key_required",
       "login_required"
     ]
   },

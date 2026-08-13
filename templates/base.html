@@ -84,7 +84,7 @@
       {% set survey_eps = ['routes_core.class_status_page','routes_core.condition_survey','routes_core.vetting_status'] %}
       {% set report_eps = ['routes_core.dry_dock_page','routes_core.dry_dock_edit_page','routes_core.boarding_page','routes_core.boarding_edit_page'] %}
       {% set auto_eps = ['routes_dock_submit.automation_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_calendar_dock.health_page'] %}
-      {% set dockprep_eps = ['routes_calendar_dock.reqgen_page','routes_dock_submit.dock_procure_page'] %}
+      {% set dockprep_eps = ['routes_repair_request.repair_request_page','routes_calendar_dock.reqgen_page','routes_dock_submit.dock_procure_page'] %}
       {% set expense_eps = ['routes_calendar_dock.expenses_page','routes_calendar_dock.expense_detail_page'] %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
       {% macro nlink(ep, label, eps=None, icon=None) -%}
@@ -127,6 +127,7 @@
         <div class="nav-group {% if request.endpoint in dockprep_eps %}active{% endif %}">
           <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-anchor"/></svg>입거 준비<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
           <div class="nav-submenu">
+            {{ nlink('routes_repair_request.repair_request_page', '수리신청서') }}
             {{ nlink('routes_calendar_dock.reqgen_page', '도크 자재/수리') }}
             {{ nlink('routes_dock_submit.dock_procure_page', 'Dock 발주현황') }}
             {% if session.role == 'admin' %}<a href="/drydock" class="nav-link">Dock Manager</a>{% endif %}
@@ -237,6 +238,7 @@
         </div>
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-anchor"/></svg>입거 준비</div>
         <div class="mm-sub-group">
+          {{ nlink('routes_repair_request.repair_request_page', '수리신청서') }}
           {{ nlink('routes_calendar_dock.reqgen_page', '도크 자재/수리') }}
           {{ nlink('routes_dock_submit.dock_procure_page', 'Dock 발주현황') }}
           {% if session.role == 'admin' %}<a href="/drydock" class="nav-link">Dock Manager</a>{% endif %}

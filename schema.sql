@@ -795,3 +795,29 @@ CREATE TABLE IF NOT EXISTS client_idem (
     PRIMARY KEY (user_id, idem_key)
 );
 CREATE INDEX IF NOT EXISTS idx_client_idem_created ON client_idem(created_at);
+
+-- 일반수리 + Dock 수리 공용 신청서. SVMS DRAFT 저장 전까지만 편집 가능하다.
+CREATE TABLE IF NOT EXISTS repair_request (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_request_id TEXT UNIQUE,
+    vessel_id INTEGER NOT NULL REFERENCES vessels(id),
+    vsl_cd TEXT NOT NULL, vsl_nm TEXT NOT NULL,
+    subject TEXT NOT NULL, category TEXT NOT NULL, equipment TEXT NOT NULL,
+    maker TEXT, type_nm TEXT,
+    app_voy TEXT NOT NULL, app_port_cd TEXT NOT NULL, app_dt TEXT NOT NULL,
+    cause TEXT NOT NULL, inspection TEXT NOT NULL, detail TEXT NOT NULL,
+    stock TEXT NOT NULL CHECK(stock IN ('owner','vendor')),
+    reason_cd TEXT NOT NULL, dept_cd TEXT NOT NULL,
+    dock_yn TEXT NOT NULL DEFAULT 'N' CHECK(dock_yn IN ('Y','N')),
+    urgent_yn TEXT NOT NULL DEFAULT 'N' CHECK(urgent_yn IN ('Y','N')),
+    critical_yn TEXT NOT NULL DEFAULT 'N' CHECK(critical_yn IN ('Y','N')),
+    status TEXT NOT NULL DEFAULT 'pending'
+           CHECK(status IN ('pending','approved','saving','saved','failed')),
+    rep_cd TEXT UNIQUE,
+    dock_rid INTEGER UNIQUE REFERENCES dock_procure(id),
+    result TEXT, version INTEGER NOT NULL DEFAULT 1,
+    decided_by TEXT, decided_at TEXT, done_at TEXT, created_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_repair_request_status ON repair_request(status, id);

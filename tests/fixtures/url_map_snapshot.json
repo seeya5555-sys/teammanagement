@@ -2328,6 +2328,27 @@
   "defaults": {}
  },
  {
+  "rule": "/api/ext/repair-requests/<int:rid>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_repair_request.repair_request_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/repair-requests/approved",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_repair_request.repair_request_claim",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/ext/reqgen/approved",
   "methods": [
    "GET",
@@ -3194,6 +3215,67 @@
    "OPTIONS"
   ],
   "endpoint": "routes_calendar_dock.api_msg_preview_file",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/repair-requests",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_repair_request.repair_request_create",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/repair-requests",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_repair_request.repair_request_list",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/repair-requests/<int:rid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_repair_request.repair_request_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/repair-requests/<int:rid>",
+  "methods": [
+   "OPTIONS",
+   "PATCH"
+  ],
+  "endpoint": "routes_repair_request.repair_request_patch",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/repair-requests/<int:rid>/approve",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_repair_request.repair_request_approve",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/repair-requests/<int:rid>/resolve",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_repair_request.repair_request_resolve",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4124,6 +4206,17 @@
    "OPTIONS"
   ],
   "endpoint": "routes_calendar_dock.msg_preview_page",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/repair-requests",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_repair_request.repair_request_page",
   "strict_slashes": true,
   "defaults": {}
  },

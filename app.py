@@ -1376,6 +1376,8 @@ import routes_calendar_dock
 app.register_blueprint(routes_calendar_dock.bp)
 import routes_dock_submit
 app.register_blueprint(routes_dock_submit.bp)
+import routes_repair_request
+app.register_blueprint(routes_repair_request.bp)
 import routes_tail
 app.register_blueprint(routes_tail.bp)
 # Static contract marker: dock sync notifications keep the historical deep link.
