@@ -83,6 +83,14 @@ def _reserve_rows(p, client_id, who):
         cur = db.execute(f"INSERT INTO repair_request(client_request_id,{cols},created_by) "
                          f"VALUES(?,{qs},?)", (client_id, *p.values(), who))
         rrid = cur.lastrowid
+        # 일반수리도 기존 MARP 견적·상신 엔진을 공용 사용한다. 그 엔진의 목록은
+        # dock_procure_vessel 를 선박 선택기의 정본으로 삼으므로, 신청서+downstream 행과
+        # 같은 transaction 안에서 선박 엔트리를 보장한다. 기존 입거 메타는 덮지 않는다.
+        db.execute("INSERT INTO dock_procure_vessel(vsl_nm,vsl_cd,updated_at) "
+                   "VALUES(?,?,datetime('now','localtime')) "
+                   "ON CONFLICT(vsl_nm) DO UPDATE SET "
+                   "vsl_cd=COALESCE(dock_procure_vessel.vsl_cd,excluded.vsl_cd), "
+                   "updated_at=excluded.updated_at", (p['vsl_nm'], p['vsl_cd']))
         if p['dock_yn'] == 'Y':
             nums = [int(x[0][1:]) for x in db.execute(
                 "SELECT req_no FROM dock_procure WHERE vsl_nm=? AND req_no GLOB 'R[0-9]*'", (p['vsl_nm'],))

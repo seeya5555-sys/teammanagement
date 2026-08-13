@@ -612,6 +612,15 @@ def init_db(drop=False):
                 updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
             )
         """)
+        # 직접작성 수리신청서는 일반수리도 dock_procure의 견적·상신 엔진을 사용한다.
+        # 기능 도입 전에 생성된 신청서까지 선박 선택기에서 고립되지 않게 기동 시 멱등 backfill.
+        conn.execute("""
+            INSERT OR IGNORE INTO dock_procure_vessel(vsl_nm, vsl_cd, updated_at)
+            SELECT vsl_nm, MAX(NULLIF(TRIM(vsl_cd),'')), datetime('now','localtime')
+              FROM repair_request
+             WHERE COALESCE(vsl_nm,'')<>''
+             GROUP BY vsl_nm
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS dock_procure (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,

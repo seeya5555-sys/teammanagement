@@ -43,9 +43,33 @@ class RepairRequestTests(unittest.TestCase):
         with appmod.app.app_context():
             rr = appmod.query('SELECT * FROM repair_request WHERE id=?', (rid,), one=True)
             dp = appmod.query('SELECT * FROM dock_procure WHERE id=?', (rr['dock_rid'],), one=True)
+            vessel = appmod.query('SELECT * FROM dock_procure_vessel WHERE vsl_nm=?', ('TEST VESSEL',), one=True)
             self.assertEqual(rr['dock_yn'], 'N'); self.assertEqual(dp['req_no'], f'RR{rid}')
+            self.assertEqual(vessel['vsl_cd'], 'TSTV')
         a = self.c.post(f'/api/repair-requests/{rid}/approve', json={})
         self.assertEqual(a.status_code, 200, a.get_data(as_text=True))
+
+    def test_init_backfills_preexisting_repair_vessel(self):
+        with appmod.app.app_context():
+            appmod.execute("INSERT INTO repair_request(vessel_id,vsl_cd,vsl_nm,subject,category,equipment,"
+                           "app_voy,app_port_cd,app_dt,cause,inspection,detail,stock,reason_cd,dept_cd) "
+                           "VALUES(1,'TSTV','LEGACY VESSEL','legacy','M/E','M/E','1','KRPUS','20260814',"
+                           "'c','i','d','vendor','P','E')")
+            appmod.init_db(drop=False)
+            vessel = appmod.query('SELECT * FROM dock_procure_vessel WHERE vsl_nm=?',
+                                  ('LEGACY VESSEL',), one=True)
+            self.assertEqual(vessel['vsl_cd'], 'TSTV')
+
+    def test_list_exposes_dock_rid_and_existing_vessel_code_wins(self):
+        with appmod.app.app_context():
+            appmod.execute("INSERT INTO dock_procure_vessel(vsl_nm,vsl_cd) VALUES('TEST VESSEL','KEEP')")
+        row = self.c.post('/api/repair-requests', json=self.body(False, 'link-contract')).get_json()
+        listed = self.c.get('/api/repair-requests').get_json()['requests'][0]
+        self.assertEqual(listed['dock_rid'], row['dock_rid'])
+        with appmod.app.app_context():
+            vessel = appmod.query('SELECT vsl_cd FROM dock_procure_vessel WHERE vsl_nm=?',
+                                  ('TEST VESSEL',), one=True)
+            self.assertEqual(vessel['vsl_cd'], 'KEEP')
 
     def test_dock_reserves_r_and_saved_is_immutable(self):
         one = self.c.post('/api/repair-requests', json=self.body(True, 'dock-1')).get_json()

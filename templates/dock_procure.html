@@ -475,6 +475,10 @@
     {code:'done',  nm:'발주완료', color:'var(--teal-dot)'},
   ];
   let DATA = {vessels:[], current:null, lines:[]};
+  const ENTRY = new URLSearchParams(location.search);
+  const ENTRY_VSL = ENTRY.get('vsl_nm') || '';
+  const ENTRY_RID = Number(ENTRY.get('rid') || 0);
+  let ENTRY_DONE = false;
   let FILTER = 'R';   // 분류 기본=서비스(R) — 칩 다시 누르면 전체 해제 (빈값=전체)
   let SFILTER = '';   // 상태(빈값=전체) — 토글
 
@@ -502,7 +506,24 @@
     DATA = lines;
     YARD_FOR = null;                 // 선박이 바뀌었을 수 있다 — 조선소표는 보일 때 다시 채운다
     render();
+    focusEntryLine();
     loadYardIfVisible();             // 조선소(Yard) 7카테고리 — `.dy-card` 가 보일 때만
+  }
+
+  function focusEntryLine(){
+    if(ENTRY_DONE || !ENTRY_RID) return;
+    const line=DATA.lines.find(l=>l.id===ENTRY_RID);
+    if(!line) return;
+    // 대상 line을 찾은 이상 이 진입 의도는 1회 소비한다. DOM 탐색이 예상 밖으로 실패해도
+    // 이후 폴링/선박전환 때 사용자의 필터를 계속 덮어쓰지 않는다.
+    ENTRY_DONE=true;
+    FILTER=line.cat_code||''; SFILTER='';
+    render();
+    const row=document.querySelector(`#dp-body tr[data-id="${ENTRY_RID}"]`);
+    if(!row) return;
+    row.style.outline='3px solid var(--accent,#2f6fed)';
+    row.style.outlineOffset='-3px';
+    row.scrollIntoView({behavior:'smooth',block:'center'});
   }
 
   // ===== 조선소(Yard) 견적 → SVMS Yard Repair 7카테고리 =====
@@ -1692,7 +1713,7 @@
     refreshStatus();
   }
 
-  load();
+  load(ENTRY_VSL || undefined);
   loadShipyards();
   bindShipyardSel();
   bindShipyardQuery();
