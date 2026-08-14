@@ -25,8 +25,15 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #   4/5. routes_repair_request.py INSERT `{cols}/{qs}` and PATCH `{sets}` — identifiers are the fixed
 #      literal keys of the server-built `_payload()` dict, never request keys; values are bound.
 # Removed 1 site (the dock lines query was replaced by 3.).
-EXPECTED_COUNT = 140
-EXPECTED_SHA256 = "6361015f28cffb81159c718f729388b5bed2b51b63dbbc1c05dd47fb1c8b9193"
+# 2026-08-15 baseline update — `deploy/oneoff/merge_vsl_nm.py` 가 12개 site 를 추가했다. 전건 검토:
+#   · 식별자(`{tab}` / `{t}` / `{idx["name"]}` / `{where}`)는 전부 **DB 스키마에서 파생**된다
+#     (`sqlite_master` 테이블명, `PRAGMA index_list/index_info` 컬럼명). request 값이 닿는 경로가 없다.
+#   · `{OWNER}` 는 모듈 상수 `dock_procure_vessel`. `{','.join('?' * len(touched))}` 는 placeholder 뿐.
+#   · 선박명 등 모든 **값은 파라미터 바인딩**이다.
+#   · 이 파일은 웹에서 import 되지 않는 오프라인 CLI 다. 그래도 `EXCLUDED_DIRS` 로 빼지 않고 등재한다 —
+#     디렉토리를 제외하면 나중에 `deploy/` 아래에 앱이 import 하는 코드가 생겨도 감시가 안 붙는다.
+EXPECTED_COUNT = 152
+EXPECTED_SHA256 = "627a9aeaba8b85516ebdd7dad039bed3be162f9c8eb97318c49c9a57fd62639b"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }
