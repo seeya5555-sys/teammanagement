@@ -16,8 +16,17 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
-EXPECTED_COUNT = 136
-EXPECTED_SHA256 = "a970356def3eac4b0a39fa82fa601f79dd7938a97b2e89653285110cce5e684b"
+# 2026-08-14 baseline update — the gate had been red since 471657a (drift accumulated over
+# several commits, so it was NOT caught at deploy time). Reviewed AST diff, all 5 added sites:
+#   1. routes_calendar_dock.py `f'SELECT * FROM {table} WHERE id=?'` — table comes from the fixed
+#      `_MSG_PREVIEW_SOURCES` whitelist (404 on miss); no request identifier reaches SQL.
+#   2/3. routes_dock_submit.py `{line_where}` (agg + lines) — one of two module-local literals chosen
+#      by the validated `scope` in {dock, repair}; every value is still bound as a parameter.
+#   4/5. routes_repair_request.py INSERT `{cols}/{qs}` and PATCH `{sets}` — identifiers are the fixed
+#      literal keys of the server-built `_payload()` dict, never request keys; values are bound.
+# Removed 1 site (the dock lines query was replaced by 3.).
+EXPECTED_COUNT = 140
+EXPECTED_SHA256 = "6361015f28cffb81159c718f729388b5bed2b51b63dbbc1c05dd47fb1c8b9193"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

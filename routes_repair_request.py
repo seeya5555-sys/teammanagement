@@ -141,7 +141,11 @@ def repair_request_create():
     except sqlite3.IntegrityError as e:
         return jsonify({'error': f'중복 생성 차단: {e}'}), 409
     row = query('SELECT id,status,dock_rid,version FROM repair_request WHERE id=?', (rid,), one=True)
-    return jsonify(dict(row)), (201 if made else 200)
+    # `replayed` = 같은 client_request_id 로 이미 접수돼 이번 body 는 **저장되지 않았다**는 뜻.
+    # 응답만 유실된 재시도(선상 회선)에서 클라이언트가 "저장됨"으로 오인해 사용자의 수정분을
+    # 조용히 버리는 것을 막기 위한 additive 필드다(웹 화면은 이 응답을 읽지 않으므로 영향 없음).
+    out = dict(row); out['replayed'] = (not made)
+    return jsonify(out), (201 if made else 200)
 
 
 @bp.route('/api/repair-requests/<int:rid>', methods=['PATCH'])

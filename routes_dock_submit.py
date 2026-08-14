@@ -321,13 +321,29 @@ def api_dockproc_vessel_delete():
     if not query("SELECT vsl_nm FROM dock_procure_vessel WHERE vsl_nm=?", (vsl_nm,), one=True):
         return jsonify({'error': f'"{vsl_nm}" 없음'}), 404
     db = get_db()
+    # 🔴 수리신청서가 붙은 라인은 이 경로로 지우지 않는다. `repair_request.dock_rid` 는
+    #    `REFERENCES dock_procure(id)` 이고 요청 커넥션은 `PRAGMA foreign_keys=ON` 이라
+    #    FK 가 막아 주기는 한다 — 다만 그러면 IntegrityError 가 그대로 올라가 raw HTML 500 이 되고
+    #    선박 카드는 사유 없이 영영 안 지워진다(dock scope 집계는 수리라인을 빼기 때문에
+    #    화면엔 "0건" 으로 보인다). 사유를 말해 주는 409 로 fail-closed 한다.
+    linked = db.execute(
+        "SELECT COUNT(*) c FROM dock_procure p "
+        "WHERE p.vsl_nm=? AND EXISTS (SELECT 1 FROM repair_request rr WHERE rr.dock_rid=p.id)",
+        (vsl_nm,)).fetchone()['c']
+    if linked:
+        return jsonify({'error': f'수리신청서에 연결된 발주라인 {linked}건이 있어 선박을 삭제할 수 없음 — '
+                                 '수리신청서에서 먼저 삭제해야 함'}), 409
     lines = db.execute("SELECT COUNT(*) c FROM dock_procure WHERE vsl_nm=?", (vsl_nm,)).fetchone()['c']
     yard = db.execute("SELECT COUNT(*) c FROM dock_yard WHERE vsl_nm=?", (vsl_nm,)).fetchone()['c']
     # 3개 테이블 원자적 삭제 — 단일 트랜잭션(중간 실패 시 자동 rollback, 부분삭제 방지)
-    with db:
-        db.execute("DELETE FROM dock_procure WHERE vsl_nm=?", (vsl_nm,))
-        db.execute("DELETE FROM dock_yard WHERE vsl_nm=?", (vsl_nm,))
-        db.execute("DELETE FROM dock_procure_vessel WHERE vsl_nm=?", (vsl_nm,))
+    try:                                   # pre-check 뒤에 수리신청서가 붙는 race → FK 가 막고 rollback, 409 로 전달
+        with db:
+            db.execute("DELETE FROM dock_procure WHERE vsl_nm=?", (vsl_nm,))
+            db.execute("DELETE FROM dock_yard WHERE vsl_nm=?", (vsl_nm,))
+            db.execute("DELETE FROM dock_procure_vessel WHERE vsl_nm=?", (vsl_nm,))
+    except sqlite3.IntegrityError:
+        return jsonify({'error': '수리신청서에 연결된 발주라인이 있어 선박을 삭제할 수 없음 — '
+                                 '수리신청서에서 먼저 삭제해야 함'}), 409
     return jsonify({'ok': True, 'vsl_nm': vsl_nm, 'deleted_lines': lines, 'deleted_yard': yard})
 
 
@@ -709,7 +725,14 @@ def api_dockproc_patch(lid):
 @bp.route('/api/dock_procure/<int:lid>', methods=['DELETE'])
 @login_required
 def api_dockproc_delete(lid):
-    execute("DELETE FROM dock_procure WHERE id=?", (lid,))
+    # 수리신청서가 소유한 라인은 신청서 쪽에서만 지운다 — 여기서 지우려 하면 FK 가 막아
+    # IntegrityError → raw HTML 500 이 되고 화면엔 사유가 안 남는다. 사유 있는 409 로 돌린다.
+    if query("SELECT id FROM repair_request WHERE dock_rid=?", (lid,), one=True):
+        return jsonify({'error': '수리신청서에 연결된 발주라인임 — 수리신청서에서 삭제해야 함'}), 409
+    try:                                               # pre-check 통과 후 연결이 생기는 race → 409(TOCTOU 보강)
+        execute("DELETE FROM dock_procure WHERE id=?", (lid,))
+    except sqlite3.IntegrityError:
+        return jsonify({'error': '수리신청서에 연결된 발주라인임 — 수리신청서에서 삭제해야 함'}), 409
     return jsonify({'ok': True})
 
 

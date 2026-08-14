@@ -151,5 +151,70 @@ class RepairRequestTests(unittest.TestCase):
                                   'confirmation': 'SVMS확인'})
         self.assertEqual((saved.status_code, saved.get_json()['status']), (200, 'saved'))
 
+    def test_dock_deletes_refuse_repair_owned_line(self):
+        """Dock 쪽 삭제 경로는 수리신청서 소유 라인을 409 로 거부해야 한다.
+        FK(dock_rid REFERENCES dock_procure) 가 막아 주기는 하지만, 막히는 방식이
+        IntegrityError → raw HTML 500 이면 사유가 안 남고 선박은 영영 안 지워진다."""
+        repair = self.c.post('/api/repair-requests', json=self.body(False, 'del-guard')).get_json()
+        with appmod.app.app_context():
+            appmod.execute("INSERT INTO dock_procure(vsl_nm,vsl_cd,req_no,cat_code,subject) "
+                           "VALUES('TEST VESSEL','TSTV','P9','P','Dock paint')")
+
+        line = self.c.delete(f"/api/dock_procure/{repair['dock_rid']}")
+        self.assertEqual(line.status_code, 409, line.get_data(as_text=True))
+        self.assertIn('수리신청서', line.get_json()['error'])
+
+        vessel = self.c.delete('/api/dock_procure/vessel', json={'vsl_nm': 'TEST VESSEL'})
+        self.assertEqual(vessel.status_code, 409, vessel.get_data(as_text=True))
+        with appmod.app.app_context():           # 부분삭제 0 — 순수 라인까지 살아 있어야 한다
+            self.assertEqual(appmod.query("SELECT COUNT(*) c FROM dock_procure WHERE vsl_nm=?",
+                                          ('TEST VESSEL',), one=True)['c'], 2)
+            self.assertTrue(appmod.query("SELECT vsl_nm FROM dock_procure_vessel WHERE vsl_nm=?",
+                                         ('TEST VESSEL',), one=True))
+
+        # 신청서를 지우면 연결이 풀리고 두 경로가 다시 열린다.
+        self.assertEqual(self.c.delete(f"/api/repair-requests/{repair['id']}").status_code, 200)
+        reopened = self.c.delete('/api/dock_procure/vessel', json={'vsl_nm': 'TEST VESSEL'})
+        self.assertEqual((reopened.status_code, reopened.get_json()['deleted_lines']), (200, 1))
+
+
+    def test_replay_is_reported_so_clients_cannot_lose_edits(self):
+        """같은 client_request_id 재전송은 201 이 아니라 200 + replayed=True 여야 한다.
+        응답만 유실된 재시도에서 클라이언트가 '저장됨'으로 오인하면 사용자가 고친 내용이
+        조용히 사라진다(iOS 는 status code 를 못 보므로 본문 플래그가 유일한 신호)."""
+        first = self.c.post('/api/repair-requests', json=self.body(False, 'replay-1'))
+        self.assertEqual((first.status_code, first.get_json()['replayed']), (201, False))
+        again = self.c.post('/api/repair-requests', json={**self.body(False, 'replay-1'),
+                                                         'subject': '형이 고친 제목'})
+        self.assertEqual((again.status_code, again.get_json()['replayed']), (200, True))
+        self.assertEqual(again.get_json()['id'], first.get_json()['id'])
+        with appmod.app.app_context():          # 재전송 body 는 반영되지 않아야 한다(idempotent)
+            self.assertEqual(appmod.query('SELECT subject FROM repair_request WHERE id=?',
+                                          (first.get_json()['id'],), one=True)['subject'], 'M/E repair')
+
+    def test_delete_race_past_precheck_still_returns_409_not_500(self):
+        """pre-check 통과 후 연결이 생기는 race(TOCTOU) 는 FK 가 막는다 — 그 IntegrityError 가
+        raw HTML 500 으로 새지 않고 409 로 나와야 한다. pre-check 를 무력화해 except 분기를
+        직접 태우는 negative control(가드가 없으면 이 테스트는 500 으로 실패한다)."""
+        from unittest.mock import patch
+        import routes_dock_submit as rds
+        repair = self.c.post('/api/repair-requests', json=self.body(False, 'race-1')).get_json()
+
+        orig = rds.query                        # 패치 전에 원본을 잡는다(안 잡으면 무한재귀)
+
+        def blind(sql, *a, **kw):               # 수리연결 pre-check 만 못 보게 만든다
+            if 'FROM repair_request WHERE dock_rid' in sql:
+                return None
+            return orig(sql, *a, **kw)
+
+        with patch.object(rds, 'query', side_effect=blind):
+            line = self.c.delete(f"/api/dock_procure/{repair['dock_rid']}")
+        self.assertEqual(line.status_code, 409, line.get_data(as_text=True))
+        with appmod.app.app_context():          # 롤백 확인 — 라인과 신청서 둘 다 살아 있어야 한다
+            self.assertTrue(appmod.query('SELECT id FROM dock_procure WHERE id=?',
+                                         (repair['dock_rid'],), one=True))
+            self.assertTrue(appmod.query('SELECT id FROM repair_request WHERE id=?',
+                                         (repair['id'],), one=True))
+
 
 if __name__ == '__main__': unittest.main()
