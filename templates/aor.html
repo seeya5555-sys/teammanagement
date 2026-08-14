@@ -341,10 +341,30 @@
       const r = await fetch('/api/aor/drafts/' + d.id + '/approve', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
       });
-      const j = await r.json();
+      const raw = await r.text();
+      let j = null;
+      let parsed = false;
+      if (raw) {
+        try {
+          j = JSON.parse(raw);
+          parsed = !!j && typeof j === 'object' && !Array.isArray(j);
+        } catch (_) {}
+      }
       if (!r.ok) {
-        errEl.textContent = (j.error || '승인 실패'); errEl.hidden = false;
-        el.classList.remove('is-busy'); return;
+        const msg = (parsed && j.error) || `승인 요청 응답 실패 (HTTP ${r.status}) — 카드 상태를 다시 확인했습니다.`;
+        await load();
+        const current = listEl.querySelector(`.aor-card[data-id="${d.id}"] .aor-err`);
+        if (current) { current.textContent = msg; current.hidden = false; }
+        return;
+      }
+      if (!parsed) {
+        await load();
+        const current = listEl.querySelector(`.aor-card[data-id="${d.id}"] .aor-err`);
+        if (current) {
+          current.textContent = '승인 응답 형식이 올바르지 않아 카드 상태를 다시 확인했습니다.';
+          current.hidden = false;
+        }
+        return;
       }
       load();
     } catch (e) {
