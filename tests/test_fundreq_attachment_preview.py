@@ -161,6 +161,40 @@ class FundreqAttachmentPreviewTests(unittest.TestCase):
         self.assertEqual(401, appmod.app.test_client().post(
             '/api/ext/fundreq/drafts/%d/attachments/0' % self.did, data=PDF).status_code)
 
+    def test_auto_submit_result_absorbs_stale_active_card_without_creating_one(self):
+        r = self.client.post('/api/ext/fundreq/drafts',
+                             json={'opex_cd': 'GYPSCO2607270001', 'auto_submitted': True,
+                                   'result': '상신OK STATUS=U'},
+                             headers={'X-API-Key': 'secret'})
+        self.assertEqual(200, r.status_code)
+        self.assertEqual(1, r.get_json()['applied'])
+        row = self.client.get('/api/fundreq/drafts').get_json()['drafts'][0]
+        self.assertEqual('submitted', row['status'])
+        self.assertEqual('상신OK STATUS=U', row['result'])
+
+        r = self.client.post('/api/ext/fundreq/drafts',
+                             json={'opex_cd': 'NONECO2607270001', 'auto_submitted': True},
+                             headers={'X-API-Key': 'secret'})
+        self.assertEqual(200, r.status_code)
+        self.assertEqual(0, r.get_json()['applied'])
+        self.assertEqual(1, len(self.client.get('/api/fundreq/drafts').get_json()['drafts']))
+
+    def test_auto_submit_result_never_overwrites_human_reject_decision(self):
+        for status in ('rejecting', 'reject_submitting', 'rejected', 'reject_failed'):
+            with appmod.app.app_context():
+                appmod.execute("UPDATE fundreq_draft SET status=? WHERE id=?", (status, self.did))
+            r = self.client.post('/api/ext/fundreq/drafts',
+                                 json={'opex_cd': 'GYPSCO2607270001', 'auto_submitted': True},
+                                 headers={'X-API-Key': 'secret'})
+            self.assertEqual(409, r.status_code)
+            self.assertEqual(status, r.get_json()['status'])
+
+    def test_auto_submit_result_requires_api_key(self):
+        r = appmod.app.test_client().post('/api/ext/fundreq/drafts',
+                                          json={'opex_cd': 'GYPSCO2607270001',
+                                                'auto_submitted': True})
+        self.assertEqual(401, r.status_code)
+
 
 if __name__ == '__main__':
     unittest.main()

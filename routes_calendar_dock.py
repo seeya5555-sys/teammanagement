@@ -6254,6 +6254,30 @@ def api_ext_fundreq_create():
     opex_cd = (d.get('opex_cd') or '').strip()
     if not opex_cd:
         return jsonify({'error': 'opex_cd required'}), 400
+    # 결정적 pass 는 fundreq_auto 가 사람 카드와 별개로 무인 상신한다. 검증 카드가 먼저
+    # 생긴 뒤 자동상신이 성공하면 그 pending 카드가 남아 사람이 재승인하게 되므로,
+    # STATUS=U readback 을 끝낸 러너가 기존 카드만 submitted 로 흡수한다(새 카드 생성 없음).
+    if d.get('auto_submitted') is True:
+        result = (d.get('result') or '자동상신 성공·SVMS STATUS=U 확인')[:2000]
+        row = query("SELECT id, status FROM fundreq_draft WHERE opex_cd=? "
+                    "ORDER BY id DESC LIMIT 1", (opex_cd,), one=True)
+        if not row:
+            return jsonify({'opex_cd': opex_cd, 'status': None, 'applied': 0}), 200
+        conflicts = ('rejecting', 'reject_submitting', 'rejected', 'reject_failed')
+        if row['status'] in conflicts:
+            return jsonify({'error': 'human reject decision conflicts with auto-submit result',
+                            'id': row['id'], 'status': row['status']}), 409
+        applied = execute_rc("UPDATE fundreq_draft SET status='submitted', "
+                             "done_at=datetime('now','localtime'), result=? WHERE id=? "
+                             "AND status IN ('pending','approved','submitting','failed')",
+                             (result, row['id']))
+        if not applied:  # SELECT 뒤 사람 결정이 바뀐 경우 조건부 UPDATE가 0 — 최신 상태 재판정.
+            current = query("SELECT status FROM fundreq_draft WHERE id=?", (row['id'],), one=True)
+            if current and current['status'] in conflicts:
+                return jsonify({'error': 'human reject decision conflicts with auto-submit result',
+                                'id': row['id'], 'status': current['status']}), 409
+        return jsonify({'opex_cd': opex_cd, 'status': 'submitted',
+                        'applied': applied, 'id': row['id']}), 200
     ex = query("SELECT id, status FROM fundreq_draft WHERE opex_cd=? "
                "AND status IN ('pending','approved','submitting','submitted',"
                "'rejecting','reject_submitting','rejected') "
