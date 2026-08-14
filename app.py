@@ -831,6 +831,39 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN shipyard_vndr_nm TEXT")
             if 'dk_cd' not in _dpv:                        # SVMS 입거수리 Dock No(푸싱 대상 draft). 설정된 선박만 자동푸싱 opt-in
                 conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN dk_cd TEXT")
+            if 'origin' not in _dpv:
+                # 🔴 엔트리 출처. 'repair' = 일반수리 신청서가 MARP 견적·상신 엔진을 쓰기 위해
+                #    자동으로 만든 shim 이고 **입거(Dock) 선박이 아니다**. Dock 발주현황 탭은
+                #    이 엔트리를 목록에서 제외한다(2026-08-15 형 지적: "일반 수리신청서는
+                #    dock발주 탭에서 하는 게 아닌데 이렇게 됨"). NULL = 기존 Dock 엔트리.
+                conn.execute("ALTER TABLE dock_procure_vessel ADD COLUMN origin TEXT")
+                # 태깅 조건은 **Dock 근거가 하나도 없을 때만**. 하나라도 있으면 진짜 입거선박이고,
+                # 잘못 태깅하면 아래 필터가 그 배를 Dock 탭에서 지워 버린다(올마이트 지적 반영):
+                #   dock 메타(vtype/survey/shipyard/due_date) · 조선소 견적(dock_yard) ·
+                #   Dock No(dk_cd) · 조선소 벤더 · 수리연결이 아닌 dock_procure 라인.
+                conn.execute("""
+                    UPDATE dock_procure_vessel SET origin='repair'
+                     WHERE vsl_nm IN (SELECT DISTINCT vsl_nm FROM repair_request
+                                       WHERE COALESCE(vsl_nm,'')<>'')
+                       AND COALESCE(vtype,'')='' AND COALESCE(survey,'')=''
+                       AND COALESCE(shipyard,'')='' AND COALESCE(due_date,'')=''
+                       AND COALESCE(dk_cd,'')='' AND COALESCE(shipyard_vndr_cd,'')=''
+                       AND COALESCE(shipyard_vndr_nm,'')='' AND COALESCE(owner_co,'')=''
+                       AND NOT EXISTS (SELECT 1 FROM dock_yard y
+                                        WHERE y.vsl_nm=dock_procure_vessel.vsl_nm)
+                       AND NOT EXISTS (SELECT 1 FROM dock_procure p
+                                        WHERE p.vsl_nm=dock_procure_vessel.vsl_nm
+                                          AND NOT EXISTS (SELECT 1 FROM repair_request rr
+                                                           WHERE rr.dock_rid=p.id))
+                """)
+            # ⛔ 이미 갈라진 중복 행(예: 'Belgium B' vs 'BELGIUM B')을 **자동 병합하지 않는다.**
+            #    `vsl_nm` 은 11개 테이블(dock_procure/dock_yard/dock_submit_draft/dock_inquiry_draft/
+            #    reqgen_draft/aor_draft/invoice_draft/fundreq_draft/soa_review_case/repair_request/
+            #    dock_procure_vessel)이 문자열로 참조하는 그룹 키라, 이름 재매핑은 그 전부를 UNIQUE
+            #    충돌 없이 옮겨야 하는 파괴적 작업이다. 매 부팅 heuristic 으로 돌릴 물건이 아니다
+            #    (2026-08-15 올마이트 지적: 같은 코드의 두 shim 이 서로를 지우는 순환도 성립).
+            #    화면 노출은 아래 origin 태깅 + Dock 탭 필터로 해소되고, 실제 병합이 필요하면
+            #    사람이 승인한 일회성 마이그레이션으로 한다.
         except Exception:
             app.logger.debug('init-db migration skip', exc_info=True)
 

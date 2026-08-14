@@ -217,4 +217,93 @@ class RepairRequestTests(unittest.TestCase):
                                          (repair['id'],), one=True))
 
 
+    def test_repair_reuses_existing_dock_vessel_spelling(self):
+        """같은 SVMS 코드의 Dock 엔트리가 있으면 그 표기를 재사용해야 한다.
+        `vessels.name` 표기를 그대로 넣으면 같은 배가 두 장 카드로 갈린다(실사고: 'Belgium B'/'BELGIUM B')."""
+        with appmod.app.app_context():
+            appmod.execute("INSERT INTO dock_procure_vessel(vsl_nm,vsl_cd,vtype) "
+                           "VALUES('TEST VESSEL DOCK','TSTV','VLCC')")
+        row = self.c.post('/api/repair-requests', json=self.body(False, 'canon-1')).get_json()
+        with appmod.app.app_context():
+            rr = appmod.query('SELECT vsl_nm FROM repair_request WHERE id=?', (row['id'],), one=True)
+            dp = appmod.query('SELECT vsl_nm FROM dock_procure WHERE id=?', (row['dock_rid'],), one=True)
+            self.assertEqual((rr['vsl_nm'], dp['vsl_nm']), ('TEST VESSEL DOCK', 'TEST VESSEL DOCK'))
+            self.assertIsNone(appmod.query("SELECT vsl_nm FROM dock_procure_vessel WHERE vsl_nm='TEST VESSEL'",
+                                           one=True))
+
+    def test_repair_only_vessel_is_hidden_from_dock_tab_until_dock_lines_exist(self):
+        """일반수리 shim 엔트리는 Dock 발주현황 목록에 뜨면 안 된다 — 삭제도 안 되는 '0/0' 유령 카드가 된다.
+        실제 Dock 라인이 붙으면 자동으로 다시 보여야 한다(숨김이 영구 은폐가 되면 안 됨)."""
+        self.c.post('/api/repair-requests', json=self.body(False, 'shim-1'))
+        with appmod.app.app_context():
+            self.assertEqual(appmod.query("SELECT origin FROM dock_procure_vessel WHERE vsl_nm=?",
+                                          ('TEST VESSEL',), one=True)['origin'], 'repair')
+        listed = self.c.get('/api/dock_procure/lines').get_json()
+        self.assertNotIn('TEST VESSEL', [v['vsl_nm'] for v in listed['vessels']])
+
+        with appmod.app.app_context():           # 실제 Dock 라인 등장 → 다시 노출
+            appmod.execute("INSERT INTO dock_procure(vsl_nm,vsl_cd,req_no,cat_code,subject) "
+                           "VALUES('TEST VESSEL','TSTV','P3','P','Dock paint')")
+        again = self.c.get('/api/dock_procure/lines').get_json()
+        self.assertIn('TEST VESSEL', [v['vsl_nm'] for v in again['vessels']])
+
+    def test_boot_never_auto_merges_split_vessel_rows(self):
+        """이미 갈라진 중복 행은 **자동 병합하지 않는다**(vsl_nm 은 11개 테이블이 문자열로 참조하는
+        그룹 키라 이름 재매핑이 파괴적). 기동 backfill 은 태깅만 하고 데이터는 그대로 두며,
+        화면 문제는 Dock 탭 필터로 해소된다."""
+        row = self.c.post('/api/repair-requests', json=self.body(False, 'nomerge-1')).get_json()
+        with appmod.app.app_context():
+            appmod.execute("INSERT INTO dock_procure_vessel(vsl_nm,vsl_cd,vtype,shipyard) "
+                           "VALUES('TEST VESSEL UP','TSTV','VLCC','YARD')")
+            appmod.init_db(drop=False)
+            self.assertTrue(appmod.query("SELECT vsl_nm FROM dock_procure_vessel WHERE vsl_nm=?",
+                                         ('TEST VESSEL',), one=True))       # shim 행 보존
+            self.assertEqual(appmod.query('SELECT vsl_nm FROM repair_request WHERE id=?',
+                                          (row['id'],), one=True)['vsl_nm'], 'TEST VESSEL')
+            self.assertEqual(appmod.query('SELECT vsl_nm FROM dock_procure WHERE id=?',
+                                          (row['dock_rid'],), one=True)['vsl_nm'], 'TEST VESSEL')
+        listed = self.c.get('/api/dock_procure/lines').get_json()            # 화면에서만 사라진다
+        names = [v['vsl_nm'] for v in listed['vessels']]
+        self.assertNotIn('TEST VESSEL', names)
+        self.assertIn('TEST VESSEL UP', names)
+
+    def test_boot_tagging_spares_vessels_with_any_dock_evidence(self):
+        """negative control — Dock 근거(라인·dock_yard·dk_cd·조선소 벤더·메타)가 하나라도 있으면
+        `origin='repair'` 로 태깅하면 안 된다. 오태깅하면 진짜 입거선박이 Dock 탭에서 사라진다."""
+        cases = {
+            'EV LINE': "INSERT INTO dock_procure(vsl_nm,vsl_cd,req_no,cat_code,subject) "
+                       "VALUES('EV LINE','TSTV','P7','P','Dock paint')",
+            'EV YARD': "INSERT INTO dock_yard(vsl_nm,vsl_cd,category,amount) "
+                       "VALUES('EV YARD','TSTV','General',1)",
+            'EV DKCD': "UPDATE dock_procure_vessel SET dk_cd='D1' WHERE vsl_nm='EV DKCD'",
+            'EV VNDR': "UPDATE dock_procure_vessel SET shipyard_vndr_cd='V1' WHERE vsl_nm='EV VNDR'",
+            'EV META': "UPDATE dock_procure_vessel SET survey='2ND SPECIAL SURVEY' WHERE vsl_nm='EV META'",
+        }
+        with appmod.app.app_context():
+            # positive control — 근거가 하나도 없는 shim 은 반드시 태깅돼야 한다. 이게 없으면
+            # 태깅 UPDATE 가 통째로 죽어도(init_db 는 try/except 로 조용히 넘어간다) 아래
+            # negative 단정이 전부 공허하게 통과한다.
+            cases['EV NONE'] = "SELECT 1"
+            for name, sql in cases.items():
+                # 각 선박에 수리신청서 이력을 만들어 태깅 후보로 올린 뒤, Dock 근거 1종만 부여한다.
+                appmod.execute("INSERT INTO dock_procure_vessel(vsl_nm,vsl_cd) VALUES(?,'TSTV')", (name,))
+                appmod.execute("INSERT INTO repair_request(vessel_id,vsl_cd,vsl_nm,subject,category,equipment,"
+                               "app_voy,app_port_cd,app_dt,cause,inspection,detail,stock,reason_cd,dept_cd) "
+                               "VALUES(1,'TSTV',?,'s','M/E','M/E','1','KRPUS','20260815','c','i','d',"
+                               "'vendor','P','E')", (name,))
+                appmod.execute(sql)
+            # 컬럼을 지워 backfill 미실행 상태를 재현한다(태깅은 `origin` 이 없을 때만 1회 돈다).
+            appmod.execute("ALTER TABLE dock_procure_vessel DROP COLUMN origin")
+            appmod.init_db(drop=False)
+            self.assertIn('origin', [r[1] for r in appmod.query(
+                "PRAGMA table_info(dock_procure_vessel)")])   # backfill 이 실제로 돌았음을 확인
+            self.assertEqual(appmod.query("SELECT origin FROM dock_procure_vessel WHERE vsl_nm=?",
+                                          ('EV NONE',), one=True)['origin'], 'repair')
+            for name in cases:
+                if name == 'EV NONE':
+                    continue
+                self.assertIsNone(appmod.query("SELECT origin FROM dock_procure_vessel WHERE vsl_nm=?",
+                                               (name,), one=True)['origin'], name)
+
+
 if __name__ == '__main__': unittest.main()

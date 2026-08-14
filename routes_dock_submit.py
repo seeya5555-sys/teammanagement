@@ -223,6 +223,12 @@ def api_dockproc_lines():
         a = agg.get(v['vsl_nm'])
         v['total'] = (a['tot'] if a else 0)
         v['done'] = (a['done'] if a else 0)
+    if scope == 'dock':
+        # 🔴 일반수리 신청서가 견적엔진용으로 만든 shim 엔트리(`origin='repair'`)는 입거선박이 아니다.
+        #    Dock 라인이 0건인 동안은 이 탭에 띄우지 않는다 — 띄우면 "0% 발주 0/0" 유령 카드가 되고,
+        #    라인 소유자가 신청서라 삭제도 409 로 막혀 어느 경로로도 안 지워진다(2026-08-15 형 지적).
+        #    나중에 실제 Dock 라인(INDEX 업로드·SVMS push)이 붙으면 total>0 이 되어 자동으로 다시 보인다.
+        vessels = [v for v in vessels if not (v.get('origin') == 'repair' and not v['total'])]
     if not vsl and vessels:
         vsl = vessels[0]['vsl_nm']
     rows = []

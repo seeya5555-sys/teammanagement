@@ -79,6 +79,15 @@ def _reserve_rows(p, client_id, who):
             ex = db.execute('SELECT id FROM repair_request WHERE client_request_id=?', (client_id,)).fetchone()
             if ex:
                 db.rollback(); return ex['id'], False
+        # 🔴 그룹 키 정규화 — 같은 SVMS 코드의 Dock 엔트리가 이미 있으면 **그 표기를 그대로 쓴다**.
+        #    `vessels.name`('Belgium B')을 그대로 넣으면 SVMS INDEX 표기('BELGIUM B')와 다른 PK 행이
+        #    생겨 Dock 발주현황에 같은 배가 두 장 뜨고, 한 장은 어느 경로로도 안 지워졌다(2026-08-15 실사고).
+        canon = db.execute("SELECT vsl_nm FROM dock_procure_vessel "
+                           "WHERE TRIM(UPPER(COALESCE(vsl_cd,'')))=? AND vsl_nm<>? "
+                           "ORDER BY (origin IS NULL) DESC, updated_at DESC LIMIT 1",
+                           (p['vsl_cd'], p['vsl_nm'])).fetchone()
+        if canon:
+            p = {**p, 'vsl_nm': canon['vsl_nm']}
         cols = ','.join(p); qs = ','.join('?' for _ in p)
         cur = db.execute(f"INSERT INTO repair_request(client_request_id,{cols},created_by) "
                          f"VALUES(?,{qs},?)", (client_id, *p.values(), who))
@@ -86,8 +95,10 @@ def _reserve_rows(p, client_id, who):
         # 일반수리도 기존 MARP 견적·상신 엔진을 공용 사용한다. 그 엔진의 목록은
         # dock_procure_vessel 를 선박 선택기의 정본으로 삼으므로, 신청서+downstream 행과
         # 같은 transaction 안에서 선박 엔트리를 보장한다. 기존 입거 메타는 덮지 않는다.
-        db.execute("INSERT INTO dock_procure_vessel(vsl_nm,vsl_cd,updated_at) "
-                   "VALUES(?,?,datetime('now','localtime')) "
+        # 새로 만드는 엔트리는 `origin='repair'` = 입거선박이 아니라 견적엔진용 shim 이라는 표시.
+        # 기존 행(Dock 정본)은 origin 을 건드리지 않는다 — 건드리면 진짜 입거선박이 탭에서 사라진다.
+        db.execute("INSERT INTO dock_procure_vessel(vsl_nm,vsl_cd,origin,updated_at) "
+                   "VALUES(?,?,'repair',datetime('now','localtime')) "
                    "ON CONFLICT(vsl_nm) DO UPDATE SET "
                    "vsl_cd=COALESCE(dock_procure_vessel.vsl_cd,excluded.vsl_cd), "
                    "updated_at=excluded.updated_at", (p['vsl_nm'], p['vsl_cd']))
