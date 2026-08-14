@@ -111,6 +111,12 @@ def _reserve_rows(p, client_id, who):
 @bp.route('/repair-requests')
 @login_required
 def repair_request_page():
+    procure_id = request.args.get('procure_id', type=int)
+    if procure_id:
+        row = query('SELECT id FROM repair_request WHERE id=?', (procure_id,), one=True)
+        if not row:
+            return '수리신청서를 찾을 수 없습니다.', 404
+        return render_template('dock_procure.html', repair_mode=True, repair_id=procure_id)
     return render_template('repair_requests.html')
 
 

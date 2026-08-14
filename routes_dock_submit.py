@@ -194,11 +194,31 @@ def dock_procure_page():
 @login_required
 def api_dockproc_lines():
     vsl = request.args.get('vsl_nm')
+    scope = (request.args.get('scope') or 'dock').strip().lower()
+    if scope not in ('dock', 'repair'):
+        return jsonify({'error': 'scope는 dock/repair 중 하나'}), 400
+    repair_id = request.args.get('repair_id', type=int)
+    if scope == 'repair' and not repair_id:
+        return jsonify({'error': 'repair_id 필수'}), 400
+    if scope == 'repair':
+        rr = query("SELECT id,vsl_nm,dock_rid,dock_yn FROM repair_request WHERE id=?", (repair_id,), one=True)
+        if not rr:
+            return jsonify({'error': '수리신청서를 찾을 수 없음'}), 404
+        vsl = rr['vsl_nm']
+        line_where = "EXISTS (SELECT 1 FROM repair_request rr WHERE rr.id=? AND rr.dock_rid=dock_procure.id)"
+        line_args = (repair_id,)
+    else:
+        rr = None
+        line_where = "NOT EXISTS (SELECT 1 FROM repair_request rr WHERE rr.dock_rid=dock_procure.id)"
+        line_args = ()
     vessels = [dict(r) for r in query(
         "SELECT * FROM dock_procure_vessel ORDER BY updated_at DESC")]
+    if scope == 'repair':
+        vessels = [item for item in vessels if item['vsl_nm'] == vsl]
     # 선박별 집계(카드 선택기용): 총건수 + 발주완료 건수
     agg = {r['vsl_nm']: r for r in query(
-        "SELECT vsl_nm, COUNT(*) tot, COALESCE(SUM(stg_order),0) done FROM dock_procure GROUP BY vsl_nm")}
+        "SELECT vsl_nm, COUNT(*) tot, COALESCE(SUM(stg_order),0) done FROM dock_procure "
+        f"WHERE {line_where} GROUP BY vsl_nm", line_args)}
     for v in vessels:
         a = agg.get(v['vsl_nm'])
         v['total'] = (a['tot'] if a else 0)
@@ -209,7 +229,8 @@ def api_dockproc_lines():
     orphans = []
     if vsl:
         rows = [dict(r) for r in query(
-            "SELECT * FROM dock_procure WHERE vsl_nm=? " + _DOCKPROC_ORDER, (vsl,))]
+            f"SELECT * FROM dock_procure WHERE vsl_nm=? AND {line_where} " + _DOCKPROC_ORDER,
+            (vsl, *line_args))]
         ves = next((v for v in vessels if v['vsl_nm'] == vsl), None)
         prefix = _reqgen_vsl_prefix((ves or {}).get('vtype'))
         vcode = (ves or {}).get('vsl_cd')
@@ -235,9 +256,12 @@ def api_dockproc_lines():
             else:
                 r['svms_subj'] = None
         # SVMS 엔 있는데 이 목록에 행이 없는 청구 — 화면 배너에서 [적재] 로 끌어올린다.
-        orphans = _dockproc_orphans_of(vcode, [r['req_no'] for r in rows])
+        if scope == 'dock':
+            orphans = _dockproc_orphans_of(vcode, [r['req_no'] for r in rows])
     return jsonify({'vessels': vessels, 'current': vsl, 'lines': rows,
-                    'orphans': orphans if vsl else []})
+                    'orphans': orphans if vsl else [],
+                    'scope': scope,
+                    'repair': ({'id': rr['id'], 'dock_yn': rr['dock_yn']} if rr else None)})
 
 
 @bp.route('/api/dock_procure/vessel_code', methods=['POST'])
@@ -3172,5 +3196,4 @@ def api_shipwiki_delete(cid):
 def api_shipwiki_clear_applied():
     n = execute_rc("DELETE FROM shipwiki_card WHERE card_status='applied'")
     return jsonify({'deleted': n})
-
 

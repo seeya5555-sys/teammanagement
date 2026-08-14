@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dock 발주현황 · TRMT3{% endblock %}
+{% block title %}{{ '수리 발주' if repair_mode|default(false) else 'Dock 발주현황' }} · TRMT3{% endblock %}
 {% block head %}
 <style>
   .dp-wrap{max-width:1320px}
@@ -195,15 +195,19 @@
   .dp-ack{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin-top:12px;cursor:pointer;line-height:1.5}
   .dp-blk{background:var(--surface-3);border:1px solid var(--border);border-radius:9px;padding:11px 13px;font-size:12.5px;color:var(--text-secondary)}
   .dp-qst{font-size:11.5px;padding:2px 8px;border-radius:20px;font-weight:700;border:1px solid var(--border)}
+  .repair-procure .dp-vcards,.repair-procure .dp-up,.repair-procure .dp-toolbar,
+  .repair-procure .dy-card,.repair-procure #dp-orphans,.repair-procure #dp-vmeta{display:none!important}
+  .repair-procure .dp-vhead{padding:12px 16px}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="dp-wrap">
+<div class="dp-wrap{% if repair_mode|default(false) %} repair-procure{% endif %}">
   <header class="ops-page-header" style="display:flex;align-items:center;gap:10px">
-    <div><p class="ops-page-kicker">Dock operations</p><h1 class="page-title"><svg class="ic-svg"><use href="#i-anchor"/></svg> Dock 발주현황</h1></div>
-    <span style="font-size:12px;color:var(--text-tertiary)">입거선박 자재·서비스·스토어·페인트·조선소 수배 트래킹</span>
+    <div><p class="ops-page-kicker">{{ 'Repair request' if repair_mode|default(false) else 'Dock operations' }}</p><h1 class="page-title"><svg class="ic-svg"><use href="#i-anchor"/></svg> {{ '수리 발주' if repair_mode|default(false) else 'Dock 발주현황' }}</h1></div>
+    <span style="font-size:12px;color:var(--text-tertiary)">{{ '수리신청서별 견적·업체선정·전자결재' if repair_mode|default(false) else '입거선박 자재·서비스·스토어·페인트·조선소 수배 트래킹' }}</span>
   </header>
+  {% if repair_mode|default(false) %}<p style="margin:-6px 0 14px"><a href="/repair-requests">← 수리신청서 목록</a></p>{% endif %}
 
   <div class="dp-vcards" id="dp-vcards"></div>
 
@@ -476,6 +480,8 @@
   ];
   let DATA = {vessels:[], current:null, lines:[]};
   const ENTRY = new URLSearchParams(location.search);
+  const REPAIR_MODE = {{ 'true' if repair_mode|default(false) else 'false' }};
+  const REPAIR_ID = {{ repair_id|default(0) }};
   const ENTRY_VSL = ENTRY.get('vsl_nm') || '';
   const ENTRY_RID = Number(ENTRY.get('rid') || 0);
   let ENTRY_DONE = false;
@@ -495,7 +501,10 @@
   }
 
   async function load(vsl){
-    const q = vsl ? ('?vsl_nm='+encodeURIComponent(vsl)) : '';
+    const qp = new URLSearchParams();
+    if(REPAIR_MODE){ qp.set('scope','repair'); qp.set('repair_id',String(REPAIR_ID)); }
+    else if(vsl){ qp.set('vsl_nm',vsl); }
+    const q = qp.toString() ? ('?'+qp.toString()) : '';
     // 🔴 세 호출은 서로 의존이 없다(큐 조회는 DATA 를 안 본다) — 직렬로 두면 왕복 3번이 그대로
     //    더해진다. 모바일 회선에서 탭 첫 진입이 그만큼 늦어진다.
     const [lines] = await Promise.all([

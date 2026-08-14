@@ -71,6 +71,27 @@ class RepairRequestTests(unittest.TestCase):
                                   ('TEST VESSEL',), one=True)
             self.assertEqual(vessel['vsl_cd'], 'KEEP')
 
+    def test_procurement_surfaces_keep_repair_rows_out_of_dock(self):
+        repair = self.c.post('/api/repair-requests', json=self.body(False, 'scope-split')).get_json()
+        with appmod.app.app_context():
+            appmod.execute("INSERT INTO dock_procure(vsl_nm,vsl_cd,req_no,cat_code,subject) "
+                           "VALUES('TEST VESSEL','TSTV','P1','P','Dock paint')")
+
+        dock = self.c.get('/api/dock_procure/lines?vsl_nm=TEST+VESSEL').get_json()
+        self.assertEqual([row['req_no'] for row in dock['lines']], ['P1'])
+        self.assertEqual(dock['scope'], 'dock')
+
+        scoped = self.c.get(f"/api/dock_procure/lines?scope=repair&repair_id={repair['id']}")
+        self.assertEqual(scoped.status_code, 200, scoped.get_data(as_text=True))
+        payload = scoped.get_json()
+        self.assertEqual([row['id'] for row in payload['lines']], [repair['dock_rid']])
+        self.assertEqual(payload['repair'], {'id': repair['id'], 'dock_yn': 'N'})
+        self.assertEqual(len(payload['vessels']), 1)
+
+        page = self.c.get(f"/repair-requests?procure_id={repair['id']}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('수리 발주', page.get_data(as_text=True))
+
     def test_dock_reserves_r_and_saved_is_immutable(self):
         one = self.c.post('/api/repair-requests', json=self.body(True, 'dock-1')).get_json()
         two = self.c.post('/api/repair-requests', json=self.body(True, 'dock-2')).get_json()
