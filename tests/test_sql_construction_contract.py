@@ -39,8 +39,20 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #   · 일부러 상수로 뽑았다 — 생성(`_reserve_rows`, BEGIN IMMEDIATE 안이라 같은 커넥션의
 #     `db.execute` 를 써야 한다)과 수정(`_apply_canon_vsl_nm`, 트랜잭션 밖 `query`)이
 #     **같은 정규화 규칙**을 써야 하고, 두 벌로 복사하면 갈라진다(2026-08-15 중복행 실사고 원인).
-EXPECTED_COUNT = 154
-EXPECTED_SHA256 = "cc9395c575566e2cdce4cbde74e4dca37c8d91f8c74cce261bdc819940b7b70a"
+# 2026-08-15 baseline update (2) — 같은 커밋(02b7308)이 6 site 를 추가했는데 위 항목이
+#   `routes_repair_request.py` 2 site 만 등재하고 `routes_calendar_dock.py` 4 site 를 빠뜨려
+#   출하 후에도 게이트가 red 로 남아 있었다(154 vs 158). 빠진 4 site 전건 검토:
+#   1/2/3. `f"DELETE FROM {aor,fundreq,invoice}_draft WHERE id=? AND status IN ({_DRAFT_DELETABLE_SQL})"`
+#      — 테이블명은 f-string 이 아닌 **인라인 하드코딩**이고, 보간되는 건 모듈 상수
+#      `_DRAFT_DELETABLE_SQL`(라인 5661) 하나뿐인 리터럴이다. `did` 는 `<int:did>` 컨버터라
+#      정수 확정이며 그와 별개로 파라미터 바인딩된다. request 값이 SQL 문법에 닿지 않는다.
+#   4. `_draft_delete_conflict` 의 `f'SELECT status FROM {table} WHERE id=?'`
+#      — `table` 은 호출부 3곳(5681/6387/6896)에서 전부 문자열 **리터럴**로만 넘어온다
+#      (AST 전수검사 non-literal 0). 읽기 전용 조회이고 `did` 는 바인딩된다.
+#   ⚠️ 교훈: baseline 을 고칠 땐 count 를 **실측값으로 재계산**해라. 신규 site 를 눈으로 세면
+#      이번처럼 일부만 반영돼 게이트가 조용히 red 로 남는다(= 다음 커밋의 진짜 위험 SQL 이 가려진다).
+EXPECTED_COUNT = 158
+EXPECTED_SHA256 = "ede55eab96ff73c6b99df02246570deb6ecbeefed65ec3d2088d37170b73d409"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }
