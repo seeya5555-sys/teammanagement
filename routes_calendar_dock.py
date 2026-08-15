@@ -5661,14 +5661,33 @@ def api_aor_unhold(did):
 _DRAFT_DELETABLE_SQL = "'pending','hold','submitted','rejected','failed','reject_failed'"
 
 
+# 러너가 이미 SVMS 를 건드리는 중이라 pending 으로 되돌릴 수단이 아예 없는 상태.
+_DRAFT_INFLIGHT_STATUSES = ('submitting', 'reject_submitting')
+# 결정 취소(`/reset`)로 pending 복귀가 가능한 테이블·상태.
+# 🔴 `aor_draft` 는 여기 없다 — aor 에는 reset 이 없고 `unhold` 는 hold→pending 전용이라
+#    approved/rejecting 을 되돌릴 방법이 없다. "취소 후 삭제하라"고 안내하면 존재하지 않는
+#    조치를 시키는 셈이라 상태별로 실제 가능한 조치만 말한다.
+_DRAFT_RESETTABLE = {
+    'fundreq_draft': ('approved', 'rejecting'),
+    'invoice_draft': ('approved', 'rejecting'),
+}
+
+
 def _draft_delete_conflict(did, table):
     """조건부 DELETE 가 0건일 때 not-found와 보호 상태를 구분한다."""
     row = query(f'SELECT status FROM {table} WHERE id=?', (did,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
+    status = row['status']
+    if status in _DRAFT_INFLIGHT_STATUSES:
+        guidance = '러너가 SVMS에 실행 중입니다. 완료된 뒤(submitted·rejected·failed) 삭제하세요.'
+    elif status in _DRAFT_RESETTABLE.get(table, ()):
+        guidance = '[결정 취소]로 검토 대기(pending)로 되돌린 뒤 삭제하세요.'
+    else:
+        guidance = '러너 실행 대기 중입니다. 실행이 끝나 완료 상태가 된 뒤 삭제하세요.'
     return jsonify({
-        'error': '실행 대기·진행중인 건은 삭제할 수 없습니다. 먼저 취소(pending 복귀)하세요.',
-        'status': row['status'],
+        'error': f'실행 대기·진행중인 건은 삭제할 수 없습니다. {guidance}',
+        'status': status,
     }), 409
 
 
