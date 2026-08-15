@@ -24,7 +24,7 @@ from docx.oxml import OxmlElement
 from dock_report_docx import (
     _set_cell_shading, _set_cell_borders, _set_font, _add_paragraph,
     _set_row_height, _set_table_fixed_layout, _add_horizontal_line,
-    _crop_to_aspect, _GLOBAL_TEMP_FILES,
+    _crop_to_aspect, _temp_files, _cleanup_temp_files,
 )
 
 
@@ -517,7 +517,7 @@ def _render_image_in_cell(parent_cell, content):
             try:
                 processed = _crop_to_aspect(img_path, 4/3)
                 if processed != img_path:
-                    _GLOBAL_TEMP_FILES.append(processed)
+                    _temp_files().append(processed)
                 run = p.add_run()
                 run.add_picture(processed, width=Cm(img_w), height=Cm(img_h))
             except Exception:
@@ -728,7 +728,7 @@ def _render_image(doc, content, base_indent):
             try:
                 processed = _crop_to_aspect(img_path, 4/3)
                 if processed != img_path:
-                    _GLOBAL_TEMP_FILES.append(processed)
+                    _temp_files().append(processed)
                 p = img_cell.paragraphs[0]
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run = p.add_run()
@@ -968,7 +968,7 @@ def _render_defect_photos(cell, images, cell_cm):
         try:
             processed = _crop_to_aspect(main_path, 4/3)
             if processed != main_path:
-                _GLOBAL_TEMP_FILES.append(processed)
+                _temp_files().append(processed)
             run = p.add_run()
             run.add_picture(processed,
                             width=Cm(img_w),
@@ -993,7 +993,7 @@ def _render_defect_photos(cell, images, cell_cm):
                 try:
                     processed = _crop_to_aspect(ex_path, 4/3)
                     if processed != ex_path:
-                        _GLOBAL_TEMP_FILES.append(processed)
+                        _temp_files().append(processed)
                     run = extra_p.add_run()
                     run.add_picture(processed,
                                     width=Cm(thumb_w), height=Cm(thumb_h))
@@ -1048,12 +1048,8 @@ def build_docx(report: dict) -> bytes:
     bio.seek(0)
     result = bio.read()
 
-    # 임시 파일 정리
-    global _GLOBAL_TEMP_FILES
-    for fp in _GLOBAL_TEMP_FILES:
-        try: os.remove(fp)
-        except Exception: pass
-    _GLOBAL_TEMP_FILES.clear()
+    # 임시 파일 정리 (스레드로컬 — dock_report_docx 주석 참조)
+    _cleanup_temp_files()
 
     return result
 
@@ -1231,7 +1227,7 @@ def _render_image_full_width(doc, content, total_cm=17.68):
             try:
                 processed = _crop_to_aspect(img_path, 4/3)
                 if processed != img_path:
-                    _GLOBAL_TEMP_FILES.append(processed)
+                    _temp_files().append(processed)
                 run = p.add_run()
                 run.add_picture(processed, width=Cm(img_w), height=Cm(img_h))
             except Exception:

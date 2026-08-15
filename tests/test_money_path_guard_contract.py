@@ -227,6 +227,12 @@ class MoneyPathGuardRuntimeTests(unittest.TestCase):
         appmod.app.config["TESTING"] = True
         with appmod.app.app_context():
             appmod.init_db(drop=False)
+            # 세션이 가리키는 계정은 DB 에 실제로 있어야 한다. `login_required` 가 요청마다
+            # users 를 재확인(비활성 계정 차단)하므로, 없는 uid 로 세션을 위조하면 admin 판정
+            # 전에 401 로 끊겨 **admin 가드가 살아 있는지를 못 재게 된다**(계약이 헐거워짐).
+            appmod.execute(
+                "INSERT OR IGNORE INTO users (id,username,password_hash,display_name,role,active) "
+                "VALUES (2,'money-user','x','Money User','member',1)")
         self.anon = appmod.app.test_client()
         self.user = appmod.app.test_client()
         with self.user.session_transaction() as session:

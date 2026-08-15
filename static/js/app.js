@@ -2145,7 +2145,9 @@ function renderAdminSupList() {
     item.append(el('div', { class: 'item-main' },
       el('strong', {}, s.name),
       el('div', { class: 'item-sub' },
-        `담당 선박: ${escHtml(s.vessels || '없음')} · 이슈 ${s.total}건`)));
+        // el() 의 텍스트 자식은 createTextNode 로 들어간다 — 여기서 escHtml 을 또 걸면
+        // 'A&B' 가 'A&amp;B' 로 보이는 이중 이스케이프가 된다.
+        `담당 선박: ${s.vessels || '없음'} · 이슈 ${s.total}건`)));
     item.append(el('div', { class: 'item-tags' },
       el('span', { class: 'item-tag' }, s.email || '(이메일 없음)')));
     const actions = el('div', { class: 'item-actions' });
@@ -2442,7 +2444,8 @@ function renderAdminVesList() {
     item.append(el('div', { class: 'item-main' },
       el('strong', {}, v.name),
       el('div', { class: 'item-sub' },
-        `${v.short_name ? v.short_name + ' · ' : ''}${v.imo ? 'IMO ' + v.imo + ' · ' : ''}담당: ${escHtml(v.supervisor_names || '없음')}`)));
+        // 위와 같음 — 텍스트노드라 이중 이스케이프가 된다.
+        `${v.short_name ? v.short_name + ' · ' : ''}${v.imo ? 'IMO ' + v.imo + ' · ' : ''}담당: ${v.supervisor_names || '없음'}`)));
     item.append(el('div', {}));
 
     const actions = el('div', { class: 'item-actions' });
@@ -3446,18 +3449,20 @@ function wireCommon() {
     toggleUserMenu(false);
     openPasswordModal();
   });
-  $('#password-modal').addEventListener('click', (ev) => {
+  // 🔴 옵셔널 체이닝 필수 — login.html 은 base.html 의 body 블록을 통째로 override 해서
+  //    이 모달들이 없는데, app.js 는 body 블록 **밖**(base.html)에서 모든 페이지에 로드된다.
+  //    가드가 없으면 /login 에서 null.addEventListener 로 이 IIFE 전체가 죽는다.
+  $('#password-modal')?.addEventListener('click', (ev) => {
     if (ev.target.dataset.closePw === '1') closePasswordModal();
   });
-  $('#password-form').addEventListener('submit', submitPasswordChange);
+  $('#password-form')?.addEventListener('submit', submitPasswordChange);
 
   // 선박 편집은 admin의 관리 모달과 member의 담당 선박 모달에서 모두 열린다.
   // adminBtn 존재 여부와 무관하게 모든 role에서 항상 연결한다.
-  const vEditModal = $('#vessel-edit-modal');
-  vEditModal.addEventListener('click', (ev) => {
+  $('#vessel-edit-modal')?.addEventListener('click', (ev) => {
     if (ev.target.dataset.closeVesedit === '1') closeVesselEdit();
   });
-  $('#btn-vedit-save').addEventListener('click', saveVesselEdit);
+  $('#btn-vedit-save')?.addEventListener('click', saveVesselEdit);
 
   // ───── Admin Modal ─────
   const adminBtn = $('#btn-open-admin');

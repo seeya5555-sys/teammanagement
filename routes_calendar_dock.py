@@ -5653,12 +5653,32 @@ def api_aor_unhold(did):
     return jsonify({'id': did, 'status': 'pending'})
 
 
+# 🔴 러너가 아직 손대는 중인 상태 — 단건 삭제도 여기서 막는다.
+#    일괄 삭제(bulk-delete / clear-decided)는 처음부터 이 상태들을 보호했는데
+#    **단건 DELETE 에만 조건이 없어서**, 상신 대기(approved)나 리젝 진행(rejecting) 건을
+#    화면에서 지우면 러너가 집어갈 행이 사라져 SVMS 액션이 조용히 유실된다.
+#    (러너는 이 행을 근거로 상신/리젝을 실행하므로 '삭제 = 취소'가 아니다.)
+_DRAFT_DELETABLE_SQL = "'pending','hold','submitted','rejected','failed','reject_failed'"
+
+
+def _draft_delete_conflict(did, table):
+    """조건부 DELETE 가 0건일 때 not-found와 보호 상태를 구분한다."""
+    row = query(f'SELECT status FROM {table} WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify({
+        'error': '실행 대기·진행중인 건은 삭제할 수 없습니다. 먼저 취소(pending 복귀)하세요.',
+        'status': row['status'],
+    }), 409
+
+
 @bp.route('/api/aor/drafts/<int:did>', methods=['DELETE'])
 @admin_required
 def api_aor_delete(did):
-    if not query('SELECT id FROM aor_draft WHERE id=?', (did,), one=True):
-        return jsonify({'error': 'not found'}), 404
-    execute('DELETE FROM aor_draft WHERE id=?', (did,))
+    # 상태 판독 후 DELETE 를 분리하면 runner 가 사이에서 approved 로 바꾼
+    # 행을 지우는 TOCTOU가 생긴다. 삭제 허용 상태를 DELETE 자체에 고정한다.
+    if not execute_rc(f"DELETE FROM aor_draft WHERE id=? AND status IN ({_DRAFT_DELETABLE_SQL})", (did,)):
+        return _draft_delete_conflict(did, 'aor_draft')
     _aor_pdf_delete(did)
     return jsonify({'id': did, 'deleted': True})
 
@@ -6363,9 +6383,8 @@ def api_fundreq_reset(did):
 @bp.route('/api/fundreq/drafts/<int:did>', methods=['DELETE'])
 @admin_required
 def api_fundreq_delete(did):
-    if not query('SELECT id FROM fundreq_draft WHERE id=?', (did,), one=True):
-        return jsonify({'error': 'not found'}), 404
-    execute('DELETE FROM fundreq_draft WHERE id=?', (did,))
+    if not execute_rc(f"DELETE FROM fundreq_draft WHERE id=? AND status IN ({_DRAFT_DELETABLE_SQL})", (did,)):
+        return _draft_delete_conflict(did, 'fundreq_draft')
     _fundreq_att_delete(did)   # 행이 사라지면 첨부 cache 도 고아 — 같이 정리
     return jsonify({'id': did, 'deleted': True})
 
@@ -6873,9 +6892,8 @@ def api_invoice_reset(did):
 @bp.route('/api/invoice/drafts/<int:did>', methods=['DELETE'])
 @admin_required
 def api_invoice_delete(did):
-    if not query('SELECT id FROM invoice_draft WHERE id=?', (did,), one=True):
-        return jsonify({'error': 'not found'}), 404
-    execute('DELETE FROM invoice_draft WHERE id=?', (did,))
+    if not execute_rc(f"DELETE FROM invoice_draft WHERE id=? AND status IN ({_DRAFT_DELETABLE_SQL})", (did,)):
+        return _draft_delete_conflict(did, 'invoice_draft')
     _invoice_pdf_delete(did)   # 행 삭제 시 미리보기 PDF 고아파일 정리
     return jsonify({'id': did, 'deleted': True})
 

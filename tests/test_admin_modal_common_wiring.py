@@ -28,9 +28,14 @@ class AdminModalCommonWiringContractTest(unittest.TestCase):
             ("btn-sedit-save", "saveSupervisorEdit"),
             ("btn-uedit-save", "saveUserEdit"),
         ):
-            self.assertIn(
-                f"$('#{button_id}').addEventListener('click', {handler})",
+            # `?.` 를 허용한다 — login.html 은 base.html 의 body 블록을 통째로 덮어써서
+            # 이 버튼들이 DOM 에 없다. 그때 `$(...)` 가 null 이면 wireCommon 이 TypeError 로
+            # 죽어 **그 페이지의 공용 와이어링이 전부** 안 걸린다. 계약의 본질은
+            # "이 버튼 ↔ 이 핸들러가 wireCommon 에서 묶인다" 이지 옵셔널 체이닝 유무가 아니다.
+            self.assertRegex(
                 body,
+                rf"\$\('#{re.escape(button_id)}'\)\??\.addEventListener\('click', "
+                rf"{re.escape(handler)}\)",
             )
 
     def test_editor_save_handlers_are_not_daily_only(self):

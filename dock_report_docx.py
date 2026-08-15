@@ -10,6 +10,7 @@ Dry Dock Report — Word(.docx) 생성
 import io
 import json
 import os
+import threading
 from typing import Dict, List, Tuple
 from datetime import datetime
 
@@ -864,13 +865,37 @@ def _render_image_block(doc, content, base_indent):
     col_cm_list = [cell_cm] * columns
     _set_table_fixed_layout(tbl, total_cm, col_cm_list)
 
-    _GLOBAL_TEMP_FILES.extend(temp_files)
+    _temp_files().extend(temp_files)
 
     _add_paragraph(doc, '', before=2, after=6)
 
 
-# Word 생성 시 만들어진 임시 cropped 이미지 — build_docx 끝나면 일괄 삭제
-_GLOBAL_TEMP_FILES = []
+# Word 생성 시 만들어진 임시 cropped 이미지 — build_docx 끝나면 일괄 삭제.
+# 🔴 반드시 **스레드로컬**이어야 한다. 운영은 gunicorn `--threads 8 -k gthread`(deploy/trmt.service)
+#    라 두 사람이 동시에 보고서를 뽑을 수 있는데, 모듈 전역 리스트면 먼저 끝난 요청의 정리 루프가
+#    아직 문서에 삽입되지 않은 **다른 요청의** 임시 이미지를 지운다 → 사진이 조용히 [이미지 오류]로 빠짐.
+#    (boarding 은 add_picture 앞에서 append 하므로 그 창이 실제로 열려 있었다.)
+_TEMP = threading.local()
+
+
+def _temp_files():
+    """이 스레드의 임시 이미지 목록(없으면 생성)."""
+    lst = getattr(_TEMP, 'files', None)
+    if lst is None:
+        lst = []
+        _TEMP.files = lst
+    return lst
+
+
+def _cleanup_temp_files():
+    """이 스레드가 만든 임시 이미지만 지운다. 다른 요청 것은 건드리지 않는다."""
+    lst = _temp_files()
+    for fp in lst:
+        try:
+            os.remove(fp)
+        except Exception:
+            pass
+    del lst[:]
 
 
 def _contain_in_static(candidate):
@@ -955,13 +980,7 @@ def build_docx(report: dict) -> bytes:
     result = bio.read()
 
     # 이미지 cropped 임시 파일 정리
-    global _GLOBAL_TEMP_FILES
-    for fp in _GLOBAL_TEMP_FILES:
-        try:
-            os.remove(fp)
-        except Exception:
-            pass
-    _GLOBAL_TEMP_FILES = []
+    _cleanup_temp_files()
 
     return result
 

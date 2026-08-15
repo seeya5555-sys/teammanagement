@@ -621,13 +621,23 @@
         const r=await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:v})});
         if(!r.ok){ inp.style.borderColor='var(--red-dot,#d33)'; return; } inp.style.borderColor=''; await loadYard(DATA.current); };
     });
+    // 🔴 r.ok 를 안 보면 저장 실패가 화면에 남지 않는다. 특히 잠금해제는 실패해도
+    //    '잠금 해제' 토스트가 떠서 **실패가 성공으로 보였다** — 다음 견적 업로드 때
+    //    값이 안 덮이는 걸로 뒤늦게 드러난다. 금액칸(.dy-amt)만 실패 표시가 있었다.
+    const yardPatch=async(id,body,failMsg)=>{
+      try{
+        const r=await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(!r.ok){ toast(failMsg+' (HTTP '+r.status+')'); return false; }
+        return true;
+      }catch(e){ toast(failMsg+': '+e.message); return false; }
+    };
     document.querySelectorAll('.dy-cur').forEach(sel=>sel.onchange=async()=>{ const id=sel.dataset.id; if(!id)return;
-      await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({cur:sel.value})}); await loadYard(DATA.current); });
+      await yardPatch(id,{cur:sel.value},'통화 저장 실패'); await loadYard(DATA.current); });
     document.querySelectorAll('.dy-rmk').forEach(inp=>inp.onblur=async()=>{ const id=inp.dataset.id; if(!id)return;
-      await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({remark:inp.value})}); });
+      await yardPatch(id,{remark:inp.value},'비고 저장 실패'); });
     document.querySelectorAll('.dy-lock').forEach(el=>el.onclick=async()=>{ const id=el.dataset.id;
-      await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({src:'auto'})});
-      toast('잠금 해제 — 다음 견적 업로드 시 갱신됨'); await loadYard(DATA.current); });
+      if(await yardPatch(id,{src:'auto'},'잠금 해제 실패')) toast('잠금 해제 — 다음 견적 업로드 시 갱신됨');
+      await loadYard(DATA.current); });
   }
   function bindShipyardSel(){
     const sel=$('#dy-shipyard'); if(!sel) return;

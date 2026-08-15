@@ -71,6 +71,21 @@ def _payload(d):
     }
 
 
+# 🔴 그룹 키 정규화 규칙(생성·수정 공용). 같은 SVMS 코드의 Dock 엔트리가 이미 있으면
+#    **그 표기를 그대로 쓴다**. `vessels.name`('Belgium B')을 그대로 넣으면 SVMS INDEX 표기
+#    ('BELGIUM B')와 다른 PK 행이 생겨 Dock 발주현황에 같은 배가 두 장 뜨고,
+#    한 장은 어느 경로로도 안 지워졌다(2026-08-15 실사고).
+_CANON_VSL_SQL = ("SELECT vsl_nm FROM dock_procure_vessel "
+                  "WHERE TRIM(UPPER(COALESCE(vsl_cd,'')))=? AND vsl_nm<>? "
+                  "ORDER BY (origin IS NULL) DESC, updated_at DESC LIMIT 1")
+
+
+def _apply_canon_vsl_nm(p):
+    """트랜잭션 밖(PATCH)에서 쓰는 정규화. 생성 경로와 같은 규칙을 적용한다."""
+    canon = query(_CANON_VSL_SQL, (p['vsl_cd'], p['vsl_nm']), one=True)
+    return {**p, 'vsl_nm': canon['vsl_nm']} if canon else p
+
+
 def _reserve_rows(p, client_id, who):
     """신청서와 downstream MARP rid를 한 transaction에서 만든다."""
     db = get_db(); db.execute('BEGIN IMMEDIATE')
@@ -79,13 +94,8 @@ def _reserve_rows(p, client_id, who):
             ex = db.execute('SELECT id FROM repair_request WHERE client_request_id=?', (client_id,)).fetchone()
             if ex:
                 db.rollback(); return ex['id'], False
-        # 🔴 그룹 키 정규화 — 같은 SVMS 코드의 Dock 엔트리가 이미 있으면 **그 표기를 그대로 쓴다**.
-        #    `vessels.name`('Belgium B')을 그대로 넣으면 SVMS INDEX 표기('BELGIUM B')와 다른 PK 행이
-        #    생겨 Dock 발주현황에 같은 배가 두 장 뜨고, 한 장은 어느 경로로도 안 지워졌다(2026-08-15 실사고).
-        canon = db.execute("SELECT vsl_nm FROM dock_procure_vessel "
-                           "WHERE TRIM(UPPER(COALESCE(vsl_cd,'')))=? AND vsl_nm<>? "
-                           "ORDER BY (origin IS NULL) DESC, updated_at DESC LIMIT 1",
-                           (p['vsl_cd'], p['vsl_nm'])).fetchone()
+        # 그룹 키 정규화 — 규칙은 `_CANON_VSL_SQL` 주석 참조(생성·수정 공용).
+        canon = db.execute(_CANON_VSL_SQL, (p['vsl_cd'], p['vsl_nm'])).fetchone()
         if canon:
             p = {**p, 'vsl_nm': canon['vsl_nm']}
         cols = ','.join(p); qs = ','.join('?' for _ in p)
@@ -175,6 +185,9 @@ def repair_request_patch(rid):
         return jsonify({'error': 'Dock 여부는 생성 후 변경할 수 없습니다. 새 초안을 작성해 주세요.'}), 409
     if row['dock_yn'] == 'Y' and p['vessel_id'] != row['vessel_id']:
         return jsonify({'error': 'Dock 수리는 R번호 예약 후 선박을 변경할 수 없습니다. 새 초안을 작성해 주세요.'}), 409
+    # 🔴 생성 경로와 같은 정규화를 여기서도 건다. 안 걸면 `vessels.name` 원문이 다시 들어가
+    #    dock_procure 행이 Dock 정본 표기에서 떨어져 나가고, 같은 배가 두 장 뜨는 실사고가 재현된다.
+    p = _apply_canon_vsl_nm(p)
     sets = ','.join(f'{k}=?' for k in p)
     rc = execute_rc(f"UPDATE repair_request SET {sets},status='pending',result=NULL,version=version+1,"
                     "updated_at=datetime('now','localtime') WHERE id=? AND version=? AND rep_cd IS NULL",

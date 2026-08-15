@@ -171,8 +171,17 @@ def send(device_token, payload, env='production', conf=None,
             lines.append('--header "apns-expiration: %s"' % _curl_quote(expiration))
     except APNsBadValue as e:
         return False, 0, str(e)
+    except Exception as e:
+        # 🔴 `provider_jwt()` 가 여기서 불린다 — p8 파일이 없거나(load_conf 는 존재만 보고
+        #    내용은 안 본다) PEM 이 깨졌으면 ValueError/OSError 가 그대로 올라간다.
+        #    이 함수의 계약은 (ok, status, reason) 이고 호출부(_push_dispatch)는 예외를
+        #    가정하지 않으므로, 여기서 삼키지 않으면 알림 큐가 통째로 흔들린다.
+        return False, 0, 'apns 서명/헤더 준비 실패: %s' % e
 
-    fd, bpath = tempfile.mkstemp(prefix='apns-', suffix='.json')
+    try:
+        fd, bpath = tempfile.mkstemp(prefix='apns-', suffix='.json')
+    except OSError as e:
+        return False, 0, '임시파일 생성 실패: %s' % e
     try:
         with os.fdopen(fd, 'wb') as fh:
             fh.write(body)

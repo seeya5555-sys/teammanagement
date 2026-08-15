@@ -334,6 +334,15 @@ class FleetNextPortOverrideTests(unittest.TestCase):
             sess["user_id"] = 99
             sess["username"] = "unassigned"
             sess["role"] = "user"
+        # 계정은 실제로 있어야 한다 — `login_required` 가 요청마다 users 를 재확인하므로,
+        # 없는 uid 면 담당 배정 검사(403)에 닿기 전에 401 로 끊겨 이 테스트의 의도가 사라진다.
+        appmod.execute(
+            "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, "
+            "password_hash TEXT, display_name TEXT, supervisor_id INTEGER, "
+            "role TEXT DEFAULT 'member', active INTEGER NOT NULL DEFAULT 1)")
+        appmod.execute(
+            "INSERT OR IGNORE INTO users (id,username,password_hash,role,active) "
+            "VALUES (99,'unassigned','x','member',1)")
         res = client.post("/api/fleet-map/next-port-override", json={})
         self.assertEqual(res.status_code, 403)
         res = client.delete("/api/fleet-map/next-port-override", json={})

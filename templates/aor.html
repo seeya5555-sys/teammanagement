@@ -136,6 +136,11 @@
     try {
       const r = await fetch('/api/aor/drafts?status=' + filter, {headers: {'Accept': 'application/json'}});
       data = await r.json();
+      // 서버가 JSON 으로 5xx 를 주면 아래 `data.drafts.length` 가 TypeError 로 죽어
+      // 화면이 '불러오는 중…' 에 영구 고착된다.
+      if (!r.ok || !data || !Array.isArray(data.drafts)) {
+        throw new Error((data && data.error) || `HTTP ${r.status}`);
+      }
     } catch (e) {
       listEl.innerHTML = '<div class="aor-err" style="padding:20px">불러오기 실패: ' + esc(e.message) + '</div>';
       return;
@@ -308,15 +313,36 @@
     } catch (e) { alert('삭제 실패: ' + e.message); }
   }
 
-  async function holdDraft(el, d) {
+  // 🔴 응답을 안 보면 서버가 4xx/5xx 를 줘도 성공처럼 보인다. 게다가 예외가 나면 load() 까지
+  //    건너뛰어 카드가 .is-busy(pointer-events:none) 로 영구 잠긴다. 리젝은 SVMS STATUS=R +
+  //    관리사 통보메일이 걸린 동작이라 "리젝했다고 믿었는데 안 나간" 상태가 조용히 생긴다.
+  async function actOn(el, d, url, opts, failMsg) {
     el.classList.add('is-busy');
-    await fetch('/api/aor/drafts/' + d.id + '/hold', {method: 'POST'});
-    load();
+    const errEl = el.querySelector('.aor-err');
+    const show = (msg) => {
+      if (errEl) { errEl.textContent = msg; errEl.hidden = false; }
+      else alert(msg);
+    };
+    try {
+      const r = await fetch(url, opts || {method: 'POST'});
+      if (!r.ok) {
+        let msg = '';
+        try { msg = ((await r.json()) || {}).error || ''; } catch (_) {}
+        show(msg || `${failMsg} (HTTP ${r.status})`);
+      }
+    } catch (e) {
+      show(`${failMsg}: ${e.message}`);
+    } finally {
+      el.classList.remove('is-busy');   // 실패해도 카드를 다시 조작할 수 있어야 한다
+      load();
+    }
+  }
+
+  async function holdDraft(el, d) {
+    await actOn(el, d, '/api/aor/drafts/' + d.id + '/hold', null, '보류 실패');
   }
   async function unhold(el, d) {
-    el.classList.add('is-busy');
-    await fetch('/api/aor/drafts/' + d.id + '/unhold', {method: 'POST'});
-    load();
+    await actOn(el, d, '/api/aor/drafts/' + d.id + '/unhold', null, '보류 해제 실패');
   }
 
   function gather(el) {
@@ -377,18 +403,15 @@
     const reason = prompt(`[${d.vsl_nm || d.aor_cd}] 리젝하면 SVMS STATUS=R + 관리사 통보메일이 발송됩니다 (메일은 SVMS 템플릿).\n리젝 사유 (SVMS Owner Remark에 기록됨):`, '');
     if (reason === null) return;
     if (!reason.trim() && !confirm('리젝 사유가 비어있습니다.\nOwner Remark 공란으로 리젝할까요?')) return;
-    el.classList.add('is-busy');
-    await fetch('/api/aor/drafts/' + d.id + '/reject', {
+    await actOn(el, d, '/api/aor/drafts/' + d.id + '/reject', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({reason})
-    });
-    load();
+    }, '리젝 실패 — SVMS 로 나가지 않았습니다');
   }
 
   async function removeDraft(el, d) {
     if (!confirm('이 AOR draft 기록을 삭제할까요?')) return;
-    el.classList.add('is-busy');
-    await fetch('/api/aor/drafts/' + d.id, {method: 'DELETE'});
-    load();
+    // 실행 대기·진행중(approved/submitting/rejecting)이면 서버가 409 로 막는다 — 그 사유를 띄운다.
+    await actOn(el, d, '/api/aor/drafts/' + d.id, {method: 'DELETE'}, '삭제 실패');
   }
 
   document.querySelectorAll('[data-filter]').forEach(b =>

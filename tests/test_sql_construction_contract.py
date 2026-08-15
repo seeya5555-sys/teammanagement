@@ -32,8 +32,15 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #   · 선박명 등 모든 **값은 파라미터 바인딩**이다.
 #   · 이 파일은 웹에서 import 되지 않는 오프라인 CLI 다. 그래도 `EXCLUDED_DIRS` 로 빼지 않고 등재한다 —
 #     디렉토리를 제외하면 나중에 `deploy/` 아래에 앱이 import 하는 코드가 생겨도 감시가 안 붙는다.
-EXPECTED_COUNT = 152
-EXPECTED_SHA256 = "627a9aeaba8b85516ebdd7dad039bed3be162f9c8eb97318c49c9a57fd62639b"
+# 2026-08-15 baseline update — `routes_repair_request.py` 의 `_CANON_VSL_SQL` 2 site. 검토:
+#   · 모듈 상수인 **완전한 리터럴 SELECT** 다. f-string 도, 식별자 조립도, 문자열 연결도 없다
+#     (여기 걸린 이유는 인자가 인라인 리터럴이 아니라 Name 노드이기 때문뿐).
+#   · 값 2개(`vsl_cd`, `vsl_nm`)는 전부 파라미터 바인딩. request 값이 SQL 문법에 닿지 않는다.
+#   · 일부러 상수로 뽑았다 — 생성(`_reserve_rows`, BEGIN IMMEDIATE 안이라 같은 커넥션의
+#     `db.execute` 를 써야 한다)과 수정(`_apply_canon_vsl_nm`, 트랜잭션 밖 `query`)이
+#     **같은 정규화 규칙**을 써야 하고, 두 벌로 복사하면 갈라진다(2026-08-15 중복행 실사고 원인).
+EXPECTED_COUNT = 154
+EXPECTED_SHA256 = "cc9395c575566e2cdce4cbde74e4dca37c8d91f8c74cce261bdc819940b7b70a"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

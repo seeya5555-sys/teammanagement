@@ -71,7 +71,10 @@ def login():
 
     nxt = request.args.get('next') or url_for('routes_core.dashboard')
     # 외부 URL 리다이렉트 방지 ('//evil.com' 같은 프로토콜-상대 URL 포함)
-    if not nxt.startswith('/') or nxt.startswith('//'):
+    # 🔴 백슬래시도 막는다 — 브라우저가 `/\evil.com` 을 `//evil.com` 으로 정규화해서
+    #    startswith('//') 검사만으로는 그대로 외부로 나간다(open redirect).
+    if (not nxt.startswith('/') or nxt.startswith('//')
+            or nxt.startswith('/\\') or '\\' in nxt or '\r' in nxt or '\n' in nxt):
         nxt = url_for('routes_core.dashboard')
     return redirect(nxt)
 
@@ -1572,10 +1575,20 @@ def api_vessel_update(vid):
         execute(f'UPDATE vessels SET {", ".join(sets)} WHERE id = ?', params)
     # supervisor 매핑 갱신 (admin만 가능 — member는 위에서 pop됨)
     if 'supervisor_ids' in d:
+        # 🔴 execute() 는 문장마다 커밋된다 — DELETE 를 먼저 날리고 나서 int(sid) 가
+        #    터지면 담당 매핑이 복구 불가로 사라진다. 그래서 검증을 전부 앞에 둔다.
+        #    문자열 "12" 가 오면 for 가 문자 단위로 돌던 문제도 여기서 같이 막는다.
+        raw = d.get('supervisor_ids') or []
+        if not isinstance(raw, (list, tuple)):
+            return jsonify({'error': 'supervisor_ids 는 배열이어야 합니다.'}), 400
+        try:
+            sup_ids = [int(s) for s in raw]
+        except (TypeError, ValueError):
+            return jsonify({'error': 'supervisor_ids 값이 올바르지 않습니다.'}), 400
         execute('DELETE FROM supervisor_vessels WHERE vessel_id = ?', (vid,))
-        for sid in (d.get('supervisor_ids') or []):
+        for sid in sup_ids:
             execute('INSERT OR IGNORE INTO supervisor_vessels (vessel_id, supervisor_id) VALUES (?, ?)',
-                    (vid, int(sid)))
+                    (vid, sid))
     return jsonify({'id': vid})
 
 

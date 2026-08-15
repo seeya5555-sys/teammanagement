@@ -157,6 +157,11 @@ def _authed_get(path):
             h = _get(op, path)
         except Exception as e:
             raise KrconError('network: %s' % e)
+        # 🔴 재로그인 후에도 로그아웃 화면이면 여기서 끊는다. 그냥 돌려주면 로그인 페이지
+        #    HTML 이 파서로 넘어가 `search()` 가 "결과 0건" 으로 응답한다 =
+        #    실패가 '검색 결과 없음'으로 위장돼 사람이 못 알아챈다(fail-closed).
+        if _looks_logged_out(h):
+            raise KrconError('login session invalid (재로그인 후에도 로그아웃 상태)')
     return h
 
 
@@ -179,7 +184,9 @@ def login_check():
     if not uid or not pwd:
         return False, 'KRCON_USER/KRCON_PW 미설정'
     op, cj = _opener()
-    return (_login(op, cj), 'ok')
+    # msg 를 항상 'ok' 로 주면 실패 사유가 화면에 '정상'으로 찍힌다.
+    ok = _login(op, cj)
+    return (ok, 'ok' if ok else 'login rejected (계정/비밀번호 또는 KR-CON 응답 확인)')
 
 
 def search(query, limit=50, locale='en'):

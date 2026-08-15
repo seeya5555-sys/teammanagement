@@ -676,13 +676,35 @@ def _clean_port(p):
     return s
 
 
+def _norm_iso_date(s):
+    """LLM 이 준 날짜를 'YYYY-MM-DD' 로만 통과시킨다. 아니면 '' (fail-closed).
+
+    🔴 이 값은 그대로 `vettings.inspection_date` 에 들어가고 두 곳이 문자열 형식을 전제한다:
+       ① 연도 필터 `inspection_date.startswith(str(year))` → 형식이 틀리면 그 vetting 이
+          모든 연도 화면에서 사라진다.
+       ② `date(vt.inspection_date,'+21 days') < date('now')` (routes_tail) → SQLite 는
+          비-ISO 문자열에 NULL 을 돌려주므로 **SIRE OBS 3주 경과 알림이 조용히 미탐**된다.
+       그래서 '12 Mar 2026' 같은 값은 저장하지 않고 빈 값으로 두어 사람이 채우게 한다.
+    """
+    s = (s or '').strip()
+    if not _re_cls.fullmatch(r'\d{4}-\d{2}-\d{2}', s):
+        return ''
+    try:
+        from datetime import datetime as _dt
+        _dt.strptime(s, '%Y-%m-%d')              # 2026-02-31 같은 없는 날짜 배제
+    except ValueError:
+        return ''
+    return s
+
+
 def _norm_vetting_meta(m):
     m = m if isinstance(m, dict) else {}
-    g = lambda k: (m.get(k) or '').strip()
+    # 텍스트 필드는 길이를 자른다 — LLM 이 문단을 통째로 뱉으면 목록 UI 가 깨진다.
+    g = lambda k: (m.get(k) or '').strip()[:200] if isinstance(m.get(k), str) else ''
     sire = g('sire_type')
     return {
         'report_number':      g('report_number'),
-        'inspection_date':    g('inspection_date'),
+        'inspection_date':    _norm_iso_date(g('inspection_date')),
         'inspection_company': g('inspection_company'),
         'inspector':          g('inspector'),
         'port':               _clean_port(g('port')),

@@ -85,15 +85,16 @@
       "app"
     ],
     "dock_report_docx.py": [
-      "_GLOBAL_TEMP_FILES",
       "_add_horizontal_line",
       "_add_paragraph",
+      "_cleanup_temp_files",
       "_crop_to_aspect",
       "_set_cell_borders",
       "_set_cell_shading",
       "_set_font",
       "_set_row_height",
-      "_set_table_fixed_layout"
+      "_set_table_fixed_layout",
+      "_temp_files"
     ]
   },
   "dock_report_docx.py": {

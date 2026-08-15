@@ -44,6 +44,11 @@ class ClientIdemTests(unittest.TestCase):
         with appmod.app.app_context():
             appmod.init_db(drop=False)
             appmod._auto_migrate()
+            # 스코프 테스트가 쓰는 2번 계정 — `login_required` 가 요청마다 users 를
+            # 재확인하므로 실재하지 않는 uid 로는 401 이 되어 스코프 자체를 못 잰다.
+            appmod.execute(
+                "INSERT OR IGNORE INTO users (id,username,password_hash,display_name,role,active) "
+                "VALUES (2,'idem-user2','x','Idem User2','member',1)")
         self.client = appmod.app.test_client()
         with self.client.session_transaction() as s:
             s['user_id'] = 1

@@ -25,7 +25,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import abort, jsonify, redirect, request, session, url_for
+from flask import abort, g, jsonify, redirect, request, session, url_for
 from werkzeug.utils import secure_filename
 
 from app_core import (
@@ -38,10 +38,39 @@ from app_core import (
 # ══════════════════════════════════════════════════════════════════
 #  From routes_core.py (8 symbols)
 # ══════════════════════════════════════════════════════════════════
+def _session_account():
+    """쿠키 세션의 계정을 요청마다 DB 로 재확인한다. (row 또는 None)
+
+    🔴 Bearer 경로(app.py)는 요청마다 `active=1` + 비번지문을 검사하는데 쿠키 경로만
+       그 검사가 없었다. 그래서 `active=0` 으로 비활성화한 계정이 이미 열려 있던 브라우저
+       세션으로는 PERMANENT_SESSION_LIFETIME(7일) 동안 계속 통과했다 — 퇴사/사고 대응으로
+       계정을 껐는데 실제로는 안 꺼지는 구멍이라 여기서 막는다.
+    요청당 1회만 조회한다(users.id 는 PK).
+    """
+    uid = session.get('user_id')
+    if not uid:
+        return None
+    if not hasattr(g, '_sess_account'):
+        try:
+            g._sess_account = query(
+                'SELECT id, role, active FROM users WHERE id=?', (uid,), one=True)
+        except Exception:
+            # DB 조회 자체가 실패하면 인증을 통과시키지 않는다(fail-closed).
+            app.logger.exception('session account 재확인 실패 uid=%s', uid)
+            g._sess_account = None
+    return g._sess_account
+
+
+def _session_account_ok():
+    u = _session_account()
+    return bool(u and u['active'] == 1)
+
+
 def login_required(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
-        if 'user_id' not in session:
+        if 'user_id' not in session or not _session_account_ok():
+            session.clear()             # 비활성화된 계정의 잔여 쿠키를 여기서 끊는다
             if request.path.startswith('/api/'):
                 return jsonify({'error': 'unauthorized'}), 401
             return redirect(url_for('routes_core.login', next=request.path))
@@ -50,9 +79,13 @@ def login_required(f):
 def admin_required(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
-        if 'user_id' not in session:
+        if 'user_id' not in session or not _session_account_ok():
+            session.clear()
             return jsonify({'error': 'unauthorized'}), 401
-        if session.get('role') != 'admin':
+        # 🔴 권한은 세션에 굳은 값이 아니라 DB 를 본다 — admin 을 member 로 강등해도
+        #    기존 세션이 살아 있는 동안 admin API 가 계속 열려 있던 문제(권한 상승 잔존).
+        acct = _session_account()       # 위 검사를 통과했으므로 None 이 아니다
+        if session.get('role') != 'admin' or acct['role'] != 'admin':
             return jsonify({'error': 'forbidden'}), 403
         return f(*args, **kwargs)
     return wrapped
@@ -2347,23 +2380,39 @@ def _push_dispatch(kind, event_key, title, body, link=None,
         return {'ok': True, 'dup': True, 'reason': 'already_sent',
                 'sent': 0, 'failed': 0}
 
-    targets = _push_devices(user_ids, kind=kind)
+    targets = []
     sent, failed, detail = 0, 0, []
-    for d in targets:
-        payload = ap.alert_payload(title, body, link=link, kind=kind)
-        ok, st, reason = ap.send(d['token'], payload, env=(d['env'] or 'production'),
-                                 conf=conf, collapse_id=collapse_id)
-        if ok:
-            sent += 1
-            execute("UPDATE ios_device SET last_push_at=datetime('now','localtime') "
-                    "WHERE id=?", (d['id'],))
-        else:
-            failed += 1
-            detail.append(f"dev{d['id']}:{st}:{reason}")
-            if ap.is_dead(st, reason):       # 영구 사망 사유만 비활성(일시실패로는 안 끔)
-                execute("UPDATE ios_device SET active=0, dead_reason=?, "
-                        "updated_at=datetime('now','localtime') WHERE id=?",
-                        (f'{st}:{reason}', d['id']))
+    try:
+        targets = _push_devices(user_ids, kind=kind)
+        for d in targets:
+            payload = ap.alert_payload(title, body, link=link, kind=kind)
+            ok, st, reason = ap.send(d['token'], payload, env=(d['env'] or 'production'),
+                                     conf=conf, collapse_id=collapse_id)
+            if ok:
+                sent += 1
+                execute("UPDATE ios_device SET last_push_at=datetime('now','localtime') "
+                        "WHERE id=?", (d['id'],))
+            else:
+                failed += 1
+                detail.append(f"dev{d['id']}:{st}:{reason}")
+                if ap.is_dead(st, reason):   # 영구 사망 사유만 비활성(일시실패로는 안 끔)
+                    execute("UPDATE ios_device SET active=0, dead_reason=?, "
+                            "updated_at=datetime('now','localtime') WHERE id=?",
+                            (f'{st}:{reason}', d['id']))
+    except Exception as e:
+        # 🔴 claim 만 남기고 발송 루프가 예외로 죽으면, 다음 시도는 IntegrityError 를 만나
+        #    `dup/already_sent` (ok=True) 로 응답한다 → 대기함(outbox) 행이 "성공"으로 지워져
+        #    그 알림이 **영구 유실**된다. 성공분이 0일 때만 claim 을 풀어 재시도를 살린다.
+        app.logger.exception('push 발송 예외 key=%s', event_key)
+        if sent == 0:
+            try:
+                execute("DELETE FROM push_log WHERE event_key=? AND sent_n=0", (event_key,))
+            except Exception:
+                app.logger.exception('push claim 해제 실패 key=%s', event_key)
+            return {'ok': False, 'reason': 'exception', 'detail': str(e)[:200],
+                    'sent': 0, 'failed': failed}
+        # 일부는 이미 나갔다 — claim 을 유지해 재발송(중복 알림)을 막고 실적만 기록한다.
+        detail.append(f'exception:{str(e)[:120]}')
 
     if targets and sent == 0:                # 전부 실패 → claim 해제(재시도 가능하게)
         execute("DELETE FROM push_log WHERE event_key=? AND sent_n=0", (event_key,))

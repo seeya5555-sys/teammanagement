@@ -65,6 +65,10 @@ async function api(url, options = {}) {
 }
 
 const esc = (s) => String(s == null ? '' : s);
+// 🔴 innerHTML 에 들어가는 값 전용. `esc` 는 텍스트노드용(el())이라 이스케이프를 안 한다.
+const escHtml = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 // ───────────── Tabs ─────────────
 function renderTabs() {
@@ -420,7 +424,7 @@ async function openMgrExport() {
   const box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
   box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:4px"><svg class="ic-svg"><use href="#i-file-text"/></svg> 관리사별 Class Status 추출 + 메일 드래프트'
-    + (supName ? ` <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${supName} 담당</span>` : '') + '</div>'
+    + (supName ? ` <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${escHtml(supName)} 담당</span>` : '') + '</div>'
     + '<div style="font-size:12px;color:#888;margin-bottom:12px">관리사 선택 → 엑셀(영문) 다운로드 + 오른쪽 메일 드래프트 복사해서 발송. 지적 없는 선박 자동 제외.</div>';
   const sel = document.createElement('select');
   sel.style.cssText = 'width:100%;height:38px;padding:0 10px;border:1px solid #d3d1c7;border-radius:8px;font-size:14px;margin-bottom:12px';
