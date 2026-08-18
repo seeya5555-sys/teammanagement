@@ -550,9 +550,13 @@ def _overlay_trmtdb_positions(fleet, override_keys):
         v['position_ts'] = latest.get('event_at') or src.get('latest_event_at')
         v['pos_source'] = 'trmtdb'
         v['pos_reported_at'] = v['position_ts']
-        event_date = str(v['position_ts'] or '')[:10].replace('-', '')
-        if len(event_date) == 8 and event_date.isdigit():
-            v['rpt_dt'] = event_date
+        # 🔴 `rpt_dt` 는 **SVMS noon 보고일**이다(iOS `Fleet.rpt_dt` 계약도 동일). 여기 ship-position 은
+        #    STORMGEO/VESSEL/SLOW 측위 피드일 뿐 noon 보고가 아니므로 절대 덮어쓰지 않는다.
+        #    옛 코드는 event_at 날짜를 rpt_dt 에 밀어넣어서
+        #      · upstream 이 얼면 rpt_dt 가 **과거로 끌려가** noon 누락 오탐(2026-08-18 실사고:
+        #        upstream 이 08-11 08:00 에 정지 → SVMS noon 은 08-17 로 멀쩡한데 12척 "7일 누락")
+        #      · upstream 이 정상이면 rpt_dt 가 늘 오늘이 돼서 noon 누락 경보가 **영구 무력화**
+        #    두 방향 모두 틀렸다. 측위 신선도는 position_ts/pos_reported_at 이 이미 들고 있다.
         matched += 1
     return {'source': 'TRMT DB', 'fetched_at': fetched_at, 'matched': matched,
             'upstream_vessels': len(upstream), 'cached': cached, 'error': error}
@@ -949,6 +953,35 @@ def api_fleet_map_eta_override_delete():
     return jsonify({'ok': True, 'vessel': vessel.strip()})
 
 
+def _ymd_to_date(raw):
+    """'YYYYMMDD' → date. 형식·실재성 둘 다 통과할 때만 값을 준다(20260231 같은 건 None).
+    🔴 문자열 대소 비교로 날짜를 판정하지 않는다 — 여기서 date 로 바꾼 뒤 비교한다."""
+    s = str(raw or '')
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        return datetime.strptime(s, '%Y%m%d').date()
+    except ValueError:
+        return None
+
+
+def _noon_alert_date(v):
+    """noon 누락 경보의 판정 기준일. 없거나 해석 불가면 None(= '보고일 불명'으로 표면화).
+
+    기준은 `rpt_dt`(SVMS noon 보고일) 하나이고, **여기서만** 예외적으로 이메일 선위 override 의
+    보고일이 그보다 최신이면 그걸 인정한다(마스터가 메일로 보고 중인 구간의 오탐 억제 —
+    옛 코드가 `rpt_dt` 자체를 덮어써서 하던 일을 판정 시점으로 옮긴 것).
+    🔴 override 는 **전진만** 시킨다. 낡은 override 가 기준일을 과거로 끌면 오탐이 된다
+       (2026-08-18 실사고). 미래 날짜는 miss 가 음수라 임계 미만 → 자연히 경보 없음.
+    """
+    d0 = _ymd_to_date(v.get('rpt_dt'))
+    if v.get('pos_source') == 'email':
+        ed = _ymd_to_date(str(v.get('pos_reported_at') or '')[:10].replace('-', ''))
+        if ed and (d0 is None or ed > d0):
+            return ed
+    return d0
+
+
 @bp.route('/api/fleet-map/data')
 @login_required
 def api_fleet_map_data():
@@ -996,9 +1029,12 @@ def api_fleet_map_data():
             v['pos_source'] = o.get('source') or 'email'
             v['pos_reported_at'] = o.get('reported_at') or o.get('stored_at')
             override_keys.add(_vkey(v.get('name')))
-            # 신선도 ALERT 오탐 방지: override 보고일을 rpt_dt로
-            if len(ov_date) == 8 and ov_date.isdigit():
-                v['rpt_dt'] = ov_date
+            # 🔴 `rpt_dt` 는 **SVMS noon 보고일**이며 여기서 건드리지 않는다(적재 후 불변).
+            #    옛 코드는 신선도 ALERT 억제를 노리고 override 보고일을 rpt_dt 에 무조건 대입했는데,
+            #      · override 가 noon 보다 낡으면 rpt_dt 가 **과거로 끌려가** 오탐을 만들었고
+            #        (2026-08-18 실측: PERU 8/12·INDONESIA 8/13 이 noon 8/17 을 덮어 6일/5일 누락 표시)
+            #      · 최신이면 fuel 라벨·iOS 표시까지 noon 아닌 날짜로 오염됐다.
+            #    억제 자체는 유효한 취지라 `_noon_alert_date()` 안에서 **경보 판정 시에만** 반영한다.
     # 실시간 위치는 TRMT DB를 우선 사용. 이메일 override + 수동 SVMS 고정(ais-off) 선박은 덮어쓰기 제외.
     _ais_off = _load_ais_off()
     _ais_off_keys = set(_ais_off.keys())
@@ -1092,6 +1128,8 @@ def api_fleet_map_data():
             pass
     # 2) 선박별 noon 보고 누락: 어제(전날)도 보고 안 된 선박만 = miss>=2 (오늘 6/23이면 6/22까지 미보고).
     #    어제 보고는 정상으로 봄(손유석 2026-06-23). 며칠부터 끊겼는지 함께 표기.
+    #    판정 기준일은 `_noon_alert_date()` 가 단독 소유한다 — 다른 피드(측위 등) 날짜를 여기 끌어오지 말 것.
+    #    해석 불가한 rpt_dt(빈값·형식오류·20260231 같은 허수날짜)는 조용히 넘기지 않고 '보고일 불명'으로 띄운다.
     today = now_k.date()
     miss_threshold = 2
     for v in (data.get('fleet') or []):
@@ -1099,12 +1137,8 @@ def api_fleet_map_data():
         if v.get('no_noon'):
             continue
         sup = v.get('supervisor')
-        rd = str(v.get('rpt_dt') or '')
-        if len(rd) == 8 and rd.isdigit():
-            try:
-                d0 = datetime.strptime(rd, '%Y%m%d').date()
-            except ValueError:
-                continue
+        d0 = _noon_alert_date(v)
+        if d0 is not None:
             miss = (today - d0).days
             if miss >= miss_threshold:
                 nxt = d0 + timedelta(days=1)
