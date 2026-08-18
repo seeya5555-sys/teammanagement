@@ -117,6 +117,13 @@ TRMTDB_POSITION_CACHE_TTL = 600
 # 실패한 시도까지 10분 묶어두면 upstream 일시 장애가 10분짜리 빈 화면이 된다(올마이트 지적).
 # 실패 뒤에는 짧게 다시 시도한다.
 TRMTDB_POSITION_ERROR_TTL = 60
+# 🔴 **폐기한 측위 플랫폼**(형 지시 2026-08-18 "Slow 파싱도 없애고, 해당 항목은 폐기").
+# upstream 은 한 선박에 SLOW/STORMGEO/VESSEL 세 소스를 함께 주는데, SLOW 는 더 안 쓴다.
+# ⚠️ upstream 쪽에서 걸러 받는 길은 없다 — `?platform=` 은 **단일값만** 받는다(실측: `STORMGEO`
+#    200/254척, `SLOW` 200/180척, `STORMGEO,VESSEL` 은 0척). 그리고 `?platform=STORMGEO` 로
+#    갈아타면 VESSEL 만 가진 선박(예: SAMOA PROSPERITY)이 선위를 통째로 잃는다.
+#    그래서 `ALL` 로 받고 **여기서** 고른다.
+TRMTDB_RETIRED_PLATFORMS = frozenset({'SLOW'})
 _trmtdb_position_cache = {'at': 0.0, 'loaded': False, 'vessels': [], 'fetched_at': None, 'error': None}
 _trmtdb_position_lock = threading.Lock()
 _trmtdb_position_refreshing = False
@@ -457,11 +464,88 @@ def _trmtdb_positions():
     return vessels, fetched_at, error, loaded
 
 
+def _trmtdb_is_retired_platform(rec):
+    """이 레코드가 **폐기한 측위 플랫폼**(SLOW) 인가.
+
+    🔴 판정은 `platform` 이 폐기 목록과 **명확히** 일치할 때만 True 다. 키가 없거나 None 이면
+       False(=유지) — '모르는 것' 을 폐기로 몰면 upstream 이 필드를 빼는 배포 한 번에 선위가
+       통째로 사라진다. 폐기는 확정된 소스에만 적용한다(`_txt_or_none` 계열과 같은 철학).
+    """
+    if not isinstance(rec, dict):
+        return False
+    plat = rec.get('platform')
+    if not isinstance(plat, str):
+        return False
+    return plat.strip().upper() in TRMTDB_RETIRED_PLATFORMS
+
+
+def _trmtdb_valid_lat_lng(rec):
+    """이 측위 레코드가 지도에 찍을 수 있는 좌표를 들고 있는가.
+
+    대체본 후보를 고를 때 쓴다 — 좌표가 깨진 레코드를 '최신' 으로 뽑아 놓으면 호출부의 좌표
+    검증에서 걸려 그 선박이 오버레이에서 통째로 빠진다(올마이트 지적 2026-08-18: 그 다음 순위의
+    **정상 레코드를 재선택하지 않는** 게 문제였다).
+    """
+    if not isinstance(rec, dict):
+        return False
+    try:
+        lat, lng = float(rec.get('latitude')), float(rec.get('longitude'))
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(lat) and math.isfinite(lng) and -90 <= lat <= 90 and -180 <= lng <= 180
+
+
+def _trmtdb_pick_latest(row):
+    """선박 1건에서 **폐기 플랫폼을 제외한** 최신 측위 레코드를 고른다.
+
+    upstream 이 준 `latest` 가 SLOW 일 수 있다(실측 2026-08-18: 318척 중 19척, 그중 담당선은
+    SOUTH AFRICA PROSPERITY 1척). 그 경우 `by_platform` 에서 SLOW 를 뺀 나머지 중 `event_at`
+    최대를 대신 쓴다. 대체가 없으면 **None** — 폐기한 소스로는 덮지 않고 오버레이를 건너뛴다
+    (그 배는 vesseltracker AIS / SVMS noon 폴백으로 내려간다).
+
+    반환 = `(latest_dict, event_at 폴백 허용 여부)`.
+    🔴 대체 레코드를 쓸 때는 row 레벨 `latest_event_at` 폴백을 **금지**한다 — 그 값은 SLOW 를
+       포함해 계산된 것이라, 대체 레코드의 시각으로 써야 신선도 판정이 오염되지 않는다.
+    """
+    if not isinstance(row, dict):
+        return None, False
+    latest = row.get('latest') if isinstance(row.get('latest'), dict) else {}
+    if not latest:
+        # latest 가 없으면 종전과 동일하게 이 선박은 오버레이 대상이 아니다. by_platform 을
+        # 뒤져 새로 발굴하지 않는다 — 이 변경의 범위는 'SLOW 폐기' 지, 신규 매칭 확대가 아니다.
+        return None, False
+    if not _trmtdb_is_retired_platform(latest):
+        return latest, True
+    by_platform = row.get('by_platform')
+    if not isinstance(by_platform, dict):
+        # 구 배포본엔 by_platform 이 없다. latest 가 폐기 소스면 대체할 방법이 없다.
+        return None, False
+    best, best_key = None, None
+    for plat, recs in by_platform.items():
+        if isinstance(plat, str) and plat.strip().upper() in TRMTDB_RETIRED_PLATFORMS:
+            continue
+        for rec in (recs if isinstance(recs, list) else [recs]):
+            if not isinstance(rec, dict) or _trmtdb_is_retired_platform(rec):
+                continue
+            if not _trmtdb_valid_lat_lng(rec):
+                continue           # 좌표 깨진 레코드를 최신으로 뽑으면 그 선박이 통째로 빠진다
+            # 🔴 `event_at` 문자열 사전순 비교 금지(올마이트 지적) — 'T' 구분자·분 단위·offset 표기가
+            #    섞이면 사전순은 시간순이 아니다. 신선도 판정과 **같은 파서**로 epoch 화해 비교하고,
+            #    해석 불가한 값은 최하위로 밀되 후보 자격은 유지한다(좌표는 여전히 유효하므로).
+            ep = _trmtdb_epoch_upper_bound(rec.get('event_at'))
+            key = (ep is not None, ep if ep is not None else 0.0)
+            if best is None or key > best_key:
+                best, best_key = rec, key
+    return best, False
+
+
 def _trmtdb_track_points(row):
     """TRMT DB AIS 응답의 과거 선위를 지도용 최소 필드로 정규화한다.
 
     ship-position API 배포본별 배열 키(history/track/positions)를 모두 받아들이되,
     원본의 MMSI·provider 메타데이터는 브라우저에 전달하지 않는다.
+    🔴 `history` 는 세 플랫폼이 **뒤섞여** 있다(실측: KUWAIT 349점 = STORMGEO 104 / VESSEL 111 /
+       SLOW 134). 폐기한 SLOW 점은 항적에서도 뺀다 — 안 빼면 지도 polyline 에만 폐기 소스가 남는다.
     """
     if not isinstance(row, dict):
         return []
@@ -473,6 +557,8 @@ def _trmtdb_track_points(row):
     points, seen = [], set()
     for point in raw_points:
         if not isinstance(point, dict):
+            continue
+        if _trmtdb_is_retired_platform(point):
             continue
         try:
             raw_lat = point.get('latitude')
@@ -577,23 +663,32 @@ def _overlay_trmtdb_positions(fleet, override_keys):
     """
     upstream, fetched_at, error, cached = _trmtdb_positions()
     by_name, by_imo = {}, {}
+    retired_dropped = 0
     for row in upstream:
         if not isinstance(row, dict):
             continue
-        latest = row.get('latest') if isinstance(row.get('latest'), dict) else {}
+        # 🔴 폐기 플랫폼(SLOW)은 후보에서 제외하고, latest 가 SLOW 면 대체 소스로 바꿔 쓴다.
+        #    대체가 없으면 이 선박은 오버레이 대상에서 빠진다(폐기 소스로 덮지 않는다).
+        latest, allow_row_ts = _trmtdb_pick_latest(row)
+        if not latest:
+            if isinstance(row.get('latest'), dict) and row.get('latest'):
+                retired_dropped += 1
+            continue
         try:
             lat, lng = float(latest.get('latitude')), float(latest.get('longitude'))
         except (TypeError, ValueError):
             continue
         if not (-90 <= lat <= 90 and -180 <= lng <= 180):
             continue
-        row = {**row, '_latest': latest, '_lat': lat, '_lng': lng}
+        row = {**row, '_latest': latest, '_lat': lat, '_lng': lng,
+               '_allow_row_ts': allow_row_ts}
         if row.get('vessel_name'):
             by_name[_vkey(row['vessel_name'])] = row
         if row.get('imo') not in (None, ''):
             by_imo[str(row['imo']).strip()] = row
     matched = 0
     skipped_stale = 0
+    skipped_no_ts = 0
     for v in fleet:
         if _vkey(v.get('name')) in override_keys:
             continue
@@ -607,7 +702,19 @@ def _overlay_trmtdb_positions(fleet, override_keys):
         # 🔴 건너뛰려면 **대체할 좌표가 실제로 있어야** 한다. push 에 좌표가 없는데 skip 하면
         #    그 배는 지도에서 통째로 사라진다(낡은 좌표보다 나쁘다).
         pushed_at = _pushed_position_epoch(v) if _has_position(v) else None
-        up_at = _trmtdb_epoch_upper_bound(latest.get('event_at') or src.get('latest_event_at'))
+        # 🔴 대체 레코드(원 latest 가 폐기 SLOW 였던 경우)는 row 레벨 `latest_event_at` 을 쓰지
+        #    않는다 — 그 값은 SLOW 를 포함해 산출된 것이라 대체본보다 새로 보일 수 있고, 그러면
+        #    신선도 판정이 폐기 소스의 시각으로 이뤄진다.
+        row_ts = src.get('latest_event_at') if src.get('_allow_row_ts') else None
+        up_at = _trmtdb_epoch_upper_bound(latest.get('event_at') or row_ts)
+        # 🔴 대체본(폐기 SLOW 를 갈아탄 경로)인데 시각을 아예 모르면, **시각이 있는** 기존 좌표를
+        #    덮지 않는다(올마이트 지적). 여긴 이미 열위 경로라 '판정 불가 = TRMT DB 우선' 을 그대로
+        #    적용하면 나이 모를 좌표가 오늘 아침 AIS 를 밀어낸다(2026-08-18 실사고와 같은 형태).
+        #    push 에 좌표가 없으면(`pushed_at is None`) 종전대로 쓴다 — 지도에서 배가 사라지는 게 더 나쁘다.
+        if up_at is None and not src.get('_allow_row_ts') and pushed_at is not None:
+            v['pos_stale_feed'] = 'trmtdb'
+            skipped_no_ts += 1
+            continue
         if pushed_at is not None and up_at is not None and up_at < pushed_at:
             v['pos_stale_feed'] = 'trmtdb'      # 진단용 — 지도 라벨은 기존 선위 출처를 그대로 쓴다
             skipped_stale += 1
@@ -622,7 +729,7 @@ def _overlay_trmtdb_positions(fleet, override_keys):
                     pass
         # 상태는 기존 SVMS 상태 체계를 유지한다. 이 API는 실시간 위치 전용이다.
         v['position_source'] = 'TRMT DB ' + str(latest.get('platform') or '')
-        v['position_ts'] = latest.get('event_at') or src.get('latest_event_at')
+        v['position_ts'] = latest.get('event_at') or row_ts
         v['pos_source'] = 'trmtdb'
         v['pos_reported_at'] = v['position_ts']
         # 🔴 `rpt_dt` 는 **SVMS noon 보고일**이다(iOS `Fleet.rpt_dt` 계약도 동일). 여기 ship-position 은
@@ -634,7 +741,8 @@ def _overlay_trmtdb_positions(fleet, override_keys):
         #    두 방향 모두 틀렸다. 측위 신선도는 position_ts/pos_reported_at 이 이미 들고 있다.
         matched += 1
     return {'source': 'TRMT DB', 'fetched_at': fetched_at, 'matched': matched,
-            'skipped_stale': skipped_stale,
+            'skipped_stale': skipped_stale, 'retired_dropped': retired_dropped,
+            'skipped_no_ts': skipped_no_ts,
             'upstream_vessels': len(upstream), 'cached': cached, 'error': error}
 
 
