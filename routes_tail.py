@@ -13,6 +13,7 @@ from flask import Blueprint
 
 import http.client
 import json
+import math
 import os
 import re
 import re as _re_cls
@@ -511,8 +512,69 @@ def _trmtdb_track_row_for_vessel(rows, vessel):
                  and _vkey(row.get('vessel_name') or row.get('name')) == wanted_name), None)
 
 
+#: 선위 시각으로 인정할 epoch 범위 — 2000-01-01 ~ '지금 +1일'.
+#: 상한을 두는 이유: `float('inf')`·먼 미래값 하나가 "무조건 더 최신"으로 읽혀 TRMT DB 를
+#: 영구히 밀어내는 걸 막는다(올마이트 지적, 2026-08-18).
+_POS_EPOCH_MIN = 946684800.0
+
+
+def _has_position(v):
+    """push 된 항목이 지도에 찍을 수 있는 좌표를 실제로 들고 있는가."""
+    try:
+        lat, lng = float(v.get('lat')), float(v.get('lng'))
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(lat) and math.isfinite(lng) and -90 <= lat <= 90 and -180 <= lng <= 180
+
+
+def _pushed_position_epoch(v):
+    """push 된 fleet 항목의 선위 시각(epoch). 맥 파이프라인이 vesseltracker AIS 를 얹으면서
+    `position_ts_epoch`(문자열 숫자)를 같이 실어준다.
+
+    없거나·유한하지 않거나(`inf`/`nan`)·상식 범위 밖이면 **비교 불가(None)** 로 본다.
+    비교 불가는 곧 '종전 우선순위 유지' 라서 판정이 틀리는 방향이 항상 보수적이다.
+    """
+    try:
+        ep = float(v.get('position_ts_epoch'))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(ep):
+        return None
+    now = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
+    if not (_POS_EPOCH_MIN <= ep <= now + 86400):
+        return None
+    return ep
+
+
+def _trmtdb_epoch_upper_bound(raw):
+    """TRMT DB `event_at`('2026-08-11 08:00:29')의 **가능한 가장 늦은** epoch.
+
+    🔴 이 타임스탬프에는 타임존 표기가 없고 upstream 문서도 없다(2026-08-18 실측: 피드가
+       08-11 에 멈춰 있어 '현재시각과 대조'로 존을 역산하는 것도 불가능). 그래서 존을 **가정하지
+       않는다** — naive 값을 UTC 로 본 epoch 에서 존 불확실성 상한(UTC-12)만큼 더한 값을 돌려주고,
+       "이렇게 상대에게 최대한 유리하게 읽어도 여전히 낡았다" 일 때만 낡음으로 판정한다.
+       (판정이 틀리는 방향은 항상 '기존 우선순위를 유지' 쪽 = 보수적.)
+    """
+    # 🔴 앞 19자만 떼어 보면 '2026-08-11 08:00:29 쓰레기' 같은 값도 통과한다(prefix parsing).
+    #    "해석 불가면 종전 우선순위" 계약이 새므로 **전체 문자열을 strict 로** 맞춘다.
+    s = str(raw or '').strip().replace('T', ' ')
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+        try:
+            naive = datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+        return (naive - datetime(1970, 1, 1)).total_seconds() + 12 * 3600
+    return None
+
+
 def _overlay_trmtdb_positions(fleet, override_keys):
-    """TRMT DB의 latest 위치를 fleet_map 항목에 병합. 이메일 수동 override가 최우선이다."""
+    """TRMT DB의 latest 위치를 fleet_map 항목에 병합. 이메일 수동 override가 최우선이다.
+
+    🔴 **낡은 값으로는 덮지 않는다.** 우선순위(①이메일 ②TRMT DB ③vesseltracker AIS ④SVMS noon)는
+    "TRMT DB 가 살아 있을 때" 전제였는데, 2026-08-18 실사고에서 upstream 이 08-11 08:00 에 멈춘 뒤에도
+    (318척 전부 동일 타임스탬프) 서버가 그 7일 묵은 좌표로 **오늘 아침 AIS 좌표를 계속 덮어써서**
+    지도가 일주일 전 선위를 그리고 있었다. 이제 push 된 선위보다 확실히 낡으면 건너뛴다.
+    """
     upstream, fetched_at, error, cached = _trmtdb_positions()
     by_name, by_imo = {}, {}
     for row in upstream:
@@ -531,6 +593,7 @@ def _overlay_trmtdb_positions(fleet, override_keys):
         if row.get('imo') not in (None, ''):
             by_imo[str(row['imo']).strip()] = row
     matched = 0
+    skipped_stale = 0
     for v in fleet:
         if _vkey(v.get('name')) in override_keys:
             continue
@@ -538,6 +601,18 @@ def _overlay_trmtdb_positions(fleet, override_keys):
         if not src:
             continue
         latest = src['_latest']
+        # 이미 실려 있는 선위(맥이 얹은 vesseltracker AIS)가 더 최신이면 덮지 않는다.
+        # 비교 불가(push 에 시각 없음/비정상 / event_at 해석 불가 / 존 불확실 구간)면 종전대로
+        # TRMT DB 를 쓴다 — 판정이 틀리는 방향을 항상 '기존 우선순위 유지' 로 몰아둔다.
+        # 🔴 건너뛰려면 **대체할 좌표가 실제로 있어야** 한다. push 에 좌표가 없는데 skip 하면
+        #    그 배는 지도에서 통째로 사라진다(낡은 좌표보다 나쁘다).
+        pushed_at = _pushed_position_epoch(v) if _has_position(v) else None
+        up_at = _trmtdb_epoch_upper_bound(latest.get('event_at') or src.get('latest_event_at'))
+        if pushed_at is not None and up_at is not None and up_at < pushed_at:
+            v['pos_stale_feed'] = 'trmtdb'      # 진단용 — 지도 라벨은 기존 선위 출처를 그대로 쓴다
+            skipped_stale += 1
+            continue
+        v.pop('pos_stale_feed', None)           # 덮어쓰는 회차엔 직전 진단 마커를 남기지 않는다
         v['lat'], v['lng'] = src['_lat'], src['_lng']
         for source_key, target_key in (('heading', 'course'), ('speed', 'speed')):
             if latest.get(source_key) is not None:
@@ -559,6 +634,7 @@ def _overlay_trmtdb_positions(fleet, override_keys):
         #    두 방향 모두 틀렸다. 측위 신선도는 position_ts/pos_reported_at 이 이미 들고 있다.
         matched += 1
     return {'source': 'TRMT DB', 'fetched_at': fetched_at, 'matched': matched,
+            'skipped_stale': skipped_stale,
             'upstream_vessels': len(upstream), 'cached': cached, 'error': error}
 
 
