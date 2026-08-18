@@ -710,12 +710,9 @@
     const btn=document.querySelector('.fm-eta-save[data-vessel="'+CSS.escape(vessel)+'"]');
     if(btn) btn.click();
   });
-  // slowspace 섹션: 최신 동정만(Notification 있을 때만). ETA/Next Port는 표시 안 함(손유석 지시).
-  function slowSec(v){
-    if(!v.slow_last_notif) return '';
-    return '<div class="fm-sec">Slow · 최신 동정</div>'+
-      '<div class="fm-line"><span class="lk">동정</span><span class="lv">'+esc(v.slow_last_notif.text||'')+(v.slow_last_notif.ts?' <small>('+esc(String(v.slow_last_notif.ts).slice(0,16))+')</small>':'')+'</span></div>';
-  }
+  // ⛔ slowspace '최신 동정' 섹션은 2026-08-18 형 지시로 폐기("Slow 파싱도 없애고. 해당 항목은 폐기").
+  //    렌더뿐 아니라 생산측(맥 automation/fleet-map/slow_overlay.py)·서버 수용측도 같이 폐기했다.
+  //    부활 금지 — 서버 push 가 `slow_last_notif` 를 이제 저장조차 하지 않는다(routes_tail 참조).
   function trackToggle(v){
     return '<div class="fm-line fm-track-row"><span class="lk">AIS 이전 항적</span><span class="lv">'+
       '<button type="button" class="fm-track-toggle" data-vessel="'+esc(v.name)+'" aria-pressed="false">표시</button>'+
@@ -836,8 +833,7 @@
       '<div class="fm-line"><span class="lk">최근/Plan</span><span class="lv">'+esc(v.vetting_plan||'—')+'</span></div>'+
       '<div class="fm-sec">항로 (운항보고서 Schedule)</div>'+
       '<div class="fm-line"><span class="lk">In Port</span><span class="lv">'+esc((v.prev_port&&v.prev_port.name)||'—')+'</span></div>'+
-      nextPortSec(v)+
-      slowSec(v);
+      nextPortSec(v);
     document.getElementById('fmPanel').classList.add('open');drawRoute(v);
   }
   window.fmClose=function(){

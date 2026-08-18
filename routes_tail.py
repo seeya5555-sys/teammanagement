@@ -746,6 +746,14 @@ def _overlay_trmtdb_positions(fleet, override_keys):
             'upstream_vessels': len(upstream), 'cached': cached, 'error': error}
 
 
+# ⛔ **폐기한 선박 필드**(형 지시 2026-08-18 "Slow 파싱도 없애고. 해당 항목은 폐기").
+# slowspace 오버레이가 얹던 '최신 동정'/ETA/Next Port 다. 생산측(맥 slow_overlay.py)을 내렸지만
+# 여기서도 **저장 자체를 막는다** — 이유는 push 가 외부에서 오는 입력이라, 옛 버전 러너가 남아
+# 돌거나 누가 수동으로 옛 payload 를 밀면 화면 렌더만 지운 상태에선 조용히 되살아난다.
+# 렌더는 templates/dashboard.html 에서 제거됨. 부활시키려면 세 곳을 같이 되살려야 한다.
+FLEET_RETIRED_VESSEL_FIELDS = ('slow_last_notif', 'slow_eta', 'slow_next_port')
+
+
 @bp.route('/api/ext/fleet-map/push', methods=['POST'])
 @api_key_required
 def api_ext_fleet_map_push():
@@ -766,6 +774,8 @@ def api_ext_fleet_map_push():
             return jsonify({'ok': False, 'error': 'invalid fleet item (name/lat/lng required)'}), 400
     with _fleet_next_port_lock:
         for v in d['fleet']:
+            for k in FLEET_RETIRED_VESSEL_FIELDS:
+                v.pop(k, None)
             _fleet_apply_code_first_next_port(v)
         d['_received_at'] = datetime.now().isoformat(timespec='seconds')
         tmp = FLEET_MAP_FILE + '.tmp'
