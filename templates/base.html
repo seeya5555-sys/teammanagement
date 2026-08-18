@@ -82,7 +82,10 @@
       </a>
 
       {% set survey_eps = ['routes_core.class_status_page','routes_core.condition_survey','routes_core.vetting_status'] %}
-      {% set report_eps = ['routes_core.dry_dock_page','routes_core.dry_dock_edit_page','routes_core.boarding_page','routes_core.boarding_edit_page'] %}
+      {# Report 그룹: 링크별 alias는 자기 것만 넘긴다(공용 리스트를 넘기면 하위 두 링크가 동시에 active 로 칠해짐). 그룹 헤더 판정은 합집합 #}
+      {% set drydock_eps = ['routes_core.dry_dock_page','routes_core.dry_dock_edit_page'] %}
+      {% set boarding_eps = ['routes_core.boarding_page','routes_core.boarding_edit_page'] %}
+      {% set report_eps = drydock_eps + boarding_eps %}
       {% set auto_eps = ['routes_dock_submit.automation_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_calendar_dock.health_page'] %}
       {% set dockprep_eps = ['routes_repair_request.repair_request_page','routes_calendar_dock.reqgen_page','routes_dock_submit.dock_procure_page'] %}
       {% set expense_eps = ['routes_calendar_dock.expenses_page','routes_calendar_dock.expense_detail_page'] %}
@@ -118,9 +121,10 @@
 
         <div class="nav-group {% if request.endpoint in report_eps %}active{% endif %}">
           <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-file-text"/></svg>Report<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
-          <div class="nav-submenu">
-            {{ nlink('routes_core.dry_dock_page', 'Dry Dock Report', report_eps) }}
-            {{ nlink('routes_core.boarding_page', 'Boarding Report', report_eps) }}
+          {# data-nav-group: 테스트가 라벨이 아니라 구조로 그룹을 집는 hook(데스크탑/모바일 각 1개) #}
+          <div class="nav-submenu" data-nav-group="report">
+            {{ nlink('routes_core.dry_dock_page', 'Dry Dock Report', drydock_eps) }}
+            {{ nlink('routes_core.boarding_page', 'Boarding Report', boarding_eps) }}
           </div>
         </div>
 
@@ -232,9 +236,9 @@
           {{ nlink('routes_core.vetting_status', 'Vetting Status') }}
         </div>
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-file-text"/></svg>Report</div>
-        <div class="mm-sub-group">
-          {{ nlink('routes_core.dry_dock_page', 'Dry Dock Report', report_eps) }}
-          {{ nlink('routes_core.boarding_page', 'Boarding Report', report_eps) }}
+        <div class="mm-sub-group" data-nav-group="report">
+          {{ nlink('routes_core.dry_dock_page', 'Dry Dock Report', drydock_eps) }}
+          {{ nlink('routes_core.boarding_page', 'Boarding Report', boarding_eps) }}
         </div>
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-anchor"/></svg>입거 준비</div>
         <div class="mm-sub-group">
