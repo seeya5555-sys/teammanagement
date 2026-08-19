@@ -86,7 +86,7 @@
       {% set drydock_eps = ['routes_core.dry_dock_page','routes_core.dry_dock_edit_page'] %}
       {% set boarding_eps = ['routes_core.boarding_page','routes_core.boarding_edit_page'] %}
       {% set report_eps = drydock_eps + boarding_eps %}
-      {% set auto_eps = ['routes_dock_submit.automation_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_calendar_dock.health_page'] %}
+      {% set auto_eps = ['routes_dock_submit.automation_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_liscr.liscr_page','routes_calendar_dock.health_page'] %}
       {% set dockprep_eps = ['routes_repair_request.repair_request_page','routes_calendar_dock.reqgen_page','routes_dock_submit.dock_procure_page'] %}
       {% set expense_eps = ['routes_calendar_dock.expenses_page','routes_calendar_dock.expense_detail_page'] %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
@@ -106,6 +106,7 @@
             {{ nlink('routes_calendar_dock.aor_page', 'AOR') }}
             {{ nlink('routes_calendar_dock.fundreq_page', '비용청구') }}
             {{ nlink('routes_calendar_dock.invoice_page', '인보이스') }}
+            {{ nlink('routes_liscr.liscr_page', '기국 인보이스 등록') }}
             {% endif %}
           </div>
         </div>
@@ -227,6 +228,7 @@
           {{ nlink('routes_calendar_dock.aor_page', 'AOR') }}
           {{ nlink('routes_calendar_dock.fundreq_page', '비용청구') }}
           {{ nlink('routes_calendar_dock.invoice_page', '인보이스') }}
+          {{ nlink('routes_liscr.liscr_page', '기국 인보이스 등록') }}
         </div>
         {% endif %}
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-search-check"/></svg>Survey</div>
@@ -698,6 +700,10 @@
     invoice_page: {
       title: '인보이스 설명서',
       sections: [['주요 버튼', ['일괄승인+컨펌: 체크된 PASS 인보이스만 SVMS confirm 처리합니다.', 'HOLD 항목은 사유를 확인하고 수동 처리합니다.', '필터는 PASS/HOLD/선박/공급업체 기준으로 목록을 좁힙니다.']]]
+    },
+    liscr_page: {
+      title: '기국 인보이스 등록 설명서',
+      sections: [['주요 버튼', ['PDF 업로드: LISCR 인보이스 PDF를 올리면 맥 러너가 내용을 읽어 카드로 띄웁니다.', '승인 · SVMS 생성: 화면 값을 확인하고 누르면 그때 SVMS에 신규 인보이스가 만들어집니다. 승인 전에는 아무것도 생성되지 않습니다.', '취소/삭제: 생성 전 건을 접거나 목록에서 지웁니다.']]]
     },
     class_status_page: {
       title: 'Class Status 설명서',

@@ -2308,6 +2308,58 @@
   "defaults": {}
  },
  {
+  "rule": "/api/ext/liscr/claim",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_ext_liscr_claim",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/liscr/jobs/<int:jid>/parsed",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_ext_liscr_parsed",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/liscr/jobs/<int:jid>/pdf",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_liscr.api_ext_liscr_pdf",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/liscr/jobs/<int:jid>/result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_ext_liscr_result",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/liscr/pending",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_liscr.api_ext_liscr_pending",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/ext/push",
   "methods": [
    "OPTIONS",
@@ -3165,6 +3217,68 @@
   "defaults": {}
  },
  {
+  "rule": "/api/liscr/jobs",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_liscr.api_liscr_jobs",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/liscr/jobs/<int:jid>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_liscr.api_liscr_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/liscr/jobs/<int:jid>/approve",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_liscr_approve",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/liscr/jobs/<int:jid>/pdf",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_liscr.api_liscr_pdf",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/liscr/jobs/<int:jid>/reject",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_liscr_reject",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/liscr/upload",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_liscr_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/me",
   "methods": [
    "GET",
@@ -3194,7 +3308,7 @@
   ],
   "endpoint": "routes_core.api_mobile_issue_list",
   "strict_slashes": true,
- "defaults": {}
+  "defaults": {}
  },
  {
   "rule": "/api/msg-preview/<string:source>/<int:aid>",
@@ -4150,6 +4264,17 @@
    "OPTIONS"
   ],
   "endpoint": "routes_calendar_dock.krcon_view",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/liscr",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_liscr.liscr_page",
   "strict_slashes": true,
   "defaults": {}
  },

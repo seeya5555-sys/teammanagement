@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block title %}기국 인보이스 등록 · TRMT3{% endblock %}
+{% block head %}
+<style>
+  .lz-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .lz-count{color:var(--text-secondary);font-size:13px}
+  .lz-wrap{max-width:920px}
+  .lz-note{background:var(--surface-2);border:1px solid var(--border-subtle);color:var(--text-secondary);border-radius:8px;padding:9px 12px;font-size:12px;margin-bottom:12px;line-height:1.55}
+  .lz-drop{border:2px dashed var(--border-strong);border-radius:12px;background:#fff;padding:26px 18px;text-align:center;cursor:pointer;transition:.12s;margin-bottom:16px}
+  .lz-drop.over{border-color:var(--blue);background:var(--blue-bg)}
+  .lz-drop.busy{opacity:.55;pointer-events:none}
+  .lz-drop h3{margin:0 0 4px;font-size:15px;color:var(--text-primary)}
+  .lz-drop p{margin:0;font-size:12px;color:var(--text-tertiary)}
+  .lz-list{display:flex;flex-direction:column;gap:12px}
+  .lz-card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .lz-card.is-busy{opacity:.55;pointer-events:none}
+  .lz-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
+  .lz-fn{font-weight:600;color:var(--text-primary);line-height:1.35;word-break:break-all}
+  .lz-meta{font-size:12px;color:var(--text-secondary);margin-top:3px}
+  .lz-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .lz-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .b-ready{background:var(--green-bg);color:var(--green)}
+  .b-hold{background:var(--amber-bg);color:var(--amber)}
+  .st-queued,.st-parsing,.st-approved,.st-creating{background:var(--amber-bg);color:var(--amber)}
+  .st-parsed{background:var(--blue-bg);color:var(--blue)}
+  .st-created{background:var(--green-bg);color:var(--green)}
+  .st-failed{background:var(--red-bg);color:var(--red)}
+  .st-hold{background:var(--amber-bg);color:var(--amber)}
+  .st-rejected{background:var(--surface-3);color:var(--text-secondary)}
+  .lz-body{padding:10px 14px;font-size:13px;color:var(--text-secondary)}
+  .lz-kv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:6px}
+  .lz-kv b{color:var(--text-primary)}
+  .lz-sect{margin-top:6px;padding-top:6px;border-top:1px dashed var(--border-subtle)}
+  .lz-sect-t{font-size:11px;font-weight:700;color:var(--text-tertiary);margin-bottom:4px;letter-spacing:.02em}
+  .lz-edit{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center}
+  .lz-edit label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-tertiary)}
+  .lz-edit input{border:1px solid var(--border-strong);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text-primary)}
+  .lz-in-subj{min-width:240px;flex:1}
+  .lz-in-date{width:150px;font-family:inherit}
+  .lz-in-amt{width:130px}
+  .lz-in-no{width:180px}
+  .lz-in-id{width:100px}
+  .lz-fix{font-size:12px;color:var(--text-tertiary)}
+  .lz-fix b{color:var(--text-secondary)}
+  .lz-why{color:var(--amber);font-size:12px;line-height:1.5}
+  .lz-err{color:var(--red);font-size:12px;line-height:1.5}
+  .lz-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;align-items:center}
+  .lz-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .lz-b.ap{background:var(--green);color:#fff}
+  .lz-b.rj{background:var(--red);color:#fff}
+  .lz-b.del{background:#fff;color:var(--text-tertiary);border:1px solid var(--border)}
+  .lz-empty{color:var(--text-tertiary);padding:30px;text-align:center}
+  .pdf-lnk{color:var(--blue);cursor:pointer;text-decoration:underline}
+  .pdf-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900;align-items:center;justify-content:center}
+  .pdf-modal.on{display:flex}
+  .pdf-box{background:#fff;border-radius:12px;width:min(1000px,94vw);height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden}
+  .pdf-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);font-size:13px}
+  .pdf-ttl{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pdf-frame{flex:1;border:0;width:100%}
+</style>
+{% endblock %}
+{% block content %}
+<div class="lz-wrap">
+  <div class="lz-head">
+    <h2 style="margin:0">기국 인보이스 등록</h2>
+    <span class="lz-count" id="lz-count"></span>
+  </div>
+  <div class="lz-note">
+    LISCR(라이베리아 기국) 인보이스 PDF를 올리면 맥 러너가 내용을 읽어 카드로 띄웁니다.
+    <b>값을 확인하고 [승인]을 눌러야</b> SVMS에 신규 인보이스가 만들어집니다(Vendor V25081 · Expense 070205 ·
+    Oversea 미지정 · Invoice PIC SS0059 고정). 생성된 인보이스는 상신(S) 상태가 되어
+    기존 <b>인보이스 자동컨펌</b> 탭이 평소처럼 이어받습니다.
+  </div>
+  <div class="lz-drop" id="lz-drop">
+    <h3>PDF를 여기로 끌어놓거나 클릭해서 선택</h3>
+    <p>LISCR 인보이스 PDF · 20MB 이하 · 여러 개 한 번에 가능</p>
+    <input type="file" id="lz-file" accept="application/pdf" multiple hidden>
+  </div>
+  <div class="lz-list" id="lz-list"><div class="lz-empty">불러오는 중…</div></div>
+</div>
+<div class="pdf-modal" id="pdf-modal">
+  <div class="pdf-box">
+    <div class="pdf-bar">
+      <span class="pdf-ttl" id="pdf-ttl">PDF</span>
+      <a id="pdf-open" href="#" target="_blank" rel="noopener">새 탭</a>
+      <button id="pdf-close" type="button">닫기 ✕</button>
+    </div>
+    <iframe class="pdf-frame" id="pdf-frame" title="기국 인보이스 PDF 미리보기"></iframe>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // INV_DT/PAY_DT 저장형(YYYYMMDD) ↔ input[type=date] 표시형. 8자리가 아니면 빈칸 —
+  // 캘린더 위젯은 임의 문자열을 못 싣는다(인보이스 탭과 같은 규칙).
+  const dtIso=s=>{s=String(s==null?'':s).trim();return /^\d{8}$/.test(s)?`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}`:'';};
+  const dtCompact=s=>String(s==null?'':s).replace(/-/g,'').trim();
+
+  async function api(method,url,body){
+    const o={method,headers:{}};
+    if(body){o.headers['Content-type']='application/json';o.body=JSON.stringify(body);}
+    const r=await fetch(url,o);let j={};try{j=await r.json();}catch(e){}
+    return {ok:r.ok,j};
+  }
+
+  const STATUS_KO={uploading:'올리는 중',queued:'대기',parsing:'읽는 중',parsed:'승인 대기',hold:'보류',
+                   approved:'승인됨',creating:'SVMS 생성 중',created:'생성 완료',
+                   failed:'실패',rejected:'취소'};
+
+  function card(d){
+    const st=d.status||'';
+    const stBadge=`<span class="lz-badge st-${esc(st)}">${esc(STATUS_KO[st]||st)}</span>`;
+    const gateBadge=d.gate?`<span class="lz-badge ${d.gate==='READY'?'b-ready':'b-hold'}">${esc(d.gate)}</span>`:'';
+    const pdfEl=d.has_pdf?`<a class="pdf-lnk" data-pdf="${d.id}" data-nm="${esc(d.filename||'')}">원본 PDF</a>`:'';
+
+    let kv='';
+    if(st!=='queued'&&st!=='parsing'){
+      kv=`<div class="lz-kv">`
+        +`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b></span>`
+        +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b></span>`
+        +`<span>금액 <b>${esc(d.amt==null?'-':d.amt)} ${esc(d.cur_cd||'')}</b></span>`
+        +`<span>INV_DT <b>${esc(d.inv_dt||'-')}</b></span>`
+        +`<span>Remit <b>${esc(d.pay_dt||'-')}</b></span>`
+        +`</div>`;
+    }
+
+    // 수정칸은 승인 가능한 상태(parsed+READY)에서만. 그 외엔 읽기전용 — 이미 SVMS로 넘어간
+    // 값을 화면에서 고치면 사람이 고쳐졌다고 착각한다.
+    const editable=(st==='parsed'&&d.gate==='READY');
+    let edit='';
+    if(editable){
+      edit=`<div class="lz-sect"><div class="lz-sect-t">확인 · 수정 (승인 시 이 값으로 생성)</div>`
+        +`<div class="lz-edit">`
+        +`<label>INV_NO <input class="lz-in-no" data-f="inv_no" value="${esc(d.inv_no||'')}"></label>`
+        +`<label>INV_DT <input type="date" class="lz-in-date" data-f="inv_dt" value="${esc(dtIso(d.inv_dt))}"></label>`
+        +`<label>금액 <input class="lz-in-amt" data-f="amt" value="${esc(d.amt==null?'':d.amt)}"></label>`
+        +`<label>Remit <input type="date" class="lz-in-date" data-f="pay_dt" value="${esc(dtIso(d.pay_dt))}"></label>`
+        +`<label>감독 <input class="lz-in-id" data-f="sup_user_id" value="${esc(d.sup_user_id||'')}"></label>`
+        +`<label style="flex:1">적요 <input class="lz-in-subj" data-f="subject" value="${esc(d.subject||'')}"></label>`
+        +`</div>`
+        +`<div class="lz-fix" style="margin-top:6px">고정값 — Vendor <b>V25081</b> · Expense <b>${esc(d.exp_cd||'070205')}</b>`
+        +` · Oversea <b>미지정</b> · Invoice PIC <b>SS0059</b> · 통화 <b>${esc(d.cur_cd||'-')}</b></div></div>`;
+    }
+
+    const reasons=(Array.isArray(d.reasons)&&d.reasons.length)
+      ? `<div class="lz-sect"><div class="lz-sect-t">보류 사유</div><div class="lz-why">${d.reasons.map(x=>esc(x)).join('<br>')}</div></div>`:'';
+    const err=d.error?`<div class="lz-sect"><div class="lz-sect-t">오류</div><div class="lz-err">${esc(d.error)}</div></div>`:'';
+    const invcd=d.inv_cd?`<div class="lz-sect"><div class="lz-sect-t">SVMS</div><div>인보이스 <b>${esc(d.inv_cd)}</b> 생성됨 — 인보이스 자동컨펌 탭에서 이어집니다.</div></div>`:'';
+
+    let acts='';
+    if(editable){
+      acts=`<button class="lz-b ap" data-act="approve">승인 · SVMS 생성</button>`
+          +`<button class="lz-b rj" data-act="reject">취소</button>`;
+    }else if(st==='hold'||st==='queued'){
+      acts=`<button class="lz-b rj" data-act="reject">취소</button>`;
+    }
+    // SVMS 에 인보이스가 생긴 건(inv_cd 보유)은 삭제칸을 아예 안 준다 — 이 행의 sha256 이
+    // 같은 PDF 재업로드를 막는 유일한 표식이라, 지우면 중복생성이 열린다(서버도 거부함).
+    if(!d.inv_cd && ['failed','rejected','hold','parsed'].includes(st)){
+      acts+=`<button class="lz-b del" data-act="delete">삭제</button>`;
+    }
+    const actsEl=acts?`<div class="lz-acts">${acts}</div>`:'';
+
+    return `<div class="lz-card" data-id="${d.id}">`
+      +`<div class="lz-top"><div><div class="lz-fn">${esc(d.filename||'(이름없음)')}</div>`
+      +`<div class="lz-meta">#${d.id} · ${esc(d.created_at||'')}${pdfEl?' · ':''}${pdfEl}</div></div>`
+      +`<div class="lz-badges">${gateBadge}${stBadge}</div></div>`
+      +`<div class="lz-body">${kv}${edit}${reasons}${err}${invcd}</div>${actsEl}</div>`;
+  }
+
+  async function load(){
+    const {ok,j}=await api('GET','/api/liscr/jobs');
+    const list=$('#lz-list');
+    if(!ok){list.innerHTML='<div class="lz-empty">목록을 불러오지 못했습니다.</div>';return;}
+    const jobs=j.jobs||[];
+    $('#lz-count').textContent=jobs.length?`전체 ${jobs.length}건 · 승인 대기 ${j.waiting||0}건`:'';
+    list.innerHTML=jobs.length?jobs.map(card).join(''):'<div class="lz-empty">업로드된 인보이스가 없습니다.</div>';
+  }
+
+  async function upload(files){
+    const drop=$('#lz-drop');
+    const pdfs=Array.from(files||[]).filter(f=>/\.pdf$/i.test(f.name));
+    if(!pdfs.length){alert('PDF 파일만 업로드할 수 있습니다.');return;}
+    drop.classList.add('busy');
+    const fails=[];
+    for(const f of pdfs){
+      const fd=new FormData(); fd.append('file',f);
+      let j={};
+      const r=await fetch('/api/liscr/upload',{method:'POST',body:fd});
+      try{j=await r.json();}catch(e){}
+      if(!r.ok) fails.push(`${f.name}: ${j.error||r.status}`);
+    }
+    drop.classList.remove('busy');
+    if(fails.length) alert('업로드 실패\n'+fails.join('\n'));
+    load();
+  }
+
+  // ── 이벤트
+  const drop=$('#lz-drop'), fileIn=$('#lz-file');
+  drop.addEventListener('click',()=>fileIn.click());
+  fileIn.addEventListener('change',e=>{upload(e.target.files);fileIn.value='';});
+  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
+  drop.addEventListener('drop',e=>upload(e.dataTransfer&&e.dataTransfer.files));
+
+  $('#lz-list').addEventListener('click',async e=>{
+    const pdf=e.target.closest('.pdf-lnk');
+    if(pdf){
+      const id=pdf.dataset.pdf, url=`/api/liscr/jobs/${id}/pdf`;
+      $('#pdf-ttl').textContent=pdf.dataset.nm||'PDF';
+      $('#pdf-open').href=url; $('#pdf-frame').src=url; $('#pdf-modal').classList.add('on');
+      return;
+    }
+    const btn=e.target.closest('button[data-act]');
+    if(!btn) return;
+    const cardEl=btn.closest('.lz-card'), id=cardEl.dataset.id, act=btn.dataset.act;
+    if(act==='reject'&&!confirm('이 건을 취소할까요? SVMS에는 아무것도 만들지 않습니다.')) return;
+    if(act==='delete'&&!confirm('목록에서 삭제할까요? 업로드한 PDF도 함께 지워집니다.')) return;
+    cardEl.classList.add('is-busy');
+    let res;
+    if(act==='approve'){
+      const body={};
+      cardEl.querySelectorAll('[data-f]').forEach(inp=>{
+        const f=inp.dataset.f;
+        body[f]=(inp.type==='date')?dtCompact(inp.value):inp.value.trim();
+      });
+      if(!confirm(`SVMS에 신규 인보이스를 만듭니다.\n\nINV_NO ${body.inv_no}\n금액 ${body.amt}\n\n진행할까요?`)){
+        cardEl.classList.remove('is-busy');return;
+      }
+      res=await api('POST',`/api/liscr/jobs/${id}/approve`,body);
+    }else if(act==='reject'){
+      res=await api('POST',`/api/liscr/jobs/${id}/reject`);
+    }else{
+      res=await api('DELETE',`/api/liscr/jobs/${id}`);
+    }
+    cardEl.classList.remove('is-busy');
+    if(!res.ok) alert(res.j.error||'처리 실패');
+    load();
+  });
+
+  $('#pdf-close').addEventListener('click',()=>{$('#pdf-modal').classList.remove('on');$('#pdf-frame').src='about:blank';});
+  $('#pdf-modal').addEventListener('click',e=>{if(e.target===$('#pdf-modal')){$('#pdf-modal').classList.remove('on');$('#pdf-frame').src='about:blank';}});
+
+  load();
+  // 러너가 파싱/생성을 끝내는 걸 화면에서 기다리게 된다 — 짧게 폴링.
+  setInterval(()=>{if(!document.hidden) load();},7000);
+})();
+</script>
+{% endblock %}

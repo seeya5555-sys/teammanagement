@@ -19,6 +19,11 @@
     "guard": "admin_required",
     "non_admin": 403
   },
+  "DELETE /api/liscr/jobs/<int:jid>": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
   "GET /api/automation/jeonja/items": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -69,6 +74,16 @@
     "guard": "api_key_required",
     "non_admin": 401
   },
+  "GET /api/ext/liscr/jobs/<int:jid>/pdf": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "GET /api/ext/liscr/pending": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
   "GET /api/fundreq/drafts": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -94,12 +109,27 @@
     "guard": "admin_required",
     "non_admin": 403
   },
+  "GET /api/liscr/jobs": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "GET /api/liscr/jobs/<int:jid>/pdf": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
   "GET /fundreq": {
     "anonymous": 401,
     "guard": "admin_required",
     "non_admin": 403
   },
   "GET /invoice": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "GET /liscr": {
     "anonymous": 401,
     "guard": "admin_required",
     "non_admin": 403
@@ -174,6 +204,21 @@
     "guard": "api_key_required",
     "non_admin": 401
   },
+  "POST /api/ext/liscr/claim": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/liscr/jobs/<int:jid>/parsed": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/liscr/jobs/<int:jid>/result": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
   "POST /api/fundreq/drafts/<int:did>/approve": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -210,6 +255,21 @@
     "non_admin": 403
   },
   "POST /api/invoice/drafts/approve-bulk": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/liscr/jobs/<int:jid>/approve": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/liscr/jobs/<int:jid>/reject": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/liscr/upload": {
     "anonymous": 401,
     "guard": "admin_required",
     "non_admin": 403

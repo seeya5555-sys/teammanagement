@@ -505,6 +505,50 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_draft_status ON invoice_draft(status)")
 
+        # 기국 인보이스 신규등록(Case 2) 큐 — /liscr 탭에 PDF 업로드 → 맥 러너가 파싱/생성.
+        #   TRMT 서버는 SVMS 자격증명을 갖지 않는다(시크릿은 맥 로컬에만 둔다는 방침).
+        #   따라서 서버는 큐·화면만 맡고 SVMS 쓰기는 전부 맥 러너가 한다. 기존 인보이스
+        #   자동컨펌(invoice_draft)과는 별개 테이블이다 — 그쪽은 "이미 있는 인보이스"를 다루고
+        #   이쪽은 "없는 인보이스를 만든다". 생성이 끝나면 SVMS STATUS='S'가 되어 기존
+        #   ingest 가 그 인보이스를 집어가므로, 두 파이프라인은 코드가 아니라 SVMS 상태로 이어진다.
+        #   status: queued → parsing → parsed|hold → approved → creating → created|failed (rejected=사람이 취소)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS liscr_job (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename      TEXT NOT NULL,                      -- 업로드 원본 파일명(표시용)
+                sha256        TEXT,                               -- PDF 내용 해시(동일파일 재업로드 감지)
+                status        TEXT NOT NULL DEFAULT 'queued',
+                claim_token   TEXT,                               -- 러너 claim CAS 토큰
+                claimed_at    TEXT,
+                gate          TEXT,                               -- READY/HOLD (파싱 결과)
+                reasons       TEXT,                               -- HOLD 사유 JSON 배열
+                vsl_cd        TEXT,
+                vsl_nm        TEXT,
+                inv_no        TEXT,
+                inv_dt        TEXT,
+                cur_cd        TEXT,
+                amt           REAL,
+                pay_dt        TEXT,
+                exp_cd        TEXT,
+                subject       TEXT,                               -- 라인 적요(사람이 수정 가능)
+                sup_user_id   TEXT,
+                sup_user_nm   TEXT,
+                inv_user_id   TEXT,                               -- Invoice PIC
+                oversea_tp    TEXT,
+                header_json   TEXT,                               -- 러너가 SVMS로 보낼 헤더 전체
+                lines_json    TEXT,                               -- 라인 전체
+                parsed_json   TEXT,                               -- PDF 파서 원본 결과(감사용)
+                edited_json   TEXT,                               -- 사람이 승인 때 고친 필드만(감사용)
+                inv_cd        TEXT,                               -- 생성된 SVMS 인보이스코드
+                error         TEXT,
+                decided_at    TEXT,
+                decided_by    TEXT,
+                done_at       TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_liscr_job_status ON liscr_job(status)")
+
         # 자동화 헬스 보드(하트비트) — 맥측 health_push.py 가 각 러너 신선도를 주기 POST.
         #   러너당 최근 30행만 유지(prune). 읽기=/api/automation/health, 페이지=/health(admin).
         conn.execute("""
@@ -1420,6 +1464,8 @@ import routes_dock_submit
 app.register_blueprint(routes_dock_submit.bp)
 import routes_repair_request
 app.register_blueprint(routes_repair_request.bp)
+import routes_liscr
+app.register_blueprint(routes_liscr.bp)
 import routes_tail
 app.register_blueprint(routes_tail.bp)
 # Static contract marker: dock sync notifications keep the historical deep link.

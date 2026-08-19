@@ -30,7 +30,8 @@ import time
 # 교차검증용이다 — 스키마에 이보다 많으면(새 테이블이 생겼으면) 중단한다.
 KNOWN_REFS = {
     'aor_draft', 'dock_inquiry_draft', 'dock_procure', 'dock_submit_draft', 'dock_yard',
-    'fundreq_draft', 'invoice_draft', 'repair_request', 'reqgen_draft', 'soa_review_case',
+    'fundreq_draft', 'invoice_draft', 'liscr_job', 'repair_request', 'reqgen_draft',
+    'soa_review_case',
 }
 OWNER = 'dock_procure_vessel'          # PK = vsl_nm. 대상 행이 이미 있으면 출처 행은 삭제한다.
 META_SKIP = {'vsl_nm', 'updated_at', 'origin'}   # origin=출처 태그라 shim 과 함께 사라지는 게 정상

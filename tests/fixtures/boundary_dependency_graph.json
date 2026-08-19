@@ -66,6 +66,7 @@
     "routes_calendar_dock.py": [],
     "routes_core.py": [],
     "routes_dock_submit.py": [],
+    "routes_liscr.py": [],
     "routes_repair_request.py": [],
     "routes_tail.py": [],
     "token_auth.py": [
@@ -287,6 +288,19 @@
       "api_key_required",
       "automation_tasks",
       "login_required"
+    ]
+  },
+  "routes_liscr.py": {
+    "app_core.py": [
+      "LISCR_PDF_DIR",
+      "app",
+      "execute",
+      "execute_rc",
+      "query"
+    ],
+    "helpers_shared.py": [
+      "admin_required",
+      "api_key_required"
     ]
   },
   "routes_repair_request.py": {
