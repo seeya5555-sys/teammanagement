@@ -79,6 +79,11 @@
     "guard": "api_key_required",
     "non_admin": 401
   },
+  "GET /api/ext/liscr/master/age": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
   "GET /api/ext/liscr/pending": {
     "anonymous": 401,
     "guard": "api_key_required",
@@ -115,6 +120,11 @@
     "non_admin": 403
   },
   "GET /api/liscr/jobs/<int:jid>/pdf": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "GET /api/liscr/master": {
     "anonymous": 401,
     "guard": "admin_required",
     "non_admin": 403
@@ -215,6 +225,11 @@
     "non_admin": 401
   },
   "POST /api/ext/liscr/jobs/<int:jid>/result": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/liscr/master": {
     "anonymous": 401,
     "guard": "api_key_required",
     "non_admin": 401

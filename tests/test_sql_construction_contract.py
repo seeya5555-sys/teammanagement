@@ -51,8 +51,15 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #      (AST 전수검사 non-literal 0). 읽기 전용 조회이고 `did` 는 바인딩된다.
 #   ⚠️ 교훈: baseline 을 고칠 땐 count 를 **실측값으로 재계산**해라. 신규 site 를 눈으로 세면
 #      이번처럼 일부만 반영돼 게이트가 조용히 red 로 남는다(= 다음 커밋의 진짜 위험 SQL 이 가려진다).
-EXPECTED_COUNT = 158
-EXPECTED_SHA256 = "ede55eab96ff73c6b99df02246570deb6ecbeefed65ec3d2088d37170b73d409"
+# 2026-08-19 baseline update — `app.py:_auto_migrate()` 의 liscr_job ALTER 1 site. 검토:
+#   · `'ALTER TABLE liscr_job ADD COLUMN %s %s' % (col, ddl)` — `col`/`ddl` 은 **같은 문장 안의
+#     인라인 리터럴 튜플**에서만 온다(profile/hard_json/vndr_cd/vndr_nm/exp_nm). 호출 인자도,
+#     설정값도, request 값도 이 루프에 닿는 경로가 없다.
+#   · ALTER 의 컬럼명·타입은 **파라미터 바인딩이 불가능한 식별자/DDL** 자리다. 값 보간이 아니다.
+#   · 부팅 경로(배포마다 1회)에서만 돌고 요청 처리 중엔 실행되지 않는다.
+#   · count 는 눈으로 세지 않고 `repository_fingerprints()` 실측 재계산으로 갱신했다(위 2026-08-15 교훈).
+EXPECTED_COUNT = 159
+EXPECTED_SHA256 = "b8865afe1f4270efab8bba37ec9bc9da7e2ee8b1b07c953d1ad749925aaf6bfb"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

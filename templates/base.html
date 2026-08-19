@@ -106,7 +106,7 @@
             {{ nlink('routes_calendar_dock.aor_page', 'AOR') }}
             {{ nlink('routes_calendar_dock.fundreq_page', '비용청구') }}
             {{ nlink('routes_calendar_dock.invoice_page', '인보이스') }}
-            {{ nlink('routes_liscr.liscr_page', '기국 인보이스 등록') }}
+            {{ nlink('routes_liscr.liscr_page', '인보이스 등록') }}
             {% endif %}
           </div>
         </div>
@@ -228,7 +228,7 @@
           {{ nlink('routes_calendar_dock.aor_page', 'AOR') }}
           {{ nlink('routes_calendar_dock.fundreq_page', '비용청구') }}
           {{ nlink('routes_calendar_dock.invoice_page', '인보이스') }}
-          {{ nlink('routes_liscr.liscr_page', '기국 인보이스 등록') }}
+          {{ nlink('routes_liscr.liscr_page', '인보이스 등록') }}
         </div>
         {% endif %}
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-search-check"/></svg>Survey</div>
@@ -702,8 +702,8 @@
       sections: [['주요 버튼', ['일괄승인+컨펌: 체크된 PASS 인보이스만 SVMS confirm 처리합니다.', 'HOLD 항목은 사유를 확인하고 수동 처리합니다.', '필터는 PASS/HOLD/선박/공급업체 기준으로 목록을 좁힙니다.']]]
     },
     liscr_page: {
-      title: '기국 인보이스 등록 설명서',
-      sections: [['주요 버튼', ['PDF 업로드: LISCR 인보이스 PDF를 올리면 맥 러너가 내용을 읽어 카드로 띄웁니다.', '승인 · SVMS 생성: 화면 값을 확인하고 누르면 그때 SVMS에 신규 인보이스가 만들어집니다. 승인 전에는 아무것도 생성되지 않습니다.', '취소/삭제: 생성 전 건을 접거나 목록에서 지웁니다.']]]
+      title: '인보이스 등록 설명서',
+      sections: [['주요 버튼', ['등록 유형: 기국(LISCR)을 고르면 Vendor·Expense·통화가 고정되고, 기타 인보이스를 고르면 그 값들을 직접 지정합니다.', 'PDF 업로드: 인보이스 PDF를 올리면 맥 러너가 내용을 읽어 카드로 띄웁니다.', '승인 · SVMS 생성: 화면 값을 확인하고 누르면 그때 SVMS에 신규 인보이스가 만들어집니다. 승인 전에는 아무것도 생성되지 않습니다.', 'FIX 카드: 러너가 못 읽은 값이 있다는 뜻입니다. 빈칸을 채우면 승인할 수 있습니다. HOLD는 채워도 승인되지 않습니다.', '취소/삭제: 생성 전 건을 접거나 목록에서 지웁니다.']]]
     },
     class_status_page: {
       title: 'Class Status 설명서',

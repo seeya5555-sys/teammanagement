@@ -520,8 +520,10 @@ def init_db(drop=False):
                 status        TEXT NOT NULL DEFAULT 'queued',
                 claim_token   TEXT,                               -- 러너 claim CAS 토큰
                 claimed_at    TEXT,
-                gate          TEXT,                               -- READY/HOLD (파싱 결과)
-                reasons       TEXT,                               -- HOLD 사유 JSON 배열
+                profile       TEXT NOT NULL DEFAULT 'liscr',      -- 등록 유형(liscr=기국 고정값 / generic=직접지정)
+                gate          TEXT,                               -- READY/FIX/HOLD (파싱 결과)
+                reasons       TEXT,                               -- 사유 JSON 배열
+                hard_json     TEXT,                               -- 그중 hard 사유(사람이 채워도 승인 불가)
                 vsl_cd        TEXT,
                 vsl_nm        TEXT,
                 inv_no        TEXT,
@@ -529,7 +531,10 @@ def init_db(drop=False):
                 cur_cd        TEXT,
                 amt           REAL,
                 pay_dt        TEXT,
+                vndr_cd       TEXT,                               -- Vendor 코드(기국=V25081 고정, 기타=사람이 지정)
+                vndr_nm       TEXT,
                 exp_cd        TEXT,
+                exp_nm        TEXT,
                 subject       TEXT,                               -- 라인 적요(사람이 수정 가능)
                 sup_user_id   TEXT,
                 sup_user_nm   TEXT,
@@ -548,6 +553,20 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_liscr_job_status ON liscr_job(status)")
+
+        # SVMS 마스터 스냅샷 — "기타 인보이스" 를 올릴 때 화면에서 Vendor/Expense/통화/선박을
+        # 고르려면 목록이 필요한데, 이 서버는 SVMS 를 부를 수 없다(자격증명은 맥에만 있다).
+        # 그래서 맥 러너가 떠서 밀어주고(/api/ext/liscr/master), 화면은 이 표만 본다.
+        # 🔴 벤더 전체(94,384종/127MB)는 담지 않는다 — 최근 1년 실사용분(563종)만.
+        #    목록에 없으면 화면에서 코드를 직접 치고, 진짜인지는 러너가 SVMS 에 물어 확인한다.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS liscr_master (
+                kind        TEXT PRIMARY KEY,                     -- vessels/expenses/vendors/currencies
+                payload     TEXT NOT NULL,                        -- [{cd,nm,...}] JSON 배열
+                n           INTEGER NOT NULL DEFAULT 0,
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
 
         # 자동화 헬스 보드(하트비트) — 맥측 health_push.py 가 각 러너 신선도를 주기 POST.
         #   러너당 최근 30행만 유지(prune). 읽기=/api/automation/health, 페이지=/health(admin).
@@ -1537,6 +1556,42 @@ def _auto_migrate():
                 print('[auto_migrate] automation_run.progress 추가됨')
         except Exception as e:
             print(f'[auto_migrate] automation_run.progress 점검 건너뜀: {e}')
+        # /liscr 범용화(2026-08-19) — 등록 유형·Vendor·Expense 를 행에 남긴다.
+        # 🔴 liscr_job 은 **schema.sql 이 아니라 init_db 안에서** 만들어지는 표라, 위의
+        #    schema 재적용으로는 손도 안 닿는다. 그리고 CREATE TABLE IF NOT EXISTS 는 이미
+        #    있는 표에 컬럼을 안 붙인다 — 여기 ALTER 가 빠지면 라이브에서 "no such column:
+        #    profile" 로 /liscr 이 통째로 죽는다.
+        # 🔴 독립 try — 다른 마이그레이션과 운명을 묶지 않는다.
+        try:
+            lcols = [r[1] for r in conn.execute('PRAGMA table_info(liscr_job)').fetchall()]
+            if lcols:
+                # DEFAULT 'liscr' — 이미 큐에 있던 행은 전부 기국 건이다(그때는 그것뿐이었다).
+                # NULL 로 두면 러너가 프리셋을 못 정해 기존 대기건이 조용히 HOLD 로 떨어진다.
+                want = (('profile', "TEXT NOT NULL DEFAULT 'liscr'"),
+                        ('hard_json', 'TEXT'), ('vndr_cd', 'TEXT'),
+                        ('vndr_nm', 'TEXT'), ('exp_nm', 'TEXT'))
+                for col, ddl in want:
+                    if col not in lcols:
+                        conn.execute('ALTER TABLE liscr_job ADD COLUMN %s %s' % (col, ddl))
+                        print(f'[auto_migrate] liscr_job.{col} 추가됨')
+                # 🔴 ALTER 가 중간에 실패하면 일부만 붙은 채로 부팅이 계속된다. 그 상태의
+                #    /liscr 은 'no such column' 으로 죽는데, 로그에 조용히 한 줄만 남으면
+                #    아무도 안 본다. 결과를 **다시 읽어** 확인하고 크게 남긴다.
+                have = {r[1] for r in conn.execute('PRAGMA table_info(liscr_job)').fetchall()}
+                miss = [c for c, _ in want if c not in have]
+                if miss:
+                    print('[auto_migrate] 🔴 liscr_job 컬럼 누락 %s — /liscr 이 죽습니다' % miss)
+        except Exception as e:
+            print(f'[auto_migrate] 🔴 liscr_job 컬럼 점검 실패 — /liscr 이 죽을 수 있음: {e}')
+        # 마스터 스냅샷 표. init_db 가 매 배포마다 돌긴 하지만, 이 표가 없으면 "기타 인보이스"
+        # 업로드 화면이 통째로 비어 기능이 죽으므로 여기서도 명시적으로 만든다.
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS liscr_master (
+                    kind TEXT PRIMARY KEY, payload TEXT NOT NULL,
+                    n INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
+        except Exception as e:
+            print(f'[auto_migrate] liscr_master 점검 건너뜀: {e}')
         # 오프라인 보관함 재전송 중복방지 원장. schema 재적용으로도 생기지만, 위 executescript 가
         # 어떤 이유로든 중간에 끊기면 이 표만 없어 **재전송이 중복 생성**으로 이어진다.
         # 🔴 독립 try + 명시 생성 — 중복방지는 조용히 빠지면 안 되는 종류다.

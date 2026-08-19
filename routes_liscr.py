@@ -1,4 +1,4 @@
-"""routes_liscr — 기국(LISCR) 인보이스 PDF 업로드 → SVMS 신규 인보이스 생성(Case 2).
+"""routes_liscr — 인보이스 PDF 업로드 → SVMS 신규 인보이스 생성(Case 2).
 
 기존 `/invoice` 탭(invoice_draft)과 헷갈리지 말 것:
   · `/invoice`  = 이미 SVMS에 있는 인보이스를 컨펌하는 자동화 (Case 1). 이 모듈은 거기 손대지 않는다.
@@ -14,6 +14,22 @@
 사람 승인 게이트:
   파싱(러너) → 사람이 화면에서 값 확인·수정 → [승인] → 그때서야 러너가 SVMS에 만든다.
   승인 없이는 어떤 인보이스도 생성되지 않는다.
+
+등록 유형(프리셋) — 2026-08-19 형 지시로 기국 전용에서 범용으로 확장:
+  · `liscr`   기국(LISCR). Vendor V25081 · Expense 070205 · USD 가 **고정**. 지금까지 그대로.
+  · `generic` 기타 인보이스. Vendor·Expense·통화를 올릴 때 사람이 지정한다.
+
+  🔴 **고정값을 강제하는 곳은 이 서버가 아니라 맥 러너(`profiles.py`)다.** 프리셋의 정본은
+     맥에 있고, 서버는 러너가 밀어준 목록(`liscr_master`)을 화면에 보여줄 뿐이다.
+     그래서 서버가 vendor/expense 를 뭐라고 보내든 기국 건에는 고정값이 박힌다 —
+     잠금이 화면 로직이 아니라 **쓰기가 일어나는 지점**에 있다는 뜻이다.
+  🔴 러너가 아직 마스터를 안 밀었으면 `generic` 업로드를 받지 않는다(=오늘까지의 동작).
+     목록 없이 코드만 받으면 형이 뭘 고르는지 화면에서 볼 수 없다 — fail-closed.
+
+gate 3단(기존 2단에서 확장):
+  READY 승인만 하면 그대로 쓴다
+  FIX   못 읽은 값이 있다. **사람이 채우면 승인 가능**(기타 인보이스에서만 나온다)
+  HOLD  승인 불가. 사람이 채워서 해결되는 종류가 아니다(번호중복·마스터 조회실패 등)
 """
 from flask import Blueprint
 
@@ -40,7 +56,12 @@ LISCR_MAX_BYTES = 20 * 1024 * 1024
 
 # 화면에서 사람이 고칠 수 있는 필드 → (컬럼, 헤더키). 여기 없는 필드는 어떤 요청이 와도 안 바뀐다.
 # 🔴 `inv_user_id`(Invoice PIC) 는 일부러 뺐다 — 형 지시로 SS0059 고정이고, 화면에서 고칠 수
-#    있게 두면 "고정"이 사실상 기본값으로 내려앉는다. Vendor·Expense·Oversea 도 같은 이유로 없다.
+#    있게 두면 "고정"이 사실상 기본값으로 내려앉는다. Oversea 도 같은 이유로 없다.
+# 🔴 Vendor·Expense 는 여기 없다 — **올릴 때 고르는 값**이고 카드에서 고치는 값이 아니다.
+#    카드에서 벤더를 바꾸면 PAY_TERM 이 벤더마다 달라 Pay Date 가 조용히 틀려진다(러너만 안다).
+#    잘못 골랐으면 삭제하고 다시 올리는 게 맞다.
+# 🔴 통화(`cur_cd`)만 예외로, **프리셋이 잠그지 않은 경우에 한해** 아래 approve 에서 열린다.
+#    자동판독 실패로 통화가 빈 FIX 카드를 여기서 못 채우면 그 건은 살릴 방법이 없기 때문이다.
 _EDITABLE = {
     'inv_no':      ('inv_no', 'INV_NO'),
     'inv_dt':      ('inv_dt', 'INV_DT'),
@@ -49,6 +70,74 @@ _EDITABLE = {
     'subject':     ('subject', None),      # 라인 적요 — 헤더가 아니라 lines[0].SUBJ 로 간다
     'sup_user_id': ('sup_user_id', 'SUP_USER_ID'),   # 담당 감독(사람) — 과거 인보이스에서 추정하므로 수정 여지를 남긴다
 }
+# 선박은 기국에서는 못 고친다(PDF 가 권위). 자유서식은 파서가 권위가 없어 사람이 지정해야 한다.
+_EDITABLE_VESSEL_PROFILES = ('generic',)
+
+# 상신이 성립하려면 반드시 채워져 있어야 하는 헤더 필드 → 사람이 읽는 라벨.
+# 🔴 이건 **UX 게이트**다(빈 채로 승인 눌러 러너에서 터지는 걸 막는다). 최종 강제선은
+#    러너 `create_invoice.REQUIRED_HEADER` 이고, 쓰기 직전에 한 번 더 본다.
+_REQUIRED_HEADER = (('VSL_CD', '선박'), ('VNDR_CD', 'Vendor'), ('SUP_USER_ID', 'Superintendent'),
+                    ('INV_NO', 'Invoice No'), ('INV_DT', 'Invoice Date'), ('CUR_CD', '통화'),
+                    ('AMT', '금액'), ('PAY_DT', 'Pay Date'))
+
+_MASTER_KINDS = ('profiles', 'vessels', 'expenses', 'vendors', 'currencies')
+# SVMS 코드 형식 — 화면에서 직접 칠 수 있는 값이라 서버에서도 형태를 본다.
+_CODE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,29}$')
+
+
+def _master(kind):
+    """마스터 스냅샷 1종. 아직 안 밀렸으면 (None, []) — 호출측이 fail-closed 판단."""
+    r = query("SELECT payload, updated_at FROM liscr_master WHERE kind=?", (kind,), one=True)
+    if not r:
+        return None, []
+    try:
+        return r['updated_at'], json.loads(r['payload']) or []
+    except Exception:
+        app.logger.exception('liscr-master-parse')
+        return r['updated_at'], []
+
+
+def _profile_registry():
+    """러너가 밀어준 프리셋 목록. 없으면 기국 1종만 — 오늘까지의 동작 그대로다.
+
+    🔴 여기서 기타 인보이스를 임의로 만들어내지 않는다. Vendor/Expense 목록 없이 코드만
+       받으면 형이 화면에서 뭘 고르는지 볼 수가 없다.
+    """
+    _, rows = _master('profiles')
+    known = [p for p in rows if isinstance(p, dict) and p.get('key')]
+    # 🔴 프리셋만 밀려 있고 나머지 마스터가 비어 있으면 **열지 않는다**. `profiles` 는
+    #    러너가 SVMS 호출 없이 만드는 순수 데이터라, SVMS 조회가 통째로 실패한 회차에도
+    #    혼자 저장될 수 있다. 그 상태로 '기타 인보이스' 를 열면 Vendor/Expense 목록이 빈
+    #    화면에서 코드를 손으로 쳐야 하고, 형이 뭘 고르는지 확인할 방법이 없다.
+    if known and all(_master(k)[1] for k in ('vessels', 'expenses', 'vendors', 'currencies')):
+        return {p['key']: p for p in known}
+    return {'liscr': {'key': 'liscr', 'label': '기국 (LISCR)',
+                      'locked': ['vendor', 'expense', 'currency'], 'soft_fill': False,
+                      'hint': '러너가 아직 마스터를 밀지 않음 — 기국만 등록 가능'}}
+
+def _check_currency(v, allow_auto=False):
+    """통화 코드 검증 → (정규화값, 에러문구). 형식 + **마스터 실재** 둘 다 본다.
+
+    allow_auto : 업로드 시점에만 True. 'AUTO' = "인보이스에서 읽어라" 라는 지시어지
+                 통화가 아니다. 승인(=SVMS 로 나갈 값)에서는 절대 통과시키지 않는다.
+
+    🔴 형식만 보면 `USF` 같은 오타 3자리가 그대로 SVMS 통화칸에 실린다 — 금액의 의미가
+       통째로 바뀌는 값이라 자유입력으로 두지 않는다. 마스터는 러너가 **최근 실사용
+       인보이스에서 집계**한 목록이라, 여기 없는 코드는 우리 회사가 안 쓰는 통화다.
+    🔴 마스터가 아직 안 밀렸으면 형식만 본다(fail-open). 여기서 막으면 마스터 없는
+       상태에서 기국 건까지 못 올리는데, 기국은 통화가 고정이라 이 경로를 아예 안 탄다.
+    """
+    v = (v or '').strip().upper()
+    if allow_auto and v == 'AUTO':
+        return v, None
+    if not re.match(r'^[A-Z]{3}$', v):
+        return None, '통화는 ISO 3자리 코드여야 함 (예: USD)'
+    _, curs = _master('currencies')
+    known = {(c.get('cd') or '').upper() for c in curs if isinstance(c, dict)}
+    if known and v not in known:
+        return None, '통화 %s 는 SVMS 최근 사용 목록에 없음 (%s)' % (v, ', '.join(sorted(known)))
+    return v, None
+
 
 # 금액 형식 — 부호 없는 십진수, 소수 2자리까지. float() 만 쓰면 'nan'/'inf' 가 통과해
 # 금액칸에 NaN 이 실린다(비교·합계가 전부 조용히 무너짐).
@@ -80,7 +169,7 @@ def _remove_pdf(jid):
 
 def _job_dict(r):
     d = dict(r)
-    for k in ('reasons', 'header_json', 'lines_json', 'parsed_json', 'edited_json'):
+    for k in ('reasons', 'hard_json', 'header_json', 'lines_json', 'parsed_json', 'edited_json'):
         if d.get(k):
             try:
                 d[k] = json.loads(d[k])
@@ -112,10 +201,52 @@ def api_liscr_jobs():
 @bp.route('/api/liscr/upload', methods=['POST'])
 @admin_required
 def api_liscr_upload():
-    """PDF 업로드 → 큐 적재. 여기서는 파싱도 SVMS 호출도 하지 않는다(맥 러너 담당)."""
+    """PDF 업로드 → 큐 적재. 여기서는 파싱도 SVMS 호출도 하지 않는다(맥 러너 담당).
+
+    등록 유형(프리셋)은 **올릴 때** 고른다. 파싱 뒤에 고르게 하면 기국 건까지 한 번 더
+    손이 가고, 무엇보다 파서를 무엇으로 태울지를 파싱 전에 알아야 한다.
+    """
     f = request.files.get('file')
     if not f or not f.filename:
         return jsonify({'error': '파일이 없음'}), 400
+
+    # ── 등록 유형과 그에 딸린 값들 ──────────────────────────────────────
+    reg = _profile_registry()
+    pkey = (request.form.get('profile') or 'liscr').strip().lower()
+    prof = reg.get(pkey)
+    if not prof:
+        return jsonify({'error': '등록 유형 %r 을 쓸 수 없음 (사용 가능: %s)'
+                                 % (pkey, ', '.join(reg))}), 400
+    locked = set(prof.get('locked') or ())
+
+    def choice(field, form_key, required, label):
+        """고정 필드는 사람이 뭘 보내든 무시한다(고정의 정본은 맥 러너)."""
+        if field in locked:
+            return None, None
+        v = (request.form.get(form_key) or '').strip()
+        if not v:
+            return (None, None) if not required else (None, '%s 를 골라야 함' % label)
+        if not _CODE_RE.match(v):
+            return None, '%s 코드 형식이 잘못됨' % label
+        return v, None
+
+    vndr_cd, err = choice('vendor', 'vendor_cd', True, 'Vendor')
+    if err:
+        return jsonify({'error': err}), 400
+    exp_cd, err = choice('expense', 'exp_cd', True, 'Expense')
+    if err:
+        return jsonify({'error': err}), 400
+    # 통화는 비워둘 수 있다 — 비면 러너가 인보이스에서 읽는다(못 읽으면 FIX 로 떨어져 형이 채운다).
+    cur_cd, err = choice('currency', 'cur_cd', False, '통화')
+    if err:
+        return jsonify({'error': err}), 400
+    if cur_cd:
+        cur_cd, err = _check_currency(cur_cd, allow_auto=True)
+        if err:
+            return jsonify({'error': err}), 400
+    vsl_cd = (request.form.get('vsl_cd') or '').strip() or None
+    if vsl_cd and not _CODE_RE.match(vsl_cd):
+        return jsonify({'error': '선박 코드 형식이 잘못됨'}), 400
     if not f.filename.lower().endswith('.pdf'):
         return jsonify({'error': 'PDF 파일만 업로드 가능'}), 400
     data = f.read(LISCR_MAX_BYTES + 1)
@@ -143,8 +274,10 @@ def api_liscr_upload():
     # 🔴 'uploading' 으로 넣고 파일을 쓴 뒤에 'queued' 로 올린다. 곧바로 'queued' 로 넣으면
     #    러너가 파일이 다 쓰이기 전에 claim 해 반쯤 쓰인 PDF 를 파싱할 수 있다.
     #    claim 은 'queued' 만 보므로, 이 순서가 파일 완성과 큐 진입을 묶어준다.
-    jid = execute("INSERT INTO liscr_job (filename, sha256, status) VALUES (?,?,'uploading')",
-                  (os.path.basename(f.filename)[:200], sha))
+    jid = execute("INSERT INTO liscr_job (filename, sha256, status, profile, vndr_cd, exp_cd, "
+                  "cur_cd, vsl_cd) VALUES (?,?,'uploading',?,?,?,?,?)",
+                  (os.path.basename(f.filename)[:200], sha, pkey,
+                   vndr_cd, exp_cd, cur_cd, vsl_cd))
     try:
         with open(_liscr_pdf_path(jid), 'wb') as out:
             out.write(data)
@@ -155,7 +288,25 @@ def api_liscr_upload():
         execute("UPDATE liscr_job SET status='failed', error='PDF 저장 실패' WHERE id=?", (jid,))
         return jsonify({'error': 'PDF 저장 실패'}), 500
     execute("UPDATE liscr_job SET status='queued' WHERE id=? AND status='uploading'", (jid,))
-    return jsonify({'id': jid, 'status': 'queued'})
+    return jsonify({'id': jid, 'status': 'queued', 'profile': pkey})
+
+
+@bp.route('/api/liscr/master')
+@admin_required
+def api_liscr_master():
+    """화면이 쓰는 마스터 스냅샷(등록 유형·선박·Vendor·Expense·통화).
+
+    러너가 밀어준 것 그대로다. 이 서버는 SVMS 를 못 부르므로 여기 없는 값은 화면에도 없다.
+    """
+    out, oldest = {}, None
+    for kind in _MASTER_KINDS:
+        ts, rows = _master(kind)
+        out[kind] = rows
+        if ts and (oldest is None or ts < oldest):
+            oldest = ts
+    out['profiles'] = list(_profile_registry().values())
+    out['updated_at'] = oldest
+    return jsonify(out)
 
 
 @bp.route('/api/liscr/jobs/<int:jid>/pdf')
@@ -176,15 +327,39 @@ def api_liscr_approve(jid):
     if not row:
         abort(404)
     if row['status'] != 'parsed':
-        return jsonify({'error': "승인 가능한 상태가 아님 (현재 %s)" % row['status']}), 409
-    if (row['gate'] or '') != 'READY':
-        return jsonify({'error': 'HOLD 상태는 승인할 수 없음'}), 409
+        # 보류 건이면 **왜** 보류인지까지 답한다. 상태만 돌려주면 형이 카드를 다시 열어
+        # 사유를 찾아야 하고, 승인이 왜 막혔는지 화면에서 바로 안 보인다.
+        why = (json.loads(row['hard_json'] or '[]') or json.loads(row['reasons'] or '[]')
+               ) if row['status'] == 'hold' else []
+        return jsonify({'error': "승인 가능한 상태가 아님 (현재 %s)%s"
+                                 % (row['status'], (' — %s' % '; '.join(why)) if why else '')}), 409
+    # 🔴 HOLD 는 사람이 값을 채워서 풀리는 종류가 아니다(번호중복·마스터 조회실패 등).
+    #    FIX 는 "못 읽었으니 채워라" 라서 채우면 승인된다 — 이 둘을 한 코드로 뭉치면
+    #    중복 인보이스가 사람 손으로 통과된다.
+    if (row['gate'] or '') not in ('READY', 'FIX'):
+        return jsonify({'error': 'HOLD 상태는 승인할 수 없음 (사유: %s)'
+                                 % '; '.join(json.loads(row['hard_json'] or '[]')
+                                             or json.loads(row['reasons'] or '[]'))}), 409
 
     d = request.get_json(silent=True) or {}
     header = json.loads(row['header_json'] or '{}')
     lines = json.loads(row['lines_json'] or '[]')
+    if not lines:
+        return jsonify({'error': '명세 라인이 없어 승인할 수 없음 — 삭제 후 다시 올릴 것'}), 409
+
+    pkey = row['profile'] or 'liscr'
+    locked = set((_profile_registry().get(pkey) or {}).get('locked') or ())
+    editable = dict(_EDITABLE)
+    if pkey in _EDITABLE_VESSEL_PROFILES:
+        editable['vsl_cd'] = ('vsl_cd', 'VSL_CD')
+    # 🔴 통화가 고정이 아닌 프리셋에서는 카드에서 고칠 수 있어야 한다. 자동판독이 실패하면
+    #    CUR_CD 가 비는데(=FIX), 여기서 못 고치면 그 건은 삭제 후 재업로드 말고 길이 없다.
+    #    고정 프리셋(기국)에서는 절대 열지 않는다 — 고정의 의미가 사라진다.
+    if 'currency' not in locked:
+        editable['cur_cd'] = ('cur_cd', 'CUR_CD')
+
     edits, cols = {}, {}
-    for key, (col, hkey) in _EDITABLE.items():
+    for key, (col, hkey) in editable.items():
         if key not in d:
             continue
         val = d[key]
@@ -198,12 +373,28 @@ def api_liscr_approve(jid):
             val = (str(val or '')).strip()
             if not val:
                 return jsonify({'error': '%s 는 비울 수 없음' % key}), 400
+            if key == 'cur_cd':
+                # 형식 + 마스터 실재. 'AUTO' 나 오타가 그대로 SVMS 통화칸에 실리면
+                # 금액의 의미가 바뀐다(업로드 때와 같은 검사를 승인에서도 한다).
+                val, cerr = _check_currency(val)
+                if cerr:
+                    return jsonify({'error': cerr}), 400
         if val == row[col]:
             continue
         edits[key] = {'from': row[col], 'to': val}
         cols[col] = val
         if hkey:
             header[hkey] = val
+
+    # 선박을 바꿨으면 이름도 마스터에서 같이 가져온다. 🔴 코드만 믿고 이름을 비워두면
+    # 카드에 배 이름이 안 뜨고, 형이 어느 배로 끊는지 못 보고 승인하게 된다.
+    if 'vsl_cd' in cols:
+        _, vessels = _master('vessels')
+        hit = next((v for v in vessels if v.get('cd') == cols['vsl_cd']), None)
+        if not hit:
+            return jsonify({'error': '선박 코드 %s 가 마스터에 없음' % cols['vsl_cd']}), 400
+        cols['vsl_nm'] = hit.get('nm')
+        header['VSL_NM'] = hit.get('nm')
 
     if 'subject' in cols and lines:
         lines[0]['SUBJ'] = cols['subject']
@@ -215,17 +406,30 @@ def api_liscr_approve(jid):
         else:
             return jsonify({'error': '라인이 2줄 이상이라 금액 수정은 SVMS 화면에서 해야 함'}), 400
 
+    # 🔴 여기까지 와서야 "다 채워졌나" 를 본다. FIX 카드는 값이 비어 있는 게 정상이고,
+    #    비운 채로 승인되면 러너가 SVMS 앞에서 터진다(그때는 이미 사람 손을 떠났다).
+    #    빈 라인 적요도 같이 본다 — 헤더만 보면 적요 없는 인보이스가 통과한다.
+    empty = [lab for k, lab in _REQUIRED_HEADER if header.get(k) in (None, '')]
+    if not (lines[0].get('SUBJ') or '').strip():
+        empty.append('적요(Subject)')
+    if empty:
+        return jsonify({'error': '아직 안 채운 값이 있음: %s' % ', '.join(empty),
+                        'missing': empty}), 400
+
     # 컬럼 목록은 고정 SQL 로 적는다(수정 안 된 필드는 기존 값을 그대로 다시 쓴다).
     # 조립식 SET 절이면 편집 가능한 컬럼이 요청 내용에 따라 달라져 검토가 어려워진다.
     rc = execute_rc(
         "UPDATE liscr_job SET inv_no=?, inv_dt=?, amt=?, pay_dt=?, subject=?, "
-        "sup_user_id=?, inv_user_id=?, header_json=?, lines_json=?, edited_json=?, "
+        "sup_user_id=?, inv_user_id=?, vsl_cd=?, vsl_nm=?, cur_cd=?, "
+        "header_json=?, lines_json=?, edited_json=?, "
         "status='approved', decided_at=datetime('now','localtime'), decided_by=? "
         "WHERE id=? AND status='parsed'",
         (cols.get('inv_no', row['inv_no']), cols.get('inv_dt', row['inv_dt']),
          cols.get('amt', row['amt']), cols.get('pay_dt', row['pay_dt']),
          cols.get('subject', row['subject']), cols.get('sup_user_id', row['sup_user_id']),
          cols.get('inv_user_id', row['inv_user_id']),
+         cols.get('vsl_cd', row['vsl_cd']), cols.get('vsl_nm', row['vsl_nm']),
+         cols.get('cur_cd', row['cur_cd']),
          json.dumps(header, ensure_ascii=False), json.dumps(lines, ensure_ascii=False),
          json.dumps(edits, ensure_ascii=False) if edits else None,
          session.get('user') or 'admin', jid))
@@ -365,27 +569,35 @@ def api_ext_liscr_pdf(jid):
 @bp.route('/api/ext/liscr/jobs/<int:jid>/parsed', methods=['POST'])
 @api_key_required
 def api_ext_liscr_parsed(jid):
-    """러너: 파싱 결과 적재. gate=READY 면 사람 승인 대기(parsed), 아니면 hold."""
+    """러너: 파싱 결과 적재.
+
+    gate=READY 사람 승인 대기(parsed)
+    gate=FIX   사람이 못 읽은 값을 채우면 승인 가능 → 같은 대기줄(parsed)에 세운다
+    gate=HOLD  보류(hold). 승인 버튼 자체가 막힌다
+    """
     d = request.get_json(silent=True) or {}
     token = (d.get('claim_token') or '').strip()
-    gate = 'READY' if d.get('gate') == 'READY' else 'HOLD'
+    gate = d.get('gate') if d.get('gate') in ('READY', 'FIX') else 'HOLD'
     header = d.get('header') or {}
     lines = d.get('lines') or []
-    # READY = "사람이 승인만 하면 SVMS 에 그대로 쓴다"는 뜻이다. 라인이 없으면 승인 화면에
+    # READY/FIX = "사람 손만 거치면 SVMS 에 그대로 쓴다"는 뜻이다. 라인이 없으면 승인 화면에
     # 금액/적요가 안 뜨고 생성 단계에서야 터진다 — 여기서 HOLD 로 떨어뜨리는 게 맞다.
-    if gate == 'READY' and (not header or not lines):
-        return jsonify({'error': 'READY 인데 header 또는 lines 가 비었음'}), 400
+    if gate != 'HOLD' and (not header or not lines):
+        return jsonify({'error': '%s 인데 header 또는 lines 가 비었음' % gate}), 400
     line0 = lines[0] if lines else {}
     rc = execute_rc(
-        "UPDATE liscr_job SET status=?, gate=?, reasons=?, vsl_cd=?, vsl_nm=?, inv_no=?, inv_dt=?, "
-        "cur_cd=?, amt=?, pay_dt=?, exp_cd=?, subject=?, sup_user_id=?, sup_user_nm=?, "
+        "UPDATE liscr_job SET status=?, gate=?, reasons=?, hard_json=?, vsl_cd=?, vsl_nm=?, "
+        "inv_no=?, inv_dt=?, cur_cd=?, amt=?, pay_dt=?, vndr_cd=?, vndr_nm=?, exp_cd=?, exp_nm=?, "
+        "subject=?, sup_user_id=?, sup_user_nm=?, "
         "inv_user_id=?, oversea_tp=?, header_json=?, lines_json=?, parsed_json=?, error=NULL "
         "WHERE id=? AND status='parsing' AND claim_token=?",
-        ('parsed' if gate == 'READY' else 'hold', gate,
+        ('hold' if gate == 'HOLD' else 'parsed', gate,
          json.dumps(d.get('reasons') or [], ensure_ascii=False),
+         json.dumps(d.get('hard') or [], ensure_ascii=False),
          header.get('VSL_CD'), header.get('VSL_NM'), header.get('INV_NO'), header.get('INV_DT'),
          header.get('CUR_CD'), header.get('AMT'), header.get('PAY_DT'),
-         line0.get('EXP_CD'), line0.get('SUBJ'),
+         header.get('VNDR_CD'), header.get('VNDR_NM'),
+         line0.get('EXP_CD'), line0.get('EXP_NM'), line0.get('SUBJ'),
          header.get('SUP_USER_ID'), header.get('SUP_USER_NM'), header.get('INV_USER_ID'),
          header.get('OVERSEA_TP'),
          json.dumps(header, ensure_ascii=False), json.dumps(lines, ensure_ascii=False),
@@ -393,6 +605,46 @@ def api_ext_liscr_parsed(jid):
     if not rc:
         return jsonify({'error': 'claim 불일치 또는 상태 변경됨'}), 409
     return jsonify({'id': jid, 'gate': gate})
+
+
+@bp.route('/api/ext/liscr/master', methods=['POST'])
+@api_key_required
+def api_ext_liscr_master():
+    """러너: SVMS 마스터 스냅샷 적재(선박·Expense·Vendor·통화·등록유형).
+
+    🔴 **빈 목록은 받지 않는다.** SVMS 조회가 반쯤 실패한 회차가 멀쩡한 스냅샷을 0건으로
+       덮어쓰면, 화면에서 고를 게 사라져 기능이 조용히 죽는다(원인은 아무데도 안 남는다).
+       빈 종류는 건너뛰고 어느 것을 건너뛰었는지 응답에 적어 러너 로그에 남긴다.
+    """
+    d = request.get_json(silent=True) or {}
+    saved, skipped = {}, []
+    for kind in _MASTER_KINDS:
+        rows = d.get(kind)
+        if not isinstance(rows, list) or not rows:
+            skipped.append(kind)
+            continue
+        execute("INSERT INTO liscr_master (kind, payload, n, updated_at) "
+                "VALUES (?,?,?,datetime('now','localtime')) "
+                "ON CONFLICT(kind) DO UPDATE SET payload=excluded.payload, n=excluded.n, "
+                "updated_at=excluded.updated_at",
+                (kind, json.dumps(rows, ensure_ascii=False), len(rows)))
+        saved[kind] = len(rows)
+    return jsonify({'saved': saved, 'skipped': skipped})
+
+
+@bp.route('/api/ext/liscr/master/age')
+@api_key_required
+def api_ext_liscr_master_age():
+    """러너: 마스터가 얼마나 오래됐나(초). 매 회차 무겁게 다시 뜨지 않으려는 용도.
+
+    한 종류라도 없으면 age=None → 러너가 무조건 새로 뜬다.
+    """
+    rows = query("SELECT kind, updated_at, (julianday('now','localtime') - "
+                 "julianday(updated_at)) * 86400 AS age FROM liscr_master")
+    got = {r['kind']: r['age'] for r in rows}
+    if any(k not in got for k in _MASTER_KINDS):
+        return jsonify({'age': None, 'have': sorted(got)})
+    return jsonify({'age': max(got.values()), 'have': sorted(got)})
 
 
 @bp.route('/api/ext/liscr/jobs/<int:jid>/result', methods=['POST'])

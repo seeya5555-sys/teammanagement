@@ -2349,6 +2349,27 @@
   "defaults": {}
  },
  {
+  "rule": "/api/ext/liscr/master",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_ext_liscr_master",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/liscr/master/age",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_liscr.api_ext_liscr_master_age",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/ext/liscr/pending",
   "methods": [
    "GET",
@@ -3275,6 +3296,17 @@
    "POST"
   ],
   "endpoint": "routes_liscr.api_liscr_clear_done",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/liscr/master",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_liscr.api_liscr_master",
   "strict_slashes": true,
   "defaults": {}
  },

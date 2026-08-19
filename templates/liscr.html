@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}기국 인보이스 등록 · TRMT3{% endblock %}
+{% block title %}인보이스 등록 · TRMT3{% endblock %}
 {% block head %}
 <style>
   .lz-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
@@ -21,6 +21,18 @@
   .lz-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
   .b-ready{background:var(--green-bg);color:var(--green)}
   .b-hold{background:var(--amber-bg);color:var(--amber)}
+  .b-fix{background:var(--blue-bg);color:var(--blue)}
+  .lz-prof{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+  .lz-f{display:flex;flex-direction:column;gap:4px}
+  .lz-f span{font-size:11px;font-weight:700;color:var(--text-tertiary);letter-spacing:.02em}
+  .lz-f select,.lz-f input{border:1px solid var(--border-strong);border-radius:6px;padding:6px 8px;font-size:13px;color:var(--text-primary);background:#fff}
+  .lz-f input{min-width:190px}
+  .lz-f select{min-width:150px}
+  .lz-hint{flex-basis:100%;font-size:12px;color:var(--text-secondary);margin:0}
+  .lz-locked{color:var(--text-tertiary)}
+  .lz-locked b{color:var(--text-secondary)}
+  .lz-in-cur{width:80px;text-transform:uppercase}
+  .lz-in-vsl{width:130px}
   .st-queued,.st-parsing,.st-approved,.st-creating{background:var(--amber-bg);color:var(--amber)}
   .st-parsed{background:var(--blue-bg);color:var(--blue)}
   .st-created{background:var(--green-bg);color:var(--green)}
@@ -62,19 +74,31 @@
 {% block content %}
 <div class="lz-wrap">
   <div class="lz-head">
-    <h2 style="margin:0">기국 인보이스 등록</h2>
+    <h2 style="margin:0">인보이스 등록</h2>
     <span class="lz-count" id="lz-count"></span>
     <button class="lz-b del" id="lz-clear" style="margin-left:auto;display:none">완료된 카드 치우기</button>
   </div>
   <div class="lz-note">
-    LISCR(라이베리아 기국) 인보이스 PDF를 올리면 맥 러너가 내용을 읽어 카드로 띄웁니다.
-    <b>값을 확인하고 [승인]을 눌러야</b> SVMS에 신규 인보이스가 만들어집니다(Vendor V25081 · Expense 070205 ·
-    Oversea 미지정 · Invoice PIC SS0059 고정). 생성된 인보이스는 상신(S) 상태가 되어
+    인보이스 PDF를 올리면 맥 러너가 내용을 읽어 카드로 띄웁니다.
+    <b>값을 확인하고 [승인]을 눌러야</b> SVMS에 신규 인보이스가 만들어집니다
+    (Oversea 미지정 · Invoice PIC SS0059 는 어느 유형이든 고정). 생성된 인보이스는 상신(S) 상태가 되어
     기존 <b>인보이스 자동컨펌</b> 탭이 평소처럼 이어받습니다.
   </div>
+  <!-- 등록 유형에 따라 Vendor/Expense/통화가 잠기거나 풀린다. 목록은 러너가 밀어준
+       SVMS 마스터 스냅샷이고, 잠긴 값은 아예 입력칸을 띄우지 않는다(고칠 수 있게 보이면
+       고칠 수 있다고 믿게 된다). -->
+  <div class="lz-prof" id="lz-prof">
+    <label class="lz-f"><span>등록 유형</span><select id="lz-profile"></select></label>
+    <div id="lz-opts" style="display:contents"></div>
+    <p class="lz-hint" id="lz-hint"></p>
+  </div>
+  <datalist id="dl-vendor"></datalist>
+  <datalist id="dl-exp"></datalist>
+  <datalist id="dl-vsl"></datalist>
+  <datalist id="dl-cur"></datalist>
   <div class="lz-drop" id="lz-drop">
     <h3>PDF를 여기로 끌어놓거나 클릭해서 선택</h3>
-    <p>LISCR 인보이스 PDF · 20MB 이하 · 여러 개 한 번에 가능</p>
+    <p>인보이스 PDF · 20MB 이하 · 여러 개 한 번에 가능</p>
     <input type="file" id="lz-file" accept="application/pdf" multiple hidden>
   </div>
   <div class="lz-list" id="lz-list"><div class="lz-empty">불러오는 중…</div></div>
@@ -110,11 +134,66 @@
   const STATUS_KO={uploading:'올리는 중',queued:'대기',parsing:'읽는 중',parsed:'승인 대기',hold:'보류',
                    approved:'승인됨',creating:'SVMS 생성 중',created:'생성 완료',
                    failed:'실패',rejected:'취소'};
+  const GATE_KO={READY:'바로 승인 가능',FIX:'값 채우면 승인 가능',HOLD:'승인 불가'};
+
+  // ── 등록 유형(프리셋) + SVMS 마스터 스냅샷
+  // 🔴 여기서 '기국이면 고정' 을 다시 구현하지 않는다. 무엇이 잠기는지는 러너의
+  //    profiles.py 가 정하고, 이 화면은 밀려온 locked 목록만 읽는다. 화면이 따로
+  //    판단하면 한쪽만 고쳤을 때 고정값이 조용히 기본값으로 내려앉는다.
+  let MASTER={profiles:[],vessels:[],expenses:[],vendors:[],currencies:[],updated_at:null};
+  const curProfile=()=>MASTER.profiles.find(p=>p.key===$('#lz-profile').value)||MASTER.profiles[0]||null;
+  const isLocked=(p,f)=>!!p&&(p.locked||[]).includes(f);
+
+  function fillDatalist(id,rows,fmt){
+    $(id).innerHTML=rows.map(r=>`<option value="${esc(r.cd)}">${esc(fmt(r))}</option>`).join('');
+  }
+
+  async function loadMaster(){
+    const {ok,j}=await api('GET','/api/liscr/master');
+    if(!ok) return;
+    MASTER=Object.assign(MASTER,j);
+    fillDatalist('#dl-vendor',MASTER.vendors,r=>`${r.nm||''}${r.n?` (최근 ${r.n}건)`:''}`);
+    fillDatalist('#dl-exp',MASTER.expenses,r=>r.nm||'');
+    fillDatalist('#dl-vsl',MASTER.vessels,r=>r.nm||'');
+    fillDatalist('#dl-cur',MASTER.currencies,r=>`${r.cd}${r.n?` (최근 ${r.n}건)`:''}`);
+    const sel=$('#lz-profile'), keep=sel.value;
+    sel.innerHTML=MASTER.profiles.map(p=>`<option value="${esc(p.key)}">${esc(p.label||p.key)}</option>`).join('');
+    if(keep&&MASTER.profiles.some(p=>p.key===keep)) sel.value=keep;
+    renderOpts();
+  }
+
+  // 잠기지 않은 값만 입력칸으로 띄운다. 잠긴 값은 "고정: …" 문구로만 보여준다.
+  function renderOpts(){
+    const p=curProfile(), box=$('#lz-opts');
+    if(!p){box.innerHTML='';$('#lz-hint').textContent='등록 유형을 불러오지 못했습니다.';return;}
+    const fixed=[];
+    let html='';
+    if(isLocked(p,'vendor')) fixed.push(`Vendor <b>${esc(p.vendor_cd||'-')}</b>`);
+    else html+=`<label class="lz-f"><span>Vendor *</span>`
+              +`<input id="op-vendor" list="dl-vendor" placeholder="벤더 코드" autocomplete="off"></label>`;
+    if(isLocked(p,'expense')) fixed.push(`Expense <b>${esc(p.exp_cd||'-')}</b>`);
+    else html+=`<label class="lz-f"><span>Expense *</span>`
+              +`<input id="op-exp" list="dl-exp" placeholder="비용 코드" autocomplete="off"></label>`;
+    if(isLocked(p,'currency')) fixed.push(`통화 <b>${esc(p.cur_cd||'-')}</b>`);
+    else html+=`<label class="lz-f"><span>통화</span>`
+              +`<input id="op-cur" list="dl-cur" value="AUTO" placeholder="AUTO" autocomplete="off"></label>`;
+    // 선박은 어느 유형에서도 선택사항 — 비우면 PDF에서 읽는다. 자유서식은 못 읽는 일이 잦아
+    // 미리 지정해두면 카드가 FIX 로 안 떨어진다.
+    html+=`<label class="lz-f"><span>선박 (선택)</span>`
+         +`<input id="op-vsl" list="dl-vsl" placeholder="PDF에서 자동" autocomplete="off"></label>`;
+    box.innerHTML=html;
+    const age=MASTER.updated_at?` · 마스터 ${esc(MASTER.updated_at)} 기준`:' · 마스터 미수신(러너 대기)';
+    $('#lz-hint').innerHTML=`${esc(p.hint||'')}`
+      +(fixed.length?` <span class="lz-locked">— 고정: ${fixed.join(' · ')}</span>`:'')
+      +`<span class="lz-locked">${age}</span>`;
+  }
 
   function card(d){
     const st=d.status||'';
     const stBadge=`<span class="lz-badge st-${esc(st)}">${esc(STATUS_KO[st]||st)}</span>`;
-    const gateBadge=d.gate?`<span class="lz-badge ${d.gate==='READY'?'b-ready':'b-hold'}">${esc(d.gate)}</span>`:'';
+    const gCls={READY:'b-ready',FIX:'b-fix'}[d.gate]||'b-hold';
+    const gateBadge=d.gate?`<span class="lz-badge ${gCls}" title="${esc(GATE_KO[d.gate]||'')}">${esc(d.gate)}</span>`:'';
+    const prof=MASTER.profiles.find(p=>p.key===(d.profile||'liscr'));
     const pdfEl=d.has_pdf?`<a class="pdf-lnk" data-pdf="${d.id}" data-nm="${esc(d.filename||'')}">원본 PDF</a>`:'';
 
     let kv='';
@@ -128,26 +207,43 @@
         +`</div>`;
     }
 
-    // 수정칸은 승인 가능한 상태(parsed+READY)에서만. 그 외엔 읽기전용 — 이미 SVMS로 넘어간
-    // 값을 화면에서 고치면 사람이 고쳐졌다고 착각한다.
-    const editable=(st==='parsed'&&d.gate==='READY');
+    // 수정칸은 승인 가능한 상태(parsed + READY|FIX)에서만. 그 외엔 읽기전용 — 이미 SVMS로
+    // 넘어간 값을 화면에서 고치면 사람이 고쳐졌다고 착각한다.
+    // FIX = 러너가 못 읽은 값이 있다는 뜻이라, 빈칸이 있는 게 정상이고 채우면 승인된다.
+    const editable=(st==='parsed'&&(d.gate==='READY'||d.gate==='FIX'));
     let edit='';
     if(editable){
+      // 통화·선박은 프리셋이 잠그지 않은 경우에만 고칠 수 있다(서버 approve 와 같은 규칙).
+      const curEd=!isLocked(prof,'currency')
+        ? `<label>통화 <input class="lz-in-cur" data-f="cur_cd" value="${esc(d.cur_cd||'')}"></label>`:'';
+      const vslEd=(d.profile==='generic')
+        ? `<label>선박 <input class="lz-in-vsl" data-f="vsl_cd" list="dl-vsl" value="${esc(d.vsl_cd||'')}"></label>`:'';
+      const fixed=['Oversea <b>미지정</b>','Invoice PIC <b>SS0059</b>'];
+      if(isLocked(prof,'vendor')||d.vndr_cd)
+        fixed.unshift(`Vendor <b>${esc(d.vndr_cd||'-')}</b>${d.vndr_nm?` ${esc(d.vndr_nm)}`:''}`);
+      if(isLocked(prof,'expense')||d.exp_cd)
+        fixed.push(`Expense <b>${esc(d.exp_cd||'-')}</b>${d.exp_nm?` ${esc(d.exp_nm)}`:''}`);
+      if(isLocked(prof,'currency')) fixed.push(`통화 <b>${esc(d.cur_cd||'-')}</b>`);
       edit=`<div class="lz-sect"><div class="lz-sect-t">확인 · 수정 (승인 시 이 값으로 생성)</div>`
         +`<div class="lz-edit">`
+        +vslEd
         +`<label>INV_NO <input class="lz-in-no" data-f="inv_no" value="${esc(d.inv_no||'')}"></label>`
         +`<label>INV_DT <input type="date" class="lz-in-date" data-f="inv_dt" value="${esc(dtIso(d.inv_dt))}"></label>`
         +`<label>금액 <input class="lz-in-amt" data-f="amt" value="${esc(d.amt==null?'':d.amt)}"></label>`
+        +curEd
         +`<label>Remit <input type="date" class="lz-in-date" data-f="pay_dt" value="${esc(dtIso(d.pay_dt))}"></label>`
         +`<label>감독 <input class="lz-in-id" data-f="sup_user_id" value="${esc(d.sup_user_id||'')}"></label>`
         +`<label style="flex:1">적요 <input class="lz-in-subj" data-f="subject" value="${esc(d.subject||'')}"></label>`
         +`</div>`
-        +`<div class="lz-fix" style="margin-top:6px">고정값 — Vendor <b>V25081</b> · Expense <b>${esc(d.exp_cd||'070205')}</b>`
-        +` · Oversea <b>미지정</b> · Invoice PIC <b>SS0059</b> · 통화 <b>${esc(d.cur_cd||'-')}</b></div></div>`;
+        +`<div class="lz-fix" style="margin-top:6px">등록 유형 <b>${esc(prof&&prof.label||d.profile||'-')}</b>`
+        +` — ${fixed.join(' · ')}</div></div>`;
     }
 
+    // FIX 는 "보류" 가 아니라 "채워라" 다. 같은 문구로 뭉치면 형이 손댈 수 있는 건지 아닌지
+    // 카드만 보고는 구분할 수 없다.
+    const rTitle=d.gate==='FIX'?'채워야 하는 값':'보류 사유';
     const reasons=(Array.isArray(d.reasons)&&d.reasons.length)
-      ? `<div class="lz-sect"><div class="lz-sect-t">보류 사유</div><div class="lz-why">${d.reasons.map(x=>esc(x)).join('<br>')}</div></div>`:'';
+      ? `<div class="lz-sect"><div class="lz-sect-t">${rTitle}</div><div class="lz-why">${d.reasons.map(x=>esc(x)).join('<br>')}</div></div>`:'';
     const err=d.error?`<div class="lz-sect"><div class="lz-sect-t">오류</div><div class="lz-err">${esc(d.error)}</div></div>`:'';
     const invcd=d.inv_cd?`<div class="lz-sect"><div class="lz-sect-t">SVMS</div><div>인보이스 <b>${esc(d.inv_cd)}</b> 생성됨 — 인보이스 자동컨펌 탭에서 이어집니다.</div></div>`:'';
 
@@ -189,10 +285,29 @@
     const drop=$('#lz-drop');
     const pdfs=Array.from(files||[]).filter(f=>/\.pdf$/i.test(f.name));
     if(!pdfs.length){alert('PDF 파일만 업로드할 수 있습니다.');return;}
+    const p=curProfile();
+    if(!p){alert('등록 유형을 아직 못 불러왔습니다. 새로고침 후 다시 시도하세요.');return;}
+    // 🔴 잠긴 값은 아예 보내지 않는다(서버도 무시한다). 여기서 채워 보내면 어느 쪽이
+    //    이겼는지 화면만 보고는 알 수 없게 된다.
+    const val=id=>{const el=$(id);return el?el.value.trim():'';};
+    const opts={};
+    if(!isLocked(p,'vendor')){
+      opts.vendor_cd=val('#op-vendor');
+      if(!opts.vendor_cd){alert('Vendor 코드를 지정해야 합니다.');return;}
+    }
+    if(!isLocked(p,'expense')){
+      opts.exp_cd=val('#op-exp');
+      if(!opts.exp_cd){alert('Expense 코드를 지정해야 합니다.');return;}
+    }
+    if(!isLocked(p,'currency')) opts.cur_cd=val('#op-cur')||'AUTO';
+    const vsl=val('#op-vsl'); if(vsl) opts.vsl_cd=vsl;
+
     drop.classList.add('busy');
     const fails=[];
     for(const f of pdfs){
       const fd=new FormData(); fd.append('file',f);
+      fd.append('profile',p.key);
+      Object.entries(opts).forEach(([k,v])=>fd.append(k,v));
       let j={};
       const r=await fetch('/api/liscr/upload',{method:'POST',body:fd});
       try{j=await r.json();}catch(e){}
@@ -232,7 +347,10 @@
       const body={};
       cardEl.querySelectorAll('[data-f]').forEach(inp=>{
         const f=inp.dataset.f;
-        body[f]=(inp.type==='date')?dtCompact(inp.value):inp.value.trim();
+        const v=(inp.type==='date')?dtCompact(inp.value):inp.value.trim();
+        // 🔴 빈칸은 아예 안 보낸다. 보내면 서버가 "비울 수 없음" 이라고만 답해서
+        //    FIX 카드에서 **뭘 채워야 하는지** 를 못 듣는다(완결성 검사가 그걸 알려준다).
+        if(v!=='') body[f]=v;
       });
       if(!confirm(`SVMS에 신규 인보이스를 만듭니다.\n\nINV_NO ${body.inv_no}\n금액 ${body.amt}\n\n진행할까요?`)){
         cardEl.classList.remove('is-busy');return;
@@ -265,7 +383,10 @@
   $('#pdf-close').addEventListener('click',()=>{$('#pdf-modal').classList.remove('on');$('#pdf-frame').src='about:blank';});
   $('#pdf-modal').addEventListener('click',e=>{if(e.target===$('#pdf-modal')){$('#pdf-modal').classList.remove('on');$('#pdf-frame').src='about:blank';}});
 
-  load();
+  $('#lz-profile').addEventListener('change',renderOpts);
+
+  // 마스터를 먼저 받아야 카드가 어느 값이 고정인지 안다. 못 받아도 목록은 뜬다.
+  loadMaster().then(load);
   // 러너가 파싱/생성을 끝내는 걸 화면에서 기다리게 된다 — 짧게 폴링.
   setInterval(()=>{if(!document.hidden) load();},7000);
 })();
