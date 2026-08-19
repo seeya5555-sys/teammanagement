@@ -3269,6 +3269,16 @@
   "defaults": {}
  },
  {
+  "rule": "/api/liscr/jobs/clear-done",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_liscr_clear_done",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/liscr/upload",
   "methods": [
    "OPTIONS",

@@ -64,6 +64,7 @@
   <div class="lz-head">
     <h2 style="margin:0">기국 인보이스 등록</h2>
     <span class="lz-count" id="lz-count"></span>
+    <button class="lz-b del" id="lz-clear" style="margin-left:auto;display:none">완료된 카드 치우기</button>
   </div>
   <div class="lz-note">
     LISCR(라이베리아 기국) 인보이스 PDF를 올리면 맥 러너가 내용을 읽어 카드로 띄웁니다.
@@ -157,9 +158,8 @@
     }else if(st==='hold'||st==='queued'){
       acts=`<button class="lz-b rj" data-act="reject">취소</button>`;
     }
-    // SVMS 에 인보이스가 생긴 건(inv_cd 보유)은 삭제칸을 아예 안 준다 — 이 행의 sha256 이
-    // 같은 PDF 재업로드를 막는 유일한 표식이라, 지우면 중복생성이 열린다(서버도 거부함).
-    if(!d.inv_cd && ['failed','rejected','hold','parsed'].includes(st)){
+    // 끝난 건은 전부 지울 수 있음. 지우는 건 이 목록의 카드일 뿐, SVMS 인보이스는 그대로.
+    if(['created','failed','rejected','hold','parsed'].includes(st)){
       acts+=`<button class="lz-b del" data-act="delete">삭제</button>`;
     }
     const actsEl=acts?`<div class="lz-acts">${acts}</div>`:'';
@@ -177,6 +177,11 @@
     if(!ok){list.innerHTML='<div class="lz-empty">목록을 불러오지 못했습니다.</div>';return;}
     const jobs=j.jobs||[];
     $('#lz-count').textContent=jobs.length?`전체 ${jobs.length}건 · 승인 대기 ${j.waiting||0}건`:'';
+    // 일괄 버튼은 치울 게 실제로 있을 때만 보인다 — 실패·보류·승인대기는 대상이 아니다.
+    const done=jobs.filter(x=>x.status==='created'||x.status==='rejected').length;
+    const clr=$('#lz-clear');
+    clr.style.display=done?'':'none';
+    clr.textContent=`완료된 카드 치우기 (${done})`;
     list.innerHTML=jobs.length?jobs.map(card).join(''):'<div class="lz-empty">업로드된 인보이스가 없습니다.</div>';
   }
 
@@ -218,7 +223,9 @@
     if(!btn) return;
     const cardEl=btn.closest('.lz-card'), id=cardEl.dataset.id, act=btn.dataset.act;
     if(act==='reject'&&!confirm('이 건을 취소할까요? SVMS에는 아무것도 만들지 않습니다.')) return;
-    if(act==='delete'&&!confirm('목록에서 삭제할까요? 업로드한 PDF도 함께 지워집니다.')) return;
+    // SVMS 인보이스는 안 지워진다는 걸 문구에 박아둔다 — 오해하면 되돌릴 수 없는 착각이다.
+    if(act==='delete'&&!confirm('이 목록에서만 지웁니다. 업로드한 PDF도 함께 삭제됩니다.\n'
+        +'SVMS에 만들어진 인보이스는 지워지지 않습니다.\n\n계속할까요?')) return;
     cardEl.classList.add('is-busy');
     let res;
     if(act==='approve'){
@@ -238,6 +245,20 @@
     }
     cardEl.classList.remove('is-busy');
     if(!res.ok) alert(res.j.error||'처리 실패');
+    // 행은 지웠는데 PDF 를 못 지운 경우. 서버가 알려주면 그대로 말한다 —
+    // "PDF도 함께 삭제됩니다" 라고 해놓고 조용히 남기면 그게 거짓 보고다.
+    else if(act==='delete'&&res.j.pdf_removed===false)
+      alert('목록에서는 지웠지만 업로드한 PDF 파일은 삭제하지 못했습니다. 서버 로그 확인 필요.');
+    load();
+  });
+
+  $('#lz-clear').addEventListener('click',async()=>{
+    if(!confirm('생성 완료·취소된 카드를 목록에서 치웁니다.\n'
+        +'실패·보류·승인 대기 건은 남습니다. SVMS 인보이스는 지워지지 않습니다.\n\n계속할까요?')) return;
+    const res=await api('POST','/api/liscr/jobs/clear-done');
+    if(!res.ok) alert(res.j.error||'처리 실패');
+    else if((res.j.pdf_failed||[]).length)
+      alert(`목록에서는 지웠지만 PDF ${res.j.pdf_failed.length}건은 삭제하지 못했습니다. 서버 로그 확인 필요.`);
     load();
   });
 

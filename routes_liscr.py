@@ -60,6 +60,24 @@ def _liscr_pdf_path(jid):
     return os.path.join(LISCR_PDF_DIR, '%d.pdf' % int(jid))
 
 
+def _remove_pdf(jid):
+    """업로드 PDF 삭제. 지워졌으면(원래 없었어도) True, 남아 있으면 False.
+
+    🔴 성공 여부를 **반드시 돌려준다.** 화면은 "업로드한 PDF도 함께 삭제됩니다" 라고
+       약속하는데, 여기서 예외를 삼키고 성공만 답하면 그 약속이 거짓말이 되고
+       디스크엔 주인 없는 PDF 가 남는다. 행 삭제 자체는 이미 끝났으므로 되돌리지 않고,
+       못 지웠다는 사실을 호출자에게 올려 보낸다.
+    """
+    try:
+        p = _liscr_pdf_path(jid)
+        if os.path.exists(p):
+            os.remove(p)
+        return True
+    except Exception:
+        app.logger.exception('liscr-pdf-delete')
+        return False
+
+
 def _job_dict(r):
     d = dict(r)
     for k in ('reasons', 'header_json', 'lines_json', 'parsed_json', 'edited_json'):
@@ -231,25 +249,49 @@ def api_liscr_reject(jid):
 @bp.route('/api/liscr/jobs/<int:jid>', methods=['DELETE'])
 @admin_required
 def api_liscr_delete(jid):
-    """행 삭제.
+    """행 삭제(= 목록에서 치우기). SVMS 인보이스는 지우지 않는다 — 여기 큐 행만 지운다.
 
-    🔴 SVMS 에 인보이스가 생겼거나 생겼을 수 있는 행은 지우지 않는다. 이 행의 sha256 이
-       "같은 PDF 재업로드" 를 막는 유일한 표식이라, 지우는 순간 같은 인보이스를 한 번 더
-       만들 수 있게 된다. created 는 물론, inv_cd 가 남은 failed(=저장은 됐고 상신에서
-       실패)도 같은 이유로 남긴다. 러너가 잡고 있는 상태도 당연히 금지.
+    끝난 건은 전부 지울 수 있다. 러너가 잡고 있거나 곧 잡을 상태만 막는다.
+
+    🔴 한때 `inv_cd IS NULL` 조건으로 created 삭제를 막아뒀는데, 실측으로 근거가 틀렸다.
+       "행의 sha256 이 재업로드를 막는 유일한 표식" 이라는 게 전제였지만, 진짜 방어선은
+       SVMS 자체 중복검사(`PKG_CO.SP_GET_CHK_INV_NO`)다. 행을 지우고 같은 PDF 를 다시
+       올려도 파싱 단계에서 `HOLD — 인보이스 번호 중복(<INV_CD>, <INV_NO>)` 로 막힌다
+       (2026-08-19 실제 생성건 3개로 확인). sha256 표식은 큐 안 중복을 걸러주는 1차선일
+       뿐이고, 그 역할은 아직 처리중인 행들이 계속 한다.
     """
-    rc = execute_rc("DELETE FROM liscr_job WHERE id=? AND inv_cd IS NULL AND status IN "
-                    "('failed','rejected','hold','parsed')", (jid,))
+    # 없는 번호를 "처리중이라 못 지움"으로 답하면 원인을 못 가린다 — 404 로 갈라준다.
+    if not query("SELECT id FROM liscr_job WHERE id=?", (jid,), one=True):
+        return jsonify({'error': '없는 건'}), 404
+    rc = execute_rc("DELETE FROM liscr_job WHERE id=? AND status IN "
+                    "('created','failed','rejected','hold','parsed')", (jid,))
     if not rc:
-        return jsonify({'error': 'SVMS 인보이스가 생겼거나 처리중인 건은 삭제할 수 없음 '
-                                 '(재업로드 중복생성 방지)'}), 409
-    try:
-        p = _liscr_pdf_path(jid)
-        if os.path.exists(p):
-            os.remove(p)
-    except Exception:
-        app.logger.exception('liscr-pdf-delete')
-    return jsonify({'id': jid, 'deleted': True})
+        return jsonify({'error': '러너가 처리중인 건은 삭제할 수 없음 '
+                                 '(대기·읽는 중·승인됨·SVMS 생성 중)'}), 409
+    return jsonify({'id': jid, 'deleted': True, 'pdf_removed': _remove_pdf(jid)})
+
+
+@bp.route('/api/liscr/jobs/clear-done', methods=['POST'])
+@admin_required
+def api_liscr_clear_done():
+    """끝난 건 일괄 삭제 — 생성 완료/취소된 카드만. 목록 청소용.
+
+    🔴 `failed`·`hold`·`parsed` 는 일부러 뺐다. 실패는 사람이 사유를 보고 손봐야 할
+       건이고, hold/parsed 는 아직 형이 판단을 안 한 건이다. 한 번에 쓸어버리는 버튼이
+       그것들까지 먹으면 "확인해야 할 것" 이 조용히 사라진다. 그 둘은 카드별 [삭제]로.
+    """
+    rows = query("SELECT id FROM liscr_job WHERE status IN ('created','rejected')")
+    ids = [r['id'] for r in rows]
+    if not ids:
+        return jsonify({'deleted': 0})
+    n, stuck = 0, []
+    for jid in ids:
+        if execute_rc("DELETE FROM liscr_job WHERE id=? AND status IN ('created','rejected')",
+                      (jid,)):
+            n += 1
+            if not _remove_pdf(jid):
+                stuck.append(jid)
+    return jsonify({'deleted': n, 'pdf_failed': stuck})
 
 
 # ───────────────────────────── 맥 러너용 API ─────────────────────────────

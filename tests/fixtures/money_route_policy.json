@@ -269,6 +269,11 @@
     "guard": "admin_required",
     "non_admin": 403
   },
+  "POST /api/liscr/jobs/clear-done": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
   "POST /api/liscr/upload": {
     "anonymous": 401,
     "guard": "admin_required",
