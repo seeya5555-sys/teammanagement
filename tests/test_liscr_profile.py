@@ -342,7 +342,21 @@ for bad in (None, True, [], {'a': 1}, '20260800', '00000000'):
         '🔴 날짜 %r 거부(400) — 500 이 아니라 사유를 돌려준다' % (bad,))
 chk(job(B4)['status'] == 'parsed', '거부되는 동안 상태는 그대로', job(B4)['status'])
 
-print('\n' + ('❌ 실패 %d건: %s' % (len(fails), fails) if fails else '✅ 전부 통과'))
+print('\n# 13) 통화 빈 카드는 **일괄 승인에서도** 못 나간다')
+# 화면에서 통화를 드롭다운으로 바꾼 뒤라(2026-08-19), 통화 없는 카드는 형이 골라야 하는 건이다.
+# 일괄 버튼은 아무 값도 채워줄 수 없으므로 여기서 반드시 걸러져야 한다(단건과 같은 함수).
+B5 = upload(profile='generic', vendor_cd='V99999', exp_cd='010101').get_json()['id']
+claim_and_report(B5, 'FIX', dict(FULL, CUR_CD=None), LINES, reasons=['통화 미판독'])
+row = job(B5)
+rb = c.post('/api/liscr/jobs/approve-bulk',
+            json={'items': [{'id': B5, 'inv_no': row['inv_no'], 'amt': row['amt']}]})
+chk(rb.status_code == 200 and rb.get_json()['approved'] == [],
+    '🔴 통화 빈 채로 일괄 승인 불가', rb.get_json())
+chk('통화' in (rb.get_json()['skipped'][0]['reason'] if rb.get_json()['skipped'] else ''),
+    '건너뛴 사유가 통화라고 말해줌', rb.get_json())
+chk(job(B5)['status'] == 'parsed', '거부돼도 승인 대기줄에 남음', job(B5)['status'])
+
+print('\n' +('❌ 실패 %d건: %s' % (len(fails), fails) if fails else '✅ 전부 통과'))
 for r in A.query("SELECT id FROM liscr_job"):
     p = os.path.join(PDF_DIR, '%d.pdf' % r['id'])
     if os.path.exists(p):

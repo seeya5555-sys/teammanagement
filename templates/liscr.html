@@ -31,7 +31,7 @@
   .lz-hint{flex-basis:100%;font-size:12px;color:var(--text-secondary);margin:0}
   .lz-locked{color:var(--text-tertiary)}
   .lz-locked b{color:var(--text-secondary)}
-  .lz-in-cur{width:80px;text-transform:uppercase}
+  .lz-in-cur{min-width:120px}
   .lz-in-vsl{width:130px}
   .st-queued,.st-parsing,.st-approved,.st-creating{background:var(--amber-bg);color:var(--amber)}
   .st-parsed{background:var(--blue-bg);color:var(--blue)}
@@ -46,9 +46,22 @@
   .lz-sect-t{font-size:11px;font-weight:700;color:var(--text-tertiary);margin-bottom:4px;letter-spacing:.02em}
   .lz-edit{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center}
   .lz-edit label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-tertiary)}
-  .lz-edit input{border:1px solid var(--border-strong);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text-primary)}
+  .lz-edit input,.lz-edit select{border:1px solid var(--border-strong);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text-primary);background:#fff}
   .lz-in-subj{min-width:240px;flex:1}
-  .lz-in-date{width:150px;font-family:inherit}
+  /* 🔴 iOS Safari 는 값이 빈 input[type=date] 를 폭 0 에 가깝게 접어버려서, 형 화면에서는
+     INV_DT·Remit 칸이 **아예 안 보였다**(2026-08-19 형 스크린샷: 다른 칸은 다 상자가 보이는데
+     날짜 둘만 줄 하나). appearance 를 끄고 최소 크기를 직접 박아야 상자가 남는다.
+     picker indicator 는 다시 켜둔다 — 안 그러면 데스크톱에서 달력 아이콘이 사라진다.
+     표준 `appearance:none` 은 일부러 안 쓴다 — 접히는 건 webkit 계열 증상인데, 표준까지 끄면
+     증상 없는 브라우저의 날짜칸 렌더까지 같이 바꾼다(고치는 범위를 실제 증상에 맞춘다). */
+  .lz-in-date{min-width:158px;min-height:34px;box-sizing:border-box;font-family:inherit;font-size:14px;
+              -webkit-appearance:none;background:#fff;text-align:left;flex:none}
+  .lz-in-date::-webkit-date-and-time-value{text-align:left;min-height:20px;margin:0}
+  .lz-in-date::-webkit-calendar-picker-indicator{opacity:1;display:block}
+  /* 아직 안 고른 날짜는 눈에 띄게 — 비어 있는 게 정상인 카드(FIX)라 "왜 빈칸이지" 가 아니라
+     "여기를 눌러 고르면 된다" 로 읽혀야 한다. */
+  .lz-in-date.is-empty{border-color:var(--amber);background:var(--amber-bg)}
+  .lz-cal{font-size:11px;color:var(--amber);font-weight:700}
   .lz-in-amt{width:130px}
   .lz-in-no{width:180px}
   .lz-in-id{width:100px}
@@ -62,6 +75,7 @@
   .lz-b.rj{background:var(--red);color:#fff}
   .lz-b.del{background:#fff;color:var(--text-tertiary);border:1px solid var(--border)}
   .lz-empty{color:var(--text-tertiary);padding:30px;text-align:center}
+  .lz-paused{margin:0 0 8px;font-size:12px;font-weight:700;color:var(--amber)}
   .pdf-lnk{color:var(--blue);cursor:pointer;text-decoration:underline}
   .pdf-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900;align-items:center;justify-content:center}
   .pdf-modal.on{display:flex}
@@ -96,12 +110,14 @@
   <datalist id="dl-vendor"></datalist>
   <datalist id="dl-exp"></datalist>
   <datalist id="dl-vsl"></datalist>
-  <datalist id="dl-cur"></datalist>
   <div class="lz-drop" id="lz-drop">
     <h3>PDF를 여기로 끌어놓거나 클릭해서 선택</h3>
     <p>인보이스 PDF · 20MB 이하 · 여러 개 한 번에 가능</p>
     <input type="file" id="lz-file" accept="application/pdf" multiple hidden>
   </div>
+  <!-- 입력 중에는 목록을 다시 그리지 않는다. 그 사실을 화면에 적어두지 않으면 "왜 새 카드가
+       안 뜨지" 로만 보인다(멈춤이 조용하면 그게 버그로 보인다). -->
+  <div class="lz-paused" id="lz-paused" style="display:none">입력 중 — 목록 자동 갱신을 잠시 멈췄습니다. 입력칸 밖을 누르면 바로 갱신됩니다.</div>
   <div class="lz-list" id="lz-list"><div class="lz-empty">불러오는 중…</div></div>
 </div>
 <div class="pdf-modal" id="pdf-modal">
@@ -149,6 +165,23 @@
     $(id).innerHTML=rows.map(r=>`<option value="${esc(r.cd)}">${esc(fmt(r))}</option>`).join('');
   }
 
+  // 통화는 드롭다운으로 고른다(2026-08-19 형 지시). Vendor(563)·Expense(357) 과 달리 통화는
+  // 회사가 실제로 쓴 11종뿐이라 목록이 한 번에 다 보이고, 사용빈도 순으로 내려온다.
+  // 🔴 지금 값이 목록에 없으면 **그 값을 첫 옵션으로 넣는다.** 안 그러면 select 가 조용히
+  //    첫 통화로 내려앉아, 형이 본 통화와 다른 통화로 승인이 나간다(금전 경로에서 제일
+  //    하면 안 되는 종류의 조용한 치환). 목록에 없는 값이면 승인 단계가 사유를 붙여 막는다.
+  function curOptions(cur,withAuto){
+    const rows=MASTER.currencies||[];
+    const opts=[];
+    if(withAuto) opts.push(`<option value="AUTO"${cur==='AUTO'?' selected':''}>AUTO (인보이스에서 자동판독)</option>`);
+    if(cur&&cur!=='AUTO'&&!rows.some(r=>r.cd===cur))
+      opts.push(`<option value="${esc(cur)}" selected>${esc(cur)} (마스터에 없음)</option>`);
+    rows.forEach(r=>opts.push(
+      `<option value="${esc(r.cd)}"${r.cd===cur?' selected':''}>${esc(r.cd)}${r.n?` (최근 ${r.n}건)`:''}</option>`));
+    if(!cur&&!withAuto) opts.unshift('<option value="" selected>선택</option>');
+    return opts.join('');
+  }
+
   async function loadMaster(){
     const {ok,j}=await api('GET','/api/liscr/master');
     if(!ok) return;
@@ -156,7 +189,6 @@
     fillDatalist('#dl-vendor',MASTER.vendors,r=>`${r.nm||''}${r.n?` (최근 ${r.n}건)`:''}`);
     fillDatalist('#dl-exp',MASTER.expenses,r=>r.nm||'');
     fillDatalist('#dl-vsl',MASTER.vessels,r=>r.nm||'');
-    fillDatalist('#dl-cur',MASTER.currencies,r=>`${r.cd}${r.n?` (최근 ${r.n}건)`:''}`);
     const sel=$('#lz-profile'), keep=sel.value;
     sel.innerHTML=MASTER.profiles.map(p=>`<option value="${esc(p.key)}">${esc(p.label||p.key)}</option>`).join('');
     if(keep&&MASTER.profiles.some(p=>p.key===keep)) sel.value=keep;
@@ -177,7 +209,7 @@
               +`<input id="op-exp" list="dl-exp" placeholder="비용 코드" autocomplete="off"></label>`;
     if(isLocked(p,'currency')) fixed.push(`통화 <b>${esc(p.cur_cd||'-')}</b>`);
     else html+=`<label class="lz-f"><span>통화</span>`
-              +`<input id="op-cur" list="dl-cur" value="AUTO" placeholder="AUTO" autocomplete="off"></label>`;
+              +`<select id="op-cur">${curOptions('AUTO',true)}</select></label>`;
     // 선박은 어느 유형에서도 선택사항 — 비우면 PDF에서 읽는다. 자유서식은 못 읽는 일이 잦아
     // 미리 지정해두면 카드가 FIX 로 안 떨어진다.
     html+=`<label class="lz-f"><span>선박 (선택)</span>`
@@ -216,7 +248,11 @@
     if(editable){
       // 통화·선박은 프리셋이 잠그지 않은 경우에만 고칠 수 있다(서버 approve 와 같은 규칙).
       const curEd=!isLocked(prof,'currency')
-        ? `<label>통화 <input class="lz-in-cur" data-f="cur_cd" value="${esc(d.cur_cd||'')}"></label>`:'';
+        ? `<label>통화 <select class="lz-in-cur" data-f="cur_cd">${curOptions(d.cur_cd||'',false)}</select></label>`:'';
+      // 못 읽은 날짜는 캘린더로 고른다. 빈칸이면 무엇을 눌러야 하는지 칸 옆에 적어둔다.
+      const dt=(f,lab,v)=>{const iso=dtIso(v);
+        return `<label>${lab} <input type="date" class="lz-in-date${iso?'':' is-empty'}" data-f="${f}" value="${esc(iso)}">`
+              +(iso?'':`<span class="lz-cal">달력에서 선택</span>`)+`</label>`;};
       const vslEd=(d.profile==='generic')
         ? `<label>선박 <input class="lz-in-vsl" data-f="vsl_cd" list="dl-vsl" value="${esc(d.vsl_cd||'')}"></label>`:'';
       const fixed=['Oversea <b>미지정</b>','Invoice PIC <b>SS0059</b>'];
@@ -229,10 +265,10 @@
         +`<div class="lz-edit">`
         +vslEd
         +`<label>INV_NO <input class="lz-in-no" data-f="inv_no" value="${esc(d.inv_no||'')}"></label>`
-        +`<label>INV_DT <input type="date" class="lz-in-date" data-f="inv_dt" value="${esc(dtIso(d.inv_dt))}"></label>`
+        +dt('inv_dt','INV_DT',d.inv_dt)
         +`<label>금액 <input class="lz-in-amt" data-f="amt" value="${esc(d.amt==null?'':d.amt)}"></label>`
         +curEd
-        +`<label>Remit <input type="date" class="lz-in-date" data-f="pay_dt" value="${esc(dtIso(d.pay_dt))}"></label>`
+        +dt('pay_dt','Remit',d.pay_dt)
         +`<label>감독 <input class="lz-in-id" data-f="sup_user_id" value="${esc(d.sup_user_id||'')}"></label>`
         +`<label style="flex:1">적요 <input class="lz-in-subj" data-f="subject" value="${esc(d.subject||'')}"></label>`
         +`</div>`
@@ -277,10 +313,63 @@
   let JOBS=[];
   const readyForBulk=d=>d.status==='parsed'&&d.gate==='READY';
 
+  // 🔴 형이 카드에 손으로 채워 넣은 값. 목록은 7초마다 통째로 다시 그려지는데(innerHTML),
+  //    그러면 채우던 값이 그때마다 날아간다. READY 카드만 있던 시절엔 손댈 게 없어서
+  //    드러나지 않았지만, 자유서식은 **손입력이 정상 경로**라 네 칸 채우는 동안 두 번 갈아엎인다.
+  //    그래서 ①입력 중(목록 안에 포커스)이면 아예 다시 그리지 않고 ②그려야 할 땐 여기 담아둔
+  //    값을 되돌려 넣는다. 승인/취소/다시읽기로 카드가 떠나면 같이 지운다.
+  //    ⓐ id 는 `INTEGER PRIMARY KEY AUTOINCREMENT`(app.py) 라 지운 카드의 번호가 새 카드에
+  //      재사용되지 않는다 — id 만으로 카드를 특정해도 남의 카드에 값이 들어가지 않는다.
+  //    ⓑ 담아둘 때 **그리던 시점의 서버값**(base)도 같이 적는다. 러너가 그 사이 값을 새로 읽어
+  //      왔는데 옛 입력을 덮어쓰면, 형은 새 값을 본 적도 없이 옛 값으로 승인하게 된다.
+  const DIRTY={};
+  const editing=()=>{const a=document.activeElement;
+    return !!a&&a.tagName!=='BUTTON'&&$('#lz-list').contains(a);};
+  // 그 칸에 서버가 넣어준 값(=마지막 렌더의 값). input 은 value 속성, select 는 selected 옵션.
+  const srvVal=el=>el.tagName==='SELECT'
+    ? ((el.querySelector('option[selected]')||{}).value||'')
+    : el.defaultValue;
+
+  function markDate(el){
+    const has=!!el.value;
+    el.classList.toggle('is-empty',!has);
+    const lab=el.parentElement;
+    let cap=lab&&lab.querySelector('.lz-cal');
+    if(has){ if(cap) cap.style.display='none'; return; }
+    // 값을 지우면 안내가 다시 나와야 한다. 처음부터 값이 있어서 안내를 안 그린 칸이면 만들어 붙인다.
+    if(!cap&&lab){cap=document.createElement('span');cap.className='lz-cal';cap.textContent='달력에서 선택';lab.appendChild(cap);}
+    if(cap) cap.style.display='';
+  }
+
+  function restoreDirty(){
+    Object.keys(DIRTY).forEach(id=>{
+      const cardEl=$(`.lz-card[data-id="${id}"]`);
+      // 카드가 사라졌거나 더는 못 고치는 상태면(승인·생성됨) 담아둔 값도 버린다.
+      if(!cardEl||!cardEl.querySelector('[data-f]')){delete DIRTY[id];return;}
+      Object.entries(DIRTY[id]).forEach(([f,rec])=>{
+        const el=cardEl.querySelector(`[data-f="${f}"]`);
+        if(!el) return;
+        // 🔴 서버값이 바뀌었으면 손입력을 버리고 새 값을 남긴다(옛 입력이 새 판독을 덮지 않게).
+        if(srvVal(el)!==rec.base){delete DIRTY[id][f];return;}
+        // select 는 없는 값을 넣으면 조용히 첫 옵션이 된다 — 그 통화로 승인이 나가면 안 된다.
+        if(el.tagName==='SELECT'&&!Array.from(el.options).some(o=>o.value===rec.v)) return;
+        el.value=rec.v;
+        if(el.classList.contains('lz-in-date')) markDate(el);
+      });
+    });
+  }
+
+  // 갱신을 미뤄둔 게 있는지. 입력이 끝나면(포커스가 목록 밖으로 나가면) 바로 따라잡는다.
+  let STALE=false;
+  function paused(on){STALE=on;$('#lz-paused').style.display=on?'':'none';}
+
   async function load(){
     const {ok,j}=await api('GET','/api/liscr/jobs');
     const list=$('#lz-list');
     if(!ok){list.innerHTML='<div class="lz-empty">목록을 불러오지 못했습니다.</div>';return;}
+    // 🔴 응답을 기다리는 동안 형이 칸에 손을 댔을 수 있다. 폴링 직전에만 보고 말면 그 사이에
+    //    들어온 응답이 입력 중인 칸을 통째로 갈아엎는다(요청→응답 사이의 경합).
+    if(editing()){paused(true);return;}
     const jobs=j.jobs||[];
     JOBS=jobs;
     $('#lz-count').textContent=jobs.length?`전체 ${jobs.length}건 · 승인 대기 ${j.waiting||0}건`:'';
@@ -296,6 +385,8 @@
     clr.style.display=done?'':'none';
     clr.textContent=`완료된 카드 치우기 (${done})`;
     list.innerHTML=jobs.length?jobs.map(card).join(''):'<div class="lz-empty">업로드된 인보이스가 없습니다.</div>';
+    restoreDirty();
+    paused(false);
   }
 
   async function upload(files){
@@ -343,6 +434,22 @@
   ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
   drop.addEventListener('drop',e=>upload(e.dataTransfer&&e.dataTransfer.files));
 
+  // 손으로 채운 값을 기억해둔다(폴링 재렌더에서 되살리려고). 날짜칸의 "달력에서 선택" 표시도
+  // 여기서 끈다 — 골랐는데도 계속 재촉하면 안 골랐다고 오해한다.
+  ['input','change'].forEach(ev=>$('#lz-list').addEventListener(ev,e=>{
+    const el=e.target.closest('[data-f]');
+    if(!el) return;
+    const cardEl=el.closest('.lz-card');
+    if(!cardEl) return;
+    const bag=DIRTY[cardEl.dataset.id]=DIRTY[cardEl.dataset.id]||{};
+    // base 는 처음 손댈 때 한 번만 잡는다(=이 값을 보고 고쳤다는 기준점).
+    bag[el.dataset.f]={v:el.value, base:(bag[el.dataset.f]||{base:srvVal(el)}).base};
+    if(el.classList.contains('lz-in-date')) markDate(el);
+  }));
+
+  // 입력이 끝나면 미뤄둔 갱신을 바로 따라잡는다 — 안 그러면 최대 7초 동안 멈춘 목록을 본다.
+  $('#lz-list').addEventListener('focusout',()=>setTimeout(()=>{if(STALE&&!editing()) load();},0));
+
   $('#lz-list').addEventListener('click',async e=>{
     const pdf=e.target.closest('.pdf-lnk');
     if(pdf){
@@ -384,6 +491,9 @@
       res=await api('DELETE',`/api/liscr/jobs/${id}`);
     }
     cardEl.classList.remove('is-busy');
+    // 카드를 떠나보냈으면 담아둔 손입력도 버린다. [다시 읽기] 는 러너가 값을 새로 쓰는 거라
+    // 옛 입력을 되돌려 넣으면 방금 읽은 값을 덮어버린다(확인창에도 사라진다고 적어뒀다).
+    if(res.ok) delete DIRTY[id];
     if(!res.ok) alert(res.j.error||'처리 실패');
     // 행은 지웠는데 PDF 를 못 지운 경우. 서버가 알려주면 그대로 말한다 —
     // "PDF도 함께 삭제됩니다" 라고 해놓고 조용히 남기면 그게 거짓 보고다.
@@ -438,7 +548,9 @@
   // 마스터를 먼저 받아야 카드가 어느 값이 고정인지 안다. 못 받아도 목록은 뜬다.
   loadMaster().then(load);
   // 러너가 파싱/생성을 끝내는 걸 화면에서 기다리게 된다 — 짧게 폴링.
-  setInterval(()=>{if(!document.hidden) load();},7000);
+  // 🔴 입력 중이면 건너뛴다. 목록을 다시 그리면 포커스째 칸이 사라져서, 날짜를 고르는
+  //    달력이 열려 있는 채로 밑동이 없어진다.
+  setInterval(()=>{if(document.hidden) return; if(editing()){paused(true);return;} load();},7000);
 })();
 </script>
 {% endblock %}
