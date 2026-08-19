@@ -62,6 +62,13 @@
      "여기를 눌러 고르면 된다" 로 읽혀야 한다. */
   .lz-in-date.is-empty{border-color:var(--amber);background:var(--amber-bg)}
   .lz-cal{font-size:11px;color:var(--amber);font-weight:700}
+  /* 카드마다 고르는 Vendor·Expense. 아직 안 고른 칸은 날짜와 같은 표시를 쓴다 — 비어 있는 게
+     정상인 카드라, 승인 눌렀다가 400 을 보고서야 알게 되면 안 된다. */
+  .lz-in-vndr{width:150px}
+  .lz-in-exp{width:130px}
+  .lz-in-vndr.is-empty,.lz-in-exp.is-empty{border-color:var(--amber);background:var(--amber-bg)}
+  .lz-nm{font-size:11px;color:var(--text-tertiary);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lz-nm.bad{color:var(--red);font-weight:700}
   .lz-in-amt{width:130px}
   .lz-in-no{width:180px}
   .lz-in-id{width:100px}
@@ -201,12 +208,16 @@
     if(!p){box.innerHTML='';$('#lz-hint').textContent='등록 유형을 불러오지 못했습니다.';return;}
     const fixed=[];
     let html='';
+    // 🔴 Vendor·Expense 는 **선택**이다(2026-08-19 형 지시). 여기서 하나로 정하면 그 값이
+    //    이 묶음 전체에 박혀서, 벤더가 섞인 인보이스를 한 번에 올릴 수가 없다. 비워두면
+    //    카드마다 고른다 — 여러 벤더를 한 번에 올리는 게 자유서식의 정상 사용법이다.
+    //    (다 같은 벤더인 묶음이면 여기서 한 번 채우는 쪽이 손이 덜 간다 — 그래서 칸은 남긴다.)
     if(isLocked(p,'vendor')) fixed.push(`Vendor <b>${esc(p.vendor_cd||'-')}</b>`);
-    else html+=`<label class="lz-f"><span>Vendor *</span>`
-              +`<input id="op-vendor" list="dl-vendor" placeholder="벤더 코드" autocomplete="off"></label>`;
+    else html+=`<label class="lz-f"><span>Vendor (선택)</span>`
+              +`<input id="op-vendor" list="dl-vendor" placeholder="비우면 카드마다" autocomplete="off"></label>`;
     if(isLocked(p,'expense')) fixed.push(`Expense <b>${esc(p.exp_cd||'-')}</b>`);
-    else html+=`<label class="lz-f"><span>Expense *</span>`
-              +`<input id="op-exp" list="dl-exp" placeholder="비용 코드" autocomplete="off"></label>`;
+    else html+=`<label class="lz-f"><span>Expense (선택)</span>`
+              +`<input id="op-exp" list="dl-exp" placeholder="비우면 카드마다" autocomplete="off"></label>`;
     if(isLocked(p,'currency')) fixed.push(`통화 <b>${esc(p.cur_cd||'-')}</b>`);
     else html+=`<label class="lz-f"><span>통화</span>`
               +`<select id="op-cur">${curOptions('AUTO',true)}</select></label>`;
@@ -255,14 +266,27 @@
               +(iso?'':`<span class="lz-cal">달력에서 선택</span>`)+`</label>`;};
       const vslEd=(d.profile==='generic')
         ? `<label>선박 <input class="lz-in-vsl" data-f="vsl_cd" list="dl-vsl" value="${esc(d.vsl_cd||'')}"></label>`:'';
+      // 🔴 Vendor·Expense 는 **카드마다** 고른다(2026-08-19 형 지시). 업로드 폼에서 하나로
+      //    정하면 벤더가 섞인 묶음을 한 번에 못 올린다. 코드가 563·357 종이라 select 가 아니라
+      //    검색형 입력(datalist) 이다 — 잠긴 프리셋(기국)에서는 아예 칸을 만들지 않는다.
+      const code=(f,lab,cls,dl,cd,nm)=>
+        `<label>${lab} <input class="${cls}${cd?'':' is-empty'}" data-f="${f}" list="${dl}" `
+        +`value="${esc(cd||'')}" placeholder="코드" autocomplete="off">`
+        +(nm?`<span class="lz-nm">${esc(nm)}</span>`:'')+`</label>`;
+      const vndrEd=!isLocked(prof,'vendor')
+        ? code('vndr_cd','Vendor','lz-in-vndr','dl-vendor',d.vndr_cd,d.vndr_nm):'';
+      const expEd=!isLocked(prof,'expense')
+        ? code('exp_cd','Expense','lz-in-exp','dl-exp',d.exp_cd,d.exp_nm):'';
       const fixed=['Oversea <b>미지정</b>','Invoice PIC <b>SS0059</b>'];
-      if(isLocked(prof,'vendor')||d.vndr_cd)
+      if(isLocked(prof,'vendor'))
         fixed.unshift(`Vendor <b>${esc(d.vndr_cd||'-')}</b>${d.vndr_nm?` ${esc(d.vndr_nm)}`:''}`);
-      if(isLocked(prof,'expense')||d.exp_cd)
+      if(isLocked(prof,'expense'))
         fixed.push(`Expense <b>${esc(d.exp_cd||'-')}</b>${d.exp_nm?` ${esc(d.exp_nm)}`:''}`);
       if(isLocked(prof,'currency')) fixed.push(`통화 <b>${esc(d.cur_cd||'-')}</b>`);
       edit=`<div class="lz-sect"><div class="lz-sect-t">확인 · 수정 (승인 시 이 값으로 생성)</div>`
         +`<div class="lz-edit">`
+        +vndrEd
+        +expEd
         +vslEd
         +`<label>INV_NO <input class="lz-in-no" data-f="inv_no" value="${esc(d.inv_no||'')}"></label>`
         +dt('inv_dt','INV_DT',d.inv_dt)
@@ -341,6 +365,21 @@
     if(cap) cap.style.display='';
   }
 
+  // 🔴 코드만 봐서는 어느 벤더인지 모른다 — **돈이 나가는 상대**라 이름이 화면에 보여야 한다.
+  //    (마스터에 없는 코드면 그것도 그 자리에서 말한다. 승인 눌러 400 을 보고 알 일이 아니다.)
+  function showName(el){
+    const isV=el.classList.contains('lz-in-vndr');
+    const rows=(isV?MASTER.vendors:MASTER.expenses)||[];
+    const cd=el.value.trim();
+    const hit=cd?rows.find(r=>r.cd===cd):null;
+    const lab=el.parentElement;
+    let nm=lab&&lab.querySelector('.lz-nm');
+    if(!nm&&lab){nm=document.createElement('span');nm.className='lz-nm';lab.appendChild(nm);}
+    if(!nm) return;
+    nm.textContent=hit?(hit.nm||''):(cd?'마스터에 없는 코드':'');
+    nm.classList.toggle('bad',!!cd&&!hit);
+  }
+
   function restoreDirty(){
     Object.keys(DIRTY).forEach(id=>{
       const cardEl=$(`.lz-card[data-id="${id}"]`);
@@ -355,6 +394,10 @@
         if(el.tagName==='SELECT'&&!Array.from(el.options).some(o=>o.value===rec.v)) return;
         el.value=rec.v;
         if(el.classList.contains('lz-in-date')) markDate(el);
+        if(el.classList.contains('lz-in-vndr')||el.classList.contains('lz-in-exp')){
+          el.classList.toggle('is-empty',!rec.v.trim());
+          showName(el);
+        }
       });
     });
   }
@@ -372,7 +415,12 @@
     if(editing()){paused(true);return;}
     const jobs=j.jobs||[];
     JOBS=jobs;
-    $('#lz-count').textContent=jobs.length?`전체 ${jobs.length}건 · 승인 대기 ${j.waiting||0}건`:'';
+    // 🔴 Vendor·Expense 를 카드에서 고르게 되면서 그런 카드는 FIX 로 앉는다 = 전체 승인 대상이
+    //    아니다(일괄은 저장된 값만 쓰고, 화면에 채운 값은 아직 서버에 없다). 버튼이 그냥
+    //    사라지면 "왜 전체 승인이 없지" 가 되므로, 몇 건이 왜 빠졌는지 숫자로 말해준다.
+    const fixN=jobs.filter(d=>d.status==='parsed'&&d.gate==='FIX').length;
+    $('#lz-count').textContent=jobs.length?`전체 ${jobs.length}건 · 승인 대기 ${j.waiting||0}건`
+      +(fixN?` · 채워야 하는 카드 ${fixN}건(카드별로 승인)`:''):'';
     // 🔴 전체 승인 대상은 **READY 만**이다. FIX 는 사람이 카드에서 값을 채워야 하는 건이라
     //    일괄 버튼이 대신 채워줄 수 없다(서버도 덜 채워진 건은 거절한다).
     const ready=jobs.filter(readyForBulk);
@@ -399,14 +447,10 @@
     //    이겼는지 화면만 보고는 알 수 없게 된다.
     const val=id=>{const el=$(id);return el?el.value.trim():'';};
     const opts={};
-    if(!isLocked(p,'vendor')){
-      opts.vendor_cd=val('#op-vendor');
-      if(!opts.vendor_cd){alert('Vendor 코드를 지정해야 합니다.');return;}
-    }
-    if(!isLocked(p,'expense')){
-      opts.exp_cd=val('#op-exp');
-      if(!opts.exp_cd){alert('Expense 코드를 지정해야 합니다.');return;}
-    }
+    // 🔴 비워도 올라간다. 비운 값은 러너가 FIX 로 내리고 형이 **카드마다** 고른다
+    //    (여기서 다시 필수로 막으면 벤더가 섞인 묶음을 한 번에 올리는 길이 도로 닫힌다).
+    if(!isLocked(p,'vendor')){const v=val('#op-vendor'); if(v) opts.vendor_cd=v;}
+    if(!isLocked(p,'expense')){const v=val('#op-exp'); if(v) opts.exp_cd=v;}
     if(!isLocked(p,'currency')) opts.cur_cd=val('#op-cur')||'AUTO';
     const vsl=val('#op-vsl'); if(vsl) opts.vsl_cd=vsl;
 
@@ -436,15 +480,41 @@
 
   // 손으로 채운 값을 기억해둔다(폴링 재렌더에서 되살리려고). 날짜칸의 "달력에서 선택" 표시도
   // 여기서 끈다 — 골랐는데도 계속 재촉하면 안 골랐다고 오해한다.
+  const stash=(cardEl,el,v)=>{
+    const bag=DIRTY[cardEl.dataset.id]=DIRTY[cardEl.dataset.id]||{};
+    // base 는 처음 손댈 때 한 번만 잡는다(=이 값을 보고 고쳤다는 기준점).
+    bag[el.dataset.f]={v:v, base:(bag[el.dataset.f]||{base:srvVal(el)}).base};
+  };
+
+  // 🔴 벤더를 바꾸면 Remit(Pay Date)의 근거가 사라진다. 결제조건(PAY_TERM)은 **벤더마다
+  //    다르고**(2026-08-19 실측: LISCR V25081=1, 뷰로베리타스 20268=없음) 그 계산은 러너만
+  //    한다 — 앞 벤더 기준으로 만들어진 날짜를 그대로 두면 형이 확인한 적 없는 송금일이
+  //    SVMS 로 나간다. 그래서 화면에서 비우고 다시 고르게 한다(서버도 재확인 없으면 거절한다).
+  function vendorChanged(cardEl,el){
+    if(el.value.trim()===srvVal(el)) return;
+    const pay=cardEl.querySelector('[data-f="pay_dt"]');
+    if(!pay) return;
+    if(pay.value){pay.value='';markDate(pay);}
+    stash(cardEl,pay,'');
+    const cap=pay.parentElement&&pay.parentElement.querySelector('.lz-cal');
+    if(cap) cap.textContent='벤더가 바뀜 — Remit 다시 고를 것';
+  }
+
   ['input','change'].forEach(ev=>$('#lz-list').addEventListener(ev,e=>{
     const el=e.target.closest('[data-f]');
     if(!el) return;
     const cardEl=el.closest('.lz-card');
     if(!cardEl) return;
-    const bag=DIRTY[cardEl.dataset.id]=DIRTY[cardEl.dataset.id]||{};
-    // base 는 처음 손댈 때 한 번만 잡는다(=이 값을 보고 고쳤다는 기준점).
-    bag[el.dataset.f]={v:el.value, base:(bag[el.dataset.f]||{base:srvVal(el)}).base};
+    stash(cardEl,el,el.value);
     if(el.classList.contains('lz-in-date')) markDate(el);
+    // 아직 안 고른 표시는 값이 들어오면 바로 꺼진다(날짜칸과 같은 규칙).
+    if(el.classList.contains('lz-in-vndr')||el.classList.contains('lz-in-exp')){
+      el.classList.toggle('is-empty',!el.value.trim());
+      showName(el);
+    }
+    // 벤더 확정은 'change'(고르거나 칸을 떠날 때)에서만 본다 — 타이핑 한 글자마다
+    // Remit 을 지우면 아직 고르지도 않은 값 때문에 화면이 흔들린다.
+    if(ev==='change'&&el.classList.contains('lz-in-vndr')) vendorChanged(cardEl,el);
   }));
 
   // 입력이 끝나면 미뤄둔 갱신을 바로 따라잡는다 — 안 그러면 최대 7초 동안 멈춘 목록을 본다.
@@ -475,11 +545,19 @@
       cardEl.querySelectorAll('[data-f]').forEach(inp=>{
         const f=inp.dataset.f;
         const v=(inp.type==='date')?dtCompact(inp.value):inp.value.trim();
-        // 🔴 빈칸은 아예 안 보낸다. 보내면 서버가 "비울 수 없음" 이라고만 답해서
-        //    FIX 카드에서 **뭘 채워야 하는지** 를 못 듣는다(완결성 검사가 그걸 알려준다).
-        if(v!=='') body[f]=v;
+        // 🔴 빈칸도 **그대로 보낸다**(2026-08-19 올마이트 지적, 금전 경로). 안 보내면
+        //    서버가 저장된 옛 값을 그대로 쓴다 — 카드에서 Vendor 를 지우고 새로 안 고른
+        //    채 승인하면 화면엔 비어 보이는데 **앞 벤더로 돈이 나간다**. 서버는 빈 값을
+        //    '비움' 으로 받고, 무엇을 채워야 하는지는 완결성 검사가 목록으로 돌려준다.
+        body[f]=v;
       });
-      if(!confirm(`SVMS에 신규 인보이스를 만듭니다.\n\nINV_NO ${body.inv_no}\n금액 ${body.amt}\n\n진행할까요?`)){
+      // 🔴 벤더와 Remit 도 확인창에 적는다. 카드마다 고르게 되면서 **이 카드가 어느 벤더로
+      //    나가는지**가 승인 직전에 보여야 하고, 벤더를 바꾸면 Remit 이 비워지므로 그 사실도
+      //    여기서 눈에 걸려야 한다(비운 채 누르면 서버가 막지만, 그 전에 보이는 게 낫다).
+      const vhit=body.vndr_cd&&(MASTER.vendors||[]).find(r=>r.cd===body.vndr_cd);
+      const vline=body.vndr_cd?`\nVendor ${body.vndr_cd}${vhit&&vhit.nm?` ${vhit.nm}`:''}`:'';
+      if(!confirm(`SVMS에 신규 인보이스를 만듭니다.\n\nINV_NO ${body.inv_no}${vline}`
+          +`\n금액 ${body.amt}\nRemit ${body.pay_dt||'(비어 있음)'}\n\n진행할까요?`)){
         cardEl.classList.remove('is-busy');return;
       }
       res=await api('POST',`/api/liscr/jobs/${id}/approve`,body);

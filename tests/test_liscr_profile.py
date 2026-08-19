@@ -135,9 +135,11 @@ chk(row['vndr_cd'] is None and row['exp_cd'] is None and row['cur_cd'] is None,
     '🔴 잠긴 필드는 저장 자체가 안 됨(러너가 고정값을 박는다)',
     dict(vndr=row['vndr_cd'], exp=row['exp_cd'], cur=row['cur_cd']))
 
-print('\n# 4) 잠기지 않은 프리셋 — 필수값 검사 후 그대로 저장')
-chk(upload(profile='generic', exp_cd='010101').status_code == 400, 'Vendor 없으면 400')
-chk(upload(profile='generic', vendor_cd='V99999').status_code == 400, 'Expense 없으면 400')
+print('\n# 4) 잠기지 않은 프리셋 — 형식 검사 후 그대로 저장')
+# 🔴 Vendor·Expense 는 **선택**이다(2026-08-19 형 지시, §14). 업로드에서 필수로 되돌리면
+#    벤더가 섞인 묶음을 한 번에 올리는 길이 도로 닫힌다.
+chk(upload(profile='generic', exp_cd='010101').status_code == 200, 'Vendor 없어도 업로드됨')
+chk(upload(profile='generic', vendor_cd='V99999').status_code == 200, 'Expense 없어도 업로드됨')
 chk(upload(profile='generic', vendor_cd='V9 99', exp_cd='010101').status_code == 400,
     '코드 형식 이상하면 400')
 chk(upload(profile='nosuch', vendor_cd='V99999', exp_cd='010101').status_code == 400,
@@ -355,6 +357,97 @@ chk(rb.status_code == 200 and rb.get_json()['approved'] == [],
 chk('통화' in (rb.get_json()['skipped'][0]['reason'] if rb.get_json()['skipped'] else ''),
     '건너뛴 사유가 통화라고 말해줌', rb.get_json())
 chk(job(B5)['status'] == 'parsed', '거부돼도 승인 대기줄에 남음', job(B5)['status'])
+
+print('\n# 14) Vendor·Expense 를 **카드마다** 고른다 (2026-08-19 형 지시)')
+# 형: "기타 인보이스를 선택하면 Vendor랑 Expense 는 타이틀이 아니라 각 인보이스 카드마다
+#      선택하게 해줘야 여러 벤더가 섞여있어도 한번에 등록가능하잖아."
+# → 업로드 폼에서 비울 수 있어야 하고(안 그러면 묶음 전체가 한 벤더로 박힌다),
+#   승인에서 카드값을 받아 헤더·라인·컬럼에 반영해야 한다.
+r = upload(profile='generic')
+chk(r.status_code == 200, '🔴 Vendor·Expense 없이 generic 업로드 = 200', r.get_json())
+CJ = r.get_json()['id']
+chk(job(CJ)['vndr_cd'] is None and job(CJ)['exp_cd'] is None,
+    '안 고른 값은 빈 채로 큐에 들어감(러너가 FIX 로 내린다)', dict(job(CJ)))
+
+# 러너가 값 없이 올린 FIX 카드 = 형이 카드에서 채울 상태.
+claim_and_report(CJ, 'FIX', dict(FULL, VNDR_CD=None, VNDR_NM=None, PAY_TERM=1),
+                 [dict(LINES[0], EXP_CD=None, EXP_NM=None)],
+                 reasons=['Vendor 미지정 — 카드에서 고를 것', 'Expense 미지정 — 카드에서 고를 것'])
+r = c.post('/api/liscr/jobs/%d/approve' % CJ, json={})
+chk(r.status_code == 400, '🔴 안 고른 채 승인 = 400', r.status_code)
+miss = r.get_json().get('missing') or []
+chk('Vendor' in miss and 'Expense' in miss,
+    '🔴 무엇을 안 골랐는지 이름으로 말해줌(Expense 는 헤더가 아니라 라인이라 놓치기 쉽다)', miss)
+
+for bad, lab in (({'vndr_cd': 'NOPE'}, 'Vendor'), ({'exp_cd': '999999'}, 'Expense')):
+    rr = c.post('/api/liscr/jobs/%d/approve' % CJ, json=dict(bad, pay_dt='20260930'))
+    chk(rr.status_code == 400 and '마스터에 없음' in (rr.get_json().get('error') or ''),
+        '🔴 마스터에 없는 %s 코드는 거부(코드만 믿고 SVMS 로 보내지 않는다)' % lab, rr.get_json())
+
+# 🔴 벤더를 고르면 Remit 을 다시 확인받는다 — PAY_TERM 은 벤더마다 다르고(실측: LISCR=1,
+#    뷰로베리타스=없음) 그 계산은 러너만 한다. 앞 벤더 기준 날짜가 조용히 남으면 형이 본 적
+#    없는 송금일이 SVMS 로 나간다.
+r = c.post('/api/liscr/jobs/%d/approve' % CJ, json={'vndr_cd': 'V25081', 'exp_cd': '070205'})
+chk(r.status_code == 400 and 'Pay Date' in (r.get_json().get('error') or ''),
+    '🔴 벤더를 고쳤는데 Remit 재확인이 없으면 400', r.get_json())
+chk(job(CJ)['status'] == 'parsed', '거부되는 동안 상태는 그대로', job(CJ)['status'])
+
+r = c.post('/api/liscr/jobs/%d/approve' % CJ,
+           json={'vndr_cd': 'V25081', 'exp_cd': '070205', 'pay_dt': '20261031'})
+chk(r.status_code == 200, '카드에서 고르고 Remit 까지 확인하면 승인', r.get_json())
+row = job(CJ)
+chk(row['vndr_cd'] == 'V25081' and row['vndr_nm'] == 'LISCR',
+    '🔴 고른 벤더가 **컬럼에도** 저장됨(카드 화면은 컬럼을 읽는다)', dict(row))
+chk(row['exp_cd'] == '070205' and row['exp_nm'] == 'TAX/OTHERS',
+    '🔴 고른 Expense 도 컬럼에 저장됨', dict(row))
+hdr = json.loads(row['header_json'])
+chk(hdr['VNDR_CD'] == 'V25081' and hdr['VNDR_NM'] == 'LISCR',
+    '헤더에도 코드+이름이 같이 실림(러너가 이름을 다시 조회하지 않는다)', hdr)
+chk(hdr.get('PAY_TERM') is None,
+    '🔴 앞 벤더의 PAY_TERM 은 버려짐 — 러너가 확인받은 Remit 에서 역산한다', hdr)
+chk(hdr['PAY_DT'] == '20261031', '확인받은 Remit 이 헤더 PAY_DT', hdr)
+ln = json.loads(row['lines_json'])
+chk(all(x['EXP_CD'] == '070205' and x['EXP_NM'] == 'TAX/OTHERS' for x in ln),
+    '🔴 Expense 는 Invoice List **행 전체**에 박힌다(한 줄만 고치면 나머지가 빈 코드로 나간다)', ln)
+
+# 🔴 카드에서 열렸다고 해서 기국의 고정이 풀리면 안 된다 — "고정" 이 기본값으로 내려앉는다.
+LJ = upload(profile='liscr').get_json()['id']
+claim_and_report(LJ, 'READY', dict(FULL, VNDR_CD='V25081', VNDR_NM='LISCR'),
+                 [dict(LINES[0], EXP_CD='070205', EXP_NM='TAX/OTHERS')])
+r = c.post('/api/liscr/jobs/%d/approve' % LJ,
+           json={'vndr_cd': 'V99999', 'exp_cd': '010101', 'pay_dt': '20260930'})
+chk(r.status_code == 200, '기국 카드 승인 자체는 된다', r.get_json())
+row = job(LJ)
+chk(row['vndr_cd'] == 'V25081' and row['exp_cd'] == '070205',
+    '🔴 기국은 카드에서 보낸 Vendor·Expense 를 무시(고정값 유지)', dict(row))
+chk(json.loads(row['lines_json'])[0]['EXP_CD'] == '070205', '기국 라인 Expense 도 고정값 그대로')
+
+print('\n# 15) 카드에서 **지운** 값이 옛 값으로 되살아나지 않는다 (2026-08-19 올마이트 지적)')
+# 🔴 실제로 났던 구멍: 화면은 빈칸을 요청에서 아예 빼고, 서버는 안 온 필드를 "안 고침" 으로
+#    보고 **저장된 옛 값**을 그대로 승인했다. 그래서 형이 Vendor 를 지우고 새로 안 고른 채
+#    승인을 누르면, 카드도 확인창도 비어 있는데 **앞 벤더로 돈이 나갔다**.
+#    이제 빈칸은 '비움' 으로 전달되고, 비면 완결성 검사가 막는다.
+BJ = upload(profile='generic').get_json()['id']
+claim_and_report(BJ, 'READY', dict(FULL, VNDR_CD='V25081', VNDR_NM='LISCR'),
+                 [dict(LINES[0], EXP_CD='070205', EXP_NM='TAX/OTHERS')])
+for f, lab in (('vndr_cd', 'Vendor'), ('exp_cd', 'Expense'), ('amt', '금액'),
+               ('inv_no', 'Invoice No'), ('subject', '적요(Subject)')):
+    rr = c.post('/api/liscr/jobs/%d/approve' % BJ, json={f: ''})
+    miss = (rr.get_json() or {}).get('missing') or []
+    chk(rr.status_code == 400 and lab in miss,
+        '🔴 %s 를 지우고 승인 = 400(옛 값으로 통과 안 됨)' % lab, (rr.status_code, rr.get_json()))
+chk(job(BJ)['status'] == 'parsed' and job(BJ)['vndr_cd'] == 'V25081',
+    '거부되는 동안 저장값은 그대로(빈 요청이 컬럼을 지우지도 않는다)', dict(job(BJ)))
+rr = c.post('/api/liscr/jobs/%d/approve' % BJ, json={'amt': ''})
+chk('라인이 2줄' not in ((rr.get_json() or {}).get('error') or ''),
+    '금액을 비운 건 "라인이 2줄" 이 아니라 "안 채운 값" 으로 답함', rr.get_json())
+
+# 🔴 같은 벤더를 다시 보낸 것은 '변경' 이 아니다 — 매번 Remit 재확인을 요구하면
+#    안 바뀐 카드도 승인이 막힌다(올마이트가 의심한 지점, 실측으로는 안 걸린다).
+r = c.post('/api/liscr/jobs/%d/approve' % BJ, json={'vndr_cd': 'V25081', 'exp_cd': '070205'})
+chk(r.status_code == 200, '벤더를 그대로 다시 보내면 Remit 재확인 없이 승인됨', r.get_json())
+chk(json.loads(job(BJ)['header_json']).get('PAY_TERM') == FULL.get('PAY_TERM'),
+    '안 바뀐 벤더의 PAY_TERM 은 버리지 않음', json.loads(job(BJ)['header_json']))
 
 print('\n' +('❌ 실패 %d건: %s' % (len(fails), fails) if fails else '✅ 전부 통과'))
 for r in A.query("SELECT id FROM liscr_job"):

@@ -79,6 +79,33 @@ chk('const srvVal=el=>' in SRC and "el.querySelector('option[selected]')" in SRC
 chk('AUTOINCREMENT' in open(os.path.join(ROOT, 'app.py'), encoding='utf-8').read().split('liscr_job')[1][:400],
     '🔴 id 재사용 없음이 전제 — DIRTY 를 id 로만 걸어도 남의 카드에 값이 들어가지 않는다')
 
+print('\n# 3-b) Vendor·Expense 는 카드마다 고른다 (2026-08-19 형 지시)')
+chk("code('vndr_cd','Vendor','lz-in-vndr','dl-vendor'" in SRC,
+    '🔴 카드에 Vendor 입력칸이 있음', '없으면 벤더가 섞인 묶음을 한 번에 못 올린다')
+chk("code('exp_cd','Expense','lz-in-exp','dl-exp'" in SRC, '🔴 카드에 Expense 입력칸이 있음')
+chk('data-f="${f}"' in SRC and 'list="${dl}"' in SRC and '+vndrEd' in SRC and '+expEd' in SRC,
+    '그 칸이 실제로 카드 편집줄에 붙는다(승인이 읽는 건 [data-f] 뿐이다)')
+chk("!isLocked(prof,'vendor')" in SRC and "!isLocked(prof,'expense')" in SRC,
+    '잠긴 프리셋(기국)에서는 칸 자체를 안 만듦 — "고정" 이 기본값으로 내려앉지 않게')
+chk('비우면 카드마다' in SRC and 'Vendor (선택)' in SRC,
+    '업로드 폼의 Vendor·Expense 는 선택 — 여기서 하나로 정하면 묶음 전체가 한 벤더가 된다')
+chk("alert('Vendor 코드를 지정해야 합니다.')" not in SRC,
+    '🔴 업로드에서 Vendor 를 다시 필수로 막지 않음(그 순간 이 기능이 무의미해진다)')
+chk('function vendorChanged' in SRC and "cardEl.querySelector('[data-f=\"pay_dt\"]')" in SRC,
+    '🔴 벤더를 바꾸면 Remit 을 비움 — PAY_TERM 은 벤더마다 다르고 계산은 러너만 한다')
+chk("ev==='change'&&el.classList.contains('lz-in-vndr')" in SRC,
+    "Remit 비우기는 'change' 에서만(타이핑 한 글자마다 지우면 화면이 흔들린다)")
+chk('function showName' in SRC and '마스터에 없는 코드' in SRC,
+    '🔴 코드 옆에 벤더 이름을 띄움 — 돈 나가는 상대를 코드만 보고 승인하지 않게')
+chk('lz-in-vndr.is-empty' in SRC and 'lz-in-exp.is-empty' in SRC,
+    '아직 안 고른 칸은 날짜칸과 같은 표시(승인 눌러 400 보고 알 일이 아니다)')
+chk('Vendor ${body.vndr_cd}' in SRC and 'Remit ${body.pay_dt' in SRC,
+    '🔴 승인 확인창에 벤더와 Remit 이 적힘(금전 경로 — 무엇으로 나가는지 보여주고 받는다)')
+chk("if(v!=='') body[f]=v;" not in SRC and re.search(r'\n\s*body\[f\]=v;', SRC) is not None,
+    '🔴 빈칸도 그대로 보냄 — 안 보내면 서버가 **저장된 옛 벤더**로 승인한다(화면은 빈칸인데)')
+chk('채워야 하는 카드' in SRC,
+    'FIX 카드는 전체 승인 대상이 아니라는 사실을 숫자로 말해줌(버튼이 그냥 사라지지 않게)')
+
 print('\n# 4) curOptions 실동작 — 통화가 조용히 바뀌지 않는가 (node 로 실행)')
 node = shutil.which('node')
 if not node:

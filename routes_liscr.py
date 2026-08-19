@@ -58,11 +58,13 @@ LISCR_MAX_BYTES = 20 * 1024 * 1024
 # 화면에서 사람이 고칠 수 있는 필드 → (컬럼, 헤더키). 여기 없는 필드는 어떤 요청이 와도 안 바뀐다.
 # 🔴 `inv_user_id`(Invoice PIC) 는 일부러 뺐다 — 형 지시로 SS0059 고정이고, 화면에서 고칠 수
 #    있게 두면 "고정"이 사실상 기본값으로 내려앉는다. Oversea 도 같은 이유로 없다.
-# 🔴 Vendor·Expense 는 여기 없다 — **올릴 때 고르는 값**이고 카드에서 고치는 값이 아니다.
-#    카드에서 벤더를 바꾸면 PAY_TERM 이 벤더마다 달라 Pay Date 가 조용히 틀려진다(러너만 안다).
-#    잘못 골랐으면 삭제하고 다시 올리는 게 맞다.
-# 🔴 통화(`cur_cd`)만 예외로, **프리셋이 잠그지 않은 경우에 한해** 아래 approve 에서 열린다.
-#    자동판독 실패로 통화가 빈 FIX 카드를 여기서 못 채우면 그 건은 살릴 방법이 없기 때문이다.
+# 🔴 통화(`cur_cd`)·Vendor(`vndr_cd`)·Expense(`exp_cd`) 는 **프리셋이 잠그지 않은 경우에 한해**
+#    아래 approve 에서 열린다(그래서 이 표가 아니라 approve 안에서 붙인다).
+#    · 통화 : 자동판독 실패로 빈 FIX 카드를 여기서 못 채우면 그 건은 살릴 방법이 없다.
+#    · Vendor·Expense : 2026-08-19 형 지시. 업로드 폼에서 하나로 정하면 **벤더가 섞인 묶음을
+#      한 번에 못 올린다** — 자유서식에서는 그게 정상 사용법이라 카드마다 고르게 한다.
+#      🔴 대신 벤더를 바꾸면 Pay Date 가 조용히 틀려질 수 있다(PAY_TERM 이 벤더마다 다르고
+#         그 계산은 러너만 한다) → 아래 approve 에서 **PAY_TERM 을 버리고 Remit 재확인을 요구**한다.
 _EDITABLE = {
     'inv_no':      ('inv_no', 'INV_NO'),
     'inv_dt':      ('inv_dt', 'INV_DT'),
@@ -105,6 +107,10 @@ def _missing_labels(header, lines):
             empty.append(derr)
     if not (lines and (lines[0].get('SUBJ') or '').strip()):
         empty.append('적요(Subject)')
+    # 🔴 Expense 는 헤더가 아니라 라인에 있다. 카드에서 고르게 열어둔 값이라(2026-08-19),
+    #    안 고른 채 승인되면 러너가 Invoice List 행을 코드 없이 SVMS 로 보낸다.
+    if not (lines and (str(lines[0].get('EXP_CD') or '')).strip()):
+        empty.append('Expense')
     return empty
 
 
@@ -276,10 +282,13 @@ def api_liscr_upload():
             return None, '%s 코드 형식이 잘못됨' % label
         return v, None
 
-    vndr_cd, err = choice('vendor', 'vendor_cd', True, 'Vendor')
+    # 🔴 Vendor·Expense 는 비워둘 수 있다(2026-08-19 형 지시). 비우면 러너가 FIX 로 내리고
+    #    **카드마다** 고른다 — 벤더가 섞인 인보이스 묶음을 한 번에 올리려면 이 길뿐이다.
+    #    (여기서 required 로 되돌리면 그 사용법이 다시 막힌다.)
+    vndr_cd, err = choice('vendor', 'vendor_cd', False, 'Vendor')
     if err:
         return jsonify({'error': err}), 400
-    exp_cd, err = choice('expense', 'exp_cd', True, 'Expense')
+    exp_cd, err = choice('expense', 'exp_cd', False, 'Expense')
     if err:
         return jsonify({'error': err}), 400
     # 통화는 비워둘 수 있다 — 비면 러너가 인보이스에서 읽는다(못 읽으면 FIX 로 떨어져 형이 채운다).
@@ -403,22 +412,34 @@ def api_liscr_approve(jid):
     #    고정 프리셋(기국)에서는 절대 열지 않는다 — 고정의 의미가 사라진다.
     if 'currency' not in locked:
         editable['cur_cd'] = ('cur_cd', 'CUR_CD')
+    # 🔴 Vendor·Expense 도 잠기지 않은 프리셋에서만 연다(2026-08-19 형 지시 — 벤더가 섞인
+    #    묶음을 한 번에 올리려면 카드마다 골라야 한다). 고정 프리셋에서는 절대 열지 않는다.
+    #    Expense 는 헤더가 아니라 **라인** 값이라 헤더키가 없다(아래에서 lines 에 실어준다).
+    if 'vendor' not in locked:
+        editable['vndr_cd'] = ('vndr_cd', 'VNDR_CD')
+    if 'expense' not in locked:
+        editable['exp_cd'] = ('exp_cd', None)
 
     edits, cols = {}, {}
     for key, (col, hkey) in editable.items():
         if key not in d:
             continue
         val = d[key]
-        if key == 'amt':
-            if not _AMT_RE.match(str(val or '').strip()):
+        # 🔴 빈칸은 "안 고침" 이 아니라 **비움**이다(2026-08-19 올마이트 지적, 금전 경로).
+        #    화면에서 Vendor 를 지우고 새로 안 고른 채 승인을 누르면, 예전에는 그 필드가
+        #    요청에서 빠져 서버가 **저장된 옛 벤더**로 승인해버렸다 — 카드도 확인창도
+        #    비어 보이는데 형이 본 적 없는 벤더로 돈이 나가는 경로다. 여기서 지우고,
+        #    아래 완결성 검사(`_missing_labels`)가 "아직 안 채운 값" 으로 되돌려준다.
+        if val is None or not str(val).strip():
+            val = None
+        elif key == 'amt':
+            if not _AMT_RE.match(str(val).strip()):
                 return jsonify({'error': '금액 형식이 잘못됨 (숫자, 소수 2자리까지)'}), 400
             val = float(val)
             if val <= 0:
                 return jsonify({'error': '금액은 0보다 커야 함'}), 400
         else:
-            val = (str(val or '')).strip()
-            if not val:
-                return jsonify({'error': '%s 는 비울 수 없음' % key}), 400
+            val = str(val).strip()
             if key == 'cur_cd':
                 # 형식 + 마스터 실재. 'AUTO' 나 오타가 그대로 SVMS 통화칸에 실리면
                 # 금액의 의미가 바뀐다(업로드 때와 같은 검사를 승인에서도 한다).
@@ -429,7 +450,10 @@ def api_liscr_approve(jid):
                 val, derr = _check_date(val, _DATE_LABEL[key])
                 if derr:
                     return jsonify({'error': derr}), 400
-        if val == row[col]:
+        # 빈 값끼리(None ↔ '')는 같은 것으로 본다 — 비어 있던 칸을 비운 채로 둔 것은
+        # '수정' 이 아니다. 아니면 승인할 때마다 빈 수정이력이 쌓이고, "벤더가 바뀌었으니
+        # Remit 을 다시 받으라" 같은 후속 처리가 바뀐 것도 없는데 헛돈다.
+        if val == row[col] or (val is None and row[col] in (None, '')):
             continue
         edits[key] = {'from': row[col], 'to': val}
         cols[col] = val
@@ -438,17 +462,65 @@ def api_liscr_approve(jid):
 
     # 선박을 바꿨으면 이름도 마스터에서 같이 가져온다. 🔴 코드만 믿고 이름을 비워두면
     # 카드에 배 이름이 안 뜨고, 형이 어느 배로 끊는지 못 보고 승인하게 된다.
-    if 'vsl_cd' in cols:
+    # 🔴 비운 경우(`cols['vsl_cd'] is None`)는 마스터를 뒤지지 않는다 — 이름도 같이 지운다.
+    #    코드는 비었는데 앞 배 이름이 남아 있으면 카드에 그 배가 계속 떠 있다.
+    if cols.get('vsl_cd'):
         _, vessels = _master('vessels')
         hit = next((v for v in vessels if v.get('cd') == cols['vsl_cd']), None)
         if not hit:
             return jsonify({'error': '선박 코드 %s 가 마스터에 없음' % cols['vsl_cd']}), 400
         cols['vsl_nm'] = hit.get('nm')
         header['VSL_NM'] = hit.get('nm')
+    elif 'vsl_cd' in cols:
+        cols['vsl_nm'] = None
+        header['VSL_NM'] = None
+
+    # 벤더를 카드에서 골랐거나 바꿨으면 이름도 마스터에서 같이 가져온다(선박과 같은 이유).
+    if cols.get('vndr_cd'):
+        _, vendors = _master('vendors')
+        hit = next((v for v in vendors if v.get('cd') == cols['vndr_cd']), None)
+        if not hit:
+            return jsonify({'error': 'Vendor 코드 %s 가 마스터에 없음' % cols['vndr_cd']}), 400
+        cols['vndr_nm'] = hit.get('nm')
+        header['VNDR_NM'] = hit.get('nm')
+        # 🔴 PAY_TERM 은 **벤더 마스터 값**이고, Pay Date 는 거기서 나온다. 벤더가 바뀌면
+        #    앞 벤더 기준으로 계산된 PAY_TERM/Pay Date 는 더는 근거가 없다 — 그대로 두면
+        #    형이 화면에서 본 적도 없는 공식으로 만들어진 날짜가 SVMS 로 나간다.
+        #    서버는 PAY_TERM 을 모르므로(마스터 스냅샷엔 코드·이름뿐) 지어내지 않고 버리고,
+        #    Remit 을 이 요청에서 **다시 확인받는다**(러너가 그 날짜에서 PAY_TERM 을 역산한다).
+        header.pop('PAY_TERM', None)
+        if 'pay_dt' not in d:
+            return jsonify({'error': '벤더를 바꾸면 Pay Date(Remit)를 다시 확인해야 함 '
+                                     '— 벤더마다 결제조건이 달라 앞 벤더 기준 날짜는 쓸 수 없음'}), 400
+    elif 'vndr_cd' in cols:
+        # 벤더를 지운 경우. 이름·PAY_TERM 도 같이 근거를 잃는다. 승인 자체는 아래
+        # 완결성 검사가 'Vendor' 로 막지만, 여기서 안 지우면 옛 이름이 카드에 남는다.
+        cols['vndr_nm'] = None
+        header['VNDR_NM'] = None
+        header.pop('PAY_TERM', None)
+
+    # Expense 는 헤더가 아니라 Invoice List 행에 실린다. 우리 라인은 전부 같은 Expense 라
+    # (러너 `build_lines`) 행 전체에 같은 값을 박는다 — 한 행만 바꾸면 나머지가 옛 코드로 남는다.
+    if cols.get('exp_cd'):
+        _, expenses = _master('expenses')
+        hit = next((x for x in expenses if x.get('cd') == cols['exp_cd']), None)
+        if not hit:
+            return jsonify({'error': 'Expense 코드 %s 가 마스터에 없음' % cols['exp_cd']}), 400
+        cols['exp_nm'] = hit.get('nm')
+        for ln in lines:
+            ln['EXP_CD'] = cols['exp_cd']
+            ln['EXP_NM'] = hit.get('nm')
+    elif 'exp_cd' in cols:
+        cols['exp_nm'] = None
+        for ln in lines:
+            ln['EXP_CD'] = None
+            ln['EXP_NM'] = None
 
     if 'subject' in cols and lines:
         lines[0]['SUBJ'] = cols['subject']
-    if 'amt' in cols:
+    # 금액을 **비운** 경우는 라인을 건드리지 않는다 — 아래 완결성 검사가 '금액' 으로 막는다.
+    # (여기서 2줄 이상 거부에 걸리면 "라인이 2줄이라 못 고친다" 는 엉뚱한 사유가 나간다.)
+    if cols.get('amt') is not None:
         # 금액을 고쳤는데 라인이 1줄이면 라인 금액도 같이 맞춘다. 2줄 이상이면 어느 줄을
         # 고쳐야 하는지 알 수 없으므로 건드리지 않고 거부한다(헤더-라인 합 불일치 방지).
         if len(lines) == 1:
@@ -469,6 +541,7 @@ def api_liscr_approve(jid):
     rc = execute_rc(
         "UPDATE liscr_job SET inv_no=?, inv_dt=?, amt=?, pay_dt=?, subject=?, "
         "sup_user_id=?, inv_user_id=?, vsl_cd=?, vsl_nm=?, cur_cd=?, "
+        "vndr_cd=?, vndr_nm=?, exp_cd=?, exp_nm=?, "
         "header_json=?, lines_json=?, edited_json=?, "
         "status='approved', decided_at=datetime('now','localtime'), decided_by=? "
         "WHERE id=? AND status='parsed'",
@@ -478,6 +551,11 @@ def api_liscr_approve(jid):
          cols.get('inv_user_id', row['inv_user_id']),
          cols.get('vsl_cd', row['vsl_cd']), cols.get('vsl_nm', row['vsl_nm']),
          cols.get('cur_cd', row['cur_cd']),
+         # 🔴 카드에서 고른 Vendor/Expense 는 **컬럼에도** 적는다. header_json 에만 남기면
+         #    카드 화면(=컬럼을 읽는다)은 계속 빈칸으로 보이고, 러너 재파싱이 옛 값으로
+         #    되돌린다 — 형이 고른 값이 조용히 사라지는 경로다.
+         cols.get('vndr_cd', row['vndr_cd']), cols.get('vndr_nm', row['vndr_nm']),
+         cols.get('exp_cd', row['exp_cd']), cols.get('exp_nm', row['exp_nm']),
          json.dumps(header, ensure_ascii=False), json.dumps(lines, ensure_ascii=False),
          json.dumps(edits, ensure_ascii=False) if edits else None,
          _actor(), jid))
