@@ -262,6 +262,85 @@ A.execute("DELETE FROM liscr_master WHERE kind='vendors'")
 chk(c.get('/api/ext/liscr/master/age', headers=HDR).get_json()['age'] is None,
     '🔴 한 종류라도 없으면 age=None(러너가 무조건 다시 뜬다)')
 chk(c.get('/api/ext/liscr/master/age').status_code in (401, 403), '키 없는 age 조회 거부')
+c.post('/api/ext/liscr/master', json=MASTER, headers=HDR)   # 원상복구
+
+print('\n# 11) 전부 못 읽은 카드를 손으로 채워 승인 (2026-08-19 형 지시)')
+# 형 지시: "진짜 못읽어오는거면 모든 정보를 수동으로 입력 가능하게 해주면 되지(읽어올수 있는거만 입력)".
+# 자유서식에서 파서가 금액 말고 아무것도 못 읽은 상태 = 잡 #16(뷰로베리타스) 의 모습이다.
+# 🔴 그 벤더는 SVMS 마스터에 PAY_TERM 이 아예 없어(실측) Pay Date 가 자동으로 안 나온다.
+#    러너가 이걸 HOLD 로 올리던 동안에는, 형이 화면에서 뭘 채워도 승인이 409 로 막혔다.
+BLANK = {'VSL_CD': None, 'VSL_NM': None, 'VNDR_CD': 'V99999', 'VNDR_NM': 'ACME',
+         'SUP_USER_ID': None, 'INV_NO': None, 'INV_DT': None, 'CUR_CD': 'USD',
+         'AMT': 9184.0, 'PAY_DT': None, 'PAY_TERM': None}
+EMPTY_LINE = [{'EXP_CD': '010101', 'EXP_NM': 'LUB OIL', 'SUBJ': '', 'AMT': 9184.0}]
+B1 = upload(profile='generic', vendor_cd='V99999', exp_cd='010101').get_json()['id']
+claim_and_report(B1, 'FIX', BLANK, EMPTY_LINE, reasons=[
+    'Vendor V99999 에 PAY_TERM 이 없어 Pay Date 를 자동 산출할 수 없음 — Remit 날짜를 직접 입력할 것',
+    'Invoice No 미판독', 'Invoice Date 미판독', '적요(Subject) 미판독 — 화면에서 입력 필요'])
+chk(job(B1)['status'] == 'parsed', '🔴 다 못 읽은 자유서식도 승인 대기줄에 선다', job(B1)['status'])
+
+r = c.post('/api/liscr/jobs/%d/approve' % B1, json={})
+miss = r.get_json().get('missing') or []
+chk(r.status_code == 400, '빈 채로 승인은 여전히 거부', r.get_json())
+chk(all(x in ' '.join(miss) for x in ('선박', 'Superintendent', 'Invoice No', 'Invoice Date',
+                                      'Pay Date', '적요')),
+    '🔴 못 채운 항목을 **전부** 알려준다(하나씩 되풀이하지 않게)', miss)
+
+FILLED = {'vsl_cd': 'V001', 'sup_user_id': 'SS0094', 'inv_no': '26010243 RI 00058',
+          'inv_dt': '20260812', 'pay_dt': '20260911', 'amt': '9184.00', 'subject': 'BV 검사비'}
+chk(c.post('/api/liscr/jobs/%d/approve' % B1,
+           json=dict(FILLED, inv_dt='2026-08-12')).status_code == 400,
+    '🔴 YYYYMMDD 아닌 날짜 = 400(러너 앞에서 터지기 전에 막는다)')
+chk(c.post('/api/liscr/jobs/%d/approve' % B1,
+           json=dict(FILLED, pay_dt='20260231')).status_code == 400,
+    '🔴 2월 31일 같은 없는 날짜 = 400')
+chk(job(B1)['status'] == 'parsed', '거부돼도 승인 대기줄에 남음', job(B1)['status'])
+
+r = c.post('/api/liscr/jobs/%d/approve' % B1, json=FILLED)
+chk(r.status_code == 200, '모든 값을 손으로 채우면 승인 = 200', r.get_json())
+row, hdr = job(B1), json.loads(job(B1)['header_json'])
+chk(row['status'] == 'approved', '승인됨', row['status'])
+chk((hdr['VSL_CD'], hdr['VSL_NM'], hdr['SUP_USER_ID'], hdr['INV_NO'], hdr['INV_DT'],
+     hdr['PAY_DT'], hdr['AMT']) ==
+    ('V001', 'KUWAIT PROSPERITY', 'SS0094', '26010243 RI 00058', '20260812', '20260911', 9184.0),
+    '🔴 손으로 채운 값이 러너가 쓸 헤더에 그대로 들어감', hdr)
+chk(json.loads(row['lines_json'])[0]['SUBJ'] == 'BV 검사비', '적요는 라인에 실린다',
+    row['lines_json'])
+chk(hdr.get('PAY_TERM') is None,
+    '🔴 PAY_TERM 은 없는 채로 둔다 — 서버는 SVMS 공식을 모른다(러너가 Remit 에서 역산한다)',
+    hdr.get('PAY_TERM'))
+
+print('\n# 12) 날짜 검증은 편집값이 아니라 **최종 헤더**에 걸린다 (올마이트 지적 반영)')
+# 🔴 요청에 실린 값만 보면, 러너가 이미 이상한 날짜를 올려둔 카드는 그 필드를 안 고치고
+#    승인하는 것만으로 통과한다. 그러면 러너가 SVMS 앞에서 터지는데 그땐 사람 손을 떠난 뒤다.
+B2 = upload(profile='generic', vendor_cd='V99999', exp_cd='010101').get_json()['id']
+claim_and_report(B2, 'READY', dict(FULL, INV_DT='2026-08-01'), LINES)
+r = c.post('/api/liscr/jobs/%d/approve' % B2, json={})
+chk(r.status_code == 400 and 'Invoice Date' in ' '.join(r.get_json().get('missing') or []),
+    '🔴 안 고친 필드의 잘못된 날짜도 단건 승인에서 걸린다', r.get_json())
+row = job(B2)
+rb = c.post('/api/liscr/jobs/approve-bulk',
+            json={'items': [{'id': B2, 'inv_no': row['inv_no'], 'amt': row['amt']}]})
+chk(rb.status_code == 200 and rb.get_json()['approved'] == [],
+    '🔴 일괄 승인도 같은 검사를 통과 못 한다(한쪽만 느슨해지지 않는다)', rb.get_json())
+chk('Invoice Date' in (rb.get_json()['skipped'][0]['reason'] if rb.get_json()['skipped'] else ''),
+    '건너뛴 사유에 어느 값이 문제인지 실림', rb.get_json())
+r = c.post('/api/liscr/jobs/%d/approve' % B2, json={'inv_dt': '20260801'})
+chk(r.status_code == 200 and job(B2)['status'] == 'approved',
+    '형이 제대로 고쳐 넣으면 승인된다', r.get_json())
+
+B3 = upload(profile='generic', vendor_cd='V99999', exp_cd='010101').get_json()['id']
+claim_and_report(B3, 'READY', FULL, LINES)
+chk(c.post('/api/liscr/jobs/%d/approve' % B3,
+           json={'inv_dt': 20260801}).status_code == 200,
+    'JSON 숫자로 온 날짜도 같은 값이면 통과(500 나지 않음)')
+B4 = upload(profile='generic', vendor_cd='V99999', exp_cd='010101').get_json()['id']
+claim_and_report(B4, 'READY', FULL, LINES)
+for bad in (None, True, [], {'a': 1}, '20260800', '00000000'):
+    chk(c.post('/api/liscr/jobs/%d/approve' % B4,
+               json={'inv_dt': bad}).status_code == 400,
+        '🔴 날짜 %r 거부(400) — 500 이 아니라 사유를 돌려준다' % (bad,))
+chk(job(B4)['status'] == 'parsed', '거부되는 동안 상태는 그대로', job(B4)['status'])
 
 print('\n' + ('❌ 실패 %d건: %s' % (len(fails), fails) if fails else '✅ 전부 통과'))
 for r in A.query("SELECT id FROM liscr_job"):

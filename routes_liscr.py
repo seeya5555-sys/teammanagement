@@ -38,6 +38,7 @@ import json
 import os
 import re
 import uuid
+from datetime import date
 
 from flask import abort, jsonify, render_template, request, send_file, session
 
@@ -91,6 +92,17 @@ def _missing_labels(header, lines):
        두 경로를 같은 입력으로 대조한다).
     """
     empty = [lab for k, lab in _REQUIRED_HEADER if header.get(k) in (None, '')]
+    # 🔴 빈 값만 보면 모자란다. 날짜는 **채워져 있어도** 형식이 어긋나면(`2026-08-12`,
+    #    달력에 없는 `20260231`) 러너가 SVMS 앞에서 터진다 — 그땐 이미 사람 손을 떠났다.
+    #    검사를 승인 요청의 편집값이 아니라 **합쳐진 최종 헤더**에 걸어야, 이번에 안 고친
+    #    필드나 러너가 올려둔 값도 같이 걸린다(2026-08-19 올마이트 지적).
+    #    일괄 승인도 이 함수를 부르므로 두 경로가 같은 강도를 갖는다.
+    for k, lab in (('INV_DT', 'Invoice Date'), ('PAY_DT', 'Pay Date')):
+        if header.get(k) in (None, ''):
+            continue
+        _, derr = _check_date(str(header[k]).strip(), lab)
+        if derr:
+            empty.append(derr)
     if not (lines and (lines[0].get('SUBJ') or '').strip()):
         empty.append('적요(Subject)')
     return empty
@@ -158,6 +170,24 @@ def _check_currency(v, allow_auto=False):
 # 금액 형식 — 부호 없는 십진수, 소수 2자리까지. float() 만 쓰면 'nan'/'inf' 가 통과해
 # 금액칸에 NaN 이 실린다(비교·합계가 전부 조용히 무너짐).
 _AMT_RE = re.compile(r'^\d{1,15}(\.\d{1,2})?$')
+# INV_DT/PAY_DT 저장형(YYYYMMDD).
+# 🔴 화면은 input[type=date] 라 형식이 보장되지만 승인은 API 로도 부를 수 있고, 무엇보다
+#    2026-08-19 부터 자유서식에서는 **날짜를 사람이 직접 치는 것이 정상 경로**가 됐다
+#    (벤더 마스터에 PAY_TERM 이 없으면 Pay Date 를 자동으로 못 만든다). 달력에 없는 날
+#    (20260231) 까지 걸러야 러너가 SVMS 앞에서 터지지 않는다 — 그때는 이미 사람 손을 떠났다.
+_DATE_RE = re.compile(r'^\d{8}$')
+_DATE_LABEL = {'inv_dt': 'Invoice Date', 'pay_dt': 'Pay Date'}
+
+
+def _check_date(val, label):
+    """(정규화값, 오류문구). 형식과 **실재하는 날짜인지**를 같이 본다."""
+    if not _DATE_RE.match(val):
+        return None, '%s 형식이 잘못됨 (YYYYMMDD)' % label
+    try:
+        date(int(val[:4]), int(val[4:6]), int(val[6:]))
+    except ValueError:
+        return None, '%s %s 는 달력에 없는 날짜임' % (label, val)
+    return val, None
 
 
 def _liscr_pdf_path(jid):
@@ -395,6 +425,10 @@ def api_liscr_approve(jid):
                 val, cerr = _check_currency(val)
                 if cerr:
                     return jsonify({'error': cerr}), 400
+            elif key in _DATE_LABEL:
+                val, derr = _check_date(val, _DATE_LABEL[key])
+                if derr:
+                    return jsonify({'error': derr}), 400
         if val == row[col]:
             continue
         edits[key] = {'from': row[col], 'to': val}
