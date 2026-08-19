@@ -284,6 +284,16 @@
     "guard": "admin_required",
     "non_admin": 403
   },
+  "POST /api/liscr/jobs/<int:jid>/reparse": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/liscr/jobs/approve-bulk": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
   "POST /api/liscr/jobs/clear-done": {
     "anonymous": 401,
     "guard": "admin_required",

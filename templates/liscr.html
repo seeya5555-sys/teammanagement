@@ -76,7 +76,8 @@
   <div class="lz-head">
     <h2 style="margin:0">인보이스 등록</h2>
     <span class="lz-count" id="lz-count"></span>
-    <button class="lz-b del" id="lz-clear" style="margin-left:auto;display:none">완료된 카드 치우기</button>
+    <button class="lz-b ap" id="lz-approve-all" style="margin-left:auto;display:none">전체 승인</button>
+    <button class="lz-b del" id="lz-clear" style="display:none">완료된 카드 치우기</button>
   </div>
   <div class="lz-note">
     인보이스 PDF를 올리면 맥 러너가 내용을 읽어 카드로 띄웁니다.
@@ -254,6 +255,11 @@
     }else if(st==='hold'||st==='queued'){
       acts=`<button class="lz-b rj" data-act="reject">취소</button>`;
     }
+    // 파서가 개선되면 이미 앉아 있는 카드도 그 혜택을 받아야 한다. 지웠다 다시 올리는 대신
+    // 올려둔 PDF 를 그대로 다시 읽힌다(SVMS 를 아직 안 건드린 상태에서만).
+    if((st==='hold'||st==='parsed')&&d.has_pdf){
+      acts+=`<button class="lz-b" data-act="reparse">다시 읽기</button>`;
+    }
     // 끝난 건은 전부 지울 수 있음. 지우는 건 이 목록의 카드일 뿐, SVMS 인보이스는 그대로.
     if(['created','failed','rejected','hold','parsed'].includes(st)){
       acts+=`<button class="lz-b del" data-act="delete">삭제</button>`;
@@ -267,12 +273,23 @@
       +`<div class="lz-body">${kv}${edit}${reasons}${err}${invcd}</div>${actsEl}</div>`;
   }
 
+  // 마지막으로 그린 목록. 전체 승인은 **형이 화면에서 본 이 목록의 id** 만 서버로 보낸다.
+  let JOBS=[];
+  const readyForBulk=d=>d.status==='parsed'&&d.gate==='READY';
+
   async function load(){
     const {ok,j}=await api('GET','/api/liscr/jobs');
     const list=$('#lz-list');
     if(!ok){list.innerHTML='<div class="lz-empty">목록을 불러오지 못했습니다.</div>';return;}
     const jobs=j.jobs||[];
+    JOBS=jobs;
     $('#lz-count').textContent=jobs.length?`전체 ${jobs.length}건 · 승인 대기 ${j.waiting||0}건`:'';
+    // 🔴 전체 승인 대상은 **READY 만**이다. FIX 는 사람이 카드에서 값을 채워야 하는 건이라
+    //    일괄 버튼이 대신 채워줄 수 없다(서버도 덜 채워진 건은 거절한다).
+    const ready=jobs.filter(readyForBulk);
+    const ap=$('#lz-approve-all');
+    ap.style.display=ready.length?'':'none';
+    ap.textContent=`전체 승인 (${ready.length})`;
     // 일괄 버튼은 치울 게 실제로 있을 때만 보인다 — 실패·보류·승인대기는 대상이 아니다.
     const done=jobs.filter(x=>x.status==='created'||x.status==='rejected').length;
     const clr=$('#lz-clear');
@@ -338,6 +355,9 @@
     if(!btn) return;
     const cardEl=btn.closest('.lz-card'), id=cardEl.dataset.id, act=btn.dataset.act;
     if(act==='reject'&&!confirm('이 건을 취소할까요? SVMS에는 아무것도 만들지 않습니다.')) return;
+    // 카드에 채워둔(아직 승인 안 한) 값은 저장되지 않은 상태라 다시 읽으면 사라진다.
+    if(act==='reparse'&&!confirm('올려둔 PDF를 처음부터 다시 읽습니다.\n'
+        +'카드에 입력해둔 값은 사라집니다. SVMS에는 아무것도 만들지 않습니다.\n\n계속할까요?')) return;
     // SVMS 인보이스는 안 지워진다는 걸 문구에 박아둔다 — 오해하면 되돌릴 수 없는 착각이다.
     if(act==='delete'&&!confirm('이 목록에서만 지웁니다. 업로드한 PDF도 함께 삭제됩니다.\n'
         +'SVMS에 만들어진 인보이스는 지워지지 않습니다.\n\n계속할까요?')) return;
@@ -358,6 +378,8 @@
       res=await api('POST',`/api/liscr/jobs/${id}/approve`,body);
     }else if(act==='reject'){
       res=await api('POST',`/api/liscr/jobs/${id}/reject`);
+    }else if(act==='reparse'){
+      res=await api('POST',`/api/liscr/jobs/${id}/reparse`);
     }else{
       res=await api('DELETE',`/api/liscr/jobs/${id}`);
     }
@@ -367,6 +389,34 @@
     // "PDF도 함께 삭제됩니다" 라고 해놓고 조용히 남기면 그게 거짓 보고다.
     else if(act==='delete'&&res.j.pdf_removed===false)
       alert('목록에서는 지웠지만 업로드한 PDF 파일은 삭제하지 못했습니다. 서버 로그 확인 필요.');
+    load();
+  });
+
+  // 전체 승인 — 여러 장을 한 번에 SVMS로 넘긴다.
+  // 🔴 금전 행위라 **무엇을 만드는지 목록으로 보여주고** 확인을 받는다. 건수만 묻고 넘기면
+  //    형은 뭘 승인했는지 모른 채 인보이스가 생긴다.
+  $('#lz-approve-all').addEventListener('click',async()=>{
+    const targets=JOBS.filter(readyForBulk);
+    if(!targets.length){alert('전체 승인할 건이 없습니다.');return;}
+    const lines=targets.map(d=>`· #${d.id} ${d.vsl_nm||d.vsl_cd||'-'} / ${d.inv_no||'-'} / ${d.amt==null?'-':d.amt} ${d.cur_cd||''}`);
+    // 🔴 통화별로 나눠 더한다. 기타 인보이스는 USD 가 아닐 수 있어서, 다 합친 숫자 하나는
+    //    금액을 잘못 읽게 만든다(승인 직전 화면에서 제일 하면 안 되는 종류의 거짓말).
+    const bycur={};
+    targets.forEach(d=>{const k=d.cur_cd||'?';bycur[k]=(bycur[k]||0)+(Number(d.amt)||0);});
+    const sum=Object.keys(bycur).sort().map(k=>`${bycur[k].toLocaleString()} ${k}`).join(' · ');
+    if(!confirm(`SVMS에 신규 인보이스 ${targets.length}건을 만듭니다.\n\n${lines.join('\n')}\n\n합계 ${sum}\n\n진행할까요?`)) return;
+    // 🔴 id 만 보내면 안 된다 — 확인창을 띄운 사이에 [다시 읽기]/러너 재파싱으로 같은 id 의
+    //    금액이 바뀔 수 있다. 화면이 **보여준 값**을 같이 보내고, 서버는 지금 값과 다르면 거절한다.
+    const res=await api('POST','/api/liscr/jobs/approve-bulk',
+      {items:targets.map(d=>({id:d.id,inv_no:d.inv_no==null?null:d.inv_no,amt:d.amt==null?null:Number(d.amt)}))});
+    if(!res.ok){alert(res.j.error||'처리 실패');}
+    else{
+      const sk=res.j.skipped||[];
+      // 건너뛴 건은 조용히 넘기지 않는다 — "전체 승인" 이라고 눌렀는데 일부가 빠졌으면
+      // 그 사실과 이유를 말해야 한다.
+      if(sk.length) alert(`${res.j.n}건 승인됨.\n\n건너뛴 ${sk.length}건:\n`
+        +sk.map(s=>`· #${s.id} — ${s.reason}`).join('\n'));
+    }
     load();
   });
 

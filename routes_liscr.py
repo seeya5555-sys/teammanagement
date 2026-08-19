@@ -80,6 +80,22 @@ _REQUIRED_HEADER = (('VSL_CD', '선박'), ('VNDR_CD', 'Vendor'), ('SUP_USER_ID',
                     ('INV_NO', 'Invoice No'), ('INV_DT', 'Invoice Date'), ('CUR_CD', '통화'),
                     ('AMT', '금액'), ('PAY_DT', 'Pay Date'))
 
+
+def _missing_labels(header, lines):
+    """상신에 필요한데 안 채워진 항목의 라벨 목록. 비어 있으면 값은 다 갖춰졌다는 뜻.
+
+    🔴 단건 승인(`api_liscr_approve`)과 일괄 승인(`api_liscr_approve_bulk`)이 **이 함수
+       하나를** 부른다. 같은 판정을 두 벌로 적어두면 한쪽만 고쳐지는 날이 오고, 그날
+       일괄 버튼이 단건보다 느슨해진다 — 한 장씩 눌렀을 때 막히던 건이 한 번에 통과하는
+       것이 이 기능에서 제일 위험한 종류의 차이다(`tests/test_liscr_bulk_reparse.py` §3 이
+       두 경로를 같은 입력으로 대조한다).
+    """
+    empty = [lab for k, lab in _REQUIRED_HEADER if header.get(k) in (None, '')]
+    if not (lines and (lines[0].get('SUBJ') or '').strip()):
+        empty.append('적요(Subject)')
+    return empty
+
+
 _MASTER_KINDS = ('profiles', 'vessels', 'expenses', 'vendors', 'currencies')
 # SVMS 코드 형식 — 화면에서 직접 칠 수 있는 값이라 서버에서도 형태를 본다.
 _CODE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,29}$')
@@ -409,9 +425,7 @@ def api_liscr_approve(jid):
     # 🔴 여기까지 와서야 "다 채워졌나" 를 본다. FIX 카드는 값이 비어 있는 게 정상이고,
     #    비운 채로 승인되면 러너가 SVMS 앞에서 터진다(그때는 이미 사람 손을 떠났다).
     #    빈 라인 적요도 같이 본다 — 헤더만 보면 적요 없는 인보이스가 통과한다.
-    empty = [lab for k, lab in _REQUIRED_HEADER if header.get(k) in (None, '')]
-    if not (lines[0].get('SUBJ') or '').strip():
-        empty.append('적요(Subject)')
+    empty = _missing_labels(header, lines)
     if empty:
         return jsonify({'error': '아직 안 채운 값이 있음: %s' % ', '.join(empty),
                         'missing': empty}), 400
@@ -432,10 +446,157 @@ def api_liscr_approve(jid):
          cols.get('cur_cd', row['cur_cd']),
          json.dumps(header, ensure_ascii=False), json.dumps(lines, ensure_ascii=False),
          json.dumps(edits, ensure_ascii=False) if edits else None,
-         session.get('user') or 'admin', jid))
+         _actor(), jid))
     if not rc:
         return jsonify({'error': '다른 처리와 겹쳐 승인되지 않음'}), 409
     return jsonify({'id': jid, 'status': 'approved', 'edited': list(edits)})
+
+
+def _actor():
+    """결재 흔적에 남길 사람 이름.
+
+    🔴 세션 키는 `username` 이다(`routes_core.py` 로그인). 여기서 `user` 를 읽고 있었는데
+       그런 키는 없어서, 누가 승인/취소했든 `decided_by` 에 항상 'admin' 이 박혔다 =
+       돈경로 감사 흔적이 통째로 무의미했다(2026-08-19 실측, 일괄승인 테스트에서 발견).
+    """
+    return session.get('username') or 'admin'
+
+
+def _approve_blockers(row):
+    """저장된 값만으로 승인 가능한가 → 막는 사유 목록(비면 승인 가능).
+
+    🔴 값 판정은 단건 승인과 **같은 함수**(`_missing_labels`)를 부른다. 일괄이 더 느슨하면
+       한 장씩 눌렀을 때 막히던 건이 일괄로는 통과한다 — 그게 제일 위험한 종류의 차이다.
+       단건과 다른 점은 딱 하나, 일괄은 화면에서 고친 값을 받지 않는다(저장된 값 그대로).
+    🔴 `header_json`/`lines_json` 이 깨져 있어도 여기서 예외를 내면 안 된다. 배치 도중
+       500 이 나면 앞의 몇 건은 이미 승인된 채 화면은 실패로 보인다 = 형이 무엇이
+       승인됐는지 모르게 된다. 깨진 건은 '읽을 수 없음' 으로 건너뛴다.
+    """
+    if row['status'] != 'parsed':
+        return ['승인 가능한 상태가 아님 (현재 %s)' % row['status']]
+    if (row['gate'] or '') not in ('READY', 'FIX'):
+        return ['HOLD 는 승인 불가']
+    try:
+        header = json.loads(row['header_json'] or '{}')
+        lines = json.loads(row['lines_json'] or '[]')
+    except ValueError:
+        return ['저장된 파싱 결과를 읽을 수 없음 — 다시 읽기 후 확인할 것']
+    if not isinstance(header, dict) or not isinstance(lines, list):
+        return ['저장된 파싱 결과 형식이 잘못됨 — 다시 읽기 후 확인할 것']
+    if not lines:
+        return ['명세 라인이 없음']
+    empty = _missing_labels(header, lines)
+    return ['안 채운 값: %s' % ', '.join(empty)] if empty else []
+
+
+def _bulk_items(d):
+    """요청 본문 → [(jid, inv_no, amt)]. 형식이 틀리면 (None, 사유).
+
+    화면은 **자기가 보여준 값**(Invoice No·금액)을 같이 보낸다. 그 값이 지금 DB 와 다르면
+    승인하지 않는다 → 아래 UPDATE 의 WHERE 참조.
+    """
+    items = d.get('items')
+    if not isinstance(items, list) or not items:
+        return None, '승인할 건을 지정해야 함 (화면을 새로고침한 뒤 다시 시도)'
+    if len(items) > 100:
+        return None, '한 번에 100건까지'
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            return None, 'items 는 {id, inv_no, amt} 목록'
+        jid = it.get('id')
+        # 🔴 `int()` 로 넘기면 1.9→1, True→1 이 조용히 통과한다. 금전 경로라 형태를 그대로 본다.
+        if not isinstance(jid, int) or isinstance(jid, bool):
+            return None, 'id 는 정수여야 함'
+        amt = it.get('amt')
+        if amt is not None and (isinstance(amt, bool) or not isinstance(amt, (int, float))):
+            return None, 'amt 는 숫자여야 함'
+        inv_no = it.get('inv_no')
+        if inv_no is not None and not isinstance(inv_no, str):
+            return None, 'inv_no 는 문자열이어야 함'
+        out.append((jid, inv_no, float(amt) if amt is not None else None))
+    return out, None
+
+
+@bp.route('/api/liscr/jobs/approve-bulk', methods=['POST'])
+@admin_required
+def api_liscr_approve_bulk():
+    """체크한 건 일괄 승인 = SVMS 생성 허가를 여러 장 한 번에.
+
+    🔴 화면이 본 건만, 화면이 본 내용 그대로 승인한다. id 만 받으면 안 된다 —
+       [다시 읽기]/러너 재파싱으로 같은 id 의 **금액·Invoice No 가 바뀔 수 있고**,
+       그러면 형이 확인한 1,490 대신 바뀐 값이 승인된다(TOCTOU). 그래서 화면이 보여준
+       `inv_no`·`amt` 를 같이 받아 UPDATE 의 WHERE 에 넣는다. 어긋나면 승인하지 않고
+       "화면과 달라졌다" 고 돌려준다.
+    🔴 값은 **고치지 않는다.** 일괄 버튼은 "이미 확인한 것들을 한꺼번에 통과시키는" 용도지
+       빈 칸을 대신 채워주는 용도가 아니다. 덜 채워진 건은 승인하지 않고 사유를 돌려준다.
+    🔴 상태 게이트도 UPDATE 의 WHERE 안에 있다(`status='parsed'`). 이미 approved/creating
+       인 건이 다시 승인되면 인보이스가 두 번 만들어진다 = 이중집행.
+    """
+    items, err = _bulk_items(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({'error': err}), 400
+
+    who = _actor()
+    approved, skipped = [], []
+    seen = set()
+    for jid, inv_no, amt in items:
+        if jid in seen:                     # 같은 id 가 두 번 와도 한 번만 본다
+            continue
+        seen.add(jid)
+        row = query("SELECT * FROM liscr_job WHERE id=?", (jid,), one=True)
+        if not row:
+            skipped.append({'id': jid, 'reason': '없는 건'})
+            continue
+        why = _approve_blockers(row)
+        if why:
+            skipped.append({'id': jid, 'reason': '; '.join(why)})
+            continue
+        # `IS` 는 SQLite 의 NULL 안전 비교다(`=` 는 NULL 이 끼면 무조건 거짓이라
+        # 값이 비어 있던 카드를 영영 승인 못 하게 된다).
+        rc = execute_rc(
+            "UPDATE liscr_job SET status='approved', decided_at=datetime('now','localtime'), "
+            "decided_by=? WHERE id=? AND status='parsed' AND inv_no IS ? AND amt IS ?",
+            (who, jid, inv_no, amt))
+        if rc:
+            approved.append(jid)
+        else:
+            cur = query("SELECT status, inv_no, amt FROM liscr_job WHERE id=?", (jid,), one=True)
+            if cur and cur['status'] == 'parsed':
+                skipped.append({'id': jid, 'reason':
+                                '화면에 뜬 내용과 달라짐(지금 %s / %s) — 새로고침 후 확인할 것'
+                                % (cur['inv_no'], cur['amt'])})
+            else:
+                skipped.append({'id': jid, 'reason': '다른 처리와 겹쳐 승인되지 않음'})
+    return jsonify({'approved': approved, 'skipped': skipped, 'n': len(approved)})
+
+
+@bp.route('/api/liscr/jobs/<int:jid>/reparse', methods=['POST'])
+@admin_required
+def api_liscr_reparse(jid):
+    """올려둔 PDF 를 그대로 다시 파싱한다(삭제 후 재업로드 대신).
+
+    파서를 고치고 나면 이미 HOLD 로 앉은 카드들이 그 개선을 못 받는다. 지웠다 다시 올리면
+    되지만, 그러면 형이 화면에서 파일을 다시 찾아야 하고 원본 파일명도 바뀐다.
+
+    🔴 되돌릴 수 있는 상태는 `hold`·`parsed` 뿐이다.
+       · `approved`/`creating` — 러너가 잡고 있거나 곧 SVMS 에 쓴다.
+       · `created`/`failed`   — 이미 SVMS 를 건드린 뒤다. 다시 파싱해 승인하면 같은
+                                 인보이스를 두 번 만들 수 있다(failed 도 저장까지는 됐을 수
+                                 있어 INV_CD 가 남아 있다).
+    """
+    row = query("SELECT id, status FROM liscr_job WHERE id=?", (jid,), one=True)
+    if not row:
+        return jsonify({'error': '없는 건'}), 404
+    if not os.path.exists(_liscr_pdf_path(jid)):
+        return jsonify({'error': '업로드 PDF 가 없어 다시 파싱할 수 없음'}), 409
+    rc = execute_rc(
+        "UPDATE liscr_job SET status='queued', gate=NULL, reasons=NULL, hard_json=NULL, "
+        "error=NULL, claim_token=NULL, claimed_at=NULL, decided_at=NULL, decided_by=NULL "
+        "WHERE id=? AND status IN ('hold','parsed')", (jid,))
+    if not rc:
+        return jsonify({'error': '다시 파싱할 수 있는 상태가 아님 (현재 %s)' % row['status']}), 409
+    return jsonify({'id': jid, 'status': 'queued'})
 
 
 @bp.route('/api/liscr/jobs/<int:jid>/reject', methods=['POST'])
@@ -444,7 +605,7 @@ def api_liscr_reject(jid):
     """사람이 취소. 아직 SVMS에 안 만든 것만 취소할 수 있다."""
     rc = execute_rc("UPDATE liscr_job SET status='rejected', decided_at=datetime('now','localtime'), "
                     "decided_by=? WHERE id=? AND status IN ('parsed','hold','queued')",
-                    (session.get('user') or 'admin', jid))
+                    (_actor(), jid))
     if not rc:
         return jsonify({'error': '취소 가능한 상태가 아님'}), 409
     return jsonify({'id': jid, 'status': 'rejected'})

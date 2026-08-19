@@ -3290,6 +3290,26 @@
   "defaults": {}
  },
  {
+  "rule": "/api/liscr/jobs/<int:jid>/reparse",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_liscr_reparse",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/liscr/jobs/approve-bulk",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_liscr.api_liscr_approve_bulk",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/liscr/jobs/clear-done",
   "methods": [
    "OPTIONS",
