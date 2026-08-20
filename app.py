@@ -1788,6 +1788,7 @@ def _auto_migrate():
             for col, ddl in (
                 ('svms_full_report_yn', "ALTER TABLE vettings ADD COLUMN svms_full_report_yn TEXT"),
                 ('svms_close_report_yn', "ALTER TABLE vettings ADD COLUMN svms_close_report_yn TEXT"),
+                ('svms_report_uploaded_yn', "ALTER TABLE vettings ADD COLUMN svms_report_uploaded_yn TEXT"),
                 ('svms_status_synced_at', "ALTER TABLE vettings ADD COLUMN svms_status_synced_at TEXT"),
             ):
                 if vt_cols and col not in vt_cols:

@@ -149,12 +149,14 @@ class SvmsSireAttachmentTests(unittest.TestCase):
             row = appmod.query("SELECT * FROM vettings WHERE id=?", (self.vetting,), one=True)
             self.assertEqual("Y", row["svms_full_report_yn"])
             self.assertEqual("N", row["svms_close_report_yn"])
+            self.assertEqual("Y", row["svms_report_uploaded_yn"])
             self.assertTrue(row["svms_status_synced_at"])
             self.assertEqual(0, appmod.query("SELECT COUNT(*) n FROM vt_findings", one=True)["n"])
         listed = self.client.get("/api/ext/vettings", headers={"X-API-Key":"test-key"}).get_json()
         payload = next(v for v in listed if v["id"] == self.vetting)
         self.assertEqual("Y", payload["svms_full_report_yn"])
         self.assertEqual("N", payload["svms_close_report_yn"])
+        self.assertEqual("Y", payload["svms_report_uploaded_yn"])
         bad = self.client.post(
             "/api/ext/vettings/svms-status",
             json={"vessel_name":"KUWAIT PROSPERITY", "report_number":"LZXN195527607793",
@@ -169,6 +171,26 @@ class SvmsSireAttachmentTests(unittest.TestCase):
             headers={"X-API-Key":"test-key"},
         )
         self.assertEqual(409, missing.status_code)
+
+    def test_status_marks_report_not_uploaded_and_clears_stale_flags(self):
+        with appmod.app.app_context():
+            appmod.execute(
+                "UPDATE vettings SET svms_full_report_yn='Y', svms_close_report_yn='N' WHERE id=?",
+                (self.vetting,),
+            )
+        response = self.client.post(
+            "/api/ext/vettings/svms-status",
+            json={"vessel_name":"KUWAIT PROSPERITY", "report_number":"LZXN195527607793",
+                  "report_uploaded_yn":"N"},
+            headers={"X-API-Key":"test-key"},
+        )
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        with appmod.app.app_context():
+            row = appmod.query("SELECT * FROM vettings WHERE id=?", (self.vetting,), one=True)
+        self.assertEqual("N", row["svms_report_uploaded_yn"])
+        self.assertIsNone(row["svms_full_report_yn"])
+        self.assertIsNone(row["svms_close_report_yn"])
+        self.assertTrue(row["svms_status_synced_at"])
 
     def test_docx_opens_as_safe_inline_html_and_can_download_original(self):
         stored = "preview.docx"

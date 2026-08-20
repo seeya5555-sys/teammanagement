@@ -1001,9 +1001,12 @@ def _svms_exact_vetting(vessel_name, report_number):
 def api_ext_vetting_svms_status():
     """Store SVMS header flags for one exact TRMT report; findings stay untouched."""
     d = request.get_json(silent=True) or {}
+    uploaded = (d.get('report_uploaded_yn') or 'Y').strip().upper()
     full = (d.get('full_report_yn') or '').strip().upper()
     close = (d.get('close_report_yn') or '').strip().upper()
-    if full not in ('Y', 'N') or close not in ('Y', 'N'):
+    if uploaded not in ('Y', 'N'):
+        return jsonify({'error': 'report_uploaded_yn must be Y or N'}), 400
+    if uploaded == 'Y' and (full not in ('Y', 'N') or close not in ('Y', 'N')):
         return jsonify({'error': 'full_report_yn and close_report_yn must be Y or N'}), 400
     matches = _svms_exact_vetting(d.get('vessel_name'), d.get('report_number'))
     if not matches:
@@ -1011,9 +1014,13 @@ def api_ext_vetting_svms_status():
     if len(matches) != 1:
         return jsonify({'error': 'ambiguous exact vessel/report match'}), 409
     vid = matches[0]['id']
+    if uploaded == 'N':
+        full = close = None
     execute('''UPDATE vettings SET svms_full_report_yn=?, svms_close_report_yn=?,
-               svms_status_synced_at=datetime('now','localtime') WHERE id=?''', (full, close, vid))
-    return jsonify({'ok': True, 'id': vid, 'full_report_yn': full, 'close_report_yn': close})
+               svms_report_uploaded_yn=?, svms_status_synced_at=datetime('now','localtime') WHERE id=?''',
+            (full, close, uploaded, vid))
+    return jsonify({'ok': True, 'id': vid, 'report_uploaded_yn': uploaded,
+                    'full_report_yn': full, 'close_report_yn': close})
 
 
 @bp.route('/api/ext/vettings/svms-attachment', methods=['POST'])

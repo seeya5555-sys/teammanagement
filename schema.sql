@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS vettings (
     manual_close_count       INTEGER,
     svms_full_report_yn      TEXT CHECK (svms_full_report_yn IN ('Y','N') OR svms_full_report_yn IS NULL),
     svms_close_report_yn     TEXT CHECK (svms_close_report_yn IN ('Y','N') OR svms_close_report_yn IS NULL),
+    svms_report_uploaded_yn  TEXT CHECK (svms_report_uploaded_yn IN ('Y','N') OR svms_report_uploaded_yn IS NULL),
     svms_status_synced_at    TEXT,
     created_by               TEXT,
     created_at               TEXT NOT NULL DEFAULT (datetime('now','localtime')),

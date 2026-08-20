@@ -435,7 +435,12 @@ function vettingRow(item, vt) {
   if (!vt.report_number) repText.classList.add('placeholder');
   rep.append(repText);
   attachInlineEdit(rep, vt, 'report_number', repText);
-  if (vt.svms_full_report_yn || vt.svms_close_report_yn) {
+  if (vt.svms_report_uploaded_yn === 'N') {
+    rep.append(el('span', {
+      class: 'vt-svms-report-flags',
+      title: vt.svms_status_synced_at ? `SVMS 조회: ${vt.svms_status_synced_at}` : 'SVMS 조회 결과',
+    }, 'SVMS 미업로드'));
+  } else if (vt.svms_full_report_yn || vt.svms_close_report_yn) {
     rep.append(el('span', {
       class: 'vt-svms-report-flags',
       title: vt.svms_status_synced_at ? `SVMS 동기화: ${vt.svms_status_synced_at}` : 'SVMS Report 상태',
