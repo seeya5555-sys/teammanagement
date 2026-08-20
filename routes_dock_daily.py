@@ -12,6 +12,7 @@ import os
 import re
 import uuid
 import zipfile
+from collections import namedtuple
 from datetime import datetime
 from io import BytesIO
 from xml.etree import ElementTree
@@ -390,11 +391,33 @@ def _purge_files(stored_names):
     return removed
 
 
-_REPORTS_OF_PROJECT = 'SELECT id FROM dock_daily_report WHERE project_id=?'
-_REPORT_ITSELF = 'SELECT id FROM dock_daily_report WHERE id=?'
+_Cascade = namedtuple('_Cascade', 'label select_row select_blobs delete_row')
+
+# Each cascade carries its three statements as callables, not as SQL strings in
+# a table.  Two reasons, in order:
+#   * `'... FROM %s' % table` is a dynamic-SQL site even when every caller
+#     passes a literal, and so is `db.execute(target.sql, …)` -- the scanner in
+#     tests/test_sql_construction_contract.py reads the call site, not the
+#     provenance.  Keeping the SQL literal *at the execute* leaves that fence
+#     exactly where it was instead of spending a review exemption on it.
+#   * The project cascade's blob query is not the report one with a table name
+#     swapped; it has to reach through dock_daily_report. A per-target function
+#     says that plainly.
+_CASCADE_PROJECT = _Cascade(
+    'project',
+    lambda db, i: db.execute('SELECT * FROM dock_daily_project WHERE id=?', (i,)),
+    lambda db, i: db.execute('SELECT stored_name FROM dock_daily_attachment WHERE report_id IN'
+                             ' (SELECT id FROM dock_daily_report WHERE project_id=?)', (i,)),
+    lambda db, i: db.execute('DELETE FROM dock_daily_project WHERE id=?', (i,)))
+
+_CASCADE_REPORT = _Cascade(
+    'report',
+    lambda db, i: db.execute('SELECT * FROM dock_daily_report WHERE id=?', (i,)),
+    lambda db, i: db.execute('SELECT stored_name FROM dock_daily_attachment WHERE report_id=?', (i,)),
+    lambda db, i: db.execute('DELETE FROM dock_daily_report WHERE id=?', (i,)))
 
 
-def _delete_cascade(table, row_id, rid_select, label, guard=None):
+def _delete_cascade(target, row_id, guard=None):
     """Delete one dock-daily row and purge the attachment blobs under it.
 
     Row removal cascades in the schema (`PRAGMA foreign_keys = ON` is set per
@@ -415,22 +438,20 @@ def _delete_cascade(table, row_id, rid_select, label, guard=None):
     db = get_db()
     try:
         db.execute('BEGIN IMMEDIATE')
-        row = db.execute('SELECT * FROM %s WHERE id=?' % table, (row_id,)).fetchone()
+        row = target.select_row(db, row_id).fetchone()
         if not row:
             db.rollback()
-            return None, _error('%s not found' % label, 404)
+            return None, _error('%s not found' % target.label, 404)
         if guard:
             refused = guard(row)
             if refused:
                 db.rollback()
                 return None, refused
-        names = [r['stored_name'] for r in db.execute(
-            'SELECT stored_name FROM dock_daily_attachment WHERE report_id IN (%s)' % rid_select,
-            (row_id,)).fetchall()]
-        cur = db.execute('DELETE FROM %s WHERE id=?' % table, (row_id,))
+        names = [r['stored_name'] for r in target.select_blobs(db, row_id).fetchall()]
+        cur = target.delete_row(db, row_id)
         if cur.rowcount != 1:
             db.rollback()
-            return None, _error('%s not found' % label, 404)
+            return None, _error('%s not found' % target.label, 404)
         db.commit()
     except Exception:
         db.rollback(); raise
@@ -453,7 +474,7 @@ def project_delete(pid):
         # Checked before the existence lookup so a bare probe cannot use the
         # 404/409 split to enumerate project ids.
         return _error('confirm=delete-project is required', 409)
-    payload, err = _delete_cascade('dock_daily_project', pid, _REPORTS_OF_PROJECT, 'project')
+    payload, err = _delete_cascade(_CASCADE_PROJECT, pid)
     return err if err else jsonify(payload)
 
 
@@ -611,15 +632,69 @@ def report_put(rid):
     return jsonify(_report_json(rid))
 
 
+@bp.route('/api/dock-daily/reports/<int:rid>/status', methods=['POST'])
+@login_required
+def report_status(rid):
+    """확정 / 확정취소 -- the only route allowed to move a report out of `final`.
+
+    `_cas_begin` refuses every write to a final row, and that refusal is what
+    makes 확정 a lock at all.  Routing the release through it would mean the
+    lock could never be opened, so this endpoint runs its own CAS instead of
+    reusing that helper.  It is deliberately the single exception: keeping the
+    bypass in one status-only route means no content write can ever ride along
+    with it, which is what `_cas_begin` exists to guarantee.
+
+    The revision bump is not cosmetic.  It is what tells another tab holding
+    the old revision that its view is stale, and it lands a snapshot row naming
+    the actor -- an unlock has to be attributable, not silent.
+    """
+    data = _body()
+    want = data.get('status')
+    if want not in ('final', 'editing'):
+        return _error("status must be 'final' or 'editing'")
+    if not isinstance(data.get('revision'), int) or isinstance(data.get('revision'), bool):
+        return _error('revision is required', 400)
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT * FROM dock_daily_report WHERE id=?', (rid,)).fetchone()
+        if not row:
+            db.rollback(); return _error('report not found', 404)
+        if row['revision'] != data['revision']:
+            db.rollback(); return _error('revision conflict', 409, current_revision=row['revision'])
+        if row['status'] == want:
+            # Already there -- a double click is not an error.  The caller's
+            # revision was still checked above, so this is not a blind no-op
+            # that hides a stale client.
+            db.rollback(); return jsonify(_report_json(rid))
+        newrev = row['revision'] + 1
+        # `source_changed_after_final` means "the Dock Manager source moved
+        # after this was 확정". Nothing ever cleared it, which stayed invisible
+        # while 확정 was one-way: with a release path, a re-확정 would inherit
+        # the previous round's warning and a reopened draft would keep flying a
+        # flag about a lock it no longer has.
+        cur = db.execute("UPDATE dock_daily_report SET status=?, revision=?, source_changed_after_final=0,"
+                         " updated_at=datetime('now','localtime') WHERE id=? AND revision=?",
+                         (want, newrev, rid, row['revision']))
+        if cur.rowcount != 1:
+            db.rollback(); return _error('revision conflict', 409, current_revision=row['revision'])
+        db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor) VALUES (?,?,?,?)',
+                   (rid, newrev, json.dumps(_snapshot(rid), ensure_ascii=False), session_actor()))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_report_json(rid))
+
+
 @bp.route('/api/dock-daily/reports/<int:rid>', methods=['DELETE'])
 @login_required
 def report_delete(rid):
     """Delete one report date and everything hanging off it.
 
-    A `final` report is edit-locked by `_cas_begin`, so deleting one must not be
-    a plain click-through.  Refusing outright would trap a report finalized by
-    mistake -- there is no unlock route -- so it is allowed behind an explicit
-    confirmation token instead of being blocked or silently permitted.
+    A `final` report is edit-locked, so deleting one must not be a plain
+    click-through: the caller has to name what it is doing.  `report_status`
+    can release the lock now, but that is a separate decision from erasing the
+    day, and a mis-click on a sidebar row must not be able to do either.
     """
     confirm = _body().get('confirm')
 
@@ -630,7 +705,7 @@ def report_delete(rid):
             return _error('final report requires confirm=delete-final', 409)
         return None
 
-    payload, err = _delete_cascade('dock_daily_report', rid, _REPORT_ITSELF, 'report', guard)
+    payload, err = _delete_cascade(_CASCADE_REPORT, rid, guard)
     return err if err else jsonify(payload)
 
 

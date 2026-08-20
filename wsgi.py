@@ -24,6 +24,10 @@ sys.path.insert(0, TRMT_DIR)            # TRMT app.py 위치
 import app as trmt                      # noqa: E402
 trmt.init_runtime()
 trmt_app = trmt.app
+# CSRF 는 config 없이도 켜지지만(csrf.enforce 기본값 = not app.testing), 배포
+# 엔트리에서는 명시적으로 못박는다. 기본값 계산이 나중에 바뀌어도 실서비스가
+# 조용히 열리지 않게 하는 fail-closed 핀이다.
+trmt_app.config["CSRF_PROTECT"] = True
 
 # ── 2. Dock Manager (drydock/app.py) 를 별도 모듈로 import ──────
 #    drydock 자체 SECRET_KEY 하드코딩 fallback 무력화 위해, import 전

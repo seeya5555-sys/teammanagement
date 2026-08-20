@@ -12,6 +12,8 @@
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <title>{% block title %}TRMT3{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+  {# 다른 스크립트보다 먼저 — fetch 래퍼를 먼저 깔아야 전부 덮인다 #}
+  {% include '_csrf.html' %}
   {% block head %}{% endblock %}
 </head>
 <body class="{% block bodyclass %}{% endblock %}{% if embedded %} embedded{% endif %}">

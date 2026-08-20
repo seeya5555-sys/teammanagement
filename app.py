@@ -36,6 +36,8 @@ from werkzeug.exceptions import HTTPException
 import hmac, hashlib
 from itsdangerous import BadData
 
+import csrf
+
 from app_core import (
     ALLOWED_EXT, AOR_PDF_DIR, BASE_DIR, DATABASE, DOCKATT_FILE_DIR, FUNDREQ_FILE_DIR,
     INSTANCE_DIR, INVOICE_PDF_DIR, JEONJA_PDF_DIR, SCHEMA_FILE, SECRET_KEY_FILE, SEED_FILE,
@@ -1313,6 +1315,18 @@ def _suppress_bearer_session_cookie(response):
 
 
 # ═════════════════════════════════════════════════════════════════
+#  CSRF (쿠키 세션 전용) — 등록 위치가 계약이다
+#  🔴 반드시 `_bearer_auth` **아래**: 위에 두면 g._token_auth 가 아직 없어서
+#     네이티브 앱의 모든 쓰기가 403 으로 죽는다.
+#  🔴 반드시 `_idem_replay` **위**: 아래에 두면 위조 요청이 거절되기 전에
+#     멱등 key 를 선점해서, 형이 나중에 보내는 정상 재전송이 그 자리를 못 쓴다.
+# ═════════════════════════════════════════════════════════════════
+csrf.init_app(app)
+# 토큰 발급 라우트(`/api/csrf-token`)는 login_required 를 쓰므로 helpers_shared
+# import 뒤에 있다. 훅 등록만 여기서 끝낸다 — 순서 계약은 훅에만 걸린다.
+
+
+# ═════════════════════════════════════════════════════════════════
 #  오프라인 재전송 중복방지(Idempotency-Key) — 네이티브 앱 보관함 전용
 #  🔴 등록 위치가 계약이다: 반드시 `_bearer_auth` **아래**에 있어야 한다.
 #     before_request 는 등록순으로 도는데, 위에 두면 session['user_id'] 가 아직 없어
@@ -1473,6 +1487,19 @@ from helpers_shared import (
 # already-running module.  A no-op under gunicorn/tests, where this file is
 # imported as "app" in the first place.
 sys.modules.setdefault('app', sys.modules[__name__])
+
+
+@app.route('/api/csrf-token')
+@helpers_shared.login_required
+def csrf_token_get():
+    """새 토큰 발급 — 열어둔 탭이 만료된 토큰으로 403 을 맞았을 때 쓰는 창구.
+
+    GET 이라 이 라우트 자체는 검사 대상이 아니고, 세션이 없으면
+    login_required 가 401 로 끊는다. 브라우저 래퍼가 403 을 한 번 받으면
+    여기서 새 토큰을 받아 그 요청만 1회 재전송한다."""
+    return jsonify({'token': csrf.csrf_token()})
+
+
 import routes_core
 app.register_blueprint(routes_core.bp)
 import ai_gemini

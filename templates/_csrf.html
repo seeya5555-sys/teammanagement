@@ -1,0 +1,83 @@
+{# ═══════════════════════════════════════════════════════════════════
+   CSRF 토큰 배포 + fetch 래퍼.  `csrf.py` 의 브라우저 쪽 짝.
+
+   <head> 안, 다른 스크립트보다 **먼저** 들어가야 한다.  아래 스크립트는
+   window.fetch 를 감싸는데, 이 파일보다 먼저 실행된 코드가 fetch 참조를
+   따로 잡아뒀으면 그 호출은 래퍼를 타지 않고 403 을 맞는다.
+
+   서버가 아니라 여기서 헤더를 붙이는 이유: 이 앱의 쓰기는 전부 fetch 이고
+   XMLHttpRequest 사용처는 0 이라 중앙 한 곳이면 전부 덮인다. 호출부마다
+   헤더를 손으로 붙이면 새로 추가되는 호출이 조용히 빠진다.
+   ═══════════════════════════════════════════════════════════════════ #}
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<script>
+(function () {
+  var meta = document.querySelector('meta[name="csrf-token"]');
+  var token = meta ? meta.getAttribute('content') : '';
+  var UNSAFE = { POST: 1, PUT: 1, PATCH: 1, DELETE: 1 };
+  var native = window.fetch.bind(window);
+
+  // 같은 출처만. 외부 API 호출에 우리 토큰을 실어보내면 그게 곧 토큰 유출이다.
+  function sameOrigin(url) {
+    try { return new URL(url, location.href).origin === location.origin; }
+    catch (e) { return false; }
+  }
+
+  function apply(input, init) {
+    var url = (typeof input === 'string') ? input
+            : (input && input.url) ? input.url : String(input);
+    var method = ((init && init.method) ||
+                  (input && input.method) || 'GET').toUpperCase();
+    if (!UNSAFE[method] || !sameOrigin(url)) return null;
+    var next = {};
+    for (var k in (init || {})) next[k] = init[k];
+    var headers = new Headers((init && init.headers) ||
+                              (input && input.headers) || undefined);
+    headers.set('X-CSRF-Token', token);
+    next.headers = headers;
+    return next;
+  }
+
+  window.fetch = function (input, init) {
+    var patched = apply(input, init);
+    if (!patched) return native(input, init);
+    return native(input, patched).then(function (res) {
+      // 만료 토큰 1회 복구.  거절은 before_request 에서 나므로 view 는 아예
+      // 돌지 않았고, 따라서 이 재전송이 뭔가를 두 번 적용할 수는 없다.
+      // 헤더가 붙은 403 만 재시도한다 — 권한 부족 403 을 무한정 두드리면 안 된다.
+      if (res.status !== 403 || res.headers.get('X-CSRF-Fail') !== '1') return res;
+      // Request 객체는 body 스트림이 이미 소비돼서 그대로 재전송할 수 없다.
+      // 이 앱은 전부 fetch(url, init) 형태라 실제로 걸릴 일이 없지만, 걸리면
+      // 조용히 깨진 재전송을 보내는 대신 원래 403 을 그대로 돌려준다.
+      if (typeof input !== 'string' && !(window.URL && input instanceof URL)) return res;
+      return native('/api/csrf-token', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data || !data.token || data.token === token) return res;
+          token = data.token;
+          if (meta) meta.setAttribute('content', token);
+          var again = apply(input, init);
+          return again ? native(input, again) : res;
+        })
+        .catch(function () { return res; });
+    });
+  };
+
+  // 클래식 form(로그인) 은 fetch 를 안 타므로 hidden 필드를 쓴다.  템플릿에
+  // 직접 박아두면 그 페이지만 되고, 여기서 채우면 새 form 도 자동으로 덮인다.
+  document.addEventListener('submit', function (ev) {
+    var form = ev.target;
+    if (!form || (form.method || '').toUpperCase() !== 'POST') return;
+    // 우리 토큰을 남의 출처로 보내지 않는다.  action 이 비어 있으면 현재 URL 로
+    // 가므로 같은 출처다. fetch 쪽 sameOrigin 과 같은 규칙을 form 에도 건다.
+    if (!sameOrigin(form.getAttribute('action') || location.href)) return;
+    if (form.querySelector('input[name="_csrf"]')) {
+      form.querySelector('input[name="_csrf"]').value = token;
+      return;
+    }
+    var input = document.createElement('input');
+    input.type = 'hidden'; input.name = '_csrf'; input.value = token;
+    form.appendChild(input);
+  }, true);
+})();
+</script>

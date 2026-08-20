@@ -17,6 +17,11 @@ from html.parser import HTMLParser
 import app as appmod
 import routes_dock_daily
 
+# 이 파일은 `client.session_transaction()` 으로 로그인해서 CSRF 토큰을 가진
+# 적이 없다. TESTING 을 세우지 않는 파일이라 csrf.enforce 의 기본값(=켜짐)에
+# 걸리므로, 여기서 명시적으로 끈다. 검사 자체는 tests/test_csrf.py 가 본다.
+appmod.app.config['CSRF_PROTECT'] = False
+
 
 class _Tree(HTMLParser):
     """Minimal element tree for the mail body, so structure tests do not rely on
@@ -300,7 +305,10 @@ class DockDailyTests(unittest.TestCase):
         src = inspect.getsource(routes_dock_daily._delete_cascade)
         body = src.split("db.execute('BEGIN IMMEDIATE')", 1)[1]
         self.assertIn('guard(row)', body, 'the status guard must run inside the transaction')
-        self.assertIn('SELECT stored_name', body, 'blob names must be read inside the transaction')
+        # The statement itself lives in `_CASCADE_*` (literal SQL at the execute
+        # keeps the dynamic-SQL fence intact), so what is asserted here is where
+        # it is *called* from -- which is the ordering contract this test is about.
+        self.assertIn('target.select_blobs(', body, 'blob names must be read inside the transaction')
         self.assertIn('cur.rowcount != 1', body, 'a lost race must not report success')
         # The purge itself is the one part that must happen after the commit,
         # or a rolled back transaction leaves rows pointing at missing files.
@@ -408,6 +416,115 @@ class DockDailyTests(unittest.TestCase):
         locked = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={'revision': final['revision'], 'status': 'final'})
         self.assertEqual(200, locked.status_code)
         self.assertEqual(409, self.client.put(f"/api/dock-daily/reports/{r['id']}", json=body).status_code)
+
+    def _final_report(self):
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Toggle DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        done = self.client.post(f"/api/dock-daily/reports/{r['id']}/status",
+                                json={'status': 'final', 'revision': r['revision']})
+        self.assertEqual(200, done.status_code)
+        return p, done.get_json()
+
+    def test_status_route_is_the_only_way_out_of_final(self):
+        """확정 / 확정취소 한 버튼 토글.
+
+        `_cas_begin` 은 final 행의 모든 쓰기를 409 로 막고, 그 거절이 곧 잠금이다.
+        해제를 그 헬퍼로 보내면 잠금은 영원히 못 열리므로, 상태 전용 라우트가
+        자기 CAS 를 돌린다. 내용 쓰기가 해제에 편승할 수 없다는 게 요점이다.
+        """
+        p, final = self._final_report()
+        self.assertEqual('final', final['status'])
+        # 잠긴 상태에서 내용 저장은 여전히 막힌다.
+        body = {'revision': final['revision'], 'operations': [
+            {'section_key': 'shipyard', 'block_type': 'paragraph', 'content': {'body': 'x'}}]}
+        self.assertEqual(409, self.client.put(f"/api/dock-daily/reports/{final['id']}",
+                                              json=body).status_code)
+        released = self.client.post(f"/api/dock-daily/reports/{final['id']}/status",
+                                    json={'status': 'editing', 'revision': final['revision']})
+        self.assertEqual(200, released.status_code)
+        self.assertEqual('editing', released.get_json()['status'])
+        # revision 은 올라간다 — 다른 탭이 들고 있던 값이 낡았다는 신호다.
+        self.assertGreater(released.get_json()['revision'], final['revision'])
+        # 해제 후엔 저장이 다시 열린다.
+        again = self.client.put(f"/api/dock-daily/reports/{final['id']}",
+                                json={'revision': released.get_json()['revision'],
+                                      'operations': body['operations']})
+        self.assertEqual(200, again.status_code)
+
+    def test_status_change_lands_an_attributed_revision_snapshot(self):
+        """잠금 해제는 조용해선 안 된다 — 누가 열었는지 남아야 한다."""
+        _, final = self._final_report()
+        self.client.post(f"/api/dock-daily/reports/{final['id']}/status",
+                         json={'status': 'editing', 'revision': final['revision']})
+        with appmod.app.app_context():
+            rows = appmod.query(
+                'SELECT revision, actor FROM dock_daily_report_revision'
+                ' WHERE report_id=? ORDER BY revision', (final['id'],))
+        self.assertEqual(final['revision'] + 1, rows[-1]['revision'])
+        self.assertTrue(rows[-1]['actor'])
+
+    def test_release_clears_the_stale_source_changed_flag(self):
+        """`source_changed_after_final` 은 아무도 0 으로 되돌리지 않았다.
+
+        확정이 단방향일 때는 보이지 않던 결함이다. 해제 경로가 생기면 재확정이
+        지난 회차의 경고를 물려받고, 열린 초안이 이미 없는 잠금에 대한 깃발을
+        계속 들고 있게 된다.
+        """
+        _, final = self._final_report()
+        with appmod.app.app_context():
+            appmod.execute('UPDATE dock_daily_report SET source_changed_after_final=1 WHERE id=?',
+                           (final['id'],))
+        released = self.client.post(f"/api/dock-daily/reports/{final['id']}/status",
+                                    json={'status': 'editing', 'revision': final['revision']})
+        self.assertEqual(200, released.status_code)
+        with appmod.app.app_context():
+            row = appmod.query('SELECT source_changed_after_final FROM dock_daily_report WHERE id=?',
+                               (final['id'],), one=True)
+        self.assertEqual(0, row['source_changed_after_final'])
+
+    def test_status_route_rejects_bad_input_and_stale_revisions(self):
+        _, final = self._final_report()
+        rid = final['id']
+        # 임의 상태로는 못 간다 — auto_draft 로 되돌리면 러너가 사람이 쓴 걸 덮는다.
+        self.assertEqual(400, self.client.post(f'/api/dock-daily/reports/{rid}/status',
+                                               json={'status': 'auto_draft',
+                                                     'revision': final['revision']}).status_code)
+        self.assertEqual(400, self.client.post(f'/api/dock-daily/reports/{rid}/status',
+                                               json={'status': 'editing'}).status_code)
+        # bool 은 int 의 서브클래스다 — revision=True 가 1 로 통과하면 안 된다.
+        self.assertEqual(400, self.client.post(f'/api/dock-daily/reports/{rid}/status',
+                                               json={'status': 'editing',
+                                                     'revision': True}).status_code)
+        stale = self.client.post(f'/api/dock-daily/reports/{rid}/status',
+                                 json={'status': 'editing', 'revision': final['revision'] - 1})
+        self.assertEqual(409, stale.status_code)
+        self.assertEqual(final['revision'], stale.get_json()['current_revision'])
+        self.assertEqual(404, self.client.post('/api/dock-daily/reports/999999/status',
+                                               json={'status': 'editing', 'revision': 1}).status_code)
+
+    def test_same_status_is_not_an_error_but_still_checks_revision(self):
+        """더블클릭은 오류가 아니다. 다만 낡은 revision 을 숨겨주지도 않는다."""
+        _, final = self._final_report()
+        same = self.client.post(f"/api/dock-daily/reports/{final['id']}/status",
+                                json={'status': 'final', 'revision': final['revision']})
+        self.assertEqual(200, same.status_code)
+        # no-op 이므로 revision 은 그대로 — 헛 bump 는 다른 탭을 이유 없이 깨운다.
+        self.assertEqual(final['revision'], same.get_json()['revision'])
+
+    def test_final_button_is_a_single_toggle_and_stays_clickable_when_locked(self):
+        """확정 버튼은 잠긴 상태에서도 살아있어야 한다 — 잠금을 여는 유일한 통로다."""
+        with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'dock_daily.js'),
+                  encoding='utf-8') as f:
+            script = f.read()
+        self.assertIn("['#dd-save','#dd-attach']", script)
+        self.assertNotIn("'#dd-final','#dd-attach'", script)
+        self.assertIn("finalBtn.disabled=false", script)
+        self.assertIn("finalBtn.textContent=locked?'확정취소':'확정'", script)
+        self.assertIn("state.report?.status==='final'?'editing':'final'", script)
+        # 해제는 PUT 이 아니라 상태 전용 라우트로 간다.
+        self.assertIn("/status`", script)
 
     def test_runner_idempotency_and_partial_fail_closed(self):
         p = self.client.post('/api/dock-daily/projects', json={

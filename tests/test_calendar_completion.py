@@ -5,6 +5,11 @@ from datetime import date, timedelta
 
 import app as appmod
 
+# 이 파일은 `client.session_transaction()` 으로 로그인해서 CSRF 토큰을 가진
+# 적이 없다. TESTING 을 세우지 않는 파일이라 csrf.enforce 의 기본값(=켜짐)에
+# 걸리므로, 여기서 명시적으로 끈다. 검사 자체는 tests/test_csrf.py 가 본다.
+appmod.app.config['CSRF_PROTECT'] = False
+
 
 class CalendarCompletionTests(unittest.TestCase):
     def setUp(self):

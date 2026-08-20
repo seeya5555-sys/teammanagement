@@ -12,6 +12,12 @@
     </div>
 
     <form method="post" class="login-form" autocomplete="on">
+      {# fetch 를 안 타는 유일한 form. `_csrf.html` 의 submit 리스너도 이 필드를
+         채우지만, 스크립트가 죽어도 남아야 하니 템플릿에 직접 박아둔다.
+         🔴 이 필드는 장식이 아니다 — 로그인 POST 는 세션이 없어도 검사한다
+         (csrf._ENFORCED_ANONYMOUS). 검사 안 하면 외부 페이지가 형을 공격자
+         계정으로 로그인시켜 이후 입력을 그 계정에 쌓을 수 있다. #}
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <label class="form-field">
         <span class="form-label">아이디</span>
         <input type="text" name="username"
@@ -26,6 +32,9 @@
 
       {% if error %}
       <div class="login-error">{{ error }}</div>
+      {% elif request.args.get('csrf') %}
+      {# 토큰 없이 들어온 로그인 시도 — 대개 오래 열어둔 탭이다. #}
+      <div class="login-error">보안 토큰이 만료됐습니다. 다시 로그인하세요.</div>
       {% endif %}
 
       <button type="submit" class="btn btn-primary btn-block">로그인</button>

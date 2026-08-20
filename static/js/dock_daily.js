@@ -85,7 +85,13 @@
     $('#dd-report-title').textContent=`${state.report.vessel_name} · 입거 Daily Report`;
     $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`;
     renderReportDates(); renderItinerary(); renderSections(); renderAttachments();
-    const locked = state.report.status === 'final'; ['#dd-save','#dd-final','#dd-attach'].forEach(s => $(s).disabled=locked);
+    const locked = state.report.status === 'final'; ['#dd-save','#dd-attach'].forEach(s => $(s).disabled=locked);
+    // 확정 버튼만은 잠긴 상태에서도 살아있어야 한다 — 잠금을 여는 유일한 통로다.
+    // 여기서 disabled 를 걸면 확정된 보고서는 영구히 잠긴다.
+    const finalBtn=$('#dd-final'); finalBtn.disabled=false;
+    finalBtn.textContent=locked?'확정취소':'확정';
+    // '취소' 한 단어는 옆의 '저장' 과 붙어 "편집 취소" 로 읽힌다.
+    finalBtn.classList.toggle('warn',locked); finalBtn.classList.toggle('alt',!locked);
   }
   function renderItinerary() {
     const values=[['berthing_date','BERTHING'],['dock_in_date','DRY DOCK IN'],['dock_out_date','DRY DOCK OUT'],['departure_date','DEPARTURE']];
@@ -232,7 +238,26 @@
   function closeUploadModal(){uploadModal.hidden=true;document.body.style.overflow='';}
 
   $('#dd-save').onclick=()=>save().catch(err); $('#dd-email').onclick=()=>openPreview('email').catch(err); $('#dd-svms').onclick=()=>openPreview('svms').catch(err);
-  $('#dd-final').onclick=async()=>{if(!state.report||!confirm('이 보고서를 확정하면 더 이상 수정할 수 없습니다. 확정할까요?'))return;try{if(state.dirty)await save();state.report=await api(`/api/dock-daily/reports/${state.report.id}`,{...json({revision:state.report.revision,status:'final',operations:[]}),method:'PUT'});await selectReport(state.report.id);}catch(e){err(e);}};
+  // 확정 / 확정취소 한 버튼 토글.  잠금을 여는 쪽은 전용 라우트를 쓴다 —
+  // PUT(=내용 저장) 은 잠긴 행에서 409 로 막히고, 그 거절이 곧 잠금이다.
+  async function setReportStatus(want){
+    if(!state.report)return;
+    const ask=want==='final'
+      ? '이 보고서를 확정하면 수정이 잠깁니다. 확정할까요?'
+      : '확정을 취소하면 다시 수정할 수 있게 됩니다. 확정을 취소할까요?';
+    if(!confirm(ask))return;
+    try{
+      // 확정 전에만 저장한다. 확정취소 시점엔 잠겨 있어서 저장할 편집 자체가 없다.
+      if(want==='final'&&state.dirty)await save();
+      const updated=await api(`/api/dock-daily/reports/${state.report.id}/status`,
+        {...json({status:want,revision:state.report.revision}),method:'POST'});
+      // 사이드바는 state.reports 의 status 를 그대로 찍는다. 여기서 갈아주지
+      // 않으면 본문은 편집 가능인데 목록만 'final' 로 남는다.
+      state.reports=state.reports.map(r=>r.id===updated.id?{...r,status:updated.status,revision:updated.revision}:r);
+      await selectReport(updated.id);
+    }catch(e){err(e);}
+  }
+  $('#dd-final').onclick=()=>setReportStatus(state.report?.status==='final'?'editing':'final');
   $('#dd-generate').onclick=async()=>{if(!state.project)return;const report_date=$('#dd-generate-date').value;if(!report_date)return err(new Error('보고서 일자를 선택하세요.'));try{const report=await api(`/api/dock-daily/projects/${state.project.id}/reports/generate`,{...json({report_date}),method:'POST'});state.reports=await api(`/api/dock-daily/projects/${state.project.id}/reports`);await selectReport(report.id);}catch(e){err(e);}};
   $('#dd-attach').onclick=()=>openUploadModal().catch(err);
   $('#dd-upload-close').onclick=closeUploadModal; $('#dd-upload-done').onclick=closeUploadModal;
