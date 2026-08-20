@@ -742,29 +742,44 @@ def _email(rid):
     for intro_line in intro_lines:
         lines.extend([intro_line, ''])
     lines.append('VESSEL ITINERARY')
-    # No <table> anywhere in this mail body, on purpose.
+    # Text that is inside a table must sit inside a <p> inside the <td>.
     #
-    # Measured on three consecutive real Outlook iOS pastes (cap height in the
-    # screenshots, converted through the device scale):
-    #   <p> text      cap 16px -> ~11.4pt   == the 11pt we declare
-    #   <td> text     cap 11px -> ~8pt      == roughly 0.7x, whatever we declare
+    # Measured on real Outlook iOS pastes (cap height in the screenshots,
+    # converted through the device scale):
+    #   <p> text                    cap 16px -> ~11.4pt  == the 11pt we declare
+    #   text directly inside <td>   cap 11px -> ~8pt     == ~0.7x, whatever we declare
     # The table figure did not move while the declaration was added to the
-    # wrapping <div> (build 229), then to every <table> and <td> (build 230),
-    # then to a <span> around every text node (build 231). So on the Outlook iOS
-    # paste path that was tested, a font-size declared inside a table does not
-    # take effect, while the block path honours it exactly. The mechanism is not
-    # established and other clients were not measured.
+    # wrapping <div>, then to every <table> and <td>, then to a <span> around
+    # each text node. Removing the tables did fix the size, which is what the
+    # owner confirmed; it also removed the itinerary borders, which he wants
+    # back. So the table returns with every cell's text wrapped in a <p>.
     #
-    # Given that, the itinerary rows and the numbered work items are plain
-    # paragraphs. Cost: the itinerary loses its cell borders. Benefit: one size
-    # everywhere, which is what was asked for. The hanging indent keeps wrapped
-    # item text under the text rather than under the number; the offset is sized
-    # for a two digit number ('10)') and is approximate, not metric exact.
+    # This is a hypothesis, not a measured result: what was measured is a
+    # standalone <p> outside any table. A <p> inside a <td> has never been
+    # pasted, and the mechanism behind the divergence is not established, so it
+    # may well come out small too. If it does, the next thing to try is
+    # borderless paragraphs with a border-bottom per line -- also unmeasured.
+    # Other mail clients were not measured at all.
+    #
+    # The numbered work items stay plain paragraphs; they never needed a table.
+    # Their hanging indent keeps wrapped text under the text rather than under
+    # the number, sized for a two digit number ('10)'), approximate not metric
+    # exact.
     cell_font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
+    cell_box = 'border:1px solid #777;padding:3px 9px;%s' % cell_font
 
     def run(inner):
         """Wrap already-escaped markup. Callers escape user text before passing it."""
         return '<span style="%s">%s</span>' % (cell_font, inner)
+
+    def cell(inner):
+        """A table cell whose text lives in a <p>, not directly in the <td>.
+
+        Same contract as run(): inner is already-escaped markup, inserted
+        verbatim. Callers escape user text before passing it.
+        """
+        return '<td style="%s"><p style="margin:0;%s">%s</p></td>' % (
+            cell_box, cell_font, run(inner))
 
     spacer = '<p style="margin:0;line-height:1.5">%s</p>' % run('&nbsp;')
     chunks = [
@@ -776,11 +791,13 @@ def _email(rid):
     for intro_line in intro_lines:
         chunks.extend(['<p style="margin:0">%s</p>' % run(html.escape(intro_line)), spacer])
     chunks.append('<p style="margin:0 0 4px">%s</p>' % run('<b>VESSEL ITINERARY</b>'))
+    chunks.append('<table style="border-collapse:collapse;margin:0;%s">' % cell_font)
     for label, value in itinerary:
         shown = _mail_date(value)
         lines.append('%s\t%s' % (label, shown))
-        chunks.append('<p style="margin:0 0 2px">%s</p>' %
-                      run('%s : <b>%s</b>' % (html.escape(label), html.escape(shown))))
+        chunks.append('<tr>%s%s</tr>' % (cell(html.escape(label)),
+                                         cell('<b>%s</b>' % html.escape(shown))))
+    chunks.append('</table>')
     chunks.append(spacer)
     for section_no, key in enumerate(order, 1):
         sec = bykey.get(key) or {'section_key': key, 'label': key.title()}

@@ -11,8 +11,59 @@ import tempfile
 import unittest
 import zipfile
 
+from html.parser import HTMLParser
+
 import app as appmod
 import routes_dock_daily
+
+
+class _Tree(HTMLParser):
+    """Minimal element tree for the mail body, so structure tests do not rely on
+    regex. A regex can pass on markup that never closes a tag or that nests a
+    cell wrongly, which is exactly what the Outlook paste is sensitive to.
+
+    Each node is {'tag', 'attrs', 'kids', 'text'}; 'text' is the character data
+    that is a *direct* child of the node. Unbalanced markup raises."""
+
+    VOID = {'br', 'img', 'meta', 'hr', 'input'}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.root = {'tag': None, 'attrs': {}, 'kids': [], 'text': ''}
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = {'tag': tag, 'attrs': dict(attrs), 'kids': [], 'text': ''}
+        self.stack[-1]['kids'].append(node)
+        if tag not in self.VOID:
+            self.stack.append(node)
+
+    def handle_endtag(self, tag):
+        if len(self.stack) < 2 or self.stack[-1]['tag'] != tag:
+            raise AssertionError('unbalanced </%s> under %r' % (tag, self.stack[-1]['tag']))
+        self.stack.pop()
+
+    def handle_data(self, data):
+        self.stack[-1]['text'] += data
+
+    def handle_entityref(self, name):
+        self.stack[-1]['text'] += '&%s;' % name
+
+    @classmethod
+    def parse(cls, markup):
+        parser = cls()
+        parser.feed(markup)
+        parser.close()
+        if len(parser.stack) != 1:
+            raise AssertionError('unclosed %r' % [n['tag'] for n in parser.stack[1:]])
+        return parser.root
+
+    @staticmethod
+    def find(node, tag):
+        found = [node] if node['tag'] == tag else []
+        for kid in node['kids']:
+            found.extend(_Tree.find(kid, tag))
+        return found
 
 
 class DockDailyTests(unittest.TestCase):
@@ -317,8 +368,11 @@ class DockDailyTests(unittest.TestCase):
         font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
         run = '<span style="%s">%%s</span>' % font
         spacer = '<p style="margin:0;line-height:1.5">%s</p>' % (run % '&nbsp;')
-        # Itinerary rows are paragraphs, not table rows.
-        self.assertIn('<p style="margin:0 0 2px">%s</p>' % (run % 'BERTHING : <b>2026.03.24</b>'),
+        # Itinerary is a bordered table, and each cell's text sits in a <p>.
+        box = 'border:1px solid #777;padding:3px 9px;%s' % font
+        td = '<td style="%s"><p style="margin:0;%s">%%s</p></td>' % (box, font)
+        self.assertIn('<table style="border-collapse:collapse;margin:0;%s">' % font, preview['html'])
+        self.assertIn('<tr>%s%s</tr>' % (td % (run % 'BERTHING'), td % (run % '<b>2026.03.24</b>')),
                       preview['html'])
         self.assertIn('%s<p style="margin:0 0 6px">%s' % (spacer, run % '<b>1. &nbsp;Shipyard</b>'),
                       preview['html'])
@@ -331,12 +385,15 @@ class DockDailyTests(unittest.TestCase):
                       preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
 
-    def test_email_html_contains_no_table_at_all(self):
-        """Outlook iOS does not apply a pasted font-size inside a table. Measured cap
-        height across three real pastes stayed at ~8pt in cells while paragraph text
-        held the declared 11pt, and it did not move as the declaration was added to
-        the wrapper <div>, then every <table>/<td>, then a <span> per text node.
-        The only way to get one size is to render no tables."""
+    def test_email_only_table_is_the_itinerary_and_its_cells_wrap_text_in_paragraphs(self):
+        """On the Outlook iOS paste that was measured, text sitting directly inside a
+        <td> came out at ~8pt while paragraph text outside any table held the
+        declared 11pt, and that did not move as the declaration was added to the
+        wrapper <div>, then every <table>/<td>, then a <span> per text node. Cell
+        text therefore goes inside a <p>; whether Outlook honours 11pt for a <p>
+        inside a <td> is an untested hypothesis, so this test locks the markup
+        shape only. The one remaining table is the itinerary, which needs the
+        borders; work items stay paragraphs."""
         p = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': 'Font DD', 'berthing_date': '2026-03-24'}).get_json()
         r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
@@ -347,13 +404,36 @@ class DockDailyTests(unittest.TestCase):
                             'content': {'body': '갑판 도장 진행중\n프로펠러 검사 완료'}}],
         }).status_code)
         body = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()['html']
-        self.assertFalse(re.findall(r'</?(?:table|tr|td|th|tbody|thead)\b', body, re.I), body)
-        # Every block still declares the size for clients that honour it. Counted
-        # inside tags only: report text could contain the same literal string.
+        # Parsed, not regexed: unbalanced or mis-nested markup raises here.
+        root = _Tree.parse(body)
+        tables = _Tree.find(root, 'table')
+        self.assertEqual(1, len(tables), body)
+        self.assertFalse(_Tree.find(root, 'th') or _Tree.find(root, 'thead'), body)
+        rows = _Tree.find(tables[0], 'tr')
+        self.assertEqual(4, len(rows), 'itinerary is BERTHING/IN/OUT/DEPARTURE')
+        for row in rows:
+            cells = [k for k in row['kids'] if k['tag'] == 'td']
+            self.assertEqual(2, len(cells), row)
+            self.assertEqual(cells, row['kids'], 'only cells may sit in a row')
+            for td in cells:
+                # The whole point: a cell's text is inside a <p>, never in the cell.
+                self.assertEqual(['p'], [k['tag'] for k in td['kids']], td)
+                self.assertEqual('', td['text'].strip(), 'text sits directly in the <td>')
+                self.assertIn('font-size:11pt', td['kids'][0]['attrs'].get('style', ''))
+        # Every container still declares the size for clients that do inherit, and
+        # every paragraph carries one text run declaring it. Matched inside tags
+        # only: report text could contain the same literal string.
         tags = re.findall(r'<[^>]+>', body)
-        blocks = [t for t in tags if re.match(r'<p\b', t, re.I)]
-        self.assertTrue(blocks)
-        self.assertEqual(sum(t.count('font-size:11pt') for t in tags), len(blocks) + 1)
+        containers = [t for t in tags if re.match(r'<(?:div|table|td)\b', t, re.I)]
+        self.assertTrue(containers)
+        for tag in containers:
+            self.assertIn('font-size:11pt', tag)
+        paragraphs = [t for t in tags if re.match(r'<p\b', t, re.I)]
+        runs = [t for t in tags if re.match(r'<span\b', t, re.I)]
+        self.assertTrue(paragraphs)
+        self.assertEqual(len(paragraphs), len(runs))
+        for tag in runs:
+            self.assertIn('font-size:11pt', tag)
 
     def test_email_html_puts_every_text_run_in_an_11pt_span(self):
         """Cell level declarations were still not enough: the Outlook iOS paste kept
@@ -371,7 +451,7 @@ class DockDailyTests(unittest.TestCase):
                             'content': {'body': '갑판 도장 진행중\n프로펠러 검사 완료'}}],
         }).status_code)
         body = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()['html']
-        opens = list(re.finditer(r'<(?:p|td)\b[^>]*>', body))
+        opens = list(re.finditer(r'<p\b[^>]*>', body))
         self.assertTrue(opens)
         for tag in opens:
             self.assertTrue(body[tag.end():].startswith('<span style="%s">' % font),
