@@ -287,8 +287,10 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('<table style="border-collapse:collapse', preview['html'])
         self.assertIn('<b>1. &nbsp;Shipyard</b>', preview['html'])
         self.assertIn('</table><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>1. &nbsp;Shipyard</b>', preview['html'])
-        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</p><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>2. &nbsp;EGCS Retrofit</b>', preview['html'])
-        self.assertIn('2) &nbsp;Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;', preview['html'])
+        self.assertIn('<table role="presentation" cellpadding="0" cellspacing="0" border="0"', preview['html'])
+        self.assertIn('<td width="24" style="width:24px">&nbsp;</td>', preview['html'])
+        self.assertIn('<td style="vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">2)</td><td style="padding:3px 0">Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td>', preview['html'])
+        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td></tr></table><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>2. &nbsp;EGCS Retrofit</b>', preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
 
     def test_email_preview_translates_legacy_defaults_but_preserves_custom_footer(self):

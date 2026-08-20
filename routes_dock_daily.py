@@ -758,8 +758,13 @@ def _email(rid):
                       (section_no, html.escape(sec['label'])))
         for item_no, item in enumerate(items, 1):
             lines.append('%d) %s' % (item_no, item))
-            chunks.append('<p style="margin:3px 0 3px 24px">%d) &nbsp;%s</p>' %
-                          (item_no, html.escape(item)))
+            chunks.append(
+                '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                'style="border-collapse:collapse;margin:0"><tr>'
+                '<td width="24" style="width:24px">&nbsp;</td>'
+                '<td style="vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">%d)</td>'
+                '<td style="padding:3px 0">%s</td></tr></table>' %
+                (item_no, html.escape(item)))
         chunks.append(spacer)
     safety_footer = r['safety_footer'] or ''
     if safety_footer == 'Safety first. Please advise if any unsafe condition is observed.':
