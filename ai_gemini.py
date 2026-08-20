@@ -18,6 +18,9 @@ import json
 import os
 import re as _re_cls
 import uuid
+import hashlib
+import tempfile
+from datetime import datetime
 
 from flask import abort, jsonify, request, send_from_directory, session
 from flask import Blueprint
@@ -29,6 +32,7 @@ from helpers_shared import (
     GEMINI_API_KEY, VETTING_TYPES, _MARITIME_TERMS, _coerce_translation_items,
     _ext_allowed, _findings_workbook, _gemini_call_json, _model_for, _safe_filename,
     _vetting_display_order, _vetting_with_counts, _xlsx_to_text, login_required,
+    api_key_required,
 )
 
 bp = Blueprint("ai_gemini", __name__)
@@ -923,7 +927,7 @@ def api_vt_export(vid):
 @login_required
 def api_vt_attachments_list(vid):
     rows = query(
-        'SELECT * FROM vt_attachments WHERE vetting_id=? ORDER BY id DESC',
+        'SELECT * FROM vt_attachments WHERE vetting_id=? AND inactive_at IS NULL ORDER BY id DESC',
         (vid,),
     )
     return jsonify([dict(r) for r in rows])
@@ -956,6 +960,104 @@ def api_vt_attachment_upload(vid):
     return jsonify({'id': aid, 'filename': f.filename, 'file_size': size}), 201
 
 
+_SVMS_MAX_BYTES = 20 * 1024 * 1024
+_SVMS_EXTS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp'}
+
+def _svms_norm(value):
+    """Comparison normalization only: casefold and retain unicode letters/digits."""
+    return ''.join(ch for ch in (value or '').casefold() if ch.isalnum())
+
+def _svms_magic_ok(ext, head):
+    if ext == 'pdf': return head.startswith(b'%PDF-')
+    if ext in {'jpg', 'jpeg'}: return head.startswith(b'\xff\xd8\xff')
+    if ext == 'png': return head.startswith(b'\x89PNG\r\n\x1a\n')
+    if ext == 'gif': return head.startswith((b'GIF87a', b'GIF89a'))
+    if ext in {'doc', 'xls'}: return head.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1')
+    if ext in {'docx', 'xlsx'}: return head.startswith(b'PK\x03\x04')
+    if ext in {'webp'}: return head.startswith(b'RIFF') and head[8:12] == b'WEBP'
+    if ext in {'heic', 'heif'}: return len(head) >= 12 and head[4:8] == b'ftyp'
+    if ext == 'bmp': return head.startswith(b'BM')
+    return False
+
+def _svms_activate_revision(row_id, external_file_id, vetting_id):
+    """Keep revision history while exposing exactly one active source file."""
+    execute("UPDATE vt_attachments SET inactive_at=datetime('now','localtime') WHERE source='svms' AND external_file_id=? AND id<>? AND inactive_at IS NULL",
+            (external_file_id, row_id))
+    execute("UPDATE vt_attachments SET vetting_id=?, inactive_at=NULL, synced_at=datetime('now','localtime') WHERE id=?",
+            (vetting_id, row_id))
+
+
+@bp.route('/api/ext/vettings/svms-attachment', methods=['POST'])
+@api_key_required
+def api_ext_vetting_svms_attachment():
+    """Idempotent SVMS SIRE attachment ingress; never mutates findings."""
+    required = ('vessel_name', 'report_number', 'SIRE_CD', 'FILE_TP', 'external_file_id', 'sha256')
+    vals = {k: (request.form.get(k) or '').strip() for k in required}
+    if any(not vals[k] for k in required) or 'file' not in request.files:
+        return jsonify({'error': 'missing required metadata or file'}), 400
+    if vals['FILE_TP'] not in ('SMSR', 'SMSC'):
+        return jsonify({'error': 'FILE_TP must be SMSR or SMSC'}), 400
+    claimed = vals['sha256'].lower()
+    if len(claimed) != 64 or any(c not in '0123456789abcdef' for c in claimed):
+        return jsonify({'error': 'invalid sha256'}), 400
+    vessel = _svms_norm(vals['vessel_name']); report = _svms_norm(vals['report_number'])
+    matches = query('''SELECT vt.id, v.name AS vessel_name, vt.report_number
+                       FROM vettings vt JOIN vessels v ON v.id=vt.vessel_id
+                       WHERE v.name IS NOT NULL AND vt.report_number IS NOT NULL''')
+    matches = [r for r in matches if _svms_norm(r['vessel_name']) == vessel and
+                                 _svms_norm(r['report_number']) == report]
+    if not matches:
+        return jsonify({'error': 'exact vessel/report match not found'}), 409
+    if len(matches) != 1:
+        return jsonify({'error': 'ambiguous exact vessel/report match'}), 409
+    match = matches[0]
+    vid = match['id']; f = request.files['file']; filename = os.path.basename(f.filename or '')
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    if ext not in _SVMS_EXTS: return jsonify({'error': 'unsupported extension'}), 415
+    raw = f.read(_SVMS_MAX_BYTES + 1)
+    if not raw: return jsonify({'error': 'empty file'}), 400
+    if len(raw) > _SVMS_MAX_BYTES: return jsonify({'error': 'file too large'}), 413
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != claimed: return jsonify({'error': 'sha256 mismatch'}), 400
+    if not _svms_magic_ok(ext, raw[:32]): return jsonify({'error': 'file magic mismatch'}), 415
+    old = query('SELECT * FROM vt_attachments WHERE source=\'svms\' AND external_file_id=? AND sha256=?', (vals['external_file_id'], claimed), one=True)
+    if old:
+        _svms_activate_revision(old['id'], vals['external_file_id'], vid)
+        return jsonify({'ok': True, 'id': old['id'], 'deduplicated': True}), 200
+    stored = f"vt_svms_{uuid.uuid4().hex}.{ext}"
+    stored_path = os.path.join(UPLOAD_DIR, stored)
+    committed = False
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.svms.', dir=UPLOAD_DIR)
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            out.write(raw); out.flush(); os.fsync(out.fileno())
+        os.replace(tmp, stored_path)
+        try:
+            aid = execute('''INSERT INTO vt_attachments
+                (vetting_id,filename,stored_name,file_size,mime_type,uploaded_by,source,source_type,
+                 external_sire_cd,external_file_id,sha256,synced_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))''',
+                (vid, filename, stored, len(raw), f.mimetype, 'svms-sync',
+                 'svms', 'close' if vals['FILE_TP'] == 'SMSC' else 'initial', vals['SIRE_CD'],
+                 vals['external_file_id'], claimed))
+        except Exception:
+            race = query('SELECT id FROM vt_attachments WHERE source=\'svms\' AND external_file_id=? AND sha256=?', (vals['external_file_id'], claimed), one=True)
+            if race:
+                _svms_activate_revision(race['id'], vals['external_file_id'], vid)
+                return jsonify({'ok': True, 'id': race['id'], 'deduplicated': True}), 200
+            raise
+        _svms_activate_revision(aid, vals['external_file_id'], vid)
+        committed = True
+    finally:
+        try: os.unlink(tmp)
+        except OSError: pass
+        if not committed:
+            try: os.unlink(stored_path)
+            except OSError: pass
+    return jsonify({'ok': True, 'id': aid, 'deduplicated': False}), 201
+
+
 @bp.route('/api/vt-attachments/<int:aid>', methods=['GET'])
 @login_required
 def api_vt_attachment_get(aid):
@@ -976,6 +1078,8 @@ def api_vt_attachment_delete(aid):
     a = query('SELECT * FROM vt_attachments WHERE id=?', (aid,), one=True)
     if not a:
         abort(404)
+    if (a['source'] or 'manual') == 'svms':
+        return jsonify({'error': 'SVMS synced attachments cannot be deleted'}), 403
     p = os.path.join(UPLOAD_DIR, a['stored_name'])
     if os.path.exists(p):
         try: os.remove(p)
@@ -983,6 +1087,3 @@ def api_vt_attachment_delete(aid):
             app.logger.exception('vt-attachment-delete')
     execute('DELETE FROM vt_attachments WHERE id=?', (aid,))
     return jsonify({'ok': True})
-
-
-

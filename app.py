@@ -1782,6 +1782,24 @@ def _auto_migrate():
         except Exception as e:
             print(f'[auto_migrate] vt_findings 컬럼 점검 건너뜀: {e}')
 
+        # SVMS SIRE attachment provenance; pre-existing rows remain manual.
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(vt_attachments)').fetchall()]
+            for col, ddl in (
+                ('source', "ALTER TABLE vt_attachments ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"),
+                ('source_type', "ALTER TABLE vt_attachments ADD COLUMN source_type TEXT"),
+                ('external_sire_cd', "ALTER TABLE vt_attachments ADD COLUMN external_sire_cd TEXT"),
+                ('external_file_id', "ALTER TABLE vt_attachments ADD COLUMN external_file_id TEXT"),
+                ('sha256', "ALTER TABLE vt_attachments ADD COLUMN sha256 TEXT"),
+                ('synced_at', "ALTER TABLE vt_attachments ADD COLUMN synced_at TEXT"),
+                ('inactive_at', "ALTER TABLE vt_attachments ADD COLUMN inactive_at TEXT"),
+            ):
+                if cols and col not in cols:
+                    conn.execute(ddl)
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_vt_attachments_svms_identity_sha ON vt_attachments(external_file_id, sha256) WHERE source='svms' AND external_file_id IS NOT NULL AND sha256 IS NOT NULL")
+        except Exception as e:
+            print(f'[auto_migrate] vt_attachments provenance 점검 건너뜀: {e}')
+
         # class_status.source_path (업로드 원본 파일 보관 경로, 선박별 최신만)
         try:
             cols = [r[1] for r in conn.execute('PRAGMA table_info(class_status)').fetchall()]

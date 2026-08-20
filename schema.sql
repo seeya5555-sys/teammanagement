@@ -284,9 +284,19 @@ CREATE TABLE IF NOT EXISTS vt_attachments (
     mime_type   TEXT,
     uploaded_by TEXT,
     uploaded_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    source      TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','svms')),
+    source_type TEXT CHECK (source_type IN ('initial','close') OR source_type IS NULL),
+    external_sire_cd TEXT,
+    external_file_id TEXT,
+    sha256      TEXT,
+    synced_at   TEXT,
+    inactive_at TEXT,
     FOREIGN KEY (vetting_id) REFERENCES vettings(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_vt_attachments_vetting ON vt_attachments(vetting_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vt_attachments_svms_identity_sha
+  ON vt_attachments(external_file_id, sha256)
+  WHERE source='svms' AND external_file_id IS NOT NULL AND sha256 IS NOT NULL;
 
 -- ═════════════════════════════════════════════════════════════
 --  Calendar Events (일정 모듈)

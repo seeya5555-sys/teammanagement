@@ -19,6 +19,7 @@
       "_vetting_display_order",
       "_vetting_with_counts",
       "_xlsx_to_text",
+      "api_key_required",
       "login_required"
     ]
   },

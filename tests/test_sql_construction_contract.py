@@ -58,8 +58,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #   · ALTER 의 컬럼명·타입은 **파라미터 바인딩이 불가능한 식별자/DDL** 자리다. 값 보간이 아니다.
 #   · 부팅 경로(배포마다 1회)에서만 돌고 요청 처리 중엔 실행되지 않는다.
 #   · count 는 눈으로 세지 않고 `repository_fingerprints()` 실측 재계산으로 갱신했다(위 2026-08-15 교훈).
-EXPECTED_COUNT = 159
-EXPECTED_SHA256 = "b8865afe1f4270efab8bba37ec9bc9da7e2ee8b1b07c953d1ad749925aaf6bfb"
+# 2026-08-20 baseline update — `app.py:_auto_migrate()` 의 vt_attachments provenance ALTER 1 site.
+#   · `ddl` 은 같은 문장 안의 인라인 리터럴 튜플에서만 온다(source/source_type/external IDs/hash/time).
+#     request·설정·DB 값은 식별자나 DDL 문법에 닿지 않는다.
+#   · 기존 행을 manual source 로 보존하는 부팅 migration 이며 요청 처리 중에는 실행되지 않는다.
+#   · count/hash 는 `repository_fingerprints()` 출력으로 실측했다.
+EXPECTED_COUNT = 160
+EXPECTED_SHA256 = "dc66458c7fad733f8b108af31d68b045f1abe42f284326adb6a6fb1e12eb13ad"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

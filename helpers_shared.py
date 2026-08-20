@@ -672,7 +672,7 @@ def _vetting_with_counts(v):
     d['open_manual']        = v['manual_open_count']        is not None
     d['close_manual']       = v['manual_close_count']       is not None
     # 첨부 카운트
-    ar = query('SELECT COUNT(*) AS n FROM vt_attachments WHERE vetting_id=?',
+    ar = query('SELECT COUNT(*) AS n FROM vt_attachments WHERE vetting_id=? AND inactive_at IS NULL',
                (vid,), one=True)
     d['attach_count'] = ar['n'] if ar else 0
     return d

@@ -2731,6 +2731,16 @@
   "defaults": {}
  },
  {
+  "rule": "/api/ext/vettings/svms-attachment",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_ext_vetting_svms_attachment",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/ext/vlcc-push/done",
   "methods": [
    "OPTIONS",

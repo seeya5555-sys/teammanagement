@@ -1413,6 +1413,10 @@ function vtAttachItemEl(a) {
     ...(isMsg ? [el('a', {
       href: `/api/vt-attachments/${a.id}`, class: 'attach-size', title: '원본 MSG 다운로드',
     }, '원본 다운로드')] : []),
+    ...(a.source === 'svms' ? [el('span', { class: 'attach-size svms-badge' },
+      a.source_type === 'close' ? 'SVMS 회신서(Close Report)' : 'SVMS Initial Report'),
+      ...(a.source_type === 'close' ? [el('span', { class: 'attach-size' }, '회신서 수신은 모든 관찰사항이 종결됐다는 뜻이 아님')] : []),
+      ...(a.synced_at ? [el('span', { class: 'attach-size' }, `동기화: ${a.synced_at}`)] : [])] : []),
   );
   item.append(meta);
 
@@ -1422,6 +1426,7 @@ function vtAttachItemEl(a) {
     title: '삭제',
     onclick: () => deleteVtAttach(a.id),
   });
+  if (a.source === 'svms') rm.hidden = true;
   rm.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2">
     <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
     <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
