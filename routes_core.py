@@ -1527,14 +1527,16 @@ def api_vessel_create():
             return jsonify({'error': '본인 담당 감독으로만 선박을 추가할 수 있습니다.'}), 403
 
     vid = execute('''
-        INSERT INTO vessels (name, short_name, vessel_type, imo, class_society, manager, active)
-        VALUES (?, ?, ?, ?, ?, ?, 1)
+        INSERT INTO vessels
+          (name, short_name, vessel_type, imo, class_society, manager, manager_supervisor, active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     ''', (name,
           (d.get('short_name') or name[:12]).strip(),
           d.get('vessel_type') or '',
           d.get('imo') or '',
           d.get('class_society') or '',
-          d.get('manager') or ''))
+          d.get('manager') or '',
+          str(d.get('manager_supervisor') or '').strip()))
     for sid in sids:
         execute('INSERT OR IGNORE INTO supervisor_vessels (vessel_id, supervisor_id) VALUES (?, ?)',
                 (vid, sid))
@@ -1566,7 +1568,10 @@ def api_vessel_update(vid):
         d.pop('active', None)
 
     sets, params = [], []
-    for f in ('name', 'short_name', 'vessel_type', 'imo', 'class_society', 'manager', 'active'):
+    if 'manager_supervisor' in d:
+        d['manager_supervisor'] = str(d.get('manager_supervisor') or '').strip()
+    for f in ('name', 'short_name', 'vessel_type', 'imo', 'class_society',
+              'manager', 'manager_supervisor', 'active'):
         if f in d:
             sets.append(f'{f} = ?')
             params.append(d[f])
@@ -2271,4 +2276,3 @@ def api_cs_finding_delete(fid):
     for idx, r in enumerate(rows, 1):
         execute('UPDATE cs_findings SET no=? WHERE id=?', (idx, r['id']))
     return jsonify({'ok': True})
-

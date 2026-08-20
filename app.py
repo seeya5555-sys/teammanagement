@@ -1836,6 +1836,15 @@ def _auto_migrate():
         except Exception as e:
             print(f'[auto_migrate] vessels.manager 점검 건너뜀: {e}')
 
+        # vessels.manager_supervisor (관리사 측 담당감독 이름 — 수동 입력)
+        try:
+            cols = [r[1] for r in conn.execute('PRAGMA table_info(vessels)').fetchall()]
+            if cols and 'manager_supervisor' not in cols:
+                conn.execute("ALTER TABLE vessels ADD COLUMN manager_supervisor TEXT NOT NULL DEFAULT ''")
+                print('[auto_migrate] vessels.manager_supervisor 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] vessels.manager_supervisor 점검 건너뜀: {e}')
+
         # mail_card.pending (보류 플래그)
         try:
             cols = [r[1] for r in conn.execute('PRAGMA table_info(mail_card)').fetchall()]

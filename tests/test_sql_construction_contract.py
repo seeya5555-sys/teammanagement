@@ -63,8 +63,8 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #     request·설정·DB 값은 식별자나 DDL 문법에 닿지 않는다.
 #   · 기존 행을 manual source 로 보존하는 부팅 migration 이며 요청 처리 중에는 실행되지 않는다.
 #   · count/hash 는 `repository_fingerprints()` 출력으로 실측했다.
-EXPECTED_COUNT = 160
-EXPECTED_SHA256 = "dc66458c7fad733f8b108af31d68b045f1abe42f284326adb6a6fb1e12eb13ad"
+EXPECTED_COUNT = 161
+EXPECTED_SHA256 = "631eb665f3759f3189a807176bd76ded95de5411b3a45cdd154e2a383fce8cc0"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

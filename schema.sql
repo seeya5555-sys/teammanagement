@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS vessels (
     flag          TEXT,
     class_society TEXT,                            -- BV / KR / LR / ABS / DNV / NK
     manager       TEXT,                            -- 관리사(선박관리사) 텍스트 지정
+    manager_supervisor TEXT NOT NULL DEFAULT '',   -- 관리사 측 담당감독 이름(수동 입력)
     vsl_cd        TEXT,                            -- SSOT(P0): SVMS 4자 코드
     vt_vessel_id  INTEGER,                         -- SSOT(P0): vesseltracker 내부 vesselId
     aliases       TEXT,                            -- SSOT(P0): 구선명·표기 별칭 JSON 배열 문자열
