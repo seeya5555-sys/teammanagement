@@ -53,13 +53,59 @@
     document.querySelectorAll('.dd-itinerary-date').forEach(i=>i.onchange=()=>{state.dirty=true;});
   }
   function blockText(b){const c=b.content||{};return c.title||c.body||c.text||(b.block_type==='table'?JSON.stringify(c.rows||[]):'');}
+  // Cards carry their own "1) " numbering so what the supervisor types is what
+  // the Outlook mail shows. The renderers strip any stored number before
+  // applying their own, so a renumbered card never double-numbers.
+  const NUM=window.DockDailyNumbering;
+  function applyNumbering(ta,result){
+    if(ta.value!==result.value)ta.value=result.value;
+    ta.selectionStart=ta.selectionEnd=result.caret;
+  }
+  function commitItems(ta){
+    const b=findBlock(ta.dataset.key); if(!b||blockText(b)===ta.value)return;
+    b.content={...(b.content||{}),body:ta.value}; b.block_type='paragraph'; b._edit=true; state.dirty=true;
+  }
+  function normalizeItems(ta,keepCaretLine){
+    applyNumbering(ta,NUM.renumber(ta.value,ta.selectionStart,keepCaretLine));
+    commitItems(ta);
+  }
+  function bindItemNumbering(ta){
+    let composing=false;
+    // Hangul/IME input must never be renumbered mid-composition, so the empty
+    // card gets its "1) " on focus instead of on the first keystroke.
+    ta.onfocus=()=>{if(!ta.value.trim()){ta.value='1) ';ta.selectionStart=ta.selectionEnd=3;}};
+    ta.oncompositionstart=()=>{composing=true;};
+    // A composed run can finish on a line that still has no number (legacy card
+    // or a paste), so normalize once the IME hands the text back.
+    ta.oncompositionend=()=>{composing=false;if(NUM.needsNumbering(ta.value))normalizeItems(ta,true);else commitItems(ta);};
+    ta.onkeydown=e=>{
+      if(e.key!=='Enter'||e.shiftKey||e.isComposing||composing)return;
+      e.preventDefault();
+      applyNumbering(ta,NUM.breakLine(ta.value,ta.selectionStart,ta.selectionEnd));
+      commitItems(ta);
+    };
+    ta.oninput=()=>{
+      // Legacy cards saved without numbers get them as soon as they are edited;
+      // an already-numbered first line is left alone so mid-line typing is safe.
+      if(!composing&&NUM.needsNumbering(ta.value))normalizeItems(ta,true);
+      else commitItems(ta);
+    };
+    // Leaving the card drops any number left on an empty line.
+    ta.onblur=()=>normalizeItems(ta,false);
+  }
   function renderSections() {
     const locked=state.report.status==='final'; const blocks=state.report.blocks||[];
     $('#dd-sections').innerHTML=(state.report.sections||[]).filter(s=>s.enabled).map(s=>{
       const bs=blocks.filter(b=>b.section_key===s.section_key&&!b._delete);
-      return `<div class="dd-card dd-section" data-section="${esc(s.section_key)}"><div class="dd-section-head"><h3>${esc(s.label)}</h3><span class="dd-muted">카드에서 바로 입력</span></div>${bs.map((b,i)=>{const key=b._key??b.id;return `<div class="dd-block-editor"><div class="dd-block-meta"><span><span class="dd-badge ${b.origin==='dock_auto'?'auto':''}">${b.origin==='dock_auto'?'자동수집':'수동'}</span>${b.manual_override?'<span class="dd-badge">수동 수정 보호</span>':''}</span>${bs.length>1?`<button class="dd-btn alt delete-inline" type="button" data-key="${key}" ${locked?'disabled':''}>삭제</button>`:''}</div><textarea class="dd-section-edit" data-key="${key}" placeholder="${esc(s.label)} 내용을 입력하세요" ${locked?'disabled':''}>${esc(blockText(b))}</textarea></div>`}).join('')}</div>`;
+      return `<div class="dd-card dd-section" data-section="${esc(s.section_key)}"><div class="dd-section-head"><h3>${esc(s.label)}</h3><span class="dd-muted">엔터를 누르면 1) 2) 번호가 붙습니다</span></div>${bs.map((b,i)=>{const key=b._key??b.id;
+      // Provenance badges only carry meaning for auto-collected blocks; hand
+      // written cards showed a permanent "수동" pair that said nothing.
+      const badges=b.origin==='dock_auto'?`<span class="dd-badge auto">자동수집</span>${b.manual_override?'<span class="dd-badge">수동 수정 보호</span>':''}`:'';
+      const del=bs.length>1?`<button class="dd-btn alt delete-inline" type="button" data-key="${key}" ${locked?'disabled':''}>삭제</button>`:'';
+      const meta=(badges||del)?`<div class="dd-block-meta"><span>${badges}</span>${del}</div>`:'';
+      return `<div class="dd-block-editor">${meta}<textarea class="dd-section-edit" data-key="${key}" placeholder="${esc(s.label)} 내용을 입력하세요" ${locked?'disabled':''}>${esc(blockText(b))}</textarea></div>`}).join('')}</div>`;
     }).join('');
-    document.querySelectorAll('.dd-section-edit').forEach(t=>t.oninput=()=>{const b=findBlock(t.dataset.key);if(!b)return;b.content={...(b.content||{}),body:t.value};b.block_type='paragraph';b._edit=true;state.dirty=true;});
+    document.querySelectorAll('.dd-section-edit').forEach(bindItemNumbering);
     document.querySelectorAll('.delete-inline').forEach(btn=>btn.onclick=()=>{const b=findBlock(btn.dataset.key);if(!b)return;if(b._new)state.report.blocks=state.report.blocks.filter(x=>x!==b);else b._delete=true;state.dirty=true;ensureSectionEditors();renderSections();});
   }
   function findBlock(key){return (state.report.blocks||[]).find(b=>String(b._key??b.id)===String(key));}

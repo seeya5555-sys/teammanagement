@@ -81,6 +81,24 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn("dd-section-edit", script)
         self.assertIn("ClipboardItem", script)
         self.assertIn('<p style="margin:0;line-height:1.5">&nbsp;</p>${v.html}', script)
+        # Cards auto-number on Enter and no longer show the meaningless
+        # 수동 / 수동 수정 보호 pair on hand written blocks. The numbering logic
+        # itself is exercised by tests/dock_daily_numbering.test.js.
+        self.assertIn('js/dock_daily_numbering.js', html)
+        self.assertLess(html.index('js/dock_daily_numbering.js'), html.index('js/dock_daily.js'))
+        self.assertIn('window.DockDailyNumbering', script)
+        self.assertIn("document.querySelectorAll('.dd-section-edit').forEach(bindItemNumbering)", script)
+        self.assertIn('NUM.breakLine(ta.value,ta.selectionStart,ta.selectionEnd)', script)
+        self.assertIn('oncompositionstart', script)
+        self.assertIn('oncompositionend', script)
+        self.assertIn('엔터를 누르면 1) 2) 번호가 붙습니다', script)
+        self.assertNotIn("?'자동수집':'수동'", script)
+
+        with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js',
+                               'dock_daily_numbering.js'), encoding='utf-8') as f:
+            numbering = f.read()
+        self.assertIn('function renumber(', numbering)
+        self.assertIn('function breakLine(', numbering)
 
     def test_docx_attachment_upload_and_inline_preview(self):
         project = self.client.post('/api/dock-daily/projects', json={
@@ -292,6 +310,71 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('<td style="vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">2)</td><td style="padding:3px 0">Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td>', preview['html'])
         self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td></tr></table><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>2. &nbsp;EGCS Retrofit</b>', preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
+
+    def test_card_written_numbers_are_never_rendered_twice(self):
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Numbered DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-05-09'}).get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [
+                # Exactly what the auto-numbering card now stores, plus a hand
+                # typed variant with odd spacing and an out-of-order number.
+                {'section_key': 'shipyard', 'block_type': 'paragraph',
+                 'content': {'body': '1) Tank cleaning\n2 )  Hull blasting\n7) Anode renewal'}},
+                {'section_key': 'vendor', 'block_type': 'paragraph',
+                 'content': {'body': '1) Vendor attendance'}},
+            ],
+        })
+        self.assertEqual(200, saved.status_code)
+        preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+        self.assertIn('1) Tank cleaning', preview['text'])
+        self.assertIn('2) Hull blasting', preview['text'])
+        self.assertIn('3) Anode renewal', preview['text'])
+        self.assertNotIn('1) 1)', preview['text'])
+        self.assertNotIn('7)', preview['text'])
+        self.assertNotIn('1) 1)', preview['html'])
+        self.assertIn('<td style="padding:3px 0">Tank cleaning</td>', preview['html'])
+        self.assertIn('<td style="padding:3px 0">Anode renewal</td>', preview['html'])
+        svms = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+        self.assertEqual('1) Tank cleaning\n2) Hull blasting\n3) Anode renewal',
+                         svms['fields']['RMK_SYD'])
+        self.assertEqual('1) Vendor attendance', svms['fields']['RMK_VNDR'])
+        self.assertNotIn('1. 1)', svms['fields']['RMK'])
+
+    def test_legacy_table_image_and_multi_block_sections_still_render(self):
+        """Blocks the textarea editor never creates must keep rendering."""
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Legacy Blocks DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-05-10'}).get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [
+                {'section_key': 'shipyard', 'block_type': 'table', 'sort_order': 0,
+                 'content': {'columns': ['WBT', 'Plan'], 'rows': [['No.1', '05-01'], ['No.2', '05-03']]}},
+                {'section_key': 'shipyard', 'block_type': 'image', 'sort_order': 1,
+                 'content': {'caption': 'Hull photo', 'attachment_id': 0}},
+                {'section_key': 'shipyard', 'block_type': 'item', 'sort_order': 2,
+                 'content': {'title': 'Runner collected item', 'body': 'ignored by plain render'}},
+                {'section_key': 'shipyard', 'block_type': 'paragraph', 'sort_order': 3,
+                 'content': {'body': ''}},
+            ],
+        })
+        self.assertEqual(200, saved.status_code)
+        svms = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+        syd = svms['fields']['RMK_SYD']
+        self.assertIn('WBT | Plan', syd)
+        self.assertIn('No.1 | 05-01', syd)
+        self.assertIn('[Image] Hull photo', syd)
+        self.assertIn('Runner collected item', syd)
+        self.assertNotIn('1) 1)', syd)
+        # Numbering stays gapless and empty blocks never claim a number.
+        self.assertEqual(['1', '2', '3', '4', '5'], [x.split(')')[0] for x in syd.splitlines()])
+        preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+        self.assertIn('[Image] Hull photo', preview['text'])
+        self.assertNotIn('1) 1)', preview['text'])
 
     def test_email_preview_translates_legacy_defaults_but_preserves_custom_footer(self):
         p = self.client.post('/api/dock-daily/projects', json={

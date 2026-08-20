@@ -33,6 +33,11 @@ FIXED = (
 FIXED_KEYS = {x[0] for x in FIXED}
 BLOCK_TYPES = {'item', 'paragraph', 'table', 'image'}
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+# The editor cards now auto-number every work item as "1) ", so any leading
+# number the stored text already carries is dropped before the mail/SVMS
+# renderers apply their own numbering.  Without this a saved "1) foo" would
+# render as "1) 1) foo".
+ITEM_NO_RE = re.compile(r'^\s*\d+\s*\)\s*')
 MAX_ATTACHMENT = 20 * 1024 * 1024
 MAX_OOXML_UNCOMPRESSED = 64 * 1024 * 1024
 MAX_OOXML_PART = 8 * 1024 * 1024
@@ -674,6 +679,10 @@ def _render_section(rid, key, label, as_html=False):
     blocks = _blocks_for(rid, key)
     if not blocks:
         return '<p>NIL</p>' if as_html else 'NIL'
+    if not as_html:
+        # Same one-item-per-line numbering as the mail body so a card written as
+        # "1) ... 2) ..." is never numbered twice on the SVMS side either.
+        return '\n'.join('%d) %s' % (no, item) for no, item in enumerate(_item_lines(rid, key), 1))
     vals = []
     for i, b in enumerate(blocks, 1):
         txt = _plain(b)
@@ -696,11 +705,14 @@ def _render_section(rid, key, label, as_html=False):
     return '\n'.join(vals) if not as_html else ''.join(vals)
 
 
-def _email_items(rid, key):
-    """Flatten card text into the numbered work-item rows used by Outlook."""
+def _item_lines(rid, key):
+    """Flatten card text into work items, dropping any number the card carries."""
     items = []
     for block in _blocks_for(rid, key):
-        items.extend(line.strip() for line in _plain(block).splitlines() if line.strip())
+        for line in _plain(block).splitlines():
+            stripped = ITEM_NO_RE.sub('', line).strip()
+            if stripped:
+                items.append(stripped)
     return items or ['NIL']
 
 
@@ -752,7 +764,7 @@ def _email(rid):
     chunks.extend(['</table>', spacer])
     for section_no, key in enumerate(order, 1):
         sec = bykey.get(key) or {'section_key': key, 'label': key.title()}
-        items = _email_items(rid, key)
+        items = _item_lines(rid, key)
         lines.extend(['', '%d. %s' % (section_no, sec['label'])])
         chunks.append('<p style="margin:0 0 6px"><b>%d. &nbsp;%s</b></p>' %
                       (section_no, html.escape(sec['label'])))
