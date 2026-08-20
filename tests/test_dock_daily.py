@@ -83,8 +83,14 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn("ClipboardItem", script)
         # The subject block sits outside the server body <div>, so it carries its
         # own 11pt declaration or Outlook pastes that one line in its own font.
-        self.assertIn('<p style="margin:0;line-height:1.5">&nbsp;</p></div>${v.html}', script)
-        self.assertIn('font-size:11pt;line-height:1.5;color:#222"><p style="margin:0"><b>제목: ${esc(v.subject)}</b></p>',
+        # The declaration has to reach the run (<span>) as well: Word resolves
+        # inherited block and table fonts differently, so inheritance alone left
+        # the pasted mail with two sizes.
+        font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
+        self.assertIn('<p style="margin:0;line-height:1.5"><span style="%s">&nbsp;</span></p></div>${v.html}' % font,
+                      script)
+        self.assertIn('%s;line-height:1.5;color:#222"><p style="margin:0">'
+                      '<span style="%s"><b>제목: ${esc(v.subject)}</b></span></p>' % (font, font),
                       script)
         # Cards auto-number on Enter and no longer show the meaningless
         # 수동 / 수동 수정 보호 pair on hand written blocks. The numbering logic
@@ -309,14 +315,20 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('2. EGCS Retrofit', preview['text'])
         self.assertIn('<table style="border-collapse:collapse', preview['html'])
         self.assertIn('<b>1. &nbsp;Shipyard</b>', preview['html'])
-        self.assertIn('</table><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>1. &nbsp;Shipyard</b>', preview['html'])
-        self.assertIn('<table role="presentation" cellpadding="0" cellspacing="0" border="0"', preview['html'])
         font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
-        self.assertIn('<td width="24" style="%s;width:24px">&nbsp;</td>' % font, preview['html'])
-        self.assertIn('<td style="%s;vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">2)</td>'
-                      '<td style="%s;padding:3px 0">Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td>'
-                      % (font, font), preview['html'])
-        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td></tr></table><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>2. &nbsp;EGCS Retrofit</b>', preview['html'])
+        run = '<span style="%s">%%s</span>' % font
+        spacer = '<p style="margin:0;line-height:1.5">%s</p>' % (run % '&nbsp;')
+        self.assertIn('</table>%s<p style="margin:0 0 6px">%s' % (spacer, run % '<b>1. &nbsp;Shipyard</b>'),
+                      preview['html'])
+        self.assertIn('<table role="presentation" cellpadding="0" cellspacing="0" border="0"', preview['html'])
+        self.assertIn('<td width="24" style="%s;width:24px">%s</td>' % (font, run % '&nbsp;'), preview['html'])
+        self.assertIn('<td style="%s;vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">%s</td>'
+                      '<td style="%s;padding:3px 0">%s</td>'
+                      % (font, run % '2)', font,
+                         run % 'Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;'), preview['html'])
+        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</span></td></tr></table>%s'
+                      '<p style="margin:0 0 6px">%s' % (spacer, run % '<b>2. &nbsp;EGCS Retrofit</b>'),
+                      preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
 
     def test_email_html_declares_11pt_on_every_table_and_cell(self):
@@ -342,6 +354,31 @@ class DockDailyTests(unittest.TestCase):
         # Inheritance alone would leave exactly one declaration, on the wrapper div.
         self.assertGreater(body.count('font-size:11pt'), 1)
 
+    def test_email_html_puts_every_text_run_in_an_11pt_span(self):
+        """Cell level declarations were still not enough: the Outlook iOS paste kept
+        a 16px cap height for <p> text against 12px inside <td>. The mechanism is
+        not proven, only the divergence, so the workaround is to leave nothing to
+        inherit — every text node sits in a <span> carrying the declaration."""
+        font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Run DD', 'berthing_date': '2026-03-24'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-05-12'}).get_json()
+        self.assertEqual(200, self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [{'section_key': 'shipyard', 'block_type': 'paragraph',
+                            'content': {'body': '갑판 도장 진행중\n프로펠러 검사 완료'}}],
+        }).status_code)
+        body = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()['html']
+        opens = list(re.finditer(r'<(?:p|td)\b[^>]*>', body))
+        self.assertTrue(opens)
+        for tag in opens:
+            self.assertTrue(body[tag.end():].startswith('<span style="%s">' % font),
+                            body[tag.start():tag.end() + 80])
+        # Nothing readable may be left outside those runs.
+        outside = re.sub(r'<span style="%s">.*?</span>' % re.escape(font), '', body, flags=re.S)
+        self.assertEqual('', re.sub(r'<[^>]+>', '', outside).strip())
+
     def test_card_written_numbers_are_never_rendered_twice(self):
         p = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': 'Numbered DD'}).get_json()
@@ -366,7 +403,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('1) 1)', preview['text'])
         self.assertNotIn('7)', preview['text'])
         self.assertNotIn('1) 1)', preview['html'])
-        item_cell = '<td style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;padding:3px 0">%s</td>'
+        item_cell = ('<td style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;padding:3px 0">'
+                     '<span style="font-family:Arial,Helvetica,sans-serif;font-size:11pt">%s</span></td>')
         self.assertIn(item_cell % 'Tank cleaning', preview['html'])
         self.assertIn(item_cell % 'Anode renewal', preview['html'])
         svms = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
