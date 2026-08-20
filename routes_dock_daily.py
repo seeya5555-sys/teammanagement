@@ -196,8 +196,8 @@ def _create_report(db, project_id, report_date, actor='system'):
     cur = db.execute('''INSERT INTO dock_daily_report
         (project_id, report_date, status, revision, auto_snapshot_json, email_subject, email_intro, safety_footer)
         VALUES (?,?,'auto_draft',1,'{}',?,?,?)''',
-        (project_id, report_date, subject, 'Dear all,\nPlease find the dock daily report below.',
-         'Safety first. Please advise if any unsafe condition is observed.'))
+        (project_id, report_date, subject,
+         '안녕하십니까.\n아래와 같이 금일 입거공사 진행사항을 보고드립니다.', ''))
     rid = cur.lastrowid
     db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor) VALUES (?,?,?,?)',
                (rid, 1, json.dumps(_snapshot(rid), ensure_ascii=False), actor))
@@ -717,6 +717,11 @@ def _email(rid):
     order = ['shipyard'] + [x['section_key'] for x in specials] + ['survey', 'vendor', 'remark']
     subject = r['email_subject'] or '[Dock] M/T %s - Dock Daily Report (%s)' % (r['vessel_name'], r['report_date'])
     intro = r['email_intro'] or ''
+    # Reports created before the Korean mail format was adopted retain the
+    # former English defaults in the database. Render those legacy defaults
+    # with the current wording without overwriting any user-edited content.
+    if intro == 'Dear all,\nPlease find the dock daily report below.':
+        intro = '안녕하십니까.\n아래와 같이 금일 입거공사 진행사항을 보고드립니다.'
     sender = session.get('display_name') or session.get('username') or ''
     itinerary = [('BERTHING', r['berthing_date']), ('DRY DOCK IN', r['dock_in_date']),
                  ('DRY DOCK OUT', r['dock_out_date']), ('DEPARTURE', r['departure_date'])]
@@ -745,9 +750,12 @@ def _email(rid):
             lines.append('%d) %s' % (item_no, item))
             chunks.append('<p style="margin:3px 0 3px 24px">%d) &nbsp;%s</p>' %
                           (item_no, html.escape(item)))
-    if r['safety_footer']:
-        lines.extend(['', r['safety_footer']])
-        chunks.append('<p style="margin-top:24px">%s</p>' % html.escape(r['safety_footer']))
+    safety_footer = r['safety_footer'] or ''
+    if safety_footer == 'Safety first. Please advise if any unsafe condition is observed.':
+        safety_footer = ''
+    if safety_footer:
+        lines.extend(['', safety_footer])
+        chunks.append('<p style="margin-top:24px">%s</p>' % html.escape(safety_footer))
     chunks.append('</div>')
     return {'subject': subject, 'to': '', 'from': sender, 'html': ''.join(chunks),
             'text': '\n'.join(lines), 'order': order}

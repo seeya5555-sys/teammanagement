@@ -265,6 +265,14 @@ class DockDailyTests(unittest.TestCase):
         preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
         self.assertIn('수신 : ', preview['text'])
         self.assertIn('발신 : Dock Daily', preview['text'])
+        self.assertIn('안녕하십니까.', preview['text'])
+        self.assertIn('아래와 같이 금일 입거공사 진행사항을 보고드립니다.', preview['text'])
+        self.assertNotIn('Dear all', preview['text'])
+        self.assertNotIn('Safety first', preview['text'])
+        self.assertIn('안녕하십니까.', preview['html'])
+        self.assertIn('아래와 같이 금일 입거공사 진행사항을 보고드립니다.', preview['html'])
+        self.assertNotIn('Dear all', preview['html'])
+        self.assertNotIn('Safety first', preview['html'])
         self.assertIn('BERTHING\t2026.03.24', preview['text'])
         self.assertIn('1. Shipyard', preview['text'])
         self.assertIn('1) Main deck repair complete', preview['text'])
@@ -274,6 +282,38 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('<b>1. &nbsp;Shipyard</b>', preview['html'])
         self.assertIn('2) &nbsp;Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;', preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
+
+    def test_email_preview_translates_legacy_defaults_but_preserves_custom_footer(self):
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Legacy Email DD',
+        }).get_json()
+        r = self.client.post(
+            f"/api/dock-daily/projects/{p['id']}/reports/generate",
+            json={'report_date': '2026-05-08'},
+        ).get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'metadata': {
+                'email_intro': 'Dear all,\nPlease find the dock daily report below.',
+                'safety_footer': 'Safety first. Please advise if any unsafe condition is observed.',
+            },
+        }).get_json()
+        preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+        self.assertIn('안녕하십니까.', preview['text'])
+        self.assertNotIn('Dear all', preview['text'])
+        self.assertNotIn('Safety first', preview['text'])
+
+        custom = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': saved['revision'],
+            'metadata': {
+                'email_intro': '사용자 지정 인사말',
+                'safety_footer': '별도 안전 유의사항',
+            },
+        })
+        self.assertEqual(200, custom.status_code)
+        preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+        self.assertIn('사용자 지정 인사말', preview['text'])
+        self.assertIn('별도 안전 유의사항', preview['text'])
 
 
 if __name__ == '__main__':
