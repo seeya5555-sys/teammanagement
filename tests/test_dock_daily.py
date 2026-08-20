@@ -50,6 +50,22 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(one.get_json()['id'], two.get_json()['id'])
         self.assertEqual(1, len(self.client.get(f'/api/dock-daily/projects/{pid}/reports').get_json()))
 
+    def test_page_uses_trmt_shell_and_single_project_modal(self):
+        page = self.client.get('/dock-daily')
+        self.assertEqual(200, page.status_code)
+        html = page.get_data(as_text=True)
+        self.assertIn('class="topnav"', html)
+        self.assertIn('id="dd-project-modal"', html)
+        self.assertIn('id="ddp-vessel"', html)
+        self.assertIn('필수 입력은 선박과 프로젝트명 2개입니다.', html)
+        self.assertNotIn('{% block body %}', html)
+
+        with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'dock_daily.js'), encoding='utf-8') as f:
+            script = f.read()
+        self.assertNotIn("prompt('vessel_id", script)
+        self.assertNotIn("confirm('이번 입거", script)
+        self.assertIn("projectForm.onsubmit", script)
+
     def test_report_includes_ios_itinerary_and_legacy_direct_dates(self):
         p = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel,

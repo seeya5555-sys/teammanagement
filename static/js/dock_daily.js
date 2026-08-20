@@ -2,7 +2,7 @@
   'use strict';
   const $ = (s) => document.querySelector(s);
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const state = { projects: [], project: null, reports: [], report: null, dirty: false };
+  const state = { projects: [], project: null, reports: [], report: null, dirty: false, vessels: [] };
   async function api(url, options) {
     const r = await fetch(url, options);
     const body = await r.json().catch(() => ({}));
@@ -96,15 +96,57 @@
   $('#dd-final').onclick = async () => { if (!state.report || !confirm('이 보고서를 확정하면 더 이상 수정할 수 없습니다. 확정할까요?')) return; try { if (state.dirty) await save(); state.report = await api(`/api/dock-daily/reports/${state.report.id}`, {...json({revision:state.report.revision, status:'final', operations:[]}), method:'PUT'}); await selectReport(state.report.id); } catch(e) { err(e); } };
   $('#dd-generate').onclick = async () => { if (!state.project) return; const report_date = $('#dd-generate-date').value; if (!report_date) return err(new Error('보고서 일자를 선택하세요.')); try { const report = await api(`/api/dock-daily/projects/${state.project.id}/reports/generate`, {...json({report_date}), method:'POST'}); state.reports = await api(`/api/dock-daily/projects/${state.project.id}/reports`); await selectReport(report.id); } catch(e) { err(e); } };
   $('#dd-add-block').onclick = () => { const s = state.report?.sections?.find(x => x.enabled); if (s) addBlock(s.section_key); };
-  $('#dd-new-project').onclick = async () => {
-    const vessel = prompt('vessel_id (기존 선박 ID)'); const title = prompt('프로젝트명');
-    if (!vessel || !title) return;
-    const active_from = prompt('자동작성 시작일 (YYYY-MM-DD)', new Date().toLocaleDateString('en-CA'));
-    const active_to = prompt('자동작성 종료일 (YYYY-MM-DD)', active_from || '');
-    const sourceRaw = prompt('Dock Manager ID (쉼표 구분, 예: v_xxx)', '');
-    const sourceIds = (sourceRaw || '').split(',').map(x => x.trim()).filter(Boolean);
-    const special_sections = confirm('이번 입거에 EGCS Retrofit 항목이 있습니까?') ? [{section_key:'egcs', label:'EGCS Retrofit', enabled:true}] : [];
-    try { const created = await api('/api/dock-daily/projects', {...json({vessel_id:Number(vessel), title, active_from, active_to, auto_generate:Boolean(active_from && active_to && sourceIds.length), dock_manager_project_ids:sourceIds, special_sections}), method:'POST'}); await loadProjects(); await selectProject(created.id); } catch(e) { err(e); }
+  const projectModal = $('#dd-project-modal');
+  const projectForm = $('#dd-project-form');
+  const projectError = $('#ddp-error');
+  const autoToggle = $('#ddp-auto');
+  const today = () => new Date().toLocaleDateString('en-CA');
+  function setAutoFields() {
+    const enabled = autoToggle.checked;
+    $('#ddp-auto-fields').hidden = !enabled;
+    ['#ddp-active-from','#ddp-active-to','#ddp-source-ids'].forEach(s => $(s).required = enabled);
+    if (enabled && !$('#ddp-active-from').value) {
+      $('#ddp-active-from').value = today();
+      $('#ddp-active-to').value = today();
+    }
+  }
+  async function openProjectModal() {
+    projectForm.reset(); projectError.textContent = ''; setAutoFields();
+    try {
+      if (!state.vessels.length) state.vessels = await api('/api/vessels');
+      $('#ddp-vessel').innerHTML = '<option value="">활성 선박을 선택하세요</option>' + state.vessels.map(v => `<option value="${v.id}">${esc(v.name)}${v.vsl_cd ? ` · ${esc(v.vsl_cd)}` : ''}</option>`).join('');
+      projectModal.hidden = false; document.body.style.overflow = 'hidden'; $('#ddp-vessel').focus();
+    } catch (e) { err(e); }
+  }
+  function closeProjectModal() { projectModal.hidden = true; document.body.style.overflow = ''; }
+  autoToggle.onchange = setAutoFields;
+  $('#dd-new-project').onclick = openProjectModal;
+  $('#dd-project-close').onclick = closeProjectModal;
+  $('#dd-project-cancel').onclick = closeProjectModal;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !projectModal.hidden) closeProjectModal(); });
+  projectForm.onsubmit = async e => {
+    e.preventDefault(); projectError.textContent = '';
+    if (!projectForm.reportValidity()) return;
+    const auto_generate = autoToggle.checked;
+    const active_from = $('#ddp-active-from').value || null;
+    const active_to = $('#ddp-active-to').value || null;
+    const sourceIds = $('#ddp-source-ids').value.split(',').map(x => x.trim()).filter(Boolean);
+    if (auto_generate && active_from > active_to) return projectError.textContent = '자동작성 종료일은 시작일보다 빠를 수 없습니다.';
+    if (auto_generate && sourceIds.some(x => !/^v_[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(x))) return projectError.textContent = 'Dock Manager 원천 ID는 모두 v_로 시작해야 합니다.';
+    const button = $('#dd-project-create'); button.disabled = true; button.textContent = '생성 중…';
+    try {
+      const created = await api('/api/dock-daily/projects', {...json({
+        vessel_id:Number($('#ddp-vessel').value), title:$('#ddp-title').value.trim(),
+        berthing_date:$('#ddp-berthing').value || null, dock_in_date:$('#ddp-dock-in').value || null,
+        dock_out_date:$('#ddp-dock-out').value || null, departure_date:$('#ddp-departure').value || null,
+        active_from:auto_generate ? active_from : null, active_to:auto_generate ? active_to : null,
+        auto_generate, dock_manager_project_ids:auto_generate ? sourceIds : [],
+        svms_dk_cd:$('#ddp-svms-dk').value.trim() || null,
+        special_sections:$('#ddp-egcs').checked ? [{section_key:'egcs', label:'EGCS Retrofit', enabled:true}] : []
+      }), method:'POST'});
+      closeProjectModal(); await loadProjects(); await selectProject(created.id);
+    } catch (error) { projectError.textContent = error.message || String(error); }
+    finally { button.disabled = false; button.textContent = '프로젝트 생성'; }
   };
   loadProjects().catch(err);
 })();

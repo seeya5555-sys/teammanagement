@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}입거 Daily Report · TRMT3{% endblock %}
 {% block head %}<style>
-.dd-wrap{max-width:1280px;margin:0 auto;padding:24px}.dd-grid{display:grid;grid-template-columns:300px 1fr;gap:18px}.dd-card{background:#fff;border:1px solid #e5e1d8;border-radius:14px;padding:16px;box-shadow:0 3px 14px #26241e0a}.dd-card h2,.dd-card h3{margin:0 0 12px}.dd-row{display:flex;justify-content:space-between;gap:10px;align-items:center}.dd-list button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid #eee;background:transparent;padding:12px 4px;cursor:pointer}.dd-list button.active{background:#f2f0e9;border-radius:8px}.dd-muted{color:#777;font-size:12px}.dd-input,.dd-select,.dd-text{box-sizing:border-box;width:100%;border:1px solid #d9d5cb;border-radius:8px;padding:9px;margin:4px 0 10px;background:#fff}.dd-text{min-height:72px}.dd-btn{border:0;border-radius:8px;padding:9px 13px;background:#29261f;color:#fff;cursor:pointer}.dd-btn.alt{background:#eee;color:#29261f}.dd-btn.warn{background:#a4352c}.dd-toolbar{display:flex;gap:7px;flex-wrap:wrap}.dd-report{display:none}.dd-report.show{display:block}.dd-section{margin-top:14px}.dd-section-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee;padding-bottom:8px}.dd-block{border:1px solid #eee;border-radius:8px;padding:10px;margin:8px 0;white-space:pre-wrap}.dd-badge{font-size:11px;padding:3px 7px;border-radius:99px;background:#eee}.dd-badge.auto{background:#e6f1eb;color:#24613b}.dd-preview{white-space:pre-wrap;background:#f8f7f3;border-radius:8px;padding:12px;max-height:400px;overflow:auto}.dd-kv{display:grid;grid-template-columns:130px 1fr;gap:4px;font-size:13px}.dd-error{color:#a4352c;margin:10px 0;font-size:13px}@media(max-width:800px){.dd-wrap{padding:14px}.dd-grid{grid-template-columns:1fr}.dd-projects{max-height:260px;overflow:auto}}
+.dd-wrap{max-width:1280px;margin:0 auto}.dd-grid{display:grid;grid-template-columns:300px 1fr;gap:18px}.dd-card{background:#fff;border:1px solid #e5e1d8;border-radius:14px;padding:16px;box-shadow:0 3px 14px #26241e0a}.dd-card h2,.dd-card h3{margin:0 0 12px}.dd-row{display:flex;justify-content:space-between;gap:10px;align-items:center}.dd-list button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid #eee;background:transparent;padding:12px 4px;cursor:pointer}.dd-list button.active{background:#f2f0e9;border-radius:8px}.dd-muted{color:#777;font-size:12px}.dd-input,.dd-select,.dd-text{box-sizing:border-box;width:100%;border:1px solid #d9d5cb;border-radius:8px;padding:9px;margin:4px 0 10px;background:#fff}.dd-text{min-height:72px}.dd-btn{border:0;border-radius:8px;padding:9px 13px;background:#29261f;color:#fff;cursor:pointer}.dd-btn.alt{background:#eee;color:#29261f}.dd-btn.warn{background:#a4352c}.dd-btn:disabled{opacity:.55;cursor:not-allowed}.dd-toolbar{display:flex;gap:7px;flex-wrap:wrap}.dd-report{display:none}.dd-report.show{display:block}.dd-section{margin-top:14px}.dd-section-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee;padding-bottom:8px}.dd-block{border:1px solid #eee;border-radius:8px;padding:10px;margin:8px 0;white-space:pre-wrap}.dd-badge{font-size:11px;padding:3px 7px;border-radius:99px;background:#eee}.dd-badge.auto{background:#e6f1eb;color:#24613b}.dd-preview{white-space:pre-wrap;background:#f8f7f3;border-radius:8px;padding:12px;max-height:400px;overflow:auto}.dd-kv{display:grid;grid-template-columns:130px 1fr;gap:4px;font-size:13px}.dd-error{color:#a4352c;margin:10px 0;font-size:13px}.dd-modal-intro{margin:0;padding:12px 14px;border-radius:9px;background:#f6f5f1;color:#565249;font-size:12px;line-height:1.55}.dd-modal-intro b{color:#29261f}.dd-form-section{margin-top:18px;padding-top:16px;border-top:1px solid #ebe8e0}.dd-form-section h3{margin:0 0 4px;font-size:14px}.dd-form-help{margin:0 0 12px;color:#777;font-size:12px}.dd-field-help{display:block;color:#888;font-size:11px;line-height:1.4}.dd-required{color:#a4352c}.dd-switch{display:flex;align-items:flex-start;gap:9px;padding:11px 12px;border:1px solid #e5e1d8;border-radius:9px;background:#fbfaf7}.dd-switch input{margin-top:2px}.dd-switch b{display:block;font-size:13px}.dd-switch span{display:block;color:#777;font-size:11px;margin-top:2px}.dd-auto-fields[hidden]{display:none}.dd-modal-error{min-height:18px;margin:8px 0 0;color:#a4352c;font-size:12px}.dd-modal-actions{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid #ebe8e0}@media(max-width:800px){.dd-grid{grid-template-columns:1fr}.dd-projects{max-height:260px;overflow:auto}.dd-row{align-items:flex-start}.form-row-2col,.form-row-4col{grid-template-columns:1fr}}
 </style>{% endblock %}
-{% block body %}
+{% block content %}
 <div class="dd-wrap">
-  <div class="dd-row"><div><div class="eyebrow">DOCK PREPARATION</div><h1>입거 Daily Report</h1><p class="dd-muted">자동초안은 출처를 보존하고, 수동 수정은 다음 자동 병합에서 보호됩니다.</p></div><button class="dd-btn" id="dd-new-project">＋ 프로젝트</button></div>
+  <div class="dd-row"><div><div class="eyebrow">DOCK PREPARATION</div><h1>입거 Daily Report</h1><p class="dd-muted">자동초안은 출처를 보존하고, 수동 수정은 다음 자동 병합에서 보호됩니다.</p></div><button class="dd-btn" id="dd-new-project">＋ NEW PROJECT</button></div>
   <div class="dd-grid">
     <aside class="dd-card dd-projects"><h2>입거 프로젝트</h2><div id="dd-project-list" class="dd-list">불러오는 중…</div><div id="dd-project-tools" style="display:none;margin-top:14px;border-top:1px solid #eee;padding-top:12px"><label class="dd-muted" for="dd-generate-date">보고서 일자</label><input class="dd-input" id="dd-generate-date" type="date"><button class="dd-btn" id="dd-generate">초안 생성/열기</button><div id="dd-special-tools" style="margin-top:12px"></div></div></aside>
     <main>
@@ -16,6 +16,61 @@
         <div class="dd-section"><h3>미리보기</h3><div id="dd-preview" class="dd-preview">미리보기 버튼을 누르세요.</div></div>
       </section>
     </main>
+  </div>
+</div>
+
+<div class="modal" id="dd-project-modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-box modal-lg" role="dialog" aria-modal="true" aria-labelledby="dd-project-modal-title">
+    <div class="modal-head">
+      <div><div class="eyebrow">DOCK DAILY</div><h2 id="dd-project-modal-title">NEW PROJECT</h2></div>
+      <button class="modal-close" id="dd-project-close" type="button" aria-label="닫기">×</button>
+    </div>
+    <form id="dd-project-form">
+      <div class="modal-body">
+        <p class="dd-modal-intro"><b>필수 입력은 선박과 프로젝트명 2개입니다.</b><br>자동초안을 켜는 경우에만 자동작성 기간과 Dock Manager 원천 ID가 추가로 필수입니다. 나머지 일정과 SVMS Dock No는 나중에 보완할 수 있습니다.</p>
+
+        <section class="dd-form-section">
+          <h3>기본 정보</h3><p class="dd-form-help"><span class="dd-required">*</span> 표시는 반드시 입력해야 합니다.</p>
+          <div class="form-row-2col">
+            <label class="form-field"><span class="form-label">선박 <em>*</em></span><select id="ddp-vessel" required><option value="">활성 선박을 선택하세요</option></select><span class="dd-field-help">TRMT에 등록된 활성 선박 기준</span></label>
+            <label class="form-field"><span class="form-label">프로젝트명 <em>*</em></span><input id="ddp-title" type="text" maxlength="160" required placeholder="예: 2026 Special Survey Dry Dock"><span class="dd-field-help">목록에서 구분할 입거 프로젝트 이름</span></label>
+          </div>
+        </section>
+
+        <section class="dd-form-section">
+          <h3>입출거 일정 <span class="dd-muted">선택</span></h3><p class="dd-form-help">보고서의 VESSEL ITINERARY에 표시됩니다. 확정되지 않은 날짜는 비워둘 수 있습니다.</p>
+          <div class="form-row-4col">
+            <label class="form-field"><span class="form-label">Berthing</span><input id="ddp-berthing" type="date"></label>
+            <label class="form-field"><span class="form-label">Dry Dock In</span><input id="ddp-dock-in" type="date"></label>
+            <label class="form-field"><span class="form-label">Dry Dock Out</span><input id="ddp-dock-out" type="date"></label>
+            <label class="form-field"><span class="form-label">Departure</span><input id="ddp-departure" type="date"></label>
+          </div>
+        </section>
+
+        <section class="dd-form-section">
+          <h3>자동초안 연동 <span class="dd-muted">선택</span></h3><p class="dd-form-help">매일 17:00에 Dock Manager 기록으로 초안을 만들 프로젝트만 켜세요.</p>
+          <label class="dd-switch"><input id="ddp-auto" type="checkbox"><span><b>자동초안 사용</b><span>켜면 아래 3개 항목이 모두 필수입니다.</span></span></label>
+          <div class="dd-auto-fields" id="ddp-auto-fields" hidden>
+            <div class="form-row-2col" style="margin-top:12px">
+              <label class="form-field"><span class="form-label">자동작성 시작일 <em>*</em></span><input id="ddp-active-from" type="date"><span class="dd-field-help">이 날짜부터 일자별 초안 생성</span></label>
+              <label class="form-field"><span class="form-label">자동작성 종료일 <em>*</em></span><input id="ddp-active-to" type="date"><span class="dd-field-help">이 날짜까지만 자동 생성</span></label>
+            </div>
+            <label class="form-field"><span class="form-label">Dock Manager 원천 ID <em>*</em></span><input id="ddp-source-ids" type="text" placeholder="예: v_982f9d8c, v_f8b31cd4"><span class="dd-field-help">Dock Manager의 선박/프로젝트 ID. 여러 개면 쉼표로 구분하며 모두 v_로 시작합니다.</span></label>
+          </div>
+        </section>
+
+        <section class="dd-form-section">
+          <h3>추가 연동 <span class="dd-muted">선택</span></h3>
+          <div class="form-row-2col">
+            <label class="form-field"><span class="form-label">SVMS Dock No</span><input id="ddp-svms-dk" type="text" maxlength="80" placeholder="예: SAPSMD2607060001"><span class="dd-field-help">향후 SVMS 발행 대상과 연결할 때 사용</span></label>
+            <label class="dd-switch"><input id="ddp-egcs" type="checkbox"><span><b>EGCS Retrofit Special 섹션</b><span>일반 4개 섹션 외 EGCS 전용 항목 추가</span></span></label>
+          </div>
+        </section>
+        <div class="dd-modal-error" id="ddp-error" role="alert"></div>
+      </div>
+      <div class="dd-modal-actions"><button class="dd-btn alt" id="dd-project-cancel" type="button">취소</button><button class="dd-btn" id="dd-project-create" type="submit">프로젝트 생성</button></div>
+    </form>
   </div>
 </div>
 {% endblock %}
