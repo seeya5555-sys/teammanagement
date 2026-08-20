@@ -742,15 +742,24 @@ def _email(rid):
     for intro_line in intro_lines:
         lines.extend([intro_line, ''])
     lines.append('VESSEL ITINERARY')
-    # Measured on a real Outlook iOS paste: cap height 16px for <p> text against
-    # 12px inside <td>. Declaring 11pt on the wrapping <div> and again on every
-    # table and cell did not change that, so inherited declarations alone do not
-    # give one size. What is established is the divergence, not its mechanism —
-    # font metrics, zoom and font fallback were not ruled out. Carrying the
-    # declaration down to the element that directly holds the text is an
-    # empirical workaround for that: it leaves nothing to inherit either path.
-    # Every text node therefore goes through run(); block and cell declarations
-    # stay for clients that do inherit.
+    # No <table> anywhere in this mail body, on purpose.
+    #
+    # Measured on three consecutive real Outlook iOS pastes (cap height in the
+    # screenshots, converted through the device scale):
+    #   <p> text      cap 16px -> ~11.4pt   == the 11pt we declare
+    #   <td> text     cap 11px -> ~8pt      == roughly 0.7x, whatever we declare
+    # The table figure did not move while the declaration was added to the
+    # wrapping <div> (build 229), then to every <table> and <td> (build 230),
+    # then to a <span> around every text node (build 231). So on the Outlook iOS
+    # paste path that was tested, a font-size declared inside a table does not
+    # take effect, while the block path honours it exactly. The mechanism is not
+    # established and other clients were not measured.
+    #
+    # Given that, the itinerary rows and the numbered work items are plain
+    # paragraphs. Cost: the itinerary loses its cell borders. Benefit: one size
+    # everywhere, which is what was asked for. The hanging indent keeps wrapped
+    # item text under the text rather than under the number; the offset is sized
+    # for a two digit number ('10)') and is approximate, not metric exact.
     cell_font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
 
     def run(inner):
@@ -766,18 +775,13 @@ def _email(rid):
     ]
     for intro_line in intro_lines:
         chunks.extend(['<p style="margin:0">%s</p>' % run(html.escape(intro_line)), spacer])
-    chunks.extend([
-        '<p style="margin:0 0 4px">%s</p>' % run('<b>VESSEL ITINERARY</b>'),
-        '<table style="border-collapse:collapse;width:390px;max-width:100%%;margin:0;%s">' % cell_font,
-    ])
+    chunks.append('<p style="margin:0 0 4px">%s</p>' % run('<b>VESSEL ITINERARY</b>'))
     for label, value in itinerary:
         shown = _mail_date(value)
         lines.append('%s\t%s' % (label, shown))
-        chunks.append('<tr><td style="%s;border:1px solid #777;padding:4px 8px;width:55%%">%s</td>'
-                      '<td style="%s;border:1px solid #777;padding:4px 8px">%s</td></tr>' %
-                      (cell_font, run(html.escape(label)),
-                       cell_font, run('<b>%s</b>' % html.escape(shown))))
-    chunks.extend(['</table>', spacer])
+        chunks.append('<p style="margin:0 0 2px">%s</p>' %
+                      run('%s : <b>%s</b>' % (html.escape(label), html.escape(shown))))
+    chunks.append(spacer)
     for section_no, key in enumerate(order, 1):
         sec = bykey.get(key) or {'section_key': key, 'label': key.title()}
         items = _item_lines(rid, key)
@@ -787,13 +791,8 @@ def _email(rid):
         for item_no, item in enumerate(items, 1):
             lines.append('%d) %s' % (item_no, item))
             chunks.append(
-                '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-                'style="border-collapse:collapse;margin:0;%s"><tr>'
-                '<td width="24" style="%s;width:24px">%s</td>'
-                '<td style="%s;vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">%s</td>'
-                '<td style="%s;padding:3px 0">%s</td></tr></table>' %
-                (cell_font, cell_font, run('&nbsp;'), cell_font, run('%d)' % item_no),
-                 cell_font, run(html.escape(item))))
+                '<p style="margin:0 0 3px 52px;text-indent:-30px">%s</p>' %
+                run('%d)&nbsp;&nbsp;%s' % (item_no, html.escape(item))))
         chunks.append(spacer)
     safety_footer = r['safety_footer'] or ''
     if safety_footer == 'Safety first. Please advise if any unsafe condition is observed.':

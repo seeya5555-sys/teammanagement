@@ -313,29 +313,30 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('1) Main deck repair complete', preview['text'])
         self.assertIn('2) Crane test <Hull & Valve> "ongoing"', preview['text'])
         self.assertIn('2. EGCS Retrofit', preview['text'])
-        self.assertIn('<table style="border-collapse:collapse', preview['html'])
         self.assertIn('<b>1. &nbsp;Shipyard</b>', preview['html'])
         font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
         run = '<span style="%s">%%s</span>' % font
         spacer = '<p style="margin:0;line-height:1.5">%s</p>' % (run % '&nbsp;')
-        self.assertIn('</table>%s<p style="margin:0 0 6px">%s' % (spacer, run % '<b>1. &nbsp;Shipyard</b>'),
+        # Itinerary rows are paragraphs, not table rows.
+        self.assertIn('<p style="margin:0 0 2px">%s</p>' % (run % 'BERTHING : <b>2026.03.24</b>'),
                       preview['html'])
-        self.assertIn('<table role="presentation" cellpadding="0" cellspacing="0" border="0"', preview['html'])
-        self.assertIn('<td width="24" style="%s;width:24px">%s</td>' % (font, run % '&nbsp;'), preview['html'])
-        self.assertIn('<td style="%s;vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">%s</td>'
-                      '<td style="%s;padding:3px 0">%s</td>'
-                      % (font, run % '2)', font,
-                         run % 'Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;'), preview['html'])
-        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</span></td></tr></table>%s'
+        self.assertIn('%s<p style="margin:0 0 6px">%s' % (spacer, run % '<b>1. &nbsp;Shipyard</b>'),
+                      preview['html'])
+        # Work items are hanging indented paragraphs.
+        self.assertIn('<p style="margin:0 0 3px 52px;text-indent:-30px">%s</p>'
+                      % (run % '2)&nbsp;&nbsp;Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;'),
+                      preview['html'])
+        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</span></p>%s'
                       '<p style="margin:0 0 6px">%s' % (spacer, run % '<b>2. &nbsp;EGCS Retrofit</b>'),
                       preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
 
-    def test_email_html_declares_11pt_on_every_table_and_cell(self):
-        """Outlook renders <table> with the client default font: a font-size on the
-        wrapping <div> does not reach the cells. Pasting into Outlook showed the
-        itinerary table and the numbered items smaller than the paragraphs, so the
-        declaration has to be repeated on each table and cell."""
+    def test_email_html_contains_no_table_at_all(self):
+        """Outlook iOS does not apply a pasted font-size inside a table. Measured cap
+        height across three real pastes stayed at ~8pt in cells while paragraph text
+        held the declared 11pt, and it did not move as the declaration was added to
+        the wrapper <div>, then every <table>/<td>, then a <span> per text node.
+        The only way to get one size is to render no tables."""
         p = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': 'Font DD', 'berthing_date': '2026-03-24'}).get_json()
         r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
@@ -346,13 +347,13 @@ class DockDailyTests(unittest.TestCase):
                             'content': {'body': '갑판 도장 진행중\n프로펠러 검사 완료'}}],
         }).status_code)
         body = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()['html']
-        tags = re.findall(r'<(?:table|td)\b[^>]*>', body)
-        self.assertTrue(tags)
-        for tag in tags:
-            self.assertIn('font-size:11pt', tag, tag)
-            self.assertIn('font-family:Arial,Helvetica,sans-serif', tag, tag)
-        # Inheritance alone would leave exactly one declaration, on the wrapper div.
-        self.assertGreater(body.count('font-size:11pt'), 1)
+        self.assertFalse(re.findall(r'</?(?:table|tr|td|th|tbody|thead)\b', body, re.I), body)
+        # Every block still declares the size for clients that honour it. Counted
+        # inside tags only: report text could contain the same literal string.
+        tags = re.findall(r'<[^>]+>', body)
+        blocks = [t for t in tags if re.match(r'<p\b', t, re.I)]
+        self.assertTrue(blocks)
+        self.assertEqual(sum(t.count('font-size:11pt') for t in tags), len(blocks) + 1)
 
     def test_email_html_puts_every_text_run_in_an_11pt_span(self):
         """Cell level declarations were still not enough: the Outlook iOS paste kept
@@ -403,10 +404,11 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('1) 1)', preview['text'])
         self.assertNotIn('7)', preview['text'])
         self.assertNotIn('1) 1)', preview['html'])
-        item_cell = ('<td style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;padding:3px 0">'
-                     '<span style="font-family:Arial,Helvetica,sans-serif;font-size:11pt">%s</span></td>')
-        self.assertIn(item_cell % 'Tank cleaning', preview['html'])
-        self.assertIn(item_cell % 'Anode renewal', preview['html'])
+        item_line = ('<p style="margin:0 0 3px 52px;text-indent:-30px">'
+                     '<span style="font-family:Arial,Helvetica,sans-serif;font-size:11pt">'
+                     '%s)&nbsp;&nbsp;%s</span></p>')
+        self.assertIn(item_line % (1, 'Tank cleaning'), preview['html'])
+        self.assertIn(item_line % (3, 'Anode renewal'), preview['html'])
         svms = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
         self.assertEqual('1) Tank cleaning\n2) Hull blasting\n3) Anode renewal',
                          svms['fields']['RMK_SYD'])
