@@ -242,6 +242,39 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(len(preview['fields']['RMK_VNDR'].encode('utf-8')), preview['byte_counts']['RMK_VNDR'])
         self.assertEqual(503, self.client.post(f"/api/dock-daily/reports/{r['id']}/svms-publish").status_code)
 
+    def test_email_preview_uses_outlook_numbered_card_format(self):
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Email DD',
+            'berthing_date': '2026-03-24',
+            'special_sections': [{'section_key': 'egcs', 'label': 'EGCS Retrofit', 'enabled': True}],
+        }).get_json()
+        r = self.client.post(
+            f"/api/dock-daily/projects/{p['id']}/reports/generate",
+            json={'report_date': '2026-05-07'},
+        ).get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [
+                {'section_key': 'shipyard', 'block_type': 'paragraph',
+                 'content': {'body': 'Main deck repair complete\nCrane test <Hull & Valve> "ongoing"'}},
+                {'section_key': 'egcs', 'block_type': 'paragraph',
+                 'content': {'body': 'Funnel structure welding complete'}},
+            ],
+        })
+        self.assertEqual(200, saved.status_code)
+        preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+        self.assertIn('수신 : ', preview['text'])
+        self.assertIn('발신 : Dock Daily', preview['text'])
+        self.assertIn('BERTHING\t2026.03.24', preview['text'])
+        self.assertIn('1. Shipyard', preview['text'])
+        self.assertIn('1) Main deck repair complete', preview['text'])
+        self.assertIn('2) Crane test <Hull & Valve> "ongoing"', preview['text'])
+        self.assertIn('2. EGCS Retrofit', preview['text'])
+        self.assertIn('<table style="border-collapse:collapse', preview['html'])
+        self.assertIn('<b>1. &nbsp;Shipyard</b>', preview['html'])
+        self.assertIn('2) &nbsp;Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;', preview['html'])
+        self.assertNotIn('<Hull & Valve>', preview['html'])
+
 
 if __name__ == '__main__':
     unittest.main()

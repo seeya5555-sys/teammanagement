@@ -696,7 +696,20 @@ def _render_section(rid, key, label, as_html=False):
     return '\n'.join(vals) if not as_html else ''.join(vals)
 
 
+def _email_items(rid, key):
+    """Flatten card text into the numbered work-item rows used by Outlook."""
+    items = []
+    for block in _blocks_for(rid, key):
+        items.extend(line.strip() for line in _plain(block).splitlines() if line.strip())
+    return items or ['NIL']
+
+
+def _mail_date(value):
+    return value.replace('-', '.') if value else '-'
+
+
 def _email(rid):
+    from flask import session
     r = _report(rid)
     sections = _sections(r['project_id'], include_disabled=False)
     specials = [x for x in sections if x['kind'] == 'special']
@@ -704,21 +717,40 @@ def _email(rid):
     order = ['shipyard'] + [x['section_key'] for x in specials] + ['survey', 'vendor', 'remark']
     subject = r['email_subject'] or '[Dock] M/T %s - Dock Daily Report (%s)' % (r['vessel_name'], r['report_date'])
     intro = r['email_intro'] or ''
+    sender = session.get('display_name') or session.get('username') or ''
     itinerary = [('BERTHING', r['berthing_date']), ('DRY DOCK IN', r['dock_in_date']),
                  ('DRY DOCK OUT', r['dock_out_date']), ('DEPARTURE', r['departure_date'])]
-    lines = [intro, 'VESSEL ITINERARY']
-    chunks = ['<p>%s</p>' % html.escape(intro), '<h3>VESSEL ITINERARY</h3><table>']
+    lines = ['수신 : ', '발신 : %s' % sender, '', intro, '', 'VESSEL ITINERARY']
+    chunks = [
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;line-height:1.5;color:#222">',
+        '<p><b>수신 :</b> </p><p><b>발신 :</b> %s</p>' % html.escape(sender),
+        '<p>%s</p>' % html.escape(intro).replace('\n', '<br>'),
+        '<p style="margin-top:24px;margin-bottom:4px"><b>VESSEL ITINERARY</b></p>',
+        '<table style="border-collapse:collapse;width:390px;max-width:100%;margin-bottom:28px">',
+    ]
     for label, value in itinerary:
-        lines.append('%s: %s' % (label, value or ''))
-        chunks.append('<tr><th>%s</th><td>%s</td></tr>' % (label, html.escape(value or '-')))
+        shown = _mail_date(value)
+        lines.append('%s\t%s' % (label, shown))
+        chunks.append('<tr><td style="border:1px solid #777;padding:4px 8px;width:55%%">%s</td>'
+                      '<td style="border:1px solid #777;padding:4px 8px"><b>%s</b></td></tr>' %
+                      (html.escape(label), html.escape(shown)))
     chunks.append('</table>')
-    for key in order:
+    for section_no, key in enumerate(order, 1):
         sec = bykey.get(key) or {'section_key': key, 'label': key.title()}
-        lines.extend(['', sec['label'], _render_section(rid, key, sec['label'])])
-        chunks.append('<h3>%s</h3>%s' % (html.escape(sec['label']), _render_section(rid, key, sec['label'], True)))
+        items = _email_items(rid, key)
+        lines.extend(['', '%d. %s' % (section_no, sec['label'])])
+        chunks.append('<p style="margin:18px 0 6px"><b>%d. &nbsp;%s</b></p>' %
+                      (section_no, html.escape(sec['label'])))
+        for item_no, item in enumerate(items, 1):
+            lines.append('%d) %s' % (item_no, item))
+            chunks.append('<p style="margin:3px 0 3px 24px">%d) &nbsp;%s</p>' %
+                          (item_no, html.escape(item)))
     if r['safety_footer']:
-        lines.extend(['', r['safety_footer']]); chunks.append('<footer>%s</footer>' % html.escape(r['safety_footer']))
-    return {'subject': subject, 'html': ''.join(chunks), 'text': '\n'.join(lines), 'order': order}
+        lines.extend(['', r['safety_footer']])
+        chunks.append('<p style="margin-top:24px">%s</p>' % html.escape(r['safety_footer']))
+    chunks.append('</div>')
+    return {'subject': subject, 'to': '', 'from': sender, 'html': ''.join(chunks),
+            'text': '\n'.join(lines), 'order': order}
 
 
 @bp.route('/api/dock-daily/reports/<int:rid>/email-preview')
