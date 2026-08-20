@@ -11,9 +11,12 @@ import mimetypes
 import os
 import re
 import uuid
+import zipfile
 from datetime import datetime
+from io import BytesIO
+from xml.etree import ElementTree
 
-from flask import Blueprint, jsonify, render_template, request, send_from_directory
+from flask import Blueprint, Response, jsonify, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 
 from app_core import ALLOWED_EXT, UPLOAD_DIR, app, execute, get_db, query
@@ -31,6 +34,8 @@ FIXED_KEYS = {x[0] for x in FIXED}
 BLOCK_TYPES = {'item', 'paragraph', 'table', 'image'}
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MAX_ATTACHMENT = 20 * 1024 * 1024
+MAX_OOXML_UNCOMPRESSED = 64 * 1024 * 1024
+MAX_OOXML_PART = 8 * 1024 * 1024
 
 
 def _now():
@@ -506,7 +511,15 @@ def _file_mime(data, ext, declared):
     if ext == 'pdf' and data[:5] == b'%PDF-': return 'application/pdf'
     if ext in {'webp'} and data[:4] == b'RIFF' and data[8:12] == b'WEBP': return 'image/webp'
     if ext in {'heic', 'heif'} and len(data) > 12 and data[4:8] == b'ftyp': return 'image/heic'
-    if ext in {'jpg','jpeg','png','gif','webp','heic','heif','pdf'}: return None
+    if ext == 'bmp' and data[:2] == b'BM': return 'image/bmp'
+    if ext in {'docx','xlsx','pptx'} and data[:4] == b'PK\x03\x04':
+        return {'docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation'}[ext]
+    if ext in {'doc','xls','ppt','msg'} and data[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+        return {'doc':'application/msword','xls':'application/vnd.ms-excel',
+                'ppt':'application/vnd.ms-powerpoint','msg':'application/vnd.ms-outlook'}[ext]
+    if ext in {'jpg','jpeg','png','gif','webp','heic','heif','bmp','pdf','docx','xlsx','pptx','doc','xls','ppt','msg'}: return None
     return declared if declared in {'text/plain', 'text/csv'} else None
 
 
@@ -549,8 +562,97 @@ def attachment_post(rid):
 def attachment_get(aid):
     row = query('SELECT * FROM dock_daily_attachment WHERE id=? AND deleted_at IS NULL', (aid,), one=True)
     if not row: return _error('attachment not found', 404)
-    return send_from_directory(UPLOAD_DIR, row['stored_name'], mimetype=row['mime_type'], as_attachment=False,
-                               download_name=row['original_name'])
+    response = send_from_directory(UPLOAD_DIR, row['stored_name'], mimetype=row['mime_type'], as_attachment=False,
+                                   download_name=row['original_name'])
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+def _safe_zip_xml(zf, path):
+    info = zf.getinfo(path)
+    if info.file_size > MAX_OOXML_PART:
+        raise ValueError('OOXML part is too large')
+    raw = zf.read(info)
+    if b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
+        raise ValueError('OOXML entities are not allowed')
+    return ElementTree.fromstring(raw)
+
+
+def _ooxml_text(raw, ext):
+    """Small dependency-free browser preview for modern Office files."""
+    with zipfile.ZipFile(BytesIO(raw)) as zf:
+        infos = zf.infolist()
+        if len(infos) > 2000 or sum(x.file_size for x in infos) > MAX_OOXML_UNCOMPRESSED:
+            raise ValueError('OOXML archive is too large')
+        if any(x.file_size > MAX_OOXML_PART or
+               (x.compress_size and x.file_size / x.compress_size > 200) for x in infos):
+            raise ValueError('OOXML archive has unsafe compression')
+        if ext == 'docx':
+            root = _safe_zip_xml(zf, 'word/document.xml')
+            paragraphs = []
+            for p in root.iter():
+                if p.tag.endswith('}p'):
+                    text = ''.join(x.text or '' for x in p.iter() if x.tag.endswith('}t')).strip()
+                    if text: paragraphs.append(text)
+            return '<h2>Word 미리보기</h2>' + ''.join('<p>%s</p>' % html.escape(x) for x in paragraphs)
+        if ext == 'xlsx':
+            shared = []
+            if 'xl/sharedStrings.xml' in zf.namelist():
+                sr = _safe_zip_xml(zf, 'xl/sharedStrings.xml')
+                shared = [''.join(x.text or '' for x in si.iter() if x.tag.endswith('}t'))
+                          for si in sr if si.tag.endswith('}si')]
+            sheets = sorted(x for x in zf.namelist() if re.match(r'^xl/worksheets/sheet\d+\.xml$', x))
+            chunks = []
+            for index, path in enumerate(sheets[:10], 1):
+                root = _safe_zip_xml(zf, path); rows = []
+                for row in (x for x in root.iter() if x.tag.endswith('}row')):
+                    vals = []
+                    for cell in (x for x in row if x.tag.endswith('}c')):
+                        val = next((x.text or '' for x in cell if x.tag.endswith('}v')), '')
+                        if cell.attrib.get('t') == 's' and val.isdigit() and int(val) < len(shared): val = shared[int(val)]
+                        vals.append(val)
+                    rows.append(vals)
+                width = max([len(x) for x in rows] or [0])
+                body = ''.join('<tr>%s</tr>' % ''.join('<td>%s</td>' % html.escape(str(row[i] if i < len(row) else '')) for i in range(width)) for row in rows[:500])
+                chunks.append('<h2>Sheet %d</h2><table>%s</table>' % (index, body))
+            return ''.join(chunks) or '<p>표시할 셀이 없습니다.</p>'
+        if ext == 'pptx':
+            slides = sorted(x for x in zf.namelist() if re.match(r'^ppt/slides/slide\d+\.xml$', x))
+            out = []
+            for index, path in enumerate(slides[:100], 1):
+                root = _safe_zip_xml(zf, path)
+                text = ' '.join(x.text or '' for x in root.iter() if x.tag.endswith('}t')).strip()
+                out.append('<section><h2>Slide %d</h2><p>%s</p></section>' % (index, html.escape(text)))
+            return ''.join(out)
+    return ''
+
+
+@bp.route('/api/dock-daily/attachments/<int:aid>/preview')
+@login_required
+def attachment_preview(aid):
+    row = query('SELECT * FROM dock_daily_attachment WHERE id=? AND deleted_at IS NULL', (aid,), one=True)
+    if not row: return _error('attachment not found', 404)
+    ext = row['original_name'].rsplit('.', 1)[-1].lower() if '.' in row['original_name'] else ''
+    if row['mime_type'].startswith('image/') or row['mime_type'] == 'application/pdf':
+        response = send_from_directory(UPLOAD_DIR, row['stored_name'], mimetype=row['mime_type'], as_attachment=False,
+                                       download_name=row['original_name'])
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        return response
+    path = os.path.realpath(os.path.join(UPLOAD_DIR, row['stored_name']))
+    if os.path.commonpath((path, os.path.realpath(UPLOAD_DIR))) != os.path.realpath(UPLOAD_DIR):
+        return _error('unsafe path', 400)
+    try:
+        with open(path, 'rb') as fh: raw = fh.read(MAX_ATTACHMENT + 1)
+        if ext in {'docx','xlsx','pptx'}: content = _ooxml_text(raw, ext)
+        elif ext in {'txt','csv'}: content = '<pre>%s</pre>' % html.escape(raw.decode('utf-8', 'replace'))
+        else: content = '<p>이 구형 Office 형식은 브라우저 미리보기를 지원하지 않습니다. DOCX/XLSX/PPTX로 저장하면 내용 미리보기가 가능합니다.</p>'
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
+        content = '<p>파일 내용을 미리보기로 변환하지 못했습니다.</p>'
+    page = '<!doctype html><meta charset="utf-8"><style>body{font:14px system-ui;margin:24px;color:#29261f}table{border-collapse:collapse;max-width:100%%}td{border:1px solid #ddd;padding:6px}pre{white-space:pre-wrap}</style>%s' % content
+    return Response(page, content_type='text/html; charset=utf-8', headers={
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+        'X-Content-Type-Options': 'nosniff',
+    })
 
 
 def _blocks_for(rid, section):

@@ -4,11 +4,14 @@ These tests use the same temporary-DB pattern as the existing Flask tests and
 avoid any external Dock Manager/SVMS service.
 """
 import json
+import io
 import os
 import tempfile
 import unittest
+import zipfile
 
 import app as appmod
+import routes_dock_daily
 
 
 class DockDailyTests(unittest.TestCase):
@@ -16,6 +19,8 @@ class DockDailyTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.old_db = appmod.DATABASE
         self.old_cfg = appmod.app.config['DATABASE']
+        self.old_upload_dir = routes_dock_daily.UPLOAD_DIR
+        routes_dock_daily.UPLOAD_DIR = os.path.join(self.tmp.name, 'uploads')
         db = os.path.join(self.tmp.name, 'dock-daily.db')
         appmod.DATABASE = db
         appmod.app.config['DATABASE'] = db
@@ -36,6 +41,7 @@ class DockDailyTests(unittest.TestCase):
     def tearDown(self):
         appmod.DATABASE = self.old_db
         appmod.app.config['DATABASE'] = self.old_cfg
+        routes_dock_daily.UPLOAD_DIR = self.old_upload_dir
         self.tmp.cleanup()
 
     def test_project_seeds_fixed_sections_and_report_is_unique(self):
@@ -60,6 +66,11 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('필수 입력은 선박과 프로젝트명 2개입니다.', html)
         self.assertIn('#dd-project-form{display:flex;min-height:0;flex:1;flex-direction:column;overflow:hidden}', html)
         self.assertIn('#dd-project-form .modal-body{min-height:0;overflow-y:auto', html)
+        self.assertIn('id="dd-preview-modal"', html)
+        self.assertIn('id="dd-copy-all"', html)
+        self.assertIn('id="dd-svms-push"', html)
+        self.assertIn('id="dd-file-input"', html)
+        self.assertNotIn('id="dd-add-block"', html)
         self.assertNotIn('{% block body %}', html)
 
         with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'dock_daily.js'), encoding='utf-8') as f:
@@ -67,6 +78,55 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn("prompt('vessel_id", script)
         self.assertNotIn("confirm('이번 입거", script)
         self.assertIn("projectForm.onsubmit", script)
+        self.assertIn("dd-section-edit", script)
+        self.assertIn("ClipboardItem", script)
+
+    def test_docx_attachment_upload_and_inline_preview(self):
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Attachment DD',
+        }).get_json()
+        report = self.client.post(
+            f"/api/dock-daily/projects/{project['id']}/reports/generate",
+            json={'report_date': '2026-08-20'},
+        ).get_json()
+        raw = io.BytesIO()
+        with zipfile.ZipFile(raw, 'w') as zf:
+            zf.writestr('word/document.xml',
+                        '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Dock Word Preview</w:t></w:r></w:p></w:body></w:document>')
+        uploaded = self.client.post(
+            f"/api/dock-daily/reports/{report['id']}/attachments",
+            data={'file': (io.BytesIO(raw.getvalue()), 'daily.docx')},
+            content_type='multipart/form-data',
+        )
+        self.assertEqual(201, uploaded.status_code, uploaded.get_data(as_text=True))
+        aid = uploaded.get_json()['id']
+        preview = self.client.get(f'/api/dock-daily/attachments/{aid}/preview')
+        self.assertEqual(200, preview.status_code)
+        self.assertIn('Dock Word Preview', preview.get_data(as_text=True))
+        self.assertEqual('nosniff', preview.headers['X-Content-Type-Options'])
+        fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        self.assertEqual('daily.docx', fetched['attachments'][0]['original_name'])
+
+    def test_ooxml_preview_rejects_entity_payload(self):
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Unsafe Attachment DD',
+        }).get_json()
+        report = self.client.post(
+            f"/api/dock-daily/projects/{project['id']}/reports/generate",
+            json={'report_date': '2026-08-20'},
+        ).get_json()
+        raw = io.BytesIO()
+        with zipfile.ZipFile(raw, 'w') as zf:
+            zf.writestr('word/document.xml', '<!DOCTYPE x [<!ENTITY a "unsafe">]><x>&a;</x>')
+        uploaded = self.client.post(
+            f"/api/dock-daily/reports/{report['id']}/attachments",
+            data={'file': (io.BytesIO(raw.getvalue()), 'unsafe.docx')},
+            content_type='multipart/form-data',
+        ).get_json()
+        preview = self.client.get(f"/api/dock-daily/attachments/{uploaded['id']}/preview")
+        self.assertEqual(200, preview.status_code)
+        self.assertIn('미리보기로 변환하지 못했습니다', preview.get_data(as_text=True))
+        self.assertNotIn('unsafe', preview.get_data(as_text=True))
 
     def test_report_includes_ios_itinerary_and_legacy_direct_dates(self):
         p = self.client.post('/api/dock-daily/projects', json={

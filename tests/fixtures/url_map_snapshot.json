@@ -1006,6 +1006,17 @@
   ],
   "endpoint": "routes_dock_daily.attachment_get",
   "strict_slashes": true,
+ "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/attachments/<int:aid>/preview",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.attachment_preview",
+  "strict_slashes": true,
   "defaults": {}
  },
  {
