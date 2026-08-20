@@ -294,9 +294,6 @@ CREATE TABLE IF NOT EXISTS vt_attachments (
     FOREIGN KEY (vetting_id) REFERENCES vettings(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_vt_attachments_vetting ON vt_attachments(vetting_id);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_vt_attachments_svms_identity_sha
-  ON vt_attachments(external_file_id, sha256)
-  WHERE source='svms' AND external_file_id IS NOT NULL AND sha256 IS NOT NULL;
 
 -- ═════════════════════════════════════════════════════════════
 --  Calendar Events (일정 모듈)

@@ -1,6 +1,7 @@
 import hashlib
 import io
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -21,6 +22,7 @@ class SvmsSireAttachmentTests(unittest.TestCase):
         os.makedirs(routes.UPLOAD_DIR)
         with appmod.app.app_context():
             appmod.init_db(False)
+            appmod._auto_migrate()
             appmod.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('api_key',?)", ("test-key",))
             vessel = appmod.execute(
                 "INSERT INTO vessels(name,short_name,active) VALUES(?,?,1)",
@@ -132,6 +134,24 @@ class SvmsSireAttachmentTests(unittest.TestCase):
         self.assertEqual(401, anon.status_code)
         missing = self._post(vessel_name="OTHER VESSEL")
         self.assertEqual(409, missing.status_code)
+
+    def test_legacy_database_migrates_before_unique_index_creation(self):
+        legacy = os.path.join(self.tmp.name, "legacy.db")
+        conn = sqlite3.connect(legacy)
+        conn.execute("""CREATE TABLE vt_attachments(
+            id INTEGER PRIMARY KEY, vetting_id INTEGER, filename TEXT,
+            stored_name TEXT, file_size INTEGER, mime_type TEXT,
+            uploaded_by TEXT, uploaded_at TEXT)""")
+        conn.commit(); conn.close()
+        with appmod.app.app_context():
+            appmod.DATABASE = legacy
+            appmod.app.config["DATABASE"] = legacy
+            appmod.init_db(False)
+            appmod._auto_migrate()
+            cols = {row[1] for row in appmod.get_db().execute("PRAGMA table_info(vt_attachments)")}
+            indexes = {row[1] for row in appmod.get_db().execute("PRAGMA index_list(vt_attachments)")}
+        self.assertIn("external_file_id", cols)
+        self.assertIn("uq_vt_attachments_svms_identity_sha", indexes)
 
 
 if __name__ == "__main__":
