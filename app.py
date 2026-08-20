@@ -1481,6 +1481,8 @@ import routes_calendar_dock
 app.register_blueprint(routes_calendar_dock.bp)
 import routes_dock_submit
 app.register_blueprint(routes_dock_submit.bp)
+import routes_dock_daily
+app.register_blueprint(routes_dock_daily.bp)
 import routes_repair_request
 app.register_blueprint(routes_repair_request.bp)
 import routes_liscr
@@ -1924,6 +1926,19 @@ def _auto_migrate():
                     print(f'[auto_migrate] stt_job.{_col} 추가됨')
         except Exception as e:
             print(f'[auto_migrate] stt_job 컬럼 점검 건너뜀: {e}')
+
+        # Dock Daily Report additive migration.  The complete table contract lives in
+        # schema.sql; this column check keeps existing installations compatible when
+        # schema.sql CREATE TABLE IF NOT EXISTS cannot alter an already-created table.
+        try:
+            dd_cols = [r[1] for r in conn.execute(
+                'PRAGMA table_info(dock_daily_report)').fetchall()]
+            if dd_cols and 'source_changed_after_final' not in dd_cols:
+                conn.execute('ALTER TABLE dock_daily_report ADD COLUMN '
+                             'source_changed_after_final INTEGER NOT NULL DEFAULT 0')
+                print('[auto_migrate] dock_daily_report.source_changed_after_final 추가됨')
+        except Exception as e:
+            print(f'[auto_migrate] dock_daily_report 컬럼 점검 건너뜀: {e}')
 
         conn.commit()
     finally:

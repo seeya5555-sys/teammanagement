@@ -67,8 +67,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #   · 기존 동적 SQL site의 SELECT 목록에 고정 리터럴 `i.id`를 추가하고, 선택적 supervisor scope를
 #     붙였다. 동적 문법 조각은 여전히 서버 리터럴 `AND` 절만 `join`하며 request 값은 `?`에 바인딩된다.
 #   · 신규 site 없음(count 161 유지), 식별자·테이블명에 request 값이 닿는 경로 없음.
-EXPECTED_COUNT = 161
-EXPECTED_SHA256 = "a8bf9481637cc502e0bd2ecba02768d7bc98fe925dea0d717a2a33b93864578d"
+# 2026-08-20 baseline update (3) — `routes_dock_daily.py` 신규 3 site 전건 검토:
+#   1. project PATCH의 `sets`는 서버 allowlist 필드와 고정 date 필드에서만 만들어진다.
+#   2. report PUT의 metadata UPDATE도 서버 고정 4필드만 사용한다. 두 곳 모두 값은 `?` 바인딩이다.
+#   3. `_sections`의 `q`는 완전한 서버 리터럴 두 조각만 조건부 연결한다.
+#   request 값이 SQL 식별자/문법에 닿는 경로 없음. count/hash는 실측 갱신했다.
+EXPECTED_COUNT = 164
+EXPECTED_SHA256 = "ce3151eb0a71d578e1fb5b598c74ecbf2d2f9029bc0c9455d5019a5c650c3bd4"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

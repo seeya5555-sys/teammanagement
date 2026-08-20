@@ -69,6 +69,7 @@
     ],
     "routes_calendar_dock.py": [],
     "routes_core.py": [],
+    "routes_dock_daily.py": [],
     "routes_dock_submit.py": [],
     "routes_liscr.py": [],
     "routes_repair_request.py": [],
@@ -233,6 +234,20 @@
       "_token_note_fail",
       "_token_rate_limited",
       "_token_reset_fails"
+    ]
+  },
+  "routes_dock_daily.py": {
+    "app_core.py": [
+      "ALLOWED_EXT",
+      "UPLOAD_DIR",
+      "app",
+      "execute",
+      "get_db",
+      "query"
+    ],
+    "helpers_shared.py": [
+      "api_key_required",
+      "login_required"
     ]
   },
   "routes_dock_submit.py": {

@@ -176,6 +176,132 @@ CREATE INDEX IF NOT EXISTS idx_sv_supervisor      ON supervisor_vessels(supervis
 CREATE INDEX IF NOT EXISTS idx_sv_vessel          ON supervisor_vessels(vessel_id);
 
 -- =============================================================
+--  Dock Daily Report (입거 준비 일일보고)
+--  완료보고서(dock_reports)와 분리된 draft/revision/source 도메인
+-- =============================================================
+CREATE TABLE IF NOT EXISTS dock_daily_project (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id INTEGER NOT NULL,
+    vsl_cd TEXT,
+    imo TEXT,
+    title TEXT NOT NULL,
+    berthing_date TEXT,
+    dock_in_date TEXT,
+    dock_out_date TEXT,
+    departure_date TEXT,
+    active_from TEXT,
+    active_to TEXT,
+    auto_generate INTEGER NOT NULL DEFAULT 0 CHECK(auto_generate IN (0,1)),
+    -- Dock Manager uses opaque string identifiers (for example v_abc123),
+    -- not TRMT's integer vessel primary keys.
+    drydock_primary_vessel_id TEXT,
+    drydock_source_vessel_ids_json TEXT NOT NULL DEFAULT '[]',
+    svms_dk_cd TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_project_vessel ON dock_daily_project(vessel_id);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_project_active ON dock_daily_project(active_from, active_to, auto_generate);
+
+CREATE TABLE IF NOT EXISTS dock_daily_section_def (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    section_key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL CHECK(kind IN ('fixed','special')),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    UNIQUE(project_id, section_key),
+    FOREIGN KEY (project_id) REFERENCES dock_daily_project(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_section_project ON dock_daily_section_def(project_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS dock_daily_report (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    report_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'auto_draft' CHECK(status IN ('auto_draft','editing','final')),
+    revision INTEGER NOT NULL DEFAULT 1,
+    auto_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    email_subject TEXT,
+    email_intro TEXT,
+    safety_footer TEXT,
+    svms_dk_seq TEXT,
+    svms_sync_status TEXT NOT NULL DEFAULT 'preview_only',
+    svms_synced_at TEXT,
+    svms_readback_hash TEXT,
+    source_changed_after_final INTEGER NOT NULL DEFAULT 0 CHECK(source_changed_after_final IN (0,1)),
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE(project_id, report_date),
+    FOREIGN KEY (project_id) REFERENCES dock_daily_project(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_report_project_date ON dock_daily_report(project_id, report_date DESC);
+
+CREATE TABLE IF NOT EXISTS dock_daily_block (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id INTEGER NOT NULL,
+    section_key TEXT NOT NULL,
+    parent_id INTEGER,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    block_type TEXT NOT NULL CHECK(block_type IN ('item','paragraph','table','image')),
+    content_json TEXT NOT NULL DEFAULT '{}',
+    origin TEXT NOT NULL DEFAULT 'manual' CHECK(origin IN ('manual','dock_auto')),
+    manual_override INTEGER NOT NULL DEFAULT 0 CHECK(manual_override IN (0,1)),
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (report_id) REFERENCES dock_daily_report(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_id) REFERENCES dock_daily_block(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_block_report ON dock_daily_block(report_id, section_key, sort_order, id);
+
+CREATE TABLE IF NOT EXISTS dock_daily_source_link (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id INTEGER NOT NULL,
+    block_id INTEGER,
+    source_system TEXT NOT NULL,
+    source_table TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_subkey TEXT NOT NULL,
+    source_updated_at TEXT,
+    source_hash TEXT NOT NULL,
+    imported_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    missing_at TEXT,
+    UNIQUE(report_id, source_system, source_table, source_id, source_subkey),
+    FOREIGN KEY (report_id) REFERENCES dock_daily_report(id) ON DELETE CASCADE,
+    FOREIGN KEY (block_id) REFERENCES dock_daily_block(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_source_report ON dock_daily_source_link(report_id, source_hash);
+
+CREATE TABLE IF NOT EXISTS dock_daily_attachment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id INTEGER NOT NULL,
+    block_id INTEGER,
+    stored_name TEXT NOT NULL UNIQUE,
+    original_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    deleted_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (report_id) REFERENCES dock_daily_report(id) ON DELETE CASCADE,
+    FOREIGN KEY (block_id) REFERENCES dock_daily_block(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_attachment_report ON dock_daily_attachment(report_id, deleted_at);
+
+CREATE TABLE IF NOT EXISTS dock_daily_report_revision (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    actor TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE(report_id, revision),
+    FOREIGN KEY (report_id) REFERENCES dock_daily_report(id) ON DELETE CASCADE
+);
+
+-- =============================================================
 --  Condition Survey 모듈
 -- =============================================================
 

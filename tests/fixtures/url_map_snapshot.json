@@ -998,6 +998,132 @@
   "defaults": {}
  },
  {
+  "rule": "/api/dock-daily/attachments/<int:aid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.attachment_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/projects",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.projects_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/projects",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.projects_post",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/projects/<int:pid>",
+  "methods": [
+   "OPTIONS",
+   "PATCH"
+  ],
+  "endpoint": "routes_dock_daily.projects_patch",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/projects/<int:pid>/reports",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.reports_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/projects/<int:pid>/reports/generate",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.report_generate",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/reports/<int:rid>",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.report_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/reports/<int:rid>",
+  "methods": [
+   "OPTIONS",
+   "PUT"
+  ],
+  "endpoint": "routes_dock_daily.report_put",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/reports/<int:rid>/attachments",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.attachment_post",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/reports/<int:rid>/email-preview",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.email_preview",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/reports/<int:rid>/svms-preview",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.svms_preview",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/reports/<int:rid>/svms-publish",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.svms_publish",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/dock-reports",
   "methods": [
    "OPTIONS",
@@ -1760,6 +1886,47 @@
    "POST"
   ],
   "endpoint": "routes_calendar_dock.api_ext_class_status_upload",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-daily/merge",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.ext_merge",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-daily/projects",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.ext_projects_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-daily/projects/<int:pid>/merge",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.ext_merge_project",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-daily/reports/<int:rid>/merge",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.ext_merge_report",
   "strict_slashes": true,
   "defaults": {}
  },
@@ -4204,6 +4371,17 @@
    "OPTIONS"
   ],
   "endpoint": "routes_tail.dashboard_classic",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/dock-daily",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.dock_daily_page",
   "strict_slashes": true,
   "defaults": {}
  },
