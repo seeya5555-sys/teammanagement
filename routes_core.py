@@ -555,8 +555,6 @@ def api_issue_list():
     return jsonify(rows)
 
 
-
-
 @bp.route('/api/mobile/issues')
 @login_required
 def api_mobile_issue_list():
@@ -605,7 +603,7 @@ def api_mobile_issue_list():
 @bp.route('/api/widget/issues')
 @login_required
 def api_widget_issues():
-    """위젯 Daily 현안 페이지용. 미완 이슈의 5개 필드만(스코프 = /api/mobile/issues 와 동일)."""
+    """위젯/Dashboard 현안 집계용. 본문·actions 없는 경량 필드만 반환한다."""
     is_admin = session.get('role') == 'admin'
     sup_id = session.get('supervisor_id')
     if not is_admin and not sup_id:
@@ -615,11 +613,17 @@ def api_widget_issues():
     # (현재 데이터에 NULL 은 0건이지만 계약을 코드로 못박아 둔다 — 올마이트 지적).
     where = ["COALESCE(i.status, '') != 'Closed'"]
     params = []
+    requested_sup = request.args.get('supervisor_id')
     if not is_admin:
+        # A member must never be able to replace the server-owned scope with
+        # another supervisor id supplied in the query string.
         where.append('i.supervisor_id = ?')
         params.append(sup_id)
+    elif requested_sup:
+        where.append('i.supervisor_id = ?')
+        params.append(requested_sup)
     rows = query(f'''
-        SELECT v.name AS vessel, i.item_topic, i.priority, i.status, i.due_date
+        SELECT i.id, v.name AS vessel, i.item_topic, i.priority, i.status, i.due_date
           FROM issues i
           JOIN vessels v ON v.id = i.vessel_id
          WHERE {' AND '.join(where)}

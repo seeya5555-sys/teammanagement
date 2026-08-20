@@ -63,8 +63,12 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #     request·설정·DB 값은 식별자나 DDL 문법에 닿지 않는다.
 #   · 기존 행을 manual source 로 보존하는 부팅 migration 이며 요청 처리 중에는 실행되지 않는다.
 #   · count/hash 는 `repository_fingerprints()` 출력으로 실측했다.
+# 2026-08-20 baseline update (2) — `routes_core.api_widget_issues()` 경량 feed 변경 1 site.
+#   · 기존 동적 SQL site의 SELECT 목록에 고정 리터럴 `i.id`를 추가하고, 선택적 supervisor scope를
+#     붙였다. 동적 문법 조각은 여전히 서버 리터럴 `AND` 절만 `join`하며 request 값은 `?`에 바인딩된다.
+#   · 신규 site 없음(count 161 유지), 식별자·테이블명에 request 값이 닿는 경로 없음.
 EXPECTED_COUNT = 161
-EXPECTED_SHA256 = "631eb665f3759f3189a807176bd76ded95de5411b3a45cdd154e2a383fce8cc0"
+EXPECTED_SHA256 = "a8bf9481637cc502e0bd2ecba02768d7bc98fe925dea0d717a2a33b93864578d"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

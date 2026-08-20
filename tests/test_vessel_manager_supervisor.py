@@ -68,6 +68,34 @@ class VesselManagerSupervisorTests(unittest.TestCase):
             source,
         )
 
+    def test_dashboard_issue_feed_omits_heavy_daily_fields(self):
+        with appmod.app.app_context():
+            sid = appmod.execute("INSERT INTO supervisors(name) VALUES(?)", ('Perf Supervisor',))
+            vid = appmod.execute("INSERT INTO vessels(name) VALUES(?)", ('PERF VESSEL',))
+            appmod.execute(
+                "INSERT INTO issues(supervisor_id,vessel_id,issue_date,item_topic,description,actions,priority,status) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (sid, vid, '2026-08-20', 'PERF', 'x' * 20000,
+                 '[{"progress":"' + ('y' * 20000) + '"}]', 'Urgent', 'Open'))
+
+        light = self.client.get(f'/api/widget/issues?supervisor_id={sid}')
+        full = self.client.get(f'/api/issues?supervisor_id={sid}')
+        self.assertEqual(200, light.status_code)
+        self.assertEqual(200, full.status_code)
+        row = next(r for r in light.get_json() if r['item_topic'] == 'PERF')
+        self.assertEqual({'id', 'vessel', 'priority', 'status', 'item_topic', 'due_date'}, set(row))
+        self.assertLess(len(light.data), len(full.data) / 4)
+
+        # Non-admin scope is server-owned; a query parameter must not expose a
+        # different supervisor's feed.
+        with appmod.app.app_context():
+            own_sid = appmod.execute("INSERT INTO supervisors(name) VALUES(?)", ('Own Supervisor',))
+        with self.client.session_transaction() as session:
+            session['role'] = 'member'
+            session['supervisor_id'] = own_sid
+        scoped = self.client.get(f'/api/widget/issues?supervisor_id={sid}')
+        self.assertEqual([], scoped.get_json())
+
     def test_auto_migrate_adds_non_null_column_to_legacy_vessels(self):
         legacy_db = os.path.join(self.tmp.name, 'legacy.db')
         with sqlite3.connect(legacy_db) as db:

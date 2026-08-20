@@ -11,6 +11,7 @@ no sibling boundary imports.
 """
 from flask import Blueprint
 
+import base64
 import http.client
 import json
 import math
@@ -23,6 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
 from datetime import datetime, timedelta
 from flask import abort, jsonify, render_template, request, session
 from app_core import (
@@ -394,6 +396,70 @@ def _fleet_invalidate_next_port_overrides_from_push(fleet, actor='fleet-push'):
 
 
 
+_TRMTDB_RECORD_FIELDS = (
+    'latitude', 'longitude', 'lat', 'lng', 'lon',
+    'event_at', 'timestamp', 'reported_at', 'platform', 'heading', 'speed',
+)
+
+
+def _trmtdb_project_record(record):
+    """Keep only fields consumed by overlay/track code."""
+    if not isinstance(record, dict):
+        return {}
+    return {key: record[key] for key in _TRMTDB_RECORD_FIELDS if key in record}
+
+
+def _trmtdb_compact_rows(vessels):
+    """Collapse the 33.5MB upstream graph into the cache's actual contract.
+
+    ``history`` and ``by_platform`` duplicate hundreds of rich records per
+    vessel.  Keeping that decoded graph alive made one gunicorn worker retain
+    roughly 600MB.  Overlay needs one latest record (plus one valid fallback
+    per platform); track points are cold-path data and stay zlib-compressed
+    until a vessel is explicitly selected.
+    """
+    compact = []
+    for row in vessels:
+        if not isinstance(row, dict):
+            continue
+        out = {key: row[key] for key in ('vessel_name', 'name', 'imo', 'latest_event_at')
+               if key in row}
+        latest = row.get('latest') if isinstance(row.get('latest'), dict) else {}
+        out['latest'] = _trmtdb_project_record(latest)
+
+        # Only a retired latest needs by-platform fallbacks. Preserve the
+        # exact picker ordering while discarding every dominated record.
+        if latest and _trmtdb_is_retired_platform(latest):
+            reduced = {}
+            source = row.get('by_platform')
+            if isinstance(source, dict):
+                for platform, records in source.items():
+                    if (isinstance(platform, str)
+                            and platform.strip().upper() in TRMTDB_RETIRED_PLATFORMS):
+                        continue
+                    best, best_key = None, None
+                    for record in (records if isinstance(records, list) else [records]):
+                        if (not isinstance(record, dict)
+                                or _trmtdb_is_retired_platform(record)
+                                or not _trmtdb_valid_lat_lng(record)):
+                            continue
+                        epoch = _trmtdb_epoch_upper_bound(record.get('event_at'))
+                        key = (epoch is not None, epoch if epoch is not None else 0.0)
+                        if best is None or key > best_key:
+                            best, best_key = record, key
+                    if best is not None:
+                        reduced[str(platform)] = [_trmtdb_project_record(best)]
+            if reduced:
+                out['by_platform'] = reduced
+
+        points = _trmtdb_track_points(row)
+        if points:
+            packed = json.dumps(points, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+            out['_track_z'] = base64.b64encode(zlib.compress(packed, 6)).decode('ascii')
+        compact.append(out)
+    return compact
+
+
 def _trmtdb_positions_refresh(api_key):
     """upstream 1회 갱신 — **백그라운드 스레드 전용**. 예외는 캐시 error 로만 남긴다
     (스레드에서 raise 하면 아무도 못 받고 삼켜지므로 여기서 끝낸다)."""
@@ -408,6 +474,7 @@ def _trmtdb_positions_refresh(api_key):
         vessels = payload.get('vessels') if isinstance(payload, dict) else None
         if not isinstance(vessels, list):
             raise ValueError('TRMT DB ship-position payload missing vessels[]')
+        vessels = _trmtdb_compact_rows(vessels)
         with _trmtdb_position_lock:
             _trmtdb_position_cache.update(
                 {'at': time.monotonic(), 'loaded': True, 'vessels': vessels,
@@ -549,6 +616,14 @@ def _trmtdb_track_points(row):
     """
     if not isinstance(row, dict):
         return []
+    packed = row.get('_track_z')
+    if isinstance(packed, str):
+        try:
+            points = json.loads(zlib.decompress(base64.b64decode(packed)).decode('utf-8'))
+            return points if isinstance(points, list) else []
+        except (ValueError, TypeError, zlib.error, json.JSONDecodeError):
+            app.logger.warning('fleet track cache decode failed')
+            return []
     raw_points = []
     for key in ('history', 'track', 'positions'):
         values = row.get(key)
