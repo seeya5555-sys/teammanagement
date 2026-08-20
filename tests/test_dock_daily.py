@@ -58,6 +58,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('id="dd-project-modal"', html)
         self.assertIn('id="ddp-vessel"', html)
         self.assertIn('필수 입력은 선박과 프로젝트명 2개입니다.', html)
+        self.assertIn('#dd-project-form{display:flex;min-height:0;flex:1;flex-direction:column;overflow:hidden}', html)
+        self.assertIn('#dd-project-form .modal-body{min-height:0;overflow-y:auto', html)
         self.assertNotIn('{% block body %}', html)
 
         with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'dock_daily.js'), encoding='utf-8') as f:
