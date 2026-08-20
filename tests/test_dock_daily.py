@@ -6,6 +6,7 @@ avoid any external Dock Manager/SVMS service.
 import json
 import io
 import os
+import re
 import tempfile
 import unittest
 import zipfile
@@ -80,7 +81,11 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn("projectForm.onsubmit", script)
         self.assertIn("dd-section-edit", script)
         self.assertIn("ClipboardItem", script)
-        self.assertIn('<p style="margin:0;line-height:1.5">&nbsp;</p>${v.html}', script)
+        # The subject block sits outside the server body <div>, so it carries its
+        # own 11pt declaration or Outlook pastes that one line in its own font.
+        self.assertIn('<p style="margin:0;line-height:1.5">&nbsp;</p></div>${v.html}', script)
+        self.assertIn('font-size:11pt;line-height:1.5;color:#222"><p style="margin:0"><b>제목: ${esc(v.subject)}</b></p>',
+                      script)
         # Cards auto-number on Enter and no longer show the meaningless
         # 수동 / 수동 수정 보호 pair on hand written blocks. The numbering logic
         # itself is exercised by tests/dock_daily_numbering.test.js.
@@ -306,10 +311,36 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('<b>1. &nbsp;Shipyard</b>', preview['html'])
         self.assertIn('</table><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>1. &nbsp;Shipyard</b>', preview['html'])
         self.assertIn('<table role="presentation" cellpadding="0" cellspacing="0" border="0"', preview['html'])
-        self.assertIn('<td width="24" style="width:24px">&nbsp;</td>', preview['html'])
-        self.assertIn('<td style="vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">2)</td><td style="padding:3px 0">Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td>', preview['html'])
+        font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
+        self.assertIn('<td width="24" style="%s;width:24px">&nbsp;</td>' % font, preview['html'])
+        self.assertIn('<td style="%s;vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">2)</td>'
+                      '<td style="%s;padding:3px 0">Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td>'
+                      % (font, font), preview['html'])
         self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</td></tr></table><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>2. &nbsp;EGCS Retrofit</b>', preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
+
+    def test_email_html_declares_11pt_on_every_table_and_cell(self):
+        """Outlook renders <table> with the client default font: a font-size on the
+        wrapping <div> does not reach the cells. Pasting into Outlook showed the
+        itinerary table and the numbered items smaller than the paragraphs, so the
+        declaration has to be repeated on each table and cell."""
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Font DD', 'berthing_date': '2026-03-24'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-05-11'}).get_json()
+        self.assertEqual(200, self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [{'section_key': 'shipyard', 'block_type': 'paragraph',
+                            'content': {'body': '갑판 도장 진행중\n프로펠러 검사 완료'}}],
+        }).status_code)
+        body = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()['html']
+        tags = re.findall(r'<(?:table|td)\b[^>]*>', body)
+        self.assertTrue(tags)
+        for tag in tags:
+            self.assertIn('font-size:11pt', tag, tag)
+            self.assertIn('font-family:Arial,Helvetica,sans-serif', tag, tag)
+        # Inheritance alone would leave exactly one declaration, on the wrapper div.
+        self.assertGreater(body.count('font-size:11pt'), 1)
 
     def test_card_written_numbers_are_never_rendered_twice(self):
         p = self.client.post('/api/dock-daily/projects', json={
@@ -335,8 +366,9 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('1) 1)', preview['text'])
         self.assertNotIn('7)', preview['text'])
         self.assertNotIn('1) 1)', preview['html'])
-        self.assertIn('<td style="padding:3px 0">Tank cleaning</td>', preview['html'])
-        self.assertIn('<td style="padding:3px 0">Anode renewal</td>', preview['html'])
+        item_cell = '<td style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;padding:3px 0">%s</td>'
+        self.assertIn(item_cell % 'Tank cleaning', preview['html'])
+        self.assertIn(item_cell % 'Anode renewal', preview['html'])
         svms = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
         self.assertEqual('1) Tank cleaning\n2) Hull blasting\n3) Anode renewal',
                          svms['fields']['RMK_SYD'])

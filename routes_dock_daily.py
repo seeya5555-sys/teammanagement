@@ -743,8 +743,14 @@ def _email(rid):
         lines.extend([intro_line, ''])
     lines.append('VESSEL ITINERARY')
     spacer = '<p style="margin:0;line-height:1.5">&nbsp;</p>'
+    # Word/Outlook HTML does not let <table> inherit font from an ancestor <div>;
+    # cells fall back to the mail client default. Observed when pasting into
+    # Outlook: paragraphs came in at 11pt while the itinerary table and the
+    # numbered work items rendered noticeably smaller. Repeat the declaration on
+    # every cell instead of relying on inheritance.
+    cell_font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
     chunks = [
-        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;line-height:1.5;color:#222">',
+        '<div style="%s;line-height:1.5;color:#222">' % cell_font,
         '<p style="margin:0"><b>수 신 :</b> %s</p>' % html.escape(mail_to),
         '<p style="margin:0"><b>발 신 :</b> %s</p>' % html.escape(mail_from),
         spacer,
@@ -753,14 +759,14 @@ def _email(rid):
         chunks.extend(['<p style="margin:0">%s</p>' % html.escape(intro_line), spacer])
     chunks.extend([
         '<p style="margin:0 0 4px"><b>VESSEL ITINERARY</b></p>',
-        '<table style="border-collapse:collapse;width:390px;max-width:100%;margin:0">',
+        '<table style="border-collapse:collapse;width:390px;max-width:100%%;margin:0;%s">' % cell_font,
     ])
     for label, value in itinerary:
         shown = _mail_date(value)
         lines.append('%s\t%s' % (label, shown))
-        chunks.append('<tr><td style="border:1px solid #777;padding:4px 8px;width:55%%">%s</td>'
-                      '<td style="border:1px solid #777;padding:4px 8px"><b>%s</b></td></tr>' %
-                      (html.escape(label), html.escape(shown)))
+        chunks.append('<tr><td style="%s;border:1px solid #777;padding:4px 8px;width:55%%">%s</td>'
+                      '<td style="%s;border:1px solid #777;padding:4px 8px"><b>%s</b></td></tr>' %
+                      (cell_font, html.escape(label), cell_font, html.escape(shown)))
     chunks.extend(['</table>', spacer])
     for section_no, key in enumerate(order, 1):
         sec = bykey.get(key) or {'section_key': key, 'label': key.title()}
@@ -772,11 +778,11 @@ def _email(rid):
             lines.append('%d) %s' % (item_no, item))
             chunks.append(
                 '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-                'style="border-collapse:collapse;margin:0"><tr>'
-                '<td width="24" style="width:24px">&nbsp;</td>'
-                '<td style="vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">%d)</td>'
-                '<td style="padding:3px 0">%s</td></tr></table>' %
-                (item_no, html.escape(item)))
+                'style="border-collapse:collapse;margin:0;%s"><tr>'
+                '<td width="24" style="%s;width:24px">&nbsp;</td>'
+                '<td style="%s;vertical-align:top;padding:3px 8px 3px 0;white-space:nowrap">%d)</td>'
+                '<td style="%s;padding:3px 0">%s</td></tr></table>' %
+                (cell_font, cell_font, cell_font, item_no, cell_font, html.escape(item)))
         chunks.append(spacer)
     safety_footer = r['safety_footer'] or ''
     if safety_footer == 'Safety first. Please advise if any unsafe condition is observed.':
