@@ -5,6 +5,8 @@ import sqlite3
 import tempfile
 import unittest
 
+from docx import Document
+
 import app as appmod
 import ai_gemini as routes
 
@@ -134,6 +136,69 @@ class SvmsSireAttachmentTests(unittest.TestCase):
         self.assertEqual(401, anon.status_code)
         missing = self._post(vessel_name="OTHER VESSEL")
         self.assertEqual(409, missing.status_code)
+
+    def test_status_flags_update_exact_report_without_touching_findings(self):
+        response = self.client.post(
+            "/api/ext/vettings/svms-status",
+            json={"vessel_name":"kuwait-prosperity", "report_number":"LZXN195527607793",
+                  "full_report_yn":"Y", "close_report_yn":"N"},
+            headers={"X-API-Key":"test-key"},
+        )
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        with appmod.app.app_context():
+            row = appmod.query("SELECT * FROM vettings WHERE id=?", (self.vetting,), one=True)
+            self.assertEqual("Y", row["svms_full_report_yn"])
+            self.assertEqual("N", row["svms_close_report_yn"])
+            self.assertTrue(row["svms_status_synced_at"])
+            self.assertEqual(0, appmod.query("SELECT COUNT(*) n FROM vt_findings", one=True)["n"])
+        listed = self.client.get("/api/ext/vettings", headers={"X-API-Key":"test-key"}).get_json()
+        payload = next(v for v in listed if v["id"] == self.vetting)
+        self.assertEqual("Y", payload["svms_full_report_yn"])
+        self.assertEqual("N", payload["svms_close_report_yn"])
+        bad = self.client.post(
+            "/api/ext/vettings/svms-status",
+            json={"vessel_name":"KUWAIT PROSPERITY", "report_number":"LZXN195527607793",
+                  "full_report_yn":"?", "close_report_yn":"N"},
+            headers={"X-API-Key":"test-key"},
+        )
+        self.assertEqual(400, bad.status_code)
+        missing = self.client.post(
+            "/api/ext/vettings/svms-status",
+            json={"vessel_name":"OTHER", "report_number":"NONE",
+                  "full_report_yn":"N", "close_report_yn":"N"},
+            headers={"X-API-Key":"test-key"},
+        )
+        self.assertEqual(409, missing.status_code)
+
+    def test_docx_opens_as_safe_inline_html_and_can_download_original(self):
+        stored = "preview.docx"
+        path = os.path.join(routes.UPLOAD_DIR, stored)
+        doc = Document()
+        doc.add_heading("Close Report", level=1)
+        doc.add_paragraph("<script>alert(1)</script>")
+        table = doc.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "Observation"
+        table.cell(0, 1).text = "Closed"
+        doc.save(path)
+        with appmod.app.app_context():
+            aid = appmod.execute(
+                "INSERT INTO vt_attachments(vetting_id,filename,stored_name,file_size,mime_type) VALUES(?,?,?,?,?)",
+                (self.vetting, "close report.docx", stored, os.path.getsize(path),
+                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            )
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", role="admin", supervisor_id=None)
+        preview = self.client.get(f"/api/vt-attachments/{aid}/docx-preview")
+        self.assertEqual(200, preview.status_code, preview.get_data(as_text=True))
+        html = preview.get_data(as_text=True)
+        self.assertIn("Close Report", html)
+        self.assertIn("Observation", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        download = self.client.get(f"/api/vt-attachments/{aid}/docx-preview?download=1")
+        self.assertEqual(200, download.status_code)
+        self.assertIn("attachment", download.headers.get("Content-Disposition", ""))
+        download.close()
 
     def test_legacy_database_migrates_before_unique_index_creation(self):
         legacy = os.path.join(self.tmp.name, "legacy.db")

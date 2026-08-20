@@ -431,11 +431,16 @@ function vettingRow(item, vt) {
 
   // 2) Report# 셀 — 클릭 시 편집 모드만
   const rep = el('td', { class: 'vt-edit-cell' });
-  const repText = el('span', { class: 'vt-cell-display' },
-    vt.report_number || '–');
+  const repText = el('span', { class: 'vt-cell-display' }, vt.report_number || '–');
   if (!vt.report_number) repText.classList.add('placeholder');
   rep.append(repText);
   attachInlineEdit(rep, vt, 'report_number', repText);
+  if (vt.svms_full_report_yn || vt.svms_close_report_yn) {
+    rep.append(el('span', {
+      class: 'vt-svms-report-flags',
+      title: vt.svms_status_synced_at ? `SVMS 동기화: ${vt.svms_status_synced_at}` : 'SVMS Report 상태',
+    }, `Full ${vt.svms_full_report_yn || '–'} · Close ${vt.svms_close_report_yn || '–'}`));
+  }
   tr.append(rep);
 
   tr.append(vtEditCell(vt, 'inspection_date', 'date'));
@@ -1391,6 +1396,7 @@ function vtAttachItemEl(a) {
   const isImg = /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(a.filename);
   const isPdf = /\.pdf$/i.test(a.filename);
   const isMsg = /\.msg$/i.test(a.filename);
+  const isDocx = /\.docx$/i.test(a.filename);
   if (isImg) {
     thumb.append(el('img', {
       src: `/api/vt-attachments/${a.id}?inline=1`,
@@ -1405,8 +1411,9 @@ function vtAttachItemEl(a) {
   // 메타 (파일명 + 크기) — flex:1로 가운데 늘어나서 삭제 버튼 오른쪽 끝으로
   const meta = el('div', { class: 'attach-meta' },
     el('a', {
-      href: isMsg ? `/msg-preview?source=vetting&aid=${a.id}` : `/api/vt-attachments/${a.id}` + (isImg || isPdf ? '?inline=1' : ''),
-      target: (isImg || isPdf || isMsg) ? '_blank' : '_self',
+      href: isMsg ? `/msg-preview?source=vetting&aid=${a.id}` :
+        (isDocx ? `/api/vt-attachments/${a.id}/docx-preview` : `/api/vt-attachments/${a.id}` + (isImg || isPdf ? '?inline=1' : '')),
+      target: (isImg || isPdf || isMsg || isDocx) ? '_blank' : '_self',
       class: 'attach-name',
     }, a.filename),
     el('span', { class: 'attach-size' }, formatFileSize(a.file_size)),

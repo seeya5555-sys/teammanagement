@@ -2741,6 +2741,16 @@
   "defaults": {}
  },
  {
+  "rule": "/api/ext/vettings/svms-status",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "ai_gemini.api_ext_vetting_svms_status",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/ext/vlcc-push/done",
   "methods": [
    "OPTIONS",
@@ -4042,6 +4052,17 @@
    "OPTIONS"
   ],
   "endpoint": "ai_gemini.api_vt_attachment_get",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/vt-attachments/<int:aid>/docx-preview",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "ai_gemini.api_vt_attachment_docx_preview",
   "strict_slashes": true,
   "defaults": {}
  },

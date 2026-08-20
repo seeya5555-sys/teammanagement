@@ -6,6 +6,9 @@
       "execute",
       "query"
     ],
+    "docx_preview.py": [
+      "render_docx_html"
+    ],
     "helpers_shared.py": [
       "GEMINI_API_KEY",
       "VETTING_TYPES",
@@ -104,6 +107,7 @@
       "app"
     ]
   },
+  "docx_preview.py": {},
   "helpers_shared.py": {
     "apns_push.py": [],
     "app_core.py": [

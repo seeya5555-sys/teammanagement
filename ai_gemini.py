@@ -22,7 +22,7 @@ import hashlib
 import tempfile
 from datetime import datetime
 
-from flask import abort, jsonify, request, send_from_directory, session
+from flask import abort, jsonify, request, send_from_directory, session, Response
 from flask import Blueprint
 
 from app_core import (
@@ -987,6 +987,35 @@ def _svms_activate_revision(row_id, external_file_id, vetting_id):
             (vetting_id, row_id))
 
 
+def _svms_exact_vetting(vessel_name, report_number):
+    vessel = _svms_norm(vessel_name); report = _svms_norm(report_number)
+    rows = query('''SELECT vt.id, v.name AS vessel_name, vt.report_number
+                    FROM vettings vt JOIN vessels v ON v.id=vt.vessel_id
+                    WHERE v.name IS NOT NULL AND vt.report_number IS NOT NULL''')
+    return [r for r in rows if _svms_norm(r['vessel_name']) == vessel and
+                                _svms_norm(r['report_number']) == report]
+
+
+@bp.route('/api/ext/vettings/svms-status', methods=['POST'])
+@api_key_required
+def api_ext_vetting_svms_status():
+    """Store SVMS header flags for one exact TRMT report; findings stay untouched."""
+    d = request.get_json(silent=True) or {}
+    full = (d.get('full_report_yn') or '').strip().upper()
+    close = (d.get('close_report_yn') or '').strip().upper()
+    if full not in ('Y', 'N') or close not in ('Y', 'N'):
+        return jsonify({'error': 'full_report_yn and close_report_yn must be Y or N'}), 400
+    matches = _svms_exact_vetting(d.get('vessel_name'), d.get('report_number'))
+    if not matches:
+        return jsonify({'error': 'exact vessel/report match not found'}), 409
+    if len(matches) != 1:
+        return jsonify({'error': 'ambiguous exact vessel/report match'}), 409
+    vid = matches[0]['id']
+    execute('''UPDATE vettings SET svms_full_report_yn=?, svms_close_report_yn=?,
+               svms_status_synced_at=datetime('now','localtime') WHERE id=?''', (full, close, vid))
+    return jsonify({'ok': True, 'id': vid, 'full_report_yn': full, 'close_report_yn': close})
+
+
 @bp.route('/api/ext/vettings/svms-attachment', methods=['POST'])
 @api_key_required
 def api_ext_vetting_svms_attachment():
@@ -1000,12 +1029,7 @@ def api_ext_vetting_svms_attachment():
     claimed = vals['sha256'].lower()
     if len(claimed) != 64 or any(c not in '0123456789abcdef' for c in claimed):
         return jsonify({'error': 'invalid sha256'}), 400
-    vessel = _svms_norm(vals['vessel_name']); report = _svms_norm(vals['report_number'])
-    matches = query('''SELECT vt.id, v.name AS vessel_name, vt.report_number
-                       FROM vettings vt JOIN vessels v ON v.id=vt.vessel_id
-                       WHERE v.name IS NOT NULL AND vt.report_number IS NOT NULL''')
-    matches = [r for r in matches if _svms_norm(r['vessel_name']) == vessel and
-                                 _svms_norm(r['report_number']) == report]
+    matches = _svms_exact_vetting(vals['vessel_name'], vals['report_number'])
     if not matches:
         return jsonify({'error': 'exact vessel/report match not found'}), 409
     if len(matches) != 1:
@@ -1070,6 +1094,26 @@ def api_vt_attachment_get(aid):
         as_attachment=not inline,
         download_name=a['filename'],
     )
+
+
+@bp.route('/api/vt-attachments/<int:aid>/docx-preview', methods=['GET'])
+@login_required
+def api_vt_attachment_docx_preview(aid):
+    a = query('SELECT * FROM vt_attachments WHERE id=? AND inactive_at IS NULL', (aid,), one=True)
+    if not a:
+        abort(404)
+    if not (a['filename'] or '').lower().endswith('.docx'):
+        return jsonify({'error': 'DOCX 파일만 미리보기 가능합니다.'}), 415
+    if request.args.get('download'):
+        return send_from_directory(UPLOAD_DIR, a['stored_name'], as_attachment=True,
+                                   download_name=a['filename'])
+    path = os.path.join(UPLOAD_DIR, a['stored_name'])
+    try:
+        from docx_preview import render_docx_html
+        return Response(render_docx_html(path, a['filename']), mimetype='text/html')
+    except Exception as exc:
+        app.logger.exception('vt-docx-preview aid=%s', aid)
+        return jsonify({'error': 'DOCX 미리보기를 생성하지 못했습니다.', 'detail': str(exc)[:180]}), 422
 
 
 @bp.route('/api/vt-attachments/<int:aid>', methods=['DELETE'])

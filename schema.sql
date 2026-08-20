@@ -250,6 +250,9 @@ CREATE TABLE IF NOT EXISTS vettings (
     manual_observation_count INTEGER,              -- NULL이면 자동 카운트
     manual_open_count        INTEGER,
     manual_close_count       INTEGER,
+    svms_full_report_yn      TEXT CHECK (svms_full_report_yn IN ('Y','N') OR svms_full_report_yn IS NULL),
+    svms_close_report_yn     TEXT CHECK (svms_close_report_yn IN ('Y','N') OR svms_close_report_yn IS NULL),
+    svms_status_synced_at    TEXT,
     created_by               TEXT,
     created_at               TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at               TEXT NOT NULL DEFAULT (datetime('now','localtime')),

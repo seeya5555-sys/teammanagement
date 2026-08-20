@@ -1784,6 +1784,14 @@ def _auto_migrate():
 
         # SVMS SIRE attachment provenance; pre-existing rows remain manual.
         try:
+            vt_cols = [r[1] for r in conn.execute('PRAGMA table_info(vettings)').fetchall()]
+            for col, ddl in (
+                ('svms_full_report_yn', "ALTER TABLE vettings ADD COLUMN svms_full_report_yn TEXT"),
+                ('svms_close_report_yn', "ALTER TABLE vettings ADD COLUMN svms_close_report_yn TEXT"),
+                ('svms_status_synced_at', "ALTER TABLE vettings ADD COLUMN svms_status_synced_at TEXT"),
+            ):
+                if vt_cols and col not in vt_cols:
+                    conn.execute(ddl)
             cols = [r[1] for r in conn.execute('PRAGMA table_info(vt_attachments)').fetchall()]
             for col, ddl in (
                 ('source', "ALTER TABLE vt_attachments ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"),

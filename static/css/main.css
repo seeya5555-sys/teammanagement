@@ -5277,3 +5277,11 @@ col.c-stat { width: 92px; }
   body.pdf-printing #pdf-print-area .pdf-act-prog { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
   body.pdf-printing #pdf-print-area .pdf-act-empty { color: #999; border-top: none; }
 }
+.vt-svms-report-flags {
+  display: block;
+  margin-top: 3px;
+  color: #0b6688;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
