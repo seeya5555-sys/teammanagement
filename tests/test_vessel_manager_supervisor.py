@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 
 import app as appmod
 
@@ -59,6 +60,13 @@ class VesselManagerSupervisorTests(unittest.TestCase):
         response = self.client.get('/')
         self.assertEqual(200, response.status_code)
         self.assertIn(b'vedit-manager-supervisor', response.data)
+
+    def test_admin_vessel_list_shows_name_and_missing_fallback(self):
+        source = (Path(__file__).resolve().parents[1] / 'static/js/app.js').read_text()
+        self.assertIn(
+            "관리사 감독: ${v.manager_supervisor || '없음'}",
+            source,
+        )
 
     def test_auto_migrate_adds_non_null_column_to_legacy_vessels(self):
         legacy_db = os.path.join(self.tmp.name, 'legacy.db')

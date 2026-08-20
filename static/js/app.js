@@ -2445,7 +2445,8 @@ function renderAdminVesList() {
       el('strong', {}, v.name),
       el('div', { class: 'item-sub' },
         // 위와 같음 — 텍스트노드라 이중 이스케이프가 된다.
-        `${v.short_name ? v.short_name + ' · ' : ''}${v.imo ? 'IMO ' + v.imo + ' · ' : ''}담당: ${v.supervisor_names || '없음'}`)));
+        `${v.short_name ? v.short_name + ' · ' : ''}${v.imo ? 'IMO ' + v.imo + ' · ' : ''}` +
+        `담당: ${v.supervisor_names || '없음'} · 관리사 감독: ${v.manager_supervisor || '없음'}`)));
     item.append(el('div', {}));
 
     const actions = el('div', { class: 'item-actions' });
