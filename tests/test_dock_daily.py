@@ -3,6 +3,7 @@
 These tests use the same temporary-DB pattern as the existing Flask tests and
 avoid any external Dock Manager/SVMS service.
 """
+import inspect
 import json
 import io
 import os
@@ -187,6 +188,167 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual('nosniff', preview.headers['X-Content-Type-Options'])
         fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
         self.assertEqual('daily.docx', fetched['attachments'][0]['original_name'])
+
+    def _png(self):
+        """Smallest byte string that passes the PNG magic check in _file_mime."""
+        return b'\x89PNG\r\n\x1a\n' + b'0' * 32
+
+    def _project_with_attachment(self, title, report_date='2026-08-20'):
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': title,
+        }).get_json()
+        report = self.client.post(
+            f"/api/dock-daily/projects/{project['id']}/reports/generate",
+            json={'report_date': report_date},
+        ).get_json()
+        up = self.client.post(
+            f"/api/dock-daily/reports/{report['id']}/attachments",
+            data={'file': (io.BytesIO(self._png()), 'shot.png')},
+            content_type='multipart/form-data',
+        )
+        self.assertEqual(201, up.status_code, up.get_data(as_text=True))
+        stored = os.path.join(routes_dock_daily.UPLOAD_DIR, up.get_json()['stored_name'])
+        self.assertTrue(os.path.exists(stored))
+        return project, report, stored
+
+    def test_report_delete_removes_children_and_blobs_but_guards_final(self):
+        """Deleting a report date takes its blocks, revisions and attachment
+        files with it.  A finalized report is edit-locked, so the delete needs
+        an explicit token instead of being either a plain click or impossible --
+        a report finalized by mistake has no unlock route."""
+        project, report, stored = self._project_with_attachment('Delete Report DD')
+        rid = report['id']
+        self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': report['revision'], 'status': 'final', 'operations': [],
+        })
+        blocked = self.client.delete(f'/api/dock-daily/reports/{rid}')
+        self.assertEqual(409, blocked.status_code)
+        self.assertIn('delete-final', blocked.get_json()['error'])
+        self.assertTrue(os.path.exists(stored), 'a refused delete must not touch the blob')
+
+        gone = self.client.delete(f'/api/dock-daily/reports/{rid}', json={'confirm': 'delete-final'})
+        self.assertEqual(200, gone.status_code, gone.get_data(as_text=True))
+        self.assertEqual({'attachments_found': 1, 'attachments_removed': 1, 'deleted': rid},
+                         gone.get_json())
+        self.assertFalse(os.path.exists(stored))
+        self.assertEqual(404, self.client.get(f'/api/dock-daily/reports/{rid}').status_code)
+        self.assertEqual([], self.client.get(
+            f"/api/dock-daily/projects/{project['id']}/reports").get_json())
+        with appmod.app.app_context():
+            for table in ('dock_daily_block', 'dock_daily_attachment',
+                          'dock_daily_report_revision', 'dock_daily_source_link'):
+                self.assertEqual([], appmod.query(
+                    'SELECT id FROM %s WHERE report_id=?' % table, (rid,)), table)
+        self.assertEqual(404, self.client.delete(f'/api/dock-daily/reports/{rid}').status_code)
+
+    def test_project_delete_needs_confirmation_then_cascades(self):
+        """The project delete wipes every report under it, so a bare call is
+        refused: a mis-click on the sidebar row must not erase a whole dock."""
+        project, report, stored = self._project_with_attachment('Delete Project DD')
+        pid = project['id']
+        blocked = self.client.delete(f'/api/dock-daily/projects/{pid}')
+        self.assertEqual(409, blocked.status_code)
+        self.assertIn('delete-project', blocked.get_json()['error'])
+        self.assertTrue(os.path.exists(stored))
+        self.assertEqual(1, len(self.client.get('/api/dock-daily/projects').get_json()))
+
+        gone = self.client.delete(f'/api/dock-daily/projects/{pid}', json={'confirm': 'delete-project'})
+        self.assertEqual(200, gone.status_code, gone.get_data(as_text=True))
+        self.assertEqual(1, gone.get_json()['attachments_removed'])
+        self.assertFalse(os.path.exists(stored))
+        self.assertEqual([], self.client.get('/api/dock-daily/projects').get_json())
+        self.assertEqual(404, self.client.get(f"/api/dock-daily/reports/{report['id']}").status_code)
+        with appmod.app.app_context():
+            self.assertEqual([], appmod.query(
+                'SELECT id FROM dock_daily_section_def WHERE project_id=?', (pid,)))
+            self.assertEqual([], appmod.query(
+                'SELECT id FROM dock_daily_report WHERE project_id=?', (pid,)))
+        self.assertEqual(404, self.client.delete(
+            f'/api/dock-daily/projects/{pid}', json={'confirm': 'delete-project'}).status_code)
+
+    def test_soft_deleted_attachment_blob_is_purged_with_its_report(self):
+        """`deleted_at` only hides the row; the file stays on disk.  A report
+        delete that skipped hidden rows would leak those blobs forever."""
+        _project, report, stored = self._project_with_attachment('Soft Delete DD')
+        with appmod.app.app_context():
+            appmod.execute("UPDATE dock_daily_attachment SET deleted_at=datetime('now') WHERE report_id=?",
+                           (report['id'],))
+        self.assertEqual([], self.client.get(
+            f"/api/dock-daily/reports/{report['id']}").get_json()['attachments'])
+        gone = self.client.delete(f"/api/dock-daily/reports/{report['id']}")
+        self.assertEqual(200, gone.status_code)
+        self.assertEqual(1, gone.get_json()['attachments_removed'])
+        self.assertFalse(os.path.exists(stored))
+
+    def test_purge_count_is_the_real_one_not_the_row_count(self):
+        """`attachments_removed` must not be the number of rows found. If a blob
+        is already gone from disk the row still cascades away, and reporting the
+        row count would hide a leak that nothing else can detect."""
+        _project, report, stored = self._project_with_attachment('Missing Blob DD')
+        os.remove(stored)                        # blob vanished behind the app's back
+        gone = self.client.delete(f"/api/dock-daily/reports/{report['id']}")
+        self.assertEqual(200, gone.status_code)
+        self.assertEqual(1, gone.get_json()['attachments_found'])
+        self.assertEqual(0, gone.get_json()['attachments_removed'])
+
+    def test_delete_reads_status_and_blob_names_inside_the_transaction(self):
+        """The guard and the blob-name read both happen inside the delete's
+        `BEGIN IMMEDIATE`. Reading either one earlier decided on stale state: a
+        upload landing in between would keep its file while its row cascaded
+        away, and a 확정 landing in between would let an unconfirmed delete
+        through."""
+        src = inspect.getsource(routes_dock_daily._delete_cascade)
+        body = src.split("db.execute('BEGIN IMMEDIATE')", 1)[1]
+        self.assertIn('guard(row)', body, 'the status guard must run inside the transaction')
+        self.assertIn('SELECT stored_name', body, 'blob names must be read inside the transaction')
+        self.assertIn('cur.rowcount != 1', body, 'a lost race must not report success')
+        # The purge itself is the one part that must happen after the commit,
+        # or a rolled back transaction leaves rows pointing at missing files.
+        self.assertNotIn('_purge_files', body.split('db.commit()', 1)[0])
+        self.assertIn('_purge_files', src.split('db.commit()', 1)[1])
+
+    def test_attachment_upload_is_a_multi_file_dropzone_and_lists_have_delete(self):
+        """첨부파일 등록 opens a drag-and-drop modal that takes several files at
+        once, and both sidebar lists carry their own delete button.  The delete
+        cannot be nested inside the selector button -- invalid HTML, and one
+        click would fire both -- so each row is a flex pair."""
+        html = self.client.get('/dock-daily').get_data(as_text=True)
+        self.assertIn('id="dd-upload-modal"', html)
+        self.assertIn('id="dd-dropzone"', html)
+        self.assertIn('파일을 여기로 끌어다 놓으세요', html)
+        self.assertIn('id="dd-upload-list"', html)
+        self.assertIn('<input id="dd-file-input" type="file" multiple hidden', html)
+        # The picker's filter must not be narrower than what the server accepts,
+        # or iPhone .heic captures are invisible in the dialog.
+        accept = re.search(r'id="dd-file-input"[^>]*accept="([^"]+)"', html).group(1)
+        self.assertEqual(set(), {'.' + e for e in routes_dock_daily.ALLOWED_EXT} - set(accept.split(',')))
+
+        with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'dock_daily.js'),
+                  encoding='utf-8') as f:
+            script = f.read()
+        self.assertIn('dropzone.addEventListener', script)
+        self.assertIn("data-del-project", script)
+        self.assertIn("data-del-report", script)
+        self.assertIn("confirm:'delete-project'", script)
+        self.assertIn("confirm:'delete-final'", script)
+        self.assertIn('class="dd-list-row"', script)
+        # Uploads are sequential with a single reload at the end; parallel posts
+        # would race the reload and could drop a row the server actually kept,
+        # and a reload per file would discard the editor state repeatedly.
+        self.assertIn('for(const file of list)', script)
+        # Counts call sites, not the declaration, so 'await ' is part of the needle.
+        self.assertEqual(1, script.count('await uploadOne(rid,file)'), 'one post per file, in the loop only')
+        # The report id is pinned before the first post and a second batch is
+        # refused while one is running: re-reading state.report per file would
+        # scatter a batch across two reports if the user switched mid-upload.
+        self.assertIn('const rid=state.report.id', script)
+        self.assertIn('if(uploading)', script)
+        self.assertIn('uploading=false', script)
+        # And the closing reload is conditional, or edits typed during the
+        # upload would be replaced by the server copy without warning.
+        self.assertIn('if(state.report?.id===rid&&!state.dirty)', script)
+        # A cancelled confirm() must release the delete button again.
+        self.assertIn('finally { button.disabled = false; }', script)
 
     def test_ooxml_preview_rejects_entity_payload(self):
         project = self.client.post('/api/dock-daily/projects', json={

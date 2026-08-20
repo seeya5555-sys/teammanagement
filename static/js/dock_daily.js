@@ -15,13 +15,53 @@
   async function loadProjects() {
     state.projects = await api('/api/dock-daily/projects');
     $('#dd-project-list').innerHTML = state.projects.length ? state.projects.map(p =>
-      `<button data-project="${p.id}" class="${state.project?.id===p.id?'active':''}"><b>${esc(p.vessel_name)}</b><br><span class="dd-muted">${esc(p.title)} · ${p.report_count||0}일</span></button>`).join('') : '<p class="dd-muted">등록된 프로젝트가 없습니다.</p>';
+      `<div class="dd-list-row"><button data-project="${p.id}" class="${state.project?.id===p.id?'active':''}"><b>${esc(p.vessel_name)}</b><br><span class="dd-muted">${esc(p.title)} · ${p.report_count||0}일</span></button><button class="dd-list-del" type="button" data-del-project="${p.id}" title="프로젝트 삭제" aria-label="${esc(p.vessel_name)} 프로젝트 삭제">삭제</button></div>`).join('') : '<p class="dd-muted">등록된 프로젝트가 없습니다.</p>';
     document.querySelectorAll('[data-project]').forEach(b => b.onclick = () => {if(canLeaveDraft())selectProject(+b.dataset.project);});
+    document.querySelectorAll('[data-del-project]').forEach(b => b.onclick = () => once(b, () => deleteProject(+b.dataset.delProject)));
   }
   function renderReportDates() {
     $('#dd-report-list').innerHTML = state.reports.length ? state.reports.map(r =>
-      `<button data-report="${r.id}" class="${state.report?.id===r.id?'active':''}"><b>${esc(r.report_date)}</b><small>${esc(r.status)}</small></button>`).join('') : '<p class="dd-muted">생성된 일자가 없습니다.</p>';
+      `<div class="dd-list-row"><button data-report="${r.id}" class="${state.report?.id===r.id?'active':''}"><b>${esc(r.report_date)}</b><small>${esc(r.status)}</small></button><button class="dd-list-del" type="button" data-del-report="${r.id}" title="이 일자 삭제" aria-label="${esc(r.report_date)} 보고서 삭제">삭제</button></div>`).join('') : '<p class="dd-muted">생성된 일자가 없습니다.</p>';
     document.querySelectorAll('[data-report]').forEach(b => b.onclick = () => {if(canLeaveDraft())selectReport(+b.dataset.report).catch(err);});
+    document.querySelectorAll('[data-del-report]').forEach(b => b.onclick = () => once(b, () => deleteReport(+b.dataset.delReport)));
+  }
+  // A second click while the first DELETE is in flight would send a duplicate
+  // request, so the button is held down for the whole round trip. Always
+  // released again: a cancelled confirm() does no work at all and must not
+  // leave the row dead. On success the button has usually been re-rendered
+  // away by then, so the release just touches a detached node.
+  async function once(button, run) {
+    if (button.disabled) return;
+    button.disabled = true;
+    try { await run(); } catch (e) { err(e); } finally { button.disabled = false; }
+  }
+  // Deleting cascades on the server (blocks, source links, revisions,
+  // attachments), so both of these ask before firing and neither has an undo.
+  async function deleteProject(id) {
+    const p = state.projects.find(x => x.id === id); if (!p) return; clearErr();
+    if (!confirm(`[${p.vessel_name}] ${p.title} 프로젝트를 삭제할까요?\n\n보고서 ${p.report_count||0}일치와 첨부파일이 모두 함께 지워지고 되돌릴 수 없습니다.`)) return;
+    await api(`/api/dock-daily/projects/${id}`, {...json({confirm:'delete-project'}), method:'DELETE'});
+    // Only the open project's editor state is dropped; deleting another one
+    // leaves unsaved edits alone, so state.dirty is not touched there.
+    if (state.project?.id === id) {
+      state.project = null; state.report = null; state.reports = []; state.dirty = false;
+      $('#dd-project-tools').style.display = 'none'; $('#dd-report').classList.remove('show'); $('#dd-empty').style.display = 'block';
+    }
+    await loadProjects();
+  }
+  async function deleteReport(id) {
+    const r = state.reports.find(x => x.id === id); if (!r || !state.project) return; clearErr();
+    // A finalized report is edit-locked, so the server demands a token for it
+    // rather than refusing outright -- otherwise a mistaken 확정 is unfixable.
+    const final = r.status === 'final';
+    if (!confirm(`${r.report_date} 보고서를 삭제할까요?${final?'\n\n확정된 보고서입니다. 지우면 되돌릴 수 없습니다.':''}`)) return;
+    await api(`/api/dock-daily/reports/${id}`, {...json(final?{confirm:'delete-final'}:{}), method:'DELETE'});
+    const openWasDeleted = state.report?.id === id;
+    if (openWasDeleted) { state.report = null; state.dirty = false; $('#dd-report').classList.remove('show'); $('#dd-empty').style.display = 'block'; }
+    state.reports = await api(`/api/dock-daily/projects/${state.project.id}/reports`);
+    await loadProjects();                       // the day count on the row changed
+    renderReportDates();
+    if (openWasDeleted && state.reports.length) await selectReport(state.reports[0].id);
   }
   async function selectProject(id) {
     clearErr(); state.project = state.projects.find(p => p.id === id) || null; if (!state.project) return;
@@ -152,12 +192,59 @@
   }
   function openFilePreview(id,name){$('#dd-file-title').textContent=name;$('#dd-file-frame').src=`/api/dock-daily/attachments/${id}/preview`;$('#dd-file-modal').hidden=false;document.body.style.overflow='hidden';}
   function closeFilePreview(){$('#dd-file-modal').hidden=true;$('#dd-file-frame').src='about:blank';document.body.style.overflow='';}
-  async function uploadFile(file){if(!file)return;const fd=new FormData();fd.append('file',file);const r=await fetch(`/api/dock-daily/reports/${state.report.id}/attachments`,{method:'POST',body:fd});const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.error||`업로드 실패 (${r.status})`);await selectReport(state.report.id);}
+  async function uploadOne(rid,file){const fd=new FormData();fd.append('file',file);const r=await fetch(`/api/dock-daily/reports/${rid}/attachments`,{method:'POST',body:fd});const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.error||`업로드 실패 (${r.status})`);return body;}
+  let uploading=false;
+  // Files go up one at a time against a report id pinned before the first
+  // post. Re-reading state.report per file would scatter a batch across two
+  // reports if the user switched in the middle, and parallel posts would race
+  // the reload and drop a row from the list that the server actually kept.
+  async function uploadFiles(files){
+    const list=[...(files||[])].filter(Boolean); if(!list.length||!state.report)return;
+    if(uploading){$('#dd-upload-status').textContent='앞의 업로드가 끝난 뒤 다시 놓아주세요.';return;}
+    const rid=state.report.id, ul=$('#dd-upload-list'); let ok=0; uploading=true;
+    try{
+      $('#dd-upload-status').textContent=`0/${list.length} 업로드 중…`;
+      for(const file of list){
+        const li=document.createElement('li');
+        li.innerHTML=`<b>${esc(file.name)}</b><span>업로드 중…</span>`; ul.appendChild(li);
+        const status=li.querySelector('span');
+        try{await uploadOne(rid,file); status.textContent='완료'; li.className='ok'; ok++;}
+        catch(e){status.textContent=e.message||String(e); li.className='fail';}
+        $('#dd-upload-status').textContent=`${ok}/${list.length} 등록됨`;
+      }
+      const tail=ok===list.length?`${ok}건 모두 등록됨`:`${list.length}건 중 ${ok}건 등록됨`;
+      // Reload only when the same report is still open with nothing unsaved.
+      // selectReport() replaces state.report wholesale, so refreshing over
+      // edits typed during the upload would discard them silently.
+      if(state.report?.id===rid&&!state.dirty){await selectReport(rid);$('#dd-upload-status').textContent=tail;}
+      else $('#dd-upload-status').textContent=`${tail} · 목록은 저장 후 새로 열면 반영됩니다.`;
+    } finally { uploading=false; }
+  }
+  const uploadModal=$('#dd-upload-modal'), dropzone=$('#dd-dropzone');
+  async function openUploadModal(){
+    if(!state.report||state.report.status==='final')return;
+    // Same contract as the previews: pending edits are saved first, because the
+    // upload reloads the report and would otherwise discard them.
+    if(state.dirty)await save();
+    $('#dd-upload-list').innerHTML=''; $('#dd-upload-status').textContent='';
+    uploadModal.hidden=false; document.body.style.overflow='hidden'; dropzone.focus();
+  }
+  function closeUploadModal(){uploadModal.hidden=true;document.body.style.overflow='';}
 
   $('#dd-save').onclick=()=>save().catch(err); $('#dd-email').onclick=()=>openPreview('email').catch(err); $('#dd-svms').onclick=()=>openPreview('svms').catch(err);
   $('#dd-final').onclick=async()=>{if(!state.report||!confirm('이 보고서를 확정하면 더 이상 수정할 수 없습니다. 확정할까요?'))return;try{if(state.dirty)await save();state.report=await api(`/api/dock-daily/reports/${state.report.id}`,{...json({revision:state.report.revision,status:'final',operations:[]}),method:'PUT'});await selectReport(state.report.id);}catch(e){err(e);}};
   $('#dd-generate').onclick=async()=>{if(!state.project)return;const report_date=$('#dd-generate-date').value;if(!report_date)return err(new Error('보고서 일자를 선택하세요.'));try{const report=await api(`/api/dock-daily/projects/${state.project.id}/reports/generate`,{...json({report_date}),method:'POST'});state.reports=await api(`/api/dock-daily/projects/${state.project.id}/reports`);await selectReport(report.id);}catch(e){err(e);}};
-  $('#dd-attach').onclick=()=>$('#dd-file-input').click(); $('#dd-file-input').onchange=async e=>{try{await uploadFile(e.target.files[0]);}catch(x){err(x);}finally{e.target.value='';}};
+  $('#dd-attach').onclick=()=>openUploadModal().catch(err);
+  $('#dd-upload-close').onclick=closeUploadModal; $('#dd-upload-done').onclick=closeUploadModal;
+  $('#dd-file-input').onchange=async e=>{const files=[...e.target.files];e.target.value='';try{await uploadFiles(files);}catch(x){err(x);}};
+  dropzone.onclick=()=>$('#dd-file-input').click();
+  dropzone.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('#dd-file-input').click();}};
+  ['dragenter','dragover'].forEach(t=>dropzone.addEventListener(t,e=>{e.preventDefault();dropzone.classList.add('over');}));
+  ['dragleave','dragend','drop'].forEach(t=>dropzone.addEventListener(t,()=>dropzone.classList.remove('over')));
+  dropzone.addEventListener('drop',e=>{e.preventDefault();uploadFiles(e.dataTransfer?.files).catch(err);});
+  // Without this the browser navigates away to the dropped file when the user
+  // misses the zone, which would silently lose unsaved edits.
+  ['dragover','drop'].forEach(t=>window.addEventListener(t,e=>{if(!dropzone.contains(e.target))e.preventDefault();}));
   $('#dd-preview-close').onclick=closePreview;$('#dd-preview-done').onclick=closePreview;$('#dd-copy-all').onclick=copyEmail;$('#dd-svms-push').onclick=pushSvms;$('#dd-file-close').onclick=closeFilePreview;
 
   const projectModal=$('#dd-project-modal'),projectForm=$('#dd-project-form'),projectError=$('#ddp-error'),autoToggle=$('#ddp-auto');
@@ -165,7 +252,7 @@
   async function openProjectModal(){projectForm.reset();projectError.textContent='';setAutoFields();try{if(!state.vessels.length)state.vessels=await api('/api/vessels');$('#ddp-vessel').innerHTML='<option value="">활성 선박을 선택하세요</option>'+state.vessels.map(v=>`<option value="${v.id}">${esc(v.name)}${v.vsl_cd?` · ${esc(v.vsl_cd)}`:''}</option>`).join('');projectModal.hidden=false;document.body.style.overflow='hidden';$('#ddp-vessel').focus();}catch(e){err(e);}}
   function closeProjectModal(){projectModal.hidden=true;document.body.style.overflow='';}
   autoToggle.onchange=setAutoFields;$('#dd-new-project').onclick=openProjectModal;$('#dd-project-close').onclick=closeProjectModal;$('#dd-project-cancel').onclick=closeProjectModal;
-  document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!projectModal.hidden)closeProjectModal();else if(!previewModal.hidden)closePreview();else if(!$('#dd-file-modal').hidden)closeFilePreview();});
+  document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!projectModal.hidden)closeProjectModal();else if(!previewModal.hidden)closePreview();else if(!$('#dd-file-modal').hidden)closeFilePreview();else if(!uploadModal.hidden)closeUploadModal();});
   projectForm.onsubmit=async e=>{e.preventDefault();projectError.textContent='';if(!projectForm.reportValidity())return;const auto_generate=autoToggle.checked,active_from=$('#ddp-active-from').value||null,active_to=$('#ddp-active-to').value||null,sourceIds=$('#ddp-source-ids').value.split(',').map(x=>x.trim()).filter(Boolean);if(auto_generate&&active_from>active_to)return projectError.textContent='자동작성 종료일은 시작일보다 빠를 수 없습니다.';if(auto_generate&&sourceIds.some(x=>!/^v_[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(x)))return projectError.textContent='Dock Manager 원천 ID는 모두 v_로 시작해야 합니다.';const button=$('#dd-project-create');button.disabled=true;button.textContent='생성 중…';try{const created=await api('/api/dock-daily/projects',{...json({vessel_id:Number($('#ddp-vessel').value),title:$('#ddp-title').value.trim(),berthing_date:$('#ddp-berthing').value||null,dock_in_date:$('#ddp-dock-in').value||null,dock_out_date:$('#ddp-dock-out').value||null,departure_date:$('#ddp-departure').value||null,active_from:auto_generate?active_from:null,active_to:auto_generate?active_to:null,auto_generate,dock_manager_project_ids:auto_generate?sourceIds:[],svms_dk_cd:$('#ddp-svms-dk').value.trim()||null,special_sections:$('#ddp-egcs').checked?[{section_key:'egcs',label:'EGCS Retrofit',enabled:true}]:[]}),method:'POST'});closeProjectModal();await loadProjects();await selectProject(created.id);}catch(error){projectError.textContent=error.message||String(error);}finally{button.disabled=false;button.textContent='프로젝트 생성';}};
   window.addEventListener('beforeunload',event=>{if(state.dirty){event.preventDefault();event.returnValue='';}});
   loadProjects().catch(err);

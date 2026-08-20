@@ -354,6 +354,109 @@ def projects_patch(pid):
     return jsonify(_project_response(_project(pid)))
 
 
+def _purge_files(stored_names):
+    """Remove attachment blobs; returns how many were actually unlinked.
+
+    Called post-commit on purpose: a file removed before a transaction that
+    then rolls back would leave a row pointing at nothing.  A blob that cannot
+    be removed is logged and skipped rather than raised -- the row is already
+    gone and the request already succeeded, so raising would report a false
+    failure.  The count returned is the real one; reporting the number of rows
+    found instead would hide a leak that nothing else can detect.
+
+    Names are re-validated even though we generate them, because the value
+    travels through the DB between write and delete.  `basename` plus the
+    realpath containment check keeps a crafted name inside UPLOAD_DIR; a
+    symlink swapped in between the check and the unlink is still possible and
+    is not defended here (it needs write access to UPLOAD_DIR itself).
+    """
+    root = os.path.realpath(UPLOAD_DIR)
+    removed = 0
+    for name in stored_names:
+        if not name or name != os.path.basename(name):
+            app.logger.warning('dock-daily: refusing odd attachment name %r', name)
+            continue
+        path = os.path.realpath(os.path.join(root, name))
+        if os.path.commonpath((path, root)) != root:
+            app.logger.warning('dock-daily: attachment %r escapes UPLOAD_DIR', name)
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            app.logger.warning('dock-daily: attachment blob %r left on disk: %s', name, exc)
+    return removed
+
+
+_REPORTS_OF_PROJECT = 'SELECT id FROM dock_daily_report WHERE project_id=?'
+_REPORT_ITSELF = 'SELECT id FROM dock_daily_report WHERE id=?'
+
+
+def _delete_cascade(table, row_id, rid_select, label, guard=None):
+    """Delete one dock-daily row and purge the attachment blobs under it.
+
+    Row removal cascades in the schema (`PRAGMA foreign_keys = ON` is set per
+    request in app_core), but blobs on disk do not, so their names are read
+    inside the same `BEGIN IMMEDIATE` as the delete.  Reading them before the
+    transaction -- or checking the row's status before it -- opened a window
+    where an upload or a 확정 landing in between was decided on stale state:
+    the uploaded file would keep its blob while its row cascaded away, an
+    orphan nothing would ever collect.
+
+    `deleted_at` rows are included: it only hides a row from the report, the
+    file stays on disk, so skipping them would leak them forever.
+
+    `guard(row)` runs inside the transaction and may return an error response
+    to abort.  Returns (payload, error); a rowcount of 0 means another request
+    won the race and is reported as 404, not as a success that did nothing.
+    """
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT * FROM %s WHERE id=?' % table, (row_id,)).fetchone()
+        if not row:
+            db.rollback()
+            return None, _error('%s not found' % label, 404)
+        if guard:
+            refused = guard(row)
+            if refused:
+                db.rollback()
+                return None, refused
+        names = [r['stored_name'] for r in db.execute(
+            'SELECT stored_name FROM dock_daily_attachment WHERE report_id IN (%s)' % rid_select,
+            (row_id,)).fetchall()]
+        cur = db.execute('DELETE FROM %s WHERE id=?' % table, (row_id,))
+        if cur.rowcount != 1:
+            db.rollback()
+            return None, _error('%s not found' % label, 404)
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    removed = _purge_files(names)
+    return {'deleted': row_id, 'attachments_found': len(names),
+            'attachments_removed': removed}, None
+
+
+@bp.route('/api/dock-daily/projects/<int:pid>', methods=['DELETE'])
+@login_required
+def project_delete(pid):
+    """Delete a project with every report, block, source link, revision and
+    attachment under it.
+
+    There is no undo and no soft-delete column here, so the caller has to name
+    the operation.  A mis-click on the sidebar row or a stray fetch must not be
+    able to erase a whole dock.
+    """
+    if _body().get('confirm') != 'delete-project':
+        # Checked before the existence lookup so a bare probe cannot use the
+        # 404/409 split to enumerate project ids.
+        return _error('confirm=delete-project is required', 409)
+    payload, err = _delete_cascade('dock_daily_project', pid, _REPORTS_OF_PROJECT, 'project')
+    return err if err else jsonify(payload)
+
+
 @bp.route('/api/dock-daily/projects/<int:pid>/reports')
 @login_required
 def reports_get(pid):
@@ -506,6 +609,29 @@ def report_put(rid):
     except Exception:
         db.rollback(); raise
     return jsonify(_report_json(rid))
+
+
+@bp.route('/api/dock-daily/reports/<int:rid>', methods=['DELETE'])
+@login_required
+def report_delete(rid):
+    """Delete one report date and everything hanging off it.
+
+    A `final` report is edit-locked by `_cas_begin`, so deleting one must not be
+    a plain click-through.  Refusing outright would trap a report finalized by
+    mistake -- there is no unlock route -- so it is allowed behind an explicit
+    confirmation token instead of being blocked or silently permitted.
+    """
+    confirm = _body().get('confirm')
+
+    def guard(row):
+        # Read inside the transaction: a 확정 that lands between the check and
+        # the delete would otherwise let an unconfirmed request through.
+        if row['status'] == 'final' and confirm != 'delete-final':
+            return _error('final report requires confirm=delete-final', 409)
+        return None
+
+    payload, err = _delete_cascade('dock_daily_report', rid, _REPORT_ITSELF, 'report', guard)
+    return err if err else jsonify(payload)
 
 
 def _file_mime(data, ext, declared):
