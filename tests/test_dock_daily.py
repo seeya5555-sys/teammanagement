@@ -76,7 +76,7 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual('2026-09-02', report['departure_date'])
 
     def test_revision_conflict_and_final_lock(self):
-        p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD', 'auto_generate': True}).get_json()
+        p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()
         r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate", json={'report_date': '2026-08-20'}).get_json()
         body = {'revision': r['revision'], 'operations': [{'section_key': 'shipyard', 'block_type': 'paragraph', 'content': {'body': 'ok'}}]}
         updated = self.client.put(f"/api/dock-daily/reports/{r['id']}", json=body)
@@ -132,6 +132,29 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(1, sections['shipyard']['enabled'])
         self.assertEqual('EGCS Special', sections['egcs']['label'])
         self.assertEqual(0, sections['egcs']['enabled'])
+
+    def test_auto_project_requires_valid_final_active_window(self):
+        missing = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Invalid auto', 'auto_generate': True,
+        })
+        self.assertEqual(400, missing.status_code)
+
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Valid auto',
+            'active_from': '2026-08-01', 'active_to': '2026-08-31',
+            'auto_generate': True,
+        }).get_json()
+        inverted = self.client.patch(f"/api/dock-daily/projects/{project['id']}", json={
+            'active_from': '2026-09-01',
+        })
+        self.assertEqual(400, inverted.status_code)
+        cleared = self.client.patch(f"/api/dock-daily/projects/{project['id']}", json={
+            'active_to': None,
+        })
+        self.assertEqual(400, cleared.status_code)
+        unchanged = self.client.get('/api/dock-daily/projects').get_json()[0]
+        self.assertEqual('2026-08-01', unchanged['active_from'])
+        self.assertEqual('2026-08-31', unchanged['active_to'])
 
     def test_svms_preview_reports_utf8_bytes_and_publish_disabled(self):
         p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()

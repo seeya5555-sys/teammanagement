@@ -205,6 +205,14 @@ def _error(message, code=400, **extra):
     return jsonify(out), code
 
 
+def _validate_active_window(auto_generate, active_from, active_to):
+    """Validate the final persisted scheduler window, not just patch fields."""
+    if active_from and active_to and active_from > active_to:
+        raise ValueError('active_from must not be after active_to')
+    if auto_generate and (not active_from or not active_to):
+        raise ValueError('active_from and active_to are required when auto_generate is enabled')
+
+
 @bp.route('/dock-daily')
 @login_required
 def dock_daily_page():
@@ -232,8 +240,7 @@ def projects_post():
             raise ValueError('active vessel_id and title are required')
         dates = {k: _date(data.get(k)) for k in
                  ('berthing_date', 'dock_in_date', 'dock_out_date', 'departure_date', 'active_from', 'active_to')}
-        if dates['active_from'] and dates['active_to'] and dates['active_from'] > dates['active_to']:
-            raise ValueError('active_from must not be after active_to')
+        _validate_active_window(bool(data.get('auto_generate')), dates['active_from'], dates['active_to'])
         primary = _drydock_id(data.get('drydock_primary_vessel_id'))
         source_ids = _drydock_id_list(data.get('drydock_source_vessel_ids',
                                                 data.get('dock_manager_project_ids', [])))
@@ -276,9 +283,21 @@ def projects_post():
 @bp.route('/api/dock-daily/projects/<int:pid>', methods=['PATCH'])
 @login_required
 def projects_patch(pid):
-    if not _project(pid):
+    current = _project(pid)
+    if not current:
         return _error('project not found', 404)
     data = _body()
+    parsed_dates = {}
+    try:
+        for key in ('berthing_date', 'dock_in_date', 'dock_out_date', 'departure_date', 'active_from', 'active_to'):
+            if key in data:
+                parsed_dates[key] = _date(data[key])
+        final_auto = bool(data.get('auto_generate')) if 'auto_generate' in data else bool(current['auto_generate'])
+        final_from = parsed_dates.get('active_from', current['active_from'])
+        final_to = parsed_dates.get('active_to', current['active_to'])
+        _validate_active_window(final_auto, final_from, final_to)
+    except ValueError as e:
+        return _error(str(e))
     allowed = {'title', 'vsl_cd', 'imo', 'svms_dk_cd', 'auto_generate', 'drydock_primary_vessel_id'}
     sets, vals = [], []
     for key in allowed:
@@ -300,10 +319,7 @@ def projects_patch(pid):
         vals.append(json.dumps(source_ids, ensure_ascii=False))
     for key in ('berthing_date', 'dock_in_date', 'dock_out_date', 'departure_date', 'active_from', 'active_to'):
         if key in data:
-            try:
-                sets.append('%s=?' % key); vals.append(_date(data[key]))
-            except ValueError as e:
-                return _error(str(e))
+            sets.append('%s=?' % key); vals.append(parsed_dates[key])
     if sets:
         sets.append("updated_at=datetime('now','localtime')")
         execute('UPDATE dock_daily_project SET %s WHERE id=?' % ','.join(sets), (*vals, pid))
