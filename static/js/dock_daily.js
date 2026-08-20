@@ -96,7 +96,7 @@
   }
   async function copyEmail(){
     const v=state.preview?.data;if(!v)return;const plain=`제목: ${v.subject}\n\n${v.text}`;
-    try{if(window.ClipboardItem&&navigator.clipboard?.write){await navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([plain],{type:'text/plain'}),'text/html':new Blob([`<p><b>제목: ${esc(v.subject)}</b></p>${v.html}`],{type:'text/html'})})]);}else await navigator.clipboard.writeText(plain);$('#dd-preview-status').textContent='전체 내용이 복사되었습니다.';}catch(e){$('#dd-preview-status').textContent='복사 실패: '+e.message;}
+    try{if(window.ClipboardItem&&navigator.clipboard?.write){await navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([plain],{type:'text/plain'}),'text/html':new Blob([`<p style="margin:0"><b>제목: ${esc(v.subject)}</b></p><p style="margin:0;line-height:1.5">&nbsp;</p>${v.html}`],{type:'text/html'})})]);}else await navigator.clipboard.writeText(plain);$('#dd-preview-status').textContent='전체 내용이 복사되었습니다.';}catch(e){$('#dd-preview-status').textContent='복사 실패: '+e.message;}
   }
   async function pushSvms(){
     if(!confirm('현재 미리보기 내용으로 SVMS 입거 Daily Report에 반영할까요?'))return;

@@ -80,6 +80,7 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn("projectForm.onsubmit", script)
         self.assertIn("dd-section-edit", script)
         self.assertIn("ClipboardItem", script)
+        self.assertIn('<p style="margin:0;line-height:1.5">&nbsp;</p>${v.html}', script)
 
     def test_docx_attachment_upload_and_inline_preview(self):
         project = self.client.post('/api/dock-daily/projects', json={
@@ -263,8 +264,10 @@ class DockDailyTests(unittest.TestCase):
         })
         self.assertEqual(200, saved.status_code)
         preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
-        self.assertIn('수신 : ', preview['text'])
-        self.assertIn('발신 : Dock Daily', preview['text'])
+        self.assertIn('수 신 : 곽인섭 팀장님 / 탱커관리 3팀', preview['text'])
+        self.assertIn('발 신 : 손유석 감독 / 탱커관리 3팀', preview['text'])
+        self.assertEqual('곽인섭 팀장님 / 탱커관리 3팀', preview['to'])
+        self.assertEqual('손유석 감독 / 탱커관리 3팀', preview['from'])
         self.assertIn('안녕하십니까.', preview['text'])
         self.assertIn('아래와 같이 금일 입거공사 진행사항을 보고드립니다.', preview['text'])
         self.assertNotIn('Dear all', preview['text'])
@@ -273,6 +276,9 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('아래와 같이 금일 입거공사 진행사항을 보고드립니다.', preview['html'])
         self.assertNotIn('Dear all', preview['html'])
         self.assertNotIn('Safety first', preview['html'])
+        self.assertIn('<b>수 신 :</b> 곽인섭 팀장님 / 탱커관리 3팀', preview['html'])
+        self.assertIn('<b>발 신 :</b> 손유석 감독 / 탱커관리 3팀', preview['html'])
+        self.assertIn('발 신 : 손유석 감독 / 탱커관리 3팀\n\n안녕하십니까.\n\n아래와 같이 금일 입거공사 진행사항을 보고드립니다.\n\nVESSEL ITINERARY', preview['text'])
         self.assertIn('BERTHING\t2026.03.24', preview['text'])
         self.assertIn('1. Shipyard', preview['text'])
         self.assertIn('1) Main deck repair complete', preview['text'])
@@ -280,6 +286,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('2. EGCS Retrofit', preview['text'])
         self.assertIn('<table style="border-collapse:collapse', preview['html'])
         self.assertIn('<b>1. &nbsp;Shipyard</b>', preview['html'])
+        self.assertIn('</table><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>1. &nbsp;Shipyard</b>', preview['html'])
+        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</p><p style="margin:0;line-height:1.5">&nbsp;</p><p style="margin:0 0 6px"><b>2. &nbsp;EGCS Retrofit</b>', preview['html'])
         self.assertIn('2) &nbsp;Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;', preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
 

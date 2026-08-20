@@ -709,7 +709,6 @@ def _mail_date(value):
 
 
 def _email(rid):
-    from flask import session
     r = _report(rid)
     sections = _sections(r['project_id'], include_disabled=False)
     specials = [x for x in sections if x['kind'] == 'special']
@@ -722,34 +721,46 @@ def _email(rid):
     # with the current wording without overwriting any user-edited content.
     if intro == 'Dear all,\nPlease find the dock daily report below.':
         intro = '안녕하십니까.\n아래와 같이 금일 입거공사 진행사항을 보고드립니다.'
-    sender = session.get('display_name') or session.get('username') or ''
+    mail_to = '곽인섭 팀장님 / 탱커관리 3팀'
+    mail_from = '손유석 감독 / 탱커관리 3팀'
     itinerary = [('BERTHING', r['berthing_date']), ('DRY DOCK IN', r['dock_in_date']),
                  ('DRY DOCK OUT', r['dock_out_date']), ('DEPARTURE', r['departure_date'])]
-    lines = ['수신 : ', '발신 : %s' % sender, '', intro, '', 'VESSEL ITINERARY']
+    intro_lines = intro.splitlines() or ['']
+    lines = ['수 신 : %s' % mail_to, '발 신 : %s' % mail_from, '']
+    for intro_line in intro_lines:
+        lines.extend([intro_line, ''])
+    lines.append('VESSEL ITINERARY')
+    spacer = '<p style="margin:0;line-height:1.5">&nbsp;</p>'
     chunks = [
         '<div style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;line-height:1.5;color:#222">',
-        '<p><b>수신 :</b> </p><p><b>발신 :</b> %s</p>' % html.escape(sender),
-        '<p>%s</p>' % html.escape(intro).replace('\n', '<br>'),
-        '<p style="margin-top:24px;margin-bottom:4px"><b>VESSEL ITINERARY</b></p>',
-        '<table style="border-collapse:collapse;width:390px;max-width:100%;margin-bottom:28px">',
+        '<p style="margin:0"><b>수 신 :</b> %s</p>' % html.escape(mail_to),
+        '<p style="margin:0"><b>발 신 :</b> %s</p>' % html.escape(mail_from),
+        spacer,
     ]
+    for intro_line in intro_lines:
+        chunks.extend(['<p style="margin:0">%s</p>' % html.escape(intro_line), spacer])
+    chunks.extend([
+        '<p style="margin:0 0 4px"><b>VESSEL ITINERARY</b></p>',
+        '<table style="border-collapse:collapse;width:390px;max-width:100%;margin:0">',
+    ])
     for label, value in itinerary:
         shown = _mail_date(value)
         lines.append('%s\t%s' % (label, shown))
         chunks.append('<tr><td style="border:1px solid #777;padding:4px 8px;width:55%%">%s</td>'
                       '<td style="border:1px solid #777;padding:4px 8px"><b>%s</b></td></tr>' %
                       (html.escape(label), html.escape(shown)))
-    chunks.append('</table>')
+    chunks.extend(['</table>', spacer])
     for section_no, key in enumerate(order, 1):
         sec = bykey.get(key) or {'section_key': key, 'label': key.title()}
         items = _email_items(rid, key)
         lines.extend(['', '%d. %s' % (section_no, sec['label'])])
-        chunks.append('<p style="margin:18px 0 6px"><b>%d. &nbsp;%s</b></p>' %
+        chunks.append('<p style="margin:0 0 6px"><b>%d. &nbsp;%s</b></p>' %
                       (section_no, html.escape(sec['label'])))
         for item_no, item in enumerate(items, 1):
             lines.append('%d) %s' % (item_no, item))
             chunks.append('<p style="margin:3px 0 3px 24px">%d) &nbsp;%s</p>' %
                           (item_no, html.escape(item)))
+        chunks.append(spacer)
     safety_footer = r['safety_footer'] or ''
     if safety_footer == 'Safety first. Please advise if any unsafe condition is observed.':
         safety_footer = ''
@@ -757,7 +768,7 @@ def _email(rid):
         lines.extend(['', safety_footer])
         chunks.append('<p style="margin-top:24px">%s</p>' % html.escape(safety_footer))
     chunks.append('</div>')
-    return {'subject': subject, 'to': '', 'from': sender, 'html': ''.join(chunks),
+    return {'subject': subject, 'to': mail_to, 'from': mail_from, 'html': ''.join(chunks),
             'text': '\n'.join(lines), 'order': order}
 
 
