@@ -22,7 +22,8 @@ from xml.etree import ElementTree
 from flask import Blueprint, Response, jsonify, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 
-from app_core import ALLOWED_EXT, UPLOAD_DIR, app, execute, get_db, query
+from app_core import (ALLOWED_EXT, UPLOAD_DIR, app, ensure_heif_opener, execute, get_db,
+                      query)
 from helpers_shared import api_key_required, login_required
 
 bp = Blueprint('routes_dock_daily', __name__)
@@ -1270,6 +1271,7 @@ def _inline_image(stored_name, budget, show_px=MAIL_IMAGE_SHOW_PX, decode_px=MAI
         from PIL import Image, ImageOps
     except Exception:                                  # pragma: no cover - 배포 의존성
         return None, '서버에 이미지 변환 모듈이 없습니다'
+    ensure_heif_opener()                               # 아이폰 HEIC 첨부도 본문에 싣는다
     try:
         with Image.open(path) as src:
             # `open` 은 헤더만 읽는다. 디코드 전에 크기로 먼저 거른다.

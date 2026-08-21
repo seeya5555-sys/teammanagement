@@ -21,6 +21,7 @@
 import os
 import secrets
 import sqlite3
+import sys
 import tempfile
 from datetime import timedelta
 
@@ -109,6 +110,49 @@ def init_runtime():
 
 # Descriptive alias for callers that prefer the full name.
 initialize_runtime = init_runtime
+
+
+# ─────────────────────────────────────────────────────────────────
+#  이미지 포맷 등록 (HEIC/HEIF)
+# ─────────────────────────────────────────────────────────────────
+# 아이폰 기본 촬영 포맷이 HEIC 인데 Pillow 는 이걸 기본으로 못 연다. 그래서 HEIC 첨부는
+# `Image.open` 에서 예외가 나고, 메일 본문에서는 사진 대신 사유 문구가, DOCX 에서는
+# 원본 .heic 가 그대로 삽입돼(Word 가 못 그린다) 빈 칸이 됐다.
+#
+# 🔴 왜 프로세스 전역 등록이 여기(app_core, 바닥 층)에 있나
+#    디코드가 필요한 곳이 세 군데(메일 본문·업로드 재인코딩·DOCX 삽입)인데 셋은 서로
+#    형제 모듈이라 서로를 import 할 수 없다(층위 게이트). 셋 다 이미 app_core 를 보므로
+#    여기 두면 새 결합도, 의존 그래프 fixture 변경도 생기지 않는다.
+#
+# 🔴 import 시점에 등록하지 않는다. 이 모듈은 "import 는 부작용 없음" 이 계약이고,
+#    pillow-heif 가 없거나 깨진 서버에서 앱 부팅 자체가 죽으면 안 된다. 실패는 조용히
+#    삼키고 예전 동작(= 못 읽는 형식으로 취급)으로 떨어진다.
+_heif_registered = None
+
+
+def ensure_heif_opener():
+    """HEIC/HEIF 를 Pillow 가 열 수 있게 등록한다. 여러 번 불러도 실제 등록은 1회.
+
+    돌려주는 값은 "지금 HEIC 를 열 수 있는가" 다. 호출부는 `Image.open` 직전에 부르면
+    되고, False 여도 따로 분기할 필요는 없다 -- 기존의 '못 읽는 형식' 경로가 그대로 받는다.
+    """
+    global _heif_registered
+    if _heif_registered is None:
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+            _heif_registered = True
+        except Exception as exc:                       # pragma: no cover - 배포 의존성
+            # 🔴 결과는 프로세스 수명 내내 캐시되므로 이유를 여기서 한 번은 남긴다.
+            # 조용히 False 로 굳으면 "왜 HEIC 만 계속 빠지지" 를 로그로 못 쫓는다.
+            _heif_registered = False
+            try:
+                sys.stderr.write(
+                    'WARN: pillow-heif 사용 불가 — HEIC 는 계속 제외됨 (%s: %s)\n'
+                    % (type(exc).__name__, exc))
+            except Exception:
+                pass
+    return _heif_registered
 
 app = Flask(__name__)
 app.config.update(

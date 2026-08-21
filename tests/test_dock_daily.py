@@ -4,6 +4,7 @@ These tests use the same temporary-DB pattern as the existing Flask tests and
 avoid any external Dock Manager/SVMS service.
 """
 import base64
+import builtins
 import inspect
 import io
 import json
@@ -1720,6 +1721,53 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('본문에 넣을 수 없습니다', mail['html'])
         self.assertIn('Hull shot', mail['html'], 'caption 은 남아야 한다')
         self.assertIn('본문에 넣을 수 없습니다', mail['text'])
+
+    def _heic(self, size=(1200, 900)):
+        """진짜 HEIC 바이트. 없으면 이 테스트는 건너뛴다(형 지시 2026-08-22로 서버엔 설치됨)."""
+        try:
+            import pillow_heif                     # noqa: F401  등록만으로는 부족, 저장도 필요
+        except Exception:
+            self.skipTest('pillow-heif 미설치 — HEIC 경로를 검증할 수 없다')
+        from PIL import Image
+        pillow_heif.register_heif_opener()
+        buf = io.BytesIO()
+        Image.new('RGB', size, (30, 90, 150)).save(buf, format='HEIF')
+        return buf.getvalue()
+
+    def test_mail_inlines_an_iphone_heic_photo(self):
+        """🔴 형 지시 2026-08-22: 아이폰 기본 포맷(HEIC)도 메일 본문에 실려야 한다.
+
+        pillow-heif 등록 전에는 `Image.open` 이 예외를 내고 '이 형식은 본문에 넣을 수
+        없습니다' 만 나갔다. 등록 뒤에도 본문 바이트는 여전히 JPEG data URI 다 --
+        메일 클라이언트가 HEIC 를 못 그리므로 형식 변환은 서버가 끝내야 한다.
+        """
+        rid, _aid = self._report_with_photo_block('Mail HEIC DD', payload=self._heic(),
+                                                  name='iphone.heic')
+        mail = self._mail(rid)
+        self.assertIn('<img src="data:image/jpeg;base64,', mail['html'])
+        self.assertNotIn('본문에 넣을 수 없습니다', mail['html'])
+        self.assertNotIn('data:image/heic', mail['html'],
+                         'HEIC 를 그대로 실으면 Outlook 이 못 그린다')
+
+    def test_heif_registration_is_idempotent_and_never_raises(self):
+        """등록은 여러 번 불려도 안전해야 하고, 패키지가 없어도 앱을 죽이면 안 된다."""
+        import app_core
+        self.assertIs(app_core.ensure_heif_opener(), app_core.ensure_heif_opener())
+        saved = app_core._heif_registered
+        app_core._heif_registered = None
+        real_import = builtins.__import__
+
+        def _no_pillow_heif(name, *a, **kw):
+            if name == 'pillow_heif':
+                raise ImportError('simulated missing wheel')
+            return real_import(name, *a, **kw)
+
+        builtins.__import__ = _no_pillow_heif
+        try:
+            self.assertFalse(app_core.ensure_heif_opener(), '없으면 False 로 떨어져야 한다')
+        finally:
+            builtins.__import__ = real_import
+            app_core._heif_registered = saved
 
     def test_mail_photo_budget_is_bounded_and_the_overflow_is_visible(self):
         """메일 한 통 크기에 상한이 있어야 한다. 넘긴 사진은 이유를 남긴다."""

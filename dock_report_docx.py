@@ -662,16 +662,32 @@ def _set_row_as_header(row):
         trPr.append(cs)
 
 
+# Word 가 실제로 그릴 수 있는 포맷. 여기 없으면 비율이 맞더라도 원본 경로를 그대로 넘기지
+# 않고 JPEG 로 굽는다. HEIC 를 Pillow 가 열 수 있게 되면서 생긴 구멍이다 -- 열리기만 하고
+# 원본을 넘기면 python-docx 는 삽입에 성공하는데 Word 에서 빈 칸이 된다(조용한 실패라 더 나쁘다).
+#
+# 🔴 확장자가 아니라 `Image.format`(=실제 바이트) 으로 판정한다. 아이폰/공유앱을 거치면
+#    HEIF 인데 이름만 .jpg 인 파일이 흔하고, 그런 건 확장자 기준으로는 그냥 통과해버린다.
+#    허용 목록(allowlist)인 이유도 같다 -- 못 읽는 포맷을 다 열거할 수는 없다.
+_DOCX_SAFE_FORMATS = {'JPEG', 'JPG', 'PNG', 'GIF', 'BMP', 'TIFF'}
+
+
 def _crop_to_aspect(src_path, target_ratio=4/3):
     """
     이미지를 target_ratio(가로/세로)에 맞춰 center-crop한 임시 파일 경로 반환.
     원본이 이미 비율 맞으면 그대로 원본 경로 반환.
     실패 시 원본 경로 반환.
+
+    단 Word 가 못 읽는 포맷(HEIC 등)은 비율이 맞아도 JPEG 로 재인코딩해서 넘긴다.
     """
     try:
         from PIL import Image
+        from app_core import ensure_heif_opener
         import tempfile
+        ensure_heif_opener()                   # 아이폰 HEIC 사진도 보고서에 들어가게
         with Image.open(src_path) as im:
+            # 열어봐야 실제 포맷을 안다(이름만 .jpg 인 HEIF 가 흔하다).
+            must_reencode = (im.format or '').upper() not in _DOCX_SAFE_FORMATS
             # EXIF orientation 적용
             try:
                 from PIL import ImageOps
@@ -683,11 +699,13 @@ def _crop_to_aspect(src_path, target_ratio=4/3):
             if w <= 0 or h <= 0:
                 return src_path
             cur_ratio = w / h
-            # 이미 비율이 비슷하면 그대로
-            if abs(cur_ratio - target_ratio) < 0.02:
+            # 이미 비율이 비슷하면 그대로 — 단 Word 가 못 읽는 포맷은 자를 게 없어도 변환한다.
+            if abs(cur_ratio - target_ratio) < 0.02 and not must_reencode:
                 return src_path
 
-            if cur_ratio > target_ratio:
+            if abs(cur_ratio - target_ratio) < 0.02:
+                box = (0, 0, w, h)                     # 변환만 하고 자르지는 않는다
+            elif cur_ratio > target_ratio:
                 # 너무 가로로 길다 → 좌우 잘라냄
                 new_w = int(h * target_ratio)
                 left = (w - new_w) // 2

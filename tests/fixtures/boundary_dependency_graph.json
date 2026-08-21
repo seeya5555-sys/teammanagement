@@ -107,7 +107,8 @@
   "csrf.py": {},
   "dock_report_docx.py": {
     "app_core.py": [
-      "app"
+      "app",
+      "ensure_heif_opener"
     ]
   },
   "docx_preview.py": {},
@@ -142,6 +143,7 @@
       "UPLOAD_DIR",
       "_NON_STT_UPLOAD_MAX",
       "app",
+      "ensure_heif_opener",
       "execute",
       "execute_rc",
       "get_db",
@@ -243,6 +245,7 @@
       "ALLOWED_EXT",
       "UPLOAD_DIR",
       "app",
+      "ensure_heif_opener",
       "execute",
       "get_db",
       "query"

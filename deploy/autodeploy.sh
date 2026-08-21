@@ -34,6 +34,24 @@ cd "$APP_DIR"
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "$(date '+%F %T') 다른 배포/롤백 진행 중 — skip"; exit 0; }
 
+# 🔴 선택 의존성(pillow-heif) 재시도 — SHA 게이트 위에 있어야 한다.
+# 아래 배포 구간의 설치는 비치명이라 실패해도 .deployed_sha 가 기록되고, 그러면 다음
+# 커밋 전까지 `LOCAL = REMOTE` 에서 걸러져 재시도 기회가 영영 없다. 실패 마커가 있을 때만,
+# 그것도 1시간에 한 번만 다시 시도한다(60초 타이머마다 pip 를 띄우지 않기 위해).
+DEP_RETRY_HEIF="$APP_DIR/.dep_retry_pillow_heif"
+if [ -f "$DEP_RETRY_HEIF" ] && [ -z "$(find "$DEP_RETRY_HEIF" -mmin -60 2>/dev/null)" ]; then
+  touch "$DEP_RETRY_HEIF"          # 먼저 찍는다 — 이번 시도가 실패해도 1시간은 쉰다
+  if [ -f venv/bin/activate ] && \
+     ( source venv/bin/activate
+       python3 -c "import pillow_heif" 2>/dev/null || pip install "pillow-heif>=0.16" ) >/dev/null 2>&1
+  then
+    rm -f "$DEP_RETRY_HEIF"
+    # 등록 결과는 프로세스 수명 내내 캐시된다 → 재시작해야 HEIC 가 실제로 살아난다.
+    sudo systemctl restart trmt || true
+    echo "$(date '+%F %T') pillow-heif 설치 성공 — HEIC 지원 복구(재시작함)"
+  fi
+fi
+
 # 원격 main 최신 커밋 SHA (git ls-remote 와 동일, REST API 아님 → rate limit 무관)
 # `|| true` 필수: set -euo pipefail 하에서 네트워크 실패나 grep 미매치가 나면 아래 -z 방어까지
 # 가지도 못하고 스크립트가 통째로 죽는다(= 조용한 배포 중단).
@@ -199,6 +217,16 @@ source venv/bin/activate
 python3 -c "import gunicorn" 2>/dev/null || pip install "gunicorn>=21,<24"
 # Outlook .msg 미리보기 파서: 필요한 새 의존성만 배포 시 설치(기존 배포는 즉시 skip).
 python3 -c "import extract_msg" 2>/dev/null || pip install "extract-msg>=0.55,<0.56"
+# 아이폰 HEIC 사진 디코드(pillow-heif). 있으면 즉시 skip.
+# 🔴 실패해도 배포를 죽이지 않는다 — 여기는 `set -e` 구간이라 pip 실패가 그대로 스크립트
+#    종료가 되고, 그러면 systemctl restart 도 .deployed_sha 기록도 건너뛴 반쯤 배포 상태가
+#    된다. HEIC 는 선택 기능이므로(없으면 예전대로 '못 읽는 형식') 경고만 남기고 진행한다.
+#    대신 실패를 마커로 남긴다 — 마커가 있으면 SHA 가 안 바뀌어도 위쪽 재시도 블록이
+#    다시 시도한다(비치명으로 두면 .deployed_sha 가 기록되어 다음 커밋까지 기회가 없다).
+python3 -c "import pillow_heif" 2>/dev/null \
+  || pip install "pillow-heif>=0.16" \
+  || { touch "$DEP_RETRY_HEIF"
+       echo "$(date '+%F %T') WARN: pillow-heif 설치 실패 — HEIC 제외됨(1시간 뒤 자동 재시도)"; }
 # Werkzeug 3.1+ 보장: per-request request.max_content_length setter 필요
 # (STT 200MB 허용하되 그 외 라우트를 스트리밍 단계서 20MB로 조임 — 3.0은 setter 없어 fail-open).
 # 3.1+ 이면 즉시 skip, 미만일 때만 업그레이드(배포 시에만·미달 시에만 실행).

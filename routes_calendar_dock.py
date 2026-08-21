@@ -30,7 +30,7 @@ from io import BytesIO
 from app_core import (
     AOR_PDF_DIR, FUNDREQ_FILE_DIR, INVOICE_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT,
     STT_LEASE_SEC, STT_MAX_ATTEMPTS, STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, app,
-    execute, execute_rc, get_db, query,
+    ensure_heif_opener, execute, execute_rc, get_db, query,
 )
 from helpers_shared import (
     AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, RETIRED_RUNNER_KEYS,
@@ -815,6 +815,10 @@ def _process_uploaded_image(file_storage, dest_path,
         # Pillow 없으면 그냥 저장
         file_storage.save(dest_path)
         return dest_path, os.path.getsize(dest_path), os.path.getsize(dest_path)
+
+    # 아이폰 HEIC 업로드도 여기서 JPEG 로 재인코딩되도록 한다. 등록 전에는 아래 except 로
+    # 떨어져 원본 .heic 가 그대로 저장됐고, 그러면 브라우저 대부분이 그림을 못 그렸다.
+    ensure_heif_opener()
 
     # 원본을 메모리에 읽어두기 (저장 실패 시 fallback용)
     file_storage.stream.seek(0)

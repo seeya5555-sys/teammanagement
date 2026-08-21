@@ -6,5 +6,8 @@ itsdangerous>=2.1,<3.0
 openpyxl>=3.1,<4.0
 python-docx>=1.1,<2.0
 Pillow>=10.0
+# 아이폰 기본 촬영 포맷(HEIC/HEIF) 디코드. 없으면 앱은 그대로 돌고 HEIC 만 예전처럼
+# '못 읽는 형식' 으로 떨어진다(app_core.ensure_heif_opener 가 실패를 삼킨다).
+pillow-heif>=0.16
 gunicorn>=21,<24
 extract-msg>=0.55,<0.56
