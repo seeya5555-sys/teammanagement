@@ -4,6 +4,7 @@ This module intentionally has no Dock Manager or SVMS write client.  The TRMT
 draft is the source of truth; runner input is normalized, API-key protected,
 and merged with the same optimistic-lock contract as the browser API.
 """
+import base64
 import hashlib
 import html
 import json
@@ -1153,50 +1154,174 @@ def _blocks_for(rid, section):
                                       WHERE report_id=? AND section_key=? ORDER BY sort_order,id''', (rid, section))]
 
 
+# 메일 본문에 싣는 사진 규격. 사진은 URL 로 넣을 수 없다 -- 첨부 라우트는
+# `login_required` 이고 경로도 상대라서 메일 클라이언트는 이미지 대신 로그인
+# 리다이렉트를 받는다. 그래서 바이트를 본문에 직접 싣는다(data URI).
+MAIL_IMAGE_MAX_PX = 900        # 본문에 싣기 전 줄이는 긴 변
+MAIL_IMAGE_SHOW_PX = 520       # 메일에서 보이는 폭
+MAIL_IMAGE_QUALITY = 80
+# 사진 data URI 문자 수 합계 상한. 메일 **전체** 크기 상한이 아니다 -- 글·표·캡션은
+# 여기서 세지 않는다. 사진이 본문 크기의 대부분이라 사진만 묶어 잡는다.
+MAIL_IMAGE_BUDGET = 3 * 1024 * 1024
+MAIL_IMAGE_MAX_COUNT = 12      # 한 통에 실을 사진 장수(예산과 별개의 상한)
+# 열기 전 거르는 픽셀 상한. 20MB 업로드 게이트를 통과한 파일도 압축률이 높으면
+# 디코드 후 메모리는 그 수십 배가 된다.
+MAIL_IMAGE_MAX_PIXELS = 40 * 1000 * 1000
+
+
+def _attachment_path(stored_name):
+    """`UPLOAD_DIR` 안에 실제로 있는 경로만 돌려준다(경로 탈출 차단)."""
+    root = os.path.realpath(UPLOAD_DIR)
+    path = os.path.realpath(os.path.join(root, stored_name or ''))
+    if os.path.commonpath((path, root)) != root or not os.path.isfile(path):
+        return None
+    return path
+
+
+def _inline_image(stored_name, budget):
+    """첨부 사진을 메일 본문용 data URI 로 만든다.
+
+    돌려주는 값은 `(정보, 사유)` 이고 둘 중 하나만 채워진다. 사유는 화면에 그대로
+    보여준다 -- 사진이 조용히 빠지면 형은 보냈다고 생각하고 메일을 보내게 된다.
+    """
+    # 예산이 이미 없으면 파일을 열지도 않는다. 변환한 뒤에 거절하면 사진을 많이 붙인
+    # 보고서 하나가 미리보기 한 번에 서버 메모리·CPU 를 다 쓰게 된다.
+    if budget <= 0:
+        return None, '본문 사진 용량 상한을 넘었습니다'
+    path = _attachment_path(stored_name)
+    if not path:
+        return None, '첨부 파일을 찾을 수 없습니다'
+    try:
+        from PIL import Image, ImageOps
+    except Exception:                                  # pragma: no cover - 배포 의존성
+        return None, '서버에 이미지 변환 모듈이 없습니다'
+    try:
+        with Image.open(path) as src:
+            # `open` 은 헤더만 읽는다. 디코드 전에 크기로 먼저 거른다.
+            pixels = (src.size[0] or 0) * (src.size[1] or 0)
+            if not pixels:
+                return None, '사진 크기를 읽을 수 없습니다'
+            if pixels > MAIL_IMAGE_MAX_PIXELS:
+                return None, '사진 해상도가 너무 큽니다'
+            # 아이폰 사진은 회전값을 EXIF 로 들고 온다. 그대로 저장하면 옆으로 눕는다.
+            image = ImageOps.exif_transpose(src) or src
+            if image.mode != 'RGB':
+                image = image.convert('RGB')           # 알파·팔레트는 JPEG 로 못 나간다
+            image.thumbnail((MAIL_IMAGE_MAX_PX, MAIL_IMAGE_MAX_PX))
+            width, height = image.size
+            buf = BytesIO()
+            image.save(buf, format='JPEG', quality=MAIL_IMAGE_QUALITY, optimize=True)
+    except Exception:
+        # HEIC 처럼 Pillow 가 못 읽는 형식이 여기로 온다. 첨부 자체는 첨부 카드에 남아
+        # 있지만, 그 파일이 이 메일에 첨부된다는 보장은 없다 -- 그러니 그렇게 안내하지
+        # 않는다(올마이트 지적). 본문에 못 넣었다는 사실만 말한다.
+        return None, '이 형식은 본문에 넣을 수 없습니다'
+    encoded = base64.b64encode(buf.getvalue()).decode('ascii')
+    if len(encoded) > budget:
+        return None, '본문 사진 용량 상한을 넘었습니다'
+    if not width or not height:
+        return None, '사진 크기를 읽을 수 없습니다'
+    shown = min(MAIL_IMAGE_SHOW_PX, width)
+    return {'uri': 'data:image/jpeg;base64,' + encoded, 'width': shown,
+            'height': max(1, round(height * shown / width)), 'cost': len(encoded)}, None
+
+
+def _table_grid(content):
+    """표 내용을 사각형으로 맞춘다. 앱 정규화(`DockDailyTableContent`)와 같은 규칙.
+
+    🔴 헤더보다 긴 행은 자르지 않는다 -- 그 칸도 형이 적은 값이다. 열을 넓혀서 맞춘다.
+    서버가 다시 맞추는 이유는 표를 만든 곳이 앱만이 아닐 수 있기 때문이다(옛 데이터).
+    """
+    def text(value):
+        return '' if value is None else str(value)     # `None` 이 'None' 으로 보이지 않게
+
+    raw_cols, raw_rows = content.get('columns'), content.get('rows')
+    # 문자열이 오면 글자 단위로 분해되므로 리스트만 받는다(올마이트 지적).
+    cols = [text(v) for v in raw_cols] if isinstance(raw_cols, (list, tuple)) else []
+    rows = []
+    for row in raw_rows if isinstance(raw_rows, (list, tuple)) else []:
+        if isinstance(row, (list, tuple)):
+            rows.append([text(v) for v in row])
+        elif row not in (None, ''):
+            # 배열이 아닌 행은 버리지 않는다 -- 형이 적은 값일 수 있다. 한 칸 행으로 살린다.
+            rows.append([text(row)])
+    width = max([len(cols)] + [len(r) for r in rows] or [0])
+    if not width:
+        return [], []
+    cols = cols + [''] * (width - len(cols))
+    rows = [r + [''] * (width - len(r)) for r in rows]
+    return cols, rows
+
+
+def _mail_entries(rid, key):
+    """섹션 카드를 메일 항목 목록으로 편다.
+
+    글 카드는 줄마다 항목 하나(종전 동작), 표·사진 카드는 카드 자체가 항목 하나가
+    된다. 번호는 종류에 상관없이 이어진다 -- 형이 카드를 놓은 순서가 메일 순서다.
+
+    사진은 여기서 바이트로 바꾸지 않고 첨부가 살아 있는지만 확인한다. 실제 인라인은
+    `_email` 이 메일 한 통 전체의 예산을 들고 하며, 섹션마다 따로 세면 사진이 많은
+    보고서에서 메일 한 통 크기에 상한이 없어진다.
+    """
+    files = {row['id']: row for row in query(
+        'SELECT id, stored_name FROM dock_daily_attachment'
+        ' WHERE report_id=? AND deleted_at IS NULL', (rid,))}
+    out = []
+    for block in _blocks_for(rid, key):
+        typ = block.get('block_type')
+        content = _json(block.get('content_json'), {})
+        if not isinstance(content, dict):
+            content = {}
+        if typ == 'table':
+            cols, rows = _table_grid(content)
+            if cols or rows:
+                out.append({'kind': 'table', 'columns': cols, 'rows': rows})
+            continue
+        if typ == 'image':
+            raw = str(content.get('attachment_id') or '')
+            row = files.get(int(raw)) if raw.isdigit() else None
+            out.append({'kind': 'image', 'caption': str(content.get('caption') or ''),
+                        'attachment': row['stored_name'] if row else None,
+                        'note': None if row else '연결된 사진이 없습니다'})
+            continue
+        for line in _plain(block).splitlines():
+            stripped = ITEM_NO_RE.sub('', line).strip()
+            if stripped:
+                out.append({'kind': 'text', 'text': stripped})
+    return out
+
+
 def _plain(block):
     c = _json(block.get('content_json'), {})
     if block.get('block_type') == 'table':
-        cols = c.get('columns') or []
-        rows = c.get('rows') or []
-        return '\n'.join([' | '.join(map(str, cols))] + [' | '.join(map(str, x)) for x in rows])
+        cols, rows = _table_grid(c)
+        return '\n'.join(' | '.join(x) for x in [cols] + rows if any(x))
     if block.get('block_type') == 'image': return '[Image] ' + str(c.get('caption') or '')
     return str(c.get('title') or c.get('body') or c.get('text') or '')
 
 
-def _render_section(rid, key, label, as_html=False):
-    blocks = _blocks_for(rid, key)
-    if not blocks:
-        return '<p>NIL</p>' if as_html else 'NIL'
-    if not as_html:
-        # Same one-item-per-line numbering as the mail body so a card written as
-        # "1) ... 2) ..." is never numbered twice on the SVMS side either.
-        return '\n'.join('%d) %s' % (no, item) for no, item in enumerate(_item_lines(rid, key), 1))
-    vals = []
-    for i, b in enumerate(blocks, 1):
-        txt = _plain(b)
-        if as_html and b.get('block_type') == 'image':
-            c = _json(b.get('content_json'), {})
-            aid = int(c.get('attachment_id') or 0) if str(c.get('attachment_id') or '').isdigit() else 0
-            image = ('<img src="/api/dock-daily/attachments/%d" alt="%s" style="max-width:100%%">' %
-                     (aid, html.escape(c.get('caption') or 'dock image'))) if aid else html.escape(txt)
-            vals.append('<div class="dd-block"><b>%s.</b> %s</div>' % (i, image))
-        elif as_html and b.get('block_type') == 'table':
-            c = _json(b.get('content_json'), {})
-            cols = c.get('columns') or []
-            rows = c.get('rows') or []
-            head = ''.join('<th>%s</th>' % html.escape(str(v)) for v in cols)
-            body = ''.join('<tr>%s</tr>' % ''.join('<td>%s</td>' % html.escape(str(v)) for v in row)
-                           for row in rows if isinstance(row, (list, tuple)))
-            vals.append('<div class="dd-block"><b>%s.</b><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (i, head, body))
-        else:
-            vals.append(('<div class="dd-block"><b>%s.</b> %s</div>' % (i, html.escape(txt))) if as_html else '%d. %s' % (i, txt))
-    return '\n'.join(vals) if not as_html else ''.join(vals)
+def _render_section(rid, key):
+    """SVMS `RMK*` 본문. 메일과 같은 한 줄 = 한 항목 번호를 쓴다(두 번 번호가 붙지 않게).
+
+    표·사진은 넣지 않는다 -- 형 지시("svms에는 표랑 사진을 본문에 포함할 필요 없음").
+    파이프로 편 표 문자열은 RMK 에서 표로 읽히지도 않는다.
+    """
+    items = _item_lines(rid, key)
+    if items == ['NIL']:
+        return 'NIL'
+    return '\n'.join('%d) %s' % (no, item) for no, item in enumerate(items, 1))
 
 
-def _item_lines(rid, key):
-    """Flatten card text into work items, dropping any number the card carries."""
+def _item_lines(rid, key, media=False):
+    """카드 글을 작업 항목으로 편다. 카드가 들고 있던 번호는 떼고 다시 붙인다.
+
+    `media=False`(SVMS 기본): 표·사진 카드는 아예 건너뛴다. 메일 본문은 이 함수가
+    아니라 `_mail_entries` 를 쓴다 -- 거기서는 표가 표로, 사진이 사진으로 나간다.
+    """
     items = []
     for block in _blocks_for(rid, key):
+        if not media and block.get('block_type') in {'table', 'image'}:
+            continue
         for line in _plain(block).splitlines():
             stripped = ITEM_NO_RE.sub('', line).strip()
             if stripped:
@@ -1287,17 +1412,66 @@ def _email(rid):
                                          cell('<b>%s</b>' % html.escape(shown))))
     chunks.append('</table>')
     chunks.append(spacer)
+    def item(no, inner):
+        """번호가 붙은 작업 항목 한 줄. inner 는 이미 escape 된 markup."""
+        return ('<p style="margin:0 0 3px 52px;text-indent:-30px">%s</p>' %
+                run('%d)&nbsp;&nbsp;%s' % (no, inner)))
+
+    def table(entry):
+        """카드의 표를 메일 표로. 셀 텍스트는 `cell()` 계약대로 `<td>` 안 `<p>` 에 넣는다.
+
+        직접 `<td>` 에 넣으면 Outlook 붙여넣기에서 11pt 선언과 무관하게 작게 붙는다
+        (ITINERARY 표에서 실측한 그 문제). `<thead>` 는 쓰지 않는다 -- Word HTML
+        엔진이 무시하는 경우가 있어 굵게로만 헤더를 표시한다.
+        """
+        head = ''.join(cell('<b>%s</b>' % (html.escape(v) or '&nbsp;')) for v in entry['columns'])
+        body = ''.join('<tr>%s</tr>' % ''.join(cell(html.escape(v) or '&nbsp;') for v in row)
+                       for row in entry['rows'])
+        return ('<table style="border-collapse:collapse;margin:0 0 8px 52px;%s">%s%s</table>'
+                % (cell_font, '<tr>%s</tr>' % head if head else '', body))
+
+    def photo(image, caption):
+        """`width`/`height` 를 HTML 속성으로 준다 -- Word HTML 엔진은 CSS 폭을 무시한다."""
+        return ('<p style="margin:0 0 8px 52px"><img src="%s" width="%d" height="%d" alt="%s"'
+                ' style="display:block;border:0"></p>'
+                % (image['uri'], image['width'], image['height'],
+                   html.escape(caption or 'dock photo')))
+
+    budget, photos = MAIL_IMAGE_BUDGET, 0
     for section_no, key in enumerate(order, 1):
         sec = bykey.get(key) or {'section_key': key, 'label': key.title()}
-        items = _item_lines(rid, key)
+        entries = _mail_entries(rid, key) or [{'kind': 'text', 'text': 'NIL'}]
         lines.extend(['', '%d. %s' % (section_no, sec['label'])])
         chunks.append('<p style="margin:0 0 6px">%s</p>' %
                       run('<b>%d. &nbsp;%s</b>' % (section_no, html.escape(sec['label']))))
-        for item_no, item in enumerate(items, 1):
-            lines.append('%d) %s' % (item_no, item))
-            chunks.append(
-                '<p style="margin:0 0 3px 52px;text-indent:-30px">%s</p>' %
-                run('%d)&nbsp;&nbsp;%s' % (item_no, html.escape(item))))
+        for item_no, entry in enumerate(entries, 1):
+            if entry['kind'] == 'table':
+                lines.append('%d)' % item_no)
+                lines.extend(' | '.join(row) for row in [entry['columns']] + entry['rows'])
+                chunks.append(item(item_no, ''))      # 번호만 -- 제목은 형이 위 카드에 쓴다
+                chunks.append(table(entry))
+                continue
+            if entry['kind'] == 'image':
+                image, note = None, entry['note']
+                if entry['attachment']:
+                    if photos >= MAIL_IMAGE_MAX_COUNT:
+                        note = '본문 사진 장수 상한(%d장)을 넘었습니다' % MAIL_IMAGE_MAX_COUNT
+                    else:
+                        image, note = _inline_image(entry['attachment'], budget)
+                        if image:
+                            budget -= image['cost']
+                            photos += 1
+                label = entry['caption'] or '사진'
+                # 사진이 못 들어간 이유는 본문에 남긴다. 조용히 빠지면 형은 사진이
+                # 실렸다고 생각하고 그대로 보내게 된다.
+                shown = label if image else '%s (%s)' % (label, note or '본문에 넣지 못했습니다')
+                lines.append('%d) %s' % (item_no, shown))
+                chunks.append(item(item_no, html.escape(shown)))
+                if image:
+                    chunks.append(photo(image, entry['caption']))
+                continue
+            lines.append('%d) %s' % (item_no, entry['text']))
+            chunks.append(item(item_no, html.escape(entry['text'])))
         chunks.append(spacer)
     safety_footer = r['safety_footer'] or ''
     if safety_footer == 'Safety first. Please advise if any unsafe condition is observed.':
@@ -1320,12 +1494,12 @@ def email_preview(rid):
 def _svms(rid):
     r = _report(rid)
     sections = _sections(r['project_id'], include_disabled=False)
-    syd = _render_section(rid, 'shipyard', 'Shipyard')
-    vendor = _render_section(rid, 'vendor', 'Vendor')
+    syd = _render_section(rid, 'shipyard')
+    vendor = _render_section(rid, 'vendor')
     rest = []
     for s in sections:
         if s['section_key'] not in {'shipyard', 'vendor'}:
-            rest.append('%s\n%s' % (s['label'], _render_section(rid, s['section_key'], s['label'])))
+            rest.append('%s\n%s' % (s['label'], _render_section(rid, s['section_key'])))
     fields = {'DK_CD': r['svms_dk_cd'] or r['project_vsl_cd'], 'DK_SEQ': r['svms_dk_seq'],
               'DR_DT': r['report_date'].replace('-', ''), 'RMK_SYD': syd, 'RMK_VNDR': vendor,
               'RMK': '\n\n'.join(rest)}

@@ -3,9 +3,10 @@
 These tests use the same temporary-DB pattern as the existing Flask tests and
 avoid any external Dock Manager/SVMS service.
 """
+import base64
 import inspect
-import json
 import io
+import json
 import os
 import re
 import tempfile
@@ -13,6 +14,8 @@ import unittest
 import zipfile
 
 from html.parser import HTMLParser
+
+from PIL import Image as PILImage
 
 import app as appmod
 import routes_dock_daily
@@ -224,8 +227,17 @@ class DockDailyTests(unittest.TestCase):
         fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
         self.assertEqual('daily.docx', fetched['attachments'][0]['original_name'])
 
-    def _png(self):
-        """Smallest byte string that passes the PNG magic check in _file_mime."""
+    def _png(self, size=(1200, 800)):
+        """Pillow 가 실제로 읽는 PNG. 메일 본문 인라인이 이 바이트를 다시 읽으므로
+        magic 바이트만 있는 가짜로는 사진 경로를 검증할 수 없다."""
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new('RGB', size, (200, 120, 60)).save(buf, format='PNG')
+        return buf.getvalue()
+
+    def _fake_png(self):
+        """PNG magic 은 통과하지만 Pillow 는 못 읽는 바이트. HEIC 처럼 본문에 넣을 수
+        없는 첨부가 어떻게 처리되는지 보는 데 쓴다."""
         return b'\x89PNG\r\n\x1a\n' + b'0' * 32
 
     def _project_with_attachment(self, title, report_date='2026-08-20'):
@@ -420,11 +432,12 @@ class DockDailyTests(unittest.TestCase):
                             'content': {'caption': 'Hull shot', 'attachment_id': aid}}],
         })
         self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
-        # The html branch has no route behind it yet, so it is exercised
-        # directly -- that is where a dangling id becomes a 404 `<img>`.
-        with appmod.app.app_context():
-            before = routes_dock_daily._render_section(rid, section, 'Shipyard', as_html=True)
-        self.assertIn(f'src="/api/dock-daily/attachments/{aid}"', before)
+        # 메일 본문이 사진을 싣는 유일한 경로다(형 지시 2026-08-21). 사진은 URL 이 아니라
+        # 바이트로 들어가므로, 첨부가 사라지면 실을 것 자체가 없어진다.
+        before = self.client.get(
+            f'/api/dock-daily/reports/{rid}/email-preview').get_json()['html']
+        self.assertIn('<img src="data:image/jpeg;base64,', before)
+        self.assertIn('Hull shot', before)
 
         gone = self.client.delete(f'/api/dock-daily/attachments/{aid}')
         self.assertEqual(200, gone.status_code, gone.get_data(as_text=True))
@@ -434,13 +447,13 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(1, len(images), 'the block itself must survive with its caption')
         self.assertIsNone(images[0]['content']['attachment_id'])
         self.assertEqual('Hull shot', images[0]['content']['caption'])
-        with appmod.app.app_context():
-            after_html = routes_dock_daily._render_section(rid, section, 'Shipyard', as_html=True)
+        after_html = self.client.get(
+            f'/api/dock-daily/reports/{rid}/email-preview').get_json()['html']
         self.assertNotIn('<img', after_html)
         self.assertIn('Hull shot', after_html, 'caption 은 남아야 한다')
-        # 메일 본문(현행 live 경로)도 그대로 나가야 한다.
-        mail = self.client.get(f'/api/dock-daily/reports/{rid}/email-preview').get_json()['html']
-        self.assertNotIn(f'/api/dock-daily/attachments/{aid}', mail)
+        self.assertIn('연결된 사진이 없습니다', after_html,
+                      '사진이 빠진 사실이 본문에 남아야 한다 -- 조용히 빠지면 그대로 발송된다')
+        self.assertNotIn(f'/api/dock-daily/attachments/{aid}', after_html)
 
     def test_attachment_unlink_lands_in_the_same_transaction_as_the_delete(self):
         """The reference is cleared before the commit, not in a second
@@ -1590,18 +1603,200 @@ class DockDailyTests(unittest.TestCase):
             ],
         })
         self.assertEqual(200, saved.status_code)
+        # SVMS 본문에는 표·사진을 넣지 않는다(형 지시 2026-08-21). 파이프로 편 표는
+        # RMK 에서 표로 읽히지도 않는다.
         svms = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
         syd = svms['fields']['RMK_SYD']
-        self.assertIn('WBT | Plan', syd)
-        self.assertIn('No.1 | 05-01', syd)
-        self.assertIn('[Image] Hull photo', syd)
-        self.assertIn('Runner collected item', syd)
-        self.assertNotIn('1) 1)', syd)
-        # Numbering stays gapless and empty blocks never claim a number.
-        self.assertEqual(['1', '2', '3', '4', '5'], [x.split(')')[0] for x in syd.splitlines()])
+        self.assertEqual('1) Runner collected item', syd)
+        for absent in ('WBT | Plan', 'No.1 | 05-01', '[Image]', 'Hull photo'):
+            self.assertNotIn(absent, syd)
         preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
-        self.assertIn('[Image] Hull photo', preview['text'])
+        # 메일에서는 표가 표로 나간다. 셀 텍스트는 `<td>` 안 `<p>` 계약을 지켜야 한다.
+        self.assertIn('<table style="border-collapse:collapse', preview['html'])
+        self.assertIn('<b>WBT</b></span></p></td>', preview['html'])
+        self.assertIn('>No.1</span></p></td>', preview['html'])
         self.assertNotIn('1) 1)', preview['text'])
+        self.assertIn('WBT | Plan', preview['text'], 'plain 폴백에는 표를 글로 남긴다')
+        # 첨부가 없는 사진 카드는 이유를 본문에 남긴다.
+        self.assertIn('Hull photo (연결된 사진이 없습니다)', preview['text'])
+        self.assertNotIn('[Image] Hull photo', preview['text'])
+
+    def _report_with_photo_block(self, title, payload=None, name='shot.png', caption='Hull shot'):
+        """사진 첨부 1개 + 그 첨부를 가리키는 image 블록 1개가 있는 보고서."""
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': title}).get_json()
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-01'}).get_json()
+        rid = report['id']
+        up = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
+                              data={'file': (io.BytesIO(payload or self._png()), name)},
+                              content_type='multipart/form-data')
+        self.assertEqual(201, up.status_code, up.get_data(as_text=True))
+        aid = up.get_json()['id']
+        fetched = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        saved = self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': fetched['revision'],
+            'operations': [{'op': 'upsert', 'section_key': 'shipyard', 'block_type': 'image',
+                            'content': {'caption': caption, 'attachment_id': aid}}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        return rid, aid
+
+    def _mail(self, rid):
+        response = self.client.get(f'/api/dock-daily/reports/{rid}/email-preview')
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        return response.get_json()
+
+    def test_mail_carries_the_photo_as_bytes_because_a_url_cannot_work(self):
+        """형 지시 2026-08-21: "사진도 ios에는 나오는데 이메일 미리보기로는 안보임".
+
+        URL 로는 절대 안 된다 -- 첨부 라우트는 `login_required` 이고 경로도 상대라서
+        메일 클라이언트는 사진이 아니라 로그인 리다이렉트를 받는다. 그래서 바이트를
+        본문에 싣는다. 이 테스트가 깨지면 다시 URL 로 되돌아간 것이다.
+        """
+        rid, aid = self._report_with_photo_block('Mail Photo DD')
+        mail = self._mail(rid)
+        self.assertIn('<img src="data:image/jpeg;base64,', mail['html'])
+        self.assertNotIn(f'/api/dock-daily/attachments/{aid}', mail['html'])
+        # 폭·높이는 HTML 속성으로 준다 -- Word HTML 엔진은 CSS 폭을 무시한다.
+        self.assertIn(f'width="{routes_dock_daily.MAIL_IMAGE_SHOW_PX}"', mail['html'])
+        self.assertRegex(mail['html'], r'height="\d+"')
+        self.assertIn('Hull shot', mail['text'])
+
+    def test_inline_photo_is_shrunk_before_it_goes_into_the_mail(self):
+        """원본을 그대로 실으면 사진 한 장에 메일이 수 MB 가 된다(실측: 4.19MB 첨부)."""
+        rid, _aid = self._report_with_photo_block('Mail Big Photo DD')
+        html_body = self._mail(rid)['html']
+        encoded = html_body.split('data:image/jpeg;base64,')[1].split('"')[0]
+        raw = base64.b64decode(encoded)
+        with PILImage.open(io.BytesIO(raw)) as shrunk:
+            self.assertLessEqual(max(shrunk.size), routes_dock_daily.MAIL_IMAGE_MAX_PX)
+        self.assertLess(len(raw), len(self._png()),
+                        '줄인 사진이 원본보다 크면 줄인 의미가 없다')
+
+    def test_inline_photo_follows_the_exif_rotation_the_iphone_wrote(self):
+        """아이폰 사진은 회전값을 EXIF 로 들고 온다. 무시하면 메일에서 옆으로 눕는다."""
+        landscape = PILImage.new('RGB', (1200, 800), (10, 20, 30))
+        exif = landscape.getexif()
+        exif[274] = 6                          # orientation: 90도 회전해서 봐야 함
+        buf = io.BytesIO()
+        landscape.save(buf, format='JPEG', exif=exif)
+        rid, _aid = self._report_with_photo_block('Mail EXIF DD', payload=buf.getvalue(),
+                                                  name='rotated.jpg')
+        html_body = self._mail(rid)['html']
+        width = int(re.search(r'<img src="data:image/jpeg;base64,[^"]+" width="(\d+)"',
+                              html_body).group(1))
+        height = int(re.search(r'width="%d" height="(\d+)"' % width, html_body).group(1))
+        self.assertGreater(height, width, 'EXIF 를 적용하면 세로 사진이 되어야 한다')
+
+    def test_mail_says_why_a_photo_could_not_go_inline(self):
+        """HEIC 처럼 서버가 못 읽는 형식. 조용히 빠지면 형은 사진이 실렸다고 믿고 보낸다."""
+        rid, _aid = self._report_with_photo_block('Mail Bad Photo DD',
+                                                 payload=self._fake_png())
+        mail = self._mail(rid)
+        self.assertNotIn('<img', mail['html'])
+        self.assertIn('본문에 넣을 수 없습니다', mail['html'])
+        self.assertIn('Hull shot', mail['html'], 'caption 은 남아야 한다')
+        self.assertIn('본문에 넣을 수 없습니다', mail['text'])
+
+    def test_mail_photo_budget_is_bounded_and_the_overflow_is_visible(self):
+        """메일 한 통 크기에 상한이 있어야 한다. 넘긴 사진은 이유를 남긴다."""
+        rid, _aid = self._report_with_photo_block('Mail Budget DD')
+        old = routes_dock_daily.MAIL_IMAGE_BUDGET
+        routes_dock_daily.MAIL_IMAGE_BUDGET = 10
+        try:
+            mail = self._mail(rid)
+        finally:
+            routes_dock_daily.MAIL_IMAGE_BUDGET = old
+        self.assertNotIn('<img', mail['html'])
+        self.assertIn('용량 상한', mail['html'])
+
+    def test_mail_table_widens_instead_of_dropping_a_long_row(self):
+        """🔴 헤더보다 긴 행은 그 칸도 형이 적은 값이다. 서버도 자르지 않는다."""
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Mail Ragged Table DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-06-02'}).get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [{'section_key': 'shipyard', 'block_type': 'table', 'sort_order': 0,
+                            'content': {'columns': ['A', 'B'],
+                                        'rows': [['1', '2', '3', '4'], ['5'], 'not a row']}}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        mail = self._mail(r['id'])
+        for value in ('1', '2', '3', '4', '5'):
+            self.assertIn('>%s</span></p></td>' % value, mail['html'])
+        # 배열이 아닌 행('not a row')도 한 칸 행으로 살아남는다 -- 값을 버리지 않는다.
+        self.assertEqual(4, mail['html'].count('<tr>') - 4,
+                         '헤더 1행 + 배열 2행 + 스칼라 1행이어야 한다')
+        self.assertIn('>not a row</span>', mail['html'],
+                      '배열이 아닌 행을 조용히 버리면 형이 적은 값이 사라진다')
+        self.assertIn('A | B |  | ', mail['text'], '열을 넓혀 사각형으로 맞춘다')
+
+    def test_table_shows_an_empty_cell_for_a_missing_value(self):
+        """`None` 셀이 'None' 이라는 글자로 보이면 적지 않은 값을 적은 것처럼 나간다."""
+        cols, rows = routes_dock_daily._table_grid(
+            {'columns': ['A', None], 'rows': [[None, 'x']]})
+        self.assertEqual(['A', ''], cols)
+        self.assertEqual([['', 'x']], rows)
+
+    def test_table_ignores_a_header_that_is_not_a_list(self):
+        """문자열 columns 를 그대로 순회하면 글자마다 열이 하나씩 생긴다."""
+        cols, rows = routes_dock_daily._table_grid({'columns': 'abc', 'rows': [['1']]})
+        self.assertEqual([''], cols, '문자열 헤더는 무시하고 열 개수만 행에서 맞춘다')
+        self.assertEqual([['1']], rows)
+
+    def test_inline_photo_is_refused_before_the_file_is_opened_when_the_budget_is_gone(self):
+        """예산이 없으면 변환하지 않는다. 거절 전에 디코드하면 그게 자원 소모 경로다."""
+        opened = []
+        real = routes_dock_daily._attachment_path
+        routes_dock_daily._attachment_path = lambda name: opened.append(name) or real(name)
+        try:
+            image, note = routes_dock_daily._inline_image('whatever.png', 0)
+        finally:
+            routes_dock_daily._attachment_path = real
+        self.assertIsNone(image)
+        self.assertIn('용량 상한', note)
+        self.assertEqual([], opened, '예산이 0이면 파일을 찾지도 않아야 한다')
+
+    def test_inline_photo_refuses_a_resolution_too_large_to_decode(self):
+        """20MB 업로드 게이트를 통과해도 디코드 후 메모리는 수십 배가 될 수 있다."""
+        rid, aid = self._report_with_photo_block('픽셀 상한', payload=self._png((300, 300)))
+        original = routes_dock_daily.MAIL_IMAGE_MAX_PIXELS
+        routes_dock_daily.MAIL_IMAGE_MAX_PIXELS = 100
+        try:
+            html = self._mail(rid)['html']
+        finally:
+            routes_dock_daily.MAIL_IMAGE_MAX_PIXELS = original
+        self.assertNotIn('<img src="data:image/jpeg', html)
+        self.assertIn('해상도가 너무 큽니다', html)
+
+    def test_mail_photo_count_is_capped_and_the_reason_is_visible(self):
+        """장수 상한은 예산과 별개다. 상한을 넘은 사진은 이유를 본문에 남긴다."""
+        rid, aid = self._report_with_photo_block('장수 상한', payload=self._png((60, 40)))
+        original = routes_dock_daily.MAIL_IMAGE_MAX_COUNT
+        routes_dock_daily.MAIL_IMAGE_MAX_COUNT = 0
+        try:
+            html = self._mail(rid)['html']
+        finally:
+            routes_dock_daily.MAIL_IMAGE_MAX_COUNT = original
+        self.assertNotIn('<img src="data:image/jpeg', html)
+        self.assertIn('장수 상한', html)
+
+    def test_mail_never_claims_a_failed_photo_is_attached_to_the_mail(self):
+        """'첨부파일로 확인' 은 이 메일에 첨부됐다는 뜻으로 읽힌다 -- 그 보장이 없다."""
+        rid, aid = self._report_with_photo_block('문구', payload=self._fake_png())
+        html = self._mail(rid)['html']
+        self.assertIn('본문에 넣을 수 없습니다', html)
+        self.assertNotIn('첨부파일로 확인', html)
+
+    def test_inline_image_refuses_a_path_outside_the_upload_dir(self):
+        """`stored_name` 은 DB 값이지만 경로 조립은 여기서 한다."""
+        with appmod.app.app_context():
+            self.assertIsNone(routes_dock_daily._attachment_path('../../etc/passwd'))
+            self.assertIsNone(routes_dock_daily._attachment_path(None))
+            image, note = routes_dock_daily._inline_image('../../etc/passwd', 10 ** 9)
+        self.assertIsNone(image)
+        self.assertIn('찾을 수 없습니다', note)
 
     def test_email_preview_translates_legacy_defaults_but_preserves_custom_footer(self):
         p = self.client.post('/api/dock-daily/projects', json={
