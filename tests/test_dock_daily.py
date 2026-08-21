@@ -114,6 +114,36 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(one.get_json()['id'], two.get_json()['id'])
         self.assertEqual(1, len(self.client.get(f'/api/dock-daily/projects/{pid}/reports').get_json()))
 
+    def test_project_list_carries_the_vessel_name_and_code_clients_identify_by(self):
+        """Both clients label a project by vessel, not by IMO.
+
+        The web sidebar has always shown `vessel_name`; iOS showed `imo` until
+        2026-08-21 and now reads these same two joined fields.  They come from the
+        `vessels` join rather than the project row, so dropping the join -- or
+        renaming an alias -- would silently reduce every chip to its fallback
+        without failing any request.  A vessel whose code was corrected after the
+        project was created is the case that separates the two: the project row
+        keeps the copy it was created with, and the joined value is current.
+        """
+        pid = self.client.post('/api/dock-daily/projects',
+                               json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()['id']
+        with appmod.app.app_context():
+            appmod.execute('UPDATE vessels SET vsl_cd=? WHERE id=?', ('D002', self.vessel))
+        row = next(p for p in self.client.get('/api/dock-daily/projects').get_json() if p['id'] == pid)
+        self.assertEqual('DOCK DAILY TEST', row['vessel_name'])
+        self.assertEqual('D002', row['vessel_vsl_cd'], 'joined code must be the live one')
+        self.assertEqual('D001', row['vsl_cd'], 'the project row keeps its creation-time copy')
+        self.assertEqual('IMO-TEST', row['vessel_imo'])
+        # There is no single-project GET; PATCH is the other response the clients
+        # decode into the same model, so it has to carry the join too or an edit
+        # would blank the label until the next full list load.
+        patched = self.client.patch(f'/api/dock-daily/projects/{pid}', json={'title': 'Renamed DD'})
+        self.assertEqual(200, patched.status_code)
+        body = patched.get_json()
+        body = body.get('project', body)
+        self.assertEqual('DOCK DAILY TEST', body['vessel_name'])
+        self.assertEqual('D002', body['vessel_vsl_cd'])
+
     def test_page_uses_trmt_shell_and_single_project_modal(self):
         page = self.client.get('/dock-daily')
         self.assertEqual(200, page.status_code)
