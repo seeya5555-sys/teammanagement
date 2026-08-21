@@ -1507,10 +1507,9 @@ def _email(rid):
     # borderless paragraphs with a border-bottom per line -- also unmeasured.
     # Other mail clients were not measured at all.
     #
-    # The numbered work items stay plain paragraphs; they never needed a table.
-    # Their hanging indent keeps wrapped text under the text rather than under
-    # the number, sized for a two digit number ('10)'), approximate not metric
-    # exact.
+    # Outlook iOS 는 `<p margin-left>`/`text-indent` 를 붙여넣을 때 버린다(형 실측
+    # 2026-08-22). 번호 항목은 borderless presentation table 로 24px spacer 를 실제
+    # 셀로 만든다. 번호 28px 뒤 본문이 52px 에서 시작해 사진·표와 같은 기준선에 맞는다.
     cell_font = 'font-family:Arial,Helvetica,sans-serif;font-size:11pt'
     cell_box = 'border:1px solid #777;padding:3px 9px;%s' % cell_font
 
@@ -1547,8 +1546,15 @@ def _email(rid):
     chunks.append(spacer)
     def item(no, inner):
         """번호가 붙은 작업 항목 한 줄. inner 는 이미 escape 된 markup."""
-        return ('<p style="margin:0 0 3px 52px;text-indent:-30px">%s</p>' %
-                run('%d)&nbsp;&nbsp;%s' % (no, inner)))
+        p = '<p style="margin:0;%s">%%s</p>' % cell_font
+        return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                'width="100%%" style="width:100%%;border-collapse:collapse;'
+                'margin:0 0 3px 0;%s"><tr>'
+                '<td width="24" style="width:24px;vertical-align:top;%s">%s</td>'
+                '<td width="28" style="width:28px;vertical-align:top;white-space:nowrap;%s">%s</td>'
+                '<td style="vertical-align:top;%s">%s</td></tr></table>'
+                % (cell_font, cell_font, p % run('&nbsp;'),
+                   cell_font, p % run('%d)' % no), cell_font, p % run(inner)))
 
     def table(entry):
         """카드의 표를 메일 표로. 셀 텍스트는 `cell()` 계약대로 `<td>` 안 `<p>` 에 넣는다.

@@ -1465,24 +1465,29 @@ class DockDailyTests(unittest.TestCase):
                       preview['html'])
         self.assertIn('%s<p style="margin:0 0 6px">%s' % (spacer, run % '<b>1. &nbsp;Shipyard</b>'),
                       preview['html'])
-        # Work items are hanging indented paragraphs.
-        self.assertIn('<p style="margin:0 0 3px 52px;text-indent:-30px">%s</p>'
-                      % (run % '2)&nbsp;&nbsp;Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;'),
+        # Outlook paste drops paragraph margin-left, so a real 24px spacer cell indents items.
+        self.assertIn('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                      'width="100%"', preview['html'])
+        self.assertIn('<td width="24" style="width:24px;vertical-align:top;%s">'
+                      '<p style="margin:0;%s">%s</p></td>' % (font, font, run % '&nbsp;'),
                       preview['html'])
-        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</span></p>%s'
+        self.assertIn('<td width="28" style="width:28px;vertical-align:top;white-space:nowrap;%s">'
+                      '<p style="margin:0;%s">%s</p></td>' % (font, font, run % '2)'),
+                      preview['html'])
+        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</span></p></td></tr></table>%s'
                       '<p style="margin:0 0 6px">%s' % (spacer, run % '<b>2. &nbsp;EGCS Retrofit</b>'),
                       preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
 
-    def test_email_only_table_is_the_itinerary_and_its_cells_wrap_text_in_paragraphs(self):
+    def test_email_table_cells_wrap_text_in_paragraphs(self):
         """On the Outlook iOS paste that was measured, text sitting directly inside a
         <td> came out at ~8pt while paragraph text outside any table held the
         declared 11pt, and that did not move as the declaration was added to the
         wrapper <div>, then every <table>/<td>, then a <span> per text node. Cell
         text therefore goes inside a <p>; whether Outlook honours 11pt for a <p>
         inside a <td> is an untested hypothesis, so this test locks the markup
-        shape only. The one remaining table is the itinerary, which needs the
-        borders; work items stay paragraphs."""
+        shape only. The itinerary needs borders; work items use borderless presentation
+        tables because Outlook drops paragraph margin-left."""
         p = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': 'Font DD', 'berthing_date': '2026-03-24'}).get_json()
         r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
@@ -1496,9 +1501,24 @@ class DockDailyTests(unittest.TestCase):
         # Parsed, not regexed: unbalanced or mis-nested markup raises here.
         root = _Tree.parse(body)
         tables = _Tree.find(root, 'table')
-        self.assertEqual(1, len(tables), body)
         self.assertFalse(_Tree.find(root, 'th') or _Tree.find(root, 'thead'), body)
-        rows = _Tree.find(tables[0], 'tr')
+        itinerary = [table for table in tables if table['attrs'].get('role') != 'presentation']
+        items = [table for table in tables if table['attrs'].get('role') == 'presentation']
+        self.assertEqual(1, len(itinerary))
+        self.assertTrue(items)
+        for table in items:
+            rows = _Tree.find(table, 'tr')
+            self.assertEqual(1, len(rows), table)
+            cells = [k for k in rows[0]['kids'] if k['tag'] == 'td']
+            self.assertEqual(3, len(cells), rows[0])
+            self.assertEqual(cells, rows[0]['kids'], 'only cells may sit in an item row')
+            self.assertEqual('24', cells[0]['attrs'].get('width'))
+            self.assertEqual('28', cells[1]['attrs'].get('width'))
+            for td in cells:
+                self.assertEqual(['p'], [k['tag'] for k in td['kids']], td)
+                self.assertEqual('', td['text'].strip(), 'text sits directly in the <td>')
+                self.assertIn('font-size:11pt', td['kids'][0]['attrs'].get('style', ''))
+        rows = _Tree.find(itinerary[0], 'tr')
         self.assertEqual(4, len(rows), 'itinerary is BERTHING/IN/OUT/DEPARTURE')
         for row in rows:
             cells = [k for k in row['kids'] if k['tag'] == 'td']
@@ -1573,11 +1593,12 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('1) 1)', preview['text'])
         self.assertNotIn('7)', preview['text'])
         self.assertNotIn('1) 1)', preview['html'])
-        item_line = ('<p style="margin:0 0 3px 52px;text-indent:-30px">'
-                     '<span style="font-family:Arial,Helvetica,sans-serif;font-size:11pt">'
-                     '%s)&nbsp;&nbsp;%s</span></p>')
-        self.assertIn(item_line % (1, 'Tank cleaning'), preview['html'])
-        self.assertIn(item_line % (3, 'Anode renewal'), preview['html'])
+        item_run = ('<span style="font-family:Arial,Helvetica,sans-serif;font-size:11pt">'
+                    '%s</span></p></td>')
+        self.assertIn(item_run % '1)', preview['html'])
+        self.assertIn(item_run % 'Tank cleaning', preview['html'])
+        self.assertIn(item_run % '3)', preview['html'])
+        self.assertIn(item_run % 'Anode renewal', preview['html'])
         svms = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
         self.assertEqual('1) Tank cleaning\n2) Hull blasting\n3) Anode renewal',
                          svms['fields']['RMK_SYD'])
@@ -1728,7 +1749,16 @@ class DockDailyTests(unittest.TestCase):
         for value in ('1', '2', '3', '4', '5'):
             self.assertIn('>%s</span></p></td>' % value, mail['html'])
         # 배열이 아닌 행('not a row')도 한 칸 행으로 살아남는다 -- 값을 버리지 않는다.
-        self.assertEqual(4, mail['html'].count('<tr>') - 4,
+        root = _Tree.parse(mail['html'])
+        data_tables = []
+        for table in _Tree.find(root, 'table'):
+            if table['attrs'].get('role') == 'presentation':
+                continue
+            rows = _Tree.find(table, 'tr')
+            if rows and len([kid for kid in rows[0]['kids'] if kid['tag'] == 'td']) == 4:
+                data_tables.append(table)
+        self.assertEqual(1, len(data_tables), mail['html'])
+        self.assertEqual(4, len(_Tree.find(data_tables[0], 'tr')),
                          '헤더 1행 + 배열 2행 + 스칼라 1행이어야 한다')
         self.assertIn('>not a row</span>', mail['html'],
                       '배열이 아닌 행을 조용히 버리면 형이 적은 값이 사라진다')
@@ -2067,8 +2097,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('4)', mail['text'])
         # html 도 같다. 표는 `1)` 줄 **뒤에** 번호 없이 오고, 그 다음 글이 `2)` 를 받는다.
         html = mail['html']
-        first = html.index('>1)&nbsp;&nbsp;첫 작업</span></p>')
-        second = html.index('>2)&nbsp;&nbsp;둘째 작업</span></p>')
+        first = html.index('>1)</span></p>')
+        second = html.index('>2)</span></p>')
         grid = html.index('<table style="border-collapse:collapse;margin:0 0 8px 52px">')
         self.assertLess(first, grid)
         self.assertLess(grid, second)
