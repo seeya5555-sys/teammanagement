@@ -189,6 +189,46 @@ def _report_json(rid):
     return out
 
 
+def _auto_subject(vessel_name, report_date):
+    """The mail subject a report is created with.
+
+    Shared with the date-correction path in `report_put` on purpose.  That path
+    decides whether a stored subject is still the generated one before it
+    rewrites the date inside it; if the two sites built the string differently
+    a corrected report would keep the wrong date in its subject forever while
+    looking untouched.
+    """
+    return '[Dock] M/T %s - Dock Daily Report (%s)' % (vessel_name, _subject_date(report_date))
+
+
+def _subject_date(report_date):
+    """The `(8/20)` fragment the generated subject ends with."""
+    return '%s/%s' % (report_date[5:7].lstrip('0'), report_date[8:10].lstrip('0'))
+
+
+def _subject_with_date(subject, old_date, new_date):
+    """Move the date inside a still-generated subject, or return None to leave it alone.
+
+    Why the shape is matched instead of the whole string being compared to
+    `_auto_subject(vessel_name, old_date)`: the vessel can be renamed after the
+    report is created, and then no stored subject equals the freshly generated
+    one -- so a date correction would silently keep `(8/20)` on an 8/30 report
+    (올마이트 지적 2026-08-21).  Matching the generated prefix plus the exact
+    old-date tail is narrow enough that a hand-written subject is not touched:
+    it has to look like `[Dock] ... Dock Daily Report (8/20)` to qualify.
+
+    A hand-typed subject that happens to be exactly that shape does get its date
+    moved, and that is the right outcome -- the only edit is the date the author
+    themself put there.
+    """
+    tail = ' (%s)' % _subject_date(old_date)
+    if not subject or not subject.startswith('[Dock] ') or 'Dock Daily Report' not in subject:
+        return None
+    if not subject.endswith(tail):
+        return None
+    return subject[:-len(tail)] + ' (%s)' % _subject_date(new_date)
+
+
 def _create_report(db, project_id, report_date, actor='system'):
     p = _project(project_id)
     if not p:
@@ -197,8 +237,7 @@ def _create_report(db, project_id, report_date, actor='system'):
                           (project_id, report_date)).fetchone()
     if existing:
         return existing['id']
-    subject = '[Dock] M/T %s - Dock Daily Report (%s)' % (p['vessel_name'],
-                                                            '%s/%s' % (report_date[5:7].lstrip('0'), report_date[8:10].lstrip('0')))
+    subject = _auto_subject(p['vessel_name'], report_date)
     cur = db.execute('''INSERT INTO dock_daily_report
         (project_id, report_date, status, revision, auto_snapshot_json, email_subject, email_intro, safety_footer)
         VALUES (?,?,'auto_draft',1,'{}',?,?,?)''',
@@ -210,10 +249,16 @@ def _create_report(db, project_id, report_date, actor='system'):
     return rid
 
 
-def _error(message, code=400, **extra):
+def _error(message, status=400, **extra):
+    """HTTP 상태는 `status` 다.
+
+    전엔 이 인자 이름이 `code` 였는데, 응답 본문에도 기계가 읽는 `code` 를 싣게 되면서
+    `_error(msg, 409, code='date_taken')` 이 같은 인자에 두 번 바인딩돼 500 이 됐다.
+    상태코드는 위치인자로만 쓰이고 있어 이름만 바꾼다.
+    """
     out = {'error': message}
     out.update(extra)
-    return jsonify(out), code
+    return jsonify(out), status
 
 
 def _validate_active_window(auto_generate, active_from, active_to):
@@ -542,10 +587,15 @@ def _cas_begin(rid, expected):
     row = db.execute('SELECT * FROM dock_daily_report WHERE id=?', (rid,)).fetchone()
     if not row:
         db.rollback(); return None, _error('report not found', 404)
+    # 409 는 종류가 셋이고(revision 충돌 / 확정잠금 / 날짜중복) 사람이 할 일이 서로 다르다.
+    # `code` 를 함께 주는 이유: 클라이언트가 `error` 문자열로 갈라 읽으면 문구 한 글자만
+    # 바뀌어도 조용히 엉뚱한 안내("다른 사용자가 먼저 저장함")를 낸다(올마이트 지적).
     if row['revision'] != expected:
-        db.rollback(); return None, _error('revision conflict', 409, current_revision=row['revision'])
+        db.rollback(); return None, _error('revision conflict', 409, code='revision_conflict',
+                                           current_revision=row['revision'])
     if row['status'] == 'final':
-        db.rollback(); return None, _error('final report is locked', 409, current_revision=row['revision'])
+        db.rollback(); return None, _error('final report is locked', 409, code='final_locked',
+                                           current_revision=row['revision'])
     return row, None
 
 
@@ -582,6 +632,38 @@ def report_put(rid):
                 changed = True
         meta = data.get('metadata') if isinstance(data.get('metadata'), dict) else data
         updates = []
+        if 'report_date' in meta:
+            # 날짜를 잘못 입력했을 때 고치는 경로(형 지시 2026-08-21).  삭제 후 재생성으로
+            # 고치면 그 날짜에 이미 쓴 본문·첨부가 같이 날아가므로 제자리 정정이 필요하다.
+            #
+            # ⚠️ 옮기는 건 날짜와 (자동생성이면) 제목뿐이다.  이미 수집된 dock_auto 블록과
+            # source_link 는 옛 날짜의 이벤트에서 온 것이고 여기서 다시 수집하지 않는다.
+            # 자동수집을 재실행하면 사람이 고친 문장을 덮으므로, 내용 판단은 사람에게 남긴다.
+            #
+            # 컬럼은 NOT NULL 이고 UNIQUE(project_id, report_date) 다.  빈 값은 400,
+            # 이미 존재하는 날짜는 409 로 끊는다 -- IntegrityError 를 500 으로 흘리면
+            # 호출자는 "저장 실패"만 받고 왜 실패했는지 알 수 없다.
+            try:
+                new_date = _date(meta['report_date'], True)
+            except ValueError as e:
+                db.rollback(); return _error(str(e))
+            if new_date != row['report_date']:
+                clash = db.execute(
+                    'SELECT id FROM dock_daily_report WHERE project_id=? AND report_date=? AND id<>?',
+                    (row['project_id'], new_date, rid)).fetchone()
+                if clash:
+                    db.rollback()
+                    return _error('that date already has a report', 409, code='date_taken',
+                                  conflicting_report_id=clash['id'])
+                updates.append(('report_date', new_date))
+                # 자동생성 제목은 날짜를 품고 있다.  사람이 손대지 않은 제목만 새 날짜로
+                # 다시 만든다 -- 손으로 쓴 제목을 덮는 쪽이 더 큰 손실이다.  같은 요청이
+                # email_subject 를 명시했으면 그쪽이 이긴다(SET 절에 같은 컬럼을 두 번
+                # 넣지 않기 위한 것이기도 하다).
+                if 'email_subject' not in meta:
+                    moved = _subject_with_date(row['email_subject'], row['report_date'], new_date)
+                    if moved is not None:
+                        updates.append(('email_subject', moved))
         for key in ('email_subject', 'email_intro', 'safety_footer'):
             if key in meta:
                 updates.append((key, meta[key] if meta[key] is not None else ''))

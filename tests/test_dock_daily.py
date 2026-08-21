@@ -602,6 +602,223 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(200, locked.status_code)
         self.assertEqual(409, self.client.put(f"/api/dock-daily/reports/{r['id']}", json=body).status_code)
 
+    def test_report_date_is_corrected_in_place_and_carries_the_auto_subject(self):
+        """날짜를 잘못 입력했을 때 지우지 않고 고친다(형 지시 2026-08-21).
+
+        삭제 후 재생성으로 고치면 그 날짜에 이미 쓴 본문·첨부가 함께 사라진다.  그래서
+        기존 PUT 을 타서 `_cas_begin` 의 revision CAS·확정잠금·스냅샷을 그대로 물려받는다.
+        자동생성 제목은 날짜를 품고 있으므로 함께 따라와야 한다 -- 안 그러면 8/30 보고서가
+        `(8/20)` 제목을 영구히 달고 나간다.
+        """
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Date DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        self.assertIn('(8/20)', r['email_subject'])
+        moved = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                                json={'revision': r['revision'], 'operations': [],
+                                      'report_date': '2026-08-30'})
+        self.assertEqual(200, moved.status_code)
+        body = moved.get_json()
+        self.assertEqual('2026-08-30', body['report_date'])
+        self.assertIn('(8/30)', body['email_subject'])
+        # revision 이 오르고 스냅샷에 새 날짜가 남아야 감사 추적이 끊기지 않는다.
+        self.assertGreater(body['revision'], r['revision'])
+        with appmod.app.app_context():
+            snaps = appmod.query(
+                'SELECT snapshot_json FROM dock_daily_report_revision WHERE report_id=? ORDER BY id DESC',
+                (r['id'],))
+            self.assertTrue(snaps)
+            self.assertIn('2026-08-30', snaps[0]['snapshot_json'])
+
+    def test_report_date_correction_keeps_a_hand_written_subject(self):
+        """손으로 쓴 제목은 덮지 않는다.  덮는 쪽의 손실이 더 크다."""
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Date DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        named = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                                json={'revision': r['revision'], 'operations': [],
+                                      'email_subject': '손으로 쓴 제목'}).get_json()
+        moved = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                                json={'revision': named['revision'], 'operations': [],
+                                      'report_date': '2026-08-30'})
+        self.assertEqual(200, moved.status_code)
+        self.assertEqual('손으로 쓴 제목', moved.get_json()['email_subject'])
+        self.assertEqual('2026-08-30', moved.get_json()['report_date'])
+
+    def test_report_date_correction_refuses_empty_taken_and_final(self):
+        """빈 값은 400, 이미 있는 날짜는 409 + `conflicting_report_id`, 확정본은 409.
+
+        중복 날짜를 `IntegrityError` 로 흘리면 500 이 되고 호출자는 "저장 실패" 만 받는다.
+        클라이언트가 revision 충돌과 갈라 읽을 수 있게 충돌 상대 id 를 함께 준다 --
+        두 경우의 해법이 정반대다(최신본 불러오기 ↔ 다른 날짜 고르기).
+        """
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Date DD'}).get_json()
+        a = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        b = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-30'}).get_json()
+        blank = self.client.put(f"/api/dock-daily/reports/{a['id']}",
+                                json={'revision': a['revision'], 'operations': [], 'report_date': '  '})
+        self.assertEqual(400, blank.status_code)
+        taken = self.client.put(f"/api/dock-daily/reports/{a['id']}",
+                                json={'revision': a['revision'], 'operations': [],
+                                      'report_date': '2026-08-30'})
+        self.assertEqual(409, taken.status_code)
+        self.assertEqual(b['id'], taken.get_json().get('conflicting_report_id'))
+        # 거절된 요청이 revision 을 올리거나 날짜를 옮기면 안 된다.
+        still = self.client.get(f"/api/dock-daily/reports/{a['id']}").get_json()
+        self.assertEqual('2026-08-20', still['report_date'])
+        self.assertEqual(a['revision'], still['revision'])
+        done = self.client.post(f"/api/dock-daily/reports/{a['id']}/status",
+                                json={'status': 'final', 'revision': a['revision']}).get_json()
+        locked = self.client.put(f"/api/dock-daily/reports/{a['id']}",
+                                 json={'revision': done['revision'], 'operations': [],
+                                       'report_date': '2026-09-01'})
+        self.assertEqual(409, locked.status_code)
+        self.assertIsNone(locked.get_json().get('conflicting_report_id'))
+
+    def test_report_date_correction_survives_a_vessel_rename(self):
+        """선박명이 바뀐 뒤에도 자동 제목의 날짜는 따라와야 한다(올마이트 지적 2026-08-21).
+
+        전엔 저장된 제목을 `_auto_subject(현재 선박명, 옛 날짜)` 통짜와 비교했다.  개명 후엔
+        어떤 제목도 그 문자열과 같지 않으므로, 8/30 으로 옮긴 보고서가 `(8/20)` 제목을
+        영구히 달고 나갔다.  지금은 생성 제목의 **모양 + 옛 날짜 꼬리**만 맞춘다.
+        """
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Rename DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        with appmod.app.app_context():
+            appmod.execute('UPDATE vessels SET name=? WHERE id=?', ('RENAMED HULL', self.vessel))
+        moved = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                                json={'revision': r['revision'], 'operations': [],
+                                      'report_date': '2026-08-30'})
+        self.assertEqual(200, moved.status_code)
+        subject = moved.get_json()['email_subject']
+        self.assertIn('(8/30)', subject)
+        self.assertNotIn('(8/20)', subject)
+        # 개명 전 선박명은 제목에 그대로 남는다 -- 날짜만 옮기는 것이 이 경로의 계약이다.
+        self.assertIn('DOCK DAILY TEST', subject)
+
+    def test_report_date_correction_leaves_an_unrelated_subject_alone(self):
+        """생성 제목 모양이 아니면 손대지 않는다."""
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Keep DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        for subject in ('입거 보고 (8/20)', '[Dock] 다른 양식 (8/20)', '[Dock] M/T X - Dock Daily Report (9/9)'):
+            with self.subTest(subject=subject):
+                with appmod.app.app_context():
+                    appmod.execute('UPDATE dock_daily_report SET email_subject=? WHERE id=?',
+                                   (subject, r['id']))
+                current = self.client.get(f"/api/dock-daily/reports/{r['id']}").get_json()
+                moved = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                                        json={'revision': current['revision'], 'operations': [],
+                                              'report_date': '2026-08-3%d' % (len(subject) % 9)})
+                self.assertEqual(200, moved.status_code)
+                self.assertEqual(subject, moved.get_json()['email_subject'])
+
+    def test_rejected_date_correction_rolls_back_the_whole_request(self):
+        """날짜 거절이 같은 요청의 본문 수정까지 되돌리는지(올마이트 지적).
+
+        `_cas_begin` 이 `BEGIN IMMEDIATE` 를 열어둔 상태라, 날짜 검사에서 rollback 하면
+        같은 요청의 `email_subject`·operations 도 함께 사라져야 한다.  일부만 남으면
+        형은 "저장 실패" 를 보고도 본문이 바뀐 화면을 받는다.
+        """
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Rollback DD'}).get_json()
+        a = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                         json={'report_date': '2026-08-30'})
+        taken = self.client.put(f"/api/dock-daily/reports/{a['id']}",
+                                json={'revision': a['revision'], 'report_date': '2026-08-30',
+                                      'email_subject': '함께 날아가야 하는 제목',
+                                      'operations': [{'section_key': 'shipyard',
+                                                      'block_type': 'paragraph',
+                                                      'content': {'body': 'rolled back'}}]})
+        self.assertEqual(409, taken.status_code)
+        self.assertEqual('date_taken', taken.get_json().get('code'))
+        after = self.client.get(f"/api/dock-daily/reports/{a['id']}").get_json()
+        self.assertEqual('2026-08-20', after['report_date'])
+        self.assertEqual(a['revision'], after['revision'])
+        self.assertNotEqual('함께 날아가야 하는 제목', after['email_subject'])
+        self.assertEqual([], [b for b in after['blocks']
+                              if 'rolled back' in json.dumps(b.get('content_json') or {})])
+
+    def test_conflicts_carry_a_machine_readable_code(self):
+        """409 세 종류가 문자열이 아니라 `code` 로 구분되는지(올마이트 지적).
+
+        클라이언트가 `error` 문구로 갈라 읽으면 문구 한 글자만 바뀌어도 확정잠금이
+        revision 충돌 안내("다른 사용자가 먼저 저장함")로 오안내된다 -- 해법이 정반대다.
+        """
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Code DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        stale = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                                json={'revision': r['revision'] + 5, 'operations': []})
+        self.assertEqual(409, stale.status_code)
+        self.assertEqual('revision_conflict', stale.get_json().get('code'))
+        done = self.client.post(f"/api/dock-daily/reports/{r['id']}/status",
+                                json={'status': 'final', 'revision': r['revision']}).get_json()
+        locked = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                                 json={'revision': done['revision'], 'operations': []})
+        self.assertEqual(409, locked.status_code)
+        self.assertEqual('final_locked', locked.get_json().get('code'))
+
+    def test_itinerary_patch_writes_nulls_and_reaches_final_reports(self):
+        """iOS 일정 편집기의 서버쪽 계약.
+
+        ① 명시적 `null` 이 NULL 로 들어가야 한다 -- 키를 빼면 "그대로 두기" 이므로
+        화면에서 지운 날짜가 서버에 남는다.
+        ② 🔴 일정은 프로젝트 열이고 확정본도 조인으로 읽는다 → 초안에서 저장한 일정이
+        **이미 확정된 보고서에도 반영된다**.  이건 확정 잠금 우회이지만, 막으면 정상적인
+        출거일 연기가 영구히 불가능해지므로 계약으로 인정하고 화면에 경고를 띄운다
+        (올마이트 지적 2026-08-21).  여기서 잠그면 웹도 함께 깨진다.
+        """
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Itin DD'}).get_json()
+        early = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                 json={'report_date': '2026-08-20'}).get_json()
+        draft = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                 json={'report_date': '2026-08-30'}).get_json()
+        self.client.post(f"/api/dock-daily/reports/{early['id']}/status",
+                         json={'status': 'final', 'revision': early['revision']})
+        set_all = self.client.patch(f"/api/dock-daily/projects/{p['id']}",
+                                   json={'berthing_date': '2026-08-30', 'dock_in_date': '2026-09-01',
+                                         'dock_out_date': '2026-09-20', 'departure_date': '2026-10-04'})
+        self.assertEqual(200, set_all.status_code)
+        seen = self.client.get(f"/api/dock-daily/reports/{draft['id']}").get_json()['itinerary']
+        self.assertEqual('2026-09-01', seen['dry_dock_in'])
+        # ② 확정본도 같은 값을 읽는다.
+        final_seen = self.client.get(f"/api/dock-daily/reports/{early['id']}").get_json()['itinerary']
+        self.assertEqual('2026-09-01', final_seen['dry_dock_in'])
+        cleared = self.client.patch(f"/api/dock-daily/projects/{p['id']}",
+                                   json={'dock_in_date': None, 'dock_out_date': None})
+        self.assertEqual(200, cleared.status_code)
+        after = self.client.get(f"/api/dock-daily/reports/{draft['id']}").get_json()['itinerary']
+        self.assertIsNone(after['dry_dock_in'])
+        self.assertIsNone(after['dry_dock_out'])
+        # ① 보내지 않은 키는 그대로 남는다.
+        self.assertEqual('2026-10-04', after['departure'])
+        self.assertEqual('2026-08-30', after['berthing'])
+
+    def test_same_report_date_is_a_no_op_not_a_conflict(self):
+        """같은 날짜를 그대로 보내도 자기 자신과 충돌났다고 하면 안 된다."""
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Date DD'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-20'}).get_json()
+        same = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                               json={'revision': r['revision'], 'operations': [],
+                                     'report_date': '2026-08-20'})
+        self.assertEqual(200, same.status_code)
+        self.assertEqual('2026-08-20', same.get_json()['report_date'])
+
     def _final_report(self):
         p = self.client.post('/api/dock-daily/projects',
                              json={'vessel_id': self.vessel, 'title': 'Toggle DD'}).get_json()
