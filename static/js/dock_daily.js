@@ -5,11 +5,36 @@
   const state = {projects:[], project:null, reports:[], report:null, dirty:false, vessels:[], tempId:-1, preview:null};
   async function api(url, options) {
     const r = await fetch(url, options); const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.error || `요청 실패 (${r.status})`); return body;
+    // 상태코드와 서버가 준 `code` 를 에러에 실어 보낸다. 문구만 던지면 호출부가
+    // `error` 문자열로 갈라 읽어야 하고, 그러면 서버 문구 한 글자만 바뀌어도
+    // 조용히 엉뚱한 안내를 낸다(→ conflictText).
+    if (!r.ok) {
+      const e = new Error(body.error || `요청 실패 (${r.status})`);
+      e.status = r.status; e.code = body.code; e.body = body; throw e;
+    }
+    return body;
   }
   const json = v => ({headers:{'Content-Type':'application/json'}, body:JSON.stringify(v)});
   const err = e => { $('#dd-error').textContent = e.message || String(e); };
-  const clearErr = () => { $('#dd-error').textContent = ''; };
+  const notice = m => { $('#dd-notice').textContent = m || ''; };
+  const clearErr = () => { $('#dd-error').textContent = ''; notice(''); };
+  // PUT /reports/<id> 의 409 는 revision 충돌·확정잠금·날짜중복 셋이고 사람이 할 일이
+  // 서로 다르다. 확정잠금에 "최신본을 다시 불러오세요" 를 띄우면 형은 해결되지 않는
+  // 동작을 반복한다 — 해법은 확정 취소다. 아이폰 앱과 같은 분기다.
+  const CONFLICT = {
+    date_taken: '그 날짜에는 이미 보고서가 있습니다. 다른 날짜를 고르세요.',
+    final_locked: '확정된 보고서는 수정할 수 없습니다. 확정을 취소한 뒤 고치세요.',
+    revision_conflict: '다른 곳에서 먼저 저장했습니다. 보고서를 다시 열어 확인한 뒤 고치세요.',
+  };
+  function conflictText(e) {
+    // 409 일 때만 `code` 로 갈라 읽는다. 다른 상태코드가 같은 이름의 `code` 를 실어보내면
+    // 엉뚱한 해법을 안내하게 된다(올마이트 지적 2026-08-21).
+    if (!e || e.status !== 409) return (e && e.message) || String(e);
+    if (CONFLICT[e.code]) return CONFLICT[e.code];
+    // `code` 를 안 주는 구버전 응답 폴백: 날짜 중복만은 충돌 상대 id 로 알아본다.
+    if (e.body && e.body.conflicting_report_id) return CONFLICT.date_taken;
+    return e.message || String(e);
+  }
   const today = () => new Date().toLocaleDateString('en-CA');
 
   async function loadProjects() {
@@ -19,11 +44,25 @@
     document.querySelectorAll('[data-project]').forEach(b => b.onclick = () => {if(canLeaveDraft())selectProject(+b.dataset.project);});
     document.querySelectorAll('[data-del-project]').forEach(b => b.onclick = () => once(b, () => deleteProject(+b.dataset.delProject)));
   }
+  // 필터 규칙 정본은 static/js/dock_daily_filter.js 다(실행형 테스트로 잠긴다).
+  const FILTER = window.DockDailyReportFilter;
+  function visibleReports() {
+    // 서버가 준 날짜 역순을 그대로 쓴다 — 다시 정렬하면 앱과 순서가 갈린다.
+    return FILTER.apply(state.reports, $('#dd-report-search').value, $('#dd-report-status').value);
+  }
   function renderReportDates() {
-    $('#dd-report-list').innerHTML = state.reports.length ? state.reports.map(r =>
-      `<div class="dd-list-row"><button data-report="${r.id}" class="${state.report?.id===r.id?'active':''}"><b>${esc(r.report_date)}</b><small>${esc(r.status)}</small></button><button class="dd-list-del" type="button" data-del-report="${r.id}" title="이 일자 삭제" aria-label="${esc(r.report_date)} 보고서 삭제">삭제</button></div>`).join('') : '<p class="dd-muted">생성된 일자가 없습니다.</p>';
-    document.querySelectorAll('[data-report]').forEach(b => b.onclick = () => {if(canLeaveDraft())selectReport(+b.dataset.report).catch(err);});
-    document.querySelectorAll('[data-del-report]').forEach(b => b.onclick = () => once(b, () => deleteReport(+b.dataset.delReport)));
+    const sel = $('#dd-report-select'), rows = visibleReports(), open = state.report?.id ?? null;
+    // 열린 보고서가 필터 밖으로 밀려나면 드롭다운은 첫 행을 선택한 것처럼 보인다.
+    // 그러면 화면 본문과 선택값이 어긋나므로, 열린 일자를 맨 위에 명시해 붙인다.
+    const stray = open && !rows.some(r => r.id === open) ? state.reports.find(r => r.id === open) : null;
+    const option = (r, tail) => `<option value="${esc(r.id)}"${r.id===open?' selected':''}>${esc(r.report_date)} · ${esc(r.status)}${tail||''}</option>`;
+    sel.innerHTML = (stray ? [option(stray, ' · 필터 밖(열림)')] : [])
+      .concat(rows.map(r => option(r)))
+      .join('') || '<option value="">해당 조건의 보고서가 없습니다</option>';
+    sel.disabled = !rows.length && !stray;
+    $('#dd-report-del').disabled = !open;
+    $('#dd-report-count').textContent = !state.reports.length ? '생성된 일자가 없습니다.'
+      : `${rows.length}/${state.reports.length}건`;
   }
   // A second click while the first DELETE is in flight would send a duplicate
   // request, so the button is held down for the whole round trip. Always
@@ -66,6 +105,9 @@
   async function selectProject(id) {
     clearErr(); state.project = state.projects.find(p => p.id === id) || null; if (!state.project) return;
     state.report = null; state.reports = await api(`/api/dock-daily/projects/${id}/reports`); await loadProjects();
+    // 프로젝트를 바꿀 때 필터를 비운다. 안 비우면 앞 프로젝트에 맞춰둔 검색어가
+    // 새 프로젝트의 일자를 전부 숨겨 "보고서가 없다" 처럼 보인다.
+    $('#dd-report-search').value = ''; $('#dd-report-status').value = '';
     $('#dd-project-tools').style.display = 'block'; $('#dd-generate-date').value = today(); renderReportDates();
     const specials = (state.project.sections||[]).filter(s => s.kind === 'special');
     $('#dd-special-tools').innerHTML = specials.length ? '<b>Special 항목</b>'+specials.map(s => `<label style="display:block;margin-top:7px"><input type="checkbox" class="dd-special-toggle" data-key="${esc(s.section_key)}" ${s.enabled?'checked':''}> ${esc(s.label)}</label>`).join('') : '<span class="dd-muted">Special 항목 없음</span>';
@@ -79,8 +121,15 @@
       }
     }
   }
+  // 드롭다운을 빠르게 여러 번 바꾸면 응답이 역전될 수 있다. 늦게 온 이전 요청이
+  // 화면을 덮으면 목록 선택값과 본문이 어긋나므로, 마지막 요청만 화면에 반영한다
+  // (올마이트 지적 2026-08-21).
+  let selectSeq = 0;
   async function selectReport(id) {
-    clearErr(); state.report = await api(`/api/dock-daily/reports/${id}`); state.dirty=false; ensureSectionEditors();
+    const seq = ++selectSeq;
+    clearErr(); const loaded = await api(`/api/dock-daily/reports/${id}`);
+    if (seq !== selectSeq) return;              // 형이 그 사이 다른 일자를 골랐다
+    state.report = loaded; state.dirty=false; ensureSectionEditors();
     $('#dd-empty').style.display='none'; $('#dd-report').classList.add('show');
     $('#dd-report-title').textContent=`${state.report.vessel_name} · 입거 Daily Report`;
     $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`;
@@ -97,6 +146,13 @@
     const values=[['berthing_date','BERTHING'],['dock_in_date','DRY DOCK IN'],['dock_out_date','DRY DOCK OUT'],['departure_date','DEPARTURE']];
     $('#dd-itinerary').innerHTML=values.map(([key,label])=>`<label>${label}<input class="dd-input dd-itinerary-date" data-key="${key}" type="date" value="${esc(state.report[key]||'')}" ${state.report.status==='final'?'disabled':''}></label>`).join('');
     document.querySelectorAll('.dd-itinerary-date').forEach(i=>i.onchange=()=>{state.dirty=true;});
+    // 🔴 일정은 프로젝트 열이고 확정본도 조인으로 읽는다 → 초안에서 저장한 일정이
+    // **이미 확정된 보고서에도** 반영된다. 막으면 정상적인 출거일 연기가 영구히
+    // 불가능해지므로 계약으로 두고, 몇 건이 함께 바뀌는지 굳이 세어 알린다(앱과 동일).
+    const finals=state.reports.filter(r=>r.status==='final').length;
+    $('#dd-itinerary-note').textContent=finals
+      ?`변경 후 저장을 누르면 이 프로젝트의 모든 보고서(확정 ${finals}건 포함)에 반영됩니다.`
+      :'변경 후 저장을 누르면 이 프로젝트의 모든 보고서에 반영됩니다.';
   }
   function blockText(b){const c=b.content||{};return c.title||c.body||c.text||(b.block_type==='table'?JSON.stringify(c.rows||[]):'');}
   // Cards carry their own "1) " numbering so what the supervisor types is what
@@ -257,6 +313,61 @@
   }
   function closeUploadModal(){uploadModal.hidden=true;document.body.style.overflow='';}
 
+  // 보고서 날짜 정정. 새 라우트가 아니라 기존 PUT 을 탄다 — BEGIN IMMEDIATE·revision
+  // CAS·확정잠금·revision bump·스냅샷을 그대로 물려받는다. 삭제 후 재생성으로 고치면
+  // 본문과 첨부가 함께 날아가므로 제자리 정정이어야 한다.
+  const dateModal=$('#dd-date-modal');
+  function closeDateModal(){dateModal.hidden=true;document.body.style.overflow='';}
+  async function openDateModal(){
+    if(!state.report)return; clearErr();
+    const rid=state.report.id, locked=state.report.status==='final';
+    // 미리보기·업로드와 같은 계약: 남은 편집을 먼저 저장한다. 날짜 정정도 같은 PUT 을
+    // 타고 revision 을 올리므로, 안 저장하면 그 다음 저장이 409 로 막힌다.
+    if(state.dirty&&!locked)await save();
+    if(state.report?.id!==rid)return;          // await 사이에 다른 일자로 옮겨갔다
+    $('#dd-date-new').value=state.report.report_date||'';
+    $('#dd-date-error').textContent=locked?CONFLICT.final_locked:'';
+    $('#dd-date-save').disabled=locked;
+    dateModal.hidden=false;document.body.style.overflow='hidden';$('#dd-date-new').focus();
+  }
+  async function saveReportDate(){
+    if(!state.report)return;
+    // 프로젝트·보고서 id 를 먼저 고정한다. await 뒤에 state 를 다시 읽으면, 그 사이
+    // 형이 다른 프로젝트로 옮겨갔을 때 남의 목록을 덮어쓴다(올마이트 지적 2026-08-21).
+    const rid=state.report.id, pid=state.project.id, next=$('#dd-date-new').value;
+    if(!next){$('#dd-date-error').textContent='새 보고서 일자를 선택하세요.';return;}
+    if(next===state.report.report_date){closeDateModal();return;}
+    const btn=$('#dd-date-save'); btn.disabled=true; $('#dd-date-error').textContent='';
+    try{
+      await api(`/api/dock-daily/reports/${rid}`,
+        {...json({revision:state.report.revision,operations:[],report_date:next}),method:'PUT'});
+      const rows=await api(`/api/dock-daily/projects/${pid}/reports`);
+      closeDateModal();
+      if(state.project?.id!==pid)return;        // 옮겨간 화면은 건드리지 않는다
+      state.reports=rows;
+      if(state.report?.id===rid)await selectReport(rid); else renderReportDates();
+      // 자동수집을 새 날짜로 다시 돌리지 않는 건 의도다 — 돌리면 사람이 고친 본문을 덮는다.
+      notice(`보고서 일자를 ${next} 로 변경했습니다. 자동수집 블록과 원천 링크는 다시 수집하지 않습니다.`);
+    }catch(e){$('#dd-date-error').textContent=conflictText(e);}
+    finally{btn.disabled=state.report?.status==='final';}
+  }
+  $('#dd-date-edit').onclick=()=>openDateModal().catch(err);
+  $('#dd-date-save').onclick=()=>saveReportDate().catch(e=>{$('#dd-date-error').textContent=conflictText(e);});
+  $('#dd-date-close').onclick=closeDateModal; $('#dd-date-cancel').onclick=closeDateModal;
+
+  // 드롭다운·필터. 저장 안 한 편집이 있으면 물어보고, 이동을 취소하면 선택값을
+  // 열린 일자로 되돌린다(안 되돌리면 목록과 본문이 어긋난다).
+  $('#dd-report-select').onchange=e=>{
+    const id=+e.target.value;
+    if(!id||id===state.report?.id||!canLeaveDraft()){renderReportDates();return;}
+    selectReport(id).catch(err);
+  };
+  $('#dd-report-search').oninput=renderReportDates;
+  $('#dd-report-status').onchange=renderReportDates;
+  // once() 의 finally 가 버튼을 되살리므로, 삭제 뒤 열린 보고서가 없으면
+  // 다시 잠글 기회를 준다 — 누를 대상이 없는 버튼이 살아 있으면 안 된다.
+  $('#dd-report-del').onclick=()=>{const id=state.report?.id;if(id)once($('#dd-report-del'),()=>deleteReport(id)).then(renderReportDates);};
+
   $('#dd-save').onclick=()=>save().catch(err); $('#dd-email').onclick=()=>openPreview('email').catch(err); $('#dd-svms').onclick=()=>openPreview('svms').catch(err);
   // 확정 / 확정취소 한 버튼 토글.  잠금을 여는 쪽은 전용 라우트를 쓴다 —
   // PUT(=내용 저장) 은 잠긴 행에서 409 로 막히고, 그 거절이 곧 잠금이다.
@@ -297,7 +408,7 @@
   async function openProjectModal(){projectForm.reset();projectError.textContent='';setAutoFields();try{if(!state.vessels.length)state.vessels=await api('/api/vessels');$('#ddp-vessel').innerHTML='<option value="">활성 선박을 선택하세요</option>'+state.vessels.map(v=>`<option value="${v.id}">${esc(v.name)}${v.vsl_cd?` · ${esc(v.vsl_cd)}`:''}</option>`).join('');projectModal.hidden=false;document.body.style.overflow='hidden';$('#ddp-vessel').focus();}catch(e){err(e);}}
   function closeProjectModal(){projectModal.hidden=true;document.body.style.overflow='';}
   autoToggle.onchange=setAutoFields;$('#dd-new-project').onclick=openProjectModal;$('#dd-project-close').onclick=closeProjectModal;$('#dd-project-cancel').onclick=closeProjectModal;
-  document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!projectModal.hidden)closeProjectModal();else if(!previewModal.hidden)closePreview();else if(!$('#dd-file-modal').hidden)closeFilePreview();else if(!uploadModal.hidden)closeUploadModal();});
+  document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!projectModal.hidden)closeProjectModal();else if(!dateModal.hidden)closeDateModal();else if(!previewModal.hidden)closePreview();else if(!$('#dd-file-modal').hidden)closeFilePreview();else if(!uploadModal.hidden)closeUploadModal();});
   projectForm.onsubmit=async e=>{e.preventDefault();projectError.textContent='';if(!projectForm.reportValidity())return;const auto_generate=autoToggle.checked,active_from=$('#ddp-active-from').value||null,active_to=$('#ddp-active-to').value||null,sourceIds=$('#ddp-source-ids').value.split(',').map(x=>x.trim()).filter(Boolean);if(auto_generate&&active_from>active_to)return projectError.textContent='자동작성 종료일은 시작일보다 빠를 수 없습니다.';if(auto_generate&&sourceIds.some(x=>!/^v_[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(x)))return projectError.textContent='Dock Manager 원천 ID는 모두 v_로 시작해야 합니다.';const button=$('#dd-project-create');button.disabled=true;button.textContent='생성 중…';try{const created=await api('/api/dock-daily/projects',{...json({vessel_id:Number($('#ddp-vessel').value),title:$('#ddp-title').value.trim(),berthing_date:$('#ddp-berthing').value||null,dock_in_date:$('#ddp-dock-in').value||null,dock_out_date:$('#ddp-dock-out').value||null,departure_date:$('#ddp-departure').value||null,active_from:auto_generate?active_from:null,active_to:auto_generate?active_to:null,auto_generate,dock_manager_project_ids:auto_generate?sourceIds:[],svms_dk_cd:$('#ddp-svms-dk').value.trim()||null,special_sections:$('#ddp-egcs').checked?[{section_key:'egcs',label:'EGCS Retrofit',enabled:true}]:[]}),method:'POST'});closeProjectModal();await loadProjects();await selectProject(created.id);}catch(error){projectError.textContent=error.message||String(error);}finally{button.disabled=false;button.textContent='프로젝트 생성';}};
   window.addEventListener('beforeunload',event=>{if(state.dirty){event.preventDefault();event.returnValue='';}});
   loadProjects().catch(err);

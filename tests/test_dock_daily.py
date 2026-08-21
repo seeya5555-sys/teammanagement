@@ -521,7 +521,12 @@ class DockDailyTests(unittest.TestCase):
             script = f.read()
         self.assertIn('dropzone.addEventListener', script)
         self.assertIn("data-del-project", script)
-        self.assertIn("data-del-report", script)
+        # 프로젝트는 행마다 삭제가 붙어 있지만, 보고서 일자는 드롭다운으로 접혔으므로
+        # (형 지시 2026-08-21 ②) 행별 삭제가 아니라 "열려 있는 일자" 하나를 지우는
+        # 버튼이 정본이다. 삭제 자체가 사라지면 안 된다는 계약은 그대로다.
+        self.assertNotIn("data-del-report", script)
+        self.assertIn("$('#dd-report-del').onclick", script)
+        self.assertIn('deleteReport(id)', script)
         self.assertIn("confirm:'delete-project'", script)
         self.assertIn("confirm:'delete-final'", script)
         self.assertIn('class="dd-list-row"', script)
@@ -542,6 +547,114 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('if(state.report?.id===rid&&!state.dirty)', script)
         # A cancelled confirm() must release the delete button again.
         self.assertIn('finally { button.disabled = false; }', script)
+
+    def _script(self, name='dock_daily.js'):
+        with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', name),
+                  encoding='utf-8') as f:
+            return f.read()
+
+    def test_report_dates_are_a_dropdown_with_search_and_status_filter(self):
+        """형 지시 2026-08-21 ②: "날짜가 많아지면 여기 칸이 쓸데없이 늘어남".
+        일자 목록은 세로로 쌓지 않고 드롭다운 + 날짜검색 + 상태필터로 접는다.
+        규칙 정본은 dock_daily_filter.js 이고 아이폰 앱과 같은 규칙을 쓴다."""
+        html = self.client.get('/dock-daily').get_data(as_text=True)
+        self.assertIn('id="dd-report-select"', html)
+        self.assertIn('id="dd-report-search"', html)
+        self.assertIn('id="dd-report-status"', html)
+        self.assertIn('id="dd-report-del"', html)
+        self.assertIn('js/dock_daily_filter.js', html)
+        # 세로 목록은 사라졌다.
+        self.assertNotIn('id="dd-report-list"', html)
+        # 상태 필터의 값은 서버 status 어휘와 같아야 한다 — 하나라도 어긋나면
+        # 그 필터는 영구히 0건을 낸다.
+        options = set(re.findall(r'<option value="(\w+)">', html))
+        self.assertEqual({'auto_draft', 'editing', 'final'}, options & {'auto_draft', 'editing', 'final'})
+
+        script = self._script()
+        self.assertIn('window.DockDailyReportFilter', script)
+        self.assertIn("FILTER.apply(state.reports", script)
+        self.assertIn("$('#dd-report-search').oninput=renderReportDates", script)
+        self.assertIn("$('#dd-report-status').onchange=renderReportDates", script)
+        # 규칙을 여기서 다시 구현하면 앱·모듈과 3중 정본이 된다.
+        self.assertNotIn('function reportMatches', script)
+        # 열린 보고서가 필터 밖으로 밀리면 드롭다운은 첫 행을 고른 것처럼 보인다.
+        # 그 어긋남을 막는 stray 옵션이 계약이다.
+        self.assertIn('필터 밖(열림)', script)
+        # 저장 안 한 편집을 들고 다른 일자로 넘어가면 물어봐야 하고, 취소하면
+        # 선택값을 되돌려야 한다.
+        self.assertIn('!canLeaveDraft()){renderReportDates();return;}', script)
+        # 프로젝트를 바꿀 때 필터를 비우지 않으면 새 프로젝트가 "보고서 없음" 으로 보인다.
+        self.assertIn("$('#dd-report-search').value = ''", script)
+
+    def test_report_date_filter_module_rules_actually_run(self):
+        """문자열 검사만으론 규칙이 지켜지는지 알 수 없다. node 가 있으면 실행형
+        테스트(tests/dock_daily_filter.test.js)를 그대로 돌린다."""
+        import shutil
+        import subprocess
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('node 없음 — 필터 실행형 테스트는 `node --test tests/dock_daily_filter.test.js`')
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        done = subprocess.run([node, '--test', os.path.join('tests', 'dock_daily_filter.test.js')],
+                              cwd=root, capture_output=True, text=True, timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+
+    def test_report_date_can_be_corrected_from_the_web_ui(self):
+        """형 지시 2026-08-21 ③: 잘못 입력한 날짜를 제자리에서 고친다.
+        삭제 후 재생성으로 고치면 본문·첨부가 함께 날아가므로, 새 라우트가 아니라
+        기존 PUT 에 `report_date` 를 실어 revision CAS·확정잠금을 물려받는다."""
+        html = self.client.get('/dock-daily').get_data(as_text=True)
+        self.assertIn('id="dd-date-modal"', html)
+        self.assertIn('id="dd-date-edit"', html)
+        self.assertIn('id="dd-date-new"', html)
+        self.assertIn('id="dd-date-save"', html)
+        self.assertIn('id="dd-notice"', html)
+        # 다시 수집하지 않는다는 사실을 화면에서 밝힌다(사람이 고친 본문을 덮지 않으려고
+        # 일부러 안 돌린다).
+        self.assertIn('다시 수집하지 않습니다', html)
+
+        script = self._script()
+        self.assertIn("operations:[],report_date:next", script)
+        self.assertIn("method:'PUT'", script)
+        # 🔴 409 세 종류는 사람이 할 일이 서로 다르다. `error` 문구가 아니라 서버가 주는
+        # `code` 로 갈라야 한다 — 확정잠금에 "최신본 불러오기" 를 띄우면 형은 풀리지 않는
+        # 동작을 반복한다(올마이트 지적 2026-08-21, 아이폰 앱과 같은 분기).
+        for code in ('date_taken', 'final_locked', 'revision_conflict'):
+            self.assertIn(code + ':', script)
+        self.assertIn('e.code = body.code', script)
+        self.assertIn('conflictText(e)', script)
+        self.assertIn('확정을 취소한 뒤 고치세요', script)
+        # 날짜 정정도 같은 PUT 이라 revision 이 오른다. 남은 편집을 먼저 저장하지 않으면
+        # 그 다음 저장이 409 로 막힌다.
+        self.assertIn('if(state.dirty&&!locked)await save()', script)
+        # await 사이에 다른 일자로 옮겨갔으면 그 보고서를 건드리면 안 된다.
+        self.assertIn("if(state.report?.id!==rid)return;", script)
+        # 프로젝트 id 도 미리 고정한다. await 뒤에 state 를 다시 읽으면 그 사이 옮겨간
+        # 다른 프로젝트의 목록을 덮어쓴다(올마이트 지적 2026-08-21).
+        self.assertIn('pid=state.project.id', script)
+        self.assertIn("if(state.project?.id!==pid)return;", script)
+        # 409 가 아닌 응답을 `code` 로 갈라 읽으면 엉뚱한 해법을 안내한다.
+        self.assertIn("if (!e || e.status !== 409) return", script)
+        # 드롭다운을 빠르게 바꾸면 응답이 역전될 수 있다. 늦게 온 이전 요청이 화면을
+        # 덮으면 선택값과 본문이 어긋나므로 마지막 요청만 반영한다.
+        self.assertIn('let selectSeq = 0', script)
+        self.assertIn('if (seq !== selectSeq) return;', script)
+
+    def test_web_itinerary_note_counts_the_final_reports_it_will_change(self):
+        """🔴 일정은 프로젝트 열이고 확정본도 조인으로 읽는다 → 초안에서 저장한 일정이
+        이미 확정된 보고서에도 반영된다. 막으면 정상적인 출거일 연기가 영구히 불가능해지므로
+        계약으로 두고 몇 건이 함께 바뀌는지 세어 알린다(아이폰 앱과 같은 문구)."""
+        html = self.client.get('/dock-daily').get_data(as_text=True)
+        self.assertIn('id="dd-itinerary-note"', html)
+        script = self._script()
+        self.assertIn("state.reports.filter(r=>r.status==='final').length", script)
+        self.assertIn('확정 ${finals}건 포함', script)
+        # 일정 PATCH 는 일정 키만 보낸다 — 프로젝트 제목·자동생성 스위치가 함께 실리면
+        # 일정만 고치려던 저장이 그 둘을 덮는다.
+        patch = script.split('async function save()', 1)[1].split('const operations', 1)[0]
+        self.assertIn(".dd-itinerary-date').forEach", patch)
+        self.assertNotIn('title', patch)
+        self.assertNotIn('auto_generate', patch)
 
     def test_ooxml_preview_rejects_entity_payload(self):
         project = self.client.post('/api/dock-daily/projects', json={
