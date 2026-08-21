@@ -116,7 +116,9 @@
   }
   function ensureSectionEditors() {
     for (const s of (state.report.sections||[]).filter(x => x.enabled)) {
-      if (!(state.report.blocks||[]).some(b => !b._delete && b.section_key === s.section_key)) {
+      // 표만 있는 섹션도 글 칸이 필요하다 — 표는 본문 문장을 대신하지 못하고, 웹에서
+      // 표는 편집 대상이 아니다(앱과 같은 판정: DockDailySectionEditing.needsTextDraft).
+      if (!(state.report.blocks||[]).some(b => !b._delete && b.section_key === s.section_key && isTextBlock(b))) {
         state.report.blocks.push({id:0,_key:state.tempId--,section_key:s.section_key,block_type:'paragraph',content:{body:''},sort_order:0,origin:'manual',manual_override:1,_new:true});
       }
     }
@@ -154,7 +156,29 @@
       ?`변경 후 저장을 누르면 이 프로젝트의 모든 보고서(확정 ${finals}건 포함)에 반영됩니다.`
       :'변경 후 저장을 누르면 이 프로젝트의 모든 보고서에 반영됩니다.';
   }
-  function blockText(b){const c=b.content||{};return c.title||c.body||c.text||(b.block_type==='table'?JSON.stringify(c.rows||[]):'');}
+  // 표·이미지는 textarea 한 칸으로 표현되지 않는다. 전엔 표를 `JSON.stringify(rows)` 로
+  // 뿌리고, 그 칸을 한 번 건드리면 commitItems 가 block_type 을 'paragraph' 로 바꿔
+  // **표를 JSON 문자열 문단으로 뭉갰다**. 앱에서 표를 실제로 만들 수 있게 되면서(형 지시
+  // 2026-08-21) 그 경로가 곧 데이터 유실이므로, 웹에서는 글 블록만 편집한다.
+  function isTextBlock(b){return b.block_type!=='table'&&b.block_type!=='image';}
+  function blockText(b){const c=b.content||{};return c.title||c.body||c.text||'';}
+  // 표·이미지는 읽기 전용으로 보여준다(메일 렌더와 같은 모양). 편집은 앱에서 한다.
+  function readOnlyBlock(b){
+    const c=b.content||{};
+    if(b.block_type==='table'){
+      const head=(c.columns||[]).map(v=>`<th>${esc(String(v))}</th>`).join('');
+      const body=(c.rows||[]).filter(Array.isArray).map(r=>`<tr>${r.map(v=>`<td>${esc(String(v))}</td>`).join('')}</tr>`).join('');
+      return `<table class="dd-block-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table><p class="dd-muted dd-block-note">표 내용은 앱에서 편집합니다.</p>`;
+    }
+    // 서버는 `str(attachment_id).isdigit()` 로만 이미지를 만든다. Number() 로 읽으면
+    // -5·12.5 가 통과해 웹에만 깨진 <img> 가 뜨므로 같은 판정을 쓴다(올마이트 지적).
+    const raw=String(c.attachment_id==null?'':c.attachment_id);
+    const aid=/^\d+$/.test(raw)?raw:'';
+    const caption=String(c.caption||'');
+    // 이 라우트는 세션 인증이라 웹에서는 URL 직결이 된다(앱은 Bearer 라 바이트를 받아온다).
+    const img=aid?`<img class="dd-block-image" src="/api/dock-daily/attachments/${aid}" alt="${esc(caption||'dock image')}">`:'<p class="dd-muted">연결된 이미지 없음</p>';
+    return `${img}<p class="dd-muted dd-block-note">${esc(caption)||'캡션 없음'} · 이미지는 앱에서 편집합니다.</p>`;
+  }
   // Cards carry their own "1) " numbering so what the supervisor types is what
   // the Outlook mail shows. The renderers strip any stored number before
   // applying their own, so a renumbered card never double-numbers.
@@ -181,9 +205,14 @@
     // 같이 키우지 않으면 줄이 늘 때마다 한 줄씩 잘려 보인다.
     autoGrow(ta);
   }
+  // blockText 가 읽은 키에 그대로 되돌려 쓴다. 항상 body 에 쓰면, 서버 렌더가 title 을
+  // 먼저 보므로(title||body||text) title 을 읽어 보여준 카드는 수정이 조용히 무시된다.
+  function textKey(b){const c=b.content||{};if(c.title)return 'title';if(c.text&&!c.body)return 'text';return 'body';}
   function commitItems(ta){
     const b=findBlock(ta.dataset.key); if(!b||blockText(b)===ta.value)return;
-    b.content={...(b.content||{}),body:ta.value}; b.block_type='paragraph'; b._edit=true; state.dirty=true;
+    // block_type 을 'paragraph' 로 갈아치우지 않는다 — item 블록이 문단으로 바뀌면서
+    // 서버가 content 를 통째로 교체해 progress/status 가 사라졌다(올마이트 지적).
+    b.content={...(b.content||{}),[textKey(b)]:ta.value}; b._edit=true; state.dirty=true;
   }
   function normalizeItems(ta,keepCaretLine){
     applyNumbering(ta,NUM.renumber(ta.value,ta.selectionStart,keepCaretLine));
@@ -228,10 +257,16 @@
       const badges=b.origin==='dock_auto'?`<span class="dd-badge auto">자동수집</span>${b.manual_override?'<span class="dd-badge">수동 수정 보호</span>':''}`:'';
       const del=bs.length>1?`<button class="dd-btn alt delete-inline" type="button" data-key="${key}" ${locked?'disabled':''}>삭제</button>`:'';
       const meta=(badges||del)?`<div class="dd-block-meta"><span>${badges}</span>${del}</div>`:'';
-      return `<div class="dd-block-editor">${meta}<textarea class="dd-section-edit" data-key="${key}" placeholder="${esc(s.label)} 내용을 입력하세요" ${locked?'disabled':''}>${esc(blockText(b))}</textarea></div>`}).join('')}</div>`;
+      const body=isTextBlock(b)
+        ?`<textarea class="dd-section-edit" data-key="${key}" placeholder="${esc(s.label)} 내용을 입력하세요" ${locked?'disabled':''}>${esc(blockText(b))}</textarea>`
+        :readOnlyBlock(b);
+      return `<div class="dd-block-editor">${meta}${body}</div>`}).join('')}</div>`;
     }).join('');
     document.querySelectorAll('.dd-section-edit').forEach(bindItemNumbering);
-    document.querySelectorAll('.delete-inline').forEach(btn=>btn.onclick=()=>{const b=findBlock(btn.dataset.key);if(!b)return;if(b._new)state.report.blocks=state.report.blocks.filter(x=>x!==b);else b._delete=true;state.dirty=true;ensureSectionEditors();renderSections();});
+    document.querySelectorAll('.delete-inline').forEach(btn=>btn.onclick=()=>{const b=findBlock(btn.dataset.key);if(!b)return;
+      // 표·이미지는 웹에서 다시 만들 수 없고(편집기는 앱에만 있다), 이미지 블록을 지우면
+      // 서버가 연결된 첨부까지 함께 지운다. 한 번 확인을 받는다.
+      if(!isTextBlock(b)&&!confirm(b.block_type==='image'?'이미지 블록을 삭제할까요?\n\n연결된 첨부파일도 함께 삭제되고, 이미지 블록은 앱에서만 다시 만들 수 있습니다.':'표 블록을 삭제할까요?\n\n표는 앱에서만 다시 만들 수 있습니다.'))return;if(b._new)state.report.blocks=state.report.blocks.filter(x=>x!==b);else b._delete=true;state.dirty=true;ensureSectionEditors();renderSections();});
   }
   function findBlock(key){return (state.report.blocks||[]).find(b=>String(b._key??b.id)===String(key));}
   function canLeaveDraft(){return !state.dirty||confirm('저장되지 않은 수정사항이 있습니다. 저장하지 않고 이동할까요?');}
@@ -269,7 +304,7 @@
     }
     const operations=[];
     state.report.blocks.filter(b=>b._delete).forEach(b=>operations.push({op:'delete',id:b.id}));
-    state.report.blocks.filter(b=>!b._delete&&(b._new||b._edit)&&(!b._new||blockText(b).trim())).forEach(b=>operations.push({op:'upsert',id:b._new?undefined:b.id,section_key:b.section_key,block_type:'paragraph',content:{body:blockText(b)},sort_order:b.sort_order||0}));
+    state.report.blocks.filter(b=>!b._delete&&isTextBlock(b)&&(b._new||b._edit)&&(!b._new||blockText(b).trim())).forEach(b=>operations.push({op:'upsert',id:b._new?undefined:b.id,section_key:b.section_key,block_type:b.block_type||'paragraph',content:{...(b.content||{})},sort_order:b.sort_order||0}));
     state.report=await api(`/api/dock-daily/reports/${state.report.id}`,{...json({revision:state.report.revision,operations}),method:'PUT'}); state.dirty=false; ensureSectionEditors();
     $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`; renderItinerary(); renderSections(); renderAttachments();
   }

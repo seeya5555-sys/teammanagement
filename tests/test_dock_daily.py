@@ -904,6 +904,37 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn("observe($('#dd-report'))", script)
         self.assertRegex(script, r'function applyNumbering\([^)]*\)\{[^}]*autoGrow\(ta\)')
 
+    def test_web_never_edits_table_or_image_blocks(self):
+        """표·이미지는 앱에서만 편집한다(형 지시 2026-08-21로 앱 편집기가 생겼다).
+
+        웹은 모든 블록을 textarea 하나로 뿌리고 저장할 때 `block_type:'paragraph'` 로
+        고정 전송한다. 표를 그 칸에 넣으면 한 번 건드리는 순간 표가 JSON 문자열 문단으로
+        뭉개진다 — 되돌릴 수 없는 유실이라 편집 자체를 막는다.
+        """
+        page = self.client.get('/dock-daily').get_data(as_text=True)
+        script = self._script()
+        self.assertIn("function isTextBlock(b)", script)
+        self.assertNotIn('JSON.stringify(c.rows', script,
+                         '표를 textarea 에 JSON 으로 뿌리던 경로가 남아 있으면 안 된다')
+        self.assertIn(':readOnlyBlock(b)', script, '표·이미지는 읽기 전용으로 그린다')
+        # 저장 대상에서 제외 — textarea 가 없어 _edit 가 붙을 일도 없지만, 다른 경로로
+        # 표시가 붙어도 paragraph 로 덮어쓰지 않게 한 겹 더 막는다.
+        self.assertIn("!b._delete&&isTextBlock(b)&&(b._new||b._edit)", script)
+        # 표만 있는 섹션도 글 칸을 받아야 한다(앱 DockDailySectionEditing 과 같은 판정).
+        self.assertIn('b.section_key === s.section_key && isTextBlock(b)', script)
+        self.assertIn('dd-block-table', page)
+        # 표·이미지 삭제는 한 번 확인을 받는다 — 웹에는 다시 만들 수단이 없고, 이미지
+        # 블록 삭제는 서버가 연결된 첨부까지 지운다(routes: block_id soft-delete).
+        self.assertRegex(script, r'if\(!isTextBlock\(b\)&&!confirm\(')
+        # 서버 upsert 는 content_json 을 통째로 교체한다. 종류와 나머지 키를 그대로 실어
+        # 보내지 않으면 item 블록의 progress/status 가 저장 한 번에 사라진다.
+        self.assertNotIn("block_type:'paragraph',content:{body:blockText(b)}", script)
+        self.assertIn("block_type:b.block_type||'paragraph',content:{...(b.content||{})}", script)
+        self.assertNotIn("b.block_type='paragraph'", script,
+                         '수정만으로 블록 종류를 갈아치우면 안 된다')
+        # 이미지 id 는 서버와 같은 판정(isdigit). Number() 는 -5·12.5 를 통과시킨다.
+        self.assertIn(r"/^\d+$/.test(raw)", script)
+
     def test_revision_conflict_and_final_lock(self):
         p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()
         r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate", json={'report_date': '2026-08-20'}).get_json()
