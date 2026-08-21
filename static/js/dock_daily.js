@@ -159,9 +159,27 @@
   // the Outlook mail shows. The renderers strip any stored number before
   // applying their own, so a renumbered card never double-numbers.
   const NUM=window.DockDailyNumbering;
+  // 카드는 내용만큼 늘어난다(형 지시 2026-08-21). 안쪽 스크롤바도, 손으로 끄는
+  // 리사이즈 핸들도 없다 — 작업 개수가 칸을 넘으면 카드 자체가 커지고 페이지가 스크롤된다.
+  // 'auto' 로 먼저 줄이는 이유: 이미 늘어난 높이가 남아 있으면 scrollHeight 가 그 높이를
+  // 그대로 되돌려줘서 지워도 줄어들지 않는다. CSS 의 min-height 가 하한을 잡는다.
+  function autoGrow(ta){
+    if(!ta)return;
+    ta.style.height='auto';
+    const h=ta.scrollHeight;
+    // 숨어 있는 동안(display:none)에는 scrollHeight 가 0 이다. 그때 0px 을 박아두면
+    // 다시 보일 때 카드가 한 줄로 잘린 채 남으므로, 인라인 높이를 아예 지워
+    // CSS min-height 에 맡기고 다음 계산 기회를 기다린다.
+    if(!h){ta.style.removeProperty('height');return;}
+    ta.style.height=h+'px';
+  }
+  function growAll(){document.querySelectorAll('.dd-section-edit').forEach(autoGrow);}
   function applyNumbering(ta,result){
     if(ta.value!==result.value)ta.value=result.value;
     ta.selectionStart=ta.selectionEnd=result.caret;
+    // 엔터·번호붙이기는 value 를 직접 갈아끼우므로 input 이벤트가 안 뜬다. 여기서
+    // 같이 키우지 않으면 줄이 늘 때마다 한 줄씩 잘려 보인다.
+    autoGrow(ta);
   }
   function commitItems(ta){
     const b=findBlock(ta.dataset.key); if(!b||blockText(b)===ta.value)return;
@@ -173,6 +191,11 @@
   }
   function bindItemNumbering(ta){
     let composing=false;
+    // oninput 프로퍼티는 아래에서 번호 로직이 쓰고 있으므로 높이는 별도 리스너로 붙인다
+    // (프로퍼티 핸들러와 addEventListener 는 둘 다 뜬다). 붙는 즉시 한 번 키운다 —
+    // 저장된 카드는 처음 그려질 때 이미 여러 줄이다.
+    ta.addEventListener('input',()=>autoGrow(ta));
+    autoGrow(ta);
     // Hangul/IME input must never be renumbered mid-composition, so the empty
     // card gets its "1) " on focus instead of on the first keystroke.
     ta.onfocus=()=>{if(!ta.value.trim()){ta.value='1) ';ta.selectionStart=ta.selectionEnd=3;}};
@@ -479,5 +502,13 @@
   // 보내지 않는다. 서버 기본값이 auto_generate=0 이라 컬럼은 그대로 두고 꺼진다.
   projectForm.onsubmit=async e=>{e.preventDefault();projectError.textContent='';if(!projectForm.reportValidity())return;const button=$('#dd-project-create');button.disabled=true;button.textContent='생성 중…';try{const created=await api('/api/dock-daily/projects',{...json({vessel_id:Number($('#ddp-vessel').value),title:$('#ddp-title').value.trim(),berthing_date:$('#ddp-berthing').value||null,dock_in_date:$('#ddp-dock-in').value||null,dock_out_date:$('#ddp-dock-out').value||null,departure_date:$('#ddp-departure').value||null,svms_dk_cd:$('#ddp-svms-dk').value.trim()||null,special_sections:$('#ddp-egcs').checked?[{section_key:'egcs',label:'EGCS Retrofit',enabled:true}]:[]}),method:'POST'});closeProjectModal();await loadProjects();await selectProject(created.id);}catch(error){projectError.textContent=error.message||String(error);}finally{button.disabled=false;button.textContent='프로젝트 생성';}};
   window.addEventListener('beforeunload',event=>{if(state.dirty){event.preventDefault();event.returnValue='';}});
+  // 폭이 바뀌면 줄바꿈이 다시 계산되므로 필요한 높이도 달라진다. 창 리사이즈 대신 카드
+  // 컨테이너를 직접 관찰하는 이유는 두 가지다: (1) 창 크기와 무관한 레이아웃 변화도 잡는다,
+  // (2) display:none 이던 보고서가 보이는 순간 폭이 0→N 으로 바뀌며 여기서 걸린다 —
+  // 숨은 동안 autoGrow 가 scrollHeight 0 을 보고 포기한 카드를 이때 다시 잰다
+  // (올마이트 지적 2026-08-21: 재측정 경로 없음).
+  // 폭만 보는 이유: 높이를 바꾸는 게 growAll 자신이라 높이까지 보면 스스로를 계속 다시 부른다.
+  let lastGrowWidth=-1;
+  new ResizeObserver(entries=>{const w=entries[entries.length-1].contentRect.width;if(w===lastGrowWidth)return;lastGrowWidth=w;if(w)growAll();}).observe($('#dd-report'));
   loadProjects().catch(err);
 })();

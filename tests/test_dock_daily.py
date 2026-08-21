@@ -878,6 +878,32 @@ class DockDailyTests(unittest.TestCase):
         for gone in ('setAutoFields', "$('#ddp-auto", 'auto_generate,', 'dock_manager_project_ids'):
             self.assertNotIn(gone, script, gone)
 
+    def test_section_cards_grow_instead_of_scrolling_inside(self):
+        """카드는 내용만큼 늘어난다(형 지시 2026-08-21).
+
+        안쪽 스크롤바도, 손으로 끄는 리사이즈 핸들도 없어야 한다. 높이 자체는 DOM 없이
+        확인할 수 없어(백로그: jsdom 하네스) 계약을 만드는 배선 문자열로 잠근다.
+        """
+        page = self.client.get('/dock-daily').get_data(as_text=True)
+        script = self._script()
+        self.assertIn('resize:none', page, '손으로 끄는 핸들이 남아 있으면 안 된다')
+        self.assertNotIn('resize:vertical', page)
+        # overflow:hidden 이 있어야 늘어나기 전에 안쪽 스크롤바가 뜨지 않는다.
+        self.assertRegex(page, r'\.dd-section-edit\{[^}]*overflow:hidden')
+        # 상한(max-height)을 두면 넘치는 순간 다시 안쪽 스크롤이 생긴다.
+        self.assertNotRegex(page, r'\.dd-section-edit\{[^}]*max-height')
+        self.assertIn("ta.style.height='auto'", script,
+                      "먼저 줄이지 않으면 지워도 카드가 안 줄어든다")
+        self.assertIn('ta.scrollHeight', script)
+        # 입력·엔터번호·폭변화 3경로 모두 다시 재야 한다. 프로그램이 value 를 갈아끼우는
+        # 엔터/번호붙이기 경로는 input 이벤트가 뜨지 않아 별도로 불러줘야 한다.
+        self.assertIn("addEventListener('input',()=>autoGrow(ta))", script)
+        # 숨은 동안(scrollHeight 0)에는 잴 수 없으니 보일 때 다시 잴 경로가 있어야 한다.
+        # 컨테이너 폭이 0→N 으로 바뀌는 순간이 그 지점이다.
+        self.assertIn('new ResizeObserver', script)
+        self.assertIn("observe($('#dd-report'))", script)
+        self.assertRegex(script, r'function applyNumbering\([^)]*\)\{[^}]*autoGrow\(ta\)')
+
     def test_revision_conflict_and_final_lock(self):
         p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()
         r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate", json={'report_date': '2026-08-20'}).get_json()
