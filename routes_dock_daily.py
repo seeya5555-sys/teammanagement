@@ -1227,6 +1227,14 @@ MAIL_IMAGE_MAX_COUNT = 12      # 한 통에 실을 사진 장수(예산과 별�
 MAIL_IMAGE_MAX_COLUMNS = 4     # 사진 격자 열 수 상한(도크 리포트와 같은 1~4)
 MAIL_BODY_PX = 540             # 들여쓰기(52px) 뒤 남는 본문 폭. 격자 셀 폭 계산 기준
 MAIL_IMAGE_GAP_PX = 6
+# 격자 칸의 가로:세로. 도크 리포트 사진 섹션의 정본 비율(`.dde-img-cell-inner`
+# `aspect-ratio:4/3` + `object-fit:cover`)을 그대로 가져온다. 형 지시대로 사진 기능은
+# 도크 리포트를 정본으로 쓴다(2026-08-21).
+#
+# 🔴 메일에서는 CSS 로 못 한다 -- Word/Outlook HTML 엔진은 `object-fit`·`aspect-ratio`
+# 를 무시한다. 그래서 **서버가 JPEG 를 미리 그 비율로 중앙 크롭**해서 싣는다. 크롭이므로
+# 세로 사진은 위아래가 잘린다(도크 리포트와 같은 트레이드오프).
+MAIL_IMAGE_CELL_RATIO = (4, 3)
 # 열기 전 거르는 픽셀 상한. 20MB 업로드 게이트를 통과한 파일도 압축률이 높으면
 # 디코드 후 메모리는 그 수십 배가 된다.
 MAIL_IMAGE_MAX_PIXELS = 40 * 1000 * 1000
@@ -1241,11 +1249,15 @@ def _attachment_path(stored_name):
     return path
 
 
-def _inline_image(stored_name, budget, show_px=MAIL_IMAGE_SHOW_PX, decode_px=MAIL_IMAGE_MAX_PX):
+def _inline_image(stored_name, budget, show_px=MAIL_IMAGE_SHOW_PX, decode_px=MAIL_IMAGE_MAX_PX,
+                  ratio=None):
     """첨부 사진을 메일 본문용 data URI 로 만든다.
 
     돌려주는 값은 `(정보, 사유)` 이고 둘 중 하나만 채워진다. 사유는 화면에 그대로
     보여준다 -- 사진이 조용히 빠지면 형은 보냈다고 생각하고 메일을 보내게 된다.
+
+    `ratio` 를 주면 그 가로:세로로 **중앙 크롭**해서 표시 크기를 고정한다. 격자에서
+    칸마다 높이가 달라지지 않게 하는 유일한 길이다(메일에서는 CSS 를 못 쓴다).
     """
     # 예산이 이미 없으면 파일을 열지도 않는다. 변환한 뒤에 거절하면 사진을 많이 붙인
     # 보고서 하나가 미리보기 한 번에 서버 메모리·CPU 를 다 쓰게 된다.
@@ -1273,7 +1285,15 @@ def _inline_image(stored_name, budget, show_px=MAIL_IMAGE_SHOW_PX, decode_px=MAI
             # 표시 크기와 디코드 크기는 다르다. 격자에서 작게 보이는 사진에
             # 큰 바이트를 싣는 건 낭비이고, 표시폭보다 작게 실으면 흐려진다.
             long_edge = max(1, min(MAIL_IMAGE_MAX_PX, int(decode_px)))
-            image.thumbnail((long_edge, long_edge))
+            if ratio:
+                # 크롭 뒤 목표 크기. 🔴 원본보다 크게 잡으면 `ImageOps.fit` 이 **확대**해서
+                # 뿌옇고 무겁기만 한 바이트를 만든다 -- 원본이 줄 수 있는 최대까지만 키운다.
+                cap = min(image.size[0], image.size[1] * ratio[0] / ratio[1])
+                target_w = max(1, int(min(long_edge, cap)))
+                target_h = max(1, round(target_w * ratio[1] / ratio[0]))
+                image = ImageOps.fit(image, (target_w, target_h), centering=(0.5, 0.5))
+            else:
+                image.thumbnail((long_edge, long_edge))
             width, height = image.size
             buf = BytesIO()
             image.save(buf, format='JPEG', quality=MAIL_IMAGE_QUALITY, optimize=True)
@@ -1287,6 +1307,16 @@ def _inline_image(stored_name, budget, show_px=MAIL_IMAGE_SHOW_PX, decode_px=MAI
         return None, '본문 사진 용량 상한을 넘었습니다'
     if not width or not height:
         return None, '사진 크기를 읽을 수 없습니다'
+    if ratio:
+        # 🔴 표시 크기는 **실제 픽셀에 맞추지 않는다**. 작은 사진까지 픽셀 폭으로 줄이면
+        # 그 칸만 좁아져 격자가 다시 어긋난다 -- `width`/`height` 는 HTML 속성이라 실제보다
+        # 크게 줘도 렌더러가 늘려준다. 정렬을 우선하고 약간 흐려지는 쪽을 택한다.
+        # 높이를 비율에서 다시 계산하는 이유도 같다(픽셀에서 역산하면 반올림으로 1px 씩
+        # 어긋나 형이 본 그 들쭉날쭉이 작은 규모로 남는다).
+        shown = max(1, min(MAIL_IMAGE_SHOW_PX, int(show_px)))
+        return {'uri': 'data:image/jpeg;base64,' + encoded, 'width': shown,
+                'height': max(1, round(shown * ratio[1] / ratio[0])),
+                'cost': len(encoded)}, None
     shown = max(1, min(MAIL_IMAGE_SHOW_PX, int(show_px), width))
     return {'uri': 'data:image/jpeg;base64,' + encoded, 'width': shown,
             'height': max(1, round(height * shown / width)), 'cost': len(encoded)}, None
@@ -1532,8 +1562,10 @@ def _email(rid):
         return ('<table style="border-collapse:collapse;margin:0 0 8px 52px;%s">%s%s</table>'
                 % (cell_font, '<tr>%s</tr>' % head if head else '', body))
 
+    # 캡션은 도크 리포트 `.dde-img-caption-inp` 계약대로 **가운데 정렬 이탤릭**이다
+    # (형 지시 2026-08-21).
     caption_font = ('font-family:Arial,Helvetica,sans-serif;font-size:9pt;'
-                    'color:#4B5563;font-style:italic')
+                    'color:#4B5563;font-style:italic;text-align:center')
 
     def photo_grid(entry, budget, count):
         """사진 카드를 `columns` 열 격자로. 도크 리포트 사진 섹션과 같은 배치다.
@@ -1546,6 +1578,10 @@ def _email(rid):
         """
         cols = entry['grid']
         cell_px = max(60, (MAIL_BODY_PX - MAIL_IMAGE_GAP_PX * (cols - 1)) // cols)
+        # 🔴 크롭은 **한 줄에 옆 칸이 있을 때만** 한다. 1열 카드는 옆 칸이 없어 높이가
+        # 어긋날 데가 없으므로, 크롭하면 형 사진의 위아래만 버리는 셈이다(세로 사진이면
+        # 절반 가까이 사라진다). 형이 캡쳐로 잡은 문제는 2열 격자의 높이 불일치다.
+        cell_ratio = MAIL_IMAGE_CELL_RATIO if cols > 1 else None
         cells = []
         for photo in entry['photos']:
             image, note = None, photo['note']
@@ -1558,12 +1594,25 @@ def _email(rid):
                 else:
                     count += 1
                     image, note = _inline_image(photo['attachment'], budget,
-                                                show_px=cell_px, decode_px=cell_px * 2)
+                                                show_px=cell_px, decode_px=cell_px * 2,
+                                                ratio=cell_ratio)
                     if image:
                         budget -= image['cost']
             cells.append((image, photo['caption'], note))
 
         pad = 'padding:0 %dpx 2px 0;vertical-align:top' % MAIL_IMAGE_GAP_PX
+        # 캡션은 형 지시대로 `<내용>` 꺾쇠로 감싼다. 빈 캡션은 감싸지 않는다 -- 내용 없는
+        # `<>` 만 남으면 형이 안 적은 것이 적힌 것처럼 보인다.
+        # 🔴 이미 꺾쇠가 있는 캡션은 다시 감싸지 않는다 -- `<<내용>>` 이 된다(옛 데이터에
+        # 형이 직접 꺾쇠를 적어둔 경우, 올마이트 지적).
+        def wrap(caption):
+            text = (caption or '').strip()
+            if not text:
+                return ''
+            if len(text) > 1 and text.startswith('<') and text.endswith('>'):
+                return text
+            return '<%s>' % text
+
         chunks_out, text_out, rows = [], [], []
         for start in range(0, len(cells), cols):
             row = cells[start:start + cols]
@@ -1576,16 +1625,17 @@ def _email(rid):
                              ' style="display:block;border:0">'
                              % (image['uri'], image['width'], image['height'],
                                 html.escape(caption or 'dock photo')))
-                    text_out.append('- %s' % (caption or '사진'))
+                    text_out.append('- %s' % (wrap(caption) or '사진'))
                 else:
                     # 못 실은 이유는 본문에 남긴다. 조용히 빠지면 형은 실렸다고 생각한다.
                     reason = note or '본문에 넣지 못했습니다'
                     inner = run(html.escape('(%s)' % reason))
-                    text_out.append('- %s (%s)' % (caption or '사진', reason))
+                    text_out.append('- %s (%s)' % (wrap(caption) or '사진', reason))
                 picture_tds.append('<td style="%s">%s</td>' % (pad, inner))
                 if has_caption:
-                    text = html.escape(caption) if (caption or '').strip() else '&nbsp;'
-                    caption_tds.append('<td style="%s"><p style="margin:0;%s">'
+                    marked = wrap(caption)
+                    text = html.escape(marked) if marked else '&nbsp;'
+                    caption_tds.append('<td style="%s;text-align:center"><p style="margin:0;%s">'
                                        '<span style="%s">%s</span></p></td>'
                                        % (pad, caption_font, caption_font, text))
             # 마지막 줄이 덜 찬 경우 빈 칸으로 채워 열 폭을 흐트러뜨리지 않는다.

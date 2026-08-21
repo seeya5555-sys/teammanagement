@@ -168,6 +168,15 @@
   // 2026-08-21) 그 경로가 곧 데이터 유실이므로, 웹에서는 글 블록만 편집한다.
   function isTextBlock(b){return b.block_type!=='table'&&b.block_type!=='image';}
   function blockText(b){const c=b.content||{};return c.title||c.body||c.text||'';}
+  // 캡션 표시 규칙. 서버 `photo_grid.wrap` · 앱 `DockDailyImageContent.captionLabel` 과
+  // 같은 글자를 내야 한다. 🔴 이미 꺾쇠가 있는 캡션은 다시 감싸지 않는다 -- 감싸면
+  // `<<내용>>` 이 된다(옛 데이터에 꺾쇠가 들어있을 수 있음, 올마이트 지적).
+  function captionLabel(caption){
+    const text=String(caption||'').trim();
+    if(!text)return '';
+    if(text.length>1&&text.startsWith('<')&&text.endsWith('>'))return text;
+    return `<${text}>`;
+  }
   // 표·이미지는 읽기 전용으로 보여준다(메일 렌더와 같은 모양). 편집은 앱에서 한다.
   function readOnlyBlock(b){
     const c=b.content||{};
@@ -191,9 +200,16 @@
       // 이 라우트는 세션 인증이라 웹에서는 URL 직결이 된다(앱은 Bearer 라 바이트를 받아온다).
       const img=aid?`<img class="dd-block-image" src="/api/dock-daily/attachments/${aid}" alt="${esc(caption||'dock image')}">`
         :'<p class="dd-muted">연결된 사진 없음</p>';
-      return `<div class="dd-img-cell">${img}<p class="dd-img-cap">${esc(caption)||'&nbsp;'}</p></div>`;
+      // 캡션은 서버 메일과 같은 규칙 -- 가운데 정렬(CSS)에 `<내용>` 꺾쇠, 빈 캡션은
+      // 감싸지 않는다. 서버 `photo_grid.wrap` 과 어긋나면 미리보기와 메일이 달라진다.
+      const marked=captionLabel(caption);
+      return `<div class="dd-img-cell">${img}<p class="dd-img-cap">${esc(marked)||'&nbsp;'}</p></div>`;
     }).join('');
-    return `<div class="dd-img-grid" style="grid-template-columns:repeat(${cols},1fr)">${cells}</div>`
+    // 🔴 크롭(`--crop`)은 **2열 이상에서만**. 1열은 옆 칸이 없어 높이가 어긋날 데가 없고,
+    // 크롭하면 사진 위아래만 버린다. 서버 메일도 `cols>1` 에서만 크롭하므로 게이트가
+    // 갈리면 미리보기와 메일이 달라진다(올마이트 지적).
+    const gridClass=cols>1?'dd-img-grid dd-img-grid--crop':'dd-img-grid';
+    return `<div class="${gridClass}" style="grid-template-columns:repeat(${cols},1fr)">${cells}</div>`
       +`<p class="dd-muted dd-block-note">사진 ${items.length}장 · ${cols}열 · 사진은 앱에서 편집합니다.</p>`;
   }
   // Cards carry their own "1) " numbering so what the supervisor types is what

@@ -1619,7 +1619,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('1) 1)', preview['text'])
         self.assertIn('WBT | Plan', preview['text'], 'plain 폴백에는 표를 글로 남긴다')
         # 첨부가 없는 사진 카드는 이유를 본문에 남긴다.
-        self.assertIn('Hull photo (연결된 사진이 없습니다)', preview['text'])
+        # 캡션은 `<내용>` 으로 표시한다(형 지시 2026-08-21).
+        self.assertIn('<Hull photo> (연결된 사진이 없습니다)', preview['text'])
         self.assertNotIn('[Image] Hull photo', preview['text'])
 
     def _report_with_photo_block(self, title, payload=None, name='shot.png', caption='Hull shot'):
@@ -1790,8 +1791,12 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('본문에 넣을 수 없습니다', html)
         self.assertNotIn('첨부파일로 확인', html)
 
-    def _report_with_gallery(self, title, count=3, columns=2, captions=None):
-        """사진 여러 장을 담은 격자 카드를 만든다(도크 리포트와 같은 계약)."""
+    def _report_with_gallery(self, title, count=3, columns=2, captions=None, sizes=None):
+        """사진 여러 장을 담은 격자 카드를 만든다(도크 리포트와 같은 계약).
+
+        `sizes` 로 사진마다 원본 크기를 달리 줄 수 있다 -- 가로·세로가 섞였을 때 칸 높이가
+        맞는지 보려면 같은 크기 사진만으로는 아무것도 증명되지 않는다.
+        """
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': title}).get_json()
         report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
@@ -1799,8 +1804,9 @@ class DockDailyTests(unittest.TestCase):
         rid = report['id']
         ids = []
         for n in range(count):
+            size = (sizes or [])[n] if n < len(sizes or []) else (900, 600)
             up = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
-                                  data={'file': (io.BytesIO(self._png((900, 600))), 'p%d.png' % n)},
+                                  data={'file': (io.BytesIO(self._png(size)), 'p%d.png' % n)},
                                   content_type='multipart/form-data')
             self.assertEqual(201, up.status_code, up.get_data(as_text=True))
             ids.append(up.get_json()['id'])
@@ -1814,6 +1820,73 @@ class DockDailyTests(unittest.TestCase):
                                                    for i, c in zip(ids, names)]}}]})
         self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
         return rid, ids
+
+    def test_grid_cells_get_one_height_even_when_photos_do_not(self):
+        """형 지시 2026-08-21(3캡쳐): "사진 높이가 안맞음".
+
+        가로 사진 옆에 세로 스크린샷이 오면 칸 높이가 350px 대 525px 로 갈렸다. 도크
+        리포트가 `aspect-ratio:4/3` + `object-fit:cover` 로 잡은 그 방식을 서버가 크롭으로
+        가져온다 -- 메일에서는 CSS 를 못 쓴다. 이 테스트가 깨지면 다시 들쭉날쭉해진 것이다.
+        """
+        rid, _ids = self._report_with_gallery('높이 정렬 DD', count=2, columns=2,
+                                              sizes=[(1200, 800), (720, 1560)])
+        html = self._mail(rid)['html']
+        boxes = re.findall(r'<img src="data:image/jpeg;base64,[^"]+" width="(\d+)" height="(\d+)"',
+                           html)
+        self.assertEqual(2, len(boxes), html[:400])
+        self.assertEqual(boxes[0], boxes[1], '가로 사진과 세로 사진이 같은 칸을 받아야 한다')
+        width, height = int(boxes[0][0]), int(boxes[0][1])
+        ratio = routes_dock_daily.MAIL_IMAGE_CELL_RATIO
+        self.assertEqual(round(width * ratio[1] / ratio[0]), height)
+
+    def test_a_photo_smaller_than_the_cell_still_lines_up(self):
+        """🔴 작은 사진의 표시 크기를 실제 픽셀로 줄이면 그 칸만 좁아져 다시 어긋난다.
+
+        `width`/`height` 는 HTML 속성이라 실제보다 크게 줘도 렌더러가 늘려준다. 정렬을
+        우선하고 약간 흐려지는 쪽을 택했다는 계약을 여기서 잠근다.
+        """
+        rid, _ids = self._report_with_gallery('작은 사진 DD', count=2, columns=2,
+                                              sizes=[(1200, 800), (80, 60)])
+        boxes = re.findall(r'width="(\d+)" height="(\d+)"', self._mail(rid)['html'])
+        photo_boxes = [b for b in boxes if int(b[0]) > 20]
+        self.assertEqual(photo_boxes[0], photo_boxes[1],
+                         '작은 사진도 같은 칸 크기를 받는다')
+
+    def test_one_column_photo_keeps_its_whole_frame(self):
+        """🔴 크롭은 옆 칸과 높이를 맞추기 위한 것이다. 1열은 옆 칸이 없다.
+
+        여기서 크롭하면 형 사진의 위아래만 버린다(세로 사진은 절반 가까이). 옛 한 장짜리
+        카드도 1열로 읽히므로 이 판정이 옛 보고서 사진까지 지킨다.
+        """
+        rid, _ids = self._report_with_gallery('1열 세로 DD', count=1, columns=1,
+                                              sizes=[(720, 1560)])
+        html = self._mail(rid)['html']
+        box = re.search(r'<img src="data:image/jpeg;base64,[^"]+" width="(\d+)" height="(\d+)"',
+                        html)
+        self.assertIsNotNone(box, html[:400])
+        self.assertGreater(int(box.group(2)), int(box.group(1)),
+                           '세로 사진이 1열에서 가로로 잘리면 안 된다')
+
+    def test_grid_caption_is_centered_and_wrapped_in_angle_brackets(self):
+        """형 지시 2026-08-21: "사진 캡션 가운데 맞춤 + <내용>로 표시"."""
+        rid, _ids = self._report_with_gallery('캡션 DD', count=2, columns=2,
+                                              captions=['선수 도장', ''])
+        mail = self._mail(rid)
+        self.assertIn('&lt;선수 도장&gt;', mail['html'])
+        self.assertIn('text-align:center', mail['html'])
+        self.assertIn('- <선수 도장>', mail['text'])
+        # 빈 캡션은 감싸지 않는다 -- 내용 없는 `<>` 는 형이 안 적은 것이 적힌 것처럼 보인다.
+        self.assertNotIn('&lt;&gt;', mail['html'])
+        self.assertNotIn('- <>', mail['text'])
+
+    def test_a_caption_that_already_has_brackets_is_not_wrapped_twice(self):
+        """🔴 형이 캡션에 직접 꺾쇠를 적어둔 옛 데이터가 `<<내용>>` 으로 나가면 안 된다."""
+        rid, _ids = self._report_with_gallery('꺾쇠 중복 DD', count=2, columns=2,
+                                              captions=['<선수 도장>', '선미'])
+        mail = self._mail(rid)
+        self.assertIn('&lt;선수 도장&gt;', mail['html'])
+        self.assertNotIn('&lt;&lt;', mail['html'])
+        self.assertIn('- <선미>', mail['text'])
 
     def test_empty_legacy_photo_card_makes_no_photo_at_all(self):
         """🔴 `{attachment_id:null, caption:''}` 은 **빈 카드**다. 사진 0장으로 읽어야 한다.
