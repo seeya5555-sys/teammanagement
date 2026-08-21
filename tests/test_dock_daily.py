@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import tempfile
 import unittest
 import zipfile
@@ -1788,6 +1789,250 @@ class DockDailyTests(unittest.TestCase):
         html = self._mail(rid)['html']
         self.assertIn('본문에 넣을 수 없습니다', html)
         self.assertNotIn('첨부파일로 확인', html)
+
+    def _report_with_gallery(self, title, count=3, columns=2, captions=None):
+        """사진 여러 장을 담은 격자 카드를 만든다(도크 리포트와 같은 계약)."""
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': title}).get_json()
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-09'}).get_json()
+        rid = report['id']
+        ids = []
+        for n in range(count):
+            up = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
+                                  data={'file': (io.BytesIO(self._png((900, 600))), 'p%d.png' % n)},
+                                  content_type='multipart/form-data')
+            self.assertEqual(201, up.status_code, up.get_data(as_text=True))
+            ids.append(up.get_json()['id'])
+        names = captions or ['사진 %d' % (n + 1) for n in range(count)]
+        fetched = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        saved = self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': fetched['revision'],
+            'operations': [{'op': 'upsert', 'section_key': 'shipyard', 'block_type': 'image',
+                            'content': {'columns': columns,
+                                        'images': [{'attachment_id': i, 'caption': c}
+                                                   for i, c in zip(ids, names)]}}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        return rid, ids
+
+    def test_empty_legacy_photo_card_makes_no_photo_at_all(self):
+        """🔴 `{attachment_id:null, caption:''}` 은 **빈 카드**다. 사진 0장으로 읽어야 한다.
+
+        값이 아니라 키의 존재로 판정하면 빈 칸 하나가 생기고, 메일에 형이 쓰지도 않은
+        "연결된 사진이 없습니다" 가 나간다. 서버·웹·앱 세 곳이 같은 기준을 써야 한다.
+        """
+        items, columns = routes_dock_daily._image_gallery(
+            {'attachment_id': None, 'caption': ''})
+        self.assertEqual([], items)
+        self.assertEqual(1, columns)
+        # 캡션만 있으면 형이 적은 것이므로 칸이 생긴다(사유와 함께 나간다).
+        items, _ = routes_dock_daily._image_gallery({'attachment_id': None, 'caption': '선수'})
+        self.assertEqual(1, len(items))
+
+    def test_photo_count_cap_counts_files_opened_not_photos_shipped(self):
+        """🔴 상한은 연 파일 수로 센다. 성공 장수만 세면 예산이 마른 뒤부터 상한이 풀린다.
+
+        예산을 10 으로 줄이면 어느 사진도 실리지 않는다. 그때도 장수 상한을 넘긴 사진은
+        디코드를 시도하지 않고 상한 문구를 받아야 한다 -- 그게 자원 소모를 막는 지점이다.
+        """
+        over = routes_dock_daily.MAIL_IMAGE_MAX_COUNT + 2
+        rid, _ids = self._report_with_gallery('장수 상한 DD', count=over, columns=4)
+        budget = routes_dock_daily.MAIL_IMAGE_BUDGET
+        routes_dock_daily.MAIL_IMAGE_BUDGET = 10
+        try:
+            mail = self._mail(rid)
+        finally:
+            routes_dock_daily.MAIL_IMAGE_BUDGET = budget
+        self.assertNotIn('<img', mail['html'], '예산 10 이면 한 장도 실리지 않는다')
+        cap = '본문 사진 장수 상한(%d장)' % routes_dock_daily.MAIL_IMAGE_MAX_COUNT
+        self.assertEqual(2, mail['text'].count(cap),
+                         '상한을 넘긴 2장은 파일을 열지 않고 상한 문구를 받는다')
+
+    def test_section_key_survives_a_unique_collision(self):
+        """🔴 SELECT→계산→INSERT 는 경쟁 구간이다. 겹치면 500 대신 다음 번호로 들어간다."""
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '키 충돌 DD'}).get_json()
+        real = routes_dock_daily.execute
+        state = {'hits': 0}
+
+        def collide(sql, *args, **kwargs):
+            # 첫 INSERT 만 다른 요청이 먼저 넣은 것처럼 만든다.
+            if 'INSERT INTO dock_daily_section_def' in sql and state['hits'] == 0:
+                state['hits'] += 1
+                real(sql, *args, **kwargs)
+                raise sqlite3.IntegrityError('UNIQUE constraint failed')
+            return real(sql, *args, **kwargs)
+
+        routes_dock_daily.execute = collide
+        try:
+            created = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                                       json={'label': '비용 정산표'})
+        finally:
+            routes_dock_daily.execute = real
+        self.assertEqual(201, created.status_code, created.get_data(as_text=True))
+        keys = {s['section_key'] for s in created.get_json()['sections']}
+        self.assertTrue({'sec_1', 'sec_2'} <= keys, keys)
+
+    def test_image_gallery_reads_the_new_and_the_legacy_card(self):
+        """형 지시 2026-08-21: 사진 카드는 도크 리포트처럼 여러 장 + 열 수를 갖는다.
+
+        옛 한 장짜리 카드도 마이그레이션 없이 계속 열려야 한다 -- 라이브에 이미 그
+        모양으로 저장된 카드가 있다.
+        """
+        items, columns = routes_dock_daily._image_gallery(
+            {'images': [{'attachment_id': 7, 'caption': 'A'}, {'attachment_id': '8', 'caption': ''}],
+             'columns': 3})
+        self.assertEqual([{'attachment_id': 7, 'caption': 'A'},
+                          {'attachment_id': 8, 'caption': ''}], items)
+        self.assertEqual(3, columns)
+        legacy, legacy_columns = routes_dock_daily._image_gallery(
+            {'attachment_id': 4, 'caption': 'Hull'})
+        self.assertEqual([{'attachment_id': 4, 'caption': 'Hull'}], legacy)
+        self.assertEqual(1, legacy_columns, '옛 카드는 한 칸 격자로 읽는다')
+
+    def test_image_gallery_clamps_columns_and_drops_junk_entries(self):
+        """열 수는 1~4 다(도크 리포트와 같은 상한). 손상된 값이 격자를 깨면 안 된다."""
+        for raw, expected in ((0, 1), (-3, 1), (99, 4), ('four', 1), (None, 1), (2, 2)):
+            items, columns = routes_dock_daily._image_gallery({'images': [], 'columns': raw})
+            self.assertEqual(expected, columns, 'columns=%r' % raw)
+            self.assertEqual([], items)
+        items, _ = routes_dock_daily._image_gallery(
+            {'images': ['nope', None, 12, {'attachment_id': 'x', 'caption': 'C'}]})
+        self.assertEqual([{'attachment_id': None, 'caption': 'C'}], items,
+                         'dict 아닌 항목은 버리고, 숫자 아닌 id 는 빈 칸으로 남긴다')
+
+    def test_mail_lays_the_photos_out_in_the_grid_the_card_asked_for(self):
+        """2열이면 한 줄에 사진 두 장. 셀 폭은 본문 폭을 나눈 값이다."""
+        rid, _ids = self._report_with_gallery('사진 격자 DD', count=3, columns=2)
+        mail = self._mail(rid)
+        html_body = mail['html']
+        self.assertEqual(3, html_body.count('<img src="data:image/jpeg;base64,'))
+        cell = (routes_dock_daily.MAIL_BODY_PX - routes_dock_daily.MAIL_IMAGE_GAP_PX) // 2
+        self.assertIn('width="%d"' % cell, html_body)
+        self.assertNotIn('width="%d"' % routes_dock_daily.MAIL_IMAGE_SHOW_PX, html_body,
+                         '2열 사진에 1열 표시폭을 쓰면 옆 칸을 밀어낸다')
+        for caption in ('사진 1', '사진 2', '사진 3'):
+            self.assertIn(caption, html_body)
+            self.assertIn(caption, mail['text'])
+
+    def test_mail_photo_bytes_shrink_with_the_column_count(self):
+        """4열에서 작게 보이는 사진에 1열짜리 바이트를 싣는 건 낭비다."""
+        wide, _ = self._report_with_gallery('사진 1열 DD', count=1, columns=1)
+        narrow, _ = self._report_with_gallery('사진 4열 DD', count=1, columns=4)
+
+        def payload(rid):
+            body = self._mail(rid)['html']
+            return base64.b64decode(body.split('data:image/jpeg;base64,')[1].split('"')[0])
+
+        self.assertLess(len(payload(narrow)), len(payload(wide)))
+
+    def test_mail_keeps_the_captions_on_their_own_grid_row(self):
+        """캡션은 사진 줄 아래 별도 줄이다. 캡션이 없는 줄은 그 줄을 만들지 않는다."""
+        with_caption, _ = self._report_with_gallery('캡션 있음 DD', count=2, columns=2)
+        rows = self._mail(with_caption)['html'].count('<tr>')
+        without, _ = self._report_with_gallery('캡션 없음 DD', count=2, columns=2,
+                                               captions=['', ''])
+        self.assertEqual(rows - 1, self._mail(without)['html'].count('<tr>'),
+                         '캡션이 없으면 캡션 줄도 없어야 한다')
+
+    def test_mail_gives_a_table_or_photo_card_no_item_number(self):
+        """🔴 형 지시 2026-08-21: 표·사진은 하위항목이 아니라 그 자리에 놓인 블록이다."""
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '번호 없음 DD'}).get_json()
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-10'}).get_json()
+        rid = report['id']
+        up = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
+                              data={'file': (io.BytesIO(self._png((300, 200))), 'g.png')},
+                              content_type='multipart/form-data')
+        aid = up.get_json()['id']
+        fetched = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        saved = self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': fetched['revision'],
+            'operations': [
+                {'op': 'upsert', 'section_key': 'shipyard', 'block_type': 'item',
+                 'sort_order': 1, 'content': {'title': '첫 작업'}},
+                {'op': 'upsert', 'section_key': 'shipyard', 'block_type': 'table',
+                 'sort_order': 2, 'content': {'columns': ['항목', '금액'], 'rows': [['도장', '100']]}},
+                {'op': 'upsert', 'section_key': 'shipyard', 'block_type': 'image',
+                 'sort_order': 3, 'content': {'columns': 1,
+                                              'images': [{'attachment_id': aid, 'caption': '외판'}]}},
+                {'op': 'upsert', 'section_key': 'shipyard', 'block_type': 'item',
+                 'sort_order': 4, 'content': {'title': '둘째 작업'}}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        mail = self._mail(rid)
+        # 글 항목만 번호를 잇는다. 표·사진이 번호를 먹으면 2) 가 사라져 형이 보기에
+        # 작업이 빠진 것처럼 된다.
+        self.assertIn('1) 첫 작업', mail['text'])
+        self.assertIn('2) 둘째 작업', mail['text'])
+        self.assertNotIn('3)', mail['text'])
+        self.assertNotIn('4)', mail['text'])
+        # html 도 같다. 표는 `1)` 줄 **뒤에** 번호 없이 오고, 그 다음 글이 `2)` 를 받는다.
+        html = mail['html']
+        first = html.index('>1)&nbsp;&nbsp;첫 작업</span></p>')
+        second = html.index('>2)&nbsp;&nbsp;둘째 작업</span></p>')
+        grid = html.index('<table style="border-collapse:collapse;margin:0 0 8px 52px">')
+        self.assertLess(first, grid)
+        self.assertLess(grid, second)
+
+    def test_attachment_delete_only_empties_its_own_slot_in_a_gallery(self):
+        """격자에서 사진 하나를 지우면 그 칸만 빈다. 나머지 장과 캡션·열 수는 남는다."""
+        rid, ids = self._report_with_gallery('격자 첨부삭제 DD', count=3, columns=3)
+        removed = self.client.delete(f'/api/dock-daily/attachments/{ids[1]}')
+        self.assertEqual(200, removed.status_code, removed.get_data(as_text=True))
+        after = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        blocks = [b for b in after['blocks'] if b['block_type'] == 'image']
+        self.assertEqual(1, len(blocks))
+        content = blocks[0]['content']
+        self.assertEqual(3, content['columns'], '열 수는 유지된다')
+        self.assertEqual([ids[0], None, ids[2]], [x['attachment_id'] for x in content['images']])
+        self.assertEqual(['사진 1', '사진 2', '사진 3'], [x['caption'] for x in content['images']],
+                         '캡션은 남는다 -- 사진만 사라진 것이다')
+
+    def test_section_create_route_makes_a_titled_section_of_its_own(self):
+        """형 지시 2026-08-21: 표는 하위항목이 아니라 제목을 가진 하나의 섹션이다."""
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '섹션 추가 DD'}).get_json()
+        created = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                                   json={'label': '비용 정산표'})
+        self.assertEqual(201, created.status_code, created.get_data(as_text=True))
+        sections = {s['section_key']: s for s in created.get_json()['sections']}
+        self.assertIn('sec_1', sections, 'key 는 서버가 만든다 -- 웹·앱이 각자 만들면 갈라진다')
+        self.assertEqual('비용 정산표', sections['sec_1']['label'])
+        self.assertEqual('special', sections['sec_1']['kind'])
+        self.assertTrue(sections['sec_1']['enabled'])
+        # 두 번째 섹션은 키가 겹치지 않아야 한다.
+        again = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                                 json={'label': '검사 일정'})
+        self.assertEqual(201, again.status_code)
+        keys = {s['section_key'] for s in again.get_json()['sections']}
+        self.assertTrue({'sec_1', 'sec_2'} <= keys, keys)
+        # 제목은 필수다. 빈 제목은 이름 없는 섹션을 만든다.
+        self.assertEqual(400, self.client.post(
+            f"/api/dock-daily/projects/{project['id']}/sections", json={'label': '  '}).status_code)
+        self.assertEqual(404, self.client.post(
+            '/api/dock-daily/projects/999999/sections', json={'label': 'X'}).status_code)
+
+    def test_added_section_gets_its_own_numbered_mail_heading(self):
+        """새 섹션은 메일에서 다른 섹션과 같은 `N. 제목` 머리글을 받는다."""
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '섹션 메일 DD'}).get_json()
+        self.assertEqual(201, self.client.post(
+            f"/api/dock-daily/projects/{project['id']}/sections",
+            json={'label': '비용 정산표'}).status_code)
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-11'}).get_json()
+        fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+            'revision': fetched['revision'],
+            'operations': [{'op': 'upsert', 'section_key': 'sec_1', 'block_type': 'table',
+                            'content': {'columns': ['항목', '금액'], 'rows': [['도장', '100']]}}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        mail = self._mail(report['id'])
+        self.assertIn('2. 비용 정산표', mail['text'],
+                      'Shipyard 다음, Survey 앞이 special 자리다')
+        self.assertIn('비용 정산표', mail['html'])
+        self.assertIn('도장', mail['html'])
 
     def test_inline_image_refuses_a_path_outside_the_upload_dir(self):
         """`stored_name` 은 DB 값이지만 경로 조립은 여기서 한다."""

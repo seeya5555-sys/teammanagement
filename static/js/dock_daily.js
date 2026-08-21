@@ -110,8 +110,14 @@
     $('#dd-report-search').value = ''; $('#dd-report-status').value = '';
     $('#dd-project-tools').style.display = 'block'; $('#dd-generate-date').value = today(); renderReportDates();
     const specials = (state.project.sections||[]).filter(s => s.kind === 'special');
-    $('#dd-special-tools').innerHTML = specials.length ? '<b>Special 항목</b>'+specials.map(s => `<label style="display:block;margin-top:7px"><input type="checkbox" class="dd-special-toggle" data-key="${esc(s.section_key)}" ${s.enabled?'checked':''}> ${esc(s.label)}</label>`).join('') : '<span class="dd-muted">Special 항목 없음</span>';
+    // 표는 다른 카드의 하위항목이 아니라 **제목을 가진 자기 섹션**이다(형 지시 2026-08-21).
+    // 그 섹션이 곧 special 섹션이므로 새 저장소도, 새 라우트도 필요 없다 — 메일에서도
+    // 다른 섹션과 같은 `N. 제목` 머리글을 받는다.
+    const add = '<div class="dd-row" style="margin-top:9px"><input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:0"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button></div>'
+      + '<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 지우려면 체크를 해제하세요.</p>';
+    $('#dd-special-tools').innerHTML = (specials.length ? '<b>Special 항목</b>'+specials.map(s => `<label style="display:block;margin-top:7px"><input type="checkbox" class="dd-special-toggle" data-key="${esc(s.section_key)}" ${s.enabled?'checked':''}> ${esc(s.label)}</label>`).join('') : '<span class="dd-muted">Special 항목 없음</span>') + add;
     document.querySelectorAll('.dd-special-toggle').forEach(t => t.onchange = () => toggleSpecial(t.dataset.key, t.checked));
+    $('#dd-section-add').onclick = () => addSection($('#dd-section-label').value);
     $('#dd-empty').style.display='block'; $('#dd-report').classList.remove('show'); if (state.reports.length) await selectReport(state.reports[0].id);
   }
   function ensureSectionEditors() {
@@ -170,14 +176,25 @@
       const body=(c.rows||[]).filter(Array.isArray).map(r=>`<tr>${r.map(v=>`<td>${esc(String(v))}</td>`).join('')}</tr>`).join('');
       return `<table class="dd-block-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table><p class="dd-muted dd-block-note">표 내용은 앱에서 편집합니다.</p>`;
     }
+    // 사진 카드는 도크 리포트와 같은 `{images:[{attachment_id,caption}], columns:N}` 이다.
+    // 옛 한 장짜리 카드(`attachment_id`/`caption`)도 그대로 열려야 하므로 둘 다 읽는다.
+    const items=Array.isArray(c.images)?c.images.filter(x=>x&&typeof x==='object')
+      :((c.attachment_id||c.caption)?[{attachment_id:c.attachment_id,caption:c.caption}]:[]);
+    const cols=Math.max(1,Math.min(4,parseInt(c.columns,10)||1));
+    if(!items.length)return '<p class="dd-muted">연결된 이미지 없음</p><p class="dd-muted dd-block-note">사진은 앱에서 편집합니다.</p>';
     // 서버는 `str(attachment_id).isdigit()` 로만 이미지를 만든다. Number() 로 읽으면
     // -5·12.5 가 통과해 웹에만 깨진 <img> 가 뜨므로 같은 판정을 쓴다(올마이트 지적).
-    const raw=String(c.attachment_id==null?'':c.attachment_id);
-    const aid=/^\d+$/.test(raw)?raw:'';
-    const caption=String(c.caption||'');
-    // 이 라우트는 세션 인증이라 웹에서는 URL 직결이 된다(앱은 Bearer 라 바이트를 받아온다).
-    const img=aid?`<img class="dd-block-image" src="/api/dock-daily/attachments/${aid}" alt="${esc(caption||'dock image')}">`:'<p class="dd-muted">연결된 이미지 없음</p>';
-    return `${img}<p class="dd-muted dd-block-note">${esc(caption)||'캡션 없음'} · 이미지는 앱에서 편집합니다.</p>`;
+    const cells=items.map(x=>{
+      const raw=String(x.attachment_id==null?'':x.attachment_id);
+      const aid=/^\d+$/.test(raw)?raw:'';
+      const caption=String(x.caption||'');
+      // 이 라우트는 세션 인증이라 웹에서는 URL 직결이 된다(앱은 Bearer 라 바이트를 받아온다).
+      const img=aid?`<img class="dd-block-image" src="/api/dock-daily/attachments/${aid}" alt="${esc(caption||'dock image')}">`
+        :'<p class="dd-muted">연결된 사진 없음</p>';
+      return `<div class="dd-img-cell">${img}<p class="dd-img-cap">${esc(caption)||'&nbsp;'}</p></div>`;
+    }).join('');
+    return `<div class="dd-img-grid" style="grid-template-columns:repeat(${cols},1fr)">${cells}</div>`
+      +`<p class="dd-muted dd-block-note">사진 ${items.length}장 · ${cols}열 · 사진은 앱에서 편집합니다.</p>`;
   }
   // Cards carry their own "1) " numbering so what the supervisor types is what
   // the Outlook mail shows. The renderers strip any stored number before
@@ -307,6 +324,27 @@
     state.report.blocks.filter(b=>!b._delete&&isTextBlock(b)&&(b._new||b._edit)&&(!b._new||blockText(b).trim())).forEach(b=>operations.push({op:'upsert',id:b._new?undefined:b.id,section_key:b.section_key,block_type:b.block_type||'paragraph',content:{...(b.content||{})},sort_order:b.sort_order||0}));
     state.report=await api(`/api/dock-daily/reports/${state.report.id}`,{...json({revision:state.report.revision,operations}),method:'PUT'}); state.dirty=false; ensureSectionEditors();
     $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`; renderItinerary(); renderSections(); renderAttachments();
+  }
+  // section_key 는 서버가 만든다(POST .../sections). 웹과 앱이 각자 키를 만들면 규칙이
+  // 두 벌이 되고 서로 다른 키를 뱉는다 -- 제목만 보내고 키는 받는다.
+  async function addSection(label){
+    const name=String(label||'').trim();
+    if(!name){err(new Error('섹션 제목을 입력하세요.'));return;}
+    clearErr();
+    try{
+      const updated=await api(`/api/dock-daily/projects/${state.project.id}/sections`,{...json({label:name}),method:'POST'});
+      state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
+      $('#dd-section-label').value='';
+      // 섹션 목록을 다시 그린다. 열린 보고서에도 바로 카드가 생겨야 한다.
+      const specials=(updated.sections||[]).filter(x=>x.kind==='special');
+      $('#dd-special-tools').innerHTML='<b>Special 항목</b>'+specials.map(x=>`<label style="display:block;margin-top:7px"><input type="checkbox" class="dd-special-toggle" data-key="${esc(x.section_key)}" ${x.enabled?'checked':''}> ${esc(x.label)}</label>`).join('')
+        +'<div class="dd-row" style="margin-top:9px"><input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:0"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button></div>'
+        +'<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 지우려면 체크를 해제하세요.</p>';
+      document.querySelectorAll('.dd-special-toggle').forEach(t=>t.onchange=()=>toggleSpecial(t.dataset.key,t.checked));
+      $('#dd-section-add').onclick=()=>addSection($('#dd-section-label').value);
+      if(state.report){state.report.sections=updated.sections;ensureSectionEditors();renderSections();}
+      notice(`섹션 "${name}" 을 추가했습니다.`);
+    }catch(error){err(error);}
   }
   async function toggleSpecial(key,enabled){const updated=await api(`/api/dock-daily/projects/${state.project.id}`,{...json({sections:[{section_key:key,enabled}]}),method:'PATCH'});state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);if(state.report){state.report.sections=updated.sections;ensureSectionEditors();renderSections();}}
 

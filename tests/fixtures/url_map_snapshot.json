@@ -1103,6 +1103,16 @@
   "defaults": {}
  },
  {
+  "rule": "/api/dock-daily/projects/<int:pid>/sections",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.create_section",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/dock-daily/reports/<int:rid>",
   "methods": [
    "DELETE",

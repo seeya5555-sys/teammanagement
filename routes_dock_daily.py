@@ -11,6 +11,7 @@ import json
 import mimetypes
 import os
 import re
+import sqlite3
 import uuid
 import zipfile
 from collections import namedtuple
@@ -409,6 +410,57 @@ def projects_patch(pid):
                      int(item.get('sort_order') or 20), 'special',
                      1 if item.get('enabled', True) else 0))
     return jsonify(_project_response(_project(pid)))
+
+
+@bp.post('/api/dock-daily/projects/<int:pid>/sections')
+@login_required
+def create_section(pid):
+    """제목만 받아 새 섹션을 만든다(형 지시 2026-08-21).
+
+    표는 다른 카드의 하위항목이 아니라 **제목을 가진 자기 섹션**이어야 한다.  그 섹션이
+    곧 special 섹션이므로 새 저장소는 필요 없지만, `section_key` 를 클라이언트가 만들면
+    웹과 앱에 규칙이 두 벌 생기고 서로 다른 키를 뱉는다.  그래서 키는 서버가 만든다.
+
+    프로젝트 PATCH 로도 같은 일을 할 수 있지만 그 라우트는 `title` 같은 프로젝트 본문을
+    함께 받는다 -- 앱에서 섹션 하나 추가하려고 프로젝트 전체를 보내면 빈 값으로 덮을
+    위험이 생기므로 최소 입력만 받는 전용 라우트를 둔다.
+    """
+    if not _project(pid):
+        # `_project` 는 없으면 None 을 준다(abort 하지 않는다). 확인 없이 넘기면
+        # 섹션 행만 남고 응답을 만들다 500 이 난다.
+        return _error('project not found', 404)
+    data = request.get_json(silent=True) or {}
+    label = str(data.get('label') or '').strip()
+    if not label:
+        return _error('label is required')
+    if len(label) > 60:
+        return _error('label is too long')
+    # 제목은 대개 한글이라 제목에서 key 를 만들 수 없다.  이름은 형이 쓴 그대로 두고
+    # key 는 프로젝트 안에서만 유일하면 되므로 남는 번호를 쓴다.
+    #
+    # 🔴 SELECT→계산→INSERT 는 그 자체로 경쟁 구간이다.  같은 프로젝트에 두 요청이
+    # 겹치면 둘 다 같은 `sec_N` 을 골라 `UNIQUE(project_id,section_key)` 를 때리고,
+    # 잡지 않으면 형에게 500 이 간다.  충돌은 정상 상황이므로 다음 번호로 다시 넣는다.
+    for _ in range(20):
+        used = {r['section_key'] for r in
+                query('SELECT section_key FROM dock_daily_section_def WHERE project_id=?', (pid,))}
+        index = 1
+        while ('sec_%d' % index) in used or ('sec_%d' % index) in FIXED_KEYS:
+            index += 1
+        key = 'sec_%d' % index
+        top = query('SELECT MAX(sort_order) AS top FROM dock_daily_section_def WHERE project_id=?',
+                    (pid,), one=True)
+        # 메일 순서는 `_email` 의 `['shipyard'] + specials + ['survey','vendor','remark']` 가
+        # 정한다.  여기서는 마지막 special 뒤에 붙이기만 한다.
+        try:
+            execute('INSERT INTO dock_daily_section_def'
+                    ' (project_id,section_key,label,sort_order,kind,enabled) VALUES (?,?,?,?,?,?)',
+                    (pid, key, label,
+                     int(top['top'] if top and top['top'] is not None else 19) + 1, 'special', 1))
+        except sqlite3.IntegrityError:
+            continue
+        return jsonify(_project_response(_project(pid))), 201
+    return _error('section key is exhausted', 409)
 
 
 def _purge_files(stored_names):
@@ -1052,9 +1104,17 @@ def attachment_delete(aid):
             content = _json(block['content_json'], {})
             if not isinstance(content, dict):
                 continue
-            if str(content.get('attachment_id') or '') != str(aid):
+            touched = False
+            if str(content.get('attachment_id') or '') == str(aid):
+                content['attachment_id'] = None
+                touched = True
+            # 격자 카드는 지운 사진의 자리만 비운다. 나머지 장과 캡션·열 수는 남는다.
+            for entry in content.get('images') or []:
+                if isinstance(entry, dict) and str(entry.get('attachment_id') or '') == str(aid):
+                    entry['attachment_id'] = None
+                    touched = True
+            if not touched:
                 continue
-            content['attachment_id'] = None
             db.execute('UPDATE dock_daily_block SET content_json=? WHERE id=?',
                        (json.dumps(content, ensure_ascii=False), block['id']))
 
@@ -1164,6 +1224,9 @@ MAIL_IMAGE_QUALITY = 80
 # 여기서 세지 않는다. 사진이 본문 크기의 대부분이라 사진만 묶어 잡는다.
 MAIL_IMAGE_BUDGET = 3 * 1024 * 1024
 MAIL_IMAGE_MAX_COUNT = 12      # 한 통에 실을 사진 장수(예산과 별개의 상한)
+MAIL_IMAGE_MAX_COLUMNS = 4     # 사진 격자 열 수 상한(도크 리포트와 같은 1~4)
+MAIL_BODY_PX = 540             # 들여쓰기(52px) 뒤 남는 본문 폭. 격자 셀 폭 계산 기준
+MAIL_IMAGE_GAP_PX = 6
 # 열기 전 거르는 픽셀 상한. 20MB 업로드 게이트를 통과한 파일도 압축률이 높으면
 # 디코드 후 메모리는 그 수십 배가 된다.
 MAIL_IMAGE_MAX_PIXELS = 40 * 1000 * 1000
@@ -1178,7 +1241,7 @@ def _attachment_path(stored_name):
     return path
 
 
-def _inline_image(stored_name, budget):
+def _inline_image(stored_name, budget, show_px=MAIL_IMAGE_SHOW_PX, decode_px=MAIL_IMAGE_MAX_PX):
     """첨부 사진을 메일 본문용 data URI 로 만든다.
 
     돌려주는 값은 `(정보, 사유)` 이고 둘 중 하나만 채워진다. 사유는 화면에 그대로
@@ -1207,7 +1270,10 @@ def _inline_image(stored_name, budget):
             image = ImageOps.exif_transpose(src) or src
             if image.mode != 'RGB':
                 image = image.convert('RGB')           # 알파·팔레트는 JPEG 로 못 나간다
-            image.thumbnail((MAIL_IMAGE_MAX_PX, MAIL_IMAGE_MAX_PX))
+            # 표시 크기와 디코드 크기는 다르다. 격자에서 작게 보이는 사진에
+            # 큰 바이트를 싣는 건 낭비이고, 표시폭보다 작게 실으면 흐려진다.
+            long_edge = max(1, min(MAIL_IMAGE_MAX_PX, int(decode_px)))
+            image.thumbnail((long_edge, long_edge))
             width, height = image.size
             buf = BytesIO()
             image.save(buf, format='JPEG', quality=MAIL_IMAGE_QUALITY, optimize=True)
@@ -1221,9 +1287,39 @@ def _inline_image(stored_name, budget):
         return None, '본문 사진 용량 상한을 넘었습니다'
     if not width or not height:
         return None, '사진 크기를 읽을 수 없습니다'
-    shown = min(MAIL_IMAGE_SHOW_PX, width)
+    shown = max(1, min(MAIL_IMAGE_SHOW_PX, int(show_px), width))
     return {'uri': 'data:image/jpeg;base64,' + encoded, 'width': shown,
             'height': max(1, round(height * shown / width)), 'cost': len(encoded)}, None
+
+
+def _image_gallery(content):
+    """사진 카드를 `(사진 목록, 열 수)` 로 편다. 도크 리포트 사진 섹션과 같은 계약.
+
+    옛 카드는 사진 한 장을 `attachment_id`/`caption` 으로 들고 있었다. 그 카드도 계속
+    열려야 하므로 한 장짜리 격자로 읽는다 -- 마이그레이션 없이 두 포맷을 같이 받는다.
+
+    🔴 도크 리포트는 사진을 `static/uploads/dock/` 공개 URL 로 들고 있지만 여기서는
+    `attachment_id` **참조**만 쓴다. 입거 Daily 의 업로드 정본은 첨부 카드이고
+    (20MB·형식 게이트가 거기 있다) 파일 라우트가 `login_required` 라서 URL 이 무의미하다.
+    """
+    raw = content.get('images')
+    items = []
+    if isinstance(raw, (list, tuple)):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            aid = str(entry.get('attachment_id') or '')
+            items.append({'attachment_id': int(aid) if aid.isdigit() else None,
+                          'caption': str(entry.get('caption') or '')})
+    elif content.get('attachment_id') or content.get('caption'):
+        aid = str(content.get('attachment_id') or '')
+        items.append({'attachment_id': int(aid) if aid.isdigit() else None,
+                      'caption': str(content.get('caption') or '')})
+    try:
+        columns = int(content.get('columns') or 1)
+    except (TypeError, ValueError):
+        columns = 1
+    return items, max(1, min(MAIL_IMAGE_MAX_COLUMNS, columns))
 
 
 def _table_grid(content):
@@ -1278,11 +1374,15 @@ def _mail_entries(rid, key):
                 out.append({'kind': 'table', 'columns': cols, 'rows': rows})
             continue
         if typ == 'image':
-            raw = str(content.get('attachment_id') or '')
-            row = files.get(int(raw)) if raw.isdigit() else None
-            out.append({'kind': 'image', 'caption': str(content.get('caption') or ''),
-                        'attachment': row['stored_name'] if row else None,
-                        'note': None if row else '연결된 사진이 없습니다'})
+            items, columns = _image_gallery(content)
+            photos = []
+            for entry in items:
+                row = files.get(entry['attachment_id']) if entry['attachment_id'] else None
+                photos.append({'caption': entry['caption'],
+                               'attachment': row['stored_name'] if row else None,
+                               'note': None if row else '연결된 사진이 없습니다'})
+            if photos:
+                out.append({'kind': 'image', 'grid': columns, 'photos': photos})
             continue
         for line in _plain(block).splitlines():
             stripped = ITEM_NO_RE.sub('', line).strip()
@@ -1296,7 +1396,9 @@ def _plain(block):
     if block.get('block_type') == 'table':
         cols, rows = _table_grid(c)
         return '\n'.join(' | '.join(x) for x in [cols] + rows if any(x))
-    if block.get('block_type') == 'image': return '[Image] ' + str(c.get('caption') or '')
+    if block.get('block_type') == 'image':
+        items, _ = _image_gallery(c)
+        return '\n'.join('[Image] ' + (x['caption'] or '') for x in items) or '[Image] '
     return str(c.get('title') or c.get('body') or c.get('text') or '')
 
 
@@ -1430,12 +1532,73 @@ def _email(rid):
         return ('<table style="border-collapse:collapse;margin:0 0 8px 52px;%s">%s%s</table>'
                 % (cell_font, '<tr>%s</tr>' % head if head else '', body))
 
-    def photo(image, caption):
-        """`width`/`height` 를 HTML 속성으로 준다 -- Word HTML 엔진은 CSS 폭을 무시한다."""
-        return ('<p style="margin:0 0 8px 52px"><img src="%s" width="%d" height="%d" alt="%s"'
-                ' style="display:block;border:0"></p>'
-                % (image['uri'], image['width'], image['height'],
-                   html.escape(caption or 'dock photo')))
+    caption_font = ('font-family:Arial,Helvetica,sans-serif;font-size:9pt;'
+                    'color:#4B5563;font-style:italic')
+
+    def photo_grid(entry, budget, count):
+        """사진 카드를 `columns` 열 격자로. 도크 리포트 사진 섹션과 같은 배치다.
+
+        돌려주는 값은 `(html 조각들, 글 줄들, 남은 예산, 실은 장수)`. 예산과 장수를 인자로
+        받아 돌려주는 이유는 상한이 **메일 한 통 전체**의 것이기 때문이다 -- 카드마다 새로
+        세면 사진이 많은 보고서에서 상한이 사라진다.
+
+        열이 늘면 사진이 작게 보이므로 그만큼 작은 바이트만 싣는다(표시폭의 2배까지).
+        """
+        cols = entry['grid']
+        cell_px = max(60, (MAIL_BODY_PX - MAIL_IMAGE_GAP_PX * (cols - 1)) // cols)
+        cells = []
+        for photo in entry['photos']:
+            image, note = None, photo['note']
+            if photo['attachment']:
+                # 🔴 상한은 **성공 장수가 아니라 연 파일 수**로 센다. 성공만 세면 예산이
+                # 작게 남은 뒤부터는 상한에 걸리지 않은 채로 형이 넣은 사진을 전부 열어
+                # 디코드하게 된다 -- "예산 없으면 파일을 열지 않는다" 와 같은 이유다.
+                if count >= MAIL_IMAGE_MAX_COUNT:
+                    note = '본문 사진 장수 상한(%d장)을 넘었습니다' % MAIL_IMAGE_MAX_COUNT
+                else:
+                    count += 1
+                    image, note = _inline_image(photo['attachment'], budget,
+                                                show_px=cell_px, decode_px=cell_px * 2)
+                    if image:
+                        budget -= image['cost']
+            cells.append((image, photo['caption'], note))
+
+        pad = 'padding:0 %dpx 2px 0;vertical-align:top' % MAIL_IMAGE_GAP_PX
+        chunks_out, text_out, rows = [], [], []
+        for start in range(0, len(cells), cols):
+            row = cells[start:start + cols]
+            # 캡션 줄은 그 줄에 캡션이 하나라도 있을 때만 만든다(도크 리포트와 같은 규칙).
+            has_caption = any((caption or '').strip() for _, caption, _ in row)
+            picture_tds, caption_tds = [], []
+            for image, caption, note in row:
+                if image:
+                    inner = ('<img src="%s" width="%d" height="%d" alt="%s"'
+                             ' style="display:block;border:0">'
+                             % (image['uri'], image['width'], image['height'],
+                                html.escape(caption or 'dock photo')))
+                    text_out.append('- %s' % (caption or '사진'))
+                else:
+                    # 못 실은 이유는 본문에 남긴다. 조용히 빠지면 형은 실렸다고 생각한다.
+                    reason = note or '본문에 넣지 못했습니다'
+                    inner = run(html.escape('(%s)' % reason))
+                    text_out.append('- %s (%s)' % (caption or '사진', reason))
+                picture_tds.append('<td style="%s">%s</td>' % (pad, inner))
+                if has_caption:
+                    text = html.escape(caption) if (caption or '').strip() else '&nbsp;'
+                    caption_tds.append('<td style="%s"><p style="margin:0;%s">'
+                                       '<span style="%s">%s</span></p></td>'
+                                       % (pad, caption_font, caption_font, text))
+            # 마지막 줄이 덜 찬 경우 빈 칸으로 채워 열 폭을 흐트러뜨리지 않는다.
+            filler = '<td style="%s">&nbsp;</td>' % pad
+            picture_tds.extend([filler] * (cols - len(picture_tds)))
+            rows.append('<tr>%s</tr>' % ''.join(picture_tds))
+            if caption_tds:
+                caption_tds.extend([filler] * (cols - len(caption_tds)))
+                rows.append('<tr>%s</tr>' % ''.join(caption_tds))
+        if rows:
+            chunks_out.append('<table style="border-collapse:collapse;margin:0 0 8px 52px">%s</table>'
+                              % ''.join(rows))
+        return chunks_out, text_out, budget, count
 
     budget, photos = MAIL_IMAGE_BUDGET, 0
     for section_no, key in enumerate(order, 1):
@@ -1444,32 +1607,20 @@ def _email(rid):
         lines.extend(['', '%d. %s' % (section_no, sec['label'])])
         chunks.append('<p style="margin:0 0 6px">%s</p>' %
                       run('<b>%d. &nbsp;%s</b>' % (section_no, html.escape(sec['label']))))
-        for item_no, entry in enumerate(entries, 1):
+        # 🔴 표·사진은 항목 번호를 받지 않는다 -- 형 지시대로 하위항목이 아니라 그 자리에
+        # 놓인 블록이다. 번호는 글 항목끼리만 이어진다.
+        item_no = 0
+        for entry in entries:
             if entry['kind'] == 'table':
-                lines.append('%d)' % item_no)
                 lines.extend(' | '.join(row) for row in [entry['columns']] + entry['rows'])
-                chunks.append(item(item_no, ''))      # 번호만 -- 제목은 형이 위 카드에 쓴다
                 chunks.append(table(entry))
                 continue
             if entry['kind'] == 'image':
-                image, note = None, entry['note']
-                if entry['attachment']:
-                    if photos >= MAIL_IMAGE_MAX_COUNT:
-                        note = '본문 사진 장수 상한(%d장)을 넘었습니다' % MAIL_IMAGE_MAX_COUNT
-                    else:
-                        image, note = _inline_image(entry['attachment'], budget)
-                        if image:
-                            budget -= image['cost']
-                            photos += 1
-                label = entry['caption'] or '사진'
-                # 사진이 못 들어간 이유는 본문에 남긴다. 조용히 빠지면 형은 사진이
-                # 실렸다고 생각하고 그대로 보내게 된다.
-                shown = label if image else '%s (%s)' % (label, note or '본문에 넣지 못했습니다')
-                lines.append('%d) %s' % (item_no, shown))
-                chunks.append(item(item_no, html.escape(shown)))
-                if image:
-                    chunks.append(photo(image, entry['caption']))
+                grid, texts, budget, photos = photo_grid(entry, budget, photos)
+                lines.extend(texts)
+                chunks.extend(grid)
                 continue
+            item_no += 1
             lines.append('%d) %s' % (item_no, entry['text']))
             chunks.append(item(item_no, html.escape(entry['text'])))
         chunks.append(spacer)
