@@ -1821,13 +1821,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
         return rid, ids
 
-    def test_grid_cells_get_one_height_even_when_photos_do_not(self):
-        """형 지시 2026-08-21(3캡쳐): "사진 높이가 안맞음".
-
-        가로 사진 옆에 세로 스크린샷이 오면 칸 높이가 350px 대 525px 로 갈렸다. 도크
-        리포트가 `aspect-ratio:4/3` + `object-fit:cover` 로 잡은 그 방식을 서버가 크롭으로
-        가져온다 -- 메일에서는 CSS 를 못 쓴다. 이 테스트가 깨지면 다시 들쭉날쭉해진 것이다.
-        """
+    def test_grid_cells_get_one_height_without_cropping_the_photos(self):
+        """가로·세로 사진을 같은 4:3 칸에 letterbox 하고 원본 전체를 보인다."""
         rid, _ids = self._report_with_gallery('높이 정렬 DD', count=2, columns=2,
                                               sizes=[(1200, 800), (720, 1560)])
         html = self._mail(rid)['html']
@@ -1838,6 +1833,16 @@ class DockDailyTests(unittest.TestCase):
         width, height = int(boxes[0][0]), int(boxes[0][1])
         ratio = routes_dock_daily.MAIL_IMAGE_CELL_RATIO
         self.assertEqual(round(width * ratio[1] / ratio[0]), height)
+
+        # 세로 사진은 4:3 으로 잘라내지 않고 흰 좌우 여백 안에 보존한다. data URI 의
+        # 실제 JPEG 를 열어 가운데는 사진색, 좌우 가장자리는 letterbox 인지 확인한다.
+        payloads = re.findall(r'<img src="data:image/jpeg;base64,([^"]+)"', html)
+        from PIL import Image
+        portrait = Image.open(io.BytesIO(base64.b64decode(payloads[1]))).convert('RGB')
+        encoded_width, encoded_height = portrait.size
+        self.assertEqual(round(encoded_width * ratio[1] / ratio[0]), encoded_height)
+        self.assertGreater(min(portrait.getpixel((0, encoded_height // 2))), 235)
+        self.assertLess(portrait.getpixel((encoded_width // 2, encoded_height // 2))[0], 230)
 
     def test_a_photo_smaller_than_the_cell_still_lines_up(self):
         """🔴 작은 사진의 표시 크기를 실제 픽셀로 줄이면 그 칸만 좁아져 다시 어긋난다.

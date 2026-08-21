@@ -1227,13 +1227,12 @@ MAIL_IMAGE_MAX_COUNT = 12      # 한 통에 실을 사진 장수(예산과 별�
 MAIL_IMAGE_MAX_COLUMNS = 4     # 사진 격자 열 수 상한(도크 리포트와 같은 1~4)
 MAIL_BODY_PX = 540             # 들여쓰기(52px) 뒤 남는 본문 폭. 격자 셀 폭 계산 기준
 MAIL_IMAGE_GAP_PX = 6
-# 격자 칸의 가로:세로. 도크 리포트 사진 섹션의 정본 비율(`.dde-img-cell-inner`
-# `aspect-ratio:4/3` + `object-fit:cover`)을 그대로 가져온다. 형 지시대로 사진 기능은
-# 도크 리포트를 정본으로 쓴다(2026-08-21).
+# 격자 칸의 가로:세로. 2열 이상에서는 이 비율의 캔버스에 사진 전체를 맞춰 넣어
+# 가로·세로 사진이 섞여도 칸 높이를 같게 유지한다(형 지시 2026-08-21).
 #
 # 🔴 메일에서는 CSS 로 못 한다 -- Word/Outlook HTML 엔진은 `object-fit`·`aspect-ratio`
-# 를 무시한다. 그래서 **서버가 JPEG 를 미리 그 비율로 중앙 크롭**해서 싣는다. 크롭이므로
-# 세로 사진은 위아래가 잘린다(도크 리포트와 같은 트레이드오프).
+# 를 무시한다. 그래서 **서버가 JPEG 를 미리 흰 4:3 캔버스에 aspect-fit** 해서 싣는다.
+# 남는 부분은 letterbox 로 두고 원본 프레임은 자르지 않는다.
 MAIL_IMAGE_CELL_RATIO = (4, 3)
 # 열기 전 거르는 픽셀 상한. 20MB 업로드 게이트를 통과한 파일도 압축률이 높으면
 # 디코드 후 메모리는 그 수십 배가 된다.
@@ -1256,8 +1255,8 @@ def _inline_image(stored_name, budget, show_px=MAIL_IMAGE_SHOW_PX, decode_px=MAI
     돌려주는 값은 `(정보, 사유)` 이고 둘 중 하나만 채워진다. 사유는 화면에 그대로
     보여준다 -- 사진이 조용히 빠지면 형은 보냈다고 생각하고 메일을 보내게 된다.
 
-    `ratio` 를 주면 그 가로:세로로 **중앙 크롭**해서 표시 크기를 고정한다. 격자에서
-    칸마다 높이가 달라지지 않게 하는 유일한 길이다(메일에서는 CSS 를 못 쓴다).
+    `ratio` 를 주면 그 가로:세로의 흰 캔버스에 **사진 전체를 aspect-fit** 해서 표시
+    크기를 고정한다. 메일에서는 CSS 를 못 쓰므로 서버가 letterbox 를 바이트에 굽는다.
     """
     # 예산이 이미 없으면 파일을 열지도 않는다. 변환한 뒤에 거절하면 사진을 많이 붙인
     # 보고서 하나가 미리보기 한 번에 서버 메모리·CPU 를 다 쓰게 된다.
@@ -1286,12 +1285,13 @@ def _inline_image(stored_name, budget, show_px=MAIL_IMAGE_SHOW_PX, decode_px=MAI
             # 큰 바이트를 싣는 건 낭비이고, 표시폭보다 작게 실으면 흐려진다.
             long_edge = max(1, min(MAIL_IMAGE_MAX_PX, int(decode_px)))
             if ratio:
-                # 크롭 뒤 목표 크기. 🔴 원본보다 크게 잡으면 `ImageOps.fit` 이 **확대**해서
-                # 뿌옇고 무겁기만 한 바이트를 만든다 -- 원본이 줄 수 있는 최대까지만 키운다.
+                # 고정 비율 캔버스 크기. 원본이 줄 수 있는 최대까지만 잡아 작은 사진을
+                # 바이트 단계에서 억지로 확대하지 않는다(표시 크기는 아래에서 통일).
                 cap = min(image.size[0], image.size[1] * ratio[0] / ratio[1])
                 target_w = max(1, int(min(long_edge, cap)))
                 target_h = max(1, round(target_w * ratio[1] / ratio[0]))
-                image = ImageOps.fit(image, (target_w, target_h), centering=(0.5, 0.5))
+                image = ImageOps.pad(image, (target_w, target_h), color=(255, 255, 255),
+                                     centering=(0.5, 0.5))
             else:
                 image.thumbnail((long_edge, long_edge))
             width, height = image.size
@@ -1578,9 +1578,8 @@ def _email(rid):
         """
         cols = entry['grid']
         cell_px = max(60, (MAIL_BODY_PX - MAIL_IMAGE_GAP_PX * (cols - 1)) // cols)
-        # 🔴 크롭은 **한 줄에 옆 칸이 있을 때만** 한다. 1열 카드는 옆 칸이 없어 높이가
-        # 어긋날 데가 없으므로, 크롭하면 형 사진의 위아래만 버리는 셈이다(세로 사진이면
-        # 절반 가까이 사라진다). 형이 캡쳐로 잡은 문제는 2열 격자의 높이 불일치다.
+        # 고정 비율 letterbox 는 **한 줄에 옆 칸이 있을 때만** 쓴다. 1열 카드는 높이를
+        # 맞출 옆 칸이 없으므로 원본 비율 그대로 보여준다.
         cell_ratio = MAIL_IMAGE_CELL_RATIO if cols > 1 else None
         cells = []
         for photo in entry['photos']:

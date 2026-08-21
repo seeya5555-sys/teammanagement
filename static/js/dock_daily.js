@@ -205,10 +205,9 @@
       const marked=captionLabel(caption);
       return `<div class="dd-img-cell">${img}<p class="dd-img-cap">${esc(marked)||'&nbsp;'}</p></div>`;
     }).join('');
-    // 🔴 크롭(`--crop`)은 **2열 이상에서만**. 1열은 옆 칸이 없어 높이가 어긋날 데가 없고,
-    // 크롭하면 사진 위아래만 버린다. 서버 메일도 `cols>1` 에서만 크롭하므로 게이트가
-    // 갈리면 미리보기와 메일이 달라진다(올마이트 지적).
-    const gridClass=cols>1?'dd-img-grid dd-img-grid--crop':'dd-img-grid';
+    // 2열 이상은 4:3 프레임에 aspect-fit 해서 높이를 맞추되 사진 전체를 보인다.
+    // 1열은 맞출 옆 칸이 없으므로 원본 비율 그대로 둔다. 서버 메일·iOS 와 같은 게이트다.
+    const gridClass=cols>1?'dd-img-grid dd-img-grid--fit':'dd-img-grid';
     return `<div class="${gridClass}" style="grid-template-columns:repeat(${cols},1fr)">${cells}</div>`
       +`<p class="dd-muted dd-block-note">사진 ${items.length}장 · ${cols}열 · 사진은 앱에서 편집합니다.</p>`;
   }
