@@ -702,6 +702,182 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual('2026-09-01', report['dock_out_date'])
         self.assertEqual('2026-09-02', report['departure_date'])
 
+    def _copy_fixture(self, dates=('2026-08-20', '2026-08-21')):
+        p = self.client.post('/api/dock-daily/projects',
+                             json={'vessel_id': self.vessel, 'title': 'Copy DD'}).get_json()
+        out = []
+        for d in dates:
+            out.append(self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                        json={'report_date': d}).get_json())
+        return p, out
+
+    def test_previous_report_is_copied_card_for_card_without_the_files(self):
+        """이전 일자 가져오기(형 지시 2026-08-21) -- 자동초안을 폐기한 대신 들어온 경로.
+
+        복사된 카드는 이 보고서의 것이 되어야 한다: origin='manual', manual_override=1.
+        원본이 자동수집이었더라도 그 provenance 는 이 날짜의 근거가 아니고, 다음 저장에서
+        덮이면 형이 손으로 고친 문장이 사라진다.
+        """
+        p, (src, dst) = self._copy_fixture()
+        src = self.client.put(f"/api/dock-daily/reports/{src['id']}", json={
+            'revision': src['revision'], 'email_intro': '어제 인사말', 'safety_footer': '어제 안전문구',
+            'operations': [
+                {'section_key': 'shipyard', 'block_type': 'item', 'sort_order': 0,
+                 'content': {'text': '탱크 세정 진행중'}},
+                {'section_key': 'shipyard', 'block_type': 'paragraph', 'sort_order': 1,
+                 'content': {'body': '내일 이어서 진행'}},
+                {'section_key': 'survey', 'block_type': 'image', 'sort_order': 0,
+                 'content': {'caption': '사진'}},
+            ]}).get_json()
+        with appmod.app.app_context():
+            appmod.execute("UPDATE dock_daily_block SET origin='dock_auto' WHERE report_id=? "
+                           "AND section_key='shipyard'", (src['id'],))
+        got = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from",
+                               json={'revision': dst['revision'], 'source_report_id': src['id']})
+        self.assertEqual(200, got.status_code)
+        body = got.get_json()
+        self.assertEqual(2, body['copied_blocks'])
+        self.assertEqual(1, body['skipped_blocks'], 'image 블록은 파일이 따라오지 않으므로 제외')
+        self.assertEqual(dst['revision'] + 1, body['revision'])
+        self.assertEqual('editing', body['status'])
+        texts = sorted(json.dumps(b['content'], ensure_ascii=False) for b in body['blocks'])
+        self.assertIn('탱크 세정 진행중', ' '.join(texts))
+        self.assertIn('내일 이어서 진행', ' '.join(texts))
+        for b in body['blocks']:
+            self.assertEqual('manual', b['origin'])
+            self.assertEqual(1, b['manual_override'])
+        # 인사말·안전문구는 따라오지만 제목은 날짜를 품고 있어 그대로 남는다.
+        self.assertEqual('어제 인사말', body['email_intro'])
+        self.assertEqual('어제 안전문구', body['safety_footer'])
+        self.assertIn('8/21', body['email_subject'])
+        # 원본은 건드리지 않는다.
+        origin = self.client.get(f"/api/dock-daily/reports/{src['id']}").get_json()
+        self.assertEqual(3, len(origin['blocks']))
+        self.assertEqual(src['revision'], origin['revision'])
+
+    def test_copy_append_keeps_what_is_already_typed_and_replace_warns(self):
+        p, (src, dst) = self._copy_fixture()
+        self.client.put(f"/api/dock-daily/reports/{src['id']}", json={
+            'revision': src['revision'], 'operations': [
+                {'section_key': 'shipyard', 'block_type': 'item', 'content': {'text': '어제 작업'}}]})
+        dst = self.client.put(f"/api/dock-daily/reports/{dst['id']}", json={
+            'revision': dst['revision'], 'operations': [
+                {'section_key': 'shipyard', 'block_type': 'item', 'content': {'text': '오늘 쓴 것'}}]}).get_json()
+        appended = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from", json={
+            'revision': dst['revision'], 'source_report_id': src['id'], 'mode': 'append'}).get_json()
+        joined = json.dumps(appended['blocks'], ensure_ascii=False)
+        self.assertIn('오늘 쓴 것', joined, 'append 는 쓰고 있던 카드를 지우지 않는다')
+        self.assertIn('어제 작업', joined)
+        self.assertEqual(2, len(appended['blocks']))
+        orders = [b['sort_order'] for b in appended['blocks'] if b['section_key'] == 'shipyard']
+        self.assertEqual(len(set(orders)), len(orders), 'append 는 기존 뒤로 붙어 순서가 겹치지 않는다')
+        replaced = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from", json={
+            'revision': appended['revision'], 'source_report_id': src['id'], 'mode': 'replace'}).get_json()
+        self.assertEqual(1, len(replaced['blocks']))
+        self.assertNotIn('오늘 쓴 것', json.dumps(replaced['blocks'], ensure_ascii=False))
+
+    def test_copy_from_refuses_final_other_project_itself_and_stale_revision(self):
+        p, (src, dst) = self._copy_fixture()
+        other = self.client.post('/api/dock-daily/projects',
+                                 json={'vessel_id': self.vessel, 'title': 'Other DD'}).get_json()
+        stranger = self.client.post(f"/api/dock-daily/projects/{other['id']}/reports/generate",
+                                    json={'report_date': '2026-08-22'}).get_json()
+        cross = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from", json={
+            'revision': dst['revision'], 'source_report_id': stranger['id']})
+        self.assertEqual(400, cross.status_code)
+        self.assertEqual('cross_project', cross.get_json()['code'],
+                         '다른 선박의 작업내역이 조용히 섞이면 안 된다')
+        itself = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from", json={
+            'revision': dst['revision'], 'source_report_id': dst['id']})
+        self.assertEqual(400, itself.status_code)
+        self.assertEqual('same_report', itself.get_json()['code'])
+        stale = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from", json={
+            'revision': dst['revision'] + 9, 'source_report_id': src['id']})
+        self.assertEqual(409, stale.status_code)
+        self.assertEqual('revision_conflict', stale.get_json()['code'])
+        self.assertEqual(404, self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from", json={
+            'revision': dst['revision'], 'source_report_id': 987654}).status_code)
+        final = self.client.post(f"/api/dock-daily/reports/{dst['id']}/status",
+                                 json={'status': 'final', 'revision': dst['revision']}).get_json()
+        locked = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from", json={
+            'revision': final['revision'], 'source_report_id': src['id']})
+        self.assertEqual(409, locked.status_code)
+        self.assertEqual('final_locked', locked.get_json()['code'],
+                         '확정본은 다른 모든 쓰기와 같은 이유로 막힌다')
+
+    def test_copy_replaces_greeting_even_when_no_card_can_follow(self):
+        """카드가 0개 복사돼도 replace 의 인사말·안전문구는 따라와야 한다.
+
+        올마이트 지적 2026-08-21: 원본이 이미지 카드만 가졌고 대상이 비어 있으면
+        copied/deleted 가 모두 0 이라 "바뀐 게 없다" 로 판정해 rollback 이 인사말 UPDATE
+        까지 되돌리고도 200 을 줬다. 계약이 말하는 것과 실제 동작이 갈라지는 자리다.
+        """
+        p, (src, dst) = self._copy_fixture()
+        src = self.client.put(f"/api/dock-daily/reports/{src['id']}", json={
+            'revision': src['revision'], 'email_intro': '어제 인사말', 'safety_footer': '어제 안전문구',
+            'operations': [{'section_key': 'survey', 'block_type': 'image', 'sort_order': 0,
+                            'content': {'caption': '사진뿐'}}]}).get_json()
+        got = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from",
+                               json={'revision': dst['revision'], 'source_report_id': src['id']})
+        self.assertEqual(200, got.status_code)
+        body = got.get_json()
+        self.assertEqual(0, body['copied_blocks'])
+        self.assertEqual(1, body['skipped_blocks'])
+        self.assertEqual('어제 인사말', body['email_intro'])
+        self.assertEqual('어제 안전문구', body['safety_footer'])
+        self.assertEqual(dst['revision'] + 1, body['revision'],
+                         '머리말이 바뀌었으면 revision 도 올라가야 다음 저장이 안전하다')
+        # 두 번 눌러도 바뀌는 게 없으면 revision 을 올리지 않는다 -- 빈 스냅샷만 쌓인다.
+        again = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from",
+                                 json={'revision': body['revision'],
+                                       'source_report_id': src['id']}).get_json()
+        self.assertEqual(body['revision'], again['revision'])
+
+    def test_copy_from_keeps_attachments_when_it_replaces_the_cards(self):
+        """본문 교체가 파일 삭제까지 뜻하면 안 된다.
+
+        블록이 사라지면 FK 가 attachment.block_id 를 NULL 로 풀 뿐이고, 첨부 행과 파일은
+        목록에 그대로 남아야 한다 -- 형이 올린 파일을 본문 복사가 지우면 복구 경로가 없다.
+        """
+        p, (src, dst) = self._copy_fixture()
+        dst = self.client.put(f"/api/dock-daily/reports/{dst['id']}", json={
+            'revision': dst['revision'], 'operations': [
+                {'section_key': 'shipyard', 'block_type': 'item', 'content': {'text': '지워질 카드'}}]}).get_json()
+        up = self.client.post(f"/api/dock-daily/reports/{dst['id']}/attachments",
+                              data={'file': (io.BytesIO(b'hello'), 'note.txt')},
+                              content_type='multipart/form-data')
+        self.assertEqual(201, up.status_code)
+        # 업로드도 revision 을 올린다. 화면이 하듯 최신 revision 을 다시 읽고 보낸다.
+        fresh = self.client.get(f"/api/dock-daily/reports/{dst['id']}").get_json()
+        after = self.client.post(f"/api/dock-daily/reports/{dst['id']}/copy-from", json={
+            'revision': fresh['revision'], 'source_report_id': src['id'], 'mode': 'replace'})
+        self.assertEqual(200, after.status_code)
+        self.assertEqual(1, len(after.get_json()['attachments']))
+
+    def test_web_ui_offers_the_carry_forward_and_no_longer_offers_auto_draft(self):
+        page = self.client.get('/dock-daily').get_data(as_text=True)
+        script = self._script()
+        self.assertIn('id="dd-copy-from"', page)
+        self.assertIn('id="dd-copy-modal"', page)
+        self.assertIn('id="dd-copy-src"', page)
+        self.assertIn('id="dd-copy-append"', page)
+        self.assertIn('/copy-from', script)
+        self.assertIn("runCopy('append')", script)
+        # 확정본으로 가져오기는 막고, 확정본에서 가져오기는 막지 않는다.
+        self.assertIn("const rid=state.report.id, pid=state.project.id, src=+$('#dd-copy-src').value", script)
+        self.assertIn('첨부파일과 이미지 카드, 지금 프로젝트에 없는 섹션의 카드는 따라오지 않습니다', page)
+        # "이전 일자" 라는 이름대로 후보는 앞선 날짜만이다. 화면 DOM 하네스가 없어
+        # 배선 문자열로 잠근다(백로그: jsdom 하네스).
+        self.assertIn('r.report_date<today', script)
+        self.assertIn('이미지 카드와 없어진 섹션의 카드', script,
+                      'skipped_blocks 는 첨부 수가 아니다 — 문구가 계약을 따라야 한다')
+        # 🔴 자동초안 opt-in 은 사라졌다. 남아 있으면 켤 수 있는데 동작하지 않는 스위치가 된다.
+        for gone in ('id="ddp-auto"', 'id="ddp-active-from"', 'id="ddp-active-to"', 'id="ddp-source-ids"'):
+            self.assertNotIn(gone, page, gone)
+        # 주석에는 왜 껐는지 남아 있어도 되지만, 전송값과 배선은 사라져야 한다.
+        for gone in ('setAutoFields', "$('#ddp-auto", 'auto_generate,', 'dock_manager_project_ids'):
+            self.assertNotIn(gone, script, gone)
+
     def test_revision_conflict_and_final_lock(self):
         p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()
         r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate", json={'report_date': '2026-08-20'}).get_json()
@@ -1041,7 +1217,55 @@ class DockDailyTests(unittest.TestCase):
         # 해제는 PUT 이 아니라 상태 전용 라우트로 간다.
         self.assertIn("/status`", script)
 
+    def _api_key(self):
+        with appmod.app.app_context():
+            key = 'dock-daily-test-key'
+            appmod.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('api_key',?)", (key,))
+        return key
+
+    def test_auto_draft_ingestion_is_retired_at_every_entrance(self):
+        """자동 초안 수집 폐기(형 지시 2026-08-21).
+
+        입구가 4개라 하나만 닫으면 나머지로 계속 들어온다.  목록까지 닫는 이유는
+        러너가 "대상 있음"을 보고 merge 에서만 실패하면 폐기된 기능이 매일 실패
+        알림을 내기 때문이다.
+        """
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Retired DD', 'auto_generate': True,
+            'active_from': '2026-08-01', 'active_to': '2026-08-31',
+            'dock_manager_project_ids': ['v_DM17'],
+        }).get_json()
+        report = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                  json={'report_date': '2026-08-20'}).get_json()
+        key = self._api_key()
+        head = {'X-API-Key': key}
+        event = {'source_table': 'jobs', 'source_id': '1', 'source_subkey': 'job:1:remark:2026-08-20',
+                 'date': '2026-08-20', 'source_updated_at': '2026-08-20T17:00:00+09:00',
+                 'kind': 'job_remark', 'title': 'Job', 'body': 'Done', 'suggested_section': 'shipyard'}
+        payload = {'report_date': '2026-08-20', 'events': [event], 'complete': True, 'partial': False}
+        calls = [
+            self.client.post(f"/api/ext/dock-daily/projects/{p['id']}/merge", json=payload, headers=head),
+            self.client.post(f"/api/ext/dock-daily/reports/{report['id']}/merge", json=payload, headers=head),
+            self.client.post('/api/ext/dock-daily/merge',
+                             json={**payload, 'project_id': p['id']}, headers=head),
+            self.client.get('/api/ext/dock-daily/projects', headers=head),
+        ]
+        for res in calls:
+            self.assertEqual(410, res.status_code)
+            self.assertEqual('auto_draft_retired', res.get_json().get('code'))
+        with appmod.app.app_context():
+            # 🔴 폐기는 "거절"이어야 한다. 부분 적용이 남으면 사람이 쓴 본문과 섞인다.
+            self.assertEqual(0, appmod.query('SELECT COUNT(*) n FROM dock_daily_block',
+                                             one=True)['n'])
+            self.assertEqual(0, appmod.query('SELECT COUNT(*) n FROM dock_daily_source_link',
+                                             one=True)['n'])
+
     def test_runner_idempotency_and_partial_fail_closed(self):
+        """되돌릴 수 있게 남겨 둔 수집 코드가 썩지 않았는지 본다.
+
+        입구는 AUTO_DRAFT_INGEST_ENABLED 한 곳에서 닫혀 있고, 이 테스트만 그 스위치를
+        올려 예전 계약(멱등 · partial fail-closed · 사라진 원천 정리)을 그대로 확인한다.
+        """
         p = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': 'Test DD', 'auto_generate': True,
             'active_from': '2026-08-01', 'active_to': '2026-08-31',
@@ -1050,9 +1274,9 @@ class DockDailyTests(unittest.TestCase):
         event = {'source_table': 'jobs', 'source_id': '1', 'source_subkey': 'job:1:remark:2026-08-20',
                  'date': '2026-08-20', 'source_updated_at': '2026-08-20T17:00:00+09:00',
                  'kind': 'job_remark', 'title': 'Job', 'body': 'Done', 'suggested_section': 'shipyard'}
-        with appmod.app.app_context():
-            key = 'dock-daily-test-key'
-            appmod.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('api_key',?)", (key,))
+        key = self._api_key()
+        routes_dock_daily.AUTO_DRAFT_INGEST_ENABLED = True
+        self.addCleanup(setattr, routes_dock_daily, 'AUTO_DRAFT_INGEST_ENABLED', False)
         url = f"/api/ext/dock-daily/projects/{p['id']}/merge"
         bad = self.client.post(url, json={'report_date': '2026-08-20', 'events': [event], 'partial': True}, headers={'X-API-Key': key})
         self.assertEqual(409, bad.status_code)

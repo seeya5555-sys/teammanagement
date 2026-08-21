@@ -1144,6 +1144,16 @@
   "defaults": {}
  },
  {
+  "rule": "/api/dock-daily/reports/<int:rid>/copy-from",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.report_copy_from",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/dock-daily/reports/<int:rid>/email-preview",
   "methods": [
    "GET",

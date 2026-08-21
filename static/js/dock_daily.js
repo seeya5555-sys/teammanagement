@@ -351,6 +351,73 @@
     }catch(e){$('#dd-date-error').textContent=conflictText(e);}
     finally{btn.disabled=state.report?.status==='final';}
   }
+  // 이전 일자 가져오기. 자동초안을 폐기한 대신 들어온 경로다(형 지시 2026-08-21) —
+  // 입거공사는 전날 작업이 그대로 이어지는 날이 많아서, 자동으로 만든 문구보다
+  // 어제 형이 쓴 문장을 복사해 고치는 쪽이 실제 작업 방식에 맞는다.
+  const copyModal=$('#dd-copy-modal');
+  function closeCopyModal(){copyModal.hidden=true;document.body.style.overflow='';}
+  function copyTargetNote(){
+    const n=(state.report?.blocks||[]).length;
+    return n?`이 보고서에는 이미 카드 ${n}개가 있습니다. "가져오기"는 그 카드를 지우고 덮어씁니다.`
+            :'이 보고서는 아직 비어 있습니다.';
+  }
+  async function openCopyModal(){
+    if(!state.report)return; clearErr();
+    const rid=state.report.id, locked=state.report.status==='final';
+    // 날짜 정정·미리보기와 같은 계약: 남은 편집을 먼저 저장한다. 가져오기도 revision 을
+    // 올리므로 저장하지 않으면 그 다음 저장이 409 로 막힌다.
+    if(state.dirty&&!locked)await save();
+    if(state.report?.id!==rid)return;            // await 사이에 다른 일자로 옮겨갔다
+    // 기능 이름이 "이전 일자" 다. 목록도 실제로 앞선 날짜만 준다(올마이트 지적 2026-08-21) —
+    // 아직 오지 않은 날짜에서 당겨오는 건 "이어지는 작업" 이 아니다. 서버는 방향을 따지지
+    // 않으므로(일반 복사 라우트) 이 제한은 화면 계약이고, 첫 일자에서는 후보가 0 이 된다.
+    const today=state.report.report_date;
+    const others=(state.reports||[]).filter(r=>r.id!==rid&&r.report_date<today)
+      .sort((a,b)=>b.report_date.localeCompare(a.report_date));
+    const sel=$('#dd-copy-src');
+    sel.innerHTML=others.map(r=>`<option value="${esc(r.id)}">${esc(r.report_date)} · ${esc(r.status)}</option>`).join('')
+      ||'<option value="">이 일자보다 앞선 보고서가 없습니다</option>';
+    sel.disabled=!others.length;
+    // 확정본에서 가져오는 건 막지 않는다(읽기다). 확정본으로 가져오는 것만 막힌다.
+    const blocked=locked||!others.length;
+    $('#dd-copy-run').disabled=blocked; $('#dd-copy-append').disabled=blocked;
+    $('#dd-copy-target').textContent=copyTargetNote();
+    $('#dd-copy-error').textContent=locked?CONFLICT.final_locked:'';
+    copyModal.hidden=false;document.body.style.overflow='hidden';sel.focus();
+  }
+  async function runCopy(mode){
+    if(!state.report)return;
+    // 날짜 정정과 같은 이유로 id 를 먼저 고정한다 — await 뒤 state 를 다시 읽으면
+    // 그 사이 옮겨간 화면을 덮어쓴다.
+    const rid=state.report.id, pid=state.project.id, src=+$('#dd-copy-src').value;
+    if(!src){$('#dd-copy-error').textContent='가져올 보고서를 선택하세요.';return;}
+    if(mode==='replace'&&(state.report.blocks||[]).length
+       &&!confirm('이 보고서에 이미 쓴 카드를 지우고 고른 일자의 내용으로 덮어씁니다. 계속할까요?'))return;
+    const run=$('#dd-copy-run'),app=$('#dd-copy-append');
+    run.disabled=true;app.disabled=true;$('#dd-copy-error').textContent='';
+    try{
+      const out=await api(`/api/dock-daily/reports/${rid}/copy-from`,
+        {...json({revision:state.report.revision,source_report_id:src,mode}),method:'POST'});
+      const rows=await api(`/api/dock-daily/projects/${pid}/reports`);
+      closeCopyModal();
+      if(state.project?.id!==pid)return;
+      state.reports=rows;
+      if(state.report?.id===rid)await selectReport(rid); else renderReportDates();
+      const from=(rows.find(r=>r.id===src)||{}).report_date||src;
+      // skipped_blocks 는 이미지 카드와 "지금 프로젝트에 없는 섹션" 의 카드 수다. 첨부는
+      // 애초에 세지 않으므로 첨부라고 말하면 거짓이다(올마이트 지적 2026-08-21).
+      const skipped=out.skipped_blocks?` 이미지 카드와 없어진 섹션의 카드 ${out.skipped_blocks}개는 따라오지 않았습니다.`:'';
+      notice(out.copied_blocks
+        ?`${from} 보고서에서 카드 ${out.copied_blocks}개를 ${mode==='append'?'뒤에 붙였습니다':'가져왔습니다'}.${skipped}`
+        :`${from} 보고서에 가져올 카드가 없었습니다.${skipped}`);
+    }catch(e){$('#dd-copy-error').textContent=conflictText(e);}
+    finally{const locked=state.report?.status==='final';run.disabled=locked;app.disabled=locked;}
+  }
+  $('#dd-copy-from').onclick=()=>openCopyModal().catch(err);
+  $('#dd-copy-run').onclick=()=>runCopy('replace').catch(e=>{$('#dd-copy-error').textContent=conflictText(e);});
+  $('#dd-copy-append').onclick=()=>runCopy('append').catch(e=>{$('#dd-copy-error').textContent=conflictText(e);});
+  $('#dd-copy-close').onclick=closeCopyModal; $('#dd-copy-cancel').onclick=closeCopyModal;
+
   $('#dd-date-edit').onclick=()=>openDateModal().catch(err);
   $('#dd-date-save').onclick=()=>saveReportDate().catch(e=>{$('#dd-date-error').textContent=conflictText(e);});
   $('#dd-date-close').onclick=closeDateModal; $('#dd-date-cancel').onclick=closeDateModal;
@@ -403,13 +470,14 @@
   ['dragover','drop'].forEach(t=>window.addEventListener(t,e=>{if(!dropzone.contains(e.target))e.preventDefault();}));
   $('#dd-preview-close').onclick=closePreview;$('#dd-preview-done').onclick=closePreview;$('#dd-copy-all').onclick=copyEmail;$('#dd-svms-push').onclick=pushSvms;$('#dd-file-close').onclick=closeFilePreview;
 
-  const projectModal=$('#dd-project-modal'),projectForm=$('#dd-project-form'),projectError=$('#ddp-error'),autoToggle=$('#ddp-auto');
-  function setAutoFields(){const enabled=autoToggle.checked;$('#ddp-auto-fields').hidden=!enabled;['#ddp-active-from','#ddp-active-to','#ddp-source-ids'].forEach(s=>$(s).required=enabled);if(enabled&&!$('#ddp-active-from').value){$('#ddp-active-from').value=today();$('#ddp-active-to').value=today();}}
-  async function openProjectModal(){projectForm.reset();projectError.textContent='';setAutoFields();try{if(!state.vessels.length)state.vessels=await api('/api/vessels');$('#ddp-vessel').innerHTML='<option value="">활성 선박을 선택하세요</option>'+state.vessels.map(v=>`<option value="${v.id}">${esc(v.name)}${v.vsl_cd?` · ${esc(v.vsl_cd)}`:''}</option>`).join('');projectModal.hidden=false;document.body.style.overflow='hidden';$('#ddp-vessel').focus();}catch(e){err(e);}}
+  const projectModal=$('#dd-project-modal'),projectForm=$('#dd-project-form'),projectError=$('#ddp-error');
+  async function openProjectModal(){projectForm.reset();projectError.textContent='';try{if(!state.vessels.length)state.vessels=await api('/api/vessels');$('#ddp-vessel').innerHTML='<option value="">활성 선박을 선택하세요</option>'+state.vessels.map(v=>`<option value="${v.id}">${esc(v.name)}${v.vsl_cd?` · ${esc(v.vsl_cd)}`:''}</option>`).join('');projectModal.hidden=false;document.body.style.overflow='hidden';$('#ddp-vessel').focus();}catch(e){err(e);}}
   function closeProjectModal(){projectModal.hidden=true;document.body.style.overflow='';}
-  autoToggle.onchange=setAutoFields;$('#dd-new-project').onclick=openProjectModal;$('#dd-project-close').onclick=closeProjectModal;$('#dd-project-cancel').onclick=closeProjectModal;
-  document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!projectModal.hidden)closeProjectModal();else if(!dateModal.hidden)closeDateModal();else if(!previewModal.hidden)closePreview();else if(!$('#dd-file-modal').hidden)closeFilePreview();else if(!uploadModal.hidden)closeUploadModal();});
-  projectForm.onsubmit=async e=>{e.preventDefault();projectError.textContent='';if(!projectForm.reportValidity())return;const auto_generate=autoToggle.checked,active_from=$('#ddp-active-from').value||null,active_to=$('#ddp-active-to').value||null,sourceIds=$('#ddp-source-ids').value.split(',').map(x=>x.trim()).filter(Boolean);if(auto_generate&&active_from>active_to)return projectError.textContent='자동작성 종료일은 시작일보다 빠를 수 없습니다.';if(auto_generate&&sourceIds.some(x=>!/^v_[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(x)))return projectError.textContent='Dock Manager 원천 ID는 모두 v_로 시작해야 합니다.';const button=$('#dd-project-create');button.disabled=true;button.textContent='생성 중…';try{const created=await api('/api/dock-daily/projects',{...json({vessel_id:Number($('#ddp-vessel').value),title:$('#ddp-title').value.trim(),berthing_date:$('#ddp-berthing').value||null,dock_in_date:$('#ddp-dock-in').value||null,dock_out_date:$('#ddp-dock-out').value||null,departure_date:$('#ddp-departure').value||null,active_from:auto_generate?active_from:null,active_to:auto_generate?active_to:null,auto_generate,dock_manager_project_ids:auto_generate?sourceIds:[],svms_dk_cd:$('#ddp-svms-dk').value.trim()||null,special_sections:$('#ddp-egcs').checked?[{section_key:'egcs',label:'EGCS Retrofit',enabled:true}]:[]}),method:'POST'});closeProjectModal();await loadProjects();await selectProject(created.id);}catch(error){projectError.textContent=error.message||String(error);}finally{button.disabled=false;button.textContent='프로젝트 생성';}};
+  $('#dd-new-project').onclick=openProjectModal;$('#dd-project-close').onclick=closeProjectModal;$('#dd-project-cancel').onclick=closeProjectModal;
+  document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!projectModal.hidden)closeProjectModal();else if(!copyModal.hidden)closeCopyModal();else if(!dateModal.hidden)closeDateModal();else if(!previewModal.hidden)closePreview();else if(!$('#dd-file-modal').hidden)closeFilePreview();else if(!uploadModal.hidden)closeUploadModal();});
+  // 자동초안 폐기(형 지시 2026-08-21) 이후 프로젝트 생성은 자동작성 관련 값을 아예
+  // 보내지 않는다. 서버 기본값이 auto_generate=0 이라 컬럼은 그대로 두고 꺼진다.
+  projectForm.onsubmit=async e=>{e.preventDefault();projectError.textContent='';if(!projectForm.reportValidity())return;const button=$('#dd-project-create');button.disabled=true;button.textContent='생성 중…';try{const created=await api('/api/dock-daily/projects',{...json({vessel_id:Number($('#ddp-vessel').value),title:$('#ddp-title').value.trim(),berthing_date:$('#ddp-berthing').value||null,dock_in_date:$('#ddp-dock-in').value||null,dock_out_date:$('#ddp-dock-out').value||null,departure_date:$('#ddp-departure').value||null,svms_dk_cd:$('#ddp-svms-dk').value.trim()||null,special_sections:$('#ddp-egcs').checked?[{section_key:'egcs',label:'EGCS Retrofit',enabled:true}]:[]}),method:'POST'});closeProjectModal();await loadProjects();await selectProject(created.id);}catch(error){projectError.textContent=error.message||String(error);}finally{button.disabled=false;button.textContent='프로젝트 생성';}};
   window.addEventListener('beforeunload',event=>{if(state.dirty){event.preventDefault();event.returnValue='';}});
   loadProjects().catch(err);
 })();

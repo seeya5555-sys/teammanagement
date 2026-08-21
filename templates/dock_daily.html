@@ -33,12 +33,12 @@
 </style>{% endblock %}
 {% block content %}
 <div class="dd-wrap">
-  <div class="dd-row"><div><div class="eyebrow">DOCK PREPARATION</div><h1>입거 Daily Report</h1><p class="dd-muted">자동초안은 출처를 보존하고, 수동 수정은 다음 자동 병합에서 보호됩니다.</p></div><button class="dd-btn" id="dd-new-project">＋ NEW PROJECT</button></div>
+  <div class="dd-row"><div><div class="eyebrow">DOCK PREPARATION</div><h1>입거 Daily Report</h1><p class="dd-muted">보고서 본문은 직접 작성합니다. 전날 이어지는 작업은 <b>이전 일자 가져오기</b>로 복사하세요.</p></div><button class="dd-btn" id="dd-new-project">＋ NEW PROJECT</button></div>
   <div class="dd-grid">
-    <aside class="dd-card dd-projects"><h2>입거 프로젝트</h2><div id="dd-project-list" class="dd-list">불러오는 중…</div><div id="dd-project-tools" style="display:none;margin-top:14px;border-top:1px solid #eee;padding-top:12px"><label class="dd-muted" for="dd-generate-date">새 보고서 일자</label><input class="dd-input" id="dd-generate-date" type="date"><button class="dd-btn" id="dd-generate">초안 생성/열기</button><div class="dd-report-dates"><b>Daily Report 일자</b><input class="dd-input" id="dd-report-search" type="search" inputmode="numeric" autocomplete="off" placeholder="날짜 검색 · 2026-08 · 0820" aria-label="보고서 일자 검색"><select class="dd-select" id="dd-report-status" aria-label="상태 필터"><option value="">전체 상태</option><option value="auto_draft">auto_draft</option><option value="editing">editing</option><option value="final">final</option></select><select class="dd-select" id="dd-report-select" aria-label="보고서 일자 선택"></select><div class="dd-row"><span id="dd-report-count" class="dd-muted"></span><button class="dd-btn alt dd-report-del" id="dd-report-del" type="button" title="열려 있는 일자 삭제">이 일자 삭제</button></div></div><div id="dd-special-tools" style="margin-top:12px"></div></div></aside>
+    <aside class="dd-card dd-projects"><h2>입거 프로젝트</h2><div id="dd-project-list" class="dd-list">불러오는 중…</div><div id="dd-project-tools" style="display:none;margin-top:14px;border-top:1px solid #eee;padding-top:12px"><label class="dd-muted" for="dd-generate-date">새 보고서 일자</label><input class="dd-input" id="dd-generate-date" type="date"><button class="dd-btn" id="dd-generate">이 일자 보고서 만들기</button><div class="dd-report-dates"><b>Daily Report 일자</b><input class="dd-input" id="dd-report-search" type="search" inputmode="numeric" autocomplete="off" placeholder="날짜 검색 · 2026-08 · 0820" aria-label="보고서 일자 검색"><select class="dd-select" id="dd-report-status" aria-label="상태 필터"><option value="">전체 상태</option><option value="auto_draft">auto_draft</option><option value="editing">editing</option><option value="final">final</option></select><select class="dd-select" id="dd-report-select" aria-label="보고서 일자 선택"></select><div class="dd-row"><span id="dd-report-count" class="dd-muted"></span><button class="dd-btn alt dd-report-del" id="dd-report-del" type="button" title="열려 있는 일자 삭제">이 일자 삭제</button></div></div><div id="dd-special-tools" style="margin-top:12px"></div></div></aside>
     <main>
       <section class="dd-card" id="dd-empty"><h2>프로젝트를 선택하세요</h2><p class="dd-muted">선박 프로젝트를 선택하면 일자별 보고서를 확인할 수 있습니다.</p></section>
-      <section class="dd-card dd-report" id="dd-report"><div class="dd-row"><div><h2 id="dd-report-title">Daily Report</h2><span id="dd-report-meta" class="dd-muted"></span></div><div class="dd-toolbar"><button class="dd-btn alt" id="dd-email">이메일 미리보기</button><button class="dd-btn alt" id="dd-svms">SVMS 미리보기</button><button class="dd-btn alt" id="dd-attach">첨부파일 등록</button><input id="dd-file-input" type="file" multiple hidden accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.bmp,.txt,.csv,.msg"><button class="dd-btn alt" id="dd-date-edit">날짜 수정</button><button class="dd-btn alt" id="dd-final">확정</button><button class="dd-btn" id="dd-save">저장</button></div></div><div id="dd-error" class="dd-error"></div><div id="dd-notice" class="dd-notice"></div>
+      <section class="dd-card dd-report" id="dd-report"><div class="dd-row"><div><h2 id="dd-report-title">Daily Report</h2><span id="dd-report-meta" class="dd-muted"></span></div><div class="dd-toolbar"><button class="dd-btn alt" id="dd-email">이메일 미리보기</button><button class="dd-btn alt" id="dd-svms">SVMS 미리보기</button><button class="dd-btn alt" id="dd-attach">첨부파일 등록</button><input id="dd-file-input" type="file" multiple hidden accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.bmp,.txt,.csv,.msg"><button class="dd-btn alt" id="dd-copy-from">이전 일자 가져오기</button><button class="dd-btn alt" id="dd-date-edit">날짜 수정</button><button class="dd-btn alt" id="dd-final">확정</button><button class="dd-btn" id="dd-save">저장</button></div></div><div id="dd-error" class="dd-error"></div><div id="dd-notice" class="dd-notice"></div>
         <div class="dd-section"><h3>VESSEL ITINERARY</h3><div id="dd-itinerary" class="dd-itinerary-edit"></div><p class="dd-muted" id="dd-itinerary-note">변경 후 저장을 누르면 프로젝트 전체 보고서 일정에 반영됩니다.</p></div>
         <div class="dd-section"><div id="dd-sections"></div></div>
         <div class="dd-section"><div class="dd-row"><h3>첨부파일</h3><span class="dd-muted">향후 SVMS 첨부 연계를 위해 report 단위로 보관</span></div><div id="dd-attachments" class="dd-attachments"></div></div>
@@ -55,6 +55,8 @@
 
 <div class="modal" id="dd-date-modal" hidden><div class="modal-backdrop"></div><div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="dd-date-title"><div class="modal-head"><div><div class="eyebrow">DOCK DAILY</div><h2 id="dd-date-title">보고서 날짜 수정</h2></div><button class="modal-close" id="dd-date-close" type="button" aria-label="닫기">×</button></div><div class="modal-body"><p class="dd-modal-intro"><b>잘못 입력한 일자를 제자리에서 고칩니다.</b><br>본문·첨부·확정 상태는 그대로 남고, 자동생성된 메일 제목의 날짜만 함께 옮겨집니다. 직접 쓴 제목은 건드리지 않습니다. 자동수집 블록과 원천 링크는 새 날짜로 다시 수집하지 않습니다.</p><label class="dd-muted" for="dd-date-new">새 보고서 일자</label><input class="dd-input" id="dd-date-new" type="date"><p class="dd-modal-error" id="dd-date-error"></p></div><div class="dd-modal-actions"><button class="dd-btn alt" id="dd-date-cancel" type="button">취소</button><button class="dd-btn" id="dd-date-save" type="button">날짜 변경</button></div></div></div>
 
+<div class="modal" id="dd-copy-modal" hidden><div class="modal-backdrop"></div><div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="dd-copy-title"><div class="modal-head"><div><div class="eyebrow">DOCK DAILY</div><h2 id="dd-copy-title">이전 일자 가져오기</h2></div><button class="modal-close" id="dd-copy-close" type="button" aria-label="닫기">×</button></div><div class="modal-body"><p class="dd-modal-intro"><b>고른 일자의 작업내역을 이 보고서로 그대로 복사합니다.</b><br>전날에서 이어지는 공사를 다시 타이핑하지 않기 위한 기능입니다. 복사된 카드는 이 보고서의 것이 되므로 마음대로 고쳐도 원본은 바뀌지 않습니다. <b>첨부파일과 이미지 카드, 지금 프로젝트에 없는 섹션의 카드는 따라오지 않습니다.</b> 일정(ITINERARY)은 프로젝트 공용이라 복사 대상이 아니고, 메일 제목도 날짜가 들어 있어 그대로 둡니다.</p><label class="dd-muted" for="dd-copy-src">가져올 보고서</label><select class="dd-select" id="dd-copy-src"></select><p class="dd-muted" id="dd-copy-target"></p><p class="dd-modal-error" id="dd-copy-error"></p></div><div class="dd-modal-actions"><button class="dd-btn alt" id="dd-copy-cancel" type="button">취소</button><button class="dd-btn alt" id="dd-copy-append" type="button">뒤에 붙이기</button><button class="dd-btn" id="dd-copy-run" type="button">가져오기</button></div></div></div>
+
 <div class="modal" id="dd-project-modal" hidden>
   <div class="modal-backdrop"></div>
   <div class="modal-box modal-lg" role="dialog" aria-modal="true" aria-labelledby="dd-project-modal-title">
@@ -64,7 +66,7 @@
     </div>
     <form id="dd-project-form">
       <div class="modal-body">
-        <p class="dd-modal-intro"><b>필수 입력은 선박과 프로젝트명 2개입니다.</b><br>자동초안을 켜는 경우에만 자동작성 기간과 Dock Manager 원천 ID가 추가로 필수입니다. 나머지 일정과 SVMS Dock No는 나중에 보완할 수 있습니다.</p>
+        <p class="dd-modal-intro"><b>필수 입력은 선박과 프로젝트명 2개입니다.</b><br>나머지 일정과 SVMS Dock No는 나중에 보완할 수 있습니다.</p>
 
         <section class="dd-form-section">
           <h3>기본 정보</h3><p class="dd-form-help"><span class="dd-required">*</span> 표시는 반드시 입력해야 합니다.</p>
@@ -84,18 +86,14 @@
           </div>
         </section>
 
-        <section class="dd-form-section">
-          <h3>자동초안 연동 <span class="dd-muted">선택</span></h3><p class="dd-form-help">매일 17:00에 Dock Manager 기록으로 초안을 만들 프로젝트만 켜세요.</p>
-          <label class="dd-switch"><input id="ddp-auto" type="checkbox"><span><b>자동초안 사용</b><span>켜면 아래 3개 항목이 모두 필수입니다.</span></span></label>
-          <div class="dd-auto-fields" id="ddp-auto-fields" hidden>
-            <div class="form-row-2col" style="margin-top:12px">
-              <label class="form-field"><span class="form-label">자동작성 시작일 <em>*</em></span><input id="ddp-active-from" type="date"><span class="dd-field-help">이 날짜부터 일자별 초안 생성</span></label>
-              <label class="form-field"><span class="form-label">자동작성 종료일 <em>*</em></span><input id="ddp-active-to" type="date"><span class="dd-field-help">이 날짜까지만 자동 생성</span></label>
-            </div>
-            <label class="form-field"><span class="form-label">Dock Manager 원천 ID <em>*</em></span><input id="ddp-source-ids" type="text" placeholder="예: v_982f9d8c, v_f8b31cd4"><span class="dd-field-help">Dock Manager의 선박/프로젝트 ID. 여러 개면 쉼표로 구분하며 모두 v_로 시작합니다.</span></label>
-          </div>
-        </section>
-
+        {#
+          🔴 "자동초안 연동" 섹션(자동작성 ON/기간/Dock Manager 원천 ID)은 자동 초안
+          폐기와 함께 걷어냈다(형 지시 2026-08-21).  본문은 사람이 쓰고, 이어지는 작업은
+          보고서 화면의 "이전 일자 가져오기"로 복사한다.  DB 컬럼(auto_generate,
+          active_from/to, drydock_source_vessel_ids_json)과 서버의 수집 코드는 이미
+          수집된 dock_auto 블록의 provenance 표시 때문에 남겨 두었고, 수집 입구는
+          routes_dock_daily.AUTO_DRAFT_INGEST_ENABLED 한 곳에서 닫혀 있다.
+        #}
         <section class="dd-form-section">
           <h3>추가 연동 <span class="dd-muted">선택</span></h3>
           <div class="form-row-2col">

@@ -43,6 +43,16 @@ MAX_ATTACHMENT = 20 * 1024 * 1024
 MAX_OOXML_UNCOMPRESSED = 64 * 1024 * 1024
 MAX_OOXML_PART = 8 * 1024 * 1024
 
+# 🔴 자동 초안 수집 폐기 (형 지시 2026-08-21).  자동으로 끌어온 문장은 형이 쓰려던
+# 문구가 아니어서, 보고서 본문은 사람이 쓰고 이어지는 작업만 "이전 일자 가져오기"로
+# 복사하는 쪽으로 컨셉이 바뀌었다.
+#
+# 끄는 방식이 라우트 삭제가 아닌 이유: 이미 수집된 dock_auto 블록과 source_link 행이
+# DB 에 남아 있고 그 provenance 표시(웹 배지 · iOS 배지)는 계속 동작해야 한다.  또 되돌릴
+# 결정이면 이 상수 하나만 False 로 놓으면 되도록 남겨 둔다 -- 컬럼/러너/plist 는 지우지
+# 않았다(`automation/dock-daily/runner.py`, `ai.openclaw.dock-daily` launchd job=disabled).
+AUTO_DRAFT_INGEST_ENABLED = False
+
 
 def _now():
     return datetime.now().replace(microsecond=0).isoformat(' ')
@@ -730,6 +740,128 @@ def report_put(rid):
     return jsonify(_report_json(rid))
 
 
+COPY_MODES = ('replace', 'append')
+
+
+@bp.route('/api/dock-daily/reports/<int:rid>/copy-from', methods=['POST'])
+@login_required
+def report_copy_from(rid):
+    """이전 일자 보고서 본문을 이 보고서로 그대로 당겨온다(형 지시 2026-08-21).
+
+    자동초안 폐기와 한 쌍인 경로다.  입거공사는 전날 작업이 그대로 이어지는 날이
+    많아서, 자동으로 문장을 만들어 주는 것보다 사람이 쓴 어제 문장을 복사해 고치는
+    쪽이 실제 작업 방식에 맞는다.
+
+    🔴 복사되는 것과 안 되는 것 -- 이 목록이 계약이다:
+      · 섹션 카드 본문(item/paragraph/table)은 내용 그대로 복사된다.  다만 origin 은
+        'manual', manual_override=1 로 들어간다.  당겨온 순간 그 문장은 사람이 고른
+        문장이고, 원본이 달고 있던 자동수집 provenance 는 이 날짜의 근거가 아니다.
+      · image 블록·첨부는 따라오지 않는다.  첨부는 실제 파일이고 stored_name 이
+        UNIQUE 라 행만 복사하면 한쪽을 지울 때 다른 쪽 파일까지 사라진다.  프로젝트에서
+        사라진 섹션의 블록도 같이 건너뛴다.  건너뛴 개수는 응답에 실어 화면에서 알린다.
+      · 일정(ITINERARY)은 프로젝트 열이라 애초에 보고서별로 다르지 않다.
+      · 메일 제목은 날짜를 품고 있어 절대 복사하지 않는다.  인사말·안전문구는
+        `replace` 일 때만 따라온다(`append` 는 지금 쓰고 있는 머리말을 건드리지 않는다).
+
+    `replace` 는 이 보고서의 기존 카드를 지우지만 첨부는 지우지 않는다 -- 파일은
+    사람이 올린 것이고, 본문 교체가 파일 삭제까지 뜻할 이유가 없다.  블록이 사라지면
+    FK 가 attachment.block_id 를 NULL 로 풀어 첨부 목록에는 그대로 남는다.
+    """
+    data = _body()
+    if not isinstance(data.get('revision'), int):
+        return _error('revision is required', 400)
+    try:
+        source_id = int(data.get('source_report_id'))
+    except (TypeError, ValueError):
+        return _error('source_report_id is required')
+    mode = str(data.get('mode') or 'replace')
+    if mode not in COPY_MODES:
+        return _error('mode must be replace or append')
+    if source_id == rid:
+        return _error('source_report_id must be another report', 400, code='same_report')
+    row, err = _cas_begin(rid, data['revision'])
+    if err:
+        return err
+    db = get_db()
+    try:
+        src = db.execute('SELECT * FROM dock_daily_report WHERE id=?', (source_id,)).fetchone()
+        if not src:
+            db.rollback(); return _error('source report not found', 404)
+        # 다른 프로젝트(=다른 선박) 보고서를 당겨오면 조용히 엉뚱한 배의 작업내역이
+        # 섞인다.  같은 프로젝트 안에서만 허용한다.
+        if src['project_id'] != row['project_id']:
+            db.rollback(); return _error('source report belongs to another project', 400,
+                                         code='cross_project')
+        sections = {x['section_key'] for x in _sections(row['project_id'], include_disabled=True)}
+        deleted = 0
+        if mode == 'replace':
+            deleted = db.execute('DELETE FROM dock_daily_block WHERE report_id=?', (rid,)).rowcount
+        bases = {}
+        if mode == 'append':
+            for b in db.execute('SELECT section_key, MAX(sort_order) m FROM dock_daily_block '
+                                'WHERE report_id=? GROUP BY section_key', (rid,)):
+                bases[b['section_key']] = (b['m'] or 0) + 1
+        src_blocks = db.execute('SELECT * FROM dock_daily_block WHERE report_id=? '
+                                'ORDER BY section_key, sort_order, id', (source_id,)).fetchall()
+        idmap = {}; copied = 0; skipped = 0; seq = {}
+        for b in src_blocks:
+            if b['block_type'] == 'image' or b['section_key'] not in sections:
+                skipped += 1
+                continue
+            if mode == 'append':
+                n = seq.get(b['section_key'], 0); seq[b['section_key']] = n + 1
+                order = bases.get(b['section_key'], 0) + n
+            else:
+                order = b['sort_order']
+            cur = db.execute('''INSERT INTO dock_daily_block(report_id,section_key,parent_id,sort_order,
+                                block_type,content_json,origin,manual_override)
+                                VALUES (?,?,NULL,?,?,?,'manual',1)''',
+                             (rid, b['section_key'], order, b['block_type'], b['content_json']))
+            idmap[b['id']] = cur.lastrowid
+            copied += 1
+        # 부모가 자식보다 먼저 나온다는 보장이 없으므로 전부 넣은 뒤 다시 잇는다.
+        # 부모가 건너뛴 블록이면 자식은 최상위로 남는다 -- 없는 부모를 가리키게 두는
+        # 쪽이 더 나쁘다.
+        for b in src_blocks:
+            new_id = idmap.get(b['id'])
+            if new_id and b['parent_id'] and idmap.get(b['parent_id']):
+                db.execute('UPDATE dock_daily_block SET parent_id=? WHERE id=?',
+                           (idmap[b['parent_id']], new_id))
+        # 🔴 인사말/안전문구도 "바뀐 것" 으로 센다(올마이트 지적 2026-08-21).  앞서는
+        # `copied`/`deleted` 만 봤는데, 원본이 이미지 카드만 가진 빈 보고서면 두 값이
+        # 0 이라 아래 rollback 이 이 UPDATE 까지 되돌리고도 200 을 줬다 -- 계약은 replace
+        # 에서 인사말이 따라온다고 말하는데 조용히 안 따라오는 상태였다.
+        meta = 0
+        if mode == 'replace':
+            meta = db.execute('UPDATE dock_daily_report SET email_intro=?, safety_footer=? '
+                              'WHERE id=? AND (IFNULL(email_intro,"")<>IFNULL(?,"") '
+                              'OR IFNULL(safety_footer,"")<>IFNULL(?,""))',
+                              (src['email_intro'], src['safety_footer'], rid,
+                               src['email_intro'], src['safety_footer'])).rowcount
+        if not copied and not deleted and not meta:
+            db.rollback()
+            out = _report_json(rid)
+            out.update(copied_blocks=0, skipped_blocks=skipped, source_report_id=source_id)
+            return jsonify(out)
+        newrev = row['revision'] + 1
+        cur = db.execute("UPDATE dock_daily_report SET revision=?, "
+                         "status=CASE WHEN status='auto_draft' THEN 'editing' ELSE status END, "
+                         "updated_at=datetime('now','localtime') WHERE id=? AND revision=?",
+                         (newrev, rid, row['revision']))
+        if cur.rowcount != 1:
+            db.rollback(); return _error('revision conflict', 409, code='revision_conflict',
+                                         current_revision=row['revision'])
+        db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor) '
+                   'VALUES (?,?,?,?)',
+                   (rid, newrev, json.dumps(_snapshot(rid), ensure_ascii=False), session_actor()))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    out = _report_json(rid)
+    out.update(copied_blocks=copied, skipped_blocks=skipped, source_report_id=source_id)
+    return jsonify(out)
+
+
 @bp.route('/api/dock-daily/reports/<int:rid>/status', methods=['POST'])
 @login_required
 def report_status(rid):
@@ -1342,15 +1474,32 @@ def _runner_merge(pid, data):
                     'complete': True, 'partial': False})
 
 
+def _ingest_retired():
+    """자동수집 입구를 닫는 단일 지점.  열려 있으면 None.
+
+    410 을 쓰는 이유: 러너가 계속 돌더라도 "일시적 실패"로 재시도하지 않고 폐기된
+    경로라는 걸 로그에서 바로 알 수 있어야 한다.  404 로 숨기면 러너 쪽에서 배포
+    사고와 구분되지 않는다.
+    """
+    if AUTO_DRAFT_INGEST_ENABLED:
+        return None
+    return _error('automatic draft ingestion has been retired', 410, code='auto_draft_retired')
+
+
 @bp.route('/api/ext/dock-daily/projects/<int:pid>/merge', methods=['POST'])
 @api_key_required
 def ext_merge_project(pid):
-    return _runner_merge(pid, request.get_json(silent=True) or {})
+    return _ingest_retired() or _runner_merge(pid, request.get_json(silent=True) or {})
 
 
 @bp.route('/api/ext/dock-daily/projects', methods=['GET'])
 @api_key_required
 def ext_projects_get():
+    # 목록도 같이 닫는다.  여기만 열어 두면 러너는 "대상 있음"을 보고 merge 에서만
+    # 410 을 맞아, 폐기된 기능이 매일 실패 알림을 내는 모양이 된다.
+    retired = _ingest_retired()
+    if retired:
+        return retired
     rows = query('''SELECT p.*, v.name vessel_name
                     FROM dock_daily_project p JOIN vessels v ON v.id=p.vessel_id
                     WHERE p.auto_generate=1 ORDER BY p.active_from, p.id''')
@@ -1360,6 +1509,9 @@ def ext_projects_get():
 @bp.route('/api/ext/dock-daily/reports/<int:rid>/merge', methods=['POST'])
 @api_key_required
 def ext_merge_report(rid):
+    retired = _ingest_retired()
+    if retired:
+        return retired
     report = _report(rid)
     if not report:
         return _error('report not found', 404)
@@ -1372,6 +1524,9 @@ def ext_merge_report(rid):
 @bp.route('/api/ext/dock-daily/merge', methods=['POST'])
 @api_key_required
 def ext_merge():
+    retired = _ingest_retired()
+    if retired:
+        return retired
     data = request.get_json(silent=True) or {}
     try: pid = int(data.get('project_id'))
     except (TypeError, ValueError): return _error('project_id is required')
