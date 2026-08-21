@@ -1227,6 +1227,7 @@ MAIL_IMAGE_MAX_COUNT = 12      # 한 통에 실을 사진 장수(예산과 별�
 MAIL_IMAGE_MAX_COLUMNS = 4     # 사진 격자 열 수 상한(도크 리포트와 같은 1~4)
 MAIL_BODY_PX = 540             # 들여쓰기(52px) 뒤 남는 본문 폭. 격자 셀 폭 계산 기준
 MAIL_IMAGE_GAP_PX = 6
+MAIL_IMAGE_FRAME_PAD_PX = 4   # 사진 프레임 안쪽 여백(좌우 폭 계산에도 포함)
 # 격자 칸의 가로:세로. 2열 이상에서는 이 비율의 캔버스에 사진 전체를 맞춰 넣어
 # 가로·세로 사진이 섞여도 칸 높이를 같게 유지한다(형 지시 2026-08-21).
 #
@@ -1577,7 +1578,10 @@ def _email(rid):
         열이 늘면 사진이 작게 보이므로 그만큼 작은 바이트만 싣는다(표시폭의 2배까지).
         """
         cols = entry['grid']
-        cell_px = max(60, (MAIL_BODY_PX - MAIL_IMAGE_GAP_PX * (cols - 1)) // cols)
+        # Outlook 은 td 의 padding/border 도 폭에 더한다. 이미지 폭만 본문폭으로 나누면
+        # 프레임을 씌운 순간 표가 MAIL_BODY_PX 를 넘어 줄바꿈·가로잘림이 생길 수 있다.
+        frame_extra = cols * (MAIL_IMAGE_FRAME_PAD_PX * 2 + 2)  # 좌우 padding + 1px border
+        cell_px = max(60, (MAIL_BODY_PX - frame_extra) // cols)
         # 고정 비율 letterbox 는 **한 줄에 옆 칸이 있을 때만** 쓴다. 1열 카드는 높이를
         # 맞출 옆 칸이 없으므로 원본 비율 그대로 보여준다.
         cell_ratio = MAIL_IMAGE_CELL_RATIO if cols > 1 else None
@@ -1599,7 +1603,10 @@ def _email(rid):
                         budget -= image['cost']
             cells.append((image, photo['caption'], note))
 
-        pad = 'padding:0 %dpx 2px 0;vertical-align:top' % MAIL_IMAGE_GAP_PX
+        # 사진과 캡션을 **같은 td** 안에 넣어 하나의 프레임으로 보이게 한다. 사진 행과
+        # 캡션 행을 따로 만들면 Outlook 에서 둘 사이가 벌어져 격자로 읽히지 않는다.
+        frame = ('border:1px solid #9CA3AF;padding:%dpx;vertical-align:top;'
+                 'text-align:center') % MAIL_IMAGE_FRAME_PAD_PX
         # 캡션은 형 지시대로 `<내용>` 꺾쇠로 감싼다. 빈 캡션은 감싸지 않는다 -- 내용 없는
         # `<>` 만 남으면 형이 안 적은 것이 적힌 것처럼 보인다.
         # 🔴 이미 꺾쇠가 있는 캡션은 다시 감싸지 않는다 -- `<<내용>>` 이 된다(옛 데이터에
@@ -1615,9 +1622,7 @@ def _email(rid):
         chunks_out, text_out, rows = [], [], []
         for start in range(0, len(cells), cols):
             row = cells[start:start + cols]
-            # 캡션 줄은 그 줄에 캡션이 하나라도 있을 때만 만든다(도크 리포트와 같은 규칙).
-            has_caption = any((caption or '').strip() for _, caption, _ in row)
-            picture_tds, caption_tds = [], []
+            framed_tds = []
             for image, caption, note in row:
                 if image:
                     inner = ('<img src="%s" width="%d" height="%d" alt="%s"'
@@ -1630,20 +1635,20 @@ def _email(rid):
                     reason = note or '본문에 넣지 못했습니다'
                     inner = run(html.escape('(%s)' % reason))
                     text_out.append('- %s (%s)' % (wrap(caption) or '사진', reason))
-                picture_tds.append('<td style="%s">%s</td>' % (pad, inner))
-                if has_caption:
-                    marked = wrap(caption)
-                    text = html.escape(marked) if marked else '&nbsp;'
-                    caption_tds.append('<td style="%s;text-align:center"><p style="margin:0;%s">'
-                                       '<span style="%s">%s</span></p></td>'
-                                       % (pad, caption_font, caption_font, text))
-            # 마지막 줄이 덜 찬 경우 빈 칸으로 채워 열 폭을 흐트러뜨리지 않는다.
-            filler = '<td style="%s">&nbsp;</td>' % pad
-            picture_tds.extend([filler] * (cols - len(picture_tds)))
-            rows.append('<tr>%s</tr>' % ''.join(picture_tds))
-            if caption_tds:
-                caption_tds.extend([filler] * (cols - len(caption_tds)))
-                rows.append('<tr>%s</tr>' % ''.join(caption_tds))
+                marked = wrap(caption)
+                caption_html = ''
+                if marked:
+                    text = html.escape(marked)
+                    caption_html = ('<p style="margin:5px 0 0;mso-margin-top-alt:5px;'
+                                    'mso-margin-bottom-alt:0;%s"><span style="%s">%s</span></p>'
+                                    % (caption_font, caption_font, text))
+                framed_tds.append('<td style="%s">%s%s</td>' % (frame, inner, caption_html))
+            # 마지막 줄이 덜 찬 경우 무테 빈 칸으로 열 폭만 유지한다. 빈 프레임을 그리면
+            # 실제 사진이 없는 자리도 사진 칸처럼 보여 혼동된다.
+            filler = ('<td style="padding:%dpx;vertical-align:top">&nbsp;</td>'
+                      % MAIL_IMAGE_FRAME_PAD_PX)
+            framed_tds.extend([filler] * (cols - len(framed_tds)))
+            rows.append('<tr>%s</tr>' % ''.join(framed_tds))
         if rows:
             chunks_out.append('<table style="border-collapse:collapse;margin:0 0 8px 52px">%s</table>'
                               % ''.join(rows))

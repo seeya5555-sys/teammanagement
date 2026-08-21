@@ -1884,6 +1884,20 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('&lt;&gt;', mail['html'])
         self.assertNotIn('- <>', mail['text'])
 
+    def test_grid_frames_each_photo_and_caption_in_the_same_cell(self):
+        """형 지시 2026-08-22: 메일에서도 사진+캡션이 한 프레임의 격자로 보여야 한다."""
+        rid, _ids = self._report_with_gallery('사진 프레임 DD', count=2, columns=2,
+                                              captions=['좌현', '우현'])
+        root = _Tree.parse(self._mail(rid)['html'])
+        framed = [td for td in _Tree.find(root, 'td')
+                  if 'border:1px solid #9CA3AF' in td['attrs'].get('style', '')]
+        self.assertEqual(2, len(framed))
+        for td in framed:
+            self.assertEqual(1, len(_Tree.find(td, 'img')))
+            captions = _Tree.find(td, 'p')
+            self.assertEqual(1, len(captions), '캡션은 사진과 같은 td 안에 있어야 한다')
+            self.assertIn('text-align:center', captions[0]['attrs'].get('style', ''))
+
     def test_a_caption_that_already_has_brackets_is_not_wrapped_twice(self):
         """🔴 형이 캡션에 직접 꺾쇠를 적어둔 옛 데이터가 `<<내용>>` 으로 나가면 안 된다."""
         rid, _ids = self._report_with_gallery('꺾쇠 중복 DD', count=2, columns=2,
@@ -1985,7 +1999,8 @@ class DockDailyTests(unittest.TestCase):
         mail = self._mail(rid)
         html_body = mail['html']
         self.assertEqual(3, html_body.count('<img src="data:image/jpeg;base64,'))
-        cell = (routes_dock_daily.MAIL_BODY_PX - routes_dock_daily.MAIL_IMAGE_GAP_PX) // 2
+        frame_extra = 2 * (routes_dock_daily.MAIL_IMAGE_FRAME_PAD_PX * 2 + 2)
+        cell = (routes_dock_daily.MAIL_BODY_PX - frame_extra) // 2
         self.assertIn('width="%d"' % cell, html_body)
         self.assertNotIn('width="%d"' % routes_dock_daily.MAIL_IMAGE_SHOW_PX, html_body,
                          '2열 사진에 1열 표시폭을 쓰면 옆 칸을 밀어낸다')
@@ -2004,14 +2019,19 @@ class DockDailyTests(unittest.TestCase):
 
         self.assertLess(len(payload(narrow)), len(payload(wide)))
 
-    def test_mail_keeps_the_captions_on_their_own_grid_row(self):
-        """캡션은 사진 줄 아래 별도 줄이다. 캡션이 없는 줄은 그 줄을 만들지 않는다."""
+    def test_mail_omits_empty_caption_paragraphs_without_adding_a_grid_row(self):
+        """빈 캡션은 불필요한 문단을 만들지 않고, 캡션은 언제나 별도 표 행이 아니다."""
         with_caption, _ = self._report_with_gallery('캡션 있음 DD', count=2, columns=2)
         rows = self._mail(with_caption)['html'].count('<tr>')
         without, _ = self._report_with_gallery('캡션 없음 DD', count=2, columns=2,
                                                captions=['', ''])
-        self.assertEqual(rows - 1, self._mail(without)['html'].count('<tr>'),
-                         '캡션이 없으면 캡션 줄도 없어야 한다')
+        empty_html = self._mail(without)['html']
+        self.assertEqual(rows, empty_html.count('<tr>'), '캡션은 별도 표 행이 아니다')
+        root = _Tree.parse(empty_html)
+        framed = [td for td in _Tree.find(root, 'td')
+                  if 'border:1px solid #9CA3AF' in td['attrs'].get('style', '')]
+        self.assertEqual(2, len(framed))
+        self.assertTrue(all(len(_Tree.find(td, 'p')) == 0 for td in framed))
 
     def test_mail_gives_a_table_or_photo_card_no_item_number(self):
         """🔴 형 지시 2026-08-21: 표·사진은 하위항목이 아니라 그 자리에 놓인 블록이다."""
