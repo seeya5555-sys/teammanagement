@@ -157,9 +157,29 @@
   function findBlock(key){return (state.report.blocks||[]).find(b=>String(b._key??b.id)===String(key));}
   function canLeaveDraft(){return !state.dirty||confirm('저장되지 않은 수정사항이 있습니다. 저장하지 않고 이동할까요?');}
   function renderAttachments(){
-    const ats=state.report.attachments||[];
-    $('#dd-attachments').innerHTML=ats.length?ats.map(a=>`<button class="dd-attachment" type="button" data-attachment="${a.id}" data-name="${esc(a.original_name)}"><b>${esc(a.original_name)}</b><span>${esc(a.mime_type)} · ${(a.size/1024).toFixed(1)} KB · 미리보기</span></button>`).join(''):'<p class="dd-muted">등록된 첨부파일이 없습니다.</p>';
+    const ats=state.report.attachments||[]; const locked=state.report.status==='final';
+    // The delete cannot sit inside the preview button (invalid HTML, and one
+    // click would fire both), so each attachment is a flex pair. On a 확정본 the
+    // x is left out entirely rather than shown disabled: the server answers 409
+    // there, and an always-refused button reads as a bug.
+    $('#dd-attachments').innerHTML=ats.length?ats.map(a=>`<div class="dd-attachment-row"><button class="dd-attachment" type="button" data-attachment="${a.id}" data-name="${esc(a.original_name)}"><b>${esc(a.original_name)}</b><span>${esc(a.mime_type)} · ${(a.size/1024).toFixed(1)} KB · 미리보기</span></button>${locked?'':`<button class="dd-att-del" type="button" data-del-attachment="${a.id}" title="첨부 삭제" aria-label="${esc(a.original_name)} 삭제">✕</button>`}</div>`).join(''):`<p class="dd-muted">등록된 첨부파일이 없습니다.</p>`;
     document.querySelectorAll('[data-attachment]').forEach(b=>b.onclick=()=>openFilePreview(+b.dataset.attachment,b.dataset.name));
+    document.querySelectorAll('[data-del-attachment]').forEach(b=>b.onclick=()=>once(b,()=>deleteAttachment(+b.dataset.delAttachment)));
+  }
+  // Removing the row from local state instead of re-fetching the report: the
+  // server only touched attachments, and a reload here would throw away
+  // unsaved section edits (uploadFiles guards on state.dirty for the same
+  // reason). A failed request keeps the row, so the list never lies.
+  async function deleteAttachment(id){
+    if(!state.report)return; const a=(state.report.attachments||[]).find(x=>x.id===id); if(!a)return; clearErr();
+    const linked=a.block_id?'\n\n본문 블록에 연결된 파일입니다. 블록과 설명은 남고 사진만 사라집니다.':'';
+    if(!confirm(`${a.original_name||'첨부'} 을(를) 삭제할까요?${linked}\n\n파일이 서버에서 완전히 지워지고 되돌릴 수 없습니다.`))return;
+    // 404 는 성공과 같이 다룬다: 다른 탭·기기에서 이미 지운 행이므로 목록에 남겨두면
+    // 화면이 서버보다 뒤처진다. api() 는 상태코드를 안 넘기므로 여기서만 fetch 를 쓴다.
+    const r=await fetch(`/api/dock-daily/attachments/${id}`,{method:'DELETE'});
+    if(!r.ok&&r.status!==404){const b=await r.json().catch(()=>({}));throw new Error(b.error||`삭제 실패 (${r.status})`);}
+    state.report.attachments=(state.report.attachments||[]).filter(x=>x.id!==id);
+    renderAttachments();
   }
   async function save() {
     if(!state.report)return; clearErr();

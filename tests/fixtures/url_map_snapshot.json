@@ -1011,6 +1011,16 @@
  {
   "rule": "/api/dock-daily/attachments/<int:aid>",
   "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.attachment_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/attachments/<int:aid>",
+  "methods": [
    "GET",
    "HEAD",
    "OPTIONS"

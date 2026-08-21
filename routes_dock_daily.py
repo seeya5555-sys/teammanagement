@@ -416,8 +416,19 @@ _CASCADE_REPORT = _Cascade(
     lambda db, i: db.execute('SELECT stored_name FROM dock_daily_attachment WHERE report_id=?', (i,)),
     lambda db, i: db.execute('DELETE FROM dock_daily_report WHERE id=?', (i,)))
 
+# The row read carries its report's status so the lock can be checked inside the
+# transaction like the other two cascades.  The join is LEFT on purpose: a row
+# whose report is already gone should still be deletable, or its blob is stranded
+# with no route that can reach it.
+_CASCADE_ATTACHMENT = _Cascade(
+    'attachment',
+    lambda db, i: db.execute('SELECT a.*, r.status AS report_status FROM dock_daily_attachment a'
+                             ' LEFT JOIN dock_daily_report r ON r.id=a.report_id WHERE a.id=?', (i,)),
+    lambda db, i: db.execute('SELECT stored_name FROM dock_daily_attachment WHERE id=?', (i,)),
+    lambda db, i: db.execute('DELETE FROM dock_daily_attachment WHERE id=?', (i,)))
 
-def _delete_cascade(target, row_id, guard=None):
+
+def _delete_cascade(target, row_id, guard=None, also=None):
     """Delete one dock-daily row and purge the attachment blobs under it.
 
     Row removal cascades in the schema (`PRAGMA foreign_keys = ON` is set per
@@ -432,7 +443,10 @@ def _delete_cascade(target, row_id, guard=None):
     file stays on disk, so skipping them would leak them forever.
 
     `guard(row)` runs inside the transaction and may return an error response
-    to abort.  Returns (payload, error); a rowcount of 0 means another request
+    to abort.  `also(db, row)` runs there too, after the delete and before the
+    commit, for repair work that has to land atomically with it -- a reference
+    cleared in a second transaction could be seen half-done by a render in
+    between.  Returns (payload, error); a rowcount of 0 means another request
     won the race and is reported as 404, not as a success that did nothing.
     """
     db = get_db()
@@ -452,6 +466,8 @@ def _delete_cascade(target, row_id, guard=None):
         if cur.rowcount != 1:
             db.rollback()
             return None, _error('%s not found' % target.label, 404)
+        if also:
+            also(db, row)
         db.commit()
     except Exception:
         db.rollback(); raise
@@ -772,6 +788,63 @@ def attachment_get(aid):
                                    download_name=row['original_name'])
     response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
+
+
+@bp.route('/api/dock-daily/attachments/<int:aid>', methods=['DELETE'])
+@login_required
+def attachment_delete(aid):
+    """Remove one attachment: its row and its blob.
+
+    No `deleted_at` tombstone here, unlike the block path.  There, hiding the
+    row is enough because deleting the block that owns it is what happened, and
+    the report delete still sweeps the blob later.  A single attachment removed
+    from a report that lives on has no such sweep: leaving the row would keep
+    the file on disk with nothing that ever revisits it, and leaving the blob is
+    the one failure mode `_purge_files` exists to make visible.
+
+    `final` is refused rather than gated behind a confirm token.  Uploading to a
+    확정본 already gets 409 `final report is locked`; letting a delete through
+    would mean the edit lock only holds in one direction, so the same content
+    could be changed by removing instead of adding.  확정 취소 is the way in --
+    that is a decision the user makes explicitly, on the report.
+
+    An image block pointing at this attachment has its reference cleared in the
+    same transaction.  The block itself stays: it carries the caption the user
+    wrote, and deleting someone's paragraph as a side effect of removing a file
+    is a bigger surprise than the file going.
+
+    Leaving the reference behind was the third option and the wrong one.  The
+    live mail body does not render images today (`_render_section` is only
+    called with `as_html=False`, and its html branch has no caller yet), so
+    nothing is visibly broken *right now* -- which is exactly why it would be
+    missed: a stale id resolves to 404 for whoever renders it first, and the
+    only place recording that the file ever existed is the row being deleted.
+    Cleared, the block takes the same path as an image block that never got a
+    file and shows its caption.
+    """
+    def guard(row):
+        if row['report_status'] == 'final':
+            return _error('final report is locked', 409)
+        return None
+
+    def unlink(db, row):
+        # Read-modify-write in Python rather than json_set(): content_json is
+        # free-form per block type and a JSON1 rewrite would also normalise
+        # every other key in it.  Only image blocks can hold the reference.
+        rows = db.execute("SELECT id, content_json FROM dock_daily_block"
+                          " WHERE report_id=? AND block_type='image'", (row['report_id'],)).fetchall()
+        for block in rows:
+            content = _json(block['content_json'], {})
+            if not isinstance(content, dict):
+                continue
+            if str(content.get('attachment_id') or '') != str(aid):
+                continue
+            content['attachment_id'] = None
+            db.execute('UPDATE dock_daily_block SET content_json=? WHERE id=?',
+                       (json.dumps(content, ensure_ascii=False), block['id']))
+
+    payload, err = _delete_cascade(_CASCADE_ATTACHMENT, aid, guard, unlink)
+    return err if err else jsonify(payload)
 
 
 def _safe_zip_xml(zf, path):

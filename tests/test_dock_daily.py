@@ -296,6 +296,161 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(1, gone.get_json()['attachments_found'])
         self.assertEqual(0, gone.get_json()['attachments_removed'])
 
+    def test_single_attachment_delete_takes_the_row_and_the_blob(self):
+        """첨부 1건 삭제는 행과 파일을 함께 지운다.
+
+        A `deleted_at` tombstone would be wrong here: the block path can leave
+        one because deleting the report later sweeps the blob, but a report that
+        lives on never revisits the row -- the file would sit on disk with
+        nothing able to reach it.  The report itself must survive untouched, and
+        a second delete of the same id is a 404, not a silent success."""
+        _project, report, stored = self._project_with_attachment('Attachment Delete DD')
+        rid = report['id']
+        aid = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()['attachments'][0]['id']
+
+        gone = self.client.delete(f'/api/dock-daily/attachments/{aid}')
+        self.assertEqual(200, gone.status_code, gone.get_data(as_text=True))
+        self.assertEqual({'attachments_found': 1, 'attachments_removed': 1, 'deleted': aid},
+                         gone.get_json())
+        self.assertFalse(os.path.exists(stored))
+        with appmod.app.app_context():
+            self.assertEqual([], appmod.query('SELECT id FROM dock_daily_attachment WHERE id=?', (aid,)))
+        survivor = self.client.get(f'/api/dock-daily/reports/{rid}')
+        self.assertEqual(200, survivor.status_code)
+        self.assertEqual([], survivor.get_json()['attachments'])
+        self.assertEqual(404, self.client.delete(f'/api/dock-daily/attachments/{aid}').status_code)
+        self.assertEqual(404, self.client.get(f'/api/dock-daily/attachments/{aid}').status_code)
+
+    def test_attachment_delete_is_refused_on_a_final_report(self):
+        """Uploading to a 확정본 is 409 `final report is locked`, so removing from
+        one has to be too.  If only the delete were open the edit lock would hold
+        in one direction and the same content could still be changed -- by
+        subtraction.  확정 취소 is the way in, and it is the report's decision."""
+        _project, report, stored = self._project_with_attachment('Final Lock Att DD')
+        rid = report['id']
+        aid = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()['attachments'][0]['id']
+        self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': report['revision'], 'status': 'final', 'operations': [],
+        })
+        blocked = self.client.delete(f'/api/dock-daily/attachments/{aid}')
+        self.assertEqual(409, blocked.status_code)
+        self.assertEqual('final report is locked', blocked.get_json()['error'])
+        self.assertTrue(os.path.exists(stored), 'a refused delete must not touch the blob')
+        self.assertEqual(1, len(self.client.get(f'/api/dock-daily/reports/{rid}').get_json()['attachments']))
+
+        # 확정을 풀면 같은 호출이 통과해야 한다 -- 잠금이지 영구 봉인이 아니다.
+        current = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        self.client.post(f'/api/dock-daily/reports/{rid}/status',
+                         json={'status': 'editing', 'revision': current['revision']})
+        self.assertEqual(200, self.client.delete(f'/api/dock-daily/attachments/{aid}').status_code)
+        self.assertFalse(os.path.exists(stored))
+
+    def test_attachment_delete_purges_a_hidden_row_and_counts_real_unlinks(self):
+        """A row hidden by `deleted_at` is unreachable in the UI but its blob is
+        still on disk, so the delete must accept it.  And the count reported is
+        the number of files actually unlinked: if the blob already vanished
+        behind the app's back, saying 1 would hide the only detectable leak."""
+        _project, report, stored = self._project_with_attachment('Hidden Att DD')
+        aid = self.client.get(
+            f"/api/dock-daily/reports/{report['id']}").get_json()['attachments'][0]['id']
+        with appmod.app.app_context():
+            appmod.execute("UPDATE dock_daily_attachment SET deleted_at=datetime('now') WHERE id=?", (aid,))
+        gone = self.client.delete(f'/api/dock-daily/attachments/{aid}')
+        self.assertEqual(200, gone.status_code)
+        self.assertEqual(1, gone.get_json()['attachments_removed'])
+        self.assertFalse(os.path.exists(stored))
+
+        _p2, report2, stored2 = self._project_with_attachment('Missing Att Blob DD', '2026-08-21')
+        aid2 = self.client.get(
+            f"/api/dock-daily/reports/{report2['id']}").get_json()['attachments'][0]['id']
+        os.remove(stored2)
+        counted = self.client.delete(f'/api/dock-daily/attachments/{aid2}').get_json()
+        self.assertEqual(1, counted['attachments_found'])
+        self.assertEqual(0, counted['attachments_removed'])
+
+    def test_attachment_delete_unlinks_the_image_block_it_was_shown_in(self):
+        """A block pointing at the deleted file must not keep pointing at it.
+
+        The live mail body does not render images (`_render_section` is only
+        called with `as_html=False` today), so a stale id breaks nothing that is
+        visible right now -- which is why it would be missed.  The html branch
+        turns any non-zero `attachment_id` into an `<img src=...>`, and after
+        the delete that src is a 404 with nothing left to say what it was.  The
+        block itself survives: it holds the caption the user wrote, and deleting
+        a paragraph as a side effect of removing a file is the bigger
+        surprise."""
+        _project, report, stored = self._project_with_attachment('Linked Att DD')
+        rid = report['id']
+        fetched = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        aid = fetched['attachments'][0]['id']
+        section = fetched['sections'][0]['section_key']
+        saved = self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': fetched['revision'],
+            'operations': [{'op': 'upsert', 'section_key': section, 'block_type': 'image',
+                            'content': {'caption': 'Hull shot', 'attachment_id': aid}}],
+        })
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        # The html branch has no route behind it yet, so it is exercised
+        # directly -- that is where a dangling id becomes a 404 `<img>`.
+        with appmod.app.app_context():
+            before = routes_dock_daily._render_section(rid, section, 'Shipyard', as_html=True)
+        self.assertIn(f'src="/api/dock-daily/attachments/{aid}"', before)
+
+        gone = self.client.delete(f'/api/dock-daily/attachments/{aid}')
+        self.assertEqual(200, gone.status_code, gone.get_data(as_text=True))
+        self.assertFalse(os.path.exists(stored))
+        after = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        images = [b for b in after['blocks'] if b['block_type'] == 'image']
+        self.assertEqual(1, len(images), 'the block itself must survive with its caption')
+        self.assertIsNone(images[0]['content']['attachment_id'])
+        self.assertEqual('Hull shot', images[0]['content']['caption'])
+        with appmod.app.app_context():
+            after_html = routes_dock_daily._render_section(rid, section, 'Shipyard', as_html=True)
+        self.assertNotIn('<img', after_html)
+        self.assertIn('Hull shot', after_html, 'caption 은 남아야 한다')
+        # 메일 본문(현행 live 경로)도 그대로 나가야 한다.
+        mail = self.client.get(f'/api/dock-daily/reports/{rid}/email-preview').get_json()['html']
+        self.assertNotIn(f'/api/dock-daily/attachments/{aid}', mail)
+
+    def test_attachment_unlink_lands_in_the_same_transaction_as_the_delete(self):
+        """The reference is cleared before the commit, not in a second
+        transaction: a render landing in between would see the row already gone
+        while the block still pointed at it -- exactly the broken image the
+        unlink exists to prevent."""
+        src = inspect.getsource(routes_dock_daily._delete_cascade)
+        body = src.split("db.execute('BEGIN IMMEDIATE')", 1)[1].split('db.commit()', 1)[0]
+        self.assertIn('also(db, row)', body)
+        self.assertIn('also', inspect.getsource(routes_dock_daily.attachment_delete))
+
+    def test_attachment_rows_carry_their_own_delete_button(self):
+        """The x cannot be nested inside the preview button -- invalid HTML, and
+        one click would fire both -- so each attachment is a flex pair.  On a
+        확정본 it is left out entirely instead of shown disabled: the server
+        answers 409 there, and a button that is always refused reads as a bug."""
+        with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'dock_daily.js'),
+                  encoding='utf-8') as f:
+            script = f.read()
+        self.assertIn('data-del-attachment', script)
+        self.assertIn('dd-attachment-row', script)
+        self.assertIn("state.report.status==='final'", script)
+        self.assertIn('async function deleteAttachment', script)
+        block = script.split('async function deleteAttachment', 1)[1].split('\n  }', 1)[0]
+        self.assertIn('confirm(', block, '되돌릴 수 없는 삭제는 물어보고 나가야 한다')
+        self.assertIn("method:'DELETE'", block)
+        # The row leaves local state instead of triggering a report re-fetch: a
+        # reload here would discard unsaved section edits, and the request only
+        # changed attachments anyway. A failed call throws before the filter, so
+        # the list cannot show a row the server still has -- or hide one it kept.
+        self.assertIn('state.report.attachments=', block)
+        self.assertNotIn('await api(`/api/dock-daily/reports/', block)
+        # 404 counts as done: the row is already gone server-side (another tab,
+        # another device), so keeping it on screen leaves the list behind the
+        # server -- the one thing this local-removal path must not do.
+        self.assertIn('r.status!==404', block)
+        html = self.client.get('/dock-daily').get_data(as_text=True)
+        self.assertIn('.dd-attachment-row{', html)
+        self.assertIn('.dd-att-del{', html)
+
     def test_delete_reads_status_and_blob_names_inside_the_transaction(self):
         """The guard and the blob-name read both happen inside the delete's
         `BEGIN IMMEDIATE`. Reading either one earlier decided on stale state: a
