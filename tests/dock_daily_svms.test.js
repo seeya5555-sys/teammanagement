@@ -89,3 +89,36 @@ test('후보 표기는 종료된 입거를 눈에 보이게 구분한다', () =>
   assert.match(closed, /출거 20211105/);
   assert.equal(S.candidateLabel({ dk_cd: 'ATGRMD2607130001', open: true }), 'ATGRMD2607130001');
 });
+
+test('상신 차단 사유는 계약 -> 확정 -> 반영상태 순서다', () => {
+  // 🔴 계약 위반이 먼저다 — blockers 패널이 구체적 사유(DK_CD 미설정 등)를 이미
+  //    보여주므로 "확정하세요" 로 덮어버리면 형이 엉뚱한 데를 고친다.
+  assert.equal(S.publishBlockReason({ publishable: false, status: 'final', sync: 'preview_only' }), 'contract');
+  assert.equal(S.publishBlockReason({ publishable: false, status: 'editing', sync: 'synced' }), 'contract');
+  assert.equal(S.publishBlockReason({ publishable: true, status: 'editing', sync: 'preview_only' }), 'draft');
+  assert.equal(S.publishBlockReason({ publishable: true, status: 'final', sync: 'synced' }), 'state');
+  assert.equal(S.publishBlockReason({ publishable: true, status: 'final', sync: 'preview_only' }), '');
+  // 실패는 다시 상신할 수 있다.
+  assert.equal(S.publishBlockReason({ publishable: true, status: 'final', sync: 'failed' }), '');
+  // 모르는 상태는 unknown 으로 접혀 막힌다.
+  assert.equal(S.publishBlockReason({ publishable: true, status: 'final', sync: 'something_new' }), 'state');
+  // 빈 sync = preview_only.
+  assert.equal(S.publishBlockReason({ publishable: true, status: 'final', sync: null }), '');
+  // 인자 없이 불러도 죽지 않는다.
+  assert.equal(S.publishBlockReason(), 'contract');
+});
+
+test('상신 차단 사유는 반드시 화면에 적을 문구를 가진다', () => {
+  // 🔴 버튼만 비활성이면 형은 왜 못 누르는지 알 수 없다(2026-08-22 형 질문:
+  //    "상신 가능이라고 표시는 되는데 푸시 버튼은 어디있음?").
+  assert.match(S.publishBlockText('draft', 'preview_only'), /확정/);
+  assert.ok(S.publishBlockText('contract', 'preview_only'));
+  // unknown/partial 은 "다시 시도" 를 권하지 않는다 — 중복 행이 생긴다.
+  assert.equal(S.publishBlockText('state', 'unknown'), S.guidance('unknown'));
+  assert.equal(S.publishBlockText('state', 'partial'), S.guidance('partial'));
+  // guidance 가 없는 상태도 문구가 비지 않는다.
+  assert.match(S.publishBlockText('state', 'synced'), /SVMS 반영됨/);
+  assert.match(S.publishBlockText('state', 'submitting'), /SVMS 전송중/);
+  // 막히지 않았으면 문구도 없다.
+  assert.equal(S.publishBlockText('', 'preview_only'), '');
+});

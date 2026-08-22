@@ -760,13 +760,12 @@
       // 🔴 계약(publishable)만으로 버튼을 열면 이미 상신한 보고서에서 계속 눌린다.
       //    반영 상태도 함께 본다(앱과 동일 게이트).
       const S=window.DockDailySVMS, sync=state.report?state.report.svms_sync_status:null;
-      const allowed=svmsPublishAllowed();
+      const reason=svmsPublishBlock(), allowed=!reason;
       push.disabled=!allowed;
       push.textContent=S.normalize(sync)==='failed'?'SVMS 재상신':'SVMS 상신';
-      push.title=allowed?'미리보기 내용을 SVMS에 반영'
-        :(!v.publishable?'SVMS 저장 계약과 byte limit 검증 전에는 반영할 수 없습니다.':`${S.title(sync)} — 다시 상신할 수 없습니다.`);
-      $('#dd-preview-status').textContent=allowed?''
-        :(!v.publishable?'실제 푸싱은 SVMS 저장 계약 검증 후 활성화됩니다.':(S.guidance(sync)||`${S.title(sync)} 상태입니다.`));
+      // 사유는 규칙 모듈 한 곳에서만 만든다(앱과 같은 문구).
+      push.title=allowed?'미리보기 내용을 SVMS에 반영':S.publishBlockText(reason,sync);
+      $('#dd-preview-status').textContent=allowed?'':S.publishBlockText(reason,sync);
       // 🔴 사유를 적는다. 전엔 "상신 불가" 만 떠서 형이 뭘 고쳐야 하는지 화면에 없었다.
       const blockers=S.blockerList(v);
       const why=blockers.length?`<div class="dd-svms-blockers"><b>상신 불가 사유</b><ul>${blockers.map(b=>`<li>${esc(b)}</li>`).join('')}</ul></div>`:'';
@@ -886,11 +885,15 @@
   }
   /* 지금 열린 보고서를 상신할 수 있는가. 미리보기 계약(publishable)과 반영 상태 둘 다 봐야
    * 한다 — 계약만 보면 이미 상신한 보고서에서 버튼이 계속 열린다. */
-  function svmsPublishAllowed(){
+  /* 🔴 `status` 도 봐야 한다. 전엔 계약+반영상태만 봐서 **편집 중인 보고서에서도 버튼이
+     활성**이었고, 누르면 서버가 409 `final_required` 로 거절했다(화면이 거짓말). */
+  function svmsPublishBlock(){
     const v=state.preview&&state.preview.kind==='svms'?state.preview.data:null;
-    if(!v||!v.publishable||!state.report) return false;
-    return window.DockDailySVMS.allowsPublish(state.report.svms_sync_status);
+    if(!v||!state.report) return 'contract';
+    return window.DockDailySVMS.publishBlockReason(
+      {publishable:v.publishable, status:state.report.status, sync:state.report.svms_sync_status});
   }
+  function svmsPublishAllowed(){ return !svmsPublishBlock(); }
   function openFilePreview(id,name){$('#dd-file-title').textContent=name;$('#dd-file-frame').src=`/api/dock-daily/attachments/${id}/preview`;$('#dd-file-modal').hidden=false;document.body.style.overflow='hidden';}
   function closeFilePreview(){$('#dd-file-modal').hidden=true;$('#dd-file-frame').src='about:blank';document.body.style.overflow='';}
   async function uploadOne(rid,file){const fd=new FormData();fd.append('file',file);const r=await fetch(`/api/dock-daily/reports/${rid}/attachments`,{method:'POST',body:fd});const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.error||`업로드 실패 (${r.status})`);return body;}

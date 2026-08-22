@@ -76,6 +76,28 @@
     return '';
   }
 
+  /* 상신 버튼을 못 누르는 이유. 🔴 웹은 보고서 `status` 를 게이트에 안 넣어서 **편집 중인
+   *    보고서에서도 상신 버튼이 활성**이었다(서버가 409 `final_required` 로 막아주지만
+   *    화면이 거짓말을 한다). 앱은 반대로 확정본에만 버튼을 그려서, "상신 가능" 이 떠도
+   *    누를 곳이 없었다(2026-08-22 형 질문: "푸시 버튼은 어디있음?"). 두 미러가 같은
+   *    함수를 쓰고, **못 누르는 이유를 화면에 적는다**.
+   *    순서: 계약(publishable) -> 확정 -> 반영상태. 계약 위반이면 blockers 패널이 구체적인
+   *    사유를 이미 보여주므로 그쪽을 먼저 가리킨다. */
+  function publishBlockReason(opts) {
+    var o = opts || {};
+    if (!o.publishable) return 'contract';
+    if (String(o.status == null ? '' : o.status).trim() !== 'final') return 'draft';
+    if (!allowsPublish(o.sync)) return 'state';
+    return '';
+  }
+
+  function publishBlockText(reason, sync) {
+    if (reason === 'contract') return '실제 푸싱은 SVMS 저장 계약 검증 후 활성화됩니다.';
+    if (reason === 'draft') return '확정본만 상신할 수 있습니다. 이 보고서를 먼저 `확정` 하세요.';
+    if (reason === 'state') return guidance(sync) || (title(sync) + ' — 다시 상신할 수 없습니다.');
+    return '';
+  }
+
   /* 미리보기의 `blockers` 는 서버가 판정한 **상신 불가 사유**다.
    * 🔴 사유를 화면에 안 뿌리면 "상신 불가" 한 줄만 남아 형이 고칠 방법을 알 수 없다
    *    (2026-08-22 형 캡쳐: DK_CD 가 비어 있었는데 화면엔 사유가 없었다). */
@@ -109,7 +131,8 @@
   var api = {
     normalize: normalize, title: title, tone: tone, listSuffix: listSuffix,
     allowsPublish: allowsPublish, needsManualCheck: needsManualCheck, guidance: guidance,
-    blockerList: blockerList, needsDockLink: needsDockLink, candidateLabel: candidateLabel
+    blockerList: blockerList, needsDockLink: needsDockLink, candidateLabel: candidateLabel,
+    publishBlockReason: publishBlockReason, publishBlockText: publishBlockText
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.DockDailySVMS = api;
