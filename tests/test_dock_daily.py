@@ -1522,6 +1522,187 @@ class DockDailyTests(unittest.TestCase):
             self.assertEqual(200, result.status_code, result.get_data(as_text=True))
             self.assertEqual('0002', self.client.get(f"/api/dock-daily/reports/{r['id']}").get_json()['svms_dk_seq'])
 
+    def test_report_json_hides_the_runner_claim_token_and_folds_the_result(self):
+        """🔴 `svms_claim_token` 은 맥 러너의 **능력치**다 — 이 토큰으로 ext API 가 첨부
+        원본(`/api/ext/dock-daily/attachments/<aid>/bytes`)을 내려주고 결과 기록도 받는다.
+        보고서 JSON 에 실리면 화면·앱 캐시·로그로 퍼지므로 응답 경계에서 걷어낸다.
+
+        러너 결과 JSON 도 원본을 넘기지 않는다. 넘기면 러너 내부 필드 이름이 UI 계약이
+        되고, 첨부 실패 목록 같은 구조가 그대로 노출된다."""
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Token DD', 'svms_dk_cd': 'ATGRMD2607130001'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': '2026-08-21'}).get_json()
+        self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [{'section_key': 'shipyard', 'block_type': 'paragraph',
+                            'content': {'body': 'hull cleaning'}}]})
+        with self._svms_env():
+            current = self.client.get(f"/api/dock-daily/reports/{r['id']}").get_json()
+            self.client.post(f"/api/dock-daily/reports/{r['id']}/status",
+                             json={'status': 'final', 'revision': current['revision']})
+            self.assertEqual(202, self.client.post(
+                f"/api/dock-daily/reports/{r['id']}/svms-publish",
+                json={'confirmation': 'user_preview_approved'}).status_code)
+            key = self._api_key()
+            job = self.client.post('/api/ext/dock-daily/svms-claim', json={'limit': 1},
+                                   headers={'X-API-Key': key}).get_json()['jobs'][0]
+            # claim 중(=토큰이 살아 있는 순간)에 조회해야 유출을 잡을 수 있다.
+            body = self.client.get(f"/api/dock-daily/reports/{r['id']}").get_data(as_text=True)
+            self.assertNotIn('svms_claim_token', body)
+            self.assertNotIn(job['claim_token'], body)
+            self.assertEqual('submitting',
+                             self.client.get(f"/api/dock-daily/reports/{r['id']}").get_json()['svms_sync_status'])
+
+            # 본문은 들어갔고 첨부만 빠진 상태. 🔴 실패 건수가 화면에 남아야 한다 —
+            # 이 문장이 없으면 형이 첨부까지 올라간 줄 알고 SVMS 를 그대로 넘긴다.
+            self.assertEqual(200, self.client.post(
+                '/api/ext/dock-daily/svms-result',
+                # 키 모양은 러너 실측 계약이다(`svms_dr_push.process()` 반환값이 그대로
+                # 본문이 된다) — `note`·`attachments` 는 최상위다.
+                json={'report_id': job['report_id'], 'claim_token': job['claim_token'],
+                      'status': 'partial', 'dk_seq': '0003', 'readback_hash': 'sha256:x',
+                      'note': '본문 저장 완료',
+                      'attachments': {'uploaded': 1, 'count': 1,
+                                      'failed': [{'id': 1, 'error': 'timeout'},
+                                                 {'id': 2, 'error': 'timeout'}]}},
+                headers={'X-API-Key': key}).status_code)
+            fetched = self.client.get(f"/api/dock-daily/reports/{r['id']}")
+            after = fetched.get_json()
+            self.assertEqual('partial', after['svms_sync_status'])
+            self.assertNotIn('svms_result_json', after)
+            self.assertIn('본문 저장 완료', after['svms_error'])
+            self.assertIn('첨부 2건 업로드 실패', after['svms_error'])
+            # 🔴 러너 본문 전체가 `svms_result_json` 으로 저장되고 그 안에는 claim_token 이
+            #    들어 있다. 한 줄로 접어 주지 않으면 여기서 토큰이 그대로 새어 나온다.
+            self.assertNotIn(job['claim_token'], fetched.get_data(as_text=True))
+
+    def _svms_to_unknown(self, title, date, status='unknown', extra=None):
+        """상신 → claim → 러너 결과까지 밀어 `unknown`/`partial` 보고서를 만든다."""
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': title, 'svms_dk_cd': 'ATGRMD2607130001'}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': date}).get_json()
+        self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [{'section_key': 'shipyard', 'block_type': 'paragraph',
+                            'content': {'body': 'hull cleaning'}}]})
+        current = self.client.get(f"/api/dock-daily/reports/{r['id']}").get_json()
+        self.client.post(f"/api/dock-daily/reports/{r['id']}/status",
+                         json={'status': 'final', 'revision': current['revision']})
+        self.client.post(f"/api/dock-daily/reports/{r['id']}/svms-publish",
+                         json={'confirmation': 'user_preview_approved'})
+        key = self._api_key()
+        job = self.client.post('/api/ext/dock-daily/svms-claim', json={'limit': 1},
+                               headers={'X-API-Key': key}).get_json()['jobs'][0]
+        body = {'report_id': job['report_id'], 'claim_token': job['claim_token'], 'status': status}
+        if status in ('synced', 'partial'):
+            body['dk_seq'] = '0007'
+        body.update(extra or {})
+        self.client.post('/api/ext/dock-daily/svms-result', json=body, headers={'X-API-Key': key})
+        return r['id'], job['claim_token']
+
+    def test_runner_result_never_stores_the_claim_token_in_the_report_row(self):
+        """응답 경계에서 걷어내는 것만으로는 부족하다(올마이트) — 토큰이 `svms_result_json`
+        에 남으면 DB 백업·debug export 로 새어 나간다. **저장 전에** 지운다."""
+        with self._svms_env():
+            rid, token = self._svms_to_unknown('Token Store DD', '2026-08-18', 'partial')
+            row = self.client.get(f"/api/dock-daily/reports/{rid}").get_json()
+            self.assertEqual('partial', row['svms_sync_status'])
+        with appmod.app.app_context():
+            stored = appmod.query('SELECT svms_result_json FROM dock_daily_report WHERE id=?',
+                                  (rid,), one=True)['svms_result_json']
+        self.assertIn('partial', stored)          # 결과 기록 자체는 남는다
+        self.assertNotIn('claim_token', stored)
+        self.assertNotIn(token, stored)
+
+    def test_malformed_runner_attachment_failure_does_not_500_the_report(self):
+        """🔴 `failed` 가 list 라는 보장은 없다. `len()` 이 터지면 그건 보고서 GET 500 이고,
+        하필 형이 SVMS 결과를 확인하려는 순간 화면이 죽는다(올마이트)."""
+        with self._svms_env():
+            rid, _ = self._svms_to_unknown(
+                'Malformed DD', '2026-08-17', 'partial',
+                extra={'note': '본문 저장 완료', 'attachments': {'failed': 3}})
+            fetched = self.client.get(f"/api/dock-daily/reports/{rid}")
+            self.assertEqual(200, fetched.status_code)
+            note = fetched.get_json()['svms_error']
+            self.assertIn('본문 저장 완료', note)
+            self.assertIn('첨부 업로드 실패', note)   # 셀 수 없으면 건수 없이 적는다
+
+    def test_manual_reconcile_closes_unknown_both_ways(self):
+        """🔴 `unknown`/`partial` 은 재상신이 상태로 막혀 있어서, 확인 결과를 기록할 출구가
+        없으면 **영구 고착**이다(올마이트 blocking). 서버는 판정하지 않고 사람이 본 것을
+        기록만 한다 — SVMS 에 다시 쓰지 않는다."""
+        with self._svms_env():
+            rid, _ = self._svms_to_unknown('Reconcile DD', '2026-08-16', 'unknown')
+            path = f"/api/dock-daily/reports/{rid}/svms-reconcile"
+            self.assertEqual('unknown',
+                             self.client.get(f"/api/dock-daily/reports/{rid}").get_json()['svms_sync_status'])
+            # 확인 플래그·resolution·DK_SEQ 검증
+            self.assertEqual('confirmation_required',
+                             self.client.post(path, json={'resolution': 'synced'}).get_json()['code'])
+            self.assertEqual(400, self.client.post(path, json={
+                'confirmation': 'user_checked_svms', 'resolution': 'maybe'}).status_code)
+            self.assertEqual('dk_seq_required', self.client.post(path, json={
+                'confirmation': 'user_checked_svms', 'resolution': 'synced'}).get_json()['code'])
+            self.assertEqual('dk_seq_invalid', self.client.post(path, json={
+                'confirmation': 'user_checked_svms', 'resolution': 'synced',
+                'dk_seq': '2 rows'}).get_json()['code'])
+            # 반영됨으로 닫기 — DK_SEQ 는 SVMS 표기대로 4자 0패딩으로 저장한다.
+            done = self.client.post(path, json={'confirmation': 'user_checked_svms',
+                                                'resolution': 'synced', 'dk_seq': '2'})
+            self.assertEqual(200, done.status_code)
+            self.assertEqual('0002', done.get_json()['dk_seq'])
+            after = self.client.get(f"/api/dock-daily/reports/{rid}").get_json()
+            self.assertEqual('synced', after['svms_sync_status'])
+            self.assertEqual('0002', after['svms_dk_seq'])
+            self.assertIn('사람 확인', after['svms_error'])
+            # 이미 닫힌 보고서는 같은 경로로 다시 만질 수 없다.
+            self.assertEqual('reconcile_not_applicable', self.client.post(path, json={
+                'confirmation': 'user_checked_svms', 'resolution': 'not_saved'}).get_json()['code'])
+            # `not_saved` 는 `failed` 로 내려 상신을 다시 열어준다.
+            rid2, _ = self._svms_to_unknown('Reconcile DD2', '2026-08-15', 'unknown')
+            path2 = f"/api/dock-daily/reports/{rid2}/svms-reconcile"
+            self.assertEqual(200, self.client.post(path2, json={
+                'confirmation': 'user_checked_svms', 'resolution': 'not_saved'}).status_code)
+            reopened = self.client.get(f"/api/dock-daily/reports/{rid2}").get_json()
+            self.assertEqual('failed', reopened['svms_sync_status'])
+            # 그리고 실제로 다시 상신이 받아진다(=고착 해제).
+            self.assertEqual(202, self.client.post(
+                f"/api/dock-daily/reports/{rid2}/svms-publish",
+                json={'confirmation': 'user_preview_approved'}).status_code)
+
+    def test_report_list_carries_svms_state_without_the_claim_token(self):
+        """어느 일자가 이미 SVMS 로 넘어갔는지 보고서를 하나씩 열지 않고 알아야 한다.
+        🔴 그렇다고 `SELECT *` 로 넓히면 목록에 `svms_claim_token` 까지 실린다."""
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'List DD'}).get_json()
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                         json={'report_date': '2026-08-19'})
+        listed = self.client.get(f"/api/dock-daily/projects/{p['id']}/reports")
+        rows = listed.get_json()
+        self.assertIn('svms_sync_status', rows[0])
+        self.assertIn('svms_dk_seq', rows[0])
+        self.assertNotIn('svms_claim_token', listed.get_data(as_text=True))
+
+    def test_svms_state_module_rules_actually_run(self):
+        """상태 → 배지·상신 허용 규칙은 앱과 웹 두 미러가 같아야 한다. 문자열 검사
+        대신 node 로 실제 실행해 잠근다(tests/dock_daily_svms.test.js)."""
+        import shutil
+        import subprocess
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('node 없음 — `node --test tests/dock_daily_svms.test.js`')
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        done = subprocess.run([node, '--test', os.path.join('tests', 'dock_daily_svms.test.js')],
+                              cwd=root, capture_output=True, text=True, timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+
+    def test_dock_daily_page_loads_the_svms_state_module(self):
+        page = self.client.get('/dock-daily').get_data(as_text=True)
+        self.assertIn('js/dock_daily_svms.js', page)
+        self.assertIn('id="dd-svms-state"', page)
+
     def test_email_preview_uses_outlook_numbered_card_format(self):
         p = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': 'Email DD',

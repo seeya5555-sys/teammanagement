@@ -55,7 +55,10 @@
     // 열린 보고서가 필터 밖으로 밀려나면 드롭다운은 첫 행을 선택한 것처럼 보인다.
     // 그러면 화면 본문과 선택값이 어긋나므로, 열린 일자를 맨 위에 명시해 붙인다.
     const stray = open && !rows.some(r => r.id === open) ? state.reports.find(r => r.id === open) : null;
-    const option = (r, tail) => `<option value="${esc(r.id)}"${r.id===open?' selected':''}>${esc(r.report_date)} · ${esc(r.status)}${tail||''}</option>`;
+    // SVMS 꼬리는 넘어간 일자에만 붙는다(목록 응답이 `svms_sync_status` 를 함께 준다) —
+    // 어느 일자가 이미 SVMS 로 갔는지 보고서를 하나씩 열지 않고 알아야 한다.
+    const svms = r => { const s = window.DockDailySVMS.listSuffix(r.svms_sync_status); return s ? ` · ${s}` : ''; };
+    const option = (r, tail) => `<option value="${esc(r.id)}"${r.id===open?' selected':''}>${esc(r.report_date)} · ${esc(r.status)}${esc(svms(r))}${tail||''}</option>`;
     sel.innerHTML = (stray ? [option(stray, ' · 필터 밖(열림)')] : [])
       .concat(rows.map(r => option(r)))
       .join('') || '<option value="">해당 조건의 보고서가 없습니다</option>';
@@ -188,7 +191,7 @@
     $('#dd-empty').style.display='none'; $('#dd-report').classList.add('show');
     $('#dd-report-title').textContent=`${state.report.vessel_name} · 입거 Daily Report`;
     $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`;
-    renderReportDates(); renderItinerary(); renderSections(); renderAttachments();
+    renderSvmsState(); renderReportDates(); renderItinerary(); renderSections(); renderAttachments();
     const locked = state.report.status === 'final'; ['#dd-save','#dd-attach'].forEach(s => $(s).disabled=locked);
     // 확정 버튼만은 잠긴 상태에서도 살아있어야 한다 — 잠금을 여는 유일한 통로다.
     // 여기서 disabled 를 걸면 확정된 보고서는 영구히 잠긴다.
@@ -196,6 +199,52 @@
     finalBtn.textContent=locked?'확정취소':'확정';
     // '취소' 한 단어는 옆의 '저장' 과 붙어 "편집 취소" 로 읽힌다.
     finalBtn.classList.toggle('warn',locked); finalBtn.classList.toggle('alt',!locked);
+  }
+  /* SVMS 반영 상태 줄. 확정 전에는 숨긴다 — 상신 자체가 확정본만 되므로 편집 중인
+   * 보고서에 "SVMS 미반영" 을 달면 결함처럼 읽힌다(앱과 동일 규칙).
+   *
+   * 🔴 상신은 맥 러너가 나중에 처리하는 비동기 경로다. 이 줄이 없으면 형은 상신을 누른 뒤
+   *    결과(반영됨 / 본문만 / 실패 / 불명)를 웹에서 영구히 알 수 없다. */
+  function renderSvmsState(){
+    const box=$('#dd-svms-state'); if(!box) return;
+    const r=state.report;
+    if(!r||r.status!=='final'){box.hidden=true;box.innerHTML='';return;}
+    const S=window.DockDailySVMS, raw=r.svms_sync_status;
+    const seq=String(r.svms_dk_seq||'').trim(), note=S.guidance(raw);
+    const err=String(r.svms_error||'').trim();
+    // DK_SEQ 는 SVMS 에서 그 행을 찾는 키다. 반영됐다는 말만으로는 어느 행인지 못 찾는다.
+    let html=`<span class="dd-badge dd-badge-${S.tone(raw)}">${esc(S.title(raw))}</span>`;
+    if(seq) html+=`<span class="dd-muted">DK_SEQ ${esc(seq)}</span>`;
+    // 결과는 러너가 나중에 써넣으므로 형이 직접 당겨볼 수단이 필요하다.
+    const pending=S.normalize(raw)==='approved'||S.normalize(raw)==='submitting';
+    if(pending) html+=`<button class="dd-btn alt" id="dd-svms-refresh" type="button" title="SVMS 반영 상태 새로고침">상태 새로고침</button>`;
+    if(err) html+=`<span class="dd-svms-err">${esc(err)}</span>`;
+    if(note) html+=`<span class="dd-svms-note">${esc(note)}</span>`;
+    // 🔴 수동 확인 출구. 없으면 `unknown`/`partial` 이 영구 고착이다(올마이트 blocking).
+    const manual=S.needsManualCheck(raw);
+    if(manual) html+=`<button class="dd-btn alt" id="dd-svms-saved" type="button">SVMS에 저장됨</button>`
+                    +`<button class="dd-btn alt" id="dd-svms-notsaved" type="button">저장 안 됨</button>`;
+    box.innerHTML=html; box.hidden=false;
+    if(pending) $('#dd-svms-refresh').onclick=()=>refreshSvmsState();
+    if(manual){
+      $('#dd-svms-saved').onclick=()=>reconcileSvms(true);
+      $('#dd-svms-notsaved').onclick=()=>reconcileSvms(false);
+    }
+  }
+  /* 형이 직접 누른 조회다 — 실패를 조용히 넘기면 화면이 멈춘 것처럼 보이므로 알린다. */
+  async function refreshSvmsState(){
+    if(!state.report) return;
+    const rid=state.report.id, before=window.DockDailySVMS.normalize(state.report.svms_sync_status);
+    try{
+      const fresh=await api(`/api/dock-daily/reports/${rid}`);
+      // 응답이 늦게 온 사이 형이 다른 일자를 골랐을 수 있다. 그때 덮으면 방금 연
+      // 보고서가 지난 보고서로 바뀐다.
+      if(!state.report||state.report.id!==rid) return;
+      state.report=fresh; ensureSectionEditors(); renderSvmsState();
+      const after=window.DockDailySVMS.normalize(fresh.svms_sync_status);
+      notice(after===before?`SVMS 상태 변화 없음 — ${window.DockDailySVMS.title(after)}.`
+                           :`SVMS 상태: ${window.DockDailySVMS.title(after)}.`);
+    }catch(e){ err(e); }
   }
   function renderItinerary() {
     const values=[['berthing_date','BERTHING'],['dock_in_date','DRY DOCK IN'],['dock_out_date','DRY DOCK OUT'],['departure_date','DEPARTURE']];
@@ -707,7 +756,17 @@
     $('#dd-preview-title').textContent=kind==='email'?'이메일 미리보기':'SVMS 미리보기'; $('#dd-preview-status').textContent='';
     $('#dd-copy-all').hidden=kind!=='email'; $('#dd-svms-push').hidden=kind!=='svms';
     if(kind==='email') $('#dd-preview-content').innerHTML=`<div class="dd-email-subject"><b>제목</b><br>${esc(v.subject)}</div><div class="dd-email-html">${v.html}</div>`;
-    else {const f=v.fields||{},push=$('#dd-svms-push');push.disabled=!v.publishable;push.title=v.publishable?'미리보기 내용을 SVMS에 반영':'SVMS 저장 계약과 byte limit 검증 전에는 반영할 수 없습니다.';$('#dd-preview-status').textContent=v.publishable?'':'실제 푸싱은 SVMS 저장 계약 검증 후 활성화됩니다.';$('#dd-preview-content').innerHTML=`<p class="dd-modal-intro"><b>${v.publishable?'SVMS 반영 준비 완료':'Preview only 안전게이트'}</b><br>DK_CD와 byte limit 계약이 모두 확인되어야 실제 반영됩니다.<br>표·사진은 SVMS 본문에 넣지 않습니다(이메일 본문에만 나갑니다).</p><div class="dd-svms-grid"><b>DK_CD</b><pre>${esc(f.DK_CD||'')}</pre><b>DR_DT</b><pre>${esc(f.DR_DT||'')}</pre><b>Shipyard</b><pre>${esc(f.RMK_SYD||'')}</pre><b>Vendor</b><pre>${esc(f.RMK_VNDR||'')}</pre><b>Remark</b><pre>${esc(f.RMK||'')}</pre></div>`;}
+    else {const f=v.fields||{},push=$('#dd-svms-push');
+      // 🔴 계약(publishable)만으로 버튼을 열면 이미 상신한 보고서에서 계속 눌린다.
+      //    반영 상태도 함께 본다(앱과 동일 게이트).
+      const S=window.DockDailySVMS, sync=state.report?state.report.svms_sync_status:null;
+      const allowed=svmsPublishAllowed();
+      push.disabled=!allowed;
+      push.textContent=S.normalize(sync)==='failed'?'SVMS 재상신':'SVMS 상신';
+      push.title=allowed?'미리보기 내용을 SVMS에 반영'
+        :(!v.publishable?'SVMS 저장 계약과 byte limit 검증 전에는 반영할 수 없습니다.':`${S.title(sync)} — 다시 상신할 수 없습니다.`);
+      $('#dd-preview-status').textContent=allowed?''
+        :(!v.publishable?'실제 푸싱은 SVMS 저장 계약 검증 후 활성화됩니다.':(S.guidance(sync)||`${S.title(sync)} 상태입니다.`));$('#dd-preview-content').innerHTML=`<p class="dd-modal-intro"><b>${v.publishable?'SVMS 반영 준비 완료':'Preview only 안전게이트'}</b><br>DK_CD와 byte limit 계약이 모두 확인되어야 실제 반영됩니다.<br>표·사진은 SVMS 본문에 넣지 않습니다(이메일 본문에만 나갑니다).</p><div class="dd-svms-grid"><b>DK_CD</b><pre>${esc(f.DK_CD||'')}</pre><b>DR_DT</b><pre>${esc(f.DR_DT||'')}</pre><b>Shipyard</b><pre>${esc(f.RMK_SYD||'')}</pre><b>Vendor</b><pre>${esc(f.RMK_VNDR||'')}</pre><b>Remark</b><pre>${esc(f.RMK||'')}</pre></div>`;}
     previewModal.hidden=false;document.body.style.overflow='hidden';
   }
   async function copyEmail(){
@@ -717,8 +776,78 @@
   async function pushSvms(){
     if(!confirm('현재 미리보기 내용으로 SVMS 입거 Daily Report에 반영할까요?'))return;
     const btn=$('#dd-svms-push');btn.disabled=true;$('#dd-preview-status').textContent='SVMS 반영 요청 중…';
-    try{const v=await api(`/api/dock-daily/reports/${state.report.id}/svms-publish`,{...json({confirmation:'user_preview_approved'}),method:'POST'});$('#dd-preview-status').textContent=v.message||'SVMS 승인 대기열 등록 완료 — 맥 runner가 저장 후 readback합니다.';}
-    catch(e){$('#dd-preview-status').textContent=e.message;}finally{btn.disabled=false;}
+    const rid=state.report.id;
+    try{
+      const v=await api(`/api/dock-daily/reports/${rid}/svms-publish`,{...json({confirmation:'user_preview_approved'}),method:'POST'});
+      $('#dd-preview-status').textContent=v.message||'SVMS 반영 대기열 등록 완료 — 맥 runner가 저장·첨부 후 결과를 이 화면에 표시합니다.';
+      // 🔴 재조회 **전에** 로컬 상태를 잠근다(올마이트 blocking). 아래 재조회가 실패하면
+      //    화면은 여전히 `preview_only` 라서 버튼이 다시 열리고, 그 두 번째 클릭이 SVMS 에
+      //    중복 행을 만든다(`SP_SET_DOCK_DR` 비멱등).
+      applySvmsAck(rid,v);
+      // 🔴 상신 뒤 보고서를 다시 읽는다. 상신은 `svms_sync_status` 를 바꾸고 그 값이 상태
+      //    배지·상신 버튼 활성을 결정한다. 다시 읽지 않으면 모달을 닫아도 화면이 "SVMS
+      //    미반영" 그대로여서 같은 버튼을 다시 누르게 된다(= 중복 저장 시도).
+      //    다시 읽기가 실패해도 상신 자체는 성공했으므로 에러로 뒤집지 않는다.
+      try{
+        const fresh=await api(`/api/dock-daily/reports/${rid}`);
+        if(state.report&&state.report.id===rid){state.report=fresh;ensureSectionEditors();renderSvmsState();}
+      }catch(_){}
+    }
+    catch(e){$('#dd-preview-status').textContent=e.message;}
+    finally{
+      // 🔴 무조건 되살리지 않는다. 성공했으면 이 보고서는 더 이상 상신 대상이 아니다
+      //    (`SP_SET_DOCK_DR` 는 멱등이 아니라 같은 날짜 재저장이 새 seq 행을 만든다).
+      btn.disabled=!svmsPublishAllowed();
+    }
+  }
+  /* 상신·수동확인 2xx 응답을 로컬(열린 보고서 + 목록 행)에 반영한다. 앱
+   * `applyPublishAck` 와 같은 규칙이다.
+   * 🔴 상태를 내리지 않는다 — 서버가 status 를 안 줬으면 큐에 들어간 것으로 보고
+   *    `approved` 로 접는다(모르면 잠그는 쪽이 안전한 방향). */
+  function applySvmsAck(rid,resp){
+    const S=window.DockDailySVMS;
+    const status=S.normalize(resp&&resp.status)==='preview_only'?'approved':S.normalize(resp&&resp.status);
+    const seq=String((resp&&resp.dk_seq)||'').trim();
+    if(state.report&&state.report.id===rid){
+      state.report.svms_sync_status=status;
+      if(seq) state.report.svms_dk_seq=seq;
+      renderSvmsState();
+    }
+    // 목록 꼬리도 같이 바꾼다. 안 바꾸면 드롭다운이 "미반영" 으로 남는다.
+    const row=(state.reports||[]).find(r=>r.id===rid);
+    if(row){row.svms_sync_status=status; if(seq) row.svms_dk_seq=seq; renderReportDates();}
+  }
+  /* `unknown`/`partial` 을 형이 SVMS 화면에서 본 결과로 닫는다. 이 경로가 없으면 그 두
+   * 상태는 영구 고착이다(재상신은 상태로 막혀 있고 상태를 내릴 방법이 없다). */
+  async function reconcileSvms(saved){
+    const r=state.report; if(!r) return;
+    const rid=r.id; let seq=null;
+    if(saved){
+      // 🔴 DK_SEQ 없이 반영됨으로 닫으면 SVMS 의 어느 행인지 영구히 모른다.
+      seq=(prompt('SVMS 화면에서 확인한 DK_SEQ를 입력하세요 (예: 2)',String(r.svms_dk_seq||'').trim())||'').trim();
+      if(!seq) return;
+    }else if(!confirm('SVMS 입거수리 Daily Report 목록에 그 날짜 행이 없는 것을 확인했나요? 기록하면 다시 상신할 수 있게 됩니다.')){
+      return;
+    }
+    try{
+      const body={confirmation:'user_checked_svms',resolution:saved?'synced':'not_saved'};
+      if(saved) body.dk_seq=seq;
+      const v=await api(`/api/dock-daily/reports/${rid}/svms-reconcile`,{...json(body),method:'POST'});
+      applySvmsAck(rid,v);
+      notice(saved?`SVMS 반영됨으로 기록했습니다 (DK_SEQ ${v.dk_seq||seq}).`
+                  :'SVMS에 저장되지 않은 것으로 기록했습니다. 다시 상신할 수 있습니다.');
+      try{
+        const fresh=await api(`/api/dock-daily/reports/${rid}`);
+        if(state.report&&state.report.id===rid){state.report=fresh;ensureSectionEditors();renderSvmsState();}
+      }catch(_){}
+    }catch(e){ err(e); }
+  }
+  /* 지금 열린 보고서를 상신할 수 있는가. 미리보기 계약(publishable)과 반영 상태 둘 다 봐야
+   * 한다 — 계약만 보면 이미 상신한 보고서에서 버튼이 계속 열린다. */
+  function svmsPublishAllowed(){
+    const v=state.preview&&state.preview.kind==='svms'?state.preview.data:null;
+    if(!v||!v.publishable||!state.report) return false;
+    return window.DockDailySVMS.allowsPublish(state.report.svms_sync_status);
   }
   function openFilePreview(id,name){$('#dd-file-title').textContent=name;$('#dd-file-frame').src=`/api/dock-daily/attachments/${id}/preview`;$('#dd-file-modal').hidden=false;document.body.style.overflow='hidden';}
   function closeFilePreview(){$('#dd-file-modal').hidden=true;$('#dd-file-frame').src='about:blank';document.body.style.overflow='';}

@@ -72,8 +72,16 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #   2. report PUT의 metadata UPDATE도 서버 고정 4필드만 사용한다. 두 곳 모두 값은 `?` 바인딩이다.
 #   3. `_sections`의 `q`는 완전한 서버 리터럴 두 조각만 조건부 연결한다.
 #   request 값이 SQL 식별자/문법에 닿는 경로 없음. count/hash는 실측 갱신했다.
-EXPECTED_COUNT = 164
-EXPECTED_SHA256 = "ce3151eb0a71d578e1fb5b598c74ecbf2d2f9029bc0c9455d5019a5c650c3bd4"
+# 2026-08-22 baseline update — `app.py:_auto_migrate()` 의 dock_daily_report SVMS 큐 ALTER 1 site.
+#   · `ddl` 은 같은 문장 안의 **인라인 리터럴 튜플**에서만 온다(svms_claim_token/claimed_at/approved_by/
+#     approved_revision/approved_hash/result_json). request·설정·DB 값이 식별자나 DDL 문법에 닿는
+#     경로가 없다. 2026-08-19/08-20 ALTER 항목과 같은 패턴이다.
+#   · 부팅 경로(배포마다 1회)에서만 돌고 요청 처리 중엔 실행되지 않는다.
+#   · count/hash 는 `repository_fingerprints()` 실측으로 갱신했다(2026-08-15 교훈).
+#   ⚠️ 이 site 는 직전 커밋(cb6a8414e 계열)이 들여왔는데 baseline 갱신이 빠져 게이트가 red 로
+#      push 됐다. 게이트 red 상태 push 는 다음 커밋의 진짜 위험 SQL 을 가린다.
+EXPECTED_COUNT = 165
+EXPECTED_SHA256 = "47021f05cda1b0fc93918be994c1e45ec0fe6d03228dc51060e1f12c31779d10"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

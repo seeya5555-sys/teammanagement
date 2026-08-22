@@ -19,7 +19,11 @@ from datetime import datetime
 from io import BytesIO
 from xml.etree import ElementTree
 
-from flask import Blueprint, Response, jsonify, render_template, request, send_from_directory
+# 🔴 `send_file` 은 SVMS 러너 첨부 다운로드 라우트(`svms_attachment_bytes`)가 쓴다.
+#    빠져 있으면 그 라우트가 요청을 받는 순간 NameError 500 이 되고(= 첨부가 영구히
+#    SVMS 로 못 올라감) 다른 경로에서는 아무 증상이 없다. 경계 그래프 게이트가 잡았다.
+from flask import (Blueprint, Response, jsonify, render_template, request, send_file,
+                   send_from_directory)
 from werkzeug.utils import secure_filename
 
 from app_core import (ALLOWED_EXT, UPLOAD_DIR, app, ensure_heif_opener, execute, get_db,
@@ -174,11 +178,40 @@ def _snapshot(rid):
             'blocks': blocks, 'sources': links}
 
 
+def _svms_result_note(raw):
+    """러너 결과에서 화면이 읽을 한 줄만 뽑는다.
+
+    화면이 `svms_result_json` 을 직접 읽으면 러너 내부 필드 이름이 UI 계약이 되고, 첨부
+    실패 목록 같은 구조가 그대로 노출된다.
+
+    🔴 `partial` 은 **본문은 SVMS 에 들어갔고 첨부만 빠진** 상태다. 실패 건수를 반드시
+       남긴다 -- 이 문장이 없으면 형이 첨부까지 올라간 줄 알고 SVMS 를 그대로 넘긴다.
+    """
+    data = _json(raw, None)
+    if not isinstance(data, dict):
+        return None
+    parts = [str(data.get(key) or '').strip() for key in ('error', 'note')]
+    att = data.get('attachments')
+    if isinstance(att, dict) and att.get('failed'):
+        # 🔴 `failed` 가 list 라고 가정하면 안 된다(올마이트). 러너가 숫자·문자열·dict 를
+        #    보내면 `len()` 이 TypeError 로 터지고, 그건 **보고서 GET 500** 이 된다
+        #    (= 상태를 확인하려는 순간 화면이 죽는다). 셀 수 없는 형태는 건수 없이 적는다.
+        failed = att['failed']
+        count = len(failed) if isinstance(failed, (list, tuple, set, dict)) else None
+        parts.append('첨부 %d건 업로드 실패' % count if count is not None else '첨부 업로드 실패')
+    return ' · '.join([p for p in parts if p])[:400] or None
+
+
 def _report_json(rid):
     r = _report(rid)
     if not r:
         return None
     out = dict(r)
+    # 🔴 claim token 은 맥 러너의 능력치다(이 토큰으로 ext API 가 첨부 원본을 내려준다).
+    #    보고서 JSON 에 실으면 화면·앱 캐시·로그로 퍼지므로 응답 경계에서 걷어낸다.
+    #    result JSON 도 원본을 넘기지 않고 사람이 읽을 한 줄(`svms_error`)로만 준다.
+    out.pop('svms_claim_token', None)
+    out['svms_error'] = _svms_result_note(out.pop('svms_result_json', None))
     # Keep the direct date fields for the existing web contract while also
     # exposing the nested shape consumed by the iOS client.
     out['itinerary'] = {
@@ -776,7 +809,11 @@ def reports_get(pid):
     if not _project(pid):
         return _error('project not found', 404)
     return jsonify([dict(x) for x in query(
-        'SELECT id,project_id,report_date,status,revision,source_changed_after_final,updated_at '
+        'SELECT id,project_id,report_date,status,revision,source_changed_after_final,updated_at,'
+        # 목록에도 SVMS 반영 상태를 싣는다 -- 어느 일자가 이미 SVMS 로 넘어갔는지 보고서를
+        # 하나씩 열어보지 않고 알아야 한다. 🔴 여기서는 컬럼을 열거해야 한다(`SELECT *`
+        # 로 넓히면 `svms_claim_token` 까지 목록에 실린다).
+        'svms_sync_status,svms_dk_seq '
         'FROM dock_daily_report WHERE project_id=? ORDER BY report_date DESC', (pid,))])
 
 
@@ -2131,6 +2168,67 @@ def svms_publish(rid):
                     'message': 'SVMS 반영 대기열에 등록했습니다'}), 202
 
 
+@bp.route('/api/dock-daily/reports/<int:rid>/svms-reconcile', methods=['POST'])
+@login_required
+def svms_reconcile(rid):
+    """`unknown`/`partial` 을 사람이 SVMS 화면에서 본 결과로 닫는다.
+
+    🔴 서버가 SVMS 에 "저장됐니?" 를 물어서 자동 판정하는 건 불가능하다. `SP_SET_DOCK_DR`
+       는 비멱등이라 재호출이 곧 중복 행이고(카나리 실측), 서버는 사내망 SVMS 에 닿지도
+       않는다. 그래서 이 라우트는 **판정하지 않고 사람이 본 것을 기록**한다.
+
+    🔴 이 경로가 없으면 `unknown`/`partial` 은 영구 고착이다 -- 재상신은 상태로 막혀 있고
+       상태를 내릴 방법이 없어서, 형이 SVMS 에서 눈으로 확인해도 화면이 계속 "결과 불명"
+       으로 남는다(올마이트 blocking).
+    """
+    r = _report(rid)
+    if not r:
+        return _error('report not found', 404)
+    data = _body()
+    if data.get('confirmation') != 'user_checked_svms':
+        return _error('SVMS 화면 확인이 필요합니다', 400, code='confirmation_required')
+    status = (r['svms_sync_status'] or 'preview_only')
+    if status not in ('unknown', 'partial'):
+        return _error('수동 확인이 필요한 상태가 아닙니다', 409, code='reconcile_not_applicable')
+    resolution = str(data.get('resolution') or '').strip()
+    if resolution not in ('synced', 'not_saved'):
+        return _error("resolution must be 'synced' or 'not_saved'")
+    seq = str(data.get('dk_seq') or '').strip()
+    if resolution == 'synced':
+        # 🔴 DK_SEQ 없이 반영됨으로 닫으면 어느 행이 들어간 건지 영구히 모른다.
+        #    나중에 대조·정정할 근거가 사라지므로 필수로 받는다.
+        if not seq:
+            return _error('SVMS에서 확인한 DK_SEQ를 입력하세요', 400, code='dk_seq_required')
+        if not seq.isdigit() or len(seq) > 8:
+            return _error('DK_SEQ는 숫자만 입력하세요', 400, code='dk_seq_invalid')
+        seq = seq.zfill(4)  # SVMS 는 `0002` 처럼 4자 0패딩으로 보여준다.
+    new_status = 'synced' if resolution == 'synced' else 'failed'
+    note = str(data.get('note') or '').strip()[:200]
+    # 🔴 `not_saved` 는 `failed` 로 내려 **상신을 다시 열어준다**. 형이 SVMS 에서 저장이
+    #    없음을 확인했다는 뜻이므로 이때의 재상신은 중복 행을 만들지 않는다.
+    record = {'note': ('사람 확인: ' + (note or ('DK_SEQ %s 반영 확인' % seq if resolution == 'synced'
+                                                else 'SVMS에 저장 안 된 것으로 확인'))),
+              'manual_reconcile': True, 'resolved_from': status,
+              'by': session_actor(), 'at': _now()}
+    db = get_db()
+    cur = db.execute("UPDATE dock_daily_report SET svms_sync_status=?, "
+                     "svms_dk_seq=COALESCE(?,svms_dk_seq), svms_result_json=?, "
+                     "svms_synced_at=CASE WHEN ?='synced' THEN datetime('now','localtime') "
+                     "ELSE svms_synced_at END, svms_claim_token=NULL, svms_claimed_at=NULL, "
+                     # CAS 는 위에서 읽은 **그 상태**로 좁힌다. `IN ('unknown','partial')` 로
+                     # 두면 읽은 뒤 partial→unknown 으로 바뀐 job 도 같은 판정으로 닫힌다.
+                     "updated_at=datetime('now','localtime') WHERE id=? "
+                     "AND svms_sync_status=?",
+                     (new_status, seq or None, json.dumps(record, ensure_ascii=False),
+                      new_status, rid, status))
+    if cur.rowcount != 1:
+        db.rollback()
+        return _error('보고서 상태가 바뀌었습니다. 다시 확인하세요', 409, code='approval_race')
+    db.commit()
+    return jsonify({'id': rid, 'status': new_status, 'dk_seq': seq or (r['svms_dk_seq'] or None),
+                    'message': '수동 확인 결과를 기록했습니다'})
+
+
 @bp.route('/api/ext/dock-daily/svms-claim', methods=['POST'])
 @api_key_required
 def svms_claim():
@@ -2226,13 +2324,17 @@ def svms_result():
     seq = str(data.get('dk_seq') or '').strip() or None
     if status == 'synced' and not seq:
         return _error('synced result requires dk_seq', 400)
+    # 🔴 claim token 을 결과 JSON 에 그대로 저장하면 응답에서 걷어내도 DB·백업·debug
+    #    export 에 남는다(올마이트). 저장 **전에** 지운다 -- 이 컬럼은 사람이 읽을 결과
+    #    기록이고, 토큰은 이 UPDATE 로 어차피 무효화된다.
+    stored = {k: v for k, v in data.items() if k != 'claim_token'}
     db.execute("UPDATE dock_daily_report SET svms_sync_status=?, svms_dk_seq=COALESCE(?,svms_dk_seq), "
                "svms_readback_hash=?, svms_result_json=?, svms_synced_at=CASE WHEN ?='synced' "
                "THEN datetime('now','localtime') ELSE svms_synced_at END, svms_claim_token=NULL, "
                "svms_claimed_at=NULL, updated_at=datetime('now','localtime') WHERE id=? "
                "AND svms_sync_status='submitting' AND svms_claim_token=?",
                (status, seq, data.get('readback_hash'),
-                json.dumps(data, ensure_ascii=False)[:10000], status, rid, token))
+                json.dumps(stored, ensure_ascii=False)[:10000], status, rid, token))
     db.commit()
     return jsonify({'report_id': rid, 'status': status, 'dk_seq': seq})
 

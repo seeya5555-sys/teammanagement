@@ -3355,6 +3355,15 @@ col.c-edit   { width: 156px; }
 }
 .dd-badge-draft { background: #fef3c7; color: #92400e; }
 .dd-badge-done  { background: #d1fae5; color: #065f46; }
+/* SVMS 반영 상태 배지(dock_daily_svms.js 의 tone 과 1:1). 아이폰 앱 Theme 토큰과 짝. */
+.dd-badge-muted { background: #eef1f5; color: #4b5563; }
+.dd-badge-info  { background: #e6f1fb; color: #0c447c; }
+.dd-badge-ok    { background: #eaf3de; color: #3b6d11; }
+.dd-badge-warn  { background: #faeeda; color: #854f0b; }
+.dd-badge-bad   { background: #fcebeb; color: #a32d2d; }
+.dd-svms-state { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dd-svms-note  { font-size: 11.5px; color: #854f0b; }
+.dd-svms-err   { font-size: 11.5px; color: #a32d2d; }
 .dd-badge-clickable { cursor: pointer; transition: filter 0.12s, box-shadow 0.12s; user-select: none; }
 .dd-badge-clickable:hover { filter: brightness(0.95); box-shadow: 0 0 0 2px rgba(0,0,0,0.06); }
 

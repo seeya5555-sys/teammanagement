@@ -1216,6 +1216,16 @@
   "defaults": {}
  },
  {
+  "rule": "/api/dock-daily/reports/<int:rid>/svms-reconcile",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.svms_reconcile",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/dock-reports",
   "methods": [
    "OPTIONS",
@@ -1982,6 +1992,17 @@
   "defaults": {}
  },
  {
+  "rule": "/api/ext/dock-daily/attachments/<int:aid>/bytes",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.svms_attachment_bytes",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/ext/dock-daily/merge",
   "methods": [
    "OPTIONS",
@@ -2019,6 +2040,26 @@
    "POST"
   ],
   "endpoint": "routes_dock_daily.ext_merge_report",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-daily/svms-claim",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.svms_claim",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-daily/svms-result",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.svms_result",
   "strict_slashes": true,
   "defaults": {}
  },
