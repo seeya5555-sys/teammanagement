@@ -941,22 +941,24 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn("observe($('#dd-report'))", script)
         self.assertRegex(script, r'function applyNumbering\([^)]*\)\{[^}]*autoGrow\(ta\)')
 
-    def test_web_never_edits_table_or_image_blocks(self):
-        """표·이미지는 앱에서만 편집한다(형 지시 2026-08-21로 앱 편집기가 생겼다).
+    def test_web_never_edits_image_blocks_and_never_puts_a_table_in_a_textarea(self):
+        """사진은 웹에서 편집하지 않고, 표는 **절대 textarea 로 뿌리지 않는다**.
 
-        웹은 모든 블록을 textarea 하나로 뿌리고 저장할 때 `block_type:'paragraph'` 로
-        고정 전송한다. 표를 그 칸에 넣으면 한 번 건드리는 순간 표가 JSON 문자열 문단으로
-        뭉개진다 — 되돌릴 수 없는 유실이라 편집 자체를 막는다.
+        옛 웹은 모든 블록을 textarea 하나로 뿌리고 저장할 때 `block_type:'paragraph'` 로
+        고정 전송했다. 표를 그 칸에 넣으면 한 번 건드리는 순간 표가 JSON 문자열 문단으로
+        뭉개진다 -- 되돌릴 수 없는 유실이다. 표 편집기가 생긴 뒤에도(형 질문 2026-08-22)
+        그 경로는 여전히 금지다. 사진은 업로드 정본이 첨부 카드라 읽기 전용을 유지한다.
         """
         page = self.client.get('/dock-daily').get_data(as_text=True)
         script = self._script()
         self.assertIn("function isTextBlock(b)", script)
         self.assertNotIn('JSON.stringify(c.rows', script,
                          '표를 textarea 에 JSON 으로 뿌리던 경로가 남아 있으면 안 된다')
-        self.assertIn(':readOnlyBlock(b)', script, '표·이미지는 읽기 전용으로 그린다')
-        # 저장 대상에서 제외 — textarea 가 없어 _edit 가 붙을 일도 없지만, 다른 경로로
-        # 표시가 붙어도 paragraph 로 덮어쓰지 않게 한 겹 더 막는다.
-        self.assertIn("!b._delete&&isTextBlock(b)&&(b._new||b._edit)", script)
+        self.assertIn('readOnlyBlock(b)', script, '사진·확정본 표는 읽기 전용으로 그린다')
+        # 🔴 사진 블록은 저장 대상에서 **영구 제외**다. 웹에 편집기가 없으므로 화면이
+        # 읽어들인 모양(옛 한 장 카드 등)을 되쓰면 앱이 만든 계약을 덮어쓴다.
+        self.assertIn("if(b.block_type==='image')return false;", script)
+        self.assertIn("!b._delete&&(b._new||b._edit)&&savable(b)", script)
         # 🔴 표를 담은 special 섹션에는 글 칸을 만들지 않는다(형 지시 2026-08-22).
         # 앱 `DockDailySectionEditing.needsTextDraft` 와 같은 **값 기준** 판정이다 —
         # 표 전용 플래그가 없으므로 "special 인데 표가 들어 있다" 를 그 표식으로 쓴다.
@@ -964,8 +966,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn("s.kind === 'special' && own.some(b => b.block_type === 'table')", script)
         self.assertIn('own.some(b => isTextBlock(b))', script)
         self.assertIn('dd-block-table', page)
-        # 표·이미지 삭제는 한 번 확인을 받는다 — 웹에는 다시 만들 수단이 없고, 이미지
-        # 블록 삭제는 서버가 연결된 첨부까지 지운다(routes: block_id soft-delete).
+        # 표·이미지 삭제는 한 번 확인을 받는다 — 표는 적어 둔 내용이 통째로 사라지고,
+        # 이미지 블록 삭제는 서버가 연결된 첨부까지 지운다(routes: block_id soft-delete).
         self.assertRegex(script, r'if\(!isTextBlock\(b\)&&!confirm\(')
         # 서버 upsert 는 content_json 을 통째로 교체한다. 종류와 나머지 키를 그대로 실어
         # 보내지 않으면 item 블록의 progress/status 가 저장 한 번에 사라진다.
@@ -975,6 +977,54 @@ class DockDailyTests(unittest.TestCase):
                          '수정만으로 블록 종류를 갈아치우면 안 된다')
         # 이미지 id 는 서버와 같은 판정(isdigit). Number() 는 -5·12.5 를 통과시킨다.
         self.assertIn(r"/^\d+$/.test(raw)", script)
+
+    def test_web_can_add_a_table_section_and_edit_the_table(self):
+        """웹에도 표 섹션 버튼과 표 편집기가 있어야 한다.
+
+        형 질문 2026-08-22 "표 섹션 넣는 버튼은 웹에 있니?" -- 앱은 OTA 245 부터 있었고
+        웹에는 `＋ 섹션` 하나뿐이라 표는 앱에서만 만들 수 있었다.  버튼만 달면 웹에서
+        채울 수가 없어 빈 표 카드만 늘어나므로 편집기까지 함께 둔다.
+        """
+        page = self.client.get('/dock-daily').get_data(as_text=True)
+        self.assertIn('js/dock_daily_table.js', page)
+        script = self._script()
+        self.assertIn('dd-section-add-table', script)
+        self.assertIn('data-add-table', script, '빈 카드에 표를 채울 길이 있어야 한다')
+        add = script.split('async function addSection(', 1)[1].split('async function addTable(', 1)[0]
+        # 🔴 확정 판정이 섹션 생성보다 **먼저**다(앱 addTableSection 과 같은 순서).
+        # 뒤에 보면 표 저장만 409 로 튕기고 빈 섹션은 모든 일자에 영구히 남는다.
+        self.assertLess(add.index("status==='final'"), add.index('/sections`'),
+                        '확정본 게이트가 POST /sections 보다 앞에 있어야 한다')
+        # 🔴 방금 만든 키는 서버가 준 `created_section_key` 를 쓴다.  응답 목록의 차집합으로
+        # 되짚으면 다른 기기가 같은 순간에 만든 남의 섹션을 고른다(create_section 주석).
+        self.assertIn('updated.created_section_key', add)
+        table = script.split('async function addTable(', 1)[1].split('async function deleteSection(', 1)[0]
+        # 🔴 실패와 "확인 못 했다" 를 합치지 않는다 -- 커밋 뒤 응답만 유실될 수 있다.
+        for outcome in ("'ok'", "'stale'", "'failed'", "'unknown'"):
+            self.assertIn(outcome, table)
+        self.assertIn("block_type:'table'", table)
+        self.assertNotIn("method:'PUT'", table, '표 전용 저장 경로를 따로 만들지 않는다')
+        # 🔴 "그 섹션에 표가 있는가" 로 성공을 판정하면 이미 표가 있던 섹션에서 저장이
+        # 실패해도 성공으로 보고한다.  새 블록에는 서버 id 가 없으니 개수로 센다.
+        self.assertIn('tables(latest)>before', table)
+        self.assertNotIn('.some(b=>b.section_key===key&&b.block_type===', table)
+        # 🔴 확실히 실패했거나 확인조차 못 했으면 낙관적 draft 를 걷어낸다.  남기면 실제로는
+        # 커밋됐던 표를 다음 저장이 한 번 더 만든다.
+        self.assertEqual(table.count('dropDraft()'), 2)
+        # 🔴 실패 경로에서 서버본으로 덮지 않는다 -- 같은 PUT 에 실려 있던 미저장 글이
+        # 통째로 사라진다.  `state.report=latest` 는 성공을 확인했을 때만.
+        self.assertEqual(table.count('state.report=latest'), 1)
+        self.assertLess(table.index('tables(latest)>before'), table.index('state.report=latest'))
+        editor = script.split('function tableEditor(', 1)[1].split('function setTable(', 1)[0]
+        self.assertIn('dd-table-edit', editor)
+        self.assertIn('data-tbl-add-row', editor)
+        self.assertIn('data-tbl-del-col', editor)
+        # 🔴 셀 입력에서는 다시 그리지 않는다 -- 한 글자마다 renderSections 를 돌리면
+        # 포커스와 커서가 날아가 한글 조합이 깨진다.  구조 변경 버튼에서만 다시 그린다.
+        bind = script.split('function bindTableEditors(', 1)[1].split('function renderSections(', 1)[0]
+        cell = bind.split('.dd-tbl-cell', 1)[1].split('const mutate', 1)[0]
+        self.assertNotIn('renderSections()', cell)
+        self.assertIn('renderSections()', bind.split('const mutate', 1)[1])
 
     def test_revision_conflict_and_final_lock(self):
         p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()

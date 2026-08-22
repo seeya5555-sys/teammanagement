@@ -127,11 +127,13 @@
           + `<button class="dd-list-del" type="button" data-del-section="${esc(s.section_key)}" title="이 섹션을 아주 삭제" aria-label="${esc(s.label||s.section_key)} 섹션 삭제">삭제</button></div>`).join('')
       : '<span class="dd-muted">Special 항목 없음</span>';
     $('#dd-special-tools').innerHTML = rows
-      + '<div class="dd-row" style="margin-top:9px"><input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:0"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button></div>'
-      + '<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 잠시 감추려면 체크를 해제하고, 아주 지우려면 삭제를 누르세요.</p>';
+      + '<input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:9px 0 7px">'
+      + '<div class="dd-row"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button><button class="dd-btn alt" id="dd-section-add-table" type="button">＋ 표 섹션</button></div>'
+      + '<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 잠시 감추려면 체크를 해제하고, 아주 지우려면 삭제를 누르세요. <b>＋ 표 섹션</b>은 제목을 가진 빈 표 카드를 열린 일자에 만듭니다(앱과 같은 기능).</p>';
     document.querySelectorAll('.dd-special-toggle').forEach(t => t.onchange = () => toggleSpecial(t.dataset.key, t.checked));
     document.querySelectorAll('[data-del-section]').forEach(b => b.onclick = () => once(b, () => deleteSection(b.dataset.delSection)));
     $('#dd-section-add').onclick = () => addSection($('#dd-section-label').value);
+    $('#dd-section-add-table').onclick = () => once($('#dd-section-add-table'), () => addSection($('#dd-section-label').value, true));
   }
   function ensureSectionEditors() {
     for (const s of (state.report.sections||[]).filter(x => x.enabled)) {
@@ -139,7 +141,14 @@
       // 끼워 넣으면 형이 안 쓴 문단이 카드마다 하나씩 붙는다. 앱과 같은 값 기준 판정
       // (`DockDailySectionEditing.needsTextDraft`).
       const own = (state.report.blocks||[]).filter(b => !b._delete && b.section_key === s.section_key);
-      if (s.kind === 'special' && own.some(b => b.block_type === 'table')) continue;
+      if (s.kind === 'special' && own.some(b => b.block_type === 'table')) {
+        // 🔴 방금 표를 넣은 섹션에는 조금 전 깔아둔 빈 글 초안이 남아 있다. 저장되지는
+        // 않지만(`_new` + 빈 글은 안 올린다) 화면에는 빈 문단이 그대로 보여서, 형이
+        // 없애라고 한 "표 카드 속 일반 입력칸" 이 되살아난 것처럼 읽힌다.
+        state.report.blocks = (state.report.blocks||[]).filter(
+          b => !(b._new && b.section_key === s.section_key && isTextBlock(b) && !blockText(b).trim()));
+        continue;
+      }
       if (!own.some(b => isTextBlock(b))) {
         state.report.blocks.push({id:0,_key:state.tempId--,section_key:s.section_key,block_type:'paragraph',content:{body:''},sort_order:0,origin:'manual',manual_override:1,_new:true});
       }
@@ -183,6 +192,15 @@
   // **표를 JSON 문자열 문단으로 뭉갰다**. 앱에서 표를 실제로 만들 수 있게 되면서(형 지시
   // 2026-08-21) 그 경로가 곧 데이터 유실이므로, 웹에서는 글 블록만 편집한다.
   function isTextBlock(b){return b.block_type!=='table'&&b.block_type!=='image';}
+  // 무엇을 서버로 올릴지. 🔴 사진 블록은 웹에서 편집기가 없으니 **절대 올리지 않는다** --
+  // 화면이 읽어들인 모양(옛 한 장 카드 등)을 그대로 되쓰면 앱이 만든 계약을 덮어쓴다.
+  // 표는 이제 웹에서 고칠 수 있으므로 올린다. 글 블록은 종전대로, 한 글자도 안 쓴 새
+  // 초안만 걸러낸다(비어 있는 카드가 매 저장마다 늘어나지 않게).
+  function savable(b){
+    if(b.block_type==='image')return false;
+    if(b.block_type==='table')return true;
+    return !b._new||blockText(b).trim();
+  }
   function blockText(b){const c=b.content||{};return c.title||c.body||c.text||'';}
   // 캡션 표시 규칙. 서버 `photo_grid.wrap` · 앱 `DockDailyImageContent.captionLabel` 과
   // 같은 글자를 내야 한다. 🔴 이미 꺾쇠가 있는 캡션은 다시 감싸지 않는다 -- 감싸면
@@ -193,13 +211,18 @@
     if(text.length>1&&text.startsWith('<')&&text.endsWith('>'))return text;
     return `<${text}>`;
   }
-  // 표·이미지는 읽기 전용으로 보여준다(메일 렌더와 같은 모양). 편집은 앱에서 한다.
+  // 사진은 읽기 전용으로 보여준다(메일 렌더와 같은 모양) -- 업로드 정본이 첨부 카드라
+  // 웹에서는 편집기를 두지 않는다. 표는 이제 웹에서도 고칠 수 있고(→ `tableEditor`),
+  // 여기로는 **확정본**만 온다.
   function readOnlyBlock(b){
     const c=b.content||{};
     if(b.block_type==='table'){
-      const head=(c.columns||[]).map(v=>`<th>${esc(String(v))}</th>`).join('');
-      const body=(c.rows||[]).filter(Array.isArray).map(r=>`<tr>${r.map(v=>`<td>${esc(String(v))}</td>`).join('')}</tr>`).join('');
-      return `<table class="dd-block-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table><p class="dd-muted dd-block-note">표 내용은 앱에서 편집합니다.</p>`;
+      // 🔴 `read` 가 아니라 `grid` -- 확정본은 보여주기만 하므로 서버 `_table_grid` 와
+      // 한 글자도 다르면 안 된다(빈 표에 기본 골격을 넣으면 메일에 없는 표가 화면에 뜬다).
+      const g=TABLE.grid(c);
+      const head=g.columns.map(v=>`<th>${esc(v)}</th>`).join('');
+      const body=g.rows.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('');
+      return `<table class="dd-block-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table><p class="dd-muted dd-block-note">확정된 보고서의 표는 고칠 수 없습니다. 확정을 취소하면 편집할 수 있습니다.</p>`;
     }
     // 사진 카드는 도크 리포트와 같은 `{images:[{attachment_id,caption}], columns:N}` 이다.
     // 옛 한 장짜리 카드(`attachment_id`/`caption`)도 그대로 열려야 하므로 둘 다 읽는다.
@@ -232,6 +255,41 @@
   // applying their own, so a renumbered card never double-numbers.
   const NUM=window.DockDailyNumbering;
   const ORDER=window.DockDailySectionOrder;
+  // 표 규칙 정본은 static/js/dock_daily_table.js 다(실행형 테스트로 잠긴다).
+  const TABLE=window.DockDailyTable;
+  // 표 편집기(형 질문 2026-08-22 "표 섹션 넣는 버튼은 웹에 있니?"). 앱과 같은 규칙을
+  // 쓰되 조작은 버튼이다 -- 마우스가 있으니 스와이프 대신 행/열 옆의 ✕ 를 둔다.
+  //
+  // 🔴 셀 입력은 **다시 그리지 않는다**. 한 글자마다 renderSections 를 돌리면 포커스와
+  // 커서 위치가 매번 날아가 한글 조합이 깨진다. 구조가 바뀌는 행·열 추가/삭제에서만
+  // 다시 그린다.
+  function tableEditor(b,key){
+    const g=TABLE.read(b.content);
+    const rowX=TABLE.canRemoveRow(g), colX=TABLE.canRemoveColumn(g);
+    const head=g.columns.map((v,c)=>`<th><div class="dd-tbl-headcell"><input class="dd-tbl-cell" data-key="${key}" data-col="${c}" value="${esc(v)}" placeholder="열 이름" aria-label="${c+1}번째 열 이름"><button class="dd-tbl-x" type="button" data-tbl-del-col="${c}" data-key="${key}" title="이 열 삭제" aria-label="${c+1}번째 열 삭제"${colX?'':' disabled'}>✕</button></div></th>`).join('');
+    const body=g.rows.map((r,ri)=>`<tr>${r.map((v,c)=>`<td><input class="dd-tbl-cell" data-key="${key}" data-row="${ri}" data-col="${c}" value="${esc(v)}" aria-label="${ri+1}행 ${c+1}열"></td>`).join('')}<td class="dd-tbl-rowtool"><button class="dd-tbl-x" type="button" data-tbl-del-row="${ri}" data-key="${key}" title="이 행 삭제" aria-label="${ri+1}번째 행 삭제"${rowX?'':' disabled'}>✕</button></td></tr>`).join('');
+    return `<table class="dd-block-table dd-table-edit"><thead><tr>${head}<th class="dd-tbl-rowtool"></th></tr></thead><tbody>${body}</tbody></table>`
+      +`<div class="dd-tbl-tools"><button class="dd-btn alt" type="button" data-tbl-add-row="1" data-key="${key}">＋ 행</button>`
+      +`<button class="dd-btn alt" type="button" data-tbl-add-col="1" data-key="${key}">＋ 열</button>`
+      +`<span class="dd-muted">고친 표는 저장을 눌러야 반영됩니다.</span></div>`;
+  }
+  // 내용은 통째로 교체한다 -- 서버 upsert 도 content 를 통째로 바꾸므로 남은 옛 키가
+  // 있으면 저장 전후 모양이 달라진다.
+  function setTable(b,grid){b.content={columns:grid.columns,rows:grid.rows};b._edit=true;state.dirty=true;}
+  function bindTableEditors(){
+    document.querySelectorAll('.dd-tbl-cell').forEach(i=>i.oninput=()=>{
+      const b=findBlock(i.dataset.key); if(!b)return;
+      const g=TABLE.read(b.content), col=Number(i.dataset.col);
+      // 헤더 칸에는 data-row 가 없다.
+      setTable(b,i.dataset.row===undefined?TABLE.setColumn(g,col,i.value)
+                                          :TABLE.setCell(g,Number(i.dataset.row),col,i.value));
+    });
+    const mutate=(btn,fn)=>{const b=findBlock(btn.dataset.key);if(!b)return;setTable(b,fn(TABLE.read(b.content)));renderSections();};
+    document.querySelectorAll('[data-tbl-add-row]').forEach(x=>x.onclick=()=>mutate(x,g=>TABLE.addRow(g)));
+    document.querySelectorAll('[data-tbl-add-col]').forEach(x=>x.onclick=()=>mutate(x,g=>TABLE.addColumn(g)));
+    document.querySelectorAll('[data-tbl-del-row]').forEach(x=>x.onclick=()=>mutate(x,g=>TABLE.removeRow(g,Number(x.dataset.tblDelRow))));
+    document.querySelectorAll('[data-tbl-del-col]').forEach(x=>x.onclick=()=>mutate(x,g=>TABLE.removeColumn(g,Number(x.dataset.tblDelCol))));
+  }
   // 카드는 내용만큼 늘어난다(형 지시 2026-08-21). 안쪽 스크롤바도, 손으로 끄는
   // 리사이즈 핸들도 없다 — 작업 개수가 칸을 넘으면 카드 자체가 커지고 페이지가 스크롤된다.
   // 'auto' 로 먼저 줄이는 이유: 이미 늘어난 높이가 남아 있으면 scrollHeight 가 그 높이를
@@ -319,7 +377,10 @@
     const del=s.kind==='special'
       ? `<button class="dd-sec-btn danger" type="button" data-del-section-card="${esc(s.section_key)}" title="이 섹션을 아주 삭제" aria-label="${esc(s.label||s.section_key)} 섹션 삭제">삭제</button>`
       : '';
-    return `<span class="dd-sec-tools">${btn(-1,'▲','위로')}${btn(1,'▼','아래로')}${del}</span>`;
+    // 앱 카드의 `+` 메뉴와 같은 자리. 표 섹션을 만들다 표만 못 들어간 경우(그 카드는
+    // 빈 채로 남는다) 형이 여기서 채울 수 있어야 한다 -- 없으면 되살릴 길이 없다.
+    const tbl=`<button class="dd-sec-btn" type="button" data-add-table="${esc(s.section_key)}" title="이 섹션에 표를 넣습니다" aria-label="${esc(s.label||s.section_key)} 에 표 추가">＋ 표</button>`;
+    return `<span class="dd-sec-tools">${tbl}${btn(-1,'▲','위로')}${btn(1,'▼','아래로')}${del}</span>`;
   }
   function renderSections() {
     const locked=state.report.status==='final'; const blocks=state.report.blocks||[];
@@ -334,16 +395,18 @@
       const meta=(badges||del)?`<div class="dd-block-meta"><span>${badges}</span>${del}</div>`:'';
       const body=isTextBlock(b)
         ?`<textarea class="dd-section-edit" data-key="${key}" placeholder="${esc(s.label)} 내용을 입력하세요" ${locked?'disabled':''}>${esc(blockText(b))}</textarea>`
-        :readOnlyBlock(b);
+        :(b.block_type==='table'&&!locked?tableEditor(b,key):readOnlyBlock(b));
       return `<div class="dd-block-editor">${meta}${body}</div>`}).join('')}</div>`;
     }).join('');
     document.querySelectorAll('.dd-section-edit').forEach(bindItemNumbering);
+    bindTableEditors();
+    document.querySelectorAll('[data-add-table]').forEach(b=>b.onclick=()=>once(b,()=>addTable(b.dataset.addTable)));
     document.querySelectorAll('[data-move-section]').forEach(b=>b.onclick=()=>once(b,()=>moveSection(b.dataset.moveSection,Number(b.dataset.delta))));
     document.querySelectorAll('[data-del-section-card]').forEach(b=>b.onclick=()=>once(b,()=>deleteSection(b.dataset.delSectionCard)));
     document.querySelectorAll('.delete-inline').forEach(btn=>btn.onclick=()=>{const b=findBlock(btn.dataset.key);if(!b)return;
       // 표·이미지는 웹에서 다시 만들 수 없고(편집기는 앱에만 있다), 이미지 블록을 지우면
       // 서버가 연결된 첨부까지 함께 지운다. 한 번 확인을 받는다.
-      if(!isTextBlock(b)&&!confirm(b.block_type==='image'?'이미지 블록을 삭제할까요?\n\n연결된 첨부파일도 함께 삭제되고, 이미지 블록은 앱에서만 다시 만들 수 있습니다.':'표 블록을 삭제할까요?\n\n표는 앱에서만 다시 만들 수 있습니다.'))return;if(b._new)state.report.blocks=state.report.blocks.filter(x=>x!==b);else b._delete=true;state.dirty=true;ensureSectionEditors();renderSections();});
+      if(!isTextBlock(b)&&!confirm(b.block_type==='image'?'이미지 블록을 삭제할까요?\n\n연결된 첨부파일도 함께 삭제되고, 이미지 블록은 앱에서만 다시 만들 수 있습니다.':'표 블록을 삭제할까요?\n\n적어 둔 표 내용이 사라집니다. 빈 표는 제목줄의 ＋ 표 로 다시 만들 수 있습니다.'))return;if(b._new)state.report.blocks=state.report.blocks.filter(x=>x!==b);else b._delete=true;state.dirty=true;ensureSectionEditors();renderSections();});
   }
   function findBlock(key){return (state.report.blocks||[]).find(b=>String(b._key??b.id)===String(key));}
   function canLeaveDraft(){return !state.dirty||confirm('저장되지 않은 수정사항이 있습니다. 저장하지 않고 이동할까요?');}
@@ -390,7 +453,7 @@
     }
     const operations=[];
     state.report.blocks.filter(b=>b._delete).forEach(b=>operations.push({op:'delete',id:b.id}));
-    state.report.blocks.filter(b=>!b._delete&&isTextBlock(b)&&(b._new||b._edit)&&(!b._new||blockText(b).trim())).forEach(b=>operations.push({op:'upsert',id:b._new?undefined:b.id,section_key:b.section_key,block_type:b.block_type||'paragraph',content:{...(b.content||{})},sort_order:b.sort_order||0}));
+    state.report.blocks.filter(b=>!b._delete&&(b._new||b._edit)&&savable(b)).forEach(b=>operations.push({op:'upsert',id:b._new?undefined:b.id,section_key:b.section_key,block_type:b.block_type||'paragraph',content:{...(b.content||{})},sort_order:b.sort_order||0}));
     const payload={revision:state.report.revision,operations};
     if(sectionUpdates)payload.section_updates=sectionUpdates;
     const saved=await api(`/api/dock-daily/reports/${rid}`,{...json(payload),method:'PUT'});
@@ -401,19 +464,126 @@
   }
   // section_key 는 서버가 만든다(POST .../sections). 웹과 앱이 각자 키를 만들면 규칙이
   // 두 벌이 되고 서로 다른 키를 뱉는다 -- 제목만 보내고 키는 받는다.
-  async function addSection(label){
+  //
+  // `wantTable` 이면 그 섹션 안에 빈 표를 하나 넣는다(형 질문 2026-08-22 "표 섹션 넣는
+  // 버튼은 웹에 있니?" -- 앱 `addTableSection` 파리티). 표는 다른 카드의 하위항목이
+  // 아니라 제목을 가진 자기 섹션이어야 한다는 형 지시(2026-08-21)를 웹에도 편다.
+  async function addSection(label,wantTable){
     const name=String(label||'').trim();
     if(!name){err(new Error('섹션 제목을 입력하세요.'));return;}
     clearErr();
+    // 🔴 확정 판정이 **섹션 생성보다 먼저**다(앱과 같은 순서). 나중에 보면 표 저장만
+    // 409 로 튕기고 빈 섹션은 프로젝트의 모든 일자에 영구히 남는다.
+    if(wantTable){
+      if(!state.report){err(new Error('표를 넣을 보고서 일자를 먼저 고르세요.'));return;}
+      if(state.report.status==='final'){err(new Error('확정된 보고서에는 표 섹션을 추가할 수 없습니다. 확정을 취소한 뒤 다시 시도하세요.'));return;}
+    }
+    // 🔴 요청 전에 어느 프로젝트·일자에서 눌렀는지 붙잡아 둔다. POST 가 도는 동안 형이
+    // 다른 프로젝트를 고르면, 응답으로 state.project 를 덮는 순간 화면은 B 프로젝트인데
+    // 내용은 A 프로젝트가 된다 -- 이어지는 표도 엉뚱한 일자에 들어간다(올마이트 지적).
+    const pid=state.project.id, seq=selectSeq, rid=state.report?.id??null;
+    let updated;
     try{
-      const updated=await api(`/api/dock-daily/projects/${state.project.id}/sections`,{...json({label:name}),method:'POST'});
-      state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
-      $('#dd-section-label').value='';
-      // 섹션 목록을 다시 그린다. 열린 보고서에도 바로 카드가 생겨야 한다.
-      renderSpecialTools();
-      if(state.report){state.report.sections=updated.sections;ensureSectionEditors();renderSections();}
-      notice(`섹션 "${name}" 을 추가했습니다.`);
-    }catch(error){err(error);}
+      updated=await api(`/api/dock-daily/projects/${pid}/sections`,{...json({label:name}),method:'POST'});
+    }catch(error){err(error);return;}
+    if(state.project?.id!==pid){
+      // 목록만 조용히 갱신하고 화면은 건드리지 않는다. 섹션은 서버에 이미 만들어졌다.
+      state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
+      notice(`섹션 "${name}" 을 추가했습니다. 그 사이 다른 프로젝트를 열어서 여기에는 반영하지 않았습니다.`);
+      return;
+    }
+    state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
+    $('#dd-section-label').value='';
+    // 섹션 목록을 다시 그린다. 열린 보고서에도 바로 카드가 생겨야 한다.
+    renderSpecialTools();
+    const sameReport=!!state.report&&state.report.id===rid&&seq===selectSeq;
+    if(state.report&&sameReport){state.report.sections=updated.sections;}
+    // 🔴 방금 만든 키는 서버가 `created_section_key` 로 알려준다. 응답 목록의 차집합으로
+    // 되짚으면 다른 기기가 같은 순간에 만든 **남의 섹션**을 고른다(서버 주석과 같은 이유).
+    const key=updated.created_section_key;
+    if(!(wantTable&&sameReport)){
+      if(state.report&&sameReport){ensureSectionEditors();renderSections();}
+      notice(wantTable
+        ? `섹션 "${name}" 을 추가했습니다. 그 사이 다른 일자를 열어서 표는 넣지 않았습니다 -- 카드의 ＋ 표 로 넣으세요.`
+        : `섹션 "${name}" 을 추가했습니다.`);
+      return;
+    }
+    if(!key){
+      ensureSectionEditors();renderSections();
+      err(new Error(`섹션 "${name}" 은 만들었지만 어느 섹션인지 확인하지 못해 표를 넣지 못했습니다. 새로고침한 뒤 그 카드의 ＋ 표 를 누르세요.`));
+      return;
+    }
+    const outcome=await addTable(key,{silent:true});
+    // 🔴 실패 문구를 단정하지 않는다(앱 `verify()` 와 같은 이유). 서버가 커밋한 뒤
+    // 응답만 유실될 수 있어서 "넣지 못했습니다" 가 거짓이 될 수 있다.
+    if(outcome==='ok'){
+      notice(`표 섹션 "${name}" 을 추가했습니다. 섹션은 이 프로젝트의 모든 일자에 생기고, 표가 없는 날은 메일에 NIL 로 나갑니다.`);
+    }else if(outcome==='stale'){
+      notice(`섹션 "${name}" 을 추가했습니다. 그 사이 다른 일자를 열어서 표는 넣지 않았습니다 -- 카드의 ＋ 표 로 넣으세요.`);
+    }else if(outcome==='failed'){
+      err(new Error(`섹션 "${name}" 은 만들었지만 표를 넣지 못했습니다. 그 빈 카드의 ＋ 표 로 채우거나, 왼쪽 목록에서 삭제하세요.`));
+    }else{
+      err(new Error(`섹션 "${name}" 은 만들었지만 표가 들어갔는지 확인하지 못했습니다. 새로고침해서 그 카드를 확인하세요.`));
+    }
+  }
+  // 섹션 하나에 빈 표를 넣는다. 서버에는 표 전용 라우트가 없고 블록 upsert 계약이
+  // 그대로 표를 받으므로(BLOCK_TYPES 에 'table'), 새 블록을 state 에 넣고 평소 저장을 탄다.
+  //
+  // 🔴 미저장 글도 같은 PUT 에 함께 실린다. 따로 두 번 보내면 첫 요청이 revision 을
+  // 올려 두 번째가 409 로 튕긴다(`moveSection` 과 같은 이유).
+  // 반환값은 'ok' | 'stale' | 'failed' | 'unknown' 이다. 🔴 실패와 "모르겠다" 를 합치지
+  // 않는다 -- 서버가 커밋한 뒤 응답만 유실될 수 있어서, 그때 "못 넣었다" 고 말하면 형은
+  // 이미 들어간 표를 한 번 더 넣는다(앱 `verify()` 와 같은 계약).
+  async function addTable(key,opts){
+    const silent=!!(opts&&opts.silent);
+    if(!state.report)return 'failed';
+    if(state.report.status==='final'){err(new Error('확정된 보고서에는 표를 넣을 수 없습니다. 확정을 취소한 뒤 다시 시도하세요.'));return 'failed';}
+    const section=(state.report.sections||[]).find(s=>s.section_key===key);
+    if(!section){err(new Error('그 섹션을 찾지 못했습니다. 새로고침한 뒤 다시 시도하세요.'));return 'failed';}
+    if(!silent)clearErr();
+    const rid=state.report.id, g=TABLE.empty();
+    const tables=r=>(r.blocks||[]).filter(b=>b.section_key===key&&b.block_type==='table').length;
+    // 🔴 "그 섹션에 표가 있는가" 로 성공을 판정하면 안 된다 -- 이미 표가 있던 섹션에
+    // ＋ 표 를 눌렀다가 저장이 실패해도 `있다` 라서 성공으로 보고한다(올마이트 지적).
+    // 새 블록에는 아직 서버 id 가 없으므로 **개수가 늘었는가**로 센다.
+    const before=tables(state.report);
+    // 카드 안에서 맨 뒤에 붙인다 -- 글이 이미 있는 섹션에 표를 넣으면 글 다음에 온다.
+    const tail=(state.report.blocks||[]).filter(b=>!b._delete&&b.section_key===key)
+      .reduce((m,b)=>Math.max(m,b.sort_order||0),0);
+    const draft={id:0,_key:state.tempId--,section_key:key,block_type:'table',
+      content:{columns:g.columns,rows:g.rows},sort_order:tail+1,origin:'manual',manual_override:1,_new:true};
+    const dropDraft=()=>{state.report.blocks=(state.report.blocks||[]).filter(b=>b!==draft);};
+    state.report.blocks.push(draft);
+    state.dirty=true;
+    let applied;
+    try{ applied=await save(); }
+    catch(error){
+      if(!silent)err(new Error(conflictText(error)));
+      // 저장이 실제로 들어갔는지 서버에 되묻는다.
+      let latest;
+      try{ latest=await api(`/api/dock-daily/reports/${rid}`); }catch(_){ latest=null; }
+      if(state.report?.id!==rid)return 'unknown';   // 그 사이 다른 일자를 열었다
+      // 🔴 확인 자체를 못 했어도 낙관적 draft 는 반드시 걷어낸다. 남겨두면 실제로는
+      // 커밋됐던 표를 다음 저장이 한 번 더 만든다(올마이트 지적). 나머지 미저장 수정과
+      // dirty 는 그대로 두고, 형에게는 확인 못 했다고 말한다.
+      if(!latest){dropDraft();renderSections();return 'unknown';}
+      if(tables(latest)>before){
+        // 커밋은 됐고 응답만 유실됐다. 이때만 서버본을 채택한다 -- 같은 PUT 에 실려간
+        // 다른 수정도 함께 들어갔으므로 로컬을 버려도 잃는 게 없다.
+        state.report=latest; state.dirty=false; ensureSectionEditors(); renderSections(); renderAttachments();
+        if(!silent){clearErr();notice(`"${section.label||key}" 에 빈 표를 넣었습니다. (응답이 늦어 서버에서 다시 읽었습니다)`);}
+        return 'ok';
+      }
+      // 🔴 확실히 실패했을 때는 서버본으로 덮지 않는다. 같은 PUT 에 실려 있던 형의
+      // 미저장 글까지 통째로 사라진다(올마이트 지적) -- 표 draft 만 빼고 그대로 둔다.
+      dropDraft(); renderSections();
+      return 'failed';
+    }
+    // `save()` 가 false 면 요청 도중 다른 일자를 열었다는 뜻이다. 그 표는 서버에 들어갔지만
+    // 지금 화면은 다른 보고서라 여기서 덮지 않는다.
+    if(!applied)return 'stale';
+    if(!silent)notice(`"${section.label||key}" 에 빈 표를 넣었습니다. 칸을 채운 뒤 저장하세요.`);
+    return 'ok';
   }
   // 섹션을 목록에서 아주 지운다(형 지시 2026-08-22). 체크 해제는 숨김일 뿐이라,
   // 잘못 만든 빈 카드가 프로젝트에 영원히 남아 있었다.

@@ -23,6 +23,19 @@
 .dd-sec-btn.danger{color:#a4352c}
 .dd-sec-btn.danger:hover:not(:disabled){background:#fdf1ef;border-color:#d9b6b1}
 @media(max-width:800px){.dd-section-head{align-items:flex-start;gap:8px}.dd-section-aside{flex-direction:column;align-items:flex-end;gap:6px}}
+/* 표 편집기(형 질문 2026-08-22). 셀은 `<td>` 를 꽉 채우는 입력칸이라 테두리를 지우고
+   표 자신의 격자선만 남긴다 -- 칸 안에 또 네모가 생기면 줄이 두 겹으로 보인다.
+   열 폭은 브라우저가 내용에 맞춰 잡게 두고(table-layout:auto) 폭 지정을 하지 않는다:
+   긴 값을 넣은 열만 넓어져야 형이 아이폰 앱에서 본 모양과 같아진다. */
+.dd-table-edit input{box-sizing:border-box;width:100%;min-width:64px;border:0;background:transparent;padding:0;font:inherit;color:inherit}
+.dd-table-edit input:focus{outline:2px solid #c7bfae;outline-offset:1px;border-radius:3px}
+.dd-tbl-headcell{display:flex;align-items:center;gap:5px}
+.dd-tbl-headcell input{font-weight:700}
+.dd-tbl-rowtool{width:1%;white-space:nowrap;background:#faf9f6}
+.dd-tbl-x{border:1px solid #e0dbd0;border-radius:6px;background:#fff;color:#a4352c;font-size:11px;line-height:1;padding:4px 6px;cursor:pointer}
+.dd-tbl-x:hover:not(:disabled){background:#fdf1ef;border-color:#d9b6b1}
+.dd-tbl-x:disabled{opacity:.3;cursor:not-allowed}
+.dd-tbl-tools{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:8px}
 /* 일자는 늘어나기만 하므로 목록을 세로로 쌓지 않는다(형 지시 2026-08-21):
    검색 + 상태 + 드롭다운 한 줄. 행마다 있던 삭제 버튼이 사라지므로 삭제는
    "열려 있는 일자" 하나를 지우는 버튼으로 옮겨간다 — 삭제 자체가 없어지면 안 된다. */
@@ -123,4 +136,5 @@
 {% block scripts %}<script src="{{ url_for('static', filename='js/dock_daily_numbering.js') }}"></script>
 <script src="{{ url_for('static', filename='js/dock_daily_filter.js') }}"></script>
 <script src="{{ url_for('static', filename='js/dock_daily_section_order.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dock_daily_table.js') }}"></script>
 <script src="{{ url_for('static', filename='js/dock_daily.js') }}"></script>{% endblock %}
