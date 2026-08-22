@@ -989,7 +989,16 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('js/dock_daily_table.js', page)
         script = self._script()
         self.assertIn('dd-section-add-table', script)
-        self.assertIn('data-add-table', script, '빈 카드에 표를 채울 길이 있어야 한다')
+        # 🔴 형 지시 2026-08-22 "기존 섹션에 표추가는 필요 없어(ios랑 똑같이 해줘)".
+        # 표는 제목을 직접 받는 `＋ 표 섹션` 으로만 만든다.  카드의 `＋ 표` 는 앱
+        # `canAddTable` 과 같은 조건 -- **빈 special 섹션**(표 삽입이 실패해 남은 고아
+        # 카드) 에만 남긴다.  아예 없애면 그 카드를 채울 길이 사라진다(올마이트 지적).
+        self.assertIn('data-add-table', script, '고아 섹션 복구 경로는 남아 있어야 한다')
+        tools = script.split('function sectionTools(', 1)[1].split('function renderSections(', 1)[0]
+        self.assertIn('TABLE.canAddTable(', tools, '표 버튼은 게이트를 통과해야 한다')
+        # 🔴 앱은 초안을 `report.blocks` 에 넣지 않는다.  웹은 `ensureSectionEditors` 가
+        # 빈 카드에 글칸 초안을 밀어넣으므로 그걸 세면 고아 카드에서 버튼이 사라진다.
+        self.assertIn('bs.filter(b=>!b._new).length', script)
         add = script.split('async function addSection(', 1)[1].split('async function addTable(', 1)[0]
         # 🔴 확정 판정이 섹션 생성보다 **먼저**다(앱 addTableSection 과 같은 순서).
         # 뒤에 보면 표 저장만 409 로 튕기고 빈 섹션은 모든 일자에 영구히 남는다.

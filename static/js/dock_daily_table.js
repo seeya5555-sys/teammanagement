@@ -122,7 +122,27 @@
                       rows: g.rows.map(function (row) { return row.filter(keep); })});
   }
 
+  /** 이 섹션 카드에서 표를 직접 만들 수 있는가. 앱 `DockDailySectionEditing.canAddTable`
+   * 과 **같은 규칙**이다.
+   *
+   * 🔴 표는 원칙적으로 "표 섹션 추가" 로만 만든다(형 지시 2026-08-22). 아무 카드에나
+   * 버튼을 두면 남의 섹션 제목 아래로 표가 딸려 들어가 무슨 표인지 적을 데가 없어진다.
+   * 유일한 예외는 **블록이 하나도 없는 special 섹션** — 섹션 생성은 됐는데 표 삽입이
+   * 실패하면 그런 고아 카드가 남고, 여기서 못 채우면 형에게 복구 수단이 없다.
+   *
+   * `blockCount` 는 **서버에 있는** 블록 수만 센다. 아직 저장 안 한 글칸 초안은 앱에서도
+   * `report.blocks(in:)` 에 없으므로(별도 `needsTextDraft` UI 상태), 초안에 글을 적는
+   * 동안 버튼이 남아 있는 것도 앱과 같은 동작이다.
+   *
+   * 🔴 `!blockCount` 가 아니라 `=== 0` 이다. `undefined`/`NaN` 을 빈 섹션으로 읽으면
+   * 호출부가 값을 안 넘긴 실수가 "표 버튼이 아무 데나 뜬다" 로 조용히 새어 나온다.
+   */
+  function canAddTable(section, blockCount, locked) {
+    return !locked && !!section && section.kind === 'special' && blockCount === 0;
+  }
+
   var api = {DEFAULT_COLUMNS: DEFAULT_COLUMNS, normalize: normalize, grid: grid, read: read, empty: empty,
+             canAddTable: canAddTable,
              setCell: setCell, setColumn: setColumn, addRow: addRow, addColumn: addColumn,
              canRemoveRow: canRemoveRow, canRemoveColumn: canRemoveColumn,
              removeRow: removeRow, removeColumn: removeColumn};

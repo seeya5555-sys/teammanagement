@@ -369,7 +369,10 @@
   // 같은 일을 한다 -- 웹은 마우스가 있으니 버튼을 그대로 둔다.
   // 🔴 끝단 방향은 `disabled` 로 남긴다(앱은 메뉴 항목을 아예 감춘다): 버튼이 사라지면
   // 카드마다 도구 위치가 달라져 옆 버튼을 잘못 누른다.
-  function sectionTools(s,all,locked){
+  // `blockCount` 는 **서버에 실제로 있는** 블록 수다(`_new` 초안 제외). 앱은 초안을
+  // `report.blocks` 에 넣지 않는데 웹은 `ensureSectionEditors` 가 빈 카드에 글칸 초안을
+  // 밀어넣으므로, 그걸 세면 고아 카드에서도 복구 버튼이 사라져 앱과 갈린다.
+  function sectionTools(s,all,locked,blockCount){
     if(locked)return '';                            // 확정본은 서버가 409 로 끊는다
     const btn=(delta,glyph,word)=>`<button class="dd-sec-btn" type="button" data-move-section="${esc(s.section_key)}" data-delta="${delta}" title="${word}" aria-label="${esc(s.label||s.section_key)} ${word}"${ORDER.canMove(all,s.section_key,delta)?'':' disabled'}>${glyph}</button>`;
     // 고정 섹션(Shipyard/Survey/Vendor/Remark)은 순서만 바꿀 수 있다 -- 삭제는 서버가
@@ -377,9 +380,13 @@
     const del=s.kind==='special'
       ? `<button class="dd-sec-btn danger" type="button" data-del-section-card="${esc(s.section_key)}" title="이 섹션을 아주 삭제" aria-label="${esc(s.label||s.section_key)} 섹션 삭제">삭제</button>`
       : '';
-    // 앱 카드의 `+` 메뉴와 같은 자리. 표 섹션을 만들다 표만 못 들어간 경우(그 카드는
-    // 빈 채로 남는다) 형이 여기서 채울 수 있어야 한다 -- 없으면 되살릴 길이 없다.
-    const tbl=`<button class="dd-sec-btn" type="button" data-add-table="${esc(s.section_key)}" title="이 섹션에 표를 넣습니다" aria-label="${esc(s.label||s.section_key)} 에 표 추가">＋ 표</button>`;
+    // 🔴 기존 섹션에 표를 붙이는 버튼은 두지 않는다(형 지시 2026-08-22, 앱과 동일).
+    // 표는 제목을 직접 받는 `＋ 표 섹션` 으로만 만든다 -- 남의 섹션 제목 아래 딸려
+    // 들어가면 무슨 표인지 적을 데가 없다. 예외는 **빈 special 섹션** = 섹션은 만들어졌는데
+    // 표 삽입이 실패해 남은 고아 카드. 여기서 못 채우면 되살릴 길이 없다(앱 canAddTable).
+    const tbl=TABLE.canAddTable(s,blockCount,locked)
+      ? `<button class="dd-sec-btn" type="button" data-add-table="${esc(s.section_key)}" title="이 빈 섹션에 표를 넣습니다" aria-label="${esc(s.label||s.section_key)} 에 표 추가">＋ 표</button>`
+      : '';
     return `<span class="dd-sec-tools">${tbl}${btn(-1,'▲','위로')}${btn(1,'▼','아래로')}${del}</span>`;
   }
   function renderSections() {
@@ -387,7 +394,7 @@
     const all=state.report.sections||[];
     $('#dd-sections').innerHTML=all.filter(s=>s.enabled).map(s=>{
       const bs=blocks.filter(b=>b.section_key===s.section_key&&!b._delete);
-      return `<div class="dd-card dd-section" data-section="${esc(s.section_key)}"><div class="dd-section-head"><h3>${esc(s.label)}</h3><span class="dd-section-aside"><span class="dd-muted">엔터를 누르면 1) 2) 번호가 붙습니다</span>${sectionTools(s,all,locked)}</span></div>${bs.map((b,i)=>{const key=b._key??b.id;
+      return `<div class="dd-card dd-section" data-section="${esc(s.section_key)}"><div class="dd-section-head"><h3>${esc(s.label)}</h3><span class="dd-section-aside"><span class="dd-muted">엔터를 누르면 1) 2) 번호가 붙습니다</span>${sectionTools(s,all,locked,bs.filter(b=>!b._new).length)}</span></div>${bs.map((b,i)=>{const key=b._key??b.id;
       // Provenance badges only carry meaning for auto-collected blocks; hand
       // written cards showed a permanent "수동" pair that said nothing.
       const badges=b.origin==='dock_auto'?`<span class="dd-badge auto">자동수집</span>${b.manual_override?'<span class="dd-badge">수동 수정 보호</span>':''}`:'';

@@ -100,6 +100,20 @@ test('🔴 마지막 행·열은 지울 수 없다', () => {
   assert.strictEqual(T.canRemoveRow(T.addRow(g)), true);
 });
 
+// 🔴 형 지시 2026-08-22: "기존 섹션에 표추가는 필요 없어(ios랑 똑같이 해줘)".
+// 앱 `DockDailySectionEditing.canAddTable` 과 같은 값이어야 한다.
+test('🔴 표 추가 버튼은 빈 special 섹션에만 (앱 canAddTable 과 동일)', () => {
+  const sp = {kind: 'special'}, fx = {kind: 'fixed'};
+  assert.strictEqual(T.canAddTable(sp, 0, false), true);    // 고아 섹션 = 유일한 복구 경로
+  assert.strictEqual(T.canAddTable(sp, 1, false), false);   // 이미 뭔가 있으면 안 붙인다
+  assert.strictEqual(T.canAddTable(fx, 0, false), false);   // Shipyard/Survey/Vendor/Remark
+  assert.strictEqual(T.canAddTable(sp, 0, true), false);    // 확정본
+  assert.strictEqual(T.canAddTable(null, 0, false), false);
+  // 🔴 개수를 안 넘긴 실수가 "표 버튼이 아무 데나 뜬다" 로 새어 나가면 안 된다.
+  assert.strictEqual(T.canAddTable(sp, undefined, false), false);
+  assert.strictEqual(T.canAddTable(sp, NaN, false), false);
+});
+
 test('범위 밖 삭제는 아무 일도 하지 않는다', () => {
   const g = T.read({columns: ['A', 'B'], rows: [['1', '2'], ['3', '4']]});
   assert.deepStrictEqual(T.removeRow(g, 9), g);
