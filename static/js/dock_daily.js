@@ -265,7 +265,18 @@
     // or a paste), so normalize once the IME hands the text back.
     ta.oncompositionend=()=>{composing=false;if(NUM.needsNumbering(ta.value))normalizeItems(ta,true);else commitItems(ta);};
     ta.onkeydown=e=>{
-      if(e.key!=='Enter'||e.shiftKey||e.isComposing||composing)return;
+      if(e.isComposing||composing)return;
+      // 번호 접두어 안에서의 백스페이스는 그 줄을 앞줄과 합친다(= 엔터 취소). 기본 삭제에
+      // 맡기면 남은 조각이 작업내용으로 보여 번호가 다시 붙는다(`2) 2`).
+      // Shift 여부는 보지 않는다 — Shift+Backspace 도 한 글자를 지우므로 그냥 두면
+      // 접두어가 부서지는 같은 버그가 그 조합에서만 되살아난다(올마이트 지적).
+      if(e.key==='Backspace'&&ta.selectionStart===ta.selectionEnd){
+        const back=NUM.deleteBackward(ta.value,ta.selectionStart);
+        // 첫 줄 no-op 은 값이 그대로다 → 기본 삭제만 막고 저장 표시는 건드리지 않는다.
+        if(back){e.preventDefault();if(back.value!==ta.value){applyNumbering(ta,back);commitItems(ta);}}
+        return;
+      }
+      if(e.key!=='Enter'||e.shiftKey)return;
       e.preventDefault();
       applyNumbering(ta,NUM.breakLine(ta.value,ta.selectionStart,ta.selectionEnd));
       commitItems(ta);
