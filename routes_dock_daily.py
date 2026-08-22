@@ -1677,18 +1677,22 @@ def _email(rid):
                 % (cell_font, cell_font, p % run('&nbsp;'),
                    cell_font, p % run('%d)' % no), cell_font, p % run(inner)))
 
-    def table(entry):
+    def table(entry, indent_px=52):
         """카드의 표를 메일 표로. 셀 텍스트는 `cell()` 계약대로 `<td>` 안 `<p>` 에 넣는다.
 
         직접 `<td>` 에 넣으면 Outlook 붙여넣기에서 11pt 선언과 무관하게 작게 붙는다
         (ITINERARY 표에서 실측한 그 문제). `<thead>` 는 쓰지 않는다 -- Word HTML
         엔진이 무시하는 경우가 있어 굵게로만 헤더를 표시한다.
+
+        `indent_px` 는 **표 섹션에서만 0** 이다(형 지시 2026-08-22). 그 섹션은 제목이 곧
+        표의 제목이라 들여쓸 상위 항목이 없다. 반대로 글 항목과 섞여 있는 표는 52px 를
+        지켜야 위 번호 항목들과 같은 기준선에 선다.
         """
         head = ''.join(cell('<b>%s</b>' % (html.escape(v) or '&nbsp;')) for v in entry['columns'])
         body = ''.join('<tr>%s</tr>' % ''.join(cell(html.escape(v) or '&nbsp;') for v in row)
                        for row in entry['rows'])
-        return ('<table style="border-collapse:collapse;margin:0 0 8px 52px;%s">%s%s</table>'
-                % (cell_font, '<tr>%s</tr>' % head if head else '', body))
+        return ('<table style="border-collapse:collapse;margin:0 0 8px %dpx;%s">%s%s</table>'
+                % (indent_px, cell_font, '<tr>%s</tr>' % head if head else '', body))
 
     # 캡션은 도크 리포트 `.dde-img-caption-inp` 계약대로 **가운데 정렬 이탤릭**이다
     # (형 지시 2026-08-21).
@@ -1791,10 +1795,19 @@ def _email(rid):
         # 🔴 표·사진은 항목 번호를 받지 않는다 -- 형 지시대로 하위항목이 아니라 그 자리에
         # 놓인 블록이다. 번호는 글 항목끼리만 이어진다.
         item_no = 0
+        # 🔴 표 섹션의 표는 들여쓰지 않는다(형 지시 2026-08-22). 그 섹션은 **제목이 곧 표의
+        # 제목**이라 들여쓸 상위 항목이 없다.
+        #
+        # 판정은 `special` **이면서** 내용이 표뿐일 때로 좁힌다. 둘 다 필요하다:
+        # - 고정 섹션(Shipyard/Survey/Vendor/Remark)의 제목은 표 제목이 아니라 분류명이다.
+        #   거기 표만 남아 있어도 표는 그 분류 아래 놓인 항목이라 52px 를 지킨다(올마이트).
+        # - special 이라도 글·사진이 섞여 있으면 위 번호 항목과 기준선을 맞춰야 한다.
+        table_indent = (0 if sec.get('kind') == 'special'
+                        and all(e['kind'] == 'table' for e in entries) else 52)
         for entry in entries:
             if entry['kind'] == 'table':
                 lines.extend(' | '.join(row) for row in [entry['columns']] + entry['rows'])
-                chunks.append(table(entry))
+                chunks.append(table(entry, table_indent))
                 continue
             if entry['kind'] == 'image':
                 grid, texts, budget, photos = photo_grid(entry, budget, photos)

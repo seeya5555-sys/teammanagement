@@ -2527,6 +2527,60 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('비용 정산표', mail['text'], '표는 이제 자기 제목 아래 있다')
         self.assertIn('도장', mail['html'], '내용은 그대로 따라온다')
 
+    def test_mail_does_not_indent_a_table_that_is_its_own_section(self):
+        """🔴 형 지시 2026-08-22: "표 섹션은 들여쓰기 하지말게(나머지는 현행 유지)".
+
+        표 섹션은 섹션 제목이 곧 표의 제목이라 들여쓸 상위 항목이 없다.  판정은 `special`
+        **이면서** 내용이 표뿐일 때로 좁힌다 -- 고정 섹션의 제목은 표 제목이 아니라
+        분류명이고, 글·사진이 섞이면 위 번호 항목과 기준선을 맞춰야 한다.
+        """
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '표 들여쓰기 DD'}).get_json()
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-13'}).get_json()
+        rid = report['id']
+        pure = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                                json={'label': '비용 정산표'}).get_json()['created_section_key']
+        mixed = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                                 json={'label': '표와 사진'}).get_json()['created_section_key']
+        up = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
+                              data={'file': (io.BytesIO(self._png((300, 200))), 'g.png')},
+                              content_type='multipart/form-data')
+        aid = up.get_json()['id']
+        content = {'columns': ['항목', '금액'], 'rows': [['도장', '100']]}
+        fetched = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        saved = self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': fetched['revision'],
+            'operations': [
+                # ① special + 표뿐 = 표 섹션. 표가 둘이어도 마찬가지다.
+                {'op': 'upsert', 'section_key': pure, 'block_type': 'table',
+                 'sort_order': 1, 'content': content},
+                {'op': 'upsert', 'section_key': pure, 'block_type': 'table',
+                 'sort_order': 2, 'content': content},
+                # ② special 이지만 사진이 섞였다 = 현행 유지
+                {'op': 'upsert', 'section_key': mixed, 'block_type': 'table',
+                 'sort_order': 1, 'content': content},
+                {'op': 'upsert', 'section_key': mixed, 'block_type': 'image', 'sort_order': 2,
+                 'content': {'columns': 1, 'images': [{'attachment_id': aid, 'caption': '외판'}]}},
+                # ③ 🔴 고정 섹션에 표만 남아 있어도 52px (올마이트 지적)
+                {'op': 'upsert', 'section_key': 'shipyard', 'block_type': 'table',
+                 'sort_order': 1, 'content': content},
+                # ④ 고정 섹션에 글과 섞인 표 = 현행 유지
+                {'op': 'upsert', 'section_key': 'vendor', 'block_type': 'item',
+                 'sort_order': 1, 'content': {'title': '첫 작업'}},
+                {'op': 'upsert', 'section_key': 'vendor', 'block_type': 'table',
+                 'sort_order': 2, 'content': content}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        body = self._mail(rid)['html']
+        flush = '<table style="border-collapse:collapse;margin:0 0 8px 0px;'
+        kept = '<table style="border-collapse:collapse;margin:0 0 8px 52px;'
+        self.assertEqual(2, body.count(flush), '표 섹션의 표 둘만 들여쓰기가 없다')
+        self.assertEqual(3, body.count(kept), '나머지 표 셋은 52px 를 지킨다')
+        # 들여쓰기 없는 두 표는 표 섹션 제목과 그 다음 섹션 제목 사이에 있다.
+        head, nxt = body.index('비용 정산표'), body.index('표와 사진')
+        self.assertLess(head, body.index(flush))
+        self.assertLess(body.rindex(flush), nxt)
+
     def test_inline_image_refuses_a_path_outside_the_upload_dir(self):
         """`stored_name` 은 DB 값이지만 경로 조립은 여기서 한다."""
         with appmod.app.app_context():
