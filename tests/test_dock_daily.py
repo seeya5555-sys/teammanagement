@@ -666,10 +666,32 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('확정 ${finals}건 포함', script)
         # 일정 PATCH 는 일정 키만 보낸다 — 프로젝트 제목·자동생성 스위치가 함께 실리면
         # 일정만 고치려던 저장이 그 둘을 덮는다.
-        patch = script.split('async function save()', 1)[1].split('const operations', 1)[0]
+        # `save` 는 섹션 순서를 함께 실어 보낼 수 있어 인자를 받는다(형 지시 2026-08-22).
+        patch = script.split('async function save(', 1)[1].split('const operations', 1)[0]
         self.assertIn(".dd-itinerary-date').forEach", patch)
         self.assertNotIn('title', patch)
         self.assertNotIn('auto_generate', patch)
+
+    def test_web_section_cards_carry_the_move_and_delete_tools(self):
+        """웹에도 카드 이동·삭제가 있어야 한다(형 지시 2026-08-22 — "웹은 카드 이동,
+        삭제 기능은 없어?").  앱은 카드 제목줄 롱프레스로 같은 일을 한다."""
+        html = self.client.get('/dock-daily').get_data(as_text=True)
+        # 순서 규칙은 앱과 같은 값을 내야 하므로 순수 모듈 한 곳에 있다.
+        self.assertIn('js/dock_daily_section_order.js', html)
+        script = self._script()
+        self.assertIn('data-move-section', script)
+        self.assertIn('data-del-section-card', script)
+        # 🔴 순서와 미저장 글은 **한 번의 CAS PUT** 으로 간다.  나눠 보내면 첫 요청이
+        # revision 을 올려 두 번째가 409 로 튕기고, 그때 보내는 순서는 옛 목록 기준이라
+        # 다른 기기가 방금 바꾼 순서를 조용히 되돌린다.
+        move = script.split('async function moveSection(', 1)[1].split('async function toggleSpecial', 1)[0]
+        self.assertIn('save(ORDER.payload(next))', move)
+        self.assertNotIn("method:'PUT'", move, '순서 전용 PUT 을 따로 만들지 않는다')
+        # 🔴 고정 섹션에는 삭제 버튼을 아예 안 낸다 — 서버가 `fixed_section` 으로 거절하므로
+        # 늘 실패하는 버튼이 된다.
+        tools = script.split('function sectionTools(', 1)[1].split('function renderSections', 1)[0]
+        self.assertIn("s.kind==='special'", tools)
+        self.assertIn('if(locked)return', tools, '확정본은 도구를 내지 않는다')
 
     def test_ooxml_preview_rejects_entity_payload(self):
         project = self.client.post('/api/dock-daily/projects', json={

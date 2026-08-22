@@ -12,6 +12,17 @@
 .dd-list .dd-list-del{flex:0 0 auto;width:auto;border:1px solid #e0dbd0;border-radius:7px;background:#fff;color:#a4352c;font-size:11px;line-height:1;padding:6px 8px;cursor:pointer}
 .dd-list .dd-list-del:hover{background:#fdf1ef;border-color:#d9b6b1}
 .dd-list .dd-list-del:disabled{opacity:.45;cursor:not-allowed}
+/* 카드 제목줄의 순서·삭제 도구(형 지시 2026-08-22). 앱의 제목줄 롱프레스 메뉴와 같은 일.
+   끝단 방향 버튼은 감추지 않고 흐리게 남긴다 — 사라지면 카드마다 도구 위치가 달라져
+   옆 버튼을 잘못 누른다. */
+.dd-section-aside{display:flex;align-items:center;gap:10px;min-width:0}
+.dd-sec-tools{display:flex;flex:0 0 auto;gap:5px}
+.dd-sec-btn{border:1px solid #e0dbd0;border-radius:7px;background:#fff;color:#4b4740;font-size:11px;line-height:1;padding:6px 8px;cursor:pointer}
+.dd-sec-btn:hover:not(:disabled){background:#f4f2ec;border-color:#cfc8b9}
+.dd-sec-btn:disabled{opacity:.35;cursor:not-allowed}
+.dd-sec-btn.danger{color:#a4352c}
+.dd-sec-btn.danger:hover:not(:disabled){background:#fdf1ef;border-color:#d9b6b1}
+@media(max-width:800px){.dd-section-head{align-items:flex-start;gap:8px}.dd-section-aside{flex-direction:column;align-items:flex-end;gap:6px}}
 /* 일자는 늘어나기만 하므로 목록을 세로로 쌓지 않는다(형 지시 2026-08-21):
    검색 + 상태 + 드롭다운 한 줄. 행마다 있던 삭제 버튼이 사라지므로 삭제는
    "열려 있는 일자" 하나를 지우는 버튼으로 옮겨간다 — 삭제 자체가 없어지면 안 된다. */
@@ -111,4 +122,5 @@
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='js/dock_daily_numbering.js') }}"></script>
 <script src="{{ url_for('static', filename='js/dock_daily_filter.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dock_daily_section_order.js') }}"></script>
 <script src="{{ url_for('static', filename='js/dock_daily.js') }}"></script>{% endblock %}

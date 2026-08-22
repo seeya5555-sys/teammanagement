@@ -231,6 +231,7 @@
   // the Outlook mail shows. The renderers strip any stored number before
   // applying their own, so a renumbered card never double-numbers.
   const NUM=window.DockDailyNumbering;
+  const ORDER=window.DockDailySectionOrder;
   // 카드는 내용만큼 늘어난다(형 지시 2026-08-21). 안쪽 스크롤바도, 손으로 끄는
   // 리사이즈 핸들도 없다 — 작업 개수가 칸을 넘으면 카드 자체가 커지고 페이지가 스크롤된다.
   // 'auto' 로 먼저 줄이는 이유: 이미 늘어난 높이가 남아 있으면 scrollHeight 가 그 높이를
@@ -306,11 +307,26 @@
     // Leaving the card drops any number left on an empty line.
     ta.onblur=()=>normalizeItems(ta,false);
   }
+  // 카드 제목줄의 순서·삭제 도구(형 지시 2026-08-22). 앱은 제목줄 롱프레스 메뉴로
+  // 같은 일을 한다 -- 웹은 마우스가 있으니 버튼을 그대로 둔다.
+  // 🔴 끝단 방향은 `disabled` 로 남긴다(앱은 메뉴 항목을 아예 감춘다): 버튼이 사라지면
+  // 카드마다 도구 위치가 달라져 옆 버튼을 잘못 누른다.
+  function sectionTools(s,all,locked){
+    if(locked)return '';                            // 확정본은 서버가 409 로 끊는다
+    const btn=(delta,glyph,word)=>`<button class="dd-sec-btn" type="button" data-move-section="${esc(s.section_key)}" data-delta="${delta}" title="${word}" aria-label="${esc(s.label||s.section_key)} ${word}"${ORDER.canMove(all,s.section_key,delta)?'':' disabled'}>${glyph}</button>`;
+    // 고정 섹션(Shipyard/Survey/Vendor/Remark)은 순서만 바꿀 수 있다 -- 삭제는 서버가
+    // `fixed_section` 으로 거절하므로 버튼을 아예 내지 않는다.
+    const del=s.kind==='special'
+      ? `<button class="dd-sec-btn danger" type="button" data-del-section-card="${esc(s.section_key)}" title="이 섹션을 아주 삭제" aria-label="${esc(s.label||s.section_key)} 섹션 삭제">삭제</button>`
+      : '';
+    return `<span class="dd-sec-tools">${btn(-1,'▲','위로')}${btn(1,'▼','아래로')}${del}</span>`;
+  }
   function renderSections() {
     const locked=state.report.status==='final'; const blocks=state.report.blocks||[];
-    $('#dd-sections').innerHTML=(state.report.sections||[]).filter(s=>s.enabled).map(s=>{
+    const all=state.report.sections||[];
+    $('#dd-sections').innerHTML=all.filter(s=>s.enabled).map(s=>{
       const bs=blocks.filter(b=>b.section_key===s.section_key&&!b._delete);
-      return `<div class="dd-card dd-section" data-section="${esc(s.section_key)}"><div class="dd-section-head"><h3>${esc(s.label)}</h3><span class="dd-muted">엔터를 누르면 1) 2) 번호가 붙습니다</span></div>${bs.map((b,i)=>{const key=b._key??b.id;
+      return `<div class="dd-card dd-section" data-section="${esc(s.section_key)}"><div class="dd-section-head"><h3>${esc(s.label)}</h3><span class="dd-section-aside"><span class="dd-muted">엔터를 누르면 1) 2) 번호가 붙습니다</span>${sectionTools(s,all,locked)}</span></div>${bs.map((b,i)=>{const key=b._key??b.id;
       // Provenance badges only carry meaning for auto-collected blocks; hand
       // written cards showed a permanent "수동" pair that said nothing.
       const badges=b.origin==='dock_auto'?`<span class="dd-badge auto">자동수집</span>${b.manual_override?'<span class="dd-badge">수동 수정 보호</span>':''}`:'';
@@ -322,6 +338,8 @@
       return `<div class="dd-block-editor">${meta}${body}</div>`}).join('')}</div>`;
     }).join('');
     document.querySelectorAll('.dd-section-edit').forEach(bindItemNumbering);
+    document.querySelectorAll('[data-move-section]').forEach(b=>b.onclick=()=>once(b,()=>moveSection(b.dataset.moveSection,Number(b.dataset.delta))));
+    document.querySelectorAll('[data-del-section-card]').forEach(b=>b.onclick=()=>once(b,()=>deleteSection(b.dataset.delSectionCard)));
     document.querySelectorAll('.delete-inline').forEach(btn=>btn.onclick=()=>{const b=findBlock(btn.dataset.key);if(!b)return;
       // 표·이미지는 웹에서 다시 만들 수 없고(편집기는 앱에만 있다), 이미지 블록을 지우면
       // 서버가 연결된 첨부까지 함께 지운다. 한 번 확인을 받는다.
@@ -354,8 +372,17 @@
     state.report.attachments=(state.report.attachments||[]).filter(x=>x.id!==id);
     renderAttachments();
   }
-  async function save() {
-    if(!state.report)return; clearErr();
+  // `sectionUpdates` 를 주면 글 저장과 섹션 순서를 **한 번의 CAS PUT** 으로 보낸다
+  // (앱 `save(sectionUpdates:)` 와 같은 계약, 올마이트 지적 2026-08-22). 두 번 나눠 보내면
+  // 첫 요청이 revision 을 올려 두 번째가 409 로 튕기고, 그 사이 계산해 둔 순서는 다른
+  // 기기가 방금 바꾼 순서를 조용히 되돌린다.
+  //
+  // 🔴 반환값은 "이 응답을 화면에 반영했는가" 다. 요청 도중 형이 다른 일자를 열었으면
+  // 옛 응답으로 새 화면을 덮지 않고 false 를 준다 -- 덮으면 목록은 B 일자를 가리키는데
+  // 본문은 A 일자가 뜬다(`selectReport` 와 같은 방어, 올마이트 지적).
+  async function save(sectionUpdates) {
+    if(!state.report)return false; clearErr();
+    const seq=selectSeq, rid=state.report.id;
     const itinerary={}; document.querySelectorAll('.dd-itinerary-date').forEach(i=>itinerary[i.dataset.key]=i.value||null);
     if(Object.keys(itinerary).some(k=>(state.project[k]||null)!==itinerary[k])){
       const updated=await api(`/api/dock-daily/projects/${state.project.id}`,{...json(itinerary),method:'PATCH'});
@@ -364,8 +391,13 @@
     const operations=[];
     state.report.blocks.filter(b=>b._delete).forEach(b=>operations.push({op:'delete',id:b.id}));
     state.report.blocks.filter(b=>!b._delete&&isTextBlock(b)&&(b._new||b._edit)&&(!b._new||blockText(b).trim())).forEach(b=>operations.push({op:'upsert',id:b._new?undefined:b.id,section_key:b.section_key,block_type:b.block_type||'paragraph',content:{...(b.content||{})},sort_order:b.sort_order||0}));
-    state.report=await api(`/api/dock-daily/reports/${state.report.id}`,{...json({revision:state.report.revision,operations}),method:'PUT'}); state.dirty=false; ensureSectionEditors();
+    const payload={revision:state.report.revision,operations};
+    if(sectionUpdates)payload.section_updates=sectionUpdates;
+    const saved=await api(`/api/dock-daily/reports/${rid}`,{...json(payload),method:'PUT'});
+    if(seq!==selectSeq||state.report?.id!==rid)return false;
+    state.report=saved; state.dirty=false; ensureSectionEditors();
     $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`; renderItinerary(); renderSections(); renderAttachments();
+    return true;
   }
   // section_key 는 서버가 만든다(POST .../sections). 웹과 앱이 각자 키를 만들면 규칙이
   // 두 벌이 되고 서로 다른 키를 뱉는다 -- 제목만 보내고 키는 받는다.
@@ -417,6 +449,31 @@
     notice(body.deleted_blocks>0
       ? `섹션 "${name}" 과 그 안의 내용 ${body.deleted_blocks}개를 지웠습니다.`
       : `섹션 "${name}" 을 지웠습니다.`);
+  }
+  // 섹션 카드 순서 바꾸기(형 지시 2026-08-22). 앱은 카드 제목줄 롱프레스, 웹은 ▲▼ 버튼.
+  // 규칙은 `dock_daily_section_order.js` 한 곳에 있고 앱과 같은 값을 낸다.
+  //
+  // 🔴 미저장 글을 먼저 따로 저장하지 않는다. `save()` 한 번에 순서를 실어 보낸다 --
+  // 두 번 나눠 보내면 첫 요청이 revision 을 올려 두 번째가 409 로 튕기고, 그때는 이미
+  // 계산해 둔 순서가 옛 목록 기준이라 다른 기기가 방금 바꾼 순서를 되돌린다(올마이트 지적).
+  async function moveSection(key,delta){
+    if(!state.report)return;
+    const next=ORDER.movingVisible(state.report.sections||[],key,delta);
+    if(!next)return;                                // 끝단 -- 버튼도 이미 disabled 다
+    clearErr();
+    // 409 는 revision 충돌·확정잠금이 서로 다른 해법이라 `conflictText` 로 갈라 읽는다.
+    // 여기서 안 잡으면 `once()` 가 서버 원문을 그대로 띄운다.
+    let applied;
+    try{ applied=await save(ORDER.payload(next)); }
+    catch(error){ err(new Error(conflictText(error))); return; }
+    if(!applied)return;                             // 그 사이 형이 다른 일자를 열었다
+    // 순서는 프로젝트 값이라 왼쪽 Special 목록도 같은 순서를 따라가야 한다.
+    if(state.project){
+      state.project={...state.project,sections:state.report.sections};
+      state.projects=state.projects.map(p=>p.id===state.project.id?state.project:p);
+      renderSpecialTools();
+    }
+    notice('섹션 순서를 바꿨습니다. 이 프로젝트의 모든 일자·확정본·메일에 함께 적용됩니다.');
   }
   async function toggleSpecial(key,enabled){const updated=await api(`/api/dock-daily/projects/${state.project.id}`,{...json({sections:[{section_key:key,enabled}]}),method:'PATCH'});state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);if(state.report){state.report.sections=updated.sections;ensureSectionEditors();renderSections();}}
 
