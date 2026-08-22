@@ -1490,13 +1490,37 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual('2026-08-01', unchanged['active_from'])
         self.assertEqual('2026-08-31', unchanged['active_to'])
 
-    def test_svms_preview_reports_utf8_bytes_and_publish_disabled(self):
-        p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()
+    def test_svms_preview_reports_utf8_bytes_and_queues_only_after_final_confirmation(self):
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Test DD', 'svms_dk_cd': 'ATGRMD2607130001'}).get_json()
         r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate", json={'report_date': '2026-08-20'}).get_json()
         self.client.put(f"/api/dock-daily/reports/{r['id']}", json={'revision': r['revision'], 'operations': [{'section_key': 'vendor', 'block_type': 'paragraph', 'content': {'body': '한글 😀'}}]})
-        preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
-        self.assertEqual(len(preview['fields']['RMK_VNDR'].encode('utf-8')), preview['byte_counts']['RMK_VNDR'])
-        self.assertEqual(503, self.client.post(f"/api/dock-daily/reports/{r['id']}/svms-publish").status_code)
+        with self._svms_env():
+            preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+            self.assertEqual(len(preview['fields']['RMK_VNDR'].encode('utf-8')), preview['byte_counts']['RMK_VNDR'])
+            self.assertEqual(400, self.client.post(f"/api/dock-daily/reports/{r['id']}/svms-publish").status_code)
+            current = self.client.get(f"/api/dock-daily/reports/{r['id']}").get_json()
+            final = self.client.post(f"/api/dock-daily/reports/{r['id']}/status",
+                                     json={'status': 'final', 'revision': current['revision']})
+            self.assertEqual(200, final.status_code, final.get_data(as_text=True))
+            queued = self.client.post(f"/api/dock-daily/reports/{r['id']}/svms-publish",
+                                      json={'confirmation': 'user_preview_approved'})
+            self.assertEqual(202, queued.status_code, queued.get_data(as_text=True))
+            key = self._api_key()
+            claim = self.client.post('/api/ext/dock-daily/svms-claim', json={'limit': 1},
+                                     headers={'X-API-Key': key})
+            self.assertEqual(200, claim.status_code, claim.get_data(as_text=True))
+            job = claim.get_json()['jobs'][0]
+            self.assertEqual('ATGRMD2607130001', job['dk_cd'])
+            self.assertEqual('', job['dk_seq'])
+            self.assertNotIn('egcs', job['rmk'])
+            result = self.client.post('/api/ext/dock-daily/svms-result',
+                                      json={'report_id': job['report_id'], 'claim_token': job['claim_token'],
+                                            'status': 'synced', 'dk_seq': '0002',
+                                            'readback_hash': 'sha256:test'},
+                                      headers={'X-API-Key': key})
+            self.assertEqual(200, result.status_code, result.get_data(as_text=True))
+            self.assertEqual('0002', self.client.get(f"/api/dock-daily/reports/{r['id']}").get_json()['svms_dk_seq'])
 
     def test_email_preview_uses_outlook_numbered_card_format(self):
         p = self.client.post('/api/dock-daily/projects', json={

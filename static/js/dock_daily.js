@@ -717,7 +717,7 @@
   async function pushSvms(){
     if(!confirm('현재 미리보기 내용으로 SVMS 입거 Daily Report에 반영할까요?'))return;
     const btn=$('#dd-svms-push');btn.disabled=true;$('#dd-preview-status').textContent='SVMS 반영 요청 중…';
-    try{const v=await api(`/api/dock-daily/reports/${state.report.id}/svms-publish`,{...json({confirmation:'user_preview_approved'}),method:'POST'});$('#dd-preview-status').textContent=v.message||'SVMS 반영 완료';}
+    try{const v=await api(`/api/dock-daily/reports/${state.report.id}/svms-publish`,{...json({confirmation:'user_preview_approved'}),method:'POST'});$('#dd-preview-status').textContent=v.message||'SVMS 승인 대기열 등록 완료 — 맥 runner가 저장 후 readback합니다.';}
     catch(e){$('#dd-preview-status').textContent=e.message;}finally{btn.disabled=false;}
   }
   function openFilePreview(id,name){$('#dd-file-title').textContent=name;$('#dd-file-frame').src=`/api/dock-daily/attachments/${id}/preview`;$('#dd-file-modal').hidden=false;document.body.style.overflow='hidden';}

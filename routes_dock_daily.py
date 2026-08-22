@@ -2038,15 +2038,26 @@ def _svms_limit(raw):
     return value if value > 0 else None
 
 
+def _svms_payload_hash(preview):
+    raw = json.dumps(preview['fields'], ensure_ascii=False, sort_keys=True,
+                     separators=(',', ':')).encode('utf-8')
+    return 'sha256:' + hashlib.sha256(raw).hexdigest()
+
+
 def _svms(rid):
     r = _report(rid)
     sections = _sections(r['project_id'], include_disabled=False)
     syd = _render_section(rid, 'shipyard')
     vendor = _render_section(rid, 'vendor')
+    # SVMS Daily Report 계약: Shipyard/Vendor는 전용 필드, Survey+Remark만 RMK.
+    # EGCS 등 Special을 RMK에 섞으면 형이 지정한 SVMS 화면 매핑과 달라진다.
     rest = []
-    for s in sections:
-        if s['section_key'] not in {'shipyard', 'vendor'}:
-            rest.append('%s\n%s' % (s['label'], _render_section(rid, s['section_key'])))
+    for key in ('survey', 'remark'):
+        section = next((s for s in sections if s['section_key'] == key), None)
+        if section:
+            text = _render_section(rid, key)
+            if text:
+                rest.append('%s\n%s' % (section['label'], text))
     # 🔴 DK_CD 는 프로젝트에 등록된 SVMS Dock No 하나뿐이다. 없을 때 선박코드(`vsl_cd`)로
     # 대체하면 안 된다 -- 둘은 다른 키이고(예: DK_CD=`KWPSMD2603250001`), 대체값을
     # 보여 주면 미리보기가 "이 dock 에 반영된다" 고 거짓말을 한다.
@@ -2083,9 +2094,147 @@ def svms_preview(rid):
 @bp.route('/api/dock-daily/reports/<int:rid>/svms-publish', methods=['POST'])
 @login_required
 def svms_publish(rid):
-    # Deliberately fail closed: no external SVMS client exists in this MVP.
-    if not _report(rid): return _error('report not found', 404)
-    return _error('SVMS publish is disabled; preview only', 503, disabled=True)
+    r = _report(rid)
+    if not r: return _error('report not found', 404)
+    data = _body()
+    if data.get('confirmation') != 'user_preview_approved':
+        return _error('SVMS 반영 확인이 필요합니다', 400, code='confirmation_required')
+    if r['status'] != 'final':
+        return _error('확정된 보고서만 SVMS에 반영할 수 있습니다', 409, code='final_required')
+    preview = _svms(rid)
+    if not preview['publishable']:
+        return _error('SVMS 저장 계약을 충족하지 못했습니다', 409,
+                      code='preview_blocked', blockers=preview['blockers'])
+    # 서버는 SVMS에 직접 붙지 않는다. 이 승인 플래그만 맥 runner가 claim한다.
+    db = get_db()
+    now = _now()
+    status = r['svms_sync_status'] or 'preview_only'
+    if status in ('approved', 'submitting'):
+        return jsonify({'id': rid, 'status': status, 'queued': True})
+    if status in ('unknown', 'partial'):
+        return _error('SVMS 저장 여부가 확정되지 않아 자동 재전송할 수 없습니다', 409,
+                      code='manual_reconcile_required')
+    if status == 'synced' and r['svms_dk_seq']:
+        return jsonify({'id': rid, 'status': status, 'queued': False,
+                        'dk_seq': r['svms_dk_seq'], 'message': '이미 SVMS에 반영됨'}), 200
+    cur = db.execute("UPDATE dock_daily_report SET svms_sync_status='approved', svms_approved_by=?, "
+                     "svms_claim_token=NULL, svms_claimed_at=NULL, svms_result_json=NULL, "
+                     "svms_approved_revision=?, svms_approved_hash=?, "
+                     "updated_at=datetime('now','localtime') WHERE id=? AND status='final' "
+                     "AND revision=? AND svms_sync_status NOT IN ('approved','submitting','synced','unknown','partial')",
+                     (session_actor(), r['revision'], _svms_payload_hash(preview), rid, r['revision']))
+    if cur.rowcount != 1:
+        db.rollback()
+        return _error('보고서 상태가 바뀌었습니다. 다시 미리보기 하세요', 409, code='approval_race')
+    db.commit()
+    return jsonify({'id': rid, 'status': 'approved', 'queued': True,
+                    'message': 'SVMS 반영 대기열에 등록했습니다'}), 202
+
+
+@bp.route('/api/ext/dock-daily/svms-claim', methods=['POST'])
+@api_key_required
+def svms_claim():
+    """맥 runner 전용 CAS claim. 승인된 final 보고서만 외부 write로 넘어간다."""
+    data = request.get_json(silent=True) or {}
+    try:
+        limit = max(1, min(int(data.get('limit', 1)), 10))
+    except (TypeError, ValueError):
+        return _error('limit must be an integer')
+    db = get_db()
+    # submitting stale는 자동 재전송하지 않고 사람 재검토 상태로 떨어뜨린다.
+    db.execute("UPDATE dock_daily_report SET svms_sync_status='unknown', svms_result_json=? "
+               "WHERE svms_sync_status='submitting' AND svms_claimed_at IS NOT NULL "
+               "AND svms_claimed_at < datetime('now','localtime','-6 hours')",
+               (json.dumps({'error': 'stale SVMS claim; manual review required'}, ensure_ascii=False),))
+    jobs = []
+    for row in db.execute("SELECT * FROM dock_daily_report WHERE svms_sync_status='approved' "
+                          "AND status='final' ORDER BY id LIMIT ?", (limit,)).fetchall():
+        token = uuid.uuid4().hex
+        cur = db.execute("UPDATE dock_daily_report SET svms_sync_status='submitting', "
+                         "svms_claim_token=?, svms_claimed_at=datetime('now','localtime') "
+                         "WHERE id=? AND svms_sync_status='approved' AND status='final'",
+                         (token, row['id']))
+        if cur.rowcount != 1:
+            continue
+        fresh = db.execute('SELECT r.*, p.svms_dk_cd AS project_svms_dk_cd '
+                           'FROM dock_daily_report r JOIN dock_daily_project p ON p.id=r.project_id '
+                           'WHERE r.id=?', (row['id'],)).fetchone()
+        preview = _svms(row['id'])
+        if (row['svms_approved_revision'] != row['revision'] or
+                row['svms_approved_hash'] != _svms_payload_hash(preview) or
+                not preview['publishable']):
+            db.execute("UPDATE dock_daily_report SET svms_sync_status='failed', svms_result_json=? WHERE id=?",
+                       (json.dumps({'error': 'approval snapshot no longer matches final report'}, ensure_ascii=False), row['id']))
+            continue
+        attachments = [dict(a) for a in db.execute(
+            "SELECT id, original_name FROM dock_daily_attachment WHERE report_id=? "
+            "AND deleted_at IS NULL ORDER BY id", (row['id'],)).fetchall()]
+        jobs.append({'report_id': row['id'], 'claim_token': token,
+                     'dk_cd': (fresh['project_svms_dk_cd'] or '').strip(),
+                     'dk_seq': (fresh['svms_dk_seq'] or '').strip(),
+                     'dr_dt': fresh['report_date'].replace('-', ''),
+                     'rmk_syd': preview['fields']['RMK_SYD'],
+                     'rmk_vndr': preview['fields']['RMK_VNDR'],
+                     'rmk': preview['fields']['RMK'],
+                     'attachments': attachments})
+    db.commit()
+    return jsonify({'count': len(jobs), 'jobs': jobs})
+
+
+@bp.route('/api/ext/dock-daily/attachments/<int:aid>/bytes')
+@api_key_required
+def svms_attachment_bytes(aid):
+    try:
+        report_id = int(request.args.get('report_id'))
+    except (TypeError, ValueError):
+        return _error('report_id is required')
+    claim_token = (request.args.get('claim_token') or '').strip()
+    row = query("SELECT a.stored_name, a.original_name, a.mime_type FROM dock_daily_attachment a "
+                "JOIN dock_daily_report r ON r.id=a.report_id "
+                "WHERE a.id=? AND a.report_id=? AND a.deleted_at IS NULL "
+                "AND r.svms_sync_status='submitting' AND r.svms_claim_token=?",
+                (aid, report_id, claim_token), one=True)
+    if not row:
+        return _error('attachment not found', 404)
+    path = _attachment_path(row['stored_name'])
+    if not path or not os.path.isfile(path):
+        return _error('attachment file not found', 404)
+    return send_file(path, mimetype=row['mime_type'], as_attachment=True,
+                     download_name=os.path.basename(row['original_name']))
+
+
+@bp.route('/api/ext/dock-daily/svms-result', methods=['POST'])
+@api_key_required
+def svms_result():
+    """맥 runner 결과 회신. claim token이 맞는 현재 job만 갱신한다."""
+    data = request.get_json(silent=True) or {}
+    try:
+        rid = int(data.get('report_id'))
+    except (TypeError, ValueError):
+        return _error('report_id is required')
+    token = str(data.get('claim_token') or '').strip()
+    if not token:
+        return _error('claim_token is required')
+    status = str(data.get('status') or '').strip()
+    if status not in ('synced', 'partial', 'failed', 'unknown'):
+        return _error('invalid SVMS result status')
+    db = get_db()
+    row = db.execute("SELECT * FROM dock_daily_report WHERE id=? AND svms_sync_status='submitting' "
+                     "AND svms_claim_token=?", (rid, token)).fetchone()
+    if not row:
+        return _error('claim 불일치 또는 상태 변경됨', 409)
+    seq = str(data.get('dk_seq') or '').strip() or None
+    if status == 'synced' and not seq:
+        return _error('synced result requires dk_seq', 400)
+    db.execute("UPDATE dock_daily_report SET svms_sync_status=?, svms_dk_seq=COALESCE(?,svms_dk_seq), "
+               "svms_readback_hash=?, svms_result_json=?, svms_synced_at=CASE WHEN ?='synced' "
+               "THEN datetime('now','localtime') ELSE svms_synced_at END, svms_claim_token=NULL, "
+               "svms_claimed_at=NULL, updated_at=datetime('now','localtime') WHERE id=? "
+               "AND svms_sync_status='submitting' AND svms_claim_token=?",
+               (status, seq, data.get('readback_hash'),
+                json.dumps(data, ensure_ascii=False)[:10000], status, rid, token))
+    db.commit()
+    return jsonify({'report_id': rid, 'status': status, 'dk_seq': seq})
 
 
 def _event_hash(event):

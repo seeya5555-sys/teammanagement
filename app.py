@@ -2006,6 +2006,24 @@ def _auto_migrate():
         except Exception as e:
             print(f'[auto_migrate] dock_daily_report 컬럼 점검 건너뜀: {e}')
 
+        # SVMS 입거 Daily 승인 큐. 기존 보고서/DB에는 additive 로만 붙인다.
+        try:
+            cols = {r['name'] for r in conn.execute('PRAGMA table_info(dock_daily_report)').fetchall()}
+            for name, ddl in (
+                ('svms_claim_token', 'ALTER TABLE dock_daily_report ADD COLUMN svms_claim_token TEXT'),
+                ('svms_claimed_at', 'ALTER TABLE dock_daily_report ADD COLUMN svms_claimed_at TEXT'),
+                ('svms_approved_by', 'ALTER TABLE dock_daily_report ADD COLUMN svms_approved_by TEXT'),
+                ('svms_approved_revision', 'ALTER TABLE dock_daily_report ADD COLUMN svms_approved_revision INTEGER'),
+                ('svms_approved_hash', 'ALTER TABLE dock_daily_report ADD COLUMN svms_approved_hash TEXT'),
+                ('svms_result_json', 'ALTER TABLE dock_daily_report ADD COLUMN svms_result_json TEXT'),
+            ):
+                if name not in cols:
+                    conn.execute(ddl)
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_dock_daily_svms_queue '
+                         'ON dock_daily_report(svms_sync_status, svms_claimed_at)')
+        except Exception as e:
+            print(f'[auto_migrate] dock_daily_report SVMS queue 점검 건너뜀: {e}')
+
         conn.commit()
     finally:
         conn.close()
