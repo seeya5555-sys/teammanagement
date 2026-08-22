@@ -460,7 +460,12 @@ def create_section(pid):
                      int(top['top'] if top and top['top'] is not None else 19) + 1, 'special', 1))
         except sqlite3.IntegrityError:
             continue
-        return jsonify(_project_response(_project(pid))), 201
+        body = _project_response(_project(pid))
+        # 🔴 방금 만든 key 를 명시한다.  클라이언트가 응답 목록의 차집합으로 되짚으면,
+        # 다른 기기가 같은 순간에 섹션을 추가했을 때 **남의 섹션**을 고른다(올마이트 지적
+        # 2026-08-22).  위 루프는 충돌 시 번호를 건너뛰므로 규칙을 다시 계산하는 것도 틀린다.
+        body['created_section_key'] = key
+        return jsonify(body), 201
     return _error('section key is exhausted', 409)
 
 

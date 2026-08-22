@@ -2210,6 +2210,44 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('비용 정산표', mail['html'])
         self.assertIn('도장', mail['html'])
 
+    def test_a_table_block_can_move_into_a_section_of_its_own(self):
+        """형 지시 2026-08-22: 남의 카드에 딸려 있는 표를 제목 가진 자기 섹션으로 뺀다.
+
+        앱의 "표를 별도 섹션으로 빼기" 가 이 계약 위에 서 있다 -- upsert 가 기존 블록의
+        `section_key` 를 바꿔주지 않으면 표를 지우고 다시 치는 수밖에 없다.
+        """
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '표 이사 DD'}).get_json()
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-12'}).get_json()
+        content = {'columns': ['항목', '금액'], 'rows': [['도장', '100']]}
+        fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+            'revision': fetched['revision'],
+            'operations': [{'op': 'upsert', 'section_key': 'shipyard', 'block_type': 'table',
+                            'content': content}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        table = [b for b in saved.get_json()['blocks'] if b['block_type'] == 'table'][0]
+        created = self.client.post(
+            f"/api/dock-daily/projects/{project['id']}/sections", json={'label': '비용 정산표'})
+        self.assertEqual(201, created.status_code, created.get_data(as_text=True))
+        # 🔴 클라이언트가 응답 목록의 차집합으로 되짚으면, 다른 기기가 같은 순간에 섹션을
+        # 추가했을 때 남의 섹션에 표를 넣는다. 방금 만든 key 를 서버가 직접 말해준다.
+        new_key = created.get_json().get('created_section_key')
+        self.assertEqual('sec_1', new_key)
+        moved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+            'revision': saved.get_json()['revision'],
+            'operations': [{'op': 'upsert', 'id': table['id'], 'section_key': new_key,
+                            'sort_order': 0, 'block_type': 'table', 'content': content}]})
+        self.assertEqual(200, moved.status_code, moved.get_data(as_text=True))
+        blocks = moved.get_json()['blocks']
+        self.assertEqual(1, len([b for b in blocks if b['block_type'] == 'table']),
+                         '옮긴 것이지 복사한 것이 아니다')
+        self.assertEqual('sec_1', [b for b in blocks if b['id'] == table['id']][0]['section_key'])
+        mail = self._mail(report['id'])
+        self.assertIn('비용 정산표', mail['text'], '표는 이제 자기 제목 아래 있다')
+        self.assertIn('도장', mail['html'], '내용은 그대로 따라온다')
+
     def test_inline_image_refuses_a_path_outside_the_upload_dir(self):
         """`stored_name` 은 DB 값이지만 경로 조립은 여기서 한다."""
         with appmod.app.app_context():
