@@ -303,12 +303,14 @@ class CsrfTests(unittest.TestCase):
         측정 결과: `_require_runtime_initialization` 은 raise 만,
         `_limit_non_stt_upload` 은 abort(413) 과 요청 단위 상한 설정만 한다.
         `_bearer_auth` 는 세션을 건드리지만 Bearer 요청에서만이고, 그 요청은
-        애초에 면제 대상이다.
+        애초에 면제 대상이다.  `_guard_dock_daily_blobs` 는 GET 경로 하나를 401 로
+        끊기만 하고 아무것도 쓰지 않는다 -- CSRF 검사 위에 있어도 무해하고, 아래로
+        내리면 `g._token_auth` 를 못 읽는다.
         """
         names = [f.__name__ for f in appmod.app.before_request_funcs[None]]
         before = names[:names.index('enforce')]
         self.assertEqual(['_require_runtime_initialization', '_limit_non_stt_upload',
-                          '_bearer_auth'], before)
+                          '_bearer_auth', '_guard_dock_daily_blobs'], before)
         self.assertIn('_require_runtime_initialization', csrf.__doc__)
 
     def test_wsgi_entry_point_pins_protection_on(self):

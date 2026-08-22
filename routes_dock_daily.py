@@ -349,6 +349,51 @@ def projects_post():
     return jsonify(_project_response(_project(pid))), 201
 
 
+def _final_content_dates(db, pid, section_key):
+    """확정본에 이 섹션의 내용이 남아 있는 날짜들.
+
+    🔴 `section_delete` 만 이걸 봤고 `enabled=0` 은 안 봤다.  두 길의 결과는 형이 보는
+    화면에서 똑같다 -- 감춘 섹션은 메일·SVMS 렌더에서 그냥 빠지므로, 확정본에 든 표
+    한 장이 **삭제는 409 로 막히는데 체크 해제로는 조용히 사라진다**.  그러면 "확정" 이
+    뜻하는 게 없어진다.  확정취소 → 정리 → 재확정이 정상 경로다.
+    """
+    return sorted({x['report_date'] for x in db.execute(
+        "SELECT DISTINCT r.report_date FROM dock_daily_block b"
+        " JOIN dock_daily_report r ON r.id=b.report_id"
+        " WHERE r.project_id=? AND b.section_key=? AND r.status='final'",
+        (pid, section_key)).fetchall()})
+
+
+def _bump_sibling_reports(db, pid, exclude_id=None):
+    """섹션 정의가 바뀌면 그 프로젝트의 열려 있는 보고서 revision 을 모두 올린다.
+
+    🔴 섹션 목록은 **프로젝트** 값인데 CAS 는 보고서 하나만 잠근다.  올리지 않으면 다른
+    일자를 열어 둔 기기가 옛 목록(옛 순서·옛 enabled)을 그대로 되돌려 보내 방금 바꾼
+    설정을 조용히 되돌린다 -- 양쪽 어디에도 409 가 뜨지 않는다.  순서를 보낼 때 목록
+    전체를 echo 하는 클라이언트가 있으니 이건 예외가 아니라 기본 경로다.
+    `section_delete` 가 블록 삭제 뒤 하는 일과 같은 이유다.
+
+    🔴 **확정본도 올린다.**  내 첫 구현은 "PUT 이 `final_locked` 라 되살릴 주체가 없다" 고
+    보고 건너뛰었는데 틀렸다(올마이트 blocking) -- `report_status` 가 확정취소를 열어 뒀고,
+    그 라우트는 revision 만 맞으면 통과한다.  건너뛰면 확정본의 revision 이 그대로 유효해서
+    낡은 기기가 ①확정취소 성공 ②그 응답으로 얻은 revision 으로 옛 섹션 목록 echo 라는
+    2단계로 방금 바꾼 설정을 되돌릴 수 있다.  올려 두면 ①이 먼저 409 로 끊긴다.
+    비용은 확정본 스냅샷 행 한 줄이고, 되돌림은 형이 눈으로 못 찾는 손실이다.
+    """
+    for row in db.execute("SELECT id FROM dock_daily_report"
+                          " WHERE project_id=?", (pid,)).fetchall():
+        rid = row['id']
+        if rid == exclude_id:
+            continue
+        db.execute("UPDATE dock_daily_report SET revision=revision+1,"
+                   " updated_at=datetime('now','localtime') WHERE id=?", (rid,))
+        current = db.execute('SELECT revision FROM dock_daily_report WHERE id=?',
+                             (rid,)).fetchone()['revision']
+        db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor)'
+                   ' VALUES (?,?,?,?)',
+                   (rid, current, json.dumps(_snapshot(rid), ensure_ascii=False), session_actor()))
+
+
 @bp.route('/api/dock-daily/projects/<int:pid>', methods=['PATCH'])
 @login_required
 def projects_patch(pid):
@@ -389,27 +434,60 @@ def projects_patch(pid):
     for key in ('berthing_date', 'dock_in_date', 'dock_out_date', 'departure_date', 'active_from', 'active_to'):
         if key in data:
             sets.append('%s=?' % key); vals.append(parsed_dates[key])
-    if sets:
-        sets.append("updated_at=datetime('now','localtime')")
-        execute('UPDATE dock_daily_project SET %s WHERE id=?' % ','.join(sets), (*vals, pid))
-    for item in data.get('sections') or []:
-        if not isinstance(item, dict) or not item.get('section_key'):
-            continue
-        key = str(item['section_key'])
-        row = query('SELECT kind FROM dock_daily_section_def WHERE project_id=? AND section_key=?', (pid, key), one=True)
-        if row and row['kind'] == 'special':
-            # Fixed sections are part of the report contract. Only optional
-            # project-specific sections may be renamed or disabled.
-            execute('''UPDATE dock_daily_section_def SET label=COALESCE(?,label), enabled=COALESCE(?,enabled)
-                       WHERE project_id=? AND section_key=?''',
-                    (item.get('label'), None if 'enabled' not in item else (1 if item['enabled'] else 0), pid, key))
-        elif key not in FIXED_KEYS and re.match(r'^[a-z0-9][a-z0-9_.-]{0,63}$', key):
-            execute('''INSERT OR IGNORE INTO dock_daily_section_def
-                       (project_id,section_key,label,sort_order,kind,enabled)
-                       VALUES (?,?,?,?,?,?)''',
-                    (pid, key, str(item.get('label') or key),
-                     int(item.get('sort_order') or 20), 'special',
-                     1 if item.get('enabled', True) else 0))
+    # 🔴 한 요청에 프로젝트 본문과 섹션 여러 개가 들어온다.  `execute()` 는 문장마다
+    # commit 하므로(app_core), 중간에서 하나라도 터지면 앞의 UPDATE·INSERT 는 이미
+    # 저장된 채로 500 이 나간다 -- 호출자는 "아무것도 저장 안 됨" 으로 읽고 재시도해
+    # 같은 일을 두 번 한다.  `projects_post` 와 같은 한 트랜잭션으로 묶는다.
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        if sets:
+            sets.append("updated_at=datetime('now','localtime')")
+            db.execute('UPDATE dock_daily_project SET %s WHERE id=?' % ','.join(sets), (*vals, pid))
+        section_defs_changed = False
+        for item in data.get('sections') or []:
+            if not isinstance(item, dict) or not item.get('section_key'):
+                continue
+            key = str(item['section_key'])
+            row = db.execute('SELECT kind, label, enabled FROM dock_daily_section_def'
+                             ' WHERE project_id=? AND section_key=?', (pid, key)).fetchone()
+            if row and row['kind'] == 'special':
+                # Fixed sections are part of the report contract. Only optional
+                # project-specific sections may be renamed or disabled.
+                enabled = None if 'enabled' not in item else (1 if item['enabled'] else 0)
+                if enabled == 0 and row['enabled']:
+                    finals = _final_content_dates(db, pid, key)
+                    if finals:
+                        db.rollback()
+                        return _error('확정된 보고서에 이 섹션의 내용이 있습니다.'
+                                      ' 확정을 취소한 뒤 감추세요.',
+                                      409, code='final_report_has_content', dates=finals)
+                db.execute('''UPDATE dock_daily_section_def SET label=COALESCE(?,label), enabled=COALESCE(?,enabled)
+                              WHERE project_id=? AND section_key=?''',
+                           (item.get('label'), enabled, pid, key))
+                label = item.get('label')
+                if (label is not None and label != row['label']) or (
+                        enabled is not None and enabled != row['enabled']):
+                    section_defs_changed = True
+            elif key not in FIXED_KEYS and re.match(r'^[a-z0-9][a-z0-9_.-]{0,63}$', key):
+                try:
+                    order = int(item.get('sort_order') or 20)
+                except (TypeError, ValueError):
+                    # 400 으로 끊는다.  전엔 여기서 ValueError 가 그대로 올라가 500 이 됐고,
+                    # 그 시점에 프로젝트 UPDATE 와 앞선 섹션 INSERT 는 이미 커밋돼 있었다.
+                    db.rollback(); return _error('sort_order must be an integer')
+                cur = db.execute('''INSERT OR IGNORE INTO dock_daily_section_def
+                                    (project_id,section_key,label,sort_order,kind,enabled)
+                                    VALUES (?,?,?,?,?,?)''',
+                                 (pid, key, str(item.get('label') or key), order, 'special',
+                                  1 if item.get('enabled', True) else 0))
+                if cur.rowcount:
+                    section_defs_changed = True
+        if section_defs_changed:
+            _bump_sibling_reports(db, pid)
+        db.commit()
+    except Exception:
+        db.rollback(); raise
     return jsonify(_project_response(_project(pid)))
 
 
@@ -714,7 +792,12 @@ def report_generate(pid):
         return _error(str(e))
     db = get_db()
     try:
-        db.execute('BEGIN')
+        # 🔴 `BEGIN IMMEDIATE`.  `_create_report` 는 SELECT→INSERT 이고 컬럼에
+        # `UNIQUE(project_id, report_date)` 가 걸려 있다.  deferred BEGIN 이면 "생성"
+        # 을 두 번 누른 순간 둘 다 빈 것을 보고, 뒤에 들어온 INSERT 가 IntegrityError
+        # 로 500 이 된다 -- 이 라우트는 원래 이미 있는 보고서를 200 으로 돌려주는
+        # 멱등 계약이다.
+        db.execute('BEGIN IMMEDIATE')
         rid = _create_report(db, pid, report_date, session_actor())
         db.commit()
     except Exception:
@@ -732,6 +815,19 @@ def session_actor():
 def report_get(rid):
     out = _report_json(rid)
     return jsonify(out) if out else _error('report not found', 404)
+
+
+def _op_int(value, default=0):
+    """블록 op 의 정수 필드 하나.  읽을 수 없으면 ValueError (호출부가 400 으로 바꾼다).
+
+    `bool` 은 int 의 하위형이라 `int(True)==1` 로 조용히 통과한다 -- `sort_order:true`
+    가 1번 자리로 들어가면 순서가 어긋나는데 아무 데서도 에러가 안 난다.
+    """
+    if value is None or value == '':
+        return default
+    if isinstance(value, bool):
+        raise ValueError('boolean is not an integer')
+    return int(value)
 
 
 def _cas_begin(rid, expected):
@@ -764,6 +860,7 @@ def report_put(rid):
     db = get_db()
     try:
         changed = False
+        section_defs_changed = False
         section_updates = data.get('section_updates')
         if section_updates is not None:
             if not isinstance(section_updates, list):
@@ -773,7 +870,8 @@ def report_put(rid):
                     db.rollback(); return _error('invalid section update')
                 key = str(item.get('section_key') or '').strip()
                 section = db.execute(
-                    'SELECT kind, label FROM dock_daily_section_def WHERE project_id=? AND section_key=?',
+                    'SELECT kind, label, enabled, sort_order FROM dock_daily_section_def'
+                    ' WHERE project_id=? AND section_key=?',
                     (row['project_id'], key)).fetchone()
                 if not section:
                     db.rollback(); return _error('only special sections are configurable')
@@ -799,13 +897,26 @@ def report_put(rid):
                         db.rollback()
                         return _error('fixed sections accept sort_order only')
                     label = None
+                enabled = (None if 'enabled' not in item or section['kind'] != 'special'
+                           else (1 if item['enabled'] else 0))
+                # 감추기도 확정본 내용을 지운다 -- `section_delete` 와 같은 가드를 쓴다.
+                if enabled == 0 and section['enabled']:
+                    finals = _final_content_dates(db, row['project_id'], key)
+                    if finals:
+                        db.rollback()
+                        return _error('확정된 보고서에 이 섹션의 내용이 있습니다.'
+                                      ' 확정을 취소한 뒤 감추세요.',
+                                      409, code='final_report_has_content', dates=finals)
                 db.execute('''UPDATE dock_daily_section_def
                               SET label=COALESCE(?,label), enabled=COALESCE(?,enabled), sort_order=COALESCE(?,sort_order)
                               WHERE project_id=? AND section_key=?''',
-                           (label,
-                            None if 'enabled' not in item or section['kind'] != 'special'
-                            else (1 if item['enabled'] else 0),
-                            order, row['project_id'], key))
+                           (label, enabled, order, row['project_id'], key))
+                # 값이 실제로 바뀐 것만 센다.  목록을 그대로 echo 하는 저장이 형제 보고서
+                # revision 을 올리면 아무것도 안 바꾼 저장마다 다른 기기가 409 를 맞는다.
+                if ((label is not None and label != section['label'])
+                        or (enabled is not None and enabled != section['enabled'])
+                        or (order is not None and order != section['sort_order'])):
+                    section_defs_changed = True
                 changed = True
         meta = data.get('metadata') if isinstance(data.get('metadata'), dict) else data
         updates = []
@@ -858,8 +969,15 @@ def report_put(rid):
             if not isinstance(op, dict):
                 db.rollback(); return _error('invalid block operation')
             action = op.get('op') or op.get('action') or 'upsert'
+            # 🔴 정수 필드는 여기서 400 으로 끊는다.  전엔 `int(op.get('id') or 0)` 이
+            # 그대로 터져 500 이 갔다 -- 본문 계약 위반은 이 라우트의 다른 검사들처럼
+            # 400 이어야 하고, 500 은 형에게 "서버가 죽었다" 로 읽힌다.
+            try:
+                bid = _op_int(op.get('id'))
+                order = _op_int(op.get('sort_order'))
+            except (TypeError, ValueError):
+                db.rollback(); return _error('block id and sort_order must be integers')
             if action == 'delete':
-                bid = int(op.get('id') or 0)
                 cur = db.execute('DELETE FROM dock_daily_block WHERE id=? AND report_id=?', (bid, rid))
                 if cur.rowcount: changed = True
                 db.execute("UPDATE dock_daily_attachment SET deleted_at=datetime('now','localtime') WHERE report_id=? AND block_id=?", (rid, bid))
@@ -874,23 +992,36 @@ def report_put(rid):
                 content = _json(content, {})
             if not isinstance(content, dict):
                 db.rollback(); return _error('content must be an object')
-            bid = int(op.get('id') or 0)
+            # `parent_id` 는 FK 다.  없는 id 를 그대로 넣으면 IntegrityError 가 500 으로
+            # 새어 나가고, 무엇이 틀렸는지 응답에 아무것도 안 남는다.
+            parent_id = op.get('parent_id')
+            if parent_id is not None:
+                try:
+                    parent_id = _op_int(parent_id, None)
+                except (TypeError, ValueError):
+                    db.rollback(); return _error('parent_id must be an integer')
+            if parent_id is not None and not db.execute(
+                    'SELECT id FROM dock_daily_block WHERE id=? AND report_id=?',
+                    (parent_id, rid)).fetchone():
+                db.rollback(); return _error('parent block not found', 404)
             existing = db.execute('SELECT id FROM dock_daily_block WHERE id=? AND report_id=?', (bid, rid)).fetchone() if bid else None
             if existing:
                 db.execute('''UPDATE dock_daily_block SET section_key=?, parent_id=?, sort_order=?, block_type=?,
                               content_json=?, origin='manual', manual_override=1, updated_at=datetime('now','localtime')
                               WHERE id=? AND report_id=?''',
-                           (sec, op.get('parent_id'), int(op.get('sort_order') or 0), typ,
+                           (sec, parent_id, order, typ,
                             json.dumps(content, ensure_ascii=False), bid, rid))
             else:
                 db.execute('''INSERT INTO dock_daily_block(report_id,section_key,parent_id,sort_order,block_type,
                               content_json,origin,manual_override) VALUES (?,?,?,?,?,?, 'manual',1)''',
-                           (rid, sec, op.get('parent_id'), int(op.get('sort_order') or 0), typ,
+                           (rid, sec, parent_id, order, typ,
                             json.dumps(content, ensure_ascii=False)))
             changed = True
         if not changed:
             db.rollback()
             return jsonify(_report_json(rid))
+        if section_defs_changed:
+            _bump_sibling_reports(db, row['project_id'], exclude_id=rid)
         newrev = row['revision'] + 1
         cur = db.execute("UPDATE dock_daily_report SET revision=?, status=CASE WHEN status='auto_draft' THEN 'editing' ELSE status END, updated_at=datetime('now','localtime') WHERE id=? AND revision=?",
                          (newrev, rid, row['revision']))
@@ -959,6 +1090,13 @@ def report_copy_from(rid):
         if src['project_id'] != row['project_id']:
             db.rollback(); return _error('source report belongs to another project', 400,
                                          code='cross_project')
+        # 🔴 "이전 일자" 는 화면 문구가 아니라 계약이다.  서버가 안 보면 웹 드롭다운만이
+        # 유일한 방어선이고, 앱 버그·러너·curl 이 **뒷날 진행사항으로 앞날 기록을 덮을**
+        # 수 있다(`replace` 는 기존 카드를 지운다).  날짜는 'YYYY-MM-DD' 라 문자열
+        # 비교가 곧 날짜 비교다.
+        if src['report_date'] >= row['report_date']:
+            db.rollback(); return _error('source report must be an earlier date', 400,
+                                         code='not_earlier')
         sections = {x['section_key'] for x in _sections(row['project_id'], include_disabled=True)}
         deleted = 0
         if mode == 'replace':
@@ -1143,8 +1281,6 @@ def attachment_post(rid):
     mime = _file_mime(raw, ext, f.mimetype)
     if not mime: return _error('file content/type mismatch')
     block_id = request.form.get('block_id', type=int)
-    if block_id and not query('SELECT id FROM dock_daily_block WHERE id=? AND report_id=?', (block_id, rid), one=True):
-        return _error('block not found', 404)
     digest = hashlib.sha256(raw).hexdigest()
     stored = 'dock_daily_' + uuid.uuid4().hex + '.' + ext
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -1155,8 +1291,31 @@ def attachment_post(rid):
         with open(path, 'xb') as fh: fh.write(raw)
     except OSError:
         return _error('file storage failed', 500)
-    aid = execute('''INSERT INTO dock_daily_attachment(report_id,block_id,stored_name,original_name,mime_type,size,sha256)
-                     VALUES (?,?,?,?,?,?,?)''', (rid, block_id, stored, safe[:255], mime, len(raw), digest))
+    # 🔴 상태·블록 확인과 INSERT 는 한 트랜잭션 안이다.  위의 `_report` 읽기는 이 아래를
+    # 못 지킨다 -- 확인과 INSERT 사이에 확정이 끼면 **확정 뒤에 추가된 첨부**가 확정본에
+    # 붙고, 그건 `attachment_delete` 가 다시 409 로 거절해서 확정취소 없이는 못 지운다.
+    #
+    # 🔴 실패하면 방금 쓴 파일을 지운다.  행 없는 blob 은 어떤 purge 경로도 못 찾는다
+    # (전부 행을 훑는다) -- 영구 고아 파일이 되고, 그게 `_purge_files` 가 드러내려고
+    # 존재하는 바로 그 실패다.
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        fresh = db.execute('SELECT status FROM dock_daily_report WHERE id=?', (rid,)).fetchone()
+        if not fresh:
+            db.rollback(); _purge_files([stored]); return _error('report not found', 404)
+        if fresh['status'] == 'final':
+            db.rollback(); _purge_files([stored]); return _error('final report is locked', 409)
+        if block_id and not db.execute('SELECT id FROM dock_daily_block WHERE id=? AND report_id=?',
+                                       (block_id, rid)).fetchone():
+            db.rollback(); _purge_files([stored]); return _error('block not found', 404)
+        cur = db.execute('''INSERT INTO dock_daily_attachment(report_id,block_id,stored_name,original_name,mime_type,size,sha256)
+                            VALUES (?,?,?,?,?,?,?)''',
+                         (rid, block_id, stored, safe[:255], mime, len(raw), digest))
+        aid = cur.lastrowid
+        db.commit()
+    except Exception:
+        db.rollback(); _purge_files([stored]); raise
     return jsonify(_dict(query('SELECT * FROM dock_daily_attachment WHERE id=?', (aid,), one=True))), 201
 
 
@@ -1231,6 +1390,28 @@ def attachment_delete(aid):
                 continue
             db.execute('UPDATE dock_daily_block SET content_json=? WHERE id=?',
                        (json.dumps(content, ensure_ascii=False), block['id']))
+        if row['report_id'] is None:
+            return
+        # 🔴 블록을 안 고쳤어도 올린다.  내 첫 구현은 `edited` 일 때만 올렸는데, 아직 어느
+        # 블록도 안 가리키는 첨부가 정확히 그 구멍이다(올마이트 blocking) -- 다른 기기가
+        # 첨부 카드에서 올려 둔 사진을 사진 카드에 **로컬로** 끼워 넣은 상태에서 이쪽이
+        # 그 첨부를 지우면, 저쪽 revision 은 그대로 유효해서 저장이 통과하고 **지워진
+        # attachment_id** 가 블록에 박힌다.  첨부 목록 자체가 `_report_json` 의 일부이므로
+        # 첨부 삭제는 그 자체로 보고서 상태 변경이다.
+        #
+        # 🔴 블록을 고쳤으면 더더욱 올린다.  안 올리면 그 보고서를 열어 둔 다른 기기가
+        # **아직 유효한** revision 으로 저장에 성공하고(upsert 는 content_json 을 통째로
+        # 덮는다) 방금 끊어낸 attachment_id 를 되살린다 -- 지운 사람은 깨끗이 지워졌다고
+        # 믿는데 메일에는 "첨부 파일을 찾을 수 없습니다" 가 나간다.  `section_delete` 가
+        # 같은 이유로 하는 일이다.
+        db.execute("UPDATE dock_daily_report SET revision=revision+1,"
+                   " updated_at=datetime('now','localtime') WHERE id=?", (row['report_id'],))
+        current = db.execute('SELECT revision FROM dock_daily_report WHERE id=?',
+                             (row['report_id'],)).fetchone()['revision']
+        db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor)'
+                   ' VALUES (?,?,?,?)',
+                   (row['report_id'], current,
+                    json.dumps(_snapshot(row['report_id']), ensure_ascii=False), session_actor()))
 
     payload, err = _delete_cascade(_CASCADE_ATTACHMENT, aid, guard, unlink)
     return err if err else jsonify(payload)
@@ -1763,8 +1944,14 @@ def _email(rid):
                     text_out.append('- %s' % (wrap(caption) or '사진'))
                 else:
                     # 못 실은 이유는 본문에 남긴다. 조용히 빠지면 형은 실렸다고 생각한다.
+                    #
+                    # 🔴 `<td>` 에 글을 바로 넣지 않고 `<p>` 로 감싼다 -- `cell()`/`item()`
+                    # 과 같은 계약이다. Outlook 붙여넣기는 `<td>` 직속 텍스트를 11pt
+                    # 선언과 무관하게 ~8pt 로 붙이므로, 감싸지 않으면 "사진이 안 실렸다"
+                    # 는 이 경고만 읽기 힘든 크기로 나가 형이 못 보고 발송한다.
                     reason = note or '본문에 넣지 못했습니다'
-                    inner = run(html.escape('(%s)' % reason))
+                    inner = ('<p style="margin:0;mso-margin-top-alt:0;mso-margin-bottom-alt:0;'
+                             '%s">%s</p>' % (cell_font, run(html.escape('(%s)' % reason))))
                     text_out.append('- %s (%s)' % (wrap(caption) or '사진', reason))
                 marked = wrap(caption)
                 caption_html = ''
@@ -1836,6 +2023,21 @@ def email_preview(rid):
     return jsonify(_email(rid))
 
 
+def _svms_limit(raw):
+    """`RMK_*` 최대 byte 계약 하나를 읽는다. 값이 계약으로 못 읽히면 None.
+
+    None 은 "한도 미설정" 이고, 미설정이면 publish 를 막는다(DESIGN §9 안전계약 3).
+    🔴 `"4,000"` 같은 오타나 `"0"` 을 "설정됨" 으로 세면 안 된다 -- 앞의 구현은 raw
+    문자열의 truthiness 로 게이트를 통과시키면서 화면에는 `null` 을 보여 줘, 한도가
+    없는 상태로 버튼이 열렸다.
+    """
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _svms(rid):
     r = _report(rid)
     sections = _sections(r['project_id'], include_disabled=False)
@@ -1845,17 +2047,31 @@ def _svms(rid):
     for s in sections:
         if s['section_key'] not in {'shipyard', 'vendor'}:
             rest.append('%s\n%s' % (s['label'], _render_section(rid, s['section_key'])))
-    fields = {'DK_CD': r['svms_dk_cd'] or r['project_vsl_cd'], 'DK_SEQ': r['svms_dk_seq'],
+    # 🔴 DK_CD 는 프로젝트에 등록된 SVMS Dock No 하나뿐이다. 없을 때 선박코드(`vsl_cd`)로
+    # 대체하면 안 된다 -- 둘은 다른 키이고(예: DK_CD=`KWPSMD2603250001`), 대체값을
+    # 보여 주면 미리보기가 "이 dock 에 반영된다" 고 거짓말을 한다.
+    dk_cd = (r['svms_dk_cd'] or '').strip()
+    fields = {'DK_CD': dk_cd, 'DK_SEQ': r['svms_dk_seq'],
               'DR_DT': r['report_date'].replace('-', ''), 'RMK_SYD': syd, 'RMK_VNDR': vendor,
               'RMK': '\n\n'.join(rest)}
-    limits = {'RMK_SYD': os.environ.get('SVMS_DOCK_DAILY_MAX_SYD'),
-              'RMK_VNDR': os.environ.get('SVMS_DOCK_DAILY_MAX_VNDR'),
-              'RMK': os.environ.get('SVMS_DOCK_DAILY_MAX_RMK')}
+    limits = {'RMK_SYD': _svms_limit(os.environ.get('SVMS_DOCK_DAILY_MAX_SYD')),
+              'RMK_VNDR': _svms_limit(os.environ.get('SVMS_DOCK_DAILY_MAX_VNDR')),
+              'RMK': _svms_limit(os.environ.get('SVMS_DOCK_DAILY_MAX_RMK'))}
     byte_counts = {k: len((v or '').encode('utf-8')) for k, v in fields.items() if k.startswith('RMK')}
-    return {'fields': fields, 'byte_counts': byte_counts,
-            'limits': {k: int(v) if v and v.isdigit() else None for k, v in limits.items()},
-            'publishable': bool(r['svms_dk_cd'] and all(limits.values())),
-            'encoding': 'UTF-8'}
+    # 🔴 한도를 **넘었는지** 도 본다. 앞의 구현은 한도가 설정됐는지만 보고 초과를 통과시켜,
+    # 계약상 SVMS 가 못 받는 본문에도 "반영 준비 완료" 를 띄웠다. 자동 truncate 는 금지이므로
+    # 판정만 하고 자르지 않는다 -- 줄이는 건 사람이 문장을 고르는 일이다.
+    over = sorted(k for k, limit in limits.items() if limit is not None and byte_counts[k] > limit)
+    blockers = []
+    if not dk_cd:
+        blockers.append('DK_CD 미설정')
+    if any(v is None for v in limits.values()):
+        blockers.append('RMK byte 한도 계약 미설정')
+    if over:
+        blockers.append('byte 한도 초과: %s' % ', '.join(over))
+    return {'fields': fields, 'byte_counts': byte_counts, 'limits': limits,
+            'over_limit': over, 'blockers': blockers,
+            'publishable': not blockers, 'encoding': 'UTF-8'}
 
 
 @bp.route('/api/dock-daily/reports/<int:rid>/svms-preview')

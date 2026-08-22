@@ -1315,6 +1315,45 @@ def _suppress_bearer_session_cookie(response):
 
 
 # ═════════════════════════════════════════════════════════════════
+#  입거 Daily Report 첨부 blob 직접접근 차단 — 등록 위치가 계약이다
+#  🔴 반드시 `_bearer_auth` **아래**: 위에 두면 g._token_auth 를 못 읽는다.
+#     ⚠️ 다만 오늘 이 경로에서 그 값은 절대 세워지지 않는다 -- `_bearer_auth` 는
+#     `/api/` 로 시작하지 않는 요청에서 즉시 return 하므로 static 경로엔 안 닿는다.
+#     지금 통과 조건은 **쿠키 세션 하나**이고, 그래서 이 게이트가 iOS 를 깨지 않는지는
+#     "앱이 이 URL 을 안 쓴다" 로 확인했다(실측: iOS 는 `/api/dock-daily/attachments/
+#     <id>` + QuickLook 을 쓰고 `/static/uploads/` 는 dock|boarding|receipt 만 읽는다).
+#     토큰 분기는 나중에 Bearer 범위가 넓어질 때를 위한 것이고, 그때 이 순서가 필요하다.
+# ═════════════════════════════════════════════════════════════════
+_DOCK_DAILY_BLOB_PREFIX = 'dock_daily_'
+
+
+@app.before_request
+def _guard_dock_daily_blobs():
+    """`/static/uploads/dock_daily_*` 는 로그인 없이 내주지 않는다.
+
+    첨부 라우트(`/api/dock-daily/attachments/<id>`)에는 `login_required` 가 붙어 있지만
+    파일 자체는 `static/uploads/` 안에 있어서 Flask 기본 `/static/<path>` 라우트가
+    **인증 없이 그대로 내보낸다**. 실측(라이브): `/static/uploads/<이름>` → 404(게이트
+    없음), `/dock-daily` → 302 login. 즉 지금 기밀성은 uuid 파일명이 안 새는 것에만
+    걸려 있다 -- 메일 본문·서버 로그·브라우저 히스토리·프록시 어디로든 새면 끝이다.
+    입거 첨부는 견적서·검사보고서라 공개돼도 되는 파일이 아니다.
+
+    🔴 **범위를 좁게 잡는다.** `/static/uploads/` 를 통째로 막으면 도크 리포트·승선·
+    영수증 사진이 깨진다 -- `routes_calendar_dock.py` 와 DOCX 생성기가 그 URL 을
+    **공개 URL 로 일부러** 쓴다(메일 클라이언트·Word 는 세션이 없다). 그래서 이 기능이
+    만드는 이름(`dock_daily_` 접두어, `attachment_post` 가 붙인다)만 막는다.
+    """
+    path = request.path
+    if not path.startswith('/static/uploads/'):
+        return None
+    if not path.rsplit('/', 1)[-1].startswith(_DOCK_DAILY_BLOB_PREFIX):
+        return None
+    if session.get('user_id') or getattr(g, '_token_auth', None):
+        return None
+    return jsonify({'error': 'unauthorized'}), 401
+
+
+# ═════════════════════════════════════════════════════════════════
 #  CSRF (쿠키 세션 전용) — 등록 위치가 계약이다
 #  🔴 반드시 `_bearer_auth` **아래**: 위에 두면 g._token_auth 가 아직 없어서
 #     네이티브 앱의 모든 쓰기가 403 으로 죽는다.

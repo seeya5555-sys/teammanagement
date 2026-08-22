@@ -102,9 +102,18 @@
     renderReportDates();
     if (openWasDeleted && state.reports.length) await selectReport(state.reports[0].id);
   }
+  // 🔴 프로젝트 전환에도 순서 방어가 필요하다(`selectSeq` 는 일자 전환만 막았다).
+  // A→B 를 빠르게 누르면 A 의 목록 응답이 나중에 도착해, 사이드바는 B 를 칠했는데
+  // 본문·드롭다운은 A 가 된다 -- 그 상태에서 ＋ 섹션을 누르면 B 에 만들면서 화면은
+  // A 의 보고서다.
+  let projectSeq = 0;
   async function selectProject(id) {
+    const pseq = ++projectSeq;
     clearErr(); state.project = state.projects.find(p => p.id === id) || null; if (!state.project) return;
-    state.report = null; state.reports = await api(`/api/dock-daily/projects/${id}/reports`); await loadProjects();
+    state.report = null; const reports = await api(`/api/dock-daily/projects/${id}/reports`);
+    if (pseq !== projectSeq) return;            // 형이 그 사이 다른 프로젝트를 골랐다
+    state.reports = reports; await loadProjects();
+    if (pseq !== projectSeq) return;
     // 프로젝트를 바꿀 때 필터를 비운다. 안 비우면 앞 프로젝트에 맞춰둔 검색어가
     // 새 프로젝트의 일자를 전부 숨겨 "보고서가 없다" 처럼 보인다.
     $('#dd-report-search').value = ''; $('#dd-report-status').value = '';
@@ -130,12 +139,25 @@
       + '<input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:9px 0 7px">'
       + '<div class="dd-row"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button><button class="dd-btn alt" id="dd-section-add-table" type="button">＋ 표 섹션</button></div>'
       + '<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 잠시 감추려면 체크를 해제하고, 아주 지우려면 삭제를 누르세요. <b>＋ 표 섹션</b>은 제목을 가진 빈 표 카드를 열린 일자에 만듭니다(앱과 같은 기능).</p>';
-    document.querySelectorAll('.dd-special-toggle').forEach(t => t.onchange = () => toggleSpecial(t.dataset.key, t.checked));
+    // 🔴 실패를 삼키지 않는다. 전엔 `.catch` 가 없어서 PATCH 가 500 이 나면 unhandled
+    // rejection 으로 조용히 끝나고, 체크박스만 바뀐 채로 남아 화면이 서버와 반대를
+    // 말했다(다시 열기 전까지 형은 감춘 줄 안다). 실패하면 체크를 되돌려 놓는다.
+    document.querySelectorAll('.dd-special-toggle').forEach(t => t.onchange = () => {
+      const wanted = t.checked;
+      toggleSpecial(t.dataset.key, wanted).catch(e => { t.checked = !wanted; err(e); });
+    });
     document.querySelectorAll('[data-del-section]').forEach(b => b.onclick = () => once(b, () => deleteSection(b.dataset.delSection)));
-    $('#dd-section-add').onclick = () => addSection($('#dd-section-label').value);
+    // ＋ 섹션도 `once()` 로 막는다(옆의 ＋ 표 섹션은 이미 막혀 있다). 두 번 누르면 서버가
+    // UNIQUE 충돌을 다음 번호로 피해 가므로 **같은 제목의 섹션이 두 개** 생기고, 이
+    // 프로젝트의 모든 일자와 메일에 두 번 나간다.
+    $('#dd-section-add').onclick = () => once($('#dd-section-add'), () => addSection($('#dd-section-label').value));
     $('#dd-section-add-table').onclick = () => once($('#dd-section-add-table'), () => addSection($('#dd-section-label').value, true));
   }
   function ensureSectionEditors() {
+    // 🔴 확정본에는 초안 칸을 깔지 않는다(앱 `needsTextDraft` 는 `guard !readOnly`).
+    // 깔면 잠긴 보고서 안에 회색 입력칸이 뜨는데 앱에는 없다 -- 파리티가 갈리고,
+    // 못 쓰는 칸이 "여기 쓸 수 있다" 로 읽힌다.
+    if (state.report.status === 'final') return;
     for (const s of (state.report.sections||[]).filter(x => x.enabled)) {
       // 🔴 표를 담은 special 섹션은 **표만** 있는 카드다(형 지시 2026-08-22) — 글 칸을
       // 끼워 넣으면 형이 안 쓴 문단이 카드마다 하나씩 붙는다. 앱과 같은 값 기준 판정
@@ -315,11 +337,24 @@
   // blockText 가 읽은 키에 그대로 되돌려 쓴다. 항상 body 에 쓰면, 서버 렌더가 title 을
   // 먼저 보므로(title||body||text) title 을 읽어 보여준 카드는 수정이 조용히 무시된다.
   function textKey(b){const c=b.content||{};if(c.title)return 'title';if(c.text&&!c.body)return 'text';return 'body';}
+  // 🔴 **있는 글 키는 전부** 같은 값으로 맞춘다. 정본은 앱 `DockDailyBlockText.content`
+  // (`for name in ["title","body","text"] where object[name] != nil`) 이고, 웹만 한 키에
+  // 써서 계약이 갈려 있었다. 한 키만 쓰면 `{title:'OLD', body:'STALE'}` 같은 수집 블록에서
+  // title 을 비운 순간 `blockText` 가 옛 body 로 되떨어진다 -- 다시 그리면 형이 지운 글이
+  // 화면에 되살아나고, 저장하면 서버 `_plain`(title→body→text)이 그 문장을 메일로 보낸다.
+  // 없는 키는 만들지 않는다(앱과 동일). 아무 키도 없으면 읽던 키에 쓴다.
+  function writeText(b,value){
+    const c={...(b.content||{})};
+    let wrote=false;
+    for(const k of ['title','body','text'])if(c[k]!==undefined&&c[k]!==null){c[k]=value;wrote=true;}
+    if(!wrote)c[textKey(b)]=value;
+    return c;
+  }
   function commitItems(ta){
     const b=findBlock(ta.dataset.key); if(!b||blockText(b)===ta.value)return;
     // block_type 을 'paragraph' 로 갈아치우지 않는다 — item 블록이 문단으로 바뀌면서
     // 서버가 content 를 통째로 교체해 progress/status 가 사라졌다(올마이트 지적).
-    b.content={...(b.content||{}),[textKey(b)]:ta.value}; b._edit=true; state.dirty=true;
+    b.content=writeText(b,ta.value); b._edit=true; state.dirty=true;
   }
   function normalizeItems(ta,keepCaretLine){
     applyNumbering(ta,NUM.renumber(ta.value,ta.selectionStart,keepCaretLine));
@@ -605,8 +640,12 @@
     // 🔴 삭제하면 열린 보고서를 다시 읽어야 하는데(서버가 블록을 지웠다), 그 재조회가
     // 저장 안 한 편집을 통째로 버린다 -- 형은 지운 적 없는 문장이 사라진 걸 본다.
     // 미리보기와 같은 계약으로 먼저 저장한다(올마이트 지적).
+    // 🔴 프로젝트 id 를 `await` **전에** 붙잡는다(`addSection` 과 같은 이유). 저장이 도는
+    // 동안 형이 다른 프로젝트로 옮기면 `state.project` 는 그쪽이 되고, 그때 DELETE 가
+    // 나가면 **남의 프로젝트의 같은 이름 섹션**을 모든 일자에서 지운다 -- 되돌릴 수 없다.
+    const pid=state.project.id;
     if(state.dirty)await save();
-    const send=async confirmed=>api(`/api/dock-daily/projects/${state.project.id}/sections/${encodeURIComponent(key)}`,
+    const send=async confirmed=>api(`/api/dock-daily/projects/${pid}/sections/${encodeURIComponent(key)}`,
       {...json(confirmed?{confirm:'delete-section'}:{}),method:'DELETE'});
     let body;
     try{ body=await send(false); }
@@ -618,7 +657,14 @@
         +'지우면 이 프로젝트의 모든 일자에서 함께 사라지고 되돌릴 수 없습니다.')) return;
       try{ body=await send(true); }catch(retry){err(retry);return;}
     }
-    state.project=body;state.projects=state.projects.map(p=>p.id===body.id?body:p);
+    state.projects=state.projects.map(p=>p.id===body.id?body:p);
+    if(state.project?.id!==pid){
+      // 그 사이 다른 프로젝트를 열었다. 목록만 갱신하고 화면은 건드리지 않는다
+      // (`addSection` 과 같은 계약) -- 섹션은 서버에서 이미 지워졌다.
+      notice(`섹션 "${name}" 을 지웠습니다. 그 사이 다른 프로젝트를 열어서 여기에는 반영하지 않았습니다.`);
+      return;
+    }
+    state.project=body;
     renderSpecialTools();
     // 열려 있는 보고서에서도 그 카드와 내용이 사라져야 한다. 서버가 블록을 지웠으므로
     // 여기서 다시 읽는다 -- 화면의 옛 블록을 그대로 두면 다음 저장이 없는 블록을 올린다.
@@ -837,7 +883,11 @@
   // 다시 잠글 기회를 준다 — 누를 대상이 없는 버튼이 살아 있으면 안 된다.
   $('#dd-report-del').onclick=()=>{const id=state.report?.id;if(id)once($('#dd-report-del'),()=>deleteReport(id)).then(renderReportDates);};
 
-  $('#dd-save').onclick=()=>save().catch(err); $('#dd-email').onclick=()=>openPreview('email').catch(err); $('#dd-svms').onclick=()=>openPreview('svms').catch(err);
+  // 🔴 저장은 `once()` 로 막고 오류는 `conflictText` 로 번역한다. 없으면 ①두 번 누른 두
+  // 번째 PUT 이 같은 revision 을 들고 가 409 를 받고, 저장은 됐는데 형은 "revision
+  // conflict" 라는 영어 원문을 본다 ②진짜 충돌에서도 다른 버튼들이 주는 안내가 안 뜬다.
+  $('#dd-save').onclick=()=>once($('#dd-save'),()=>save().catch(e=>{$('#dd-error').textContent=conflictText(e);}));
+  $('#dd-email').onclick=()=>openPreview('email').catch(err); $('#dd-svms').onclick=()=>openPreview('svms').catch(err);
   // 확정 / 확정취소 한 버튼 토글.  잠금을 여는 쪽은 전용 라우트를 쓴다 —
   // PUT(=내용 저장) 은 잠긴 행에서 409 로 막히고, 그 거절이 곧 잠금이다.
   async function setReportStatus(want){
@@ -846,10 +896,15 @@
       ? '이 보고서를 확정하면 수정이 잠깁니다. 확정할까요?'
       : '확정을 취소하면 다시 수정할 수 있게 됩니다. 확정을 취소할까요?';
     if(!confirm(ask))return;
+    // 🔴 어느 보고서를 확정하는지 `await` **전에** 고정한다(`openDateModal` 과 같은 계약).
+    // 저장이 도는 동안 형이 다른 일자로 옮기면 `state.report` 는 그쪽이 되고, POST 는
+    // **형이 확정한다고 답하지 않은 보고서**를 잠근다.
+    const rid=state.report.id;
     try{
       // 확정 전에만 저장한다. 확정취소 시점엔 잠겨 있어서 저장할 편집 자체가 없다.
-      if(want==='final'&&state.dirty)await save();
-      const updated=await api(`/api/dock-daily/reports/${state.report.id}/status`,
+      if(want==='final'&&state.dirty&&!await save())return;
+      if(state.report?.id!==rid)return;        // await 사이에 다른 일자로 옮겨갔다
+      const updated=await api(`/api/dock-daily/reports/${rid}/status`,
         {...json({status:want,revision:state.report.revision}),method:'POST'});
       // 사이드바는 state.reports 의 status 를 그대로 찍는다. 여기서 갈아주지
       // 않으면 본문은 편집 가능인데 목록만 'final' 로 남는다.
@@ -858,7 +913,10 @@
     }catch(e){err(e);}
   }
   $('#dd-final').onclick=()=>setReportStatus(state.report?.status==='final'?'editing':'final');
-  $('#dd-generate').onclick=async()=>{if(!state.project)return;const report_date=$('#dd-generate-date').value;if(!report_date)return err(new Error('보고서 일자를 선택하세요.'));try{const report=await api(`/api/dock-daily/projects/${state.project.id}/reports/generate`,{...json({report_date}),method:'POST'});state.reports=await api(`/api/dock-daily/projects/${state.project.id}/reports`);await selectReport(report.id);}catch(e){err(e);}};
+  // 🔴 여기도 `canLeaveDraft()` 를 물어본다. 드롭다운·프로젝트 목록은 묻는데 이 버튼만
+  // 안 물어서, 카드에 글을 쓰다가 새 일자를 만들면 `selectReport` 가 `state.report` 를
+  // 갈아치우며 방금 쓴 글이 **확인 한 번 없이** 사라졌다.
+  $('#dd-generate').onclick=async()=>{if(!state.project)return;const report_date=$('#dd-generate-date').value;if(!report_date)return err(new Error('보고서 일자를 선택하세요.'));if(!canLeaveDraft())return;const pid=state.project.id;try{const report=await api(`/api/dock-daily/projects/${pid}/reports/generate`,{...json({report_date}),method:'POST'});const reports=await api(`/api/dock-daily/projects/${pid}/reports`);if(state.project?.id!==pid)return;state.reports=reports;await selectReport(report.id);}catch(e){err(e);}};
   $('#dd-attach').onclick=()=>openUploadModal().catch(err);
   $('#dd-upload-close').onclick=closeUploadModal; $('#dd-upload-done').onclick=closeUploadModal;
   $('#dd-file-input').onchange=async e=>{const files=[...e.target.files];e.target.value='';try{await uploadFiles(files);}catch(x){err(x);}};

@@ -2622,6 +2622,569 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('사용자 지정 인사말', preview['text'])
         self.assertIn('별도 안전 유의사항', preview['text'])
 
+    # ------------------------------------------------------------------
+    # 2026-08-22 전체 검토(페이블 4개 차원)에서 나온 잠재결함들.
+    # 각 테스트는 "고치기 전 구현으로 되돌리면 실패한다" 를 기준으로 썼다.
+    # ------------------------------------------------------------------
+
+    def _svms_env(self, syd='4000', vndr='4000', rmk='4000'):
+        """`SVMS_DOCK_DAILY_MAX_*` 3개를 이 테스트 동안만 세운다."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def _ctx():
+            keys = {'SVMS_DOCK_DAILY_MAX_SYD': syd,
+                    'SVMS_DOCK_DAILY_MAX_VNDR': vndr,
+                    'SVMS_DOCK_DAILY_MAX_RMK': rmk}
+            old = {k: os.environ.get(k) for k in keys}
+            for k, v in keys.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            try:
+                yield
+            finally:
+                for k, v in old.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+        return _ctx()
+
+    def _dd_project_report(self, title, report_date='2026-08-20', **project):
+        payload = {'vessel_id': self.vessel, 'title': title}
+        payload.update(project)
+        p = self.client.post('/api/dock-daily/projects', json=payload).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': report_date}).get_json()
+        return p, r
+
+    def test_svms_preview_never_substitutes_the_vessel_code_for_the_dock_no(self):
+        """🔴 `DK_CD` 가 없을 때 선박코드로 대체하면 미리보기가 거짓말을 한다.
+
+        `DK_CD` 는 SVMS 가 발급한 dock 키(예: `KWPSMD2603250001`)이고 `vsl_cd` 는
+        선박코드다.  대체값을 보여 주면 형은 "이 dock 에 반영된다" 고 읽는데, 실제로
+        그 키로는 어떤 dock 도 안 열린다.  비어 있으면 비어 있다고 보이고 publish 는
+        막혀야 한다.
+        """
+        p, r = self._dd_project_report('SVMS DK_CD DD')
+        with self._svms_env():
+            preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+        self.assertEqual('', preview['fields']['DK_CD'], '선박코드(D001)로 대체하면 안 된다')
+        self.assertFalse(preview['publishable'])
+        self.assertIn('DK_CD 미설정', preview['blockers'])
+
+        self.client.patch(f"/api/dock-daily/projects/{p['id']}",
+                          json={'svms_dk_cd': 'KWPSMD2603250001'})
+        with self._svms_env():
+            ok = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+        self.assertEqual('KWPSMD2603250001', ok['fields']['DK_CD'])
+        self.assertEqual([], ok['blockers'])
+        self.assertTrue(ok['publishable'])
+
+    def test_svms_byte_limit_that_cannot_be_read_counts_as_unset(self):
+        """🔴 `"4,000"`·`"0"` 은 "한도 설정됨" 이 아니다.
+
+        앞의 구현은 raw 문자열의 truthiness 로 `publishable` 을 열면서 화면에는
+        `limits: null` 을 보여 줬다 -- 한도가 없는 상태로 반영 버튼이 열렸다.
+        """
+        p, r = self._dd_project_report('SVMS 한도 DD')
+        self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={'svms_dk_cd': 'DK-1'})
+        for bad in ('4,000', '0', '', 'abc', '-1'):
+            with self._svms_env(rmk=bad):
+                preview = self.client.get(
+                    f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+            self.assertIsNone(preview['limits']['RMK'], bad)
+            self.assertFalse(preview['publishable'], bad)
+            self.assertIn('RMK byte 한도 계약 미설정', preview['blockers'], bad)
+        with self._svms_env(rmk=None):
+            missing = self.client.get(
+                f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+        self.assertIsNone(missing['limits']['RMK'])
+        self.assertFalse(missing['publishable'])
+
+    def test_svms_preview_blocks_a_body_over_the_byte_limit(self):
+        """🔴 한도가 설정됐는지만 보고 **초과** 를 통과시키면 안 된다.
+
+        SVMS 가 계약상 못 받는 본문에 "반영 준비 완료" 가 뜨면, 사람은 눌렀고 서버는
+        거절한다.  자동 truncate 는 금지이므로(문장을 고르는 건 사람 일) 판정만 한다.
+        """
+        p, r = self._dd_project_report('SVMS 초과 DD')
+        self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={'svms_dk_cd': 'DK-1'})
+        self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [{'section_key': 'shipyard', 'block_type': 'paragraph',
+                            'content': {'body': '가' * 40}}]})
+        with self._svms_env(syd='10'):
+            preview = self.client.get(
+                f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+        self.assertGreater(preview['byte_counts']['RMK_SYD'], 10)
+        self.assertEqual(['RMK_SYD'], preview['over_limit'])
+        self.assertFalse(preview['publishable'])
+        self.assertTrue(any('byte 한도 초과' in b for b in preview['blockers']),
+                        preview['blockers'])
+        # 잘라 보내지는 않는다 -- 본문은 그대로 보이고 판정만 막는다.
+        self.assertIn('가' * 40, preview['fields']['RMK_SYD'])
+
+    def _final_section_project(self, title):
+        """확정본에 내용이 든 special 섹션 + 열려 있는 다음 일자 보고서."""
+        p, first = self._dd_project_report(title, '2026-08-20')
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/sections", json={'label': '표 섹션'})
+        saved = self.client.put(f"/api/dock-daily/reports/{first['id']}", json={
+            'revision': first['revision'],
+            'operations': [{'section_key': 'sec_1', 'block_type': 'paragraph',
+                            'content': {'body': '확정본에 든 내용'}}]}).get_json()
+        finalized = self.client.put(f"/api/dock-daily/reports/{first['id']}", json={
+            'revision': saved['revision'], 'status': 'final', 'operations': []})
+        self.assertEqual(200, finalized.status_code, finalized.get_data(as_text=True))
+        second = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                  json={'report_date': '2026-08-21'}).get_json()
+        return p, second
+
+    def test_hiding_a_section_is_refused_while_a_final_report_holds_it(self):
+        """🔴 `section_delete` 만 확정본을 봤고 `enabled=0` 은 안 봤다.
+
+        감춘 섹션은 메일·SVMS 렌더에서 그냥 빠진다.  즉 확정본에 든 표 한 장이
+        **삭제는 409 로 막히는데 체크 해제로는 조용히 사라졌다** -- 그러면 "확정" 이
+        뜻하는 게 없다.  두 입구(`PUT` 의 `section_updates`, 프로젝트 `PATCH`)가 같은
+        가드를 써야 한다.
+        """
+        p, second = self._final_section_project('확정 섹션 감추기 DD')
+        via_put = self.client.put(f"/api/dock-daily/reports/{second['id']}", json={
+            'revision': second['revision'],
+            'section_updates': [{'section_key': 'sec_1', 'enabled': False}]})
+        self.assertEqual(409, via_put.status_code, via_put.get_data(as_text=True))
+        body = via_put.get_json()
+        self.assertEqual('final_report_has_content', body['code'])
+        self.assertEqual(['2026-08-20'], body['dates'], '어느 날짜가 막는지 알려 준다')
+
+        via_patch = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
+            'sections': [{'section_key': 'sec_1', 'enabled': False}]})
+        self.assertEqual(409, via_patch.status_code, via_patch.get_data(as_text=True))
+        self.assertEqual('final_report_has_content', via_patch.get_json()['code'])
+        # 두 경로 모두 아무것도 바꾸지 않았다.
+        sections = {s['section_key']: s for s in
+                    self.client.get(f"/api/dock-daily/reports/{second['id']}").get_json()['sections']}
+        self.assertIn('sec_1', sections)
+        self.assertTrue(sections['sec_1']['enabled'], '거절된 요청은 아무것도 안 바꾼다')
+        with appmod.app.app_context():
+            self.assertEqual(1, appmod.query(
+                'SELECT enabled FROM dock_daily_section_def WHERE project_id=? AND section_key=?',
+                (p['id'], 'sec_1'), one=True)['enabled'])
+
+    def test_hiding_an_empty_section_still_works(self):
+        """가드는 **내용이 있는** 확정본에만 걸린다. 빈 섹션은 그냥 감춰진다."""
+        p, r = self._dd_project_report('빈 섹션 감추기 DD')
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/sections", json={'label': '빈 섹션'})
+        ok = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
+            'sections': [{'section_key': 'sec_1', 'enabled': False}]})
+        self.assertEqual(200, ok.status_code, ok.get_data(as_text=True))
+        with appmod.app.app_context():
+            row = appmod.query('SELECT enabled FROM dock_daily_section_def'
+                               ' WHERE project_id=? AND section_key=?', (p['id'], 'sec_1'),
+                               one=True)
+        self.assertEqual(0, row['enabled'])
+
+    def test_project_patch_saves_the_body_and_the_sections_atomically(self):
+        """🔴 `execute()` 는 문장마다 commit 한다(app_core).
+
+        전엔 섹션 하나가 터지면 프로젝트 UPDATE 와 앞선 섹션 INSERT 는 **이미 저장된
+        채로** 500 이 나갔다.  호출자는 "아무것도 저장 안 됨" 으로 읽고 재시도해 같은
+        일을 두 번 한다.
+        """
+        p, _r = self._dd_project_report('원자성 DD')
+        broken = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
+            'title': '바뀌면 안 되는 제목',
+            'sections': [{'section_key': 'good_one', 'label': '먼저 들어간 섹션'},
+                         {'section_key': 'bad_one', 'sort_order': 'abc'}]})
+        self.assertEqual(400, broken.status_code, broken.get_data(as_text=True))
+        self.assertIn('sort_order', broken.get_json()['error'])
+        row = next(x for x in self.client.get('/api/dock-daily/projects').get_json()
+                   if x['id'] == p['id'])
+        self.assertEqual('원자성 DD', row['title'], '프로젝트 본문이 함께 되돌려져야 한다')
+        with appmod.app.app_context():
+            keys = [x['section_key'] for x in appmod.query(
+                'SELECT section_key FROM dock_daily_section_def WHERE project_id=?', (p['id'],))]
+        self.assertNotIn('good_one', keys, '앞선 섹션 INSERT 도 되돌려져야 한다')
+        # 문자열 정수는 계속 받는다 -- 기존 클라이언트가 `"20"` 을 보낸다.
+        ok = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
+            'sections': [{'section_key': 'good_one', 'label': 'OK', 'sort_order': '20'}]})
+        self.assertEqual(200, ok.status_code, ok.get_data(as_text=True))
+
+    def test_a_section_definition_change_bumps_the_other_open_reports(self):
+        """🔴 섹션 목록은 **프로젝트** 값인데 CAS 는 보고서 하나만 잠근다.
+
+        올리지 않으면 다른 일자를 열어 둔 기기가 옛 목록을 그대로 되돌려 보내 방금 바꾼
+        설정을 조용히 되돌린다 -- 양쪽 어디에도 409 가 안 뜬다.  여기서 늘어나는 409 는
+        **정확한** CAS 동작이다(그 기기는 진짜로 낡은 목록을 들고 있다).
+        """
+        p, first = self._dd_project_report('형제 bump DD', '2026-08-20')
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/sections", json={'label': '원래 이름'})
+        second = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                  json={'report_date': '2026-08-21'}).get_json()
+        stale = self.client.get(f"/api/dock-daily/reports/{second['id']}").get_json()['revision']
+
+        renamed = self.client.put(f"/api/dock-daily/reports/{first['id']}", json={
+            'revision': self.client.get(
+                f"/api/dock-daily/reports/{first['id']}").get_json()['revision'],
+            'section_updates': [{'section_key': 'sec_1', 'label': '바뀐 이름'}]})
+        self.assertEqual(200, renamed.status_code, renamed.get_data(as_text=True))
+        bumped = self.client.get(f"/api/dock-daily/reports/{second['id']}").get_json()['revision']
+        self.assertEqual(stale + 1, bumped, '다른 일자 보고서 revision 이 올라야 한다')
+        conflict = self.client.put(f"/api/dock-daily/reports/{second['id']}", json={
+            'revision': stale,
+            'section_updates': [{'section_key': 'sec_1', 'label': '원래 이름'}]})
+        self.assertEqual(409, conflict.status_code)
+        self.assertEqual('revision_conflict', conflict.get_json()['code'])
+        with appmod.app.app_context():
+            label = appmod.query('SELECT label FROM dock_daily_section_def'
+                                 ' WHERE project_id=? AND section_key=?', (p['id'], 'sec_1'),
+                                 one=True)['label']
+        self.assertEqual('바뀐 이름', label, '낡은 기기가 이름을 되돌리지 못한다')
+
+    def test_echoing_the_section_list_back_does_not_bump_anything(self):
+        """🔴 값이 그대로인 저장은 형제를 올리지 않는다.
+
+        순서를 보낼 때 목록 전체를 echo 하는 클라이언트가 있다.  거기서 bump 하면
+        **아무것도 안 바꾼 저장마다** 다른 기기가 409 를 맞는다.
+        """
+        p, first = self._dd_project_report('echo 저장 DD', '2026-08-20')
+        created = self.client.post(f"/api/dock-daily/projects/{p['id']}/sections",
+                                   json={'label': '그대로'}).get_json()['sections']
+        current = {s['section_key']: s for s in created}
+        second = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                  json={'report_date': '2026-08-21'}).get_json()
+        before = self.client.get(f"/api/dock-daily/reports/{second['id']}").get_json()['revision']
+        echo = self.client.put(f"/api/dock-daily/reports/{first['id']}", json={
+            'revision': self.client.get(
+                f"/api/dock-daily/reports/{first['id']}").get_json()['revision'],
+            'section_updates': [{'section_key': k, 'label': v['label'],
+                                 'sort_order': v['sort_order'],
+                                 **({'enabled': bool(v['enabled'])} if v['kind'] == 'special' else {})}
+                                for k, v in current.items()]})
+        self.assertEqual(200, echo.status_code, echo.get_data(as_text=True))
+        after = self.client.get(f"/api/dock-daily/reports/{second['id']}").get_json()['revision']
+        self.assertEqual(before, after, 'echo 저장은 형제 revision 을 건드리지 않는다')
+
+    def test_a_new_section_from_the_project_patch_bumps_the_open_reports(self):
+        """프로젝트 PATCH 로 섹션이 새로 생겨도 열린 보고서는 목록이 낡는다."""
+        p, first = self._dd_project_report('PATCH bump DD', '2026-08-20')
+        before = self.client.get(f"/api/dock-daily/reports/{first['id']}").get_json()['revision']
+        added = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
+            'sections': [{'section_key': 'extra_one', 'label': '추가'}]})
+        self.assertEqual(200, added.status_code, added.get_data(as_text=True))
+        after = self.client.get(f"/api/dock-daily/reports/{first['id']}").get_json()['revision']
+        self.assertEqual(before + 1, after)
+        # 같은 섹션을 다시 보내면 INSERT OR IGNORE 가 아무것도 안 하므로 올리지 않는다.
+        again = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
+            'sections': [{'section_key': 'extra_one', 'label': '추가'}]})
+        self.assertEqual(200, again.status_code)
+        self.assertEqual(after, self.client.get(
+            f"/api/dock-daily/reports/{first['id']}").get_json()['revision'])
+
+    def test_a_final_report_is_bumped_too_because_it_can_be_unfinalized(self):
+        """🔴 확정본을 건너뛰면 안 된다(올마이트 blocking, 내 첫 구현이 틀렸다).
+
+        "PUT 이 `final_locked` 라 되살릴 주체가 없다" 는 전제가 거짓이다 -- `report_status`
+        가 확정취소를 열어 뒀고 그 라우트는 revision 만 맞으면 통과한다.  건너뛰면 확정본
+        revision 이 그대로 유효해서 낡은 기기가 **①확정취소 성공 → ②그 응답 revision 으로
+        옛 섹션 목록 echo** 2단계로 방금 바꾼 설정을 되돌린다.  올려 두면 ①에서 끊긴다.
+        """
+        p, first = self._dd_project_report('확정본 bump DD', '2026-08-20')
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/sections", json={'label': '원래 이름'})
+        rev = self.client.get(f"/api/dock-daily/reports/{first['id']}").get_json()['revision']
+        finalized = self.client.put(f"/api/dock-daily/reports/{first['id']}",
+                                    json={'revision': rev, 'status': 'final', 'operations': []})
+        self.assertEqual(200, finalized.status_code, finalized.get_data(as_text=True))
+        stale = finalized.get_json()['revision']
+
+        renamed = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
+            'sections': [{'section_key': 'sec_1', 'label': '바뀐 이름'}]})
+        self.assertEqual(200, renamed.status_code, renamed.get_data(as_text=True))
+        self.assertGreater(self.client.get(
+            f"/api/dock-daily/reports/{first['id']}").get_json()['revision'], stale,
+            '확정본 revision 도 올라야 한다')
+        # 낡은 기기의 1단계(확정취소)가 여기서 끊긴다.
+        release = self.client.post(f"/api/dock-daily/reports/{first['id']}/status",
+                                   json={'revision': stale, 'status': 'editing'})
+        self.assertEqual(409, release.status_code, release.get_data(as_text=True))
+        with appmod.app.app_context():
+            self.assertEqual('바뀐 이름', appmod.query(
+                'SELECT label FROM dock_daily_section_def WHERE project_id=? AND section_key=?',
+                (p['id'], 'sec_1'), one=True)['label'])
+
+    def test_block_operation_rejects_a_field_that_is_not_an_integer(self):
+        """🔴 본문 계약 위반은 400 이다.  전엔 `int(op.get('id') or 0)` 이 그대로 터져
+        500 이 갔고, 형에게는 "서버가 죽었다" 로 읽힌다.
+
+        `bool` 은 int 의 하위형이라 `sort_order: true` 가 1번 자리로 조용히 들어갔다.
+        """
+        _p, r = self._dd_project_report('블록 op 400 DD')
+        rev = r['revision']
+        for op in ({'id': 'abc', 'section_key': 'shipyard', 'content': {'body': 'x'}},
+                   {'sort_order': 'first', 'section_key': 'shipyard', 'content': {'body': 'x'}},
+                   {'sort_order': True, 'section_key': 'shipyard', 'content': {'body': 'x'}},
+                   {'op': 'delete', 'id': 'abc'}):
+            resp = self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                                   json={'revision': rev, 'operations': [op]})
+            self.assertEqual(400, resp.status_code, op)
+            self.assertIn('integer', resp.get_json()['error'], op)
+        # 아무것도 저장되지 않았다 -- revision 이 그대로다.
+        self.assertEqual(rev, self.client.get(
+            f"/api/dock-daily/reports/{r['id']}").get_json()['revision'])
+        # 빈 문자열·None 은 "안 보냄" 과 같다(기존 클라이언트 계약).
+        ok = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': rev,
+            'operations': [{'id': '', 'sort_order': None, 'section_key': 'shipyard',
+                            'content': {'body': 'x'}}]})
+        self.assertEqual(200, ok.status_code, ok.get_data(as_text=True))
+
+    def test_block_operation_rejects_an_unknown_parent_block(self):
+        """🔴 `parent_id` 는 FK 다.  없는 id 를 그대로 넣으면 IntegrityError 가 500 으로
+        새어 나가고 무엇이 틀렸는지 응답에 아무것도 안 남는다.  다른 보고서의 블록도
+        남이다 -- 같은 보고서 안에서만 부모가 된다."""
+        _p, r = self._dd_project_report('parent_id DD', '2026-08-20')
+        rev = r['revision']
+        bad_type = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': rev, 'operations': [{'section_key': 'shipyard', 'parent_id': 'abc',
+                                             'content': {'body': 'x'}}]})
+        self.assertEqual(400, bad_type.status_code)
+        self.assertIn('parent_id', bad_type.get_json()['error'])
+        missing = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': rev, 'operations': [{'section_key': 'shipyard', 'parent_id': 999999,
+                                             'content': {'body': 'x'}}]})
+        self.assertEqual(404, missing.status_code)
+        self.assertEqual('parent block not found', missing.get_json()['error'])
+
+        parent = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': rev, 'operations': [{'section_key': 'shipyard',
+                                             'content': {'body': 'parent'}}]}).get_json()
+        pbid = parent['blocks'][0]['id']
+        child = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': parent['revision'],
+            'operations': [{'section_key': 'shipyard', 'parent_id': pbid,
+                            'content': {'body': 'child'}}]})
+        self.assertEqual(200, child.status_code, child.get_data(as_text=True))
+        self.assertIn(pbid, [b.get('parent_id') for b in child.get_json()['blocks']],
+                      'parent_id 는 실제로 저장돼야 한다')
+
+    def test_copy_from_refuses_a_source_that_is_not_an_earlier_date(self):
+        """🔴 "이전 일자" 는 화면 문구가 아니라 계약이다.
+
+        서버가 안 보면 웹 드롭다운만이 유일한 방어선이고, 앱 버그·러너·curl 이
+        **뒷날 진행사항으로 앞날 기록을 덮을** 수 있다(`replace` 는 기존 카드를 지운다).
+        """
+        p, early = self._dd_project_report('copy 방향 DD', '2026-08-20')
+        late = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                json={'report_date': '2026-08-21'}).get_json()
+        self.client.put(f"/api/dock-daily/reports/{late['id']}", json={
+            'revision': late['revision'],
+            'operations': [{'section_key': 'shipyard', 'block_type': 'paragraph',
+                            'content': {'body': '뒷날 진행사항'}}]})
+        early_rev = self.client.get(
+            f"/api/dock-daily/reports/{early['id']}").get_json()['revision']
+        backwards = self.client.post(f"/api/dock-daily/reports/{early['id']}/copy-from",
+                                     json={'revision': early_rev,
+                                           'source_report_id': late['id'], 'mode': 'replace'})
+        self.assertEqual(400, backwards.status_code, backwards.get_data(as_text=True))
+        self.assertEqual('not_earlier', backwards.get_json()['code'])
+        # 자기 자신은 더 앞선 `same_report` 가드가 잡는다(더 구체적인 문구가 낫다).
+        same = self.client.post(f"/api/dock-daily/reports/{early['id']}/copy-from",
+                                json={'revision': early_rev, 'source_report_id': early['id']})
+        self.assertEqual(400, same.status_code)
+        self.assertEqual('same_report', same.get_json()['code'])
+        # 앞날 기록은 그대로다.
+        self.assertEqual([], self.client.get(
+            f"/api/dock-daily/reports/{early['id']}").get_json()['blocks'])
+        late_rev = self.client.get(
+            f"/api/dock-daily/reports/{late['id']}").get_json()['revision']
+        forwards = self.client.post(f"/api/dock-daily/reports/{late['id']}/copy-from",
+                                    json={'revision': late_rev,
+                                          'source_report_id': early['id']})
+        self.assertEqual(200, forwards.status_code, forwards.get_data(as_text=True))
+
+    def test_a_refused_attachment_upload_leaves_no_orphan_blob(self):
+        """🔴 행 없는 blob 은 어떤 purge 경로도 못 찾는다(전부 행을 훑는다).
+
+        영구 고아 파일이 되고, 그게 `_purge_files` 가 드러내려고 존재하는 실패다.
+        """
+        _p, r = self._dd_project_report('고아 blob DD')
+        before = set(os.listdir(routes_dock_daily.UPLOAD_DIR)) if os.path.isdir(
+            routes_dock_daily.UPLOAD_DIR) else set()
+        refused = self.client.post(f"/api/dock-daily/reports/{r['id']}/attachments",
+                                   data={'file': (io.BytesIO(self._png()), 'orphan.png'),
+                                         'block_id': '999999'},
+                                   content_type='multipart/form-data')
+        self.assertEqual(404, refused.status_code, refused.get_data(as_text=True))
+        self.assertEqual('block not found', refused.get_json()['error'])
+        after = set(os.listdir(routes_dock_daily.UPLOAD_DIR)) if os.path.isdir(
+            routes_dock_daily.UPLOAD_DIR) else set()
+        self.assertEqual(before, after, '거절된 업로드는 파일을 남기지 않는다')
+        with appmod.app.app_context():
+            self.assertEqual([], appmod.query(
+                'SELECT id FROM dock_daily_attachment WHERE report_id=?', (r['id'],)))
+
+    def test_attachment_upload_checks_the_final_lock_inside_the_transaction(self):
+        """확인과 INSERT 가 한 트랜잭션 안이라 확정본에는 어떤 경로로도 안 붙는다.
+
+        확정 뒤에 붙은 첨부는 `attachment_delete` 가 다시 409 로 거절해서 확정취소
+        없이는 못 지운다.
+        """
+        _p, r = self._dd_project_report('확정 첨부 DD')
+        self.client.put(f"/api/dock-daily/reports/{r['id']}",
+                        json={'revision': r['revision'], 'status': 'final', 'operations': []})
+        blocked = self.client.post(f"/api/dock-daily/reports/{r['id']}/attachments",
+                                   data={'file': (io.BytesIO(self._png()), 'late.png')},
+                                   content_type='multipart/form-data')
+        self.assertEqual(409, blocked.status_code)
+        self.assertIn('locked', blocked.get_json()['error'])
+        src = inspect.getsource(routes_dock_daily.attachment_post)
+        self.assertIn('BEGIN IMMEDIATE', src, '상태 재확인은 트랜잭션 안이어야 한다')
+        self.assertIn('_purge_files([stored])', src)
+
+    def test_attachment_delete_bumps_the_revision_of_the_block_it_edited(self):
+        """🔴 블록을 고쳤으면 revision 을 올린다.
+
+        안 올리면 그 보고서를 열어 둔 다른 기기가 **아직 유효한** revision 으로 저장에
+        성공하고(upsert 는 content_json 을 통째로 덮는다) 방금 끊어낸 attachment_id 를
+        되살린다 -- 지운 사람은 깨끗이 지워졌다고 믿는데 메일에는 "첨부 파일을 찾을 수
+        없습니다" 가 나간다.
+        """
+        rid, ids = self._report_with_gallery('첨부삭제 revision DD', count=2, columns=2)
+        before = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        stale = before['revision']
+        bid = next(b['id'] for b in before['blocks'] if b['block_type'] == 'image')
+        removed = self.client.delete(f'/api/dock-daily/attachments/{ids[0]}')
+        self.assertEqual(200, removed.status_code, removed.get_data(as_text=True))
+        after = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        self.assertEqual(stale + 1, after['revision'])
+        resurrect = self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': stale,
+            'operations': [{'id': bid, 'section_key': 'shipyard', 'block_type': 'image',
+                            'content': {'columns': 2,
+                                        'images': [{'attachment_id': ids[0], 'caption': 'x'},
+                                                   {'attachment_id': ids[1], 'caption': 'y'}]}}]})
+        self.assertEqual(409, resurrect.status_code, resurrect.get_data(as_text=True))
+        self.assertEqual('revision_conflict', resurrect.get_json()['code'])
+
+    def test_deleting_an_unreferenced_attachment_also_bumps_the_revision(self):
+        """🔴 아직 어느 블록도 안 가리키는 첨부가 정확히 그 구멍이다(올마이트 blocking).
+
+        내 첫 구현은 블록을 고쳤을 때만 올렸다.  그런데 다른 기기가 첨부 카드에 올려 둔
+        사진을 사진 카드에 **로컬로** 끼워 넣은 상태에서 이쪽이 그 첨부를 지우면, 저쪽
+        revision 이 그대로 유효해서 저장이 통과하고 **지워진 attachment_id** 가 블록에
+        박힌다.  첨부 목록 자체가 `_report_json` 의 일부이므로 첨부 삭제는 그 자체로
+        보고서 상태 변경이다.
+        """
+        project, report, _stored = self._project_with_attachment('첨부삭제 미참조 DD')
+        rid = report['id']
+        before = self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
+        stale = before['revision']
+        aid = before['attachments'][0]['id']
+        self.assertEqual([], [b for b in before['blocks'] if b['block_type'] == 'image'],
+                         '이 첨부는 아직 어느 블록도 가리키지 않는다')
+        self.assertEqual(200, self.client.delete(f'/api/dock-daily/attachments/{aid}').status_code)
+        self.assertEqual(stale + 1, self.client.get(
+            f'/api/dock-daily/reports/{rid}').get_json()['revision'])
+        # 낡은 기기가 지워진 첨부를 사진 카드에 박아 넣는 저장이 여기서 끊긴다.
+        resurrect = self.client.put(f'/api/dock-daily/reports/{rid}', json={
+            'revision': stale,
+            'operations': [{'section_key': 'shipyard', 'block_type': 'image',
+                            'content': {'attachment_id': aid, 'caption': '로컬로 끼워 넣은 사진'}}]})
+        self.assertEqual(409, resurrect.status_code, resurrect.get_data(as_text=True))
+        self.assertEqual('revision_conflict', resurrect.get_json()['code'])
+
+    def test_dock_daily_uploads_are_not_served_without_a_session(self):
+        """🔴 `/static/uploads/dock_daily_*` 는 로그인 없이 내주지 않는다.
+
+        실측(라이브, 게이트 전): `/static/uploads/<이름>` → 404, `/dock-daily` → 302
+        login.  즉 파일 URL 을 아는 사람은 페이지 없이 사진을 꺼낼 수 있었다.
+
+        🔴 **범위는 좁게.**  `/static/uploads/` 를 통째로 막으면 도크 리포트·승선·영수증
+        사진이 깨진다 -- `routes_calendar_dock.py` 와 DOCX 생성기가 그 URL 을 **공개
+        URL 로 일부러** 쓴다(메일 클라이언트·Word 는 세션이 없다).
+        """
+        anon = appmod.app.test_client()
+        guarded = anon.get('/static/uploads/dock_daily_deadbeef.png')
+        self.assertEqual(401, guarded.status_code, guarded.get_data(as_text=True))
+        for public in ('/static/uploads/dock/x.jpg', '/static/uploads/boarding/y.jpg',
+                       '/static/uploads/receipt/z.jpg'):
+            self.assertNotEqual(401, anon.get(public).status_code, public)
+        # 로그인한 세션은 게이트를 지나 **실제 바이트**를 받는다.  404 만 확인하면 게이트가
+        # 웹 화면을 깨뜨리는지 아무것도 증명하지 못한다(올마이트 지적).
+        real = os.path.join(appmod.app.static_folder, 'uploads', 'dock_daily_gate_probe.png')
+        os.makedirs(os.path.dirname(real), exist_ok=True)
+        payload = self._png((8, 8))
+        with open(real, 'wb') as fh:
+            fh.write(payload)
+        try:
+            served = self.client.get('/static/uploads/dock_daily_gate_probe.png')
+            self.assertEqual(200, served.status_code)
+            self.assertEqual(payload, served.get_data())
+            self.assertEqual(401, anon.get('/static/uploads/dock_daily_gate_probe.png').status_code,
+                             '파일이 실제로 있을 때도 익명은 못 받는다')
+        finally:
+            os.unlink(real)
+        # ⚠️ Bearer 분기는 이 경로에서 **닿지 않는다**: `_bearer_auth` 는 `/api/` 로
+        # 시작하지 않는 요청에서 즉시 return 하므로 `g._token_auth` 가 안 세워진다.
+        # 지금 통과 조건은 쿠키 세션 하나뿐이고, 이 게이트가 앱을 깨지 않는 근거는
+        # "iOS 가 이 URL 을 안 쓴다"(첨부는 `/api/dock-daily/attachments/<id>`)다.
+        token_only = appmod.app.test_client()
+        self.assertEqual(401, token_only.get('/static/uploads/dock_daily_gate_probe.png',
+                                             headers={'Authorization': 'Bearer whatever'}).status_code)
+
+    def test_report_generate_is_idempotent_under_a_double_click(self):
+        """🔴 `BEGIN IMMEDIATE`.  `_create_report` 는 SELECT→INSERT 이고 컬럼에
+        `UNIQUE(project_id, report_date)` 가 걸려 있다 -- deferred BEGIN 이면 두 번째
+        INSERT 가 IntegrityError 로 500 이 된다.  이 라우트는 원래 이미 있는 보고서를
+        200 으로 돌려주는 멱등 계약이다."""
+        src = inspect.getsource(routes_dock_daily.report_generate)
+        self.assertIn("db.execute('BEGIN IMMEDIATE')", src)
+        p, first = self._dd_project_report('멱등 생성 DD')
+        again = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                                 json={'report_date': '2026-08-20'})
+        self.assertEqual(200, again.status_code, again.get_data(as_text=True))
+        self.assertEqual(first['id'], again.get_json()['id'])
+
+    def test_mail_photo_failure_note_is_wrapped_for_outlook(self):
+        """🔴 못 실은 이유를 `<td>` 직속 텍스트로 두면 Outlook 이 ~8pt 로 붙인다.
+
+        읽기 힘든 크기로 나가면 형은 경고를 못 보고 발송한다 -- `cell()`/`item()` 과
+        같은 11pt `<p>` 계약을 쓴다.
+        """
+        rid, _aid = self._report_with_photo_block('경고 서식 DD', payload=self._fake_png())
+        mail = self._mail(rid)
+        self.assertRegex(mail['html'], r'<p style="margin:0;[^"]*font-size:11pt[^"]*">'
+                                       r'<span[^>]*>\(')
+        self.assertNotIn('첨부파일로 확인', mail['html'])
+
+    def test_frontend_writes_every_text_key_the_server_may_read(self):
+        """🔴 서버 `_plain` 은 `title`→`body`→`text` 순으로 읽는다.
+
+        한 키만 쓰면 다른 키를 든 블록은 **화면만 바뀌고 메일은 옛 글**이 나간다.
+        정본 규칙은 iOS `DockDailyBlockText` 이고, 웹 미러가 같은 일을 해야 한다.
+        """
+        with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js',
+                               'dock_daily.js'), encoding='utf-8') as f:
+            script = f.read()
+        self.assertIn('function writeText(', script)
+        self.assertIn("for(const k of ['title','body','text'])", script)
+        self.assertIn('b.content=writeText(b,ta.value)', script)
+        # 프로젝트·보고서를 바꾸는 사이 늦게 온 응답이 새 화면을 덮지 않는다.
+        self.assertIn('projectSeq', script)
+        self.assertIn('if (pseq !== projectSeq) return;', script)
+        # 확정본에는 초안 글칸을 밀어넣지 않는다.
+        self.assertIn("if (state.report.status === 'final') return;", script)
+        # 삭제·확정은 누른 순간의 id 로 보낸다.
+        self.assertIn('const pid=state.project.id', script)
+        self.assertIn('const rid=state.report.id', script)
+        # 두 번 눌러 두 번 저장하지 않는다.
+        self.assertIn("once($('#dd-save')", script)
+        self.assertIn("once($('#dd-section-add')", script)
+        # 실패한 토글은 체크 상태를 되돌린다 -- 화면이 서버와 갈리면 안 된다.
+        self.assertIn('t.checked = !wanted', script)
+
 
 if __name__ == '__main__':
     unittest.main()
