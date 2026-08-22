@@ -170,6 +170,22 @@ def _sections_for_report(rid, project_id, include_disabled=True, db=None):
             if s.get('scope') != 'report' or s['section_key'] in keys]
 
 
+def _alloc_section_key(db, project_id):
+    """이 프로젝트에서 안 쓰는 `sec_N` 중 가장 작은 번호.
+
+    🔴 **쓰기 잠금(`BEGIN IMMEDIATE`)을 잡은 뒤에** 부를 것.  잠금 밖에서 세면 같은
+    프로젝트에 두 요청이 겹칠 때 둘 다 같은 번호를 골라
+    `UNIQUE(project_id,section_key)` 를 때린다.
+    """
+    used = {r['section_key'] for r in
+            db.execute('SELECT section_key FROM dock_daily_section_def WHERE project_id=?',
+                       (project_id,))}
+    index = 1
+    while ('sec_%d' % index) in used or ('sec_%d' % index) in FIXED_KEYS:
+        index += 1
+    return 'sec_%d' % index
+
+
 def _seed_sections(db, project_id):
     for key, label, order in FIXED:
         db.execute('''INSERT OR IGNORE INTO dock_daily_section_def
@@ -627,14 +643,6 @@ def create_section(pid):
     # 겹치면 둘 다 같은 `sec_N` 을 골라 `UNIQUE(project_id,section_key)` 를 때리고,
     # 잡지 않으면 형에게 500 이 간다.  충돌은 정상 상황이므로 다음 번호로 다시 넣는다.
     for _ in range(20):
-        used = {r['section_key'] for r in
-                query('SELECT section_key FROM dock_daily_section_def WHERE project_id=?', (pid,))}
-        index = 1
-        while ('sec_%d' % index) in used or ('sec_%d' % index) in FIXED_KEYS:
-            index += 1
-        key = 'sec_%d' % index
-        top = query('SELECT MAX(sort_order) AS top FROM dock_daily_section_def WHERE project_id=?',
-                    (pid,), one=True)
         # 맨 뒤에 붙인다.  화면(`sort_order`)·메일·SVMS 가 모두 이 값을 따르므로 새 섹션은
         # 형이 옮기기 전까지 맨 아래에 보이고 메일에서도 맨 아래로 나간다.
         # 🔴 정의와 소속을 **한 트랜잭션**으로 넣는다. `execute()` 는 문장마다 commit 하므로
@@ -644,6 +652,12 @@ def create_section(pid):
         db = get_db()
         try:
             db.execute('BEGIN IMMEDIATE')
+            # 🔴 번호는 잠금 **안에서** 고른다.  밖에서 고르면 같은 프로젝트에 두 요청이
+            #    겹칠 때 둘 다 같은 `sec_N` 을 집어 UNIQUE 를 때린다(아래 retry 가 그
+            #    흔적이다).  잠금 안에서 고르면 애초에 겹치지 않는다.
+            key = _alloc_section_key(db, pid)
+            top = db.execute('SELECT MAX(sort_order) AS top FROM dock_daily_section_def'
+                             ' WHERE project_id=?', (pid,)).fetchone()
             db.execute('INSERT INTO dock_daily_section_def'
                        ' (project_id,section_key,label,sort_order,kind,enabled,scope)'
                        " VALUES (?,?,?,?,?,?,'report')",
@@ -1442,6 +1456,381 @@ def report_copy_from(rid):
     out = _report_json(rid)
     out.update(copied_blocks=copied, skipped_blocks=skipped, moved_sections=moved_sections,
                source_report_id=source_id)
+    return jsonify(out)
+
+
+# ─────────────────────────────────────────────────────────────────
+#  감독 Daily DD report(.docx) 읽어 카드 만들기 (형 지시 2026-08-23)
+# ─────────────────────────────────────────────────────────────────
+# 🔴 폐기된 17:00 자동초안(`AUTO_DRAFT_INGEST_ENABLED=False`)의 부활이 **아니다**.
+#    그건 러너가 시간에 맞춰 스스로 초안을 만드는 push 였고, 이건 형이 파일을 올리고
+#    `읽기` 를 누른 순간에만 도는 pull 이다.  트리거·주체·시점이 전부 다르다.
+#
+# 🔴 문서에서 날짜를 뽑아 보고서를 찾지 않는다.  형이 그 날짜의 빈 보고서를 먼저
+#    만들고, 그 보고서가 기준일을 준다(형 지시).  라이브 문서의 `Reporting date-S/N:`
+#    칸은 비어 있고 본문 날짜에는 오타도 있어서, 문서로 보고서를 고르면 **다른 일자의
+#    보고서를 덮는다.**
+#
+# 🔴 여기서 만든 카드를 지우지는 않는다.  러너(`_runner_merge`)는 "완전한 현재 뷰" 를
+#    받으므로 사라진 소스의 옛 카드를 지우는 게 맞지만, 이건 형이 고른 행만 넣는
+#    수동 경로다.  선택에서 뺐다는 이유로 이미 들어간 카드를 지우면, 형이 손으로 고쳐
+#    둔 문장이 재읽기 한 번에 사라진다.  삭제는 형이 카드에서 한다.
+DOCX_SOURCE_SYSTEM = 'docx'
+DOCX_SOURCE_TABLE = 'sup_dd_report'
+# 🔴 `source_id` 에 **파일 해시를 쓰지 않는다.**  감독이 같은 날 문서를 고쳐 다시
+#    보내면 해시가 달라져 같은 작업이 새 카드로 또 들어온다.  동일성은 "이 보고서의
+#    이 작업" 이므로 상수 + `row_key` 로 잡고, 파일 해시는 `source_hash` 로 기록만 한다.
+DOCX_SOURCE_ID = 'daily'
+
+#: 파서 섹션 key 중 프로젝트 고정 섹션이 아닌 것 → 자동으로 만들 섹션 이름.
+#: Crew 작업(선원 자체작업)은 Shipyard/Vendor 와 성격이 달라 Remark 에 섞으면 안 된다.
+DOCX_NEW_SECTIONS = {'crew': 'Crew'}
+
+
+def _docx_source(rid, aid):
+    """`((첨부행, 파일경로), None)` 또는 `(None, 에러응답)`."""
+    try:
+        aid = _op_int(aid, None)
+    except (TypeError, ValueError):
+        aid = None
+    if not aid:
+        return None, _error('attachment_id is required')
+    row = query('SELECT * FROM dock_daily_attachment WHERE id=? AND report_id=?'
+                ' AND deleted_at IS NULL', (aid, rid), one=True)
+    if not row:
+        return None, _error('attachment not found', 404)
+    if not (row['original_name'] or '').lower().endswith('.docx'):
+        return None, _error('Word(.docx) 파일만 읽을 수 있습니다.', 400, code='not_docx')
+    path = _attachment_path(row['stored_name'])
+    if not path:
+        return None, _error('첨부 파일을 찾을 수 없습니다.', 404, code='file_missing')
+    return (row, path), None
+
+
+def _docx_parse(path, report_date):
+    """`(payload, None)` 또는 `(None, 에러응답)`.  중복 `row_key` 는 첫 행만 남긴다.
+
+    `row_key` 가 표 라벨 기준이 된 뒤로 Deck/Engine 교차충돌은 없어졌지만, **같은
+    표 안에** 같은 문장이 두 번 있으면 여전히 겹친다.  놔두면 `source_subkey` 가
+    같아 뒤 행이 앞 행의 카드를 덮어 **조용히 한 건이 사라진다.**  그래서 첫 행만
+    남기고 `duplicate_rows` 로 몇 건을 접었는지 **화면까지 올린다**(올마이트 지적
+    2026-08-23) -- 숫자를 안 보여주면 형은 접힌 걸 모른다.
+    """
+    import dock_daily_docx as parser          # 지연 import: leaf 모듈, 층위 게이트 준수
+    try:
+        payload = parser.scan(path, report_date)
+    except Exception as exc:                  # pragma: no cover - 손상 파일
+        app.logger.warning('dock-daily docx parse: %s', exc)
+        return None, _error('문서를 읽을 수 없습니다. Word(.docx) 파일이 맞는지 확인하세요.',
+                            400, code='docx_unreadable')
+    seen, dupes = set(), 0
+    for group in payload['groups']:
+        keep = []
+        for row in group['rows']:
+            if row['row_key'] in seen:
+                dupes += 1
+                continue
+            seen.add(row['row_key'])
+            keep.append(row)
+        group['rows'] = keep
+    payload['groups'] = [g for g in payload['groups'] if g['rows']]
+    payload['duplicate_rows'] = dupes
+    return payload, None
+
+
+def _docx_targets(payload, rid, project_id):
+    """각 group 에 넣을 섹션을 정한다.  group 에 `target_*` 키를 채워 넣는다.
+
+    · 파서 key 가 이 일자에 있는 섹션이면 그대로.
+    · `crew` 처럼 고정 섹션에 없는 것은 같은 이름의 섹션을 찾아 재사용하고, 없으면
+      **이 일자 스코프로 새로 만든다**(`target_new`).  프로젝트 스코프로 만들면 다른
+      날짜 보고서에까지 빈 Crew 섹션이 생긴다.
+      🔴 같은 이름이 **다른 일자에만** 있으면 정의를 또 만들지 않고 이 일자에
+      **붙인다**(`target_attach`, 올마이트 지적 2026-08-23).  또 만들면 프로젝트에
+      `Crew` 정의가 날짜 수만큼 쌓여서 섹션 목록이 같은 이름으로 도배된다.
+    · 제목을 못 알아본 group 은 Remark 로 보내고 `target_fallback` 을 세운다.
+      🔴 조용히 버리지 않는다 -- 문서에 있던 작업이 사라진 걸 형이 모르면 그 상태로
+      메일이 나간다.  화면에서 보고 뺄 수 있게 후보로 올린다.
+    """
+    on_report = {s['section_key']: s for s in
+                 _sections_for_report(rid, project_id, include_disabled=False)}
+    by_label = {(s['label'] or '').strip().lower(): s
+                for s in _sections(project_id, include_disabled=False)}
+    for group in payload['groups']:
+        key = group.get('section_key')
+        group['target_new'] = None
+        group['target_attach'] = None
+        group['target_fallback'] = False
+        if key and key in on_report:
+            group['target_key'] = key
+            group['target_label'] = on_report[key]['label']
+            continue
+        wanted = DOCX_NEW_SECTIONS.get(key or '')
+        if wanted:
+            found = by_label.get(wanted.lower())
+            if found and found['section_key'] in on_report:
+                group['target_key'] = found['section_key']
+                group['target_label'] = found['label']
+            elif found:
+                # 프로젝트에는 있는데 이 일자에 없다 -- 정의를 재사용하고 붙이기만 한다.
+                group['target_key'] = None
+                group['target_label'] = found['label']
+                group['target_attach'] = found['section_key']
+            else:
+                # 아직 없다 -- apply 가 이 일자 스코프로 만든다.
+                group['target_key'] = None
+                group['target_label'] = wanted
+                group['target_new'] = wanted
+            continue
+        group['target_key'] = 'remark' if 'remark' in on_report else None
+        group['target_label'] = on_report['remark']['label'] if 'remark' in on_report else None
+        group['target_fallback'] = True
+    return payload
+
+
+def _docx_applied_keys(rid):
+    """이 보고서에 이미 들어간 문서 행의 `row_key` → 블록 상태."""
+    out = {}
+    for link in query('''SELECT l.source_subkey, l.block_id, b.manual_override
+                         FROM dock_daily_source_link l
+                         LEFT JOIN dock_daily_block b ON b.id=l.block_id
+                         WHERE l.report_id=? AND l.source_system=? AND l.source_table=?''',
+                      (rid, DOCX_SOURCE_SYSTEM, DOCX_SOURCE_TABLE)):
+        out[link['source_subkey']] = {'block_id': link['block_id'],
+                                      'edited': bool(link['manual_override'])}
+    return out
+
+
+def _docx_preview(rid, row, path):
+    """scan/apply 가 공유하는 미리보기 페이로드."""
+    r = _report(rid)
+    if not r:
+        return None, _error('report not found', 404)
+    try:
+        report_date = datetime.strptime(r['report_date'], '%Y-%m-%d').date()
+    except (TypeError, ValueError):           # pragma: no cover - 스키마상 불가
+        return None, _error('report date is invalid', 500)
+    payload, err = _docx_parse(path, report_date)
+    if err:
+        return None, err
+    _docx_targets(payload, rid, r['project_id'])
+    applied = _docx_applied_keys(rid)
+    # 🔴 이 보고서에 문서에서 들어온 카드인데 **지금 파일에는 없는** 행.  감독이 문장을
+    # 고쳐 쓰면 `row_key` 가 달라져 새 행으로 보이고, 옛 카드는 지우지 않으므로 같은
+    # 작업이 두 줄로 남는다(올마이트 지적 2026-08-23).  자동으로 알아맞힐 수는 없으니
+    # **숫자로 알린다** -- 조용히 두면 형은 중복된 채로 메일을 보낸다.
+    in_file = {row_['row_key'] for g in payload['groups'] for row_ in g['rows']}
+    payload.update(report_id=rid, attachment_id=row['id'], filename=row['original_name'],
+                   file_sha256=row['sha256'], applied=applied,
+                   stale_applied=sorted(k for k in applied if k not in in_file),
+                   revision=r['revision'], status=r['status'])
+    return payload, None
+
+
+@bp.route('/api/dock-daily/reports/<int:rid>/docx-scan', methods=['POST'])
+@login_required
+def report_docx_scan(rid):
+    """첨부한 감독 DD report 를 **읽기만** 한다.  DB 도 번역 API 도 건드리지 않는다.
+
+    미리보기를 별도 라우트로 둔 이유: 형이 무엇이 들어오고 무엇이 왜 빠지는지 먼저
+    보고 고르게 하려는 것이다.  판정을 믿고 바로 쓰게 하면, 규칙이 한 번 틀린 날
+    형은 틀린 본문을 그대로 사내 메일로 보낸다.
+    """
+    src, err = _docx_source(rid, _body().get('attachment_id'))
+    if err:
+        return err
+    payload, err = _docx_preview(rid, src[0], src[1])
+    return err or jsonify(payload)
+
+
+def _docx_card_text(row, korean):
+    """카드에 들어갈 한 줄.  번역이 없으면 영문 원문을 그대로 쓴다."""
+    text = (korean or row['desc']).strip()
+    return '%s (%s)' % (text, row['marker']) if row.get('marker') else text
+
+
+@bp.route('/api/dock-daily/reports/<int:rid>/docx-apply', methods=['POST'])
+@login_required
+def report_docx_apply(rid):
+    """고른 행을 카드로 만든다.
+
+    🔴 번역 API 호출은 **트랜잭션 밖**에서 한다.  `BEGIN IMMEDIATE` 를 잡은 채로
+    네트워크를 기다리면 그 수 초 동안 이 DB 의 모든 쓰기가 막힌다(iOS 저장·다른 탭·
+    러너까지).  대신 잠금 안에서 revision CAS 로 다시 확인하므로 그 사이 누가 저장하면
+    409 가 나간다.
+
+    🔴 `manual_override` 카드는 건드리지 않는다.  형이 문장을 고쳤으면 그건 형의
+    문장이고, 파일을 다시 읽었다는 이유로 덮을 근거가 없다.
+    """
+    data = _body()
+    if not isinstance(data.get('revision'), int) or isinstance(data.get('revision'), bool):
+        return _error('revision is required', 400)
+    src, err = _docx_source(rid, data.get('attachment_id'))
+    if err:
+        return err
+    row, path = src
+    r = _report(rid)
+    if not r:
+        return _error('report not found', 404)
+    # 확정본은 잠금을 잡기 전에 끊는다.  `_cas_begin` 이 잠금 안에서 한 번 더 보지만,
+    # 여기서 안 보면 거절이 확정된 요청 때문에 번역 API 를 헛돌린다.
+    if r['status'] == 'final':
+        return _error('final report is locked', 409, code='final_locked',
+                      current_revision=r['revision'])
+    payload, err = _docx_preview(rid, row, path)
+    if err:
+        return err
+    wanted = data.get('row_keys')
+    if wanted is not None and not isinstance(wanted, list):
+        return _error('row_keys must be an array')
+    picked = set(str(x) for x in wanted) if wanted is not None else None
+    # 넣을 행 모으기.  `row_keys` 를 안 주면 판정이 '포함' 인 행만 -- 제외/판정불가를
+    # 기본으로 넣으면 형이 지운 전날 작업이 되살아난다.
+    jobs = []
+    for group in payload['groups']:
+        for item in group['rows']:
+            take = item['row_key'] in picked if picked is not None else item['verdict'] == 'include'
+            if take:
+                jobs.append((group, item))
+    if not jobs:
+        return _error('넣을 항목이 없습니다.', 400, code='no_rows')
+    unknown_keys = sorted(picked - {i['row_key'] for _, i in jobs}) if picked is not None else []
+
+    translated = 0
+    ko = [None] * len(jobs)
+    if data.get('translate', True):
+        try:
+            from helpers_shared import translate_texts_ko
+            out = translate_texts_ko([i['desc'] for _, i in jobs])
+        except Exception as exc:              # pragma: no cover - 외부 API
+            app.logger.warning('dock-daily docx translate: %s', exc)
+            out = None
+        if out and len(out) == len(jobs):
+            for n, (_, item) in enumerate(jobs):
+                if out[n] and out[n].strip() != item['desc'].strip():
+                    ko[n] = out[n]
+                    translated += 1
+
+    db = get_db()
+    lock, err = _cas_begin(rid, data['revision'])
+    if err:
+        return err
+    try:
+        created_section = None
+        applied = updated = unchanged = skipped_edited = skipped_unmapped = 0
+        # 다른 일자에만 있던 섹션은 정의를 재사용하고 이 일자에 붙인다.
+        attached = 0
+        for skey in sorted({g['target_attach'] for g, _ in jobs if g.get('target_attach')}):
+            cur = db.execute('INSERT OR IGNORE INTO dock_daily_report_section(report_id,'
+                             'section_key) VALUES (?,?)', (rid, skey))
+            attached += cur.rowcount or 0
+            for group, _ in jobs:
+                if group.get('target_attach') == skey:
+                    group['target_key'] = skey
+        # crew 처럼 없는 섹션은 여기서 딱 한 번 만든다(잠금 안이라 key 경쟁 없음).
+        new_labels = {g['target_new'] for g, _ in jobs if g.get('target_new')}
+        for label in sorted(x for x in new_labels if x):
+            key = _alloc_section_key(db, lock['project_id'])
+            top = db.execute('SELECT MAX(sort_order) t FROM dock_daily_section_def'
+                             ' WHERE project_id=?', (lock['project_id'],)).fetchone()
+            db.execute('INSERT INTO dock_daily_section_def'
+                       ' (project_id,section_key,label,sort_order,kind,enabled,scope)'
+                       " VALUES (?,?,?,?,'special',1,'report')",
+                       (lock['project_id'], key, label,
+                        int(top['t'] if top and top['t'] is not None else 19) + 1))
+            db.execute('INSERT OR IGNORE INTO dock_daily_report_section(report_id,section_key)'
+                       ' VALUES (?,?)', (rid, key))
+            created_section = {'section_key': key, 'label': label}
+            for group, _ in jobs:
+                if group.get('target_new') == label:
+                    group['target_key'] = key
+        # 섹션별 append 위치.  기존 카드 뒤에 붙인다 -- 형이 먼저 쓴 글을 위로 밀지 않는다.
+        nexts = {}
+        for b in db.execute('SELECT section_key, MAX(sort_order) m FROM dock_daily_block'
+                            ' WHERE report_id=? GROUP BY section_key', (rid,)):
+            nexts[b['section_key']] = (b['m'] or 0) + 1
+        links = {x['source_subkey']: x for x in db.execute(
+            'SELECT * FROM dock_daily_source_link WHERE report_id=? AND source_system=?'
+            ' AND source_table=?', (rid, DOCX_SOURCE_SYSTEM, DOCX_SOURCE_TABLE))}
+        for n, (group, item) in enumerate(jobs):
+            key = group.get('target_key')
+            if not key:
+                skipped_unmapped += 1
+                continue
+            content = {'title': _docx_card_text(item, ko[n]),
+                       'source_en': item['desc'],
+                       'source_dates': {'start': item.get('start') or '',
+                                        'sched': item.get('sched') or '',
+                                        'finish': item.get('finish') or ''},
+                       'source_verdict': item['verdict']}
+            body = json.dumps(content, ensure_ascii=False)
+            link = links.get(item['row_key'])
+            block = db.execute('SELECT id, manual_override, section_key, content_json'
+                               ' FROM dock_daily_block WHERE id=?',
+                               (link['block_id'],)).fetchone() if link and link['block_id'] else None
+            if block and block['manual_override']:
+                skipped_edited += 1
+                continue
+            # 🔴 같은 파일을 다시 읽었을 때 **아무 쓰기도 하지 않는다**(올마이트 지적
+            # 2026-08-23).  옛 코드는 내용이 같아도 전 카드를 UPDATE 하고 revision 을
+            # 올려서, 이 보고서를 열어 둔 다른 기기가 이유 없이 409 를 맞았다.
+            if block and block['section_key'] == key and block['content_json'] == body:
+                unchanged += 1
+                continue
+            if block:
+                db.execute("UPDATE dock_daily_block SET section_key=?, block_type='item',"
+                           " content_json=?, origin='dock_auto',"
+                           " updated_at=datetime('now','localtime') WHERE id=?",
+                           (key, body, block['id']))
+                bid = block['id']
+                updated += 1
+            else:
+                order = nexts.get(key, 0)
+                nexts[key] = order + 1
+                bid = db.execute('''INSERT INTO dock_daily_block(report_id,section_key,sort_order,
+                                    block_type,content_json,origin)
+                                    VALUES (?,?,?,'item',?,'dock_auto')''',
+                                 (rid, key, order, body)).lastrowid
+                applied += 1
+            if link:
+                db.execute('UPDATE dock_daily_source_link SET block_id=?, source_hash=?,'
+                           " imported_at=datetime('now','localtime'), missing_at=NULL WHERE id=?",
+                           (bid, row['sha256'], link['id']))
+            else:
+                db.execute('''INSERT INTO dock_daily_source_link(report_id,block_id,source_system,
+                              source_table,source_id,source_subkey,source_updated_at,source_hash)
+                              VALUES (?,?,?,?,?,?,?,?)''',
+                           (rid, bid, DOCX_SOURCE_SYSTEM, DOCX_SOURCE_TABLE, DOCX_SOURCE_ID,
+                            item['row_key'], row['created_at'], row['sha256']))
+        if not applied and not updated and not created_section and not attached:
+            # 아무것도 안 바뀌었으면 revision 을 올리지 않는다 -- 올리면 이 보고서를 열어
+            # 둔 다른 기기가 이유 없이 409 를 맞는다.
+            db.rollback()
+            out = _report_json(rid)
+            out.update(applied=0, updated=0, unchanged=unchanged,
+                       skipped_edited=skipped_edited, attached_sections=0,
+                       skipped_unmapped=skipped_unmapped, translated=0,
+                       unknown_row_keys=unknown_keys, created_section=None)
+            return jsonify(out)
+        newrev = lock['revision'] + 1
+        cur = db.execute("UPDATE dock_daily_report SET revision=?,"
+                         " status=CASE WHEN status='auto_draft' THEN 'editing' ELSE status END,"
+                         " updated_at=datetime('now','localtime') WHERE id=? AND revision=?",
+                         (newrev, rid, lock['revision']))
+        if cur.rowcount != 1:
+            db.rollback(); return _error('revision conflict', 409, code='revision_conflict',
+                                         current_revision=lock['revision'])
+        db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor)'
+                   ' VALUES (?,?,?,?)',
+                   (rid, newrev, json.dumps(_snapshot(rid), ensure_ascii=False), session_actor()))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    out = _report_json(rid)
+    out.update(applied=applied, updated=updated, unchanged=unchanged,
+               skipped_edited=skipped_edited, attached_sections=attached,
+               skipped_unmapped=skipped_unmapped, translated=translated,
+               unknown_row_keys=unknown_keys, created_section=created_section)
     return jsonify(out)
 
 

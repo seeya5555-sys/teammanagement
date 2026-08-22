@@ -515,10 +515,17 @@
     // click would fire both), so each attachment is a flex pair. On a 확정본 the
     // x is left out entirely rather than shown disabled: the server answers 409
     // there, and an always-refused button reads as a bug.
-    $('#dd-attachments').innerHTML=ats.length?ats.map(a=>`<div class="dd-attachment-row"><button class="dd-attachment" type="button" data-attachment="${a.id}" data-name="${esc(a.original_name)}"><b>${esc(a.original_name)}</b><span>${esc(a.mime_type)} · ${(a.size/1024).toFixed(1)} KB · 미리보기</span></button>${locked?'':`<button class="dd-att-del" type="button" data-del-attachment="${a.id}" title="첨부 삭제" aria-label="${esc(a.original_name)} 삭제">✕</button>`}</div>`).join(''):`<p class="dd-muted">등록된 첨부파일이 없습니다.</p>`;
+    // `읽기` 는 .docx 에만 붙는다. 감독 DD report 를 카드로 옮기는 입구이고, 다른
+    // 확장자에는 눌러도 400 이 돌아오는 버튼을 보여줄 이유가 없다. 확정본에서는
+    // 빼는데, 서버가 잠금 전에 409(final_locked) 로 끊기 때문이다.
+    $('#dd-attachments').innerHTML=ats.length?ats.map(a=>`<div class="dd-attachment-row"><button class="dd-attachment" type="button" data-attachment="${a.id}" data-name="${esc(a.original_name)}"><b>${esc(a.original_name)}</b><span>${esc(a.mime_type)} · ${(a.size/1024).toFixed(1)} KB · 미리보기</span></button>${locked||!isDocx(a)?'':`<button class="dd-att-read" type="button" data-read-attachment="${a.id}" title="감독 DD report 읽기">읽기</button>`}${locked?'':`<button class="dd-att-del" type="button" data-del-attachment="${a.id}" title="첨부 삭제" aria-label="${esc(a.original_name)} 삭제">✕</button>`}</div>`).join(''):`<p class="dd-muted">등록된 첨부파일이 없습니다.</p>`;
     document.querySelectorAll('[data-attachment]').forEach(b=>b.onclick=()=>openFilePreview(+b.dataset.attachment,b.dataset.name));
+    document.querySelectorAll('[data-read-attachment]').forEach(b=>b.onclick=()=>once(b,()=>openDocxModal(+b.dataset.readAttachment)));
     document.querySelectorAll('[data-del-attachment]').forEach(b=>b.onclick=()=>once(b,()=>deleteAttachment(+b.dataset.delAttachment)));
   }
+  // 이름으로 본다. 서버도 `original_name` 으로 판정하므로(mime 은 브라우저마다 다르게
+  // 온다) 화면과 서버가 같은 기준을 쓴다.
+  const isDocx=a=>/\.docx$/i.test(a.original_name||'');
   // Removing the row from local state instead of re-fetching the report: the
   // server only touched attachments, and a reload here would throw away
   // unsaved section edits (uploadFiles guards on state.dirty for the same
@@ -1083,6 +1090,123 @@
   $('#dd-copy-append').onclick=()=>runCopy('append').catch(e=>{$('#dd-copy-error').textContent=conflictText(e);});
   $('#dd-copy-close').onclick=closeCopyModal; $('#dd-copy-cancel').onclick=closeCopyModal;
 
+  // ── 감독 DD report(.docx) 읽기 ─────────────────────────────────────────────
+  // 미리보기와 넣기를 두 단계로 나눈 이유는 서버 주석과 같다: 형이 무엇이 들어오고
+  // **무엇이 왜 빠지는지** 먼저 보고 골라야 한다. 판정 규칙이 하루 틀리면 그 본문이
+  // 그대로 사내 메일로 나간다.
+  const docxModal=$('#dd-docx-modal');
+  const DOCX_REASON={
+    finished_today:'금일 완료', started_today:'금일 착수',
+    in_progress_scheduled:'진행 중(계획일 남음)', in_progress_text:'진행 중(본문 언급)',
+    future:'아직 착수 전', finished_earlier:'이전 일자에 완료',
+    plan_date_passed:'계획 완료일이 지남', past_one_off:'이전 일자 단발 작업',
+    date_unreadable:'날짜를 읽을 수 없음', no_start_date:'착수일이 비어 있음',
+  };
+  const VERDICTS=[['include','포함','이 일자 보고서에 들어갑니다'],
+                  ['exclude','제외','중복이거나 이 일자 작업이 아닙니다'],
+                  ['unknown','판정불가','날짜를 못 읽었습니다. 직접 고르세요']];
+  function closeDocxModal(){docxModal.hidden=true;document.body.style.overflow='';state.docx=null;}
+  function renderDocxGroups(){
+    const scan=state.docx; if(!scan)return;
+    const rows=[]; scan.groups.forEach(g=>g.rows.forEach(r=>rows.push([g,r])));
+    const box=$('#dd-docx-groups');
+    box.innerHTML=VERDICTS.map(([verdict,label,note])=>{
+      const mine=rows.filter(([,r])=>r.verdict===verdict);
+      if(!mine.length)return '';
+      return `<div class="dd-docx-group"><h3>${esc(label)} <span class="dd-muted">${mine.length}건 · ${esc(note)}</span></h3>`
+        +mine.map(([g,r])=>{
+          // 이미 들어간 행은 다시 체크해 두지 않는다. 기본 체크로 두면 "넣기" 를 누를 때마다
+          // 같은 카드를 갱신해 revision 만 올라간다.
+          const done=scan.applied[r.row_key];
+          const tail=done?(done.edited?' · 직접 고친 카드(덮지 않음)':' · 이미 들어감'):'';
+          // 🔴 갈 곳이 없으면 그렇게 적는다. "넣기" 를 눌러도 조용히 빠지면 형은
+          // 들어간 줄 알고 메일을 보낸다(올마이트 지적).
+          const target=!g.target_key&&!g.target_new&&!g.target_attach?' · ⚠ 넣을 섹션이 없어 빠집니다'
+                      :g.target_fallback?` · 섹션 미상 → ${esc(g.target_label||'비고')}`
+                      :(g.target_new?` · ${esc(g.target_new)} 섹션을 새로 만듭니다`
+                      :(g.target_attach?` · ${esc(g.target_label)} 섹션을 이 일자에 붙입니다`:''));
+          return `<label class="dd-docx-row"><input type="checkbox" value="${esc(r.row_key)}"`
+            +`${verdict==='include'&&!done?' checked':''}${done&&done.edited?' disabled':''}>`
+            +`<span><b>${esc(r.desc)}</b>${r.marker?` <em>(${esc(r.marker)})</em>`:''}`
+            +`<br><span class="dd-muted">${esc(g.label||'섹션 미상')}${esc(target)} · ${esc(DOCX_REASON[r.reason]||r.reason)}${esc(tail)}</span></span></label>`;
+        }).join('')+'</div>';
+    }).join('');
+    // 접힌 행·모르는 제목·짝이 없어진 옛 카드를 전부 여기서 말한다. 조용히 넘기면
+    // 형은 문서에 있던 작업이 빠진 걸(또는 중복으로 남은 걸) 모른다.
+    const warn=[];
+    if(scan.unmapped_headings.length)warn.push(`모르는 제목 ${scan.unmapped_headings.length}개는 비고로 갑니다`);
+    if(scan.duplicate_rows)warn.push(`같은 표에 같은 문장이 겹쳐 ${scan.duplicate_rows}행을 접었습니다`);
+    if((scan.stale_applied||[]).length)warn.push(`⚠ 이 보고서에 있던 문서 카드 ${scan.stale_applied.length}개가 지금 파일에는 없습니다(문장이 수정되었을 수 있음 — 중복으로 남으면 직접 지우세요)`);
+    $('#dd-docx-summary').textContent=`${scan.filename} · 기준 일자 ${scan.report_date} · `
+      +`포함 ${scan.counts.include||0} / 제외 ${scan.counts.exclude||0} / 판정불가 ${scan.counts.unknown||0}`
+      +(warn.length?' · '+warn.join(' · '):'');
+    box.querySelectorAll('input[type=checkbox]').forEach(c=>c.onchange=updateDocxRun);
+    updateDocxRun();
+  }
+  function docxPicked(){
+    return Array.from($('#dd-docx-groups').querySelectorAll('input[type=checkbox]:checked')).map(c=>c.value);
+  }
+  function updateDocxRun(){
+    const n=docxPicked().length, locked=state.report?.status==='final';
+    $('#dd-docx-run').disabled=!n||locked;
+    $('#dd-docx-status').textContent=locked?'':(n?`${n}건 선택`:'선택한 항목이 없습니다');
+  }
+  async function openDocxModal(aid){
+    if(!state.report)return; clearErr();
+    const rid=state.report.id, locked=state.report.status==='final';
+    // 복사·날짜정정과 같은 계약: 넣기도 revision 을 올리므로 남은 편집을 먼저 저장한다.
+    if(state.dirty&&!locked)await save();
+    if(state.report?.id!==rid)return;
+    $('#dd-docx-error').textContent=locked?CONFLICT.final_locked:'';
+    $('#dd-docx-groups').innerHTML='';
+    $('#dd-docx-summary').textContent='파일을 읽는 중…';
+    $('#dd-docx-run').disabled=true;
+    docxModal.hidden=false;document.body.style.overflow='hidden';
+    try{
+      const scan=await api(`/api/dock-daily/reports/${rid}/docx-scan`,{...json({attachment_id:aid}),method:'POST'});
+      if(state.report?.id!==rid||docxModal.hidden)return;   // 그 사이 닫거나 옮겨갔다
+      state.docx={...scan,attachment_id:aid};
+      renderDocxGroups();
+    }catch(e){
+      $('#dd-docx-summary').textContent='';
+      $('#dd-docx-error').textContent=e.code==='not_docx'?'감독 DD report(.docx) 파일만 읽을 수 있습니다.'
+        :e.code==='docx_unreadable'?'파일을 열 수 없습니다. 손상되었거나 .docx 가 아닌 파일입니다.'
+        :conflictText(e);
+    }
+  }
+  async function runDocxApply(){
+    const scan=state.docx; if(!scan||!state.report)return;
+    const rid=state.report.id, pid=state.project.id, picked=docxPicked();
+    if(!picked.length){$('#dd-docx-error').textContent='넣을 항목을 고르세요.';return;}
+    const run=$('#dd-docx-run'); run.disabled=true;
+    $('#dd-docx-error').textContent=''; $('#dd-docx-status').textContent='번역하고 넣는 중…';
+    try{
+      const out=await api(`/api/dock-daily/reports/${rid}/docx-apply`,
+        {...json({attachment_id:scan.attachment_id,revision:state.report.revision,row_keys:picked}),method:'POST'});
+      closeDocxModal();
+      if(state.project?.id!==pid)return;
+      if(state.report?.id===rid)await selectReport(rid);
+      // 무엇이 안 들어갔는지 함께 말한다. 조용히 빠지면 형은 들어간 줄 알고 메일을 보낸다.
+      const bits=[];
+      if(out.applied)bits.push(`카드 ${out.applied}개를 넣었습니다`);
+      if(out.updated)bits.push(`${out.updated}개를 갱신했습니다`);
+      if(out.unchanged)bits.push(`${out.unchanged}개는 이미 같은 내용이라 그대로 뒀습니다`);
+      if(out.skipped_edited)bits.push(`직접 고친 카드 ${out.skipped_edited}개는 그대로 뒀습니다`);
+      // 🔴 갈 섹션이 없어 빠진 건 반드시 말한다 — 비고 섹션이 없거나 꺼져 있으면
+      // 고른 행이 통째로 사라지는데 옛 문구는 "바뀐 내용이 없습니다" 뿐이었다.
+      if(out.skipped_unmapped)bits.push(`⚠ ${out.skipped_unmapped}개는 넣을 섹션이 없어 빠졌습니다(비고 섹션을 열어 두세요)`);
+      if(out.created_section)bits.push(`${out.created_section.label} 섹션을 이 일자에 만들었습니다`);
+      if(out.attached_sections)bits.push(`기존 섹션 ${out.attached_sections}개를 이 일자에 붙였습니다`);
+      if(out.translated<picked.length-out.skipped_edited-out.unchanged)bits.push('일부는 번역 없이 영문 원문으로 들어갔습니다');
+      notice(bits.length?bits.join(' · ')+'.':'바뀐 내용이 없습니다.');
+    }catch(e){
+      $('#dd-docx-error').textContent=conflictText(e); $('#dd-docx-status').textContent='';
+      run.disabled=false;
+    }
+  }
+  $('#dd-docx-run').onclick=()=>runDocxApply().catch(e=>{$('#dd-docx-error').textContent=conflictText(e);});
+  $('#dd-docx-close').onclick=closeDocxModal; $('#dd-docx-cancel').onclick=closeDocxModal;
+
   $('#dd-date-edit').onclick=()=>openDateModal().catch(err);
   $('#dd-date-save').onclick=()=>saveReportDate().catch(e=>{$('#dd-date-error').textContent=conflictText(e);});
   $('#dd-date-close').onclick=closeDateModal; $('#dd-date-cancel').onclick=closeDateModal;
@@ -1151,7 +1275,7 @@
   async function openProjectModal(){projectForm.reset();projectError.textContent='';try{if(!state.vessels.length)state.vessels=await api('/api/vessels');$('#ddp-vessel').innerHTML='<option value="">활성 선박을 선택하세요</option>'+state.vessels.map(v=>`<option value="${v.id}">${esc(v.name)}${v.vsl_cd?` · ${esc(v.vsl_cd)}`:''}</option>`).join('');projectModal.hidden=false;document.body.style.overflow='hidden';$('#ddp-vessel').focus();}catch(e){err(e);}}
   function closeProjectModal(){projectModal.hidden=true;document.body.style.overflow='';}
   $('#dd-new-project').onclick=openProjectModal;$('#dd-project-close').onclick=closeProjectModal;$('#dd-project-cancel').onclick=closeProjectModal;
-  document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!projectModal.hidden)closeProjectModal();else if(!copyModal.hidden)closeCopyModal();else if(!dateModal.hidden)closeDateModal();else if(!previewModal.hidden)closePreview();else if(!$('#dd-file-modal').hidden)closeFilePreview();else if(!uploadModal.hidden)closeUploadModal();});
+  document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!projectModal.hidden)closeProjectModal();else if(!docxModal.hidden)closeDocxModal();else if(!copyModal.hidden)closeCopyModal();else if(!dateModal.hidden)closeDateModal();else if(!previewModal.hidden)closePreview();else if(!$('#dd-file-modal').hidden)closeFilePreview();else if(!uploadModal.hidden)closeUploadModal();});
   // 자동초안 폐기(형 지시 2026-08-21) 이후 프로젝트 생성은 자동작성 관련 값을 아예
   // 보내지 않는다. 서버 기본값이 auto_generate=0 이라 컬럼은 그대로 두고 꺼진다.
   projectForm.onsubmit=async e=>{e.preventDefault();projectError.textContent='';if(!projectForm.reportValidity())return;const button=$('#dd-project-create');button.disabled=true;button.textContent='생성 중…';try{const created=await api('/api/dock-daily/projects',{...json({vessel_id:Number($('#ddp-vessel').value),title:$('#ddp-title').value.trim(),berthing_date:$('#ddp-berthing').value||null,dock_in_date:$('#ddp-dock-in').value||null,dock_out_date:$('#ddp-dock-out').value||null,departure_date:$('#ddp-departure').value||null,svms_dk_cd:$('#ddp-svms-dk').value.trim()||null,special_sections:$('#ddp-egcs').checked?[{section_key:'egcs',label:'EGCS Retrofit',enabled:true}]:[]}),method:'POST'});closeProjectModal();await loadProjects();await selectProject(created.id);}catch(error){projectError.textContent=error.message||String(error);}finally{button.disabled=false;button.textContent='프로젝트 생성';}};

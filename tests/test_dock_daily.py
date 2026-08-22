@@ -2325,29 +2325,29 @@ class DockDailyTests(unittest.TestCase):
         """🔴 SELECT→계산→INSERT 는 경쟁 구간이다. 겹치면 500 대신 다음 번호로 들어간다.
 
         경쟁을 **실제 UNIQUE 위반**으로 만든다: `sec_1` 은 DB 에 이미 있는데 번호를
-        고르는 SELECT 한 번만 그걸 못 본 것처럼 가린다 -- 다른 요청이 방금 넣고 아직
-        이 요청의 시야에 안 들어온 상황과 같다. 예외를 직접 던지면 트랜잭션이 정말
-        롤백되는지는 검증되지 않는다.
+        고르는 쪽이 한 번만 그걸 못 본 것처럼 옛 번호를 준다 -- 다른 요청이 방금 넣고
+        아직 이 요청의 시야에 안 들어온 상황과 같다. 예외를 직접 던지면 트랜잭션이
+        정말 롤백되는지는 검증되지 않는다.
         """
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': '키 충돌 DD'}).get_json()
         rid = self._report(project['id'])['id']
         self.assertEqual(201, self._section(project['id'], rid, '먼저 만든 섹션').status_code)
-        real = routes_dock_daily.query
+        real = routes_dock_daily._alloc_section_key
         state = {'hidden': 0}
 
-        def blind(sql, *args, **kwargs):
-            if 'SELECT section_key FROM dock_daily_section_def' in sql and not state['hidden']:
+        def stale(db, pid):
+            if not state['hidden']:
                 state['hidden'] += 1
-                return []
-            return real(sql, *args, **kwargs)
+                return 'sec_1'
+            return real(db, pid)
 
-        routes_dock_daily.query = blind
+        routes_dock_daily._alloc_section_key = stale
         try:
             created = self._section(project['id'], rid, '비용 정산표')
         finally:
-            routes_dock_daily.query = real
-        self.assertEqual(1, state['hidden'], '가린 SELECT 가 실제로 쓰였다')
+            routes_dock_daily._alloc_section_key = real
+        self.assertEqual(1, state['hidden'], '가린 번호가 실제로 쓰였다')
         self.assertEqual(201, created.status_code, created.get_data(as_text=True))
         self.assertEqual('sec_2', created.get_json()['created_section_key'],
                          '충돌한 번호는 건너뛰고 다음 번호로 들어간다')

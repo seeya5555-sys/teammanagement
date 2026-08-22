@@ -1195,6 +1195,26 @@
     "defaults": {}
   },
   {
+    "rule": "/api/dock-daily/reports/<int:rid>/docx-apply",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_dock_daily.report_docx_apply",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/dock-daily/reports/<int:rid>/docx-scan",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_dock_daily.report_docx_scan",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/dock-daily/reports/<int:rid>/email-preview",
     "methods": [
       "GET",

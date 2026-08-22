@@ -616,6 +616,92 @@ def _translate_texts_en(texts):
     for s in range(0, len(idxs), CHUNK):
         run(idxs[s:s + CHUNK])
     return out
+def _dd_ko_prompt(payload):
+    """감독 DD report 행(영문) → 형의 일일보고 어조(한국어) 번역 프롬프트.
+
+    어조 정본은 라이브 `issues` 229행에서 관찰한 형의 작성 패턴이다: 한국어 서술 +
+    장비명·약어는 영문 그대로 + `~함/~됨/~예정/~필요` 음슴체.  🔴 실제 지적 문구를
+    few-shot 으로 매번 외부 API 에 보내지 않는다(선박 실데이터 유출) — 패턴만 규칙으로
+    적고 예시는 식별정보 없는 합성문으로 쓴다.
+    """
+    return (
+        "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열은 조선소 감독이 영문으로 "
+        "쓴 입거(dry dock) 일일 작업 항목이다. 각 항목을 한국어 일일보고 문장으로 옮겨라.\n"
+        "- 문체는 '~함/~됨/~예정/~필요' 음슴체 개조식. 1문장(길면 최대 2문장)으로 짧게.\n"
+        "- 장비명·부위명·약어·모델명·단위·수치는 **영문 그대로** 둔다 "
+        "(예: Hatch Cover, Rope Guard, Stern Tube, Windlass, Cooler Plate, T/C, ME, AE, "
+        "S/W pump, LT cooler, EGCS, BWTS, UTM, RPM, °C, No.1).\n"
+        "- 원문에 없는 내용·원인·평가를 덧붙이지 마라. 요약은 하되 사실을 만들지 마라.\n"
+        "- 시각(예: 11:42 LT)·수량·호기 번호는 반드시 보존한다.\n"
+        "- 존댓말·'-습니다' 금지. 제목처럼 명사만 나열하지 말고 서술로 쓴다.\n"
+        + _MARITIME_TERMS +
+        "예: 'Hatch Cover No.1 dismantle hydraulic jacks and pins' → "
+        "'Hatch Cover No.1 hydraulic jack 및 pin 분해함'\n"
+        "입력의 i를 그대로 사용해 JSON 객체로만 답하라.\n"
+        '형식: {"translations":[{"i":0,"ko":"..."}]}\n\n[입력]\n' + payload)
+
+
+def _translate_batch_ko(texts, group):
+    """group(인덱스 리스트) 한 묶음 EN→KO → {원본인덱스: 한국어}. 실패 시 None.
+
+    `_translate_batch_en` 의 거울.  🔴 번역 함수를 이 한 곳으로 몰아 두는 이유는
+    나중에 덴키(로컬 Qwen)로 갈아탈 때 이 함수만 바꾸면 되게 하려는 것이다
+    (지금 서버는 tailscale 이 없어 맥의 `127.0.0.1:8000` 에 닿지 못한다).
+    """
+    payload = json.dumps([{'i': i, 'text': texts[i]} for i in group], ensure_ascii=False)
+    res = _gemini_call_json([{'text': _dd_ko_prompt(payload)}], model=_model_for('translate'))
+    arr = _coerce_translation_items(res)
+    if arr is None:
+        return None  # API 호출 실패 → 상위에서 분할 재시도
+    out = {}
+    for tr in arr:
+        if not isinstance(tr, dict):
+            continue
+        try:
+            i = int(tr.get('i'))
+        except (TypeError, ValueError):
+            continue
+        ko = tr.get('ko') if isinstance(tr.get('ko'), str) else tr.get('text')
+        if isinstance(ko, str) and ko.strip():
+            out[i] = ko.strip()
+    return out
+
+
+def translate_texts_ko(texts):
+    """영문 문자열 리스트 → 한국어. 키 없음/실패 시 **원문 유지**.
+
+    🔴 실패를 예외로 올리지 않는다. 번역이 안 되면 영문 그대로 카드에 들어가는 게
+    맞다 — 형은 영문 원문도 읽을 수 있고, 여기서 터뜨리면 파일 읽기 전체가 실패한다.
+    """
+    if not GEMINI_API_KEY:
+        return list(texts)
+    out = list(texts)
+    idxs = [i for i, t in enumerate(texts) if t and str(t).strip()]
+
+    def run(group, depth=0):
+        if not group:
+            return
+        res = _translate_batch_ko(texts, group)
+        if res is None:
+            if len(group) > 1 and depth < 6:
+                mid = len(group) // 2
+                run(group[:mid], depth + 1)
+                run(group[mid:], depth + 1)
+            return
+        missing = [i for i in group if i not in res]
+        for i, ko in res.items():
+            out[i] = ko
+        if missing and len(group) > 1 and depth < 6:
+            mid = max(1, len(missing) // 2)
+            run(missing[:mid], depth + 1)
+            run(missing[mid:], depth + 1)
+
+    CHUNK = 12
+    for s in range(0, len(idxs), CHUNK):
+        run(idxs[s:s + CHUNK])
+    return out
+
+
 def _translate_rows_en(rows):
     """이슈 행들의 item_topic/description/actions[].progress 를 영문으로 치환(제자리)."""
     bucket, texts = [], []

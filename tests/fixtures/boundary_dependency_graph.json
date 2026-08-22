@@ -105,6 +105,7 @@
     ]
   },
   "csrf.py": {},
+  "dock_daily_docx.py": {},
   "dock_report_docx.py": {
     "app_core.py": [
       "app",
@@ -250,9 +251,11 @@
       "get_db",
       "query"
     ],
+    "dock_daily_docx.py": [],
     "helpers_shared.py": [
       "api_key_required",
-      "login_required"
+      "login_required",
+      "translate_texts_ko"
     ]
   },
   "routes_dock_submit.py": {
