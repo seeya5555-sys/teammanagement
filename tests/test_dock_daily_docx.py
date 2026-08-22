@@ -308,6 +308,23 @@ class DocxRouteTests(unittest.TestCase):
                 ' FROM dock_daily_block WHERE report_id=? ORDER BY section_key, sort_order',
                 (rid,))]
 
+    def _cards(self, rid):
+        """섹션 → 카드 내용.  형 지시 2026-08-23 이후 섹션마다 카드가 **한 장**이다."""
+        out = {}
+        for b in self._blocks(rid):
+            content = routes_dock_daily._json(b['content_json'], {})
+            self.assertNotIn(b['section_key'], out, '섹션마다 카드 한 장이어야 한다')
+            out[b['section_key']] = content
+        return out
+
+    def _lines(self, rid):
+        """카드 안의 `1) 2) 3)` 줄을 번호 떼고 평평하게."""
+        out = []
+        for content in self._cards(rid).values():
+            for line in (content.get('title') or '').splitlines():
+                out.append(routes_dock_daily.ITEM_NO_RE.sub('', line).strip())
+        return out
+
     def test_scan_reads_the_file_without_touching_the_report(self):
         rid = self.report['id']
         aid = self._upload(rid)
@@ -359,11 +376,25 @@ class DocxRouteTests(unittest.TestCase):
         self.assertEqual(0, body['translated'], 'API 키가 없으면 원문 그대로')
         self.assertEqual(self.report['revision'] + 1, body['revision'])
         blocks = self._blocks(rid)
-        self.assertEqual(5, len(blocks))
+        # 🔴 섹션마다 카드 **한 장**, 행은 그 안의 `1) 2) 3)` 줄이다(형 지시 2026-08-23).
+        # Deck 3행이 shipyard 한 장, 3rd party 1행, Crew 1행 -> 카드 3장 / 줄 5개.
+        self.assertEqual(3, len(blocks))
+        self.assertEqual(0, body['merged_cards'], '처음 읽으면 접을 낱장이 없다')
         self.assertEqual({'dock_auto'}, {b['origin'] for b in blocks})
         self.assertEqual({0}, {b['manual_override'] for b in blocks})
-        texts = [routes_dock_daily._json(b['content_json'], {}).get('title') for b in blocks]
-        self.assertTrue(any('Hatch Cover No.1' in t and '계획 완료 08.21' in t for t in texts), texts)
+        self.assertEqual({'item'}, {b['block_type'] for b in blocks})
+        cards = self._cards(rid)
+        self.assertEqual(['1) Hatch Cover No.1 dismantle hydraulic jacks (계획 완료 08.21)',
+                          '2) Load/discharge spare parts and tools',
+                          '3) Staging erection continues in cargo hold (진행 중)'],
+                         cards['shipyard']['title'].splitlines())
+        # 줄별 출처는 카드 **안에** 있다 -- 카드 하나에 여러 행이 들어가면
+        # `source_link` 만으로는 어느 줄이 어느 행인지 되짚을 수 없다.
+        rows = cards['shipyard']['source_rows']
+        self.assertEqual(3, len(rows))
+        self.assertEqual('Hatch Cover No.1 dismantle hydraulic jacks', rows[0]['source_en'])
+        self.assertEqual('include', rows[0]['source_verdict'])
+        texts = self._lines(rid)
         self.assertFalse(any('Future blasting' in t for t in texts), '미래 작업은 안 들어온다')
         self.assertFalse(any('UTM Service' in t for t in texts), '판정불가는 자동으로 안 넣는다')
         with appmod.app.app_context():
@@ -427,9 +458,9 @@ class DocxRouteTests(unittest.TestCase):
         # **다시 쓰지 않는다**(같은 내용 UPDATE 는 revision 만 올려 다른 기기에 409 를 준다).
         self.assertEqual(1, second['updated'])
         self.assertEqual(4, second['unchanged'])
-        self.assertEqual(5, len(self._blocks(rid)))
-        texts = [routes_dock_daily._json(b['content_json'], {}).get('title')
-                 for b in self._blocks(rid)]
+        self.assertEqual(3, len(self._blocks(rid)))
+        texts = self._lines(rid)
+        self.assertEqual(5, len(texts), '줄이 늘지 않는다')
         self.assertTrue(any('계획 완료 08.22' in t for t in texts), texts)
 
     def test_reading_the_same_file_twice_writes_nothing_at_all(self):
@@ -448,6 +479,161 @@ class DocxRouteTests(unittest.TestCase):
         self.assertEqual(5, second['unchanged'])
         self.assertEqual(first['revision'], second['revision'], 'revision 을 올리지 않는다')
         self.assertEqual(blocks, self._blocks(rid))
+
+    def test_a_second_partial_selection_keeps_the_lines_already_in_the_card(self):
+        """🔴 부분 선택 재적용이 **지난번에 넣은 줄을 지우면 안 된다**.
+
+        카드 한 장에 여러 행이 들어가므로, 이번에 고른 행만으로 카드를 다시 쓰면 형이
+        먼저 넣어 둔 줄이 조용히 사라진다.  부분 선택은 정상 사용이므로 실제로 난다.
+        줄별 출처를 카드 안(`source_rows`)에 두는 이유가 이것이다.
+        """
+        rid = self.report['id']
+        aid = self._upload(rid)
+        rows = {r['desc']: r for g in self._scan(rid, aid).get_json()['groups']
+                for r in g['rows']}
+        first = self._apply(rid, aid, self.report['revision'],
+                            row_keys=[rows['Load/discharge spare parts and tools']['row_key']]
+                            ).get_json()
+        self.assertEqual(['Load/discharge spare parts and tools'], self._lines(rid))
+        second = self._apply(rid, aid, first['revision'],
+                             row_keys=[rows['Staging erection continues in cargo hold']['row_key']]
+                             ).get_json()
+        self.assertEqual(1, second['applied'])
+        self.assertEqual(1, len(self._blocks(rid)), '같은 섹션이면 카드는 여전히 한 장')
+        self.assertEqual(['Load/discharge spare parts and tools',
+                          'Staging erection continues in cargo hold (진행 중)'],
+                         self._lines(rid))
+
+    def test_old_one_card_per_row_data_is_folded_into_a_single_card(self):
+        """옛 계약(행 1개 = 카드 1장)으로 들어간 라이브 카드는 재적용 때 접힌다.
+
+        🔴 링크를 **먼저** 옮기고 나서 낱장을 지운다.  순서를 뒤집으면 `block_id` FK
+        (`ON DELETE SET NULL`)가 끊어져 그 줄의 멱등키가 카드를 잃고, 다음 재적용에서
+        같은 줄이 새 줄로 또 들어온다.
+        """
+        rid = self.report['id']
+        aid = self._upload(rid)
+        first = self._apply(rid, aid, self.report['revision']).get_json()
+        # 라이브에 남아 있는 옛 모양을 손으로 만든다: shipyard 카드를 줄마다 한 장으로.
+        with appmod.app.app_context():
+            block = appmod.query('SELECT * FROM dock_daily_block WHERE report_id=?'
+                                 " AND section_key='shipyard'", (rid,), one=True)
+            entries = routes_dock_daily._json(block['content_json'], {})['source_rows']
+            self.assertEqual(3, len(entries))
+            for n, entry in enumerate(entries):
+                body = routes_dock_daily.json.dumps(
+                    {'title': entry['line'], 'source_en': entry['source_en']},
+                    ensure_ascii=False)
+                if n == 0:
+                    appmod.execute('UPDATE dock_daily_block SET content_json=? WHERE id=?',
+                                   (body, block['id']))
+                    bid = block['id']
+                else:
+                    bid = appmod.execute('''INSERT INTO dock_daily_block(report_id,section_key,
+                                            sort_order,block_type,content_json,origin)
+                                            VALUES (?,'shipyard',?,'item',?,'dock_auto')''',
+                                         (rid, 10 + n, body))
+                appmod.execute('UPDATE dock_daily_source_link SET block_id=? WHERE report_id=?'
+                               ' AND source_subkey=?', (bid, rid, entry['row_key']))
+        self.assertEqual(5, len(self._blocks(rid)), '옛 모양: shipyard 3장 + 나머지 2장')
+        second = self._apply(rid, aid, first['revision']).get_json()
+        self.assertEqual(2, second['merged_cards'])
+        self.assertEqual(3, len(self._blocks(rid)))
+        self.assertEqual(3, len(self._cards(rid)['shipyard']['title'].splitlines()))
+        with appmod.app.app_context():
+            after = appmod.query('SELECT block_id FROM dock_daily_source_link WHERE report_id=?',
+                                 (rid,))
+        self.assertTrue(all(x['block_id'] for x in after), '멱등키가 카드를 잃으면 안 된다')
+        # 접힌 뒤 한 번 더 읽으면 완전 no-op 이다(줄이 또 늘지 않는다).
+        third = self._apply(rid, aid, second['revision']).get_json()
+        self.assertEqual(second['revision'], third['revision'])
+        self.assertEqual(5, len(self._lines(rid)))
+
+    def test_the_same_row_stored_in_two_cards_becomes_one_line(self):
+        """🔴 링크와 카드가 어긋난 데이터에서 같은 행이 **두 줄**로 저장되면 안 된다.
+
+        도달 경로: 카드 A 의 `source_rows` 에 행 X 가 적혀 있는데 그 뒤 X 의 링크가 카드
+        B 로 옮겨 간 상태(부분쓰기 유실·손편집).  두 카드 다 문서 링크를 갖고 있으므로
+        둘 다 읽히고, 그대로 담으면 형이 같은 문장을 두 번 읽는다(올마이트 지적
+        2026-08-23).  링크가 **아예 없는** dock_auto 카드는 일부러 손대지 않는다 --
+        같은 `origin` 을 Dock 러너도 쓰므로, 링크 없이 origin 만 보고 접으면 러너 카드를
+        부순다.
+        """
+        rid = self.report['id']
+        aid = self._upload(rid)
+        first = self._apply(rid, aid, self.report['revision']).get_json()
+        crew = first['created_section']['section_key']
+        with appmod.app.app_context():
+            ship = appmod.query('SELECT * FROM dock_daily_block WHERE report_id=?'
+                                " AND section_key='shipyard'", (rid,), one=True)
+            other = appmod.query('SELECT * FROM dock_daily_block WHERE report_id=?'
+                                 ' AND section_key=?', (rid, crew), one=True)
+            stolen = routes_dock_daily._json(ship['content_json'], {})['source_rows'][0]
+            content = routes_dock_daily._json(other['content_json'], {})
+            content['source_rows'] = content['source_rows'] + [stolen]
+            content['title'] += '\n2) ' + stolen['line']
+            appmod.execute('UPDATE dock_daily_block SET content_json=? WHERE id=?',
+                           (routes_dock_daily.json.dumps(content, ensure_ascii=False),
+                            other['id']))
+        self._apply(rid, aid, first['revision'])
+        cards = self._cards(rid)
+        lines = cards['shipyard']['title'].splitlines()
+        self.assertEqual(3, len(lines), lines)
+        self.assertEqual(len(set(lines)), len(lines), '같은 문장이 두 줄로 남으면 안 된다')
+        self.assertNotIn(stolen['line'], cards[crew]['title'], '옮겨 간 사본은 남지 않는다')
+
+    def test_a_row_moving_to_another_section_leaves_no_copy_behind(self):
+        """감독이 표 제목을 바꾸면 그 행만 다른 섹션으로 옮겨 간다.
+
+        🔴 옛 카드에 사본이 남으면 같은 문장이 두 섹션에서 메일로 나간다.  줄이 전부
+        옮겨 가 빈 카드가 되면 그 카드는 접어서 지운다.
+        """
+        rid = self.report['id']
+        first = self._apply(rid, self._upload(rid), self.report['revision']).get_json()
+        crew = first['created_section']['section_key']
+        self.assertEqual(['ME FO Auto-filter maintenance'],
+                         [routes_dock_daily.ITEM_NO_RE.sub('', x).strip()
+                          for x in self._cards(rid)[crew]['title'].splitlines()])
+        # 같은 작업을 Deck 표로 옮긴 문서.  `row_key` 는 (표 라벨|설명) 이므로 새 행이다.
+        path = os.path.join(self.tmp.name, 'moved.docx')
+        doc = Document()
+        _table(doc, 'Leading Deck Works done by the Yard', HEADER,
+               [['1', 'ME FO Auto-filter maintenance', '20.08.2026', '', '']])
+        doc.save(path)
+        with open(path, 'rb') as fh:
+            data = fh.read()
+        aid = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
+                               data={'file': (io.BytesIO(data), 'moved.docx')},
+                               content_type='multipart/form-data').get_json()['id']
+        second = self._apply(rid, aid, first['revision']).get_json()
+        cards = self._cards(rid)
+        self.assertIn('ME FO Auto-filter maintenance', cards['shipyard']['title'])
+        # Crew 카드에는 그 줄이 남아 있다 -- `row_key` 가 표 라벨 스코프라 별개 행이고,
+        # apply 는 지금 파일에 없는 줄을 지우지 않는다(`stale_applied` 로만 알린다).
+        self.assertIn(crew, cards, '지금 파일에 없는 줄은 apply 가 지우지 않는다')
+        self.assertEqual(1, second['applied'])
+
+    def test_a_card_carrying_a_photo_is_never_folded_away(self):
+        """🔴 사진이 매달린 카드는 병합·삭제 대상에서 뺀다.
+
+        `dock_daily_attachment.block_id` 는 `ON DELETE SET NULL` 이라 지워도 500 은 안
+        나지만, 형이 올린 사진이 조용히 카드에서 떨어진다.
+        """
+        rid = self.report['id']
+        aid = self._upload(rid)
+        first = self._apply(rid, aid, self.report['revision']).get_json()
+        with appmod.app.app_context():
+            block = appmod.query('SELECT * FROM dock_daily_block WHERE report_id=?'
+                                 " AND section_key='shipyard'", (rid,), one=True)
+            appmod.execute('UPDATE dock_daily_attachment SET block_id=? WHERE id=?',
+                           (block['id'], aid))
+        second = self._apply(rid, aid, first['revision']).get_json()
+        self.assertEqual(0, second['merged_cards'])
+        self.assertEqual(3, second['skipped_edited'], '사진 달린 카드의 줄은 손대지 않는다')
+        with appmod.app.app_context():
+            still = appmod.query('SELECT block_id FROM dock_daily_attachment WHERE id=?',
+                                 (aid,), one=True)
+        self.assertEqual(block['id'], still['block_id'], '사진이 카드에서 떨어지면 안 된다')
 
     def test_a_section_that_exists_on_another_date_is_attached_not_duplicated(self):
         """🔴 같은 이름 섹션을 날짜마다 새로 만들면 프로젝트 섹션 목록이 도배된다.
@@ -566,9 +752,7 @@ class DocxRouteTests(unittest.TestCase):
                            row_keys=picked + ['deadbeef1234']).get_json()
         self.assertEqual(2, body['applied'], '형이 고르면 제외·판정불가도 넣는다')
         self.assertEqual(['deadbeef1234'], body['unknown_row_keys'])
-        titles = [routes_dock_daily._json(b['content_json'], {}).get('title')
-                  for b in self._blocks(rid)]
-        self.assertEqual({'UTM Service', 'Future blasting of hull'}, set(titles))
+        self.assertEqual({'UTM Service', 'Future blasting of hull'}, set(self._lines(rid)))
 
     def test_apply_rejects_an_empty_selection_and_a_stale_revision(self):
         rid = self.report['id']
@@ -615,9 +799,11 @@ class DocxRouteTests(unittest.TestCase):
         finally:
             helpers_shared.translate_texts_ko = real
         self.assertEqual(5, body['translated'])
-        cards = [routes_dock_daily._json(b['content_json'], {}) for b in self._blocks(rid)]
-        self.assertTrue(all(c['title'].startswith('[KO] ') for c in cards), cards)
-        self.assertTrue(all(not c['source_en'].startswith('[KO] ') for c in cards),
+        lines = self._lines(rid)
+        self.assertEqual(5, len(lines))
+        self.assertTrue(all(t.startswith('[KO] ') for t in lines), lines)
+        rows = [r for c in self._cards(rid).values() for r in c['source_rows']]
+        self.assertTrue(all(not r['source_en'].startswith('[KO] ') for r in rows),
                         '영문 원문은 추적용으로 남는다')
 
     def test_a_failing_translator_falls_back_to_the_english_text(self):

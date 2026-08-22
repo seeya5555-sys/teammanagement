@@ -1118,7 +1118,7 @@
           // 이미 들어간 행은 다시 체크해 두지 않는다. 기본 체크로 두면 "넣기" 를 누를 때마다
           // 같은 카드를 갱신해 revision 만 올라간다.
           const done=scan.applied[r.row_key];
-          const tail=done?(done.edited?' · 직접 고친 카드(덮지 않음)':' · 이미 들어감'):'';
+          const tail=done?(done.edited?' · 직접 고친 카드(덮지 않음)':' · 이미 카드에 있음'):'';
           // 🔴 갈 곳이 없으면 그렇게 적는다. "넣기" 를 눌러도 조용히 빠지면 형은
           // 들어간 줄 알고 메일을 보낸다(올마이트 지적).
           const target=!g.target_key&&!g.target_new&&!g.target_attach?' · ⚠ 넣을 섹션이 없어 빠집니다'
@@ -1136,7 +1136,7 @@
     const warn=[];
     if(scan.unmapped_headings.length)warn.push(`모르는 제목 ${scan.unmapped_headings.length}개는 비고로 갑니다`);
     if(scan.duplicate_rows)warn.push(`같은 표에 같은 문장이 겹쳐 ${scan.duplicate_rows}행을 접었습니다`);
-    if((scan.stale_applied||[]).length)warn.push(`⚠ 이 보고서에 있던 문서 카드 ${scan.stale_applied.length}개가 지금 파일에는 없습니다(문장이 수정되었을 수 있음 — 중복으로 남으면 직접 지우세요)`);
+    if((scan.stale_applied||[]).length)warn.push(`⚠ 이 보고서 카드에 있는 ${scan.stale_applied.length}줄이 지금 파일에는 없습니다(문장이 수정되었을 수 있음 — 중복으로 남으면 직접 지우세요)`);
     $('#dd-docx-summary').textContent=`${scan.filename} · 기준 일자 ${scan.report_date} · `
       +`포함 ${scan.counts.include||0} / 제외 ${scan.counts.exclude||0} / 판정불가 ${scan.counts.unknown||0}`
       +(warn.length?' · '+warn.join(' · '):'');
@@ -1188,10 +1188,12 @@
       if(state.report?.id===rid)await selectReport(rid);
       // 무엇이 안 들어갔는지 함께 말한다. 조용히 빠지면 형은 들어간 줄 알고 메일을 보낸다.
       const bits=[];
-      if(out.applied)bits.push(`카드 ${out.applied}개를 넣었습니다`);
-      if(out.updated)bits.push(`${out.updated}개를 갱신했습니다`);
-      if(out.unchanged)bits.push(`${out.unchanged}개는 이미 같은 내용이라 그대로 뒀습니다`);
-      if(out.skipped_edited)bits.push(`직접 고친 카드 ${out.skipped_edited}개는 그대로 뒀습니다`);
+      // 단위는 카드가 아니라 **줄**이다 — 섹션마다 카드 한 장에 `1) 2) 3)` 로 들어간다.
+      if(out.applied)bits.push(`${out.applied}줄을 넣었습니다`);
+      if(out.updated)bits.push(`${out.updated}줄을 갱신했습니다`);
+      if(out.unchanged)bits.push(`${out.unchanged}줄은 이미 같은 내용이라 그대로 뒀습니다`);
+      if(out.merged_cards)bits.push(`따로 있던 카드 ${out.merged_cards}장을 섹션 카드로 합쳤습니다`);
+      if(out.skipped_edited)bits.push(`직접 고친 카드에 있던 ${out.skipped_edited}줄은 그대로 뒀습니다`);
       // 🔴 갈 섹션이 없어 빠진 건 반드시 말한다 — 비고 섹션이 없거나 꺼져 있으면
       // 고른 행이 통째로 사라지는데 옛 문구는 "바뀐 내용이 없습니다" 뿐이었다.
       if(out.skipped_unmapped)bits.push(`⚠ ${out.skipped_unmapped}개는 넣을 섹션이 없어 빠졌습니다(비고 섹션을 열어 두세요)`);

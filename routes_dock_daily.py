@@ -1649,6 +1649,64 @@ def _docx_card_text(row, korean):
     return '%s (%s)' % (text, row['marker']) if row.get('marker') else text
 
 
+def _docx_row_entry(item, line):
+    """카드 한 줄 + 그 줄의 출처.  줄과 출처를 같은 자리에 두는 이유는 아래 참조."""
+    return {'row_key': item['row_key'], 'line': line, 'source_en': item['desc'],
+            'source_dates': {'start': item.get('start') or '', 'sched': item.get('sched') or '',
+                             'finish': item.get('finish') or ''},
+            'source_verdict': item['verdict']}
+
+
+def _docx_card_content(entries):
+    """섹션 카드 하나의 `content_json` (형 지시 2026-08-23 "한 파라그래프에 1) 2) 3)").
+
+    🔴 줄별 출처를 **블록 안에** 둔다(`source_rows`).  카드 한 장에 여러 행이 들어가면
+    `dock_daily_source_link` 만으로는 어느 줄이 어느 행인지 되짚을 수 없고, 그러면
+    재적용 때 카드를 통째로 다시 쓸 수밖에 없다 -- 형이 이번에 체크한 행만으로 다시
+    쓰면 **지난번에 넣은 줄이 조용히 사라진다**(부분 선택이 정상 사용이므로 실제로
+    난다).  `link` 는 멱등키(행↔카드 소속)를, `source_rows` 는 줄 단위 병합을 맡는다.
+
+    번호는 텍스트에 박아 둔다.  화면(textarea)·메일·SVMS 가 모두 번호를 글에서 읽고,
+    메일/SVMS 는 번호를 떼고 다시 붙이므로 두 번 붙지 않는다(`_item_lines`).
+    """
+    lines = [e for e in entries if (e.get('line') or '').strip()]
+    return {'title': '\n'.join('%d) %s' % (n, e['line'].strip())
+                               for n, e in enumerate(lines, 1)),
+            'source_rows': lines}
+
+
+def _docx_entries_of(block, subkeys):
+    """블록에서 줄 목록을 되읽는다.  옛 낱장 카드도 여기서 줄 하나로 환산한다.
+
+    🔴 `row_key` 를 못 알아낸 줄은 `None` 으로 **남긴다**.  버리면 형이 보던 문장이
+    사라지고, 아무 화면에도 안 남는다.  남겨 두면 갱신 대상만 아니고 그대로 보인다.
+    """
+    content = _json(block['content_json'], {})
+    if not isinstance(content, dict):
+        content = {}
+    rows = content.get('source_rows')
+    if isinstance(rows, list):
+        out = []
+        for entry in rows:
+            if isinstance(entry, dict) and (entry.get('line') or '').strip():
+                out.append({'row_key': entry.get('row_key'), 'line': str(entry['line']).strip(),
+                            'source_en': entry.get('source_en') or '',
+                            'source_dates': entry.get('source_dates') or {},
+                            'source_verdict': entry.get('source_verdict') or ''})
+        return out
+    # 옛 계약: 카드 1장 = 행 1개.  `source_link` 의 subkey 로 신원을 되찾는다.
+    text = str(content.get('title') or content.get('body') or content.get('text') or '')
+    lines = [ITEM_NO_RE.sub('', x).strip() for x in text.splitlines()]
+    lines = [x for x in lines if x]
+    out = []
+    for n, line in enumerate(lines):
+        out.append({'row_key': subkeys[0] if (n == 0 and subkeys) else None, 'line': line,
+                    'source_en': content.get('source_en') or '',
+                    'source_dates': content.get('source_dates') or {},
+                    'source_verdict': content.get('source_verdict') or ''})
+    return out
+
+
 @bp.route('/api/dock-daily/reports/<int:rid>/docx-apply', methods=['POST'])
 @login_required
 def report_docx_apply(rid):
@@ -1752,38 +1810,127 @@ def report_docx_apply(rid):
         links = {x['source_subkey']: x for x in db.execute(
             'SELECT * FROM dock_daily_source_link WHERE report_id=? AND source_system=?'
             ' AND source_table=?', (rid, DOCX_SOURCE_SYSTEM, DOCX_SOURCE_TABLE))}
+        # 섹션마다 카드 한 장에 몰아넣는다(형 지시 2026-08-23 "한 파라그래프에 1) 2) 3)").
+        # 정확히는 **섹션마다 잠기지 않은 문서 카드 1장**이다 -- 형이 고친 카드는 그대로
+        # 남으므로 그 섹션에 문서 카드가 둘 보일 수 있고, 그게 맞다(형 문장을 안 덮는다).
+        wanted_rows = {}
         for n, (group, item) in enumerate(jobs):
             key = group.get('target_key')
             if not key:
                 skipped_unmapped += 1
                 continue
-            content = {'title': _docx_card_text(item, ko[n]),
-                       'source_en': item['desc'],
-                       'source_dates': {'start': item.get('start') or '',
-                                        'sched': item.get('sched') or '',
-                                        'finish': item.get('finish') or ''},
-                       'source_verdict': item['verdict']}
-            body = json.dumps(content, ensure_ascii=False)
-            link = links.get(item['row_key'])
-            block = db.execute('SELECT id, manual_override, section_key, content_json'
-                               ' FROM dock_daily_block WHERE id=?',
-                               (link['block_id'],)).fetchone() if link and link['block_id'] else None
-            if block and block['manual_override']:
-                skipped_edited += 1
+            wanted_rows.setdefault(key, []).append((item, _docx_card_text(item, ko[n])))
+        # 이 보고서 블록을 한 번만 읽어 둔다(섹션마다 다시 묻지 않게).
+        blocks = {b['id']: b for b in db.execute(
+            'SELECT id, section_key, block_type, sort_order, manual_override, content_json'
+            ' FROM dock_daily_block WHERE report_id=?', (rid,))}
+        # 🔴 사진이 매달린 블록은 병합·삭제 대상에서 뺀다.  `dock_daily_attachment.block_id`
+        #    는 `ON DELETE SET NULL` 이라 지워도 500 은 안 나지만, 형이 올린 사진이 조용히
+        #    카드에서 떨어진다.  글 카드에 사진이 붙는 정상 경로는 없으므로 방어선이다.
+        with_files = {x['block_id'] for x in db.execute(
+            'SELECT DISTINCT block_id FROM dock_daily_attachment'
+            ' WHERE report_id=? AND block_id IS NOT NULL AND deleted_at IS NULL', (rid,))}
+        subkeys_by_block = {}
+        for subkey, lk in sorted(links.items(), key=lambda kv: kv[1]['id']):
+            if lk['block_id']:
+                subkeys_by_block.setdefault(lk['block_id'], []).append(subkey)
+        # 🔴 형이 손댄 카드는 `locked` 로 통째 빼고, **섹션과 무관하게** 본다.  옛 코드는
+        #    `manual_override` 를 카드 단위로 봤고, 지금은 섹션 단위로 접으므로 잠금을
+        #    섹션 안에서만 보면 형이 딴 섹션으로 옮긴 카드(옮기면 override 가 붙는다)를
+        #    못 보고 그 줄을 새 줄로 또 넣는다 -- 같은 문장이 두 섹션에 남는다.
+        locked = {bid for bid in subkeys_by_block
+                  if bid in blocks and (blocks[bid]['manual_override']
+                                        or blocks[bid]['block_type'] != 'item'
+                                        or bid in with_files)}
+        # 이번 파일의 줄이 갈 섹션.  잠긴 카드에 있던 줄은 형의 문장이므로 손대지 않는다.
+        job_key = {}
+        for key, rows_in in wanted_rows.items():
+            for item, _ in rows_in:
+                lk = links.get(item['row_key'])
+                if lk and lk['block_id'] in locked:
+                    skipped_edited += 1
+                    continue
+                job_key[item['row_key']] = key
+        # 이번 apply 가 만질 카드.  ①이 파일이 쓰는 섹션의 문서카드 ②이 파일의 줄이
+        # 지금 들어 있는 카드(섹션이 달라도 -- 줄이 옮겨 가면 그 카드도 다시 써야 한다).
+        touched_ids = [bid for bid in sorted(
+            (b for b in subkeys_by_block if b in blocks and b not in locked),
+            key=lambda b: (blocks[b]['section_key'], blocks[b]['sort_order'], b))
+            if blocks[bid]['section_key'] in wanted_rows
+            or any(sk in job_key for sk in subkeys_by_block[bid])]
+        # 줄을 섹션별로 다시 담는다.  이번 파일에 없는 줄은 지금 있는 섹션에 남는다.
+        # 🔴 `row_key` 로 **한 번만** 담는다(올마이트 지적 2026-08-23).  링크와 카드의
+        #    `source_rows` 가 어긋난 데이터(옛 부분쓰기·손편집)에서 같은 행이 두 카드에
+        #    있으면, 그대로 담으면 같은 문장이 카드 안에 두 줄로 저장된다.
+        entries_by_key = {k: [] for k in wanted_rows}
+        hosts, seen_rows = {}, set()
+        prev_section = {}
+        for bid in touched_ids:
+            sec = blocks[bid]['section_key']
+            for entry in _docx_entries_of(blocks[bid], subkeys_by_block.get(bid, [])):
+                if entry['row_key']:
+                    if entry['row_key'] in seen_rows:
+                        continue
+                    seen_rows.add(entry['row_key'])
+                    prev_section[entry['row_key']] = sec
+                entries_by_key.setdefault(job_key.get(entry['row_key']) or sec,
+                                          []).append(entry)
+            # 카드 한 장은 자기 섹션의 host 후보다.  `touched_ids` 가 (섹션, sort_order)
+            # 순이라 먼저 오는 것이 그 섹션의 맨 위 카드다.
+            hosts.setdefault(sec, bid)
+        merged = writes = 0
+        # 🔴 삭제는 **전부 쓴 뒤에** 한 번에 한다(올마이트 지적 2026-08-23).  루프 안에서
+        #    지우면 아직 링크를 못 옮긴 카드가 먼저 사라져 `block_id` FK
+        #    (`ON DELETE SET NULL`)가 멱등키를 끊는다 -- 다음 재적용에 같은 줄이 또 들어온다.
+        to_delete = [bid for bid in touched_ids if bid not in hosts.values()]
+        for key in list(entries_by_key):
+            entries = entries_by_key[key]
+            index = {e['row_key']: e for e in entries if e.get('row_key')}
+            added = changed = same = 0
+            for item, line in wanted_rows.get(key, []):
+                if job_key.get(item['row_key']) != key:
+                    continue                      # 잠긴 카드에 있던 줄
+                fresh = _docx_row_entry(item, line)
+                cur = index.get(item['row_key'])
+                if cur is None:
+                    entries.append(fresh)
+                    index[item['row_key']] = fresh
+                    added += 1
+                elif cur != fresh or prev_section.get(item['row_key']) != key:
+                    # 글자가 같아도 **섹션이 바뀌면 갱신**이다.  `unchanged` 로 세면
+                    # 화면에 "그대로 뒀습니다" 가 뜨는데 카드는 실제로 바뀐다.
+                    entries[entries.index(cur)] = fresh
+                    index[item['row_key']] = fresh
+                    changed += 1
+                else:
+                    same += 1
+            unchanged += same
+            applied += added
+            updated += changed
+            host = hosts.get(key)
+            if not entries:
+                # 줄이 전부 다른 섹션으로 옮겨 간 카드.  빈 카드를 남기면 화면·메일에
+                # 빈 항목으로 나가므로 접어서 지운다(형이 손댄 카드는 `locked` 라 여기
+                # 오지 않는다).  실제 삭제는 아래 한 곳에서만 한다.
+                if host is not None and host not in to_delete:
+                    to_delete.append(host)
                 continue
-            # 🔴 같은 파일을 다시 읽었을 때 **아무 쓰기도 하지 않는다**(올마이트 지적
-            # 2026-08-23).  옛 코드는 내용이 같아도 전 카드를 UPDATE 하고 revision 을
-            # 올려서, 이 보고서를 열어 둔 다른 기기가 이유 없이 409 를 맞았다.
-            if block and block['section_key'] == key and block['content_json'] == body:
-                unchanged += 1
+            body = json.dumps(_docx_card_content(entries), ensure_ascii=False)
+            if host is not None and blocks[host]['content_json'] == body:
+                # 🔴 같은 파일 재적용은 **아무 쓰기도 하지 않는다**(올마이트 지적
+                # 2026-08-23).  내용이 같아도 UPDATE 하면 revision 이 올라가서, 이
+                # 보고서를 열어 둔 다른 기기가 이유 없이 409 를 맞는다.
+                # 이 경로에서는 링크의 `source_hash`/`imported_at` 도 그대로 둔다.
+                # docx 링크의 그 두 칸은 기록용이고 읽는 곳이 없다(`missing_at`·
+                # `source_hash` 판정은 `dock_manager` 소스 전용, `_docx_preview` 의
+                # `applied`/`stale_applied` 는 링크 존재와 `manual_override` 만 본다).
+                # 여기서 쓰면 no-op 계약이 깨진다 -- 쓰는 쪽이 손해다.
                 continue
-            if block:
-                db.execute("UPDATE dock_daily_block SET section_key=?, block_type='item',"
-                           " content_json=?, origin='dock_auto',"
-                           " updated_at=datetime('now','localtime') WHERE id=?",
-                           (key, body, block['id']))
-                bid = block['id']
-                updated += 1
+            if host is not None:
+                db.execute("UPDATE dock_daily_block SET block_type='item', content_json=?,"
+                           " origin='dock_auto', updated_at=datetime('now','localtime')"
+                           ' WHERE id=?', (body, host))
+                bid = host
             else:
                 order = nexts.get(key, 0)
                 nexts[key] = order + 1
@@ -1791,23 +1938,38 @@ def report_docx_apply(rid):
                                     block_type,content_json,origin)
                                     VALUES (?,?,?,'item',?,'dock_auto')''',
                                  (rid, key, order, body)).lastrowid
-                applied += 1
-            if link:
-                db.execute('UPDATE dock_daily_source_link SET block_id=?, source_hash=?,'
-                           " imported_at=datetime('now','localtime'), missing_at=NULL WHERE id=?",
-                           (bid, row['sha256'], link['id']))
-            else:
-                db.execute('''INSERT INTO dock_daily_source_link(report_id,block_id,source_system,
-                              source_table,source_id,source_subkey,source_updated_at,source_hash)
-                              VALUES (?,?,?,?,?,?,?,?)''',
-                           (rid, bid, DOCX_SOURCE_SYSTEM, DOCX_SOURCE_TABLE, DOCX_SOURCE_ID,
-                            item['row_key'], row['created_at'], row['sha256']))
-        if not applied and not updated and not created_section and not attached:
+            writes += 1
+            # 링크(멱등키)를 새 host 로 옮긴다.  카드 삭제는 이 루프가 전부 끝난 뒤다.
+            for entry in entries:
+                if not entry.get('row_key'):
+                    continue
+                lk = links.get(entry['row_key'])
+                if lk is None:
+                    db.execute('''INSERT INTO dock_daily_source_link(report_id,block_id,
+                                  source_system,source_table,source_id,source_subkey,
+                                  source_updated_at,source_hash)
+                                  VALUES (?,?,?,?,?,?,?,?)''',
+                               (rid, bid, DOCX_SOURCE_SYSTEM, DOCX_SOURCE_TABLE, DOCX_SOURCE_ID,
+                                entry['row_key'], row['created_at'], row['sha256']))
+                elif entry['row_key'] in job_key:
+                    db.execute('UPDATE dock_daily_source_link SET block_id=?, source_hash=?,'
+                               " imported_at=datetime('now','localtime'), missing_at=NULL"
+                               ' WHERE id=?', (bid, row['sha256'], lk['id']))
+                else:
+                    # 이번 파일에 없던 줄은 소속만 옮긴다 -- 읽은 시각·해시는 그 줄을
+                    # 실제로 읽었던 파일의 것으로 남겨 둔다.
+                    db.execute('UPDATE dock_daily_source_link SET block_id=? WHERE id=?',
+                               (bid, lk['id']))
+        for bid in to_delete:
+            db.execute('DELETE FROM dock_daily_block WHERE id=?', (bid,))
+            merged += 1
+            writes += 1
+        if not writes and not created_section and not attached:
             # 아무것도 안 바뀌었으면 revision 을 올리지 않는다 -- 올리면 이 보고서를 열어
             # 둔 다른 기기가 이유 없이 409 를 맞는다.
             db.rollback()
             out = _report_json(rid)
-            out.update(applied=0, updated=0, unchanged=unchanged,
+            out.update(applied=0, updated=0, unchanged=unchanged, merged_cards=0,
                        skipped_edited=skipped_edited, attached_sections=0,
                        skipped_unmapped=skipped_unmapped, translated=0,
                        unknown_row_keys=unknown_keys, created_section=None)
@@ -1827,7 +1989,7 @@ def report_docx_apply(rid):
     except Exception:
         db.rollback(); raise
     out = _report_json(rid)
-    out.update(applied=applied, updated=updated, unchanged=unchanged,
+    out.update(applied=applied, updated=updated, unchanged=unchanged, merged_cards=merged,
                skipped_edited=skipped_edited, attached_sections=attached,
                skipped_unmapped=skipped_unmapped, translated=translated,
                unknown_row_keys=unknown_keys, created_section=created_section)
