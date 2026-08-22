@@ -1123,6 +1123,27 @@
   "defaults": {}
  },
  {
+  "rule": "/api/dock-daily/projects/<int:pid>/svms-dk-cd",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.svms_bind_dk_cd",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/dock-daily/projects/<int:pid>/svms-docks",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.svms_docks",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/dock-daily/reports/<int:rid>",
   "methods": [
    "DELETE",
@@ -2050,6 +2071,27 @@
    "POST"
   ],
   "endpoint": "routes_dock_daily.svms_claim",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-daily/svms-dock-candidates",
+  "methods": [
+   "OPTIONS",
+   "POST"
+  ],
+  "endpoint": "routes_dock_daily.svms_dock_candidates",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
+  "rule": "/api/ext/dock-daily/svms-dock-targets",
+  "methods": [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.svms_dock_targets",
   "strict_slashes": true,
   "defaults": {}
  },

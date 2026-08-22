@@ -76,9 +76,40 @@
     return '';
   }
 
+  /* 미리보기의 `blockers` 는 서버가 판정한 **상신 불가 사유**다.
+   * 🔴 사유를 화면에 안 뿌리면 "상신 불가" 한 줄만 남아 형이 고칠 방법을 알 수 없다
+   *    (2026-08-22 형 캡쳐: DK_CD 가 비어 있었는데 화면엔 사유가 없었다). */
+  function blockerList(preview) {
+    var raw = preview && preview.blockers;
+    if (!Array.isArray(raw)) return [];
+    return raw.map(function (b) { return String(b == null ? '' : b).trim(); })
+              .filter(function (b) { return !!b; });
+  }
+
+  /* `DK_CD 미설정` 은 사람이 화면에서 고칠 수 있는 유일한 blocker 다(Dock 연결).
+   * 나머지(byte 한도 미설정/초과)는 설정이나 본문 편집 문제라 여기서 못 푼다. */
+  function needsDockLink(preview) {
+    return blockerList(preview).some(function (b) { return b.indexOf('DK_CD') === 0; });
+  }
+
+  /* 후보 한 줄 표기. `open=false`(출거 완료/상태 C)는 눈에 보이게 구분한다 --
+   * 지난 입거에 오늘 daily report 를 쓰는 게 제일 흔한 사고다. */
+  function candidateLabel(cand) {
+    if (!cand) return '';
+    var bits = [String(cand.dk_cd || '')];
+    if (cand.subj) bits.push(String(cand.subj));
+    var state = [];
+    if (cand.status) state.push('STATUS ' + cand.status);
+    if (cand.dk_out_date) state.push('출거 ' + cand.dk_out_date);
+    if (!cand.open) state.push('종료된 입거');
+    if (state.length) bits.push('(' + state.join(' · ') + ')');
+    return bits.join(' · ');
+  }
+
   var api = {
     normalize: normalize, title: title, tone: tone, listSuffix: listSuffix,
-    allowsPublish: allowsPublish, needsManualCheck: needsManualCheck, guidance: guidance
+    allowsPublish: allowsPublish, needsManualCheck: needsManualCheck, guidance: guidance,
+    blockerList: blockerList, needsDockLink: needsDockLink, candidateLabel: candidateLabel
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.DockDailySVMS = api;

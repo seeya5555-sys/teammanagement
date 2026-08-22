@@ -2880,8 +2880,10 @@ class DockDailyTests(unittest.TestCase):
         self.assertFalse(preview['publishable'])
         self.assertIn('DK_CD 미설정', preview['blockers'])
 
-        self.client.patch(f"/api/dock-daily/projects/{p['id']}",
-                          json={'svms_dk_cd': 'KWPSMD2603250001'})
+        # 연결은 전용 라우트로만 바꾼다(PATCH 는 두 번째 writer 라 막혀 있다).
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/svms-dk-cd",
+                         json={'dk_cd': 'KWPSMD2603250001', 'allow_unlisted': True,
+                               'confirmation': 'user_selected_dock'})
         with self._svms_env():
             ok = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
         self.assertEqual('KWPSMD2603250001', ok['fields']['DK_CD'])
@@ -2895,7 +2897,9 @@ class DockDailyTests(unittest.TestCase):
         `limits: null` 을 보여 줬다 -- 한도가 없는 상태로 반영 버튼이 열렸다.
         """
         p, r = self._dd_project_report('SVMS 한도 DD')
-        self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={'svms_dk_cd': 'DK-1'})
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/svms-dk-cd",
+                         json={'dk_cd': 'DK-1', 'allow_unlisted': True,
+                               'confirmation': 'user_selected_dock'})
         for bad in ('4,000', '0', '', 'abc', '-1'):
             with self._svms_env(rmk=bad):
                 preview = self.client.get(
@@ -2916,7 +2920,9 @@ class DockDailyTests(unittest.TestCase):
         거절한다.  자동 truncate 는 금지이므로(문장을 고르는 건 사람 일) 판정만 한다.
         """
         p, r = self._dd_project_report('SVMS 초과 DD')
-        self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={'svms_dk_cd': 'DK-1'})
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/svms-dk-cd",
+                         json={'dk_cd': 'DK-1', 'allow_unlisted': True,
+                               'confirmation': 'user_selected_dock'})
         self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
             'revision': r['revision'],
             'operations': [{'section_key': 'shipyard', 'block_type': 'paragraph',
@@ -2931,6 +2937,217 @@ class DockDailyTests(unittest.TestCase):
                         preview['blockers'])
         # 잘라 보내지는 않는다 -- 본문은 그대로 보이고 판정만 막는다.
         self.assertIn('가' * 40, preview['fields']['RMK_SYD'])
+
+    def _dock_candidates(self, pid, candidates, vsl_cd='D001'):
+        """맥 runner 가 하는 일: `SP_GET_DOCK` 결과를 프로젝트에 캐시한다."""
+        body = {'project_id': pid, 'candidates': candidates}
+        if vsl_cd is not None:
+            body['vsl_cd'] = vsl_cd
+        return self.client.post('/api/ext/dock-daily/svms-dock-candidates',
+                                headers={'X-API-Key': self._api_key()}, json=body)
+
+    def test_dock_candidates_refuse_another_vessels_result(self):
+        """🔴 후보 캐시는 `project_id` 만 믿으면 안 된다.
+
+        runner 가 선박별로 조회해 프로젝트마다 회신하는 구조라, 응답이 뒤바뀌거나 캐시가
+        밀리면 **다른 배의 dock 목록**이 이 프로젝트에 저장되고, 열린 게 1건이면 그대로
+        자동연결된다.  그 뒤 daily report 는 남의 입거에 쌓인다.
+        """
+        p, _ = self._dd_project_report('Dock 선박대조 DD')
+        wrong = self._dock_candidates(p['id'], [{'dk_cd': 'BGBBMD2608050001', 'status': 'I'}],
+                                      vsl_cd='BGBB')
+        self.assertEqual(409, wrong.status_code, wrong.get_data(as_text=True))
+        self.assertEqual('vsl_cd_mismatch', wrong.get_json()['code'])
+        missing = self._dock_candidates(p['id'], [{'dk_cd': 'BGBBMD2608050001', 'status': 'I'}],
+                                        vsl_cd=None)
+        self.assertEqual(400, missing.status_code)
+        # 거절된 요청은 캐시도 자동연결도 남기지 않는다.
+        listed = self.client.get(f"/api/dock-daily/projects/{p['id']}/svms-docks").get_json()
+        self.assertEqual([], listed['candidates'])
+        self.assertIsNone(listed['dk_cd'])
+
+    def test_dock_candidates_do_not_autobind_an_undocumented_status(self):
+        """🔴 SVMS `STATUS` 전집합은 문서화돼 있지 않다(실측: `I` 진행, `D` draft, `C` 완료).
+
+        "닫힌 게 아니면 후보" 라는 넓은 판정을 **자동연결까지** 그대로 쓰면, 모르는 코드를
+        진행중으로 단정하는 셈이다.  목록엔 남기고 자동연결에서만 뺀다 -- 형이 직접 고르는
+        길은 열려 있다.
+        """
+        p, _ = self._dd_project_report('Dock 미문서 STATUS DD')
+        out = self._dock_candidates(p['id'], [{'dk_cd': 'ATGRMD2607130001', 'status': 'Z'}]).get_json()
+        self.assertIsNone(out['auto_bound'])
+        self.assertIsNone(out['dk_cd'])
+        listed = self.client.get(f"/api/dock-daily/projects/{p['id']}/svms-docks").get_json()
+        self.assertTrue(listed['candidates'][0]['open'], '목록에서까지 지우면 고를 수가 없다')
+        # 실측된 진행중 코드는 그대로 자동연결된다.
+        p2, _ = self._dd_project_report('Dock 진행중 DD', '2026-08-19')
+        self.assertEqual('ATGRMD2607130001',
+                         self._dock_candidates(p2['id'], [{'dk_cd': 'ATGRMD2607130001',
+                                                           'status': 'I'}]).get_json()['auto_bound'])
+
+    def test_dock_candidates_route_is_inside_the_lock_too(self):
+        """🔴 후보 캐시 라우트도 `svms_dk_cd` 를 쓰는 **세 번째 입구**다.
+
+        잠금을 두 입구에만 걸면 runner 회신 한 번으로 우회된다.  (지금 계약상 잠긴
+        프로젝트는 dk_cd 가 이미 차 있어 COALESCE 가 no-op 이지만, 그건 다른 함수의
+        성질에 기댄 것이라 여기서 직접 막는다.)
+        """
+        p, r = self._dd_project_report('Dock 후보 잠금 DD')
+        with appmod.app.app_context():
+            appmod.execute("UPDATE dock_daily_report SET svms_sync_status='partial' WHERE id=?",
+                           (r['id'],))
+            appmod.execute("UPDATE dock_daily_project SET svms_dk_cd=NULL WHERE id=?", (p['id'],))
+        out = self._dock_candidates(p['id'], [{'dk_cd': 'ATGRMD2607130001',
+                                               'status': 'I'}]).get_json()
+        self.assertIsNone(out['auto_bound'])
+        self.assertIsNone(out['dk_cd'])
+        self.assertEqual(1, out['count'], '후보 목록 자체는 갱신돼야 한다')
+
+    def test_project_create_refuses_a_malformed_dock_no(self):
+        """🔴 생성도 `svms_dk_cd` writer 다 -- 여기만 검증이 없으면 형식이 깨진 채 굳는다."""
+        bad = self.client.post('/api/dock-daily/projects',
+                               json={'vessel_id': self.vessel, 'title': '생성 오타 DD',
+                                     'svms_dk_cd': '한글코드'})
+        self.assertEqual(400, bad.status_code)
+        blank = self.client.post('/api/dock-daily/projects',
+                                 json={'vessel_id': self.vessel, 'title': '생성 공백 DD',
+                                       'svms_dk_cd': '   '}).get_json()
+        self.assertIsNone(blank.get('svms_dk_cd'), '공백은 빈 값으로 저장한다')
+
+    def test_dock_link_patch_is_not_a_second_writer(self):
+        """🔴 잠기지 **않은** 프로젝트라도 PATCH 로 바꾸면 형식검증·목록대조·확인문자열이
+        전부 없는 두 번째 writer 가 된다.  변경은 전용 라우트로만 받는다."""
+        p, _ = self._dd_project_report('Dock PATCH DD')
+        res = self.client.patch(f"/api/dock-daily/projects/{p['id']}",
+                                json={'svms_dk_cd': 'ATGRMD2607130001'})
+        self.assertEqual(409, res.status_code, res.get_data(as_text=True))
+        self.assertEqual('dk_cd_route_required', res.get_json()['code'])
+
+    def test_dock_link_allow_unlisted_must_be_a_real_true(self):
+        """🔴 `allow_unlisted` 를 truthy 로 받으면 `"false"`·`0.1`·`[]` 같은 값이
+        목록대조를 통째로 끈다.  진짜 `True` 만 받는다."""
+        p, _ = self._dd_project_report('Dock unlisted DD')
+        self._dock_candidates(p['id'], [{'dk_cd': 'ATGRMD2607130001', 'status': 'I'}])
+        path = f"/api/dock-daily/projects/{p['id']}/svms-dk-cd"
+        for value in ('false', 'no', 1, [1]):
+            res = self.client.post(path, json={'dk_cd': 'BGBBMD2608050001',
+                                               'allow_unlisted': value,
+                                               'confirmation': 'user_selected_dock'})
+            self.assertEqual(409, res.status_code, repr(value))
+            self.assertEqual('dk_cd_unlisted', res.get_json()['code'], repr(value))
+
+    def test_dock_link_is_the_only_exit_from_the_dk_cd_blocker(self):
+        """🔴 `svms_dk_cd` 는 프로젝트 **생성 화면**에서만 넣을 수 있었다.
+
+        만들 때 비워 둔 프로젝트는 상신이 영구히 불가였고(형 캡쳐 2026-08-22: 라이브
+        프로젝트 2건 모두 NULL), 화면에는 사유도 없었다.  전용 라우트로 고칠 수 있어야
+        하고, 조회 목록·잠금 상태가 같은 응답에 있어야 화면이 안내를 만들 수 있다.
+        """
+        p, r = self._dd_project_report('Dock 연결 DD')
+        listed = self.client.get(f"/api/dock-daily/projects/{p['id']}/svms-docks").get_json()
+        self.assertIsNone(listed['dk_cd'])
+        self.assertFalse(listed['locked'])
+        self.assertEqual([], listed['candidates'])
+
+        self._dock_candidates(p['id'], [
+            {'dk_cd': 'ATGRMD2607130001', 'subj': 'DD 2026', 'status': 'I'},
+            {'dk_cd': 'ATGR22062701', 'status': 'C', 'dk_out_date': '20211105'},
+        ])
+        listed = self.client.get(f"/api/dock-daily/projects/{p['id']}/svms-docks").get_json()
+        self.assertEqual(['ATGRMD2607130001', 'ATGR22062701'],
+                         [c['dk_cd'] for c in listed['candidates']])
+        # 열린 후보가 딱 1건이라 자동 연결된다.
+        self.assertEqual('ATGRMD2607130001', listed['dk_cd'])
+        with self._svms_env():
+            preview = self.client.get(
+                f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+        self.assertEqual([], preview['blockers'])
+        self.assertTrue(preview['publishable'])
+
+    def test_dock_link_refuses_a_typo_and_needs_an_explicit_confirmation(self):
+        """🔴 오타 한 글자면 **다른 배의 dock** 에 daily report 가 저장된다."""
+        p, _ = self._dd_project_report('Dock 오타 DD')
+        self._dock_candidates(p['id'], [{'dk_cd': 'ATGRMD2607130001', 'status': 'I'},
+                                        {'dk_cd': 'BGBBMD2608050001', 'status': 'D'}])
+        path = f"/api/dock-daily/projects/{p['id']}/svms-dk-cd"
+        # 확인 문자열이 없으면 통과하지 않는다.
+        no_conf = self.client.post(path, json={'dk_cd': 'ATGRMD2607130001'})
+        self.assertEqual(400, no_conf.status_code)
+        self.assertEqual('confirmation_required', no_conf.get_json()['code'])
+        # 열린 후보가 2건이라 자동 연결은 안 됐다.
+        self.assertIsNone(self.client.get(
+            f"/api/dock-daily/projects/{p['id']}/svms-docks").get_json()['dk_cd'])
+
+        bad = self.client.post(path, json={'dk_cd': '한', 'confirmation': 'user_selected_dock'})
+        self.assertEqual(400, bad.status_code)
+        self.assertEqual('dk_cd_invalid', bad.get_json()['code'])
+
+        unlisted = self.client.post(path, json={'dk_cd': 'ATGRMD2607130002',
+                                                'confirmation': 'user_selected_dock'})
+        self.assertEqual(409, unlisted.status_code)
+        self.assertEqual('dk_cd_unlisted', unlisted.get_json()['code'])
+        self.assertIn('ATGRMD2607130001', unlisted.get_json()['candidates'])
+
+        forced = self.client.post(path, json={'dk_cd': 'ATGRMD2607130002', 'allow_unlisted': True,
+                                              'confirmation': 'user_selected_dock'})
+        self.assertEqual(200, forced.status_code, forced.get_data(as_text=True))
+        self.assertTrue(forced.get_json()['changed'])
+        # 같은 값 재선택은 성공이지만 바뀐 게 없다 -- 화면이 "연결했습니다" 로 뭉개면 안 된다.
+        again = self.client.post(path, json={'dk_cd': 'ATGRMD2607130002',
+                                             'confirmation': 'user_selected_dock'}).get_json()
+        self.assertFalse(again['changed'])
+
+    def test_dock_link_is_locked_once_a_report_went_to_svms_at_every_entrance(self):
+        """🔴 연결을 바꾸면 **이후 보고서가 다른 dock 으로 간다**.
+
+        입구가 둘(전용 라우트, 프로젝트 `PATCH`)이라 하나만 잠그면 나머지로 우회된다.
+        """
+        p, r = self._dd_project_report('Dock 잠금 DD')
+        self._dock_candidates(p['id'], [{'dk_cd': 'ATGRMD2607130001', 'status': 'I'}])
+        with appmod.app.app_context():
+            appmod.execute("UPDATE dock_daily_report SET svms_sync_status='synced' WHERE id=?",
+                           (r['id'],))
+        listed = self.client.get(f"/api/dock-daily/projects/{p['id']}/svms-docks").get_json()
+        self.assertTrue(listed['locked'])
+        self.assertIn('Dock 연결', listed['locked_reason'])
+
+        direct = self.client.post(f"/api/dock-daily/projects/{p['id']}/svms-dk-cd",
+                                  json={'dk_cd': 'BGBBMD2608050001', 'allow_unlisted': True,
+                                        'confirmation': 'user_selected_dock'})
+        self.assertEqual(409, direct.status_code)
+        self.assertEqual('dk_cd_locked', direct.get_json()['code'])
+
+        via_patch = self.client.patch(f"/api/dock-daily/projects/{p['id']}",
+                                      json={'svms_dk_cd': 'BGBBMD2608050001'})
+        self.assertEqual(409, via_patch.status_code, via_patch.get_data(as_text=True))
+        self.assertEqual('dk_cd_locked', via_patch.get_json()['code'])
+        # 같은 값 PATCH 는 변경이 아니므로 통과해야 한다(다른 필드 저장이 막히면 안 된다).
+        same = self.client.patch(f"/api/dock-daily/projects/{p['id']}",
+                                 json={'svms_dk_cd': 'ATGRMD2607130001', 'title': '이름만 변경'})
+        self.assertEqual(200, same.status_code, same.get_data(as_text=True))
+
+    def test_dock_candidates_never_overwrite_a_human_pick(self):
+        """🔴 이미 붙은 값을 자동으로 갈아치우면 형이 고른 dock 이 조용히 바뀐다."""
+        p, _ = self._dd_project_report('Dock 자동연결 DD')
+        self.client.post(f"/api/dock-daily/projects/{p['id']}/svms-dk-cd",
+                         json={'dk_cd': 'ATGRMD2607130001', 'allow_unlisted': True,
+                               'confirmation': 'user_selected_dock'})
+        out = self._dock_candidates(p['id'], [{'dk_cd': 'BGBBMD2608050001', 'status': 'I'}]).get_json()
+        self.assertEqual('ATGRMD2607130001', out['dk_cd'])
+        self.assertIsNone(out['auto_bound'])
+        # 후보가 모호하면(열린 게 2건) 자동 연결하지 않는다.
+        p2, _ = self._dd_project_report('Dock 모호 DD', '2026-08-19')
+        out2 = self._dock_candidates(p2['id'], [{'dk_cd': 'ATGRMD2607130001', 'status': 'I'},
+                                                {'dk_cd': 'BGBBMD2608050001', 'status': 'D'}]).get_json()
+        self.assertIsNone(out2['dk_cd'])
+        self.assertIsNone(out2['auto_bound'])
+        # 닫힌 후보만 있으면 자동 연결하지 않는다 -- 지난 입거에 daily report 를 쓰는 사고.
+        p3, _ = self._dd_project_report('Dock 종료 DD', '2026-08-18')
+        out3 = self._dock_candidates(p3['id'], [
+            {'dk_cd': 'ATGR22062701', 'status': 'C', 'dk_out_date': '20211105'}]).get_json()
+        self.assertIsNone(out3['dk_cd'])
+        listed = self.client.get(f"/api/dock-daily/projects/{p3['id']}/svms-docks").get_json()
+        self.assertFalse(listed['candidates'][0]['open'])
 
     def _final_section_project(self, title):
         """확정본에 내용이 든 special 섹션 + 열려 있는 다음 일자 보고서."""

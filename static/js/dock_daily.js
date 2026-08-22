@@ -766,8 +766,50 @@
       push.title=allowed?'미리보기 내용을 SVMS에 반영'
         :(!v.publishable?'SVMS 저장 계약과 byte limit 검증 전에는 반영할 수 없습니다.':`${S.title(sync)} — 다시 상신할 수 없습니다.`);
       $('#dd-preview-status').textContent=allowed?''
-        :(!v.publishable?'실제 푸싱은 SVMS 저장 계약 검증 후 활성화됩니다.':(S.guidance(sync)||`${S.title(sync)} 상태입니다.`));$('#dd-preview-content').innerHTML=`<p class="dd-modal-intro"><b>${v.publishable?'SVMS 반영 준비 완료':'Preview only 안전게이트'}</b><br>DK_CD와 byte limit 계약이 모두 확인되어야 실제 반영됩니다.<br>표·사진은 SVMS 본문에 넣지 않습니다(이메일 본문에만 나갑니다).</p><div class="dd-svms-grid"><b>DK_CD</b><pre>${esc(f.DK_CD||'')}</pre><b>DR_DT</b><pre>${esc(f.DR_DT||'')}</pre><b>Shipyard</b><pre>${esc(f.RMK_SYD||'')}</pre><b>Vendor</b><pre>${esc(f.RMK_VNDR||'')}</pre><b>Remark</b><pre>${esc(f.RMK||'')}</pre></div>`;}
+        :(!v.publishable?'실제 푸싱은 SVMS 저장 계약 검증 후 활성화됩니다.':(S.guidance(sync)||`${S.title(sync)} 상태입니다.`));
+      // 🔴 사유를 적는다. 전엔 "상신 불가" 만 떠서 형이 뭘 고쳐야 하는지 화면에 없었다.
+      const blockers=S.blockerList(v);
+      const why=blockers.length?`<div class="dd-svms-blockers"><b>상신 불가 사유</b><ul>${blockers.map(b=>`<li>${esc(b)}</li>`).join('')}</ul></div>`:'';
+      $('#dd-preview-content').innerHTML=`<p class="dd-modal-intro"><b>${v.publishable?'SVMS 반영 준비 완료':'Preview only 안전게이트'}</b><br>DK_CD와 byte limit 계약이 모두 확인되어야 실제 반영됩니다.<br>표·사진은 SVMS 본문에 넣지 않습니다(이메일 본문에만 나갑니다).</p>${why}<div id="dd-svms-dock-link"></div><div class="dd-svms-grid"><b>DK_CD</b><pre>${esc(f.DK_CD||'')}</pre><b>DR_DT</b><pre>${esc(f.DR_DT||'')}</pre><b>Shipyard</b><pre>${esc(f.RMK_SYD||'')}</pre><b>Vendor</b><pre>${esc(f.RMK_VNDR||'')}</pre><b>Remark</b><pre>${esc(f.RMK||'')}</pre></div>`;
+      if(S.needsDockLink(v)) renderDockLink();}
     previewModal.hidden=false;document.body.style.overflow='hidden';
+  }
+  /* `DK_CD 미설정` 을 미리보기 안에서 바로 푼다.
+   * 🔴 전엔 프로젝트 **생성 화면**에만 입력칸이 있어서, 비워 두고 만든 프로젝트는 상신이
+   *    영구히 불가였다(라이브 프로젝트 2건 다 그랬다). 후보는 맥 러너가 SVMS `SP_GET_DOCK`
+   *    으로 채워 둔 캐시이고, 열린 후보가 딱 1건이면 서버가 이미 자동연결해 둔다. */
+  async function renderDockLink(){
+    const host=$('#dd-svms-dock-link'); if(!host||!state.project) return;
+    host.innerHTML='<p class="dd-field-help">SVMS 입거(Dock) 후보 조회 중…</p>';
+    let info;
+    try{info=await api(`/api/dock-daily/projects/${state.project.id}/svms-docks`);}
+    catch(e){host.innerHTML=`<p class="dd-field-help">Dock 후보를 불러오지 못했습니다: ${esc(e.message||String(e))}</p>`;return;}
+    if(info.locked){host.innerHTML=`<p class="dd-field-help">${esc(info.locked_reason||'Dock 연결이 잠겨 있습니다.')}</p>`;return;}
+    const S=window.DockDailySVMS,cands=info.candidates||[];
+    if(!cands.length){host.innerHTML=`<p class="dd-field-help">SVMS 입거 후보가 아직 없습니다(선박 ${esc(info.vsl_cd||'')}). 맥 러너가 SVMS를 조회한 뒤 다시 열어보세요.</p>`;return;}
+    host.innerHTML=`<div class="dd-svms-dock"><label class="form-field"><span class="form-label">SVMS 입거(Dock) 연결</span><select id="dd-dock-select" class="dd-select">${cands.map(c=>`<option value="${esc(c.dk_cd)}" data-open="${c.open===false?'0':'1'}"${c.dk_cd===info.dk_cd?' selected':''}>${esc(S.candidateLabel(c))}</option>`).join('')}</select></label><button type="button" class="dd-btn" id="dd-dock-bind">이 Dock에 연결</button> <span id="dd-dock-status" class="dd-field-help"></span></div>`;
+    $('#dd-dock-bind').onclick=()=>bindDockCd();
+  }
+  async function bindDockCd(){
+    const sel=$('#dd-dock-select'),st=$('#dd-dock-status'),btn=$('#dd-dock-bind');
+    if(!sel||!state.project)return;
+    const opt=sel.options[sel.selectedIndex];
+    const dk=sel.value,label=opt.textContent;
+    /* 🔴 종료된 입거도 고를 수는 있게 두되(SVMS 상태가 늦게 닫히는 일이 있다) 경고는 반드시
+       띄운다. 앱과 같은 문구다 -- 조용히 붙이면 남의 끝난 dock 에 daily report 가 쌓인다. */
+    const warn=opt.dataset.open==='0'
+      ? '\n\n⚠️ 이 입거는 SVMS에서 이미 종료(출거·완료)된 것으로 보입니다.'
+      : '';
+    if(!confirm(`이 프로젝트의 SVMS 입거를 다음으로 연결할까요?\n\n${label}${warn}\n\n이후 이 프로젝트의 Daily Report는 이 Dock에 저장됩니다.`))return;
+    btn.disabled=true;st.textContent='연결 중…';
+    try{
+      await api(`/api/dock-daily/projects/${state.project.id}/svms-dk-cd`,
+                {...json({dk_cd:dk,confirmation:'user_selected_dock'}),method:'POST'});
+      state.project.svms_dk_cd=dk;
+      state.projects=(state.projects||[]).map(p=>p.id===state.project.id?state.project:p);
+      await openPreview('svms');            // DK_CD·publishable 을 서버에서 다시 읽는다
+      notice('SVMS 입거(Dock)를 연결했습니다.');
+    }catch(e){btn.disabled=false;st.textContent='연결 실패: '+(e.message||String(e));}
   }
   async function copyEmail(){
     const v=state.preview?.data;if(!v)return;const plain=`제목: ${v.subject}\n\n${v.text}`;

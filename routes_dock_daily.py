@@ -348,6 +348,11 @@ def projects_post():
                                                 data.get('dock_manager_project_ids', [])))
         if not primary and data.get('dock_manager_project_ids'):
             primary = source_ids[0] if source_ids else None
+        # 🔴 생성도 `svms_dk_cd` writer 다. 형식검증이 없으면 오타·전각문자가 그대로 들어가고
+        #    그 프로젝트의 daily report 가 열리지 않는 dock 키로 상신된다(전용 라우트와 같은 규칙).
+        new_dk = str(data.get('svms_dk_cd') or '').strip()
+        if new_dk and not DK_CD_RE.match(new_dk):
+            raise ValueError('DK_CD 형식이 올바르지 않습니다')
     except (TypeError, ValueError) as e:
         return _error(str(e))
     v = query('SELECT vsl_cd, imo FROM vessels WHERE id=?', (vessel_id,), one=True)
@@ -362,7 +367,7 @@ def projects_post():
              dates['berthing_date'], dates['dock_in_date'], dates['dock_out_date'], dates['departure_date'],
              dates['active_from'], dates['active_to'], 1 if data.get('auto_generate') else 0,
              primary, json.dumps(source_ids, ensure_ascii=False),
-             data.get('svms_dk_cd')))
+             new_dk or None))
         pid = cur.lastrowid
         _seed_sections(db, pid)
         for i, item in enumerate(data.get('special_sections') or data.get('sections') or []):
@@ -445,6 +450,20 @@ def projects_patch(pid):
         _validate_active_window(final_auto, final_from, final_to)
     except ValueError as e:
         return _error(str(e))
+    # 🔴 Dock 연결 **변경은 이 라우트에서 못 한다**. 잠금만 걸어 두면 형식검증(`DK_CD_RE`)·
+    #    조회목록 대조·확인문자열을 전부 우회하는 두 번째 writer 가 남는다 -- 오타 한 글자면
+    #    다른 배의 dock 에 daily report 가 저장된다. 값이 그대로면 통과시킨다(다른 필드
+    #    저장이 막히면 안 된다). 화면 writer 는 없다: 웹은 생성 POST 만, iOS 는 이 키를
+    #    보내는 UI 가 없다(2026-08-22 전수확인).
+    if 'svms_dk_cd' in data:
+        raw = data['svms_dk_cd']
+        new_dk = '' if raw is None else str(raw).strip()
+        if new_dk != (current['svms_dk_cd'] or '').strip():
+            reason = _dk_cd_lock_reason(pid)
+            if reason:
+                return _error(reason, 409, code='dk_cd_locked')
+            return _error('Dock 연결은 SVMS Dock 연결 화면에서만 바꿀 수 있습니다', 409,
+                          code='dk_cd_route_required')
     allowed = {'title', 'vsl_cd', 'imo', 'svms_dk_cd', 'auto_generate', 'drydock_primary_vessel_id'}
     sets, vals = [], []
     for key in allowed:
@@ -2075,6 +2094,123 @@ def _svms_limit(raw):
     return value if value > 0 else None
 
 
+DK_CD_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{3,79}$')
+DOCK_CANDIDATE_TEXT_KEYS = ('subj', 'status', 'status_h', 'dk_in_date', 'dk_out_date', 'vndr_nm')
+#  Dock 연결을 바꾸면 **이후 보고서가 다른 dock 으로 간다**. 이미 SVMS 로 넘어간(또는
+#  결과를 기다리는) 보고서가 있는 프로젝트는 잠근다.  상태 목록은 `_dk_cd_lock_reason()`
+#  의 SQL 리터럴이 정본이다(placeholder 를 문자열로 조립하지 않는다 -- SQL 구성 게이트).
+
+
+def _dock_candidate_open(cand):
+    """이 dock 이 아직 daily report 를 받을 수 있는가.
+
+    🔴 SVMS `STATUS` 코드 전집합은 문서화돼 있지 않다(실측값만: 진행중 `I`, draft `D`,
+       완료 `C`). 그래서 **판정을 좁게** 한다 -- 출거일이 찍혔거나 완료(`C`)면 닫힌 것으로
+       보고 나머지는 "열린 후보" 로만 둔다. 이 값으로 자동연결까지 하려면 열린 후보가
+       **딱 1건**이어야 한다(§ `svms_dock_candidates`). 모르는 코드를 진행중으로 단정해서
+       엉뚱한 dock 에 daily report 를 쓰는 게 최악이다.
+    """
+    if (cand.get('dk_out_date') or '').strip():
+        return False
+    return 'C' not in ((cand.get('status') or '').strip().upper(),
+                       (cand.get('status_h') or '').strip().upper())
+
+
+#  🔴 자동연결에만 쓰는 **실측된** 진행중 코드. `_dock_candidate_open()` 은 "닫힌 게 아니면
+#  후보" 라는 넓은 판정이라 미문서 코드도 목록에 뜨는데, 그걸 그대로 자동연결까지 하면
+#  "모르는 코드를 진행중으로 단정하지 않는다" 는 원칙과 정면충돌한다. 목록엔 남기고
+#  **자동연결에서만** 뺀다(형이 직접 고르는 길은 그대로 열려 있다).
+DOCK_AUTOBIND_STATUS = ('I', 'D')
+
+
+def _dock_candidate_autobindable(cand):
+    if not _dock_candidate_open(cand):
+        return False
+    return (cand.get('status') or '').strip().upper() in DOCK_AUTOBIND_STATUS
+
+
+def _dock_candidates(project_row):
+    try:
+        raw = project_row['svms_dock_candidates_json']
+    except (IndexError, KeyError):          # 마이그레이션 전 DB
+        return []
+    value = _json(raw or '[]', [])
+    return [c for c in value if isinstance(c, dict)] if isinstance(value, list) else []
+
+
+def _dk_cd_lock_reason(pid):
+    row = query("SELECT COUNT(*) n FROM dock_daily_report WHERE project_id=? AND svms_sync_status "
+                "IN ('approved','submitting','synced','unknown','partial')", (pid,), one=True)
+    if row and row['n']:
+        return 'SVMS로 넘어간 보고서가 있어 Dock 연결을 바꿀 수 없습니다(%d건)' % row['n']
+    return None
+
+
+@bp.route('/api/dock-daily/projects/<int:pid>/svms-docks')
+@login_required
+def svms_docks(pid):
+    """이 프로젝트에 연결된 SVMS Dock 과, 맥 runner 가 캐시해 둔 후보 목록."""
+    p = _project(pid)
+    if not p:
+        return _error('project not found', 404)
+    reason = _dk_cd_lock_reason(pid)
+    return jsonify({'project_id': pid, 'vsl_cd': (p['vsl_cd'] or p['vessel_vsl_cd'] or '').strip(),
+                    'dk_cd': (p['svms_dk_cd'] or '').strip() or None,
+                    'synced_at': (_dict(p) or {}).get('svms_dock_synced_at'),
+                    'locked': bool(reason), 'locked_reason': reason,
+                    'candidates': _dock_candidates(p)})
+
+
+@bp.route('/api/dock-daily/projects/<int:pid>/svms-dk-cd', methods=['POST'])
+@login_required
+def svms_bind_dk_cd(pid):
+    """SVMS Dock 연결(=`DK_CD`)을 사람이 고른 값으로 고정한다.
+
+    미리보기의 `DK_CD 미설정` blocker 를 푸는 유일한 경로다. 전엔 프로젝트 **생성 화면**
+    에서만 넣을 수 있어서, 만들 때 비워 둔 프로젝트는 상신이 영구히 불가였다.
+    """
+    p = _project(pid)
+    if not p:
+        return _error('project not found', 404)
+    data = _body()
+    if data.get('confirmation') != 'user_selected_dock':
+        return _error('연결할 SVMS Dock 확인이 필요합니다', 400, code='confirmation_required')
+    raw = data.get('dk_cd')
+    dk_cd = '' if raw is None else str(raw).strip()
+    if dk_cd and not DK_CD_RE.match(dk_cd):
+        return _error('DK_CD 형식이 올바르지 않습니다', 400, code='dk_cd_invalid')
+    current = (p['svms_dk_cd'] or '').strip()
+    if dk_cd == current:
+        return jsonify({'project_id': pid, 'dk_cd': dk_cd or None, 'changed': False})
+    reason = _dk_cd_lock_reason(pid)
+    if reason:
+        return _error(reason, 409, code='dk_cd_locked')
+    known = [str(c.get('dk_cd') or '').strip() for c in _dock_candidates(p)]
+    # 🔴 오타 한 글자면 **다른 배의 dock** 에 daily report 가 저장된다. 조회 목록에 없는
+    #    값은 형이 한 번 더 명시(`allow_unlisted`)해야 통과시킨다.
+    # 🔴 `is not True` 다 -- JSON `"false"` 같은 문자열은 truthy 라서 `not data.get(...)` 로
+    #    보면 오타 방어가 조용히 열린다.
+    if dk_cd and dk_cd not in known and data.get('allow_unlisted') is not True:
+        return _error('SVMS 조회 목록에 없는 DK_CD입니다', 409, code='dk_cd_unlisted',
+                      candidates=sorted(k for k in known if k))
+    db = get_db()
+    # 🔴 잠금을 UPDATE 와 **한 문장**에서 본다. 위 `_dk_cd_lock_reason()` 만 믿으면 확인과
+    #    쓰기 사이에 다른 요청이 보고서를 승인/상신해 잠금을 우회한다(= 그 보고서가 넘어간
+    #    dock 과 프로젝트 연결이 갈린다). 아래 상태 목록은 `_dk_cd_lock_reason()` 과 같아야 한다.
+    cur = db.execute("UPDATE dock_daily_project SET svms_dk_cd=?, "
+                     "updated_at=datetime('now','localtime') "
+                     "WHERE id=? AND COALESCE(svms_dk_cd,'')=? AND NOT EXISTS ("
+                     "  SELECT 1 FROM dock_daily_report WHERE project_id=? AND svms_sync_status "
+                     "  IN ('approved','submitting','synced','unknown','partial'))",
+                     (dk_cd or None, pid, current, pid))
+    if cur.rowcount != 1:
+        db.rollback()
+        return _error('프로젝트 Dock 연결이 이미 바뀌었습니다. 다시 확인하세요', 409,
+                      code='approval_race')
+    db.commit()
+    return jsonify({'project_id': pid, 'dk_cd': dk_cd or None, 'changed': True})
+
+
 def _svms_payload_hash(preview):
     raw = json.dumps(preview['fields'], ensure_ascii=False, sort_keys=True,
                      separators=(',', ':')).encode('utf-8')
@@ -2227,6 +2363,86 @@ def svms_reconcile(rid):
     db.commit()
     return jsonify({'id': rid, 'status': new_status, 'dk_seq': seq or (r['svms_dk_seq'] or None),
                     'message': '수동 확인 결과를 기록했습니다'})
+
+
+@bp.route('/api/ext/dock-daily/svms-dock-targets')
+@api_key_required
+def svms_dock_targets():
+    """맥 runner 가 "어느 선박의 dock 목록을 조회하면 되는지" 만 받아 간다."""
+    out = []
+    for r in query('SELECT p.id, p.title, p.vsl_cd, p.svms_dk_cd, v.vsl_cd vessel_vsl_cd '
+                   'FROM dock_daily_project p JOIN vessels v ON v.id=p.vessel_id '
+                   'ORDER BY p.id LIMIT 200'):
+        vsl_cd = (r['vsl_cd'] or r['vessel_vsl_cd'] or '').strip()
+        if not vsl_cd:
+            continue
+        out.append({'project_id': r['id'], 'title': r['title'], 'vsl_cd': vsl_cd,
+                    'dk_cd': (r['svms_dk_cd'] or '').strip() or None})
+    return jsonify({'count': len(out), 'targets': out})
+
+
+@bp.route('/api/ext/dock-daily/svms-dock-candidates', methods=['POST'])
+@api_key_required
+def svms_dock_candidates():
+    """runner 가 조회한 `SP_GET_DOCK` 행을 후보로 캐시한다(+모호하지 않을 때만 자동연결)."""
+    data = request.get_json(silent=True) or {}
+    try:
+        pid = int(data.get('project_id'))
+    except (TypeError, ValueError):
+        return _error('project_id is required')
+    p = _project(pid)
+    if not p:
+        return _error('project not found', 404)
+    # 🔴 runner 가 **어느 선박을 조회한 결과인지** 함께 보내야 한다. project_id 만 믿으면
+    #    응답이 뒤바뀌거나(비동기 조회) runner 캐시가 밀렸을 때 다른 배의 dock 목록이
+    #    이 프로젝트에 캐시되고, 열린 후보가 1건이면 그대로 자동연결된다.
+    want = (p['vsl_cd'] or p['vessel_vsl_cd'] or '').strip().upper()
+    got = str(data.get('vsl_cd') or '').strip().upper()
+    if not got:
+        return _error('vsl_cd is required')
+    if got != want:
+        return _error('vsl_cd mismatch: project is %s' % (want or '(none)'), 409,
+                      code='vsl_cd_mismatch')
+    raw = data.get('candidates')
+    if not isinstance(raw, list):
+        return _error('candidates must be a list')
+    cands, seen = [], set()
+    for item in raw:
+        if not isinstance(item, dict) or len(cands) >= 20:
+            continue
+        dk_cd = str(item.get('dk_cd') or '').strip()
+        if not dk_cd or dk_cd in seen or not DK_CD_RE.match(dk_cd):
+            continue
+        seen.add(dk_cd)
+        cand = {k: (str(item.get(k) or '').strip()[:120] or None) for k in DOCK_CANDIDATE_TEXT_KEYS}
+        cand['dk_cd'] = dk_cd
+        cand['open'] = _dock_candidate_open(cand)
+        cands.append(cand)
+    # 잘려서 깨진 JSON 을 저장하지 않는다. 넘치면 뒤에서부터 후보를 버린다.
+    payload = json.dumps(cands, ensure_ascii=False)
+    while len(payload) > 20000 and cands:
+        cands.pop()
+        payload = json.dumps(cands, ensure_ascii=False)
+    auto = [c['dk_cd'] for c in cands if _dock_candidate_autobindable(c)]
+    # 🔴 자동연결은 **아직 안 붙었고 + 실측 진행중 후보가 딱 1건**일 때만. 이미 붙은 값을
+    #    자동으로 갈아치우면 형이 고른 dock 이 조용히 바뀌고, 그 뒤 daily report 가 남의
+    #    dock 에 쌓인다. `COALESCE(NULLIF(...))` 이라 읽은 뒤 사람이 먼저 골랐어도 그 값이 이긴다.
+    bound = auto[0] if len(auto) == 1 else None
+    # 🔴 잠긴 프로젝트에서는 아예 쓰지 않는다. 지금 계약상 잠김이면 dk_cd 가 이미 있어
+    #    COALESCE 가 no-op 이지만, 그건 `publishable` 이 DK_CD 를 요구한다는 **다른 함수의
+    #    성질**에 기대는 것이다. 세 번째 writer 를 잠금 밖에 두지 않는다.
+    if bound and _dk_cd_lock_reason(pid):
+        bound = None
+    db = get_db()
+    db.execute("UPDATE dock_daily_project SET svms_dock_candidates_json=?, "
+               "svms_dock_synced_at=datetime('now','localtime'), "
+               "svms_dk_cd=COALESCE(NULLIF(svms_dk_cd,''),?), "
+               "updated_at=datetime('now','localtime') WHERE id=?", (payload, bound, pid))
+    db.commit()
+    fresh = _project(pid)
+    return jsonify({'project_id': pid, 'count': len(cands),
+                    'dk_cd': (fresh['svms_dk_cd'] or '').strip() or None,
+                    'auto_bound': bound if bound and not (p['svms_dk_cd'] or '').strip() else None})
 
 
 @bp.route('/api/ext/dock-daily/svms-claim', methods=['POST'])

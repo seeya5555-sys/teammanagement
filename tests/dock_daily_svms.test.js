@@ -60,3 +60,32 @@ test('모든 상태가 제목과 색을 가진다', () => {
   assert.equal(S.tone('failed'), 'bad');
   assert.equal(S.tone('partial'), 'warn');
 });
+
+test('blockers 는 배열이 아니어도 화면을 죽이지 않는다', () => {
+  // 서버가 이 키를 안 주는 갈래(이메일 미리보기)도 같은 함수를 지나간다.
+  assert.deepEqual(S.blockerList(null), []);
+  assert.deepEqual(S.blockerList({}), []);
+  assert.deepEqual(S.blockerList({ blockers: 'DK_CD 미설정' }), []);
+  assert.deepEqual(S.blockerList({ blockers: ['  DK_CD 미설정 ', '', null, 'byte 한도 초과: RMK'] }),
+                   ['DK_CD 미설정', 'byte 한도 초과: RMK']);
+});
+
+test('Dock 연결 UI 는 DK_CD blocker 에서만 뜬다', () => {
+  // 🔴 byte 한도 초과는 본문 편집 문제라 Dock 연결로 못 푼다. 여기서 UI 를 띄우면
+  //    형이 Dock 을 바꿔가며 고쳐지지 않는 이유를 찾게 된다.
+  assert.ok(S.needsDockLink({ blockers: ['DK_CD 미설정'] }));
+  assert.equal(S.needsDockLink({ blockers: ['byte 한도 초과: RMK'] }), false);
+  assert.equal(S.needsDockLink({ blockers: ['RMK byte 한도 계약 미설정'] }), false);
+  assert.equal(S.needsDockLink({}), false);
+});
+
+test('후보 표기는 종료된 입거를 눈에 보이게 구분한다', () => {
+  // 지난 입거에 오늘 daily report 를 쓰는 게 제일 흔한 사고다.
+  assert.equal(S.candidateLabel(null), '');
+  assert.equal(S.candidateLabel({ dk_cd: 'ATGRMD2607130001', subj: 'DD 2026', status: 'I', open: true }),
+               'ATGRMD2607130001 · DD 2026 · (STATUS I)');
+  const closed = S.candidateLabel({ dk_cd: 'ATGR22062701', status: 'C', dk_out_date: '20211105', open: false });
+  assert.match(closed, /종료된 입거/);
+  assert.match(closed, /출거 20211105/);
+  assert.equal(S.candidateLabel({ dk_cd: 'ATGRMD2607130001', open: true }), 'ATGRMD2607130001');
+});

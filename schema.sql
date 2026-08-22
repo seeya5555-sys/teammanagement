@@ -197,6 +197,10 @@ CREATE TABLE IF NOT EXISTS dock_daily_project (
     drydock_primary_vessel_id TEXT,
     drydock_source_vessel_ids_json TEXT NOT NULL DEFAULT '[]',
     svms_dk_cd TEXT,
+    -- SVMS 입거(Dock) 후보 캐시.  TRMT 서버는 사내망 SVMS 에 못 붙으므로 맥 runner 가
+    -- `SP_GET_DOCK` 결과를 여기에 넣어 주고, 사람은 그 목록에서 `svms_dk_cd` 를 고른다.
+    svms_dock_candidates_json TEXT,
+    svms_dock_synced_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE RESTRICT

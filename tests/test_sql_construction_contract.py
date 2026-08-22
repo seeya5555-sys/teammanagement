@@ -80,8 +80,19 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #   · count/hash 는 `repository_fingerprints()` 실측으로 갱신했다(2026-08-15 교훈).
 #   ⚠️ 이 site 는 직전 커밋(cb6a8414e 계열)이 들여왔는데 baseline 갱신이 빠져 게이트가 red 로
 #      push 됐다. 게이트 red 상태 push 는 다음 커밋의 진짜 위험 SQL 을 가린다.
-EXPECTED_COUNT = 165
-EXPECTED_SHA256 = "47021f05cda1b0fc93918be994c1e45ec0fe6d03228dc51060e1f12c31779d10"
+# 2026-08-22 baseline update (2) — `app.py:_auto_migrate()` 의 dock_daily_project SVMS dock
+#   후보 캐시 ALTER 1 site (`app.py:execute:ddl` 이 5 -> 6). 검토:
+#   · `ddl` 은 같은 문장 안의 **인라인 리터럴 튜플**에서만 온다
+#     (svms_dock_candidates_json / svms_dock_synced_at). request·설정·DB 값이 식별자나 DDL
+#     문법에 닿는 경로가 없다. 위 2026-08-19/08-20/08-22 ALTER 항목과 같은 패턴이다.
+#   · 부팅 경로(배포마다 1회)에서만 돌고 요청 처리 중엔 실행되지 않는다.
+#   · 같은 커밋의 신규 라우트 4개(`svms-docks` / `svms-dk-cd` / ext targets·candidates)는
+#     전부 **완전 리터럴 SQL + `?` 바인딩**이라 여기에 site 를 추가하지 않는다. 특히
+#     `_dk_cd_lock_reason()` 의 상태 목록은 placeholder 를 `join` 으로 조립하지 않고
+#     리터럴 `IN (...)` 으로 뒀다 — 조립하면 이 게이트에 새 site 가 하나 더 생긴다.
+#   · count/hash 는 `repository_fingerprints()` 실측으로 갱신했다(2026-08-15 교훈).
+EXPECTED_COUNT = 166
+EXPECTED_SHA256 = "15a1099b17382796f1315b495ce475e2505a0ae7ef791f0ddb62a54ceb8ea7e1"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

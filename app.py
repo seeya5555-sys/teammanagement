@@ -2024,6 +2024,20 @@ def _auto_migrate():
         except Exception as e:
             print(f'[auto_migrate] dock_daily_report SVMS queue 점검 건너뜀: {e}')
 
+        # SVMS 입거(Dock) 후보 캐시. 맥 runner 가 채우고 사람이 그 중에서 DK_CD 를 고른다.
+        try:
+            cols = {r['name'] for r in conn.execute('PRAGMA table_info(dock_daily_project)').fetchall()}
+            for name, ddl in (
+                ('svms_dock_candidates_json',
+                 'ALTER TABLE dock_daily_project ADD COLUMN svms_dock_candidates_json TEXT'),
+                ('svms_dock_synced_at',
+                 'ALTER TABLE dock_daily_project ADD COLUMN svms_dock_synced_at TEXT'),
+            ):
+                if name not in cols:
+                    conn.execute(ddl)
+        except Exception as e:
+            print(f'[auto_migrate] dock_daily_project SVMS dock 캐시 점검 건너뜀: {e}')
+
         conn.commit()
     finally:
         conn.close()
