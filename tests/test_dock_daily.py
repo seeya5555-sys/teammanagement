@@ -935,8 +935,12 @@ class DockDailyTests(unittest.TestCase):
         # 저장 대상에서 제외 — textarea 가 없어 _edit 가 붙을 일도 없지만, 다른 경로로
         # 표시가 붙어도 paragraph 로 덮어쓰지 않게 한 겹 더 막는다.
         self.assertIn("!b._delete&&isTextBlock(b)&&(b._new||b._edit)", script)
-        # 표만 있는 섹션도 글 칸을 받아야 한다(앱 DockDailySectionEditing 과 같은 판정).
-        self.assertIn('b.section_key === s.section_key && isTextBlock(b)', script)
+        # 🔴 표를 담은 special 섹션에는 글 칸을 만들지 않는다(형 지시 2026-08-22).
+        # 앱 `DockDailySectionEditing.needsTextDraft` 와 같은 **값 기준** 판정이다 —
+        # 표 전용 플래그가 없으므로 "special 인데 표가 들어 있다" 를 그 표식으로 쓴다.
+        # 고정 섹션(Shipyard/Survey/Vendor/Remark)은 표가 있어도 글 칸을 유지한다.
+        self.assertIn("s.kind === 'special' && own.some(b => b.block_type === 'table')", script)
+        self.assertIn('own.some(b => isTextBlock(b))', script)
         self.assertIn('dd-block-table', page)
         # 표·이미지 삭제는 한 번 확인을 받는다 — 웹에는 다시 만들 수단이 없고, 이미지
         # 블록 삭제는 서버가 연결된 첨부까지 지운다(routes: block_id soft-delete).
@@ -2205,10 +2209,75 @@ class DockDailyTests(unittest.TestCase):
                             'content': {'columns': ['항목', '금액'], 'rows': [['도장', '100']]}}]})
         self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
         mail = self._mail(report['id'])
-        self.assertIn('2. 비용 정산표', mail['text'],
-                      'Shipyard 다음, Survey 앞이 special 자리다')
+        # 🔴 메일 순서 = 화면 순서 = `sort_order` 다(형 지시 2026-08-22).  `create_section` 이
+        # `MAX+1` 로 붙이므로 새 섹션은 고정 4개 뒤, 즉 5번이다.  전에는 메일만 special 을
+        # Shipyard 바로 뒤로 못박아 두어 앱에서 맨 아래 보이던 카드가 메일에서는 2번으로
+        # 튀어 올랐다.  형이 카드 순서를 직접 바꾸게 된 이상 그 어긋남은 거짓말이 된다.
+        self.assertIn('5. 비용 정산표', mail['text'],
+                      f"화면 순서(sort_order)를 그대로 따라야 한다: {mail['text']}")
         self.assertIn('비용 정산표', mail['html'])
         self.assertIn('도장', mail['html'])
+
+    def test_sections_can_be_reordered_and_the_mail_follows(self):
+        """형 지시 2026-08-22: 카드 순서를 바꾸면 메일 순서도 같이 바뀐다.
+
+        순서는 프로젝트 값(`dock_daily_section_def.sort_order`)이고 출구 셋(앱·메일·SVMS)이
+        모두 이 한 값을 읽는다.  🔴 고정 섹션은 **순서만** 열려 있다 -- 이름·표시여부까지
+        열면 SVMS 필드(`RMK_SYD`/`RMK_VNDR`)와 메일 서식이 이름으로 물려 있어 깨진다.
+        """
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '섹션 순서 DD'}).get_json()
+        self.assertEqual(201, self.client.post(
+            f"/api/dock-daily/projects/{project['id']}/sections",
+            json={'label': '비용 정산표'}).status_code)
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-12'}).get_json()
+        fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        keys = [s['section_key'] for s in sorted(fetched['sections'], key=lambda s: s['sort_order'])]
+        self.assertEqual(['shipyard', 'survey', 'vendor', 'remark', 'sec_1'], keys)
+
+        # 새 섹션을 맨 앞으로. 클라이언트는 목록 전체를 다시 매겨 보낸다(앱
+        # `DockDailySectionEditing.renumbered`) -- 고정 섹션 항목에는 `sort_order` 만 담는다.
+        moved = ['sec_1', 'shipyard', 'survey', 'vendor', 'remark']
+        saved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+            'revision': fetched['revision'],
+            'section_updates': [{'section_key': k, 'sort_order': i + 1}
+                                for i, k in enumerate(moved)],
+            'operations': [{'op': 'upsert', 'section_key': 'sec_1', 'block_type': 'table',
+                            'content': {'columns': ['항목', '금액'], 'rows': [['도장', '100']]}}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        after = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        self.assertEqual(moved, [s['section_key'] for s in
+                                 sorted(after['sections'], key=lambda s: s['sort_order'])])
+        mail = self._mail(report['id'])
+        self.assertIn('1. 비용 정산표', mail['text'], mail['text'])
+        self.assertLess(mail['text'].index('비용 정산표'), mail['text'].index('Shipyard'),
+                        f"메일도 화면 순서를 따라야 한다: {mail['text']}")
+
+        # 🔴 고정 섹션의 이름·표시여부는 거절한다.  조용히 무시하면 클라이언트는 바뀐 줄
+        # 알고 옛 값을 화면에 남긴다.
+        rev = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()['revision']
+        for bad in ({'section_key': 'shipyard', 'sort_order': 1, 'label': '조선소'},
+                    {'section_key': 'shipyard', 'sort_order': 1, 'enabled': False}):
+            resp = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+                'revision': rev, 'section_updates': [bad]})
+            self.assertEqual(400, resp.status_code, resp.get_data(as_text=True))
+            self.assertIn('fixed sections accept sort_order only',
+                          resp.get_data(as_text=True))
+        # 🔴 정수가 아닌 순서는 거절한다.  SQLite 는 `"3"`·3.5 를 그대로 넣고 `ORDER BY`
+        # 가 조용히 섞여, 앱·메일·SVMS 순서가 한꺼번에 어긋나는데 에러는 안 난다.
+        for bad_order in ('3', 3.5, True, [1]):
+            resp = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+                'revision': rev,
+                'section_updates': [{'section_key': 'sec_1', 'sort_order': bad_order}]})
+            self.assertEqual(400, resp.status_code, f'{bad_order!r}: {resp.get_data(as_text=True)}')
+            self.assertIn('sort_order must be an integer', resp.get_data(as_text=True))
+        # 값이 그대로인 label 은 변경이 아니다 -- 목록을 통째로 되돌려 보내는 클라이언트가 있다.
+        same = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+            'revision': rev,
+            'section_updates': [{'section_key': 'shipyard', 'sort_order': 2,
+                                 'label': 'Shipyard'}]})
+        self.assertEqual(200, same.status_code, same.get_data(as_text=True))
 
     def test_a_table_block_can_move_into_a_section_of_its_own(self):
         """형 지시 2026-08-22: 남의 카드에 딸려 있는 표를 제목 가진 자기 섹션으로 뺀다.

@@ -98,3 +98,54 @@ test('범위를 벗어난 caret 도 안전하게 처리한다', () => {
   assert.strictEqual(N.renumber('A', -5, true).value, '1) A');
   assert.strictEqual(N.breakLine('A', 999, 999).value, '1) A\n2) ');
 });
+
+/* 백스페이스 — 형 제보 2026-08-22: 엔터로 붙은 `2) ` 가 지워지지 않았다.
+ * 접두어 안을 한 글자 지우면 남은 조각이 작업내용으로 보여 번호가 다시 붙는다. */
+test('빈 항목의 번호 접두어에서 백스페이스를 누르면 그 줄이 사라진다', () => {
+  const out = N.deleteBackward('1) shipyard 작업진행중\n2) ', 21);
+  assert.strictEqual(out.value, '1) shipyard 작업진행중');
+  assert.strictEqual(out.caret, 17, 'caret 은 앞줄 끝에 놓인다');
+});
+
+test('가로채지 않으면 `2) 2` 로 되살아난다(회귀 증명)', () => {
+  // 기본 삭제 = 접두어의 마지막 한 글자를 지우는 것. 그 결과를 정규화하면 번호가 되살아난다.
+  const naive = N.renumber('1) A\n2', 6, true);
+  assert.strictEqual(naive.value, '1) A\n2) 2', '이 되살아남이 형이 본 화면이다');
+  // 가로채면 그 줄이 통째로 없어진다.
+  assert.strictEqual(N.deleteBackward('1) A\n2) ', 8).value, '1) A');
+});
+
+test('내용이 있는 항목은 앞줄 끝에 이어붙는다(엔터 취소)', () => {
+  assert.strictEqual(N.deleteBackward('1) A\n2) B', 5).value, '1) AB', '줄 맨 앞');
+  assert.strictEqual(N.deleteBackward('1) A\n2) B', 7).value, '1) AB', '접두어 안(숫자 뒤)');
+  assert.strictEqual(N.deleteBackward('1) A\n2) B', 8).caret, 4, 'caret 은 합쳐진 지점');
+});
+
+test('본문이 번호처럼 생겨도 글자를 잃지 않는다', () => {
+  assert.strictEqual(N.deleteBackward('1) A\n2) 3) x', 8).value, '1) A3) x');
+});
+
+test('접두어 밖에서는 가로채지 않는다(평범한 글자 삭제)', () => {
+  assert.strictEqual(N.deleteBackward('1) A\n2) B', 9), null, '본문 안');
+  assert.strictEqual(N.deleteBackward('1) A', 0), null, '문서 맨 앞');
+});
+
+test('첫 줄에서는 접두어를 부수지 않고 삼킨다', () => {
+  const out = N.deleteBackward('1) ', 3);
+  assert.strictEqual(out.value, '1) ', '앞줄이 없으니 아무 일도 하지 않는다');
+  assert.strictEqual(out.caret, 3);
+  assert.strictEqual(N.deleteBackward('1) abc', 2).value, '1) abc', '숫자를 지워 `) abc` 가 되지 않는다');
+});
+
+test('두 자리 번호 경계에서도 caret 이 맞는다', () => {
+  const nine = Array.from({length: 10}, (_, i) => `${i + 1}) 항목${i + 1}`).join('\n');
+  const caret = nine.length;                                  // "10) 항목10" 끝
+  const out = N.deleteBackward(nine, caret - '항목10'.length - 4);  // "10) " 접두어 안
+  assert.strictEqual(out.value.split('\n').length, 9, '10번 줄이 9번 줄에 합쳐진다');
+  assert.ok(out.value.endsWith('9) 항목9항목10'));
+});
+
+test('이모지가 섞인 본문도 잃지 않는다', () => {
+  const out = N.deleteBackward('1) A\n2) 🚢선체', 7);
+  assert.strictEqual(out.value, '1) A🚢선체');
+});

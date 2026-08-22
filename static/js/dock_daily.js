@@ -122,9 +122,12 @@
   }
   function ensureSectionEditors() {
     for (const s of (state.report.sections||[]).filter(x => x.enabled)) {
-      // 표만 있는 섹션도 글 칸이 필요하다 — 표는 본문 문장을 대신하지 못하고, 웹에서
-      // 표는 편집 대상이 아니다(앱과 같은 판정: DockDailySectionEditing.needsTextDraft).
-      if (!(state.report.blocks||[]).some(b => !b._delete && b.section_key === s.section_key && isTextBlock(b))) {
+      // 🔴 표를 담은 special 섹션은 **표만** 있는 카드다(형 지시 2026-08-22) — 글 칸을
+      // 끼워 넣으면 형이 안 쓴 문단이 카드마다 하나씩 붙는다. 앱과 같은 값 기준 판정
+      // (`DockDailySectionEditing.needsTextDraft`).
+      const own = (state.report.blocks||[]).filter(b => !b._delete && b.section_key === s.section_key);
+      if (s.kind === 'special' && own.some(b => b.block_type === 'table')) continue;
+      if (!own.some(b => isTextBlock(b))) {
         state.report.blocks.push({id:0,_key:state.tempId--,section_key:s.section_key,block_type:'paragraph',content:{body:''},sort_order:0,origin:'manual',manual_override:1,_new:true});
       }
     }

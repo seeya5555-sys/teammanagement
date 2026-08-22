@@ -451,8 +451,8 @@ def create_section(pid):
         key = 'sec_%d' % index
         top = query('SELECT MAX(sort_order) AS top FROM dock_daily_section_def WHERE project_id=?',
                     (pid,), one=True)
-        # 메일 순서는 `_email` 의 `['shipyard'] + specials + ['survey','vendor','remark']` 가
-        # 정한다.  여기서는 마지막 special 뒤에 붙이기만 한다.
+        # 맨 뒤에 붙인다.  화면(`sort_order`)·메일·SVMS 가 모두 이 값을 따르므로 새 섹션은
+        # 형이 옮기기 전까지 맨 아래에 보이고 메일에서도 맨 아래로 나간다.
         try:
             execute('INSERT INTO dock_daily_section_def'
                     ' (project_id,section_key,label,sort_order,kind,enabled) VALUES (?,?,?,?,?,?)',
@@ -689,15 +689,39 @@ def report_put(rid):
                     db.rollback(); return _error('invalid section update')
                 key = str(item.get('section_key') or '').strip()
                 section = db.execute(
-                    'SELECT kind FROM dock_daily_section_def WHERE project_id=? AND section_key=?',
+                    'SELECT kind, label FROM dock_daily_section_def WHERE project_id=? AND section_key=?',
                     (row['project_id'], key)).fetchone()
-                if not section or section['kind'] != 'special':
+                if not section:
                     db.rollback(); return _error('only special sections are configurable')
+                # 🔴 고정 섹션은 **순서만** 바꿀 수 있다(형 지시 2026-08-22).  Shipyard/Survey/
+                # Vendor/Remark 는 SVMS 필드(`RMK_SYD`/`RMK_VNDR`)와 메일 서식이 이름으로
+                # 물려 있어 label 을 바꾸거나 꺼 버리면 그 계약이 깨진다.  그래서 위치만
+                # 열어 주고, label·enabled 가 함께 오면 거절한다 -- 조용히 무시하면
+                # 클라이언트는 이름이 바뀐 줄 알고 옛 값을 화면에 남긴다.
+                #
+                # 순서를 보낼 때 목록 전체를 그대로 되돌려 보내는 클라이언트가 있으므로,
+                # **값이 그대로인** label 은 변경이 아니라고 보고 통과시킨다.
+                # 🔴 `sort_order` 는 정수여야 한다(올마이트 지적).  SQLite 는 형을 가리지
+                # 않아서 `"3"`·`3.5` 를 그대로 저장하고, 그 뒤 `ORDER BY sort_order` 는
+                # 문자열/실수와 정수를 섞어 정렬한다 -- 앱·메일·SVMS 순서가 한꺼번에
+                # 어긋나는데 아무 데서도 에러가 나지 않는다.  `bool` 은 int 의 하위형이라
+                # 따로 걷어낸다.
+                order = item.get('sort_order')
+                if order is not None and (isinstance(order, bool) or not isinstance(order, int)):
+                    db.rollback(); return _error('sort_order must be an integer')
+                label = item.get('label')
+                if section['kind'] != 'special':
+                    if 'enabled' in item or (label is not None and label != section['label']):
+                        db.rollback()
+                        return _error('fixed sections accept sort_order only')
+                    label = None
                 db.execute('''UPDATE dock_daily_section_def
                               SET label=COALESCE(?,label), enabled=COALESCE(?,enabled), sort_order=COALESCE(?,sort_order)
                               WHERE project_id=? AND section_key=?''',
-                           (item.get('label'), None if 'enabled' not in item else (1 if item['enabled'] else 0),
-                            item.get('sort_order'), row['project_id'], key))
+                           (label,
+                            None if 'enabled' not in item or section['kind'] != 'special'
+                            else (1 if item['enabled'] else 0),
+                            order, row['project_id'], key))
                 changed = True
         meta = data.get('metadata') if isinstance(data.get('metadata'), dict) else data
         updates = []
@@ -1476,9 +1500,15 @@ def _mail_date(value):
 def _email(rid):
     r = _report(rid)
     sections = _sections(r['project_id'], include_disabled=False)
-    specials = [x for x in sections if x['kind'] == 'special']
     bykey = {x['section_key']: x for x in sections}
-    order = ['shipyard'] + [x['section_key'] for x in specials] + ['survey', 'vendor', 'remark']
+    # 🔴 메일 순서는 화면 순서와 같아야 한다 -- 둘 다 `sort_order` 다(형 지시 2026-08-22).
+    #
+    # 전에는 `['shipyard'] + specials + ['survey','vendor','remark']` 로 못박혀 있었다.
+    # 그래서 `create_section` 이 `MAX+1`(=마지막)로 만든 special 은 앱·웹에서 맨 아래
+    # 보이는데 메일에서는 Shipyard 바로 뒤로 튀어 올라갔다.  형이 카드 순서를 바꿀 수
+    # 있게 된 이상 이 어긋남은 그대로 거짓말이 된다.  `_svms` 는 원래 `_sections()` 순서를
+    # 따랐으므로 이 변경으로 세 출구가 같아진다.
+    order = [x['section_key'] for x in sections]
     subject = r['email_subject'] or '[Dock] M/T %s - Dock Daily Report (%s)' % (r['vessel_name'], r['report_date'])
     intro = r['email_intro'] or ''
     # Reports created before the Korean mail format was adopted retain the
