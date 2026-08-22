@@ -2008,7 +2008,10 @@ def _auto_migrate():
 
         # SVMS 입거 Daily 승인 큐. 기존 보고서/DB에는 additive 로만 붙인다.
         try:
-            cols = {r['name'] for r in conn.execute('PRAGMA table_info(dock_daily_report)').fetchall()}
+            # 🔴 이 `conn` 은 row_factory 가 없다 -- `r['name']` 은 TypeError 로 죽고
+            #    except 가 그걸 삼켜 **마이그레이션이 조용히 안 돈다**(라이브 실측
+            #    2026-08-22: 컬럼이 없어 후보 캐시가 500). 관례대로 `r[1]` 을 쓴다.
+            cols = {r[1] for r in conn.execute('PRAGMA table_info(dock_daily_report)').fetchall()}
             for name, ddl in (
                 ('svms_claim_token', 'ALTER TABLE dock_daily_report ADD COLUMN svms_claim_token TEXT'),
                 ('svms_claimed_at', 'ALTER TABLE dock_daily_report ADD COLUMN svms_claimed_at TEXT'),
@@ -2026,7 +2029,7 @@ def _auto_migrate():
 
         # SVMS 입거(Dock) 후보 캐시. 맥 runner 가 채우고 사람이 그 중에서 DK_CD 를 고른다.
         try:
-            cols = {r['name'] for r in conn.execute('PRAGMA table_info(dock_daily_project)').fetchall()}
+            cols = {r[1] for r in conn.execute('PRAGMA table_info(dock_daily_project)').fetchall()}
             for name, ddl in (
                 ('svms_dock_candidates_json',
                  'ALTER TABLE dock_daily_project ADD COLUMN svms_dock_candidates_json TEXT'),
@@ -2035,6 +2038,7 @@ def _auto_migrate():
             ):
                 if name not in cols:
                     conn.execute(ddl)
+                    print('[auto_migrate] dock_daily_project.%s 추가됨' % name)
         except Exception as e:
             print(f'[auto_migrate] dock_daily_project SVMS dock 캐시 점검 건너뜀: {e}')
 
