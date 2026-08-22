@@ -91,8 +91,11 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 #     `_dk_cd_lock_reason()` 의 상태 목록은 placeholder 를 `join` 으로 조립하지 않고
 #     리터럴 `IN (...)` 으로 뒀다 — 조립하면 이 게이트에 새 site 가 하나 더 생긴다.
 #   · count/hash 는 `repository_fingerprints()` 실측으로 갱신했다(2026-08-15 교훈).
-EXPECTED_COUNT = 166
-EXPECTED_SHA256 = "15a1099b17382796f1315b495ce475e2505a0ae7ef791f0ddb62a54ceb8ea7e1"
+# 2026-08-23 baseline update — two reviewed dynamic SQL expressions in the
+# dock-daily date-scope membership/delete paths. Both interpolate only fixed
+# server SQL fragments; all values remain bound parameters.
+EXPECTED_COUNT = 168
+EXPECTED_SHA256 = "32fd9d8cb15f8d3314e51c011252933d77a1e8c3eb6838f4bd4eb92cc341eec5"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

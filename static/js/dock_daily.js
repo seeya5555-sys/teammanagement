@@ -131,17 +131,25 @@
   // 🔴 이 markup 은 여기 한 곳에서만 만든다. 전엔 `selectProject` 와 `addSection` 이
   // 같은 HTML 을 각자 들고 있어서, 행에 버튼을 하나 더 다는 순간 한쪽만 고치면
   // "섹션을 추가하고 나면 삭제 버튼이 사라지는" 화면이 된다.
+  //
+  // 🔴 목록은 **열린 일자**의 섹션이다(형 지시 2026-08-23). 프로젝트 목록을 그리면
+  // 오늘 없는 섹션까지 체크박스로 뜨고, 그걸 지우면 "이 날짜에서 빼기" 가 아무 일도
+  // 안 하는 것처럼 보인다. 일자가 없을 때만 프로젝트 목록으로 떨어진다(읽기 전용).
   function renderSpecialTools() {
-    const specials = (state.project?.sections||[]).filter(s => s.kind === 'special');
+    const onReport = !!state.report;
+    const specials = ((onReport ? state.report.sections : state.project?.sections)||[])
+      .filter(s => s.kind === 'special');
     const rows = specials.length
       ? '<b>Special 항목</b>' + specials.map(s =>
           `<div class="dd-list-row" style="border-bottom:0;margin-top:7px"><label style="flex:1;min-width:0"><input type="checkbox" class="dd-special-toggle" data-key="${esc(s.section_key)}" ${s.enabled?'checked':''}> ${esc(s.label||s.section_key)}</label>`
-          + `<button class="dd-list-del" type="button" data-del-section="${esc(s.section_key)}" title="이 섹션을 아주 삭제" aria-label="${esc(s.label||s.section_key)} 섹션 삭제">삭제</button></div>`).join('')
+          + `<button class="dd-list-del" type="button" data-del-section="${esc(s.section_key)}" title="이 일자에서 빼기" aria-label="${esc(s.label||s.section_key)} 섹션을 이 일자에서 빼기">${onReport?'빼기':'삭제'}</button></div>`).join('')
       : '<span class="dd-muted">Special 항목 없음</span>';
     $('#dd-special-tools').innerHTML = rows
-      + '<input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:9px 0 7px">'
-      + '<div class="dd-row"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button><button class="dd-btn alt" id="dd-section-add-table" type="button">＋ 표 섹션</button></div>'
-      + '<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 잠시 감추려면 체크를 해제하고, 아주 지우려면 삭제를 누르세요. <b>＋ 표 섹션</b>은 제목을 가진 빈 표 카드를 열린 일자에 만듭니다(앱과 같은 기능).</p>';
+      + `<input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:9px 0 7px"${onReport?'':' disabled'}>`
+      + `<div class="dd-row"><button class="dd-btn alt" id="dd-section-add" type="button"${onReport?'':' disabled'}>＋ 섹션</button><button class="dd-btn alt" id="dd-section-add-table" type="button"${onReport?'':' disabled'}>＋ 표 섹션</button></div>`
+      + (onReport
+        ? '<p class="dd-muted dd-block-note">섹션은 <b>열려 있는 일자에만</b> 생깁니다. 다른 일자로 옮기려면 그 일자에서 <b>이전 일자 가져오기</b>로 당겨오고, 필요 없는 일자에서는 <b>빼기</b>로 그 일자에서만 지우세요(다른 일자는 그대로). 잠시 감추려면 체크를 해제하세요 — 감추기는 프로젝트 전체에 적용됩니다. <b>＋ 표 섹션</b>은 제목을 가진 빈 표 카드를 이 일자에 만듭니다(앱과 같은 기능).</p>'
+        : '<p class="dd-muted dd-block-note">섹션을 추가·제거하려면 먼저 일자를 여세요. 섹션은 열려 있는 일자에만 생깁니다.</p>');
     // 🔴 실패를 삼키지 않는다. 전엔 `.catch` 가 없어서 PATCH 가 500 이 나면 unhandled
     // rejection 으로 조용히 끝나고, 체크박스만 바뀐 채로 남아 화면이 서버와 반대를
     // 말했다(다시 열기 전까지 형은 감춘 줄 안다). 실패하면 체크를 되돌려 놓는다.
@@ -152,7 +160,7 @@
     document.querySelectorAll('[data-del-section]').forEach(b => b.onclick = () => once(b, () => deleteSection(b.dataset.delSection)));
     // ＋ 섹션도 `once()` 로 막는다(옆의 ＋ 표 섹션은 이미 막혀 있다). 두 번 누르면 서버가
     // UNIQUE 충돌을 다음 번호로 피해 가므로 **같은 제목의 섹션이 두 개** 생기고, 이
-    // 프로젝트의 모든 일자와 메일에 두 번 나간다.
+    // 이 일자의 카드와 메일에 두 번 나간다.
     $('#dd-section-add').onclick = () => once($('#dd-section-add'), () => addSection($('#dd-section-label').value));
     $('#dd-section-add-table').onclick = () => once($('#dd-section-add-table'), () => addSection($('#dd-section-label').value, true));
   }
@@ -462,7 +470,7 @@
     // 고정 섹션(Shipyard/Survey/Vendor/Remark)은 순서만 바꿀 수 있다 -- 삭제는 서버가
     // `fixed_section` 으로 거절하므로 버튼을 아예 내지 않는다.
     const del=s.kind==='special'
-      ? `<button class="dd-sec-btn danger" type="button" data-del-section-card="${esc(s.section_key)}" title="이 섹션을 아주 삭제" aria-label="${esc(s.label||s.section_key)} 섹션 삭제">삭제</button>`
+      ? `<button class="dd-sec-btn danger" type="button" data-del-section-card="${esc(s.section_key)}" title="이 일자에서 빼기 (다른 일자는 그대로)" aria-label="${esc(s.label||s.section_key)} 섹션을 이 일자에서 빼기">빼기</button>`
       : '';
     // 🔴 기존 섹션에 표를 붙이는 버튼은 두지 않는다(형 지시 2026-08-22, 앱과 동일).
     // 표는 제목을 직접 받는 `＋ 표 섹션` 으로만 만든다 -- 남의 섹션 제목 아래 딸려
@@ -564,18 +572,19 @@
     if(!name){err(new Error('섹션 제목을 입력하세요.'));return;}
     clearErr();
     // 🔴 확정 판정이 **섹션 생성보다 먼저**다(앱과 같은 순서). 나중에 보면 표 저장만
-    // 409 로 튕기고 빈 섹션은 프로젝트의 모든 일자에 영구히 남는다.
-    if(wantTable){
-      if(!state.report){err(new Error('표를 넣을 보고서 일자를 먼저 고르세요.'));return;}
-      if(state.report.status==='final'){err(new Error('확정된 보고서에는 표 섹션을 추가할 수 없습니다. 확정을 취소한 뒤 다시 시도하세요.'));return;}
-    }
+    // 409 로 튕기고 빈 섹션은 영구히 남는다.
+    // 🔴 섹션은 이제 **열린 일자**에 생긴다(형 지시 2026-08-23) — 표 여부와 무관하게
+    //    일자가 필요하다. 서버도 `report_id` 없으면 400 이다.
+    if(!state.report){err(new Error('섹션을 추가할 보고서 일자를 먼저 고르세요.'));return;}
+    if(state.report.status==='final'){err(new Error('확정된 보고서에는 섹션을 추가할 수 없습니다. 확정을 취소한 뒤 다시 시도하세요.'));return;}
     // 🔴 요청 전에 어느 프로젝트·일자에서 눌렀는지 붙잡아 둔다. POST 가 도는 동안 형이
     // 다른 프로젝트를 고르면, 응답으로 state.project 를 덮는 순간 화면은 B 프로젝트인데
     // 내용은 A 프로젝트가 된다 -- 이어지는 표도 엉뚱한 일자에 들어간다(올마이트 지적).
-    const pid=state.project.id, seq=selectSeq, rid=state.report?.id??null;
+    const pid=state.project.id, seq=selectSeq, rid=state.report.id;
     let updated;
     try{
-      updated=await api(`/api/dock-daily/projects/${pid}/sections`,{...json({label:name}),method:'POST'});
+      updated=await api(`/api/dock-daily/projects/${pid}/sections`,
+                        {...json({label:name,report_id:rid}),method:'POST'});
     }catch(error){err(error);return;}
     if(state.project?.id!==pid){
       // 목록만 조용히 갱신하고 화면은 건드리지 않는다. 섹션은 서버에 이미 만들어졌다.
@@ -585,18 +594,26 @@
     }
     state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
     $('#dd-section-label').value='';
-    // 섹션 목록을 다시 그린다. 열린 보고서에도 바로 카드가 생겨야 한다.
-    renderSpecialTools();
-    const sameReport=!!state.report&&state.report.id===rid&&seq===selectSeq;
-    if(state.report&&sameReport){state.report.sections=updated.sections;}
     // 🔴 방금 만든 키는 서버가 `created_section_key` 로 알려준다. 응답 목록의 차집합으로
     // 되짚으면 다른 기기가 같은 순간에 만든 **남의 섹션**을 고른다(서버 주석과 같은 이유).
     const key=updated.created_section_key;
+    const sameReport=state.report?.id===rid&&seq===selectSeq;
+    if(sameReport){
+      // 🔴 프로젝트 목록을 그대로 넣지 않는다(형 지시 2026-08-23). 다른 일자에만 있는
+      // 섹션까지 이 일자에 붙어 빈 카드가 뜨고, 저장하면 서버가 409
+      // `section_not_on_report` 로 튕긴다. 이 일자에 있던 키 + 방금 만든 키만 남긴다.
+      // (보고서를 다시 받아오면 형이 아직 저장 안 한 글이 날아간다.)
+      const had=new Set((state.report.sections||[]).map(s=>s.section_key));
+      state.report.sections=(updated.sections||[]).filter(
+        s=>had.has(s.section_key)||(key&&s.section_key===key));
+    }
+    // 섹션 목록을 다시 그린다(열린 일자 기준이므로 위 갱신 뒤에 부른다).
+    renderSpecialTools();
     if(!(wantTable&&sameReport)){
       if(state.report&&sameReport){ensureSectionEditors();renderSections();}
       notice(wantTable
         ? `섹션 "${name}" 을 추가했습니다. 그 사이 다른 일자를 열어서 표는 넣지 않았습니다 -- 카드의 ＋ 표 로 넣으세요.`
-        : `섹션 "${name}" 을 추가했습니다.`);
+        : `섹션 "${name}" 을 이 일자에 추가했습니다. 다른 일자에서는 이전 일자 가져오기로 당겨오세요.`);
       return;
     }
     if(!key){
@@ -608,7 +625,7 @@
     // 🔴 실패 문구를 단정하지 않는다(앱 `verify()` 와 같은 이유). 서버가 커밋한 뒤
     // 응답만 유실될 수 있어서 "넣지 못했습니다" 가 거짓이 될 수 있다.
     if(outcome==='ok'){
-      notice(`표 섹션 "${name}" 을 추가했습니다. 섹션은 이 프로젝트의 모든 일자에 생기고, 표가 없는 날은 메일에 NIL 로 나갑니다.`);
+      notice(`표 섹션 "${name}" 을 이 일자에 추가했습니다. 다른 일자에서는 이전 일자 가져오기로 당겨오세요.`);
     }else if(outcome==='stale'){
       notice(`섹션 "${name}" 을 추가했습니다. 그 사이 다른 일자를 열어서 표는 넣지 않았습니다 -- 카드의 ＋ 표 로 넣으세요.`);
     }else if(outcome==='failed'){
@@ -676,51 +693,59 @@
     if(!silent)notice(`"${section.label||key}" 에 빈 표를 넣었습니다. 칸을 채운 뒤 저장하세요.`);
     return 'ok';
   }
-  // 섹션을 목록에서 아주 지운다(형 지시 2026-08-22). 체크 해제는 숨김일 뿐이라,
-  // 잘못 만든 빈 카드가 프로젝트에 영원히 남아 있었다.
+  // 섹션을 **이 일자에서만** 뺀다(형 지시 2026-08-23). 그날 이슈로 추가한 섹션이 모든
+  // 일자에 생기고 다른 일자에서 지울 수도 없던 게 이 버튼이 고치는 문제다.
   //
-  // 🔴 서버가 그 섹션의 블록을 **모든 일자에서** 함께 지운다(안 지우면 `sec_N` 번호를
-  // 재사용할 때 옛 블록이 새 섹션에서 되살아난다). 그래서 내용이 있으면 서버가 409
-  // `section_not_empty` 로 한 번 끊고, 그때만 개수를 보여주고 다시 물어본다.
+  // 🔴 프로젝트 전체 삭제 라우트(`/projects/<pid>/sections/<key>`)는 서버에 남아 있지만
+  // 웹은 더 쓰지 않는다. 버튼 하나가 어떤 날은 "이 날짜만", 어떤 날은 "모든 날짜" 를
+  // 뜻하면 형은 어느 쪽인지 모른 채 누른다. 마지막 일자에서 빼면 서버가 정의까지
+  // 지우므로(`section_deleted`) "없애기" 도 이 버튼으로 끝난다.
   async function deleteSection(key){
-    const section=(state.project?.sections||[]).find(s=>s.section_key===key);
+    if(!state.report){err(new Error('섹션을 뺄 보고서 일자를 먼저 고르세요.'));return;}
+    const section=(state.report.sections||state.project?.sections||[]).find(s=>s.section_key===key);
     const name=String(section?.label||'').trim()||key;
     clearErr();
-    // 🔴 삭제하면 열린 보고서를 다시 읽어야 하는데(서버가 블록을 지웠다), 그 재조회가
+    // 🔴 빼면 열린 보고서를 다시 읽어야 하는데(서버가 블록을 지웠다), 그 재조회가
     // 저장 안 한 편집을 통째로 버린다 -- 형은 지운 적 없는 문장이 사라진 걸 본다.
     // 미리보기와 같은 계약으로 먼저 저장한다(올마이트 지적).
-    // 🔴 프로젝트 id 를 `await` **전에** 붙잡는다(`addSection` 과 같은 이유). 저장이 도는
-    // 동안 형이 다른 프로젝트로 옮기면 `state.project` 는 그쪽이 되고, 그때 DELETE 가
-    // 나가면 **남의 프로젝트의 같은 이름 섹션**을 모든 일자에서 지운다 -- 되돌릴 수 없다.
-    const pid=state.project.id;
+    // 🔴 보고서 id 를 `await` **전에** 붙잡는다(`addSection` 과 같은 이유). 저장이 도는
+    // 동안 형이 다른 일자를 열면 `state.report` 는 그쪽이 되고, 그때 DELETE 가 나가면
+    // **엉뚱한 날짜에서** 섹션이 사라진다.
+    const rid=state.report.id, seq=selectSeq;
     if(state.dirty)await save();
-    const send=async confirmed=>api(`/api/dock-daily/projects/${pid}/sections/${encodeURIComponent(key)}`,
+    if(state.report?.id!==rid||seq!==selectSeq){
+      notice('그 사이 다른 일자를 열어서 빼기를 취소했습니다. 다시 눌러 주세요.');
+      return;
+    }
+    const send=async confirmed=>api(`/api/dock-daily/reports/${rid}/sections/${encodeURIComponent(key)}`,
       {...json(confirmed?{confirm:'delete-section'}:{}),method:'DELETE'});
     let body;
     try{ body=await send(false); }
     catch(error){
       if(error.status!==409||error.code!=='section_not_empty'){err(error);return;}
-      const dates=(error.body?.dates||[]).join(', ');
-      // 🔴 "이 날짜만" 이 아니라 모든 일자에서 사라진다는 걸 반드시 말한다.
-      if(!confirm(`섹션 "${name}" 에 내용 ${error.body?.blocks||0}개가 있습니다${dates?` (${dates})`:''}.\n\n`
-        +'지우면 이 프로젝트의 모든 일자에서 함께 사라지고 되돌릴 수 없습니다.')) return;
+      // 🔴 "이 날짜에서만" 이라는 걸 반드시 말한다. 앞 버전은 모든 일자에서 사라진다고
+      // 경고했고, 그 문구를 그대로 두면 형은 다른 날짜도 지워질까 봐 취소한다.
+      if(!confirm(`이 일자(${state.report.report_date})의 "${name}" 섹션에 내용 ${error.body?.blocks||0}개가 있습니다.\n\n`
+        +'이 일자에서만 빼고 그 내용은 지웁니다. 다른 일자는 그대로 남습니다.')) return;
       try{ body=await send(true); }catch(retry){err(retry);return;}
     }
-    state.projects=state.projects.map(p=>p.id===body.id?body:p);
-    if(state.project?.id!==pid){
-      // 그 사이 다른 프로젝트를 열었다. 목록만 갱신하고 화면은 건드리지 않는다
-      // (`addSection` 과 같은 계약) -- 섹션은 서버에서 이미 지워졌다.
-      notice(`섹션 "${name}" 을 지웠습니다. 그 사이 다른 프로젝트를 열어서 여기에는 반영하지 않았습니다.`);
+    if(body.section_deleted){
+      // 어느 일자에도 안 남아 정의까지 지워졌다. 프로젝트 목록에서도 빼 둔다 -- 안 빼면
+      // 일자를 닫았을 때 사이드바에 없는 섹션이 뜬다.
+      const drop=p=>p&&p.sections?{...p,sections:p.sections.filter(s=>s.section_key!==key)}:p;
+      state.project=drop(state.project);
+      state.projects=state.projects.map(p=>p.id===state.project?.id?state.project:p);
+    }
+    if(state.report?.id!==rid||seq!==selectSeq){
+      notice(`"${name}" 을 그 일자에서 뺐습니다. 그 사이 다른 일자를 열어서 화면에는 반영하지 않았습니다.`);
       return;
     }
-    state.project=body;
+    // 화면의 옛 블록을 그대로 두면 다음 저장이 없는 블록을 올린다 -- 다시 읽는다.
+    await selectReport(rid);
     renderSpecialTools();
-    // 열려 있는 보고서에서도 그 카드와 내용이 사라져야 한다. 서버가 블록을 지웠으므로
-    // 여기서 다시 읽는다 -- 화면의 옛 블록을 그대로 두면 다음 저장이 없는 블록을 올린다.
-    if(state.report)await selectReport(state.report.id);
     notice(body.deleted_blocks>0
-      ? `섹션 "${name}" 과 그 안의 내용 ${body.deleted_blocks}개를 지웠습니다.`
-      : `섹션 "${name}" 을 지웠습니다.`);
+      ? `"${name}" 을 이 일자에서 뺐습니다(내용 ${body.deleted_blocks}개 삭제). 다른 일자는 그대로입니다.`
+      : `"${name}" 을 이 일자에서 뺐습니다. 다른 일자는 그대로입니다.`);
   }
   // 섹션 카드 순서 바꾸기(형 지시 2026-08-22). 앱은 카드 제목줄 롱프레스, 웹은 ▲▼ 버튼.
   // 규칙은 `dock_daily_section_order.js` 한 곳에 있고 앱과 같은 값을 낸다.
@@ -740,14 +765,32 @@
     catch(error){ err(new Error(conflictText(error))); return; }
     if(!applied)return;                             // 그 사이 형이 다른 일자를 열었다
     // 순서는 프로젝트 값이라 왼쪽 Special 목록도 같은 순서를 따라가야 한다.
+    // 🔴 보고서 목록으로 프로젝트 목록을 **덮지 않는다**(형 지시 2026-08-23). 보고서
+    // 목록은 이 일자의 것뿐이라, 덮으면 다른 일자에만 있는 섹션이 프로젝트 state 에서
+    // 사라진다(일자를 닫으면 사이드바에서 통째로 없어진 것처럼 보인다).
     if(state.project){
-      state.project={...state.project,sections:state.report.sections};
+      const order=new Map((state.report.sections||[]).map(s=>[s.section_key,s.sort_order]));
+      const merged=(state.project.sections||[]).map(
+        s=>order.has(s.section_key)?{...s,sort_order:order.get(s.section_key)}:s);
+      merged.sort((a,b)=>(a.sort_order-b.sort_order)||a.section_key.localeCompare(b.section_key));
+      state.project={...state.project,sections:merged};
       state.projects=state.projects.map(p=>p.id===state.project.id?state.project:p);
       renderSpecialTools();
     }
     notice('섹션 순서를 바꿨습니다. 이 프로젝트의 모든 일자·확정본·메일에 함께 적용됩니다.');
   }
-  async function toggleSpecial(key,enabled){const updated=await api(`/api/dock-daily/projects/${state.project.id}`,{...json({sections:[{section_key:key,enabled}]}),method:'PATCH'});state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);if(state.report){state.report.sections=updated.sections;ensureSectionEditors();renderSections();}}
+  // 🔴 갱신된 프로젝트 목록을 보고서에 **그대로** 넣지 않는다(형 지시 2026-08-23) --
+  // 다른 일자에만 있는 섹션까지 이 일자에 붙어 빈 카드가 뜨고, 저장하면 서버가 409
+  // `section_not_on_report` 로 튕긴다. 이 일자에 있던 키만 남기고 값만 새로 받는다.
+  async function toggleSpecial(key,enabled){
+    const updated=await api(`/api/dock-daily/projects/${state.project.id}`,{...json({sections:[{section_key:key,enabled}]}),method:'PATCH'});
+    state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
+    if(state.report){
+      const had=new Set((state.report.sections||[]).map(s=>s.section_key));
+      state.report.sections=(updated.sections||[]).filter(s=>had.has(s.section_key));
+      ensureSectionEditors();renderSections();renderSpecialTools();
+    }
+  }
 
   const previewModal=$('#dd-preview-modal');
   function closePreview(){previewModal.hidden=true;document.body.style.overflow='';state.preview=null;}

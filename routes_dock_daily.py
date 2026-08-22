@@ -134,11 +134,40 @@ def _project_response(row):
 
 
 def _sections(project_id, include_disabled=True):
-    q = ('SELECT id, project_id, section_key, label, sort_order, kind, enabled '
+    q = ('SELECT id, project_id, section_key, label, sort_order, kind, enabled, scope '
          'FROM dock_daily_section_def WHERE project_id=?')
     if not include_disabled:
         q += ' AND enabled=1'
     return [dict(r) for r in query(q + ' ORDER BY sort_order, id', (project_id,))]
+
+
+def _report_section_keys(rid, db=None):
+    """이 보고서에 소속된 일자 스코프 섹션의 key 집합."""
+    sql = 'SELECT section_key FROM dock_daily_report_section WHERE report_id=?'
+    rows = db.execute(sql, (rid,)).fetchall() if db is not None else query(sql, (rid,))
+    return {r['section_key'] for r in rows}
+
+
+def _sections_for_report(rid, project_id, include_disabled=True, db=None):
+    """이 **일자** 의 섹션 목록 (형 지시 2026-08-23).
+
+    섹션 정의는 여전히 프로젝트에 있다(이름·순서·key 는 일자마다 달라선 안 되고,
+    '이전 일자 가져오기' 가 같은 key 로 옮겨야 하므로).  달라지는 건 **어느 일자에
+    나타나는가** 뿐이다:
+
+      · `scope='project'` (고정 4섹션 + 프로젝트 생성 때 고른 EGCS 류) = 모든 일자.
+      · `scope='report'` (형이 그날 추가한 섹션) = `dock_daily_report_section` 에
+        행이 있는 일자에만.
+
+    🔴 그래서 **만든 날짜보다 앞선 보고서에는 구조적으로 없다** -- 그 보고서에는
+       행을 만들지 않고, copy-from 은 앞선 날짜에서 뒷날짜로만 복사한다.
+
+    🔴 화면·메일·SVMS 세 출구가 **모두** 이 함수를 써야 한다. 하나라도 프로젝트
+       목록(`_sections`)을 그대로 쓰면 그 출구에서만 없는 섹션이 `NIL` 로 나간다.
+    """
+    keys = _report_section_keys(rid, db)
+    return [s for s in _sections(project_id, include_disabled)
+            if s.get('scope') != 'report' or s['section_key'] in keys]
 
 
 def _seed_sections(db, project_id):
@@ -175,6 +204,9 @@ def _snapshot(rid):
         'SELECT * FROM dock_daily_source_link WHERE report_id=? ORDER BY id', (rid,))]
     return {'report': {k: r[k] for k in ('id', 'project_id', 'report_date', 'status', 'revision',
                                          'email_subject', 'email_intro', 'safety_footer')},
+            # 어떤 일자 스코프 섹션이 이 보고서에 붙어 있었는지도 남긴다. 없으면 스냅샷만
+            # 보고는 "그날 그 카드가 있었는지" 를 알 수 없다.
+            'report_sections': sorted(_report_section_keys(rid)),
             'blocks': blocks, 'sources': links}
 
 
@@ -222,7 +254,10 @@ def _report_json(rid):
     }
     for key in ('auto_snapshot_json',):
         out[key] = _json(out.get(key), {})
-    out['sections'] = _sections(r['project_id'])
+    # 🔴 보고서 JSON 의 `sections` 는 **이 일자의 목록**이다. 웹·앱은 이걸 그대로
+    #    카드로 그리므로, 프로젝트 전체 목록을 주면 그날 없는 섹션이 빈 카드로 뜨고
+    #    형이 거기에 글을 쓴다(그 저장은 이제 서버가 거절한다).
+    out['sections'] = _sections_for_report(rid, r['project_id'])
     out['blocks'] = []
     for b in query('SELECT * FROM dock_daily_block WHERE report_id=? ORDER BY section_key, sort_order, id', (rid,)):
         x = dict(b)
@@ -555,6 +590,11 @@ def create_section(pid):
     프로젝트 PATCH 로도 같은 일을 할 수 있지만 그 라우트는 `title` 같은 프로젝트 본문을
     함께 받는다 -- 앱에서 섹션 하나 추가하려고 프로젝트 전체를 보내면 빈 값으로 덮을
     위험이 생기므로 최소 입력만 받는 전용 라우트를 둔다.
+
+    🔴 **`report_id` 필수**(형 지시 2026-08-23).  섹션은 이제 만든 그 일자에만 생긴다.
+       없이 만들면 정의만 있고 어느 일자에도 안 보이는 유령 섹션이 되므로, 조용히
+       프로젝트 전체에 붙이지 않고 400 으로 끊는다.  옛 클라이언트(구 OTA)는 이
+       메시지를 그대로 보게 된다 -- 아무 일자에나 생기는 쪽이 더 나쁘다.
     """
     if not _project(pid):
         # `_project` 는 없으면 None 을 준다(abort 하지 않는다). 확인 없이 넘기면
@@ -566,6 +606,20 @@ def create_section(pid):
         return _error('label is required')
     if len(label) > 60:
         return _error('label is too long')
+    try:
+        report_id = int(data.get('report_id'))
+    except (TypeError, ValueError):
+        return _error('report_id is required — 섹션은 열려 있는 일자에 추가됩니다', 400,
+                      code='report_id_required')
+    target = query('SELECT id, project_id, status FROM dock_daily_report WHERE id=?',
+                   (report_id,), one=True)
+    if not target or target['project_id'] != pid:
+        return _error('report not found in this project', 404, code='report_not_found')
+    # 확정본에는 카드를 못 넣는다(블록 저장이 어차피 409 다). 여기서 안 막으면 섹션
+    # 정의만 남고 형은 왜 카드가 안 보이는지 알 수 없다.
+    if target['status'] == 'final':
+        return _error('확정된 보고서에는 섹션을 추가할 수 없습니다. 확정을 취소한 뒤 추가하세요.',
+                      409, code='final_locked')
     # 제목은 대개 한글이라 제목에서 key 를 만들 수 없다.  이름은 형이 쓴 그대로 두고
     # key 는 프로젝트 안에서만 유일하면 되므로 남는 번호를 쓴다.
     #
@@ -583,14 +637,31 @@ def create_section(pid):
                     (pid,), one=True)
         # 맨 뒤에 붙인다.  화면(`sort_order`)·메일·SVMS 가 모두 이 값을 따르므로 새 섹션은
         # 형이 옮기기 전까지 맨 아래에 보이고 메일에서도 맨 아래로 나간다.
+        # 🔴 정의와 소속을 **한 트랜잭션**으로 넣는다. `execute()` 는 문장마다 commit 하므로
+        #    두 번 부르면 사이에서 죽었을 때 "정의는 있고 어느 일자에도 안 보이는" 섹션이
+        #    남는다 -- 이름은 쓰였으니 `sec_N` 은 소모되고, 형에게는 아무것도 안 생긴 것으로
+        #    보인다.
+        db = get_db()
         try:
-            execute('INSERT INTO dock_daily_section_def'
-                    ' (project_id,section_key,label,sort_order,kind,enabled) VALUES (?,?,?,?,?,?)',
-                    (pid, key, label,
-                     int(top['top'] if top and top['top'] is not None else 19) + 1, 'special', 1))
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('INSERT INTO dock_daily_section_def'
+                       ' (project_id,section_key,label,sort_order,kind,enabled,scope)'
+                       " VALUES (?,?,?,?,?,?,'report')",
+                       (pid, key, label,
+                        int(top['top'] if top and top['top'] is not None else 19) + 1, 'special', 1))
+            db.execute('INSERT INTO dock_daily_report_section(report_id, section_key) VALUES (?,?)',
+                       (report_id, key))
+            db.commit()
         except sqlite3.IntegrityError:
+            db.rollback()
             continue
+        except Exception:
+            db.rollback(); raise
         body = _project_response(_project(pid))
+        # 새 섹션은 이 일자에만 생겼다. 형제 보고서 revision 은 올리지 않는다 -- 다른
+        # 일자의 화면은 아무것도 달라지지 않았고, 올리면 열어 둔 다른 기기가 이유 없이
+        # 409 를 맞는다.
+        body['created_report_id'] = report_id
         # 🔴 방금 만든 key 를 명시한다.  클라이언트가 응답 목록의 차집합으로 되짚으면,
         # 다른 기기가 같은 순간에 섹션을 추가했을 때 **남의 섹션**을 고른다(올마이트 지적
         # 2026-08-22).  위 루프는 충돌 시 번호를 건너뛰므로 규칙을 다시 계산하는 것도 틀린다.
@@ -671,6 +742,12 @@ def section_delete(pid, section_key):
                        (rid, db.execute('SELECT revision FROM dock_daily_report WHERE id=?',
                                         (rid,)).fetchone()['revision'],
                         json.dumps(_snapshot(rid), ensure_ascii=False), session_actor()))
+        # 🔴 소속 행도 지운다. `dock_daily_report_section.section_key` 도 FK 가 아니라
+        #    텍스트다 -- 정의만 지우면 소속이 고아로 남고, `create_section` 이 비어 있는
+        #    가장 작은 번호를 다시 쓰는 순간 새 섹션이 **옛 일자들에 되살아난다**(블록
+        #    고아와 같은 사고 기제).
+        db.execute('DELETE FROM dock_daily_report_section WHERE section_key=? AND report_id IN'
+                   ' (SELECT id FROM dock_daily_report WHERE project_id=?)', (section_key, pid))
         cur = db.execute('DELETE FROM dock_daily_section_def WHERE id=?', (section['id'],))
         if cur.rowcount != 1:
             db.rollback(); return _error('section not found', 404)
@@ -681,6 +758,106 @@ def section_delete(pid, section_key):
     body['deleted_section_key'] = section_key
     body['deleted_blocks'] = len(rows)
     return jsonify(body)
+
+
+@bp.route('/api/dock-daily/reports/<int:rid>/sections/<section_key>', methods=['DELETE'])
+@login_required
+def report_section_remove(rid, section_key):
+    """이 **일자에서만** 섹션을 뺀다(형 지시 2026-08-23).
+
+    형이 그날 이슈로 추가한 섹션이 모든 일자에 생기고, 다른 일자에서 지울 수도 없었다.
+    이 라우트가 그 출구다 -- 정의는 남기고 이 보고서의 소속과 이 보고서의 블록만 지운다.
+    다른 일자는 손대지 않고, 필요하면 '이전 일자 가져오기' 로 다시 당겨올 수 있다.
+    어느 일자에도 안 남으면 정의까지 지운다 -- 오늘 만든 섹션을 오늘 빼는 건 "없애기"
+    이고, 정의만 남기면 어느 화면에도 안 보이는 유령이 된다(`section_deleted=true`).
+
+    🔴 `scope='project'` 섹션(프로젝트 생성 때 고른 EGCS 류)은 소속 행이 없으므로 이 자리
+       에서 "빼기" 를 하려면 **먼저 다른 모든 일자에 소속을 만들어 놓고** 이 일자만
+       빼야 한다.  안 하면 이 일자만 빼는 대신 전 일자에서 사라진다.  그 순간부터 그
+       섹션은 일자 스코프가 되고, 앞으로 새로 만드는 보고서에는 안 따라온다 -- "이 날짜엔
+       필요 없다" 는 지시가 곧 "모든 날짜의 것은 아니다" 라는 뜻이므로 이걸 계약으로 둔다.
+
+    🔴 확정본은 거절한다.  확정된 보고서의 본문을 지우는 길을 열면 "확정" 이 뜻하는 게
+       없어진다(`section_delete` 와 같은 가드).  확정취소 -> 제거 -> 재확정이 정상 경로다.
+    """
+    row = _report(rid)
+    if not row:
+        return _error('report not found', 404)
+    confirm = _body().get('confirm')
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        pid = row['project_id']
+        section = db.execute('SELECT kind, label, scope FROM dock_daily_section_def'
+                             ' WHERE project_id=? AND section_key=?', (pid, section_key)).fetchone()
+        if not section:
+            db.rollback(); return _error('section not found', 404)
+        if section['kind'] != 'special':
+            db.rollback()
+            return _error('고정 섹션은 뺄 수 없습니다', 409, code='fixed_section')
+        if row['status'] == 'final':
+            db.rollback()
+            return _error('확정된 보고서에서는 섹션을 뺄 수 없습니다. 확정을 취소한 뒤 지우세요.',
+                          409, code='final_locked')
+        blocks = db.execute('SELECT id FROM dock_daily_block WHERE report_id=? AND section_key=?',
+                            (rid, section_key)).fetchall()
+        if blocks and confirm != 'delete-section':
+            db.rollback()
+            return _error('section is not empty', 409, code='section_not_empty',
+                          blocks=len(blocks), dates=[row['report_date']])
+        if section['scope'] != 'report':
+            # 프로젝트 스코프였다 -> 일자 스코프로 바꾼다. **이 보고서를 뺀** 나머지
+            # 보고서에 소속을 심는다.  확정본에도 심는다: 그 일자에서는 지금 보이는
+            # 섹션이므로, 안 심으면 확정본의 내용이 조용히 사라진다.
+            db.execute('''INSERT OR IGNORE INTO dock_daily_report_section(report_id, section_key)
+                          SELECT id, ? FROM dock_daily_report WHERE project_id=? AND id<>?''',
+                       (section_key, pid, rid))
+            db.execute("UPDATE dock_daily_section_def SET scope='report'"
+                       ' WHERE project_id=? AND section_key=?', (pid, section_key))
+        removed = db.execute('DELETE FROM dock_daily_report_section WHERE report_id=? AND section_key=?',
+                             (rid, section_key)).rowcount
+        if blocks:
+            db.executemany("UPDATE dock_daily_attachment SET deleted_at=datetime('now','localtime')"
+                           ' WHERE block_id=? AND deleted_at IS NULL', [(b['id'],) for b in blocks])
+            db.executemany('DELETE FROM dock_daily_block WHERE id=?', [(b['id'],) for b in blocks])
+        if not removed and not blocks:
+            # 이 일자에는 애초에 없었다. 멱등으로 성공 처리한다 -- 화면에서 이미 사라진
+            # 카드를 다시 눌렀을 때 오류를 띄우면 형은 뭔가 잘못된 줄로 읽는다.
+            db.rollback()
+            out = _report_json(rid)
+            out.update(removed_section_key=section_key, deleted_blocks=0, section_deleted=False)
+            return jsonify(out)
+        # 🔴 아무 일자에도 안 남았으면 **정의까지 지운다.**  형이 오늘 만든 섹션을 오늘
+        #    빼면 그건 "없애기" 다.  정의만 남기면 어느 화면에도 안 보이는 유령이 되고,
+        #    `sec_N` 번호는 계속 잡아먹으면서 순서값만 쌓인다.  블록은 방금 지웠으니
+        #    되살아날 것도 없다.
+        section_deleted = False
+        if not db.execute('SELECT 1 FROM dock_daily_report_section WHERE section_key=?'
+                          ' AND report_id IN (SELECT id FROM dock_daily_report WHERE project_id=?)'
+                          ' LIMIT 1', (section_key, pid)).fetchone():
+            db.execute('DELETE FROM dock_daily_section_def WHERE project_id=? AND section_key=?',
+                       (pid, section_key))
+            # 🔴 소속 없이 블록만 남은 일자가 있으면 함께 쓸어낸다.  `section_key` 는 FK 가
+            #    아니라서 남겨두면 `create_section` 이 같은 `sec_N` 을 다시 쓰는 순간 옛
+            #    블록이 새 섹션에 되살아난다(`section_delete` 와 같은 사고 기제).
+            db.execute('DELETE FROM dock_daily_block WHERE section_key=? AND report_id IN'
+                       ' (SELECT id FROM dock_daily_report WHERE project_id=?)',
+                       (section_key, pid))
+            section_deleted = True
+        db.execute("UPDATE dock_daily_report SET revision=revision+1,"
+                   " updated_at=datetime('now','localtime') WHERE id=?", (rid,))
+        newrev = db.execute('SELECT revision FROM dock_daily_report WHERE id=?',
+                            (rid,)).fetchone()['revision']
+        db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor)'
+                   ' VALUES (?,?,?,?)',
+                   (rid, newrev, json.dumps(_snapshot(rid), ensure_ascii=False), session_actor()))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    out = _report_json(rid)
+    out.update(removed_section_key=section_key, deleted_blocks=len(blocks),
+               section_deleted=section_deleted)
+    return jsonify(out)
 
 
 def _purge_files(stored_names):
@@ -1021,6 +1198,9 @@ def report_put(rid):
             ops = data.get('block_operations') or []
         if not isinstance(ops, list):
             db.rollback(); return _error('operations must be an array')
+        # 한 번만 읽는다. op 마다 다시 읽으면 카드 수십 개 저장에 같은 쿼리가 그만큼 돈다.
+        on_report = {s['section_key'] for s in
+                     _sections_for_report(rid, row['project_id'], db=db)}
         for op in ops:
             if not isinstance(op, dict):
                 db.rollback(); return _error('invalid block operation')
@@ -1043,6 +1223,14 @@ def report_put(rid):
             if not sec or typ not in BLOCK_TYPES or not query('SELECT id FROM dock_daily_section_def WHERE project_id=? AND section_key=?',
                                                               (row['project_id'], sec), one=True):
                 db.rollback(); return _error('invalid section or block_type')
+            # 🔴 **이 일자에 없는 섹션에는 못 쓴다**(형 지시 2026-08-23).  정의만 보고
+            #    통과시키면, 다른 일자에서 뺀 섹션에 옛 화면을 들고 있는 기기가 카드를
+            #    저장해 그 섹션을 조용히 되살린다 -- 소속 행은 없으니 화면에는 안 뜨는데
+            #    메일/SVMS 는 블록을 읽어 나간다(더 나쁜 조합: 안 보이는 본문이 발송된다).
+            if sec not in on_report:
+                db.rollback()
+                return _error('이 일자에 없는 섹션입니다. 새로고침한 뒤 다시 시도하세요.', 409,
+                              code='section_not_on_report')
             content = op.get('content', op.get('content_json', {}))
             if isinstance(content, str):
                 content = _json(content, {})
@@ -1113,6 +1301,11 @@ def report_copy_from(rid):
       · image 블록·첨부는 따라오지 않는다.  첨부는 실제 파일이고 stored_name 이
         UNIQUE 라 행만 복사하면 한쪽을 지울 때 다른 쪽 파일까지 사라진다.  프로젝트에서
         사라진 섹션의 블록도 같이 건너뛴다.  건너뛴 개수는 응답에 실어 화면에서 알린다.
+      · 일자 스코프 섹션(그날 이슈로 추가한 섹션)은 **소속째로** 따라온다.  이게 그
+        섹션이 다른 일자로 옮겨가는 유일한 경로다(형 지시 2026-08-23).  내용이 없는
+        빈 섹션도 따라온다 -- 어제 만들어 둔 제목 자체가 오늘 쓰려는 양식이다.
+        `replace` 는 원본에 없는 일자 스코프 섹션을 이 일자에서 뺀다("원본과 같게"),
+        `append` 는 합집합이다.  옮긴 개수는 응답 `moved_sections` 로 나간다.
       · 일정(ITINERARY)은 프로젝트 열이라 애초에 보고서별로 다르지 않다.
       · 메일 제목은 날짜를 품고 있어 절대 복사하지 않는다.  인사말·안전문구는
         `replace` 일 때만 따라온다(`append` 는 지금 쓰고 있는 머리말을 건드리지 않는다).
@@ -1153,7 +1346,31 @@ def report_copy_from(rid):
         if src['report_date'] >= row['report_date']:
             db.rollback(); return _error('source report must be an earlier date', 400,
                                          code='not_earlier')
-        sections = {x['section_key'] for x in _sections(row['project_id'], include_disabled=True)}
+        defs = _sections(row['project_id'], include_disabled=True)
+        # 🔴 일자 스코프 섹션의 **소속도 함께 당겨온다**(형 지시 2026-08-23).  이게
+        #    "다른 일자로 옮기는" 유일한 경로다.  블록만 복사하면 이 일자에 없는 섹션에
+        #    블록이 들어가 화면에는 안 보이고 메일에도 안 나가는 유령 본문이 된다.
+        #    내용이 없는 빈 섹션도 따라온다 -- 형이 어제 만들어 둔 제목 자체가 오늘 쓰려는
+        #    양식이다.
+        #
+        #    `replace` 는 "이 보고서를 원본과 같게" 이므로 원본에 없는 일자 스코프 섹션은
+        #    빠지고(그 블록은 아래 DELETE 로 사라진다), `append` 는 합집합이다.
+        #    🔴 차집합만 쓴다 -- 지우고 같은 값을 다시 넣으면 아무것도 안 바뀐 복사에서도
+        #    revision 이 올라가 다른 기기가 이유 없이 409 를 맞는다.
+        keys = {x['section_key'] for x in defs}
+        before_keys = _report_section_keys(rid, db)
+        src_keys = _report_section_keys(source_id, db) & keys
+        want = src_keys if mode == 'replace' else (before_keys | src_keys)
+        for key in sorted(before_keys - want):
+            db.execute('DELETE FROM dock_daily_report_section WHERE report_id=? AND section_key=?',
+                       (rid, key))
+        for key in sorted(want - before_keys):
+            db.execute('INSERT OR IGNORE INTO dock_daily_report_section(report_id, section_key)'
+                       ' VALUES (?,?)', (rid, key))
+        moved_sections = len(before_keys ^ want)
+        # 블록을 받을 수 있는 섹션 = 고정·프로젝트 스코프 + 방금 확정된 이 일자의 소속.
+        sections = {x['section_key'] for x in defs
+                    if x.get('scope') != 'report' or x['section_key'] in want}
         deleted = 0
         if mode == 'replace':
             deleted = db.execute('DELETE FROM dock_daily_block WHERE report_id=?', (rid,)).rowcount
@@ -1199,10 +1416,14 @@ def report_copy_from(rid):
                               'OR IFNULL(safety_footer,"")<>IFNULL(?,""))',
                               (src['email_intro'], src['safety_footer'], rid,
                                src['email_intro'], src['safety_footer'])).rowcount
-        if not copied and not deleted and not meta:
+        # 🔴 `moved_sections` 도 "바뀐 것" 이다(형 지시 2026-08-23).  빼면 내용 없이
+        # 제목만 있는 섹션을 당겨올 때 rollback 이 소속까지 되돌리고 200 을 줘서
+        # 형이 보기엔 버튼이 아무 일도 안 한 게 된다 -- 위 인사말과 같은 함정이다.
+        if not copied and not deleted and not meta and not moved_sections:
             db.rollback()
             out = _report_json(rid)
-            out.update(copied_blocks=0, skipped_blocks=skipped, source_report_id=source_id)
+            out.update(copied_blocks=0, skipped_blocks=skipped, moved_sections=0,
+                       source_report_id=source_id)
             return jsonify(out)
         newrev = row['revision'] + 1
         cur = db.execute("UPDATE dock_daily_report SET revision=?, "
@@ -1219,7 +1440,8 @@ def report_copy_from(rid):
     except Exception:
         db.rollback(); raise
     out = _report_json(rid)
-    out.update(copied_blocks=copied, skipped_blocks=skipped, source_report_id=source_id)
+    out.update(copied_blocks=copied, skipped_blocks=skipped, moved_sections=moved_sections,
+               source_report_id=source_id)
     return jsonify(out)
 
 
@@ -1820,7 +2042,7 @@ def _mail_date(value):
 
 def _email(rid):
     r = _report(rid)
-    sections = _sections(r['project_id'], include_disabled=False)
+    sections = _sections_for_report(rid, r['project_id'], include_disabled=False)
     bykey = {x['section_key']: x for x in sections}
     # 🔴 메일 순서는 화면 순서와 같아야 한다 -- 둘 다 `sort_order` 다(형 지시 2026-08-22).
     #
@@ -2219,7 +2441,7 @@ def _svms_payload_hash(preview):
 
 def _svms(rid):
     r = _report(rid)
-    sections = _sections(r['project_id'], include_disabled=False)
+    sections = _sections_for_report(rid, r['project_id'], include_disabled=False)
     syd = _render_section(rid, 'shipyard')
     vendor = _render_section(rid, 'vendor')
     # SVMS Daily Report 계약: Shipyard/Vendor는 전용 필드, Survey+Remark만 RMK.

@@ -101,6 +101,19 @@ class DockDailyTests(unittest.TestCase):
             s.update(user_id=self.uid, username='dockdaily-test', display_name='Dock Daily',
                      role='admin', permanent=False)
 
+    def _report(self, pid, report_date='2026-06-10'):
+        return self.client.post(f'/api/dock-daily/projects/{pid}/reports/generate',
+                                json={'report_date': report_date}).get_json()
+
+    def _section(self, pid, rid, label='비용 정산표'):
+        """섹션은 **열린 일자**에 생긴다(형 지시 2026-08-23).
+
+        `report_id` 없이 만들면 서버가 400 이다 -- 정의만 있고 어느 일자에도 안 보이는
+        유령 섹션을 막는 게 그 게이트의 목적이라, 테스트도 일자를 먼저 만든다.
+        """
+        return self.client.post(f'/api/dock-daily/projects/{pid}/sections',
+                                json={'label': label, 'report_id': rid})
+
     def tearDown(self):
         appmod.DATABASE = self.old_db
         appmod.app.config['DATABASE'] = self.old_cfg
@@ -2309,29 +2322,80 @@ class DockDailyTests(unittest.TestCase):
                          '상한을 넘긴 2장은 파일을 열지 않고 상한 문구를 받는다')
 
     def test_section_key_survives_a_unique_collision(self):
-        """🔴 SELECT→계산→INSERT 는 경쟁 구간이다. 겹치면 500 대신 다음 번호로 들어간다."""
+        """🔴 SELECT→계산→INSERT 는 경쟁 구간이다. 겹치면 500 대신 다음 번호로 들어간다.
+
+        경쟁을 **실제 UNIQUE 위반**으로 만든다: `sec_1` 은 DB 에 이미 있는데 번호를
+        고르는 SELECT 한 번만 그걸 못 본 것처럼 가린다 -- 다른 요청이 방금 넣고 아직
+        이 요청의 시야에 안 들어온 상황과 같다. 예외를 직접 던지면 트랜잭션이 정말
+        롤백되는지는 검증되지 않는다.
+        """
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': '키 충돌 DD'}).get_json()
-        real = routes_dock_daily.execute
-        state = {'hits': 0}
+        rid = self._report(project['id'])['id']
+        self.assertEqual(201, self._section(project['id'], rid, '먼저 만든 섹션').status_code)
+        real = routes_dock_daily.query
+        state = {'hidden': 0}
 
-        def collide(sql, *args, **kwargs):
-            # 첫 INSERT 만 다른 요청이 먼저 넣은 것처럼 만든다.
-            if 'INSERT INTO dock_daily_section_def' in sql and state['hits'] == 0:
-                state['hits'] += 1
-                real(sql, *args, **kwargs)
-                raise sqlite3.IntegrityError('UNIQUE constraint failed')
+        def blind(sql, *args, **kwargs):
+            if 'SELECT section_key FROM dock_daily_section_def' in sql and not state['hidden']:
+                state['hidden'] += 1
+                return []
             return real(sql, *args, **kwargs)
 
-        routes_dock_daily.execute = collide
+        routes_dock_daily.query = blind
         try:
-            created = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                                       json={'label': '비용 정산표'})
+            created = self._section(project['id'], rid, '비용 정산표')
         finally:
-            routes_dock_daily.execute = real
+            routes_dock_daily.query = real
+        self.assertEqual(1, state['hidden'], '가린 SELECT 가 실제로 쓰였다')
         self.assertEqual(201, created.status_code, created.get_data(as_text=True))
+        self.assertEqual('sec_2', created.get_json()['created_section_key'],
+                         '충돌한 번호는 건너뛰고 다음 번호로 들어간다')
         keys = {s['section_key'] for s in created.get_json()['sections']}
         self.assertTrue({'sec_1', 'sec_2'} <= keys, keys)
+        # 🔴 롤백까지 확인한다. 첫 시도의 소속 행이 남으면 `sec_1` 이 이 일자에 두 번
+        # 걸린 것처럼 되고, 정의를 지운 뒤 번호를 재사용할 때 되살아난다.
+        with appmod.app.app_context():
+            rows = appmod.query('SELECT section_key FROM dock_daily_report_section'
+                                ' WHERE report_id=? ORDER BY section_key', (rid,))
+        self.assertEqual(['sec_1', 'sec_2'], [r['section_key'] for r in rows])
+
+    def test_section_is_date_scoped_and_can_be_copied_then_removed_per_date(self):
+        """그날 추가한 섹션은 과거에 나타나지 않고, 복사·제거는 일자별이다."""
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '일자별 섹션 DD'}).get_json()
+        pid = project['id']
+        before = self._report(pid, '2026-06-09')
+        created_on = self._report(pid, '2026-06-10')
+        after = self._report(pid, '2026-06-11')
+        made = self._section(pid, created_on['id'], '당일 이슈')
+        self.assertEqual(201, made.status_code, made.get_data(as_text=True))
+        key = made.get_json()['created_section_key']
+
+        self.assertNotIn(key, {s['section_key'] for s in self.client.get(
+            f"/api/dock-daily/reports/{before['id']}").get_json()['sections']})
+        self.assertIn(key, {s['section_key'] for s in self.client.get(
+            f"/api/dock-daily/reports/{created_on['id']}").get_json()['sections']})
+        self.assertNotIn(key, {s['section_key'] for s in self.client.get(
+            f"/api/dock-daily/reports/{after['id']}").get_json()['sections']})
+
+        latest_after = self.client.get(f"/api/dock-daily/reports/{after['id']}").get_json()
+        copied = self.client.post(f"/api/dock-daily/reports/{after['id']}/copy-from", json={
+            'revision': latest_after['revision'], 'source_report_id': created_on['id'],
+            'mode': 'append'})
+        self.assertEqual(200, copied.status_code, copied.get_data(as_text=True))
+        self.assertEqual(1, copied.get_json()['moved_sections'])
+        self.assertIn(key, {s['section_key'] for s in copied.get_json()['sections']})
+
+        after_now = copied.get_json()
+        removed = self.client.delete(
+            f"/api/dock-daily/reports/{after['id']}/sections/{key}")
+        self.assertEqual(200, removed.status_code, removed.get_data(as_text=True))
+        self.assertFalse(removed.get_json()['section_deleted'],
+                         '이전 일자의 원본이 남아 정의도 남아야 한다')
+        self.assertNotIn(key, {s['section_key'] for s in removed.get_json()['sections']})
+        self.assertIn(key, {s['section_key'] for s in self.client.get(
+            f"/api/dock-daily/reports/{created_on['id']}").get_json()['sections']})
 
     def test_image_gallery_reads_the_new_and_the_legacy_card(self):
         """형 지시 2026-08-21: 사진 카드는 도크 리포트처럼 여러 장 + 열 수를 갖는다.
@@ -2459,25 +2523,38 @@ class DockDailyTests(unittest.TestCase):
         """형 지시 2026-08-21: 표는 하위항목이 아니라 제목을 가진 하나의 섹션이다."""
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': '섹션 추가 DD'}).get_json()
-        created = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                                   json={'label': '비용 정산표'})
+        rid = self._report(project['id'])['id']
+        created = self._section(project['id'], rid, '비용 정산표')
         self.assertEqual(201, created.status_code, created.get_data(as_text=True))
+        self.assertEqual(rid, created.get_json()['created_report_id'],
+                         '어느 일자에 생겼는지 응답이 말해 준다')
         sections = {s['section_key']: s for s in created.get_json()['sections']}
         self.assertIn('sec_1', sections, 'key 는 서버가 만든다 -- 웹·앱이 각자 만들면 갈라진다')
         self.assertEqual('비용 정산표', sections['sec_1']['label'])
         self.assertEqual('special', sections['sec_1']['kind'])
         self.assertTrue(sections['sec_1']['enabled'])
         # 두 번째 섹션은 키가 겹치지 않아야 한다.
-        again = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                                 json={'label': '검사 일정'})
+        again = self._section(project['id'], rid, '검사 일정')
         self.assertEqual(201, again.status_code)
         keys = {s['section_key'] for s in again.get_json()['sections']}
         self.assertTrue({'sec_1', 'sec_2'} <= keys, keys)
         # 제목은 필수다. 빈 제목은 이름 없는 섹션을 만든다.
-        self.assertEqual(400, self.client.post(
-            f"/api/dock-daily/projects/{project['id']}/sections", json={'label': '  '}).status_code)
+        self.assertEqual(400, self._section(project['id'], rid, '  ').status_code)
         self.assertEqual(404, self.client.post(
-            '/api/dock-daily/projects/999999/sections', json={'label': 'X'}).status_code)
+            '/api/dock-daily/projects/999999/sections',
+            json={'label': 'X', 'report_id': rid}).status_code)
+        # 🔴 일자가 없으면 만들지 않는다(형 지시 2026-08-23) -- 정의만 남고 어느 일자에도
+        # 안 보이는 유령 섹션이 되고, 옛 클라이언트가 조용히 그걸 만들어 낸다.
+        missing = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                                   json={'label': '일자 없는 섹션'})
+        self.assertEqual(400, missing.status_code, missing.get_data(as_text=True))
+        self.assertEqual('report_id_required', missing.get_json()['code'])
+        other = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '남의 프로젝트'}).get_json()
+        stray = self.client.post(f"/api/dock-daily/projects/{other['id']}/sections",
+                                 json={'label': '남의 일자', 'report_id': rid})
+        self.assertEqual(404, stray.status_code, '다른 프로젝트의 일자에는 못 붙인다')
+        self.assertEqual('report_not_found', stray.get_json()['code'])
 
     def test_an_empty_section_is_deleted_outright(self):
         """형 지시 2026-08-22: 잘못 만든 섹션을 목록에서 아주 지운다.
@@ -2486,8 +2563,8 @@ class DockDailyTests(unittest.TestCase):
         """
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': '섹션 삭제 DD'}).get_json()
-        self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                         json={'label': '잘못 만든 섹션'})
+        rid = self._report(project['id'])['id']
+        self._section(project['id'], rid, '잘못 만든 섹션')
         gone = self.client.delete(f"/api/dock-daily/projects/{project['id']}/sections/sec_1")
         self.assertEqual(200, gone.status_code, gone.get_data(as_text=True))
         body = gone.get_json()
@@ -2495,6 +2572,11 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(0, body['deleted_blocks'])
         self.assertNotIn('sec_1', {s['section_key'] for s in body['sections']},
                          '숨김이 아니라 목록에서 사라져야 한다')
+        with appmod.app.app_context():
+            # 🔴 소속 행도 함께 지워야 한다. 남으면 `sec_1` 을 다시 쓸 때 그 일자에서
+            # 새 섹션이 되살아난다(블록 고아와 같은 사고 기제).
+            self.assertEqual([], appmod.query(
+                'SELECT section_key FROM dock_daily_report_section WHERE report_id=?', (rid,)))
         # 🔴 고정 섹션은 못 지운다 -- 메일 서식과 SVMS 필드가 이름으로 물려 있다.
         for key in ('shipyard', 'survey', 'vendor', 'remark'):
             resp = self.client.delete(f"/api/dock-daily/projects/{project['id']}/sections/{key}")
@@ -2513,10 +2595,8 @@ class DockDailyTests(unittest.TestCase):
         """
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': '내용 있는 섹션 삭제 DD'}).get_json()
-        self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                         json={'label': '비용 정산표'})
-        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
-                                  json={'report_date': '2026-06-13'}).get_json()
+        report = self._report(project['id'], '2026-06-13')
+        self._section(project['id'], report['id'], '비용 정산표')
         fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
         saved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
             'revision': fetched['revision'],
@@ -2543,8 +2623,7 @@ class DockDailyTests(unittest.TestCase):
         self.assertGreater(after['revision'], before_rev)
 
         # 같은 번호를 다시 써도 옛 블록이 따라오지 않는다.
-        again = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                                 json={'label': '새 표'})
+        again = self._section(project['id'], report['id'], '새 표')
         self.assertEqual('sec_1', again.get_json()['created_section_key'])
         fresh = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
         self.assertEqual([], [b for b in fresh['blocks'] if b['section_key'] == 'sec_1'],
@@ -2561,10 +2640,8 @@ class DockDailyTests(unittest.TestCase):
         """
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': 'stale 저장 DD'}).get_json()
-        self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                         json={'label': '비용 정산표'})
-        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
-                                  json={'report_date': '2026-06-15'}).get_json()
+        report = self._report(project['id'], '2026-06-15')
+        self._section(project['id'], report['id'], '비용 정산표')
         # 이 보고서에는 sec_1 블록이 없다 -> 삭제해도 revision 이 오르지 않는다.
         stale = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
         self.assertEqual(200, self.client.delete(
@@ -2585,10 +2662,8 @@ class DockDailyTests(unittest.TestCase):
         """확정본에 내용이 있으면 거절한다 -- 확정 취소가 정상 경로다."""
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': '확정 섹션 삭제 DD'}).get_json()
-        self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                         json={'label': '비용 정산표'})
-        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
-                                  json={'report_date': '2026-06-14'}).get_json()
+        report = self._report(project['id'], '2026-06-14')
+        self._section(project['id'], report['id'], '비용 정산표')
         fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
         saved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
             'revision': fetched['revision'],
@@ -2612,11 +2687,8 @@ class DockDailyTests(unittest.TestCase):
         """새 섹션은 메일에서 다른 섹션과 같은 `N. 제목` 머리글을 받는다."""
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': '섹션 메일 DD'}).get_json()
-        self.assertEqual(201, self.client.post(
-            f"/api/dock-daily/projects/{project['id']}/sections",
-            json={'label': '비용 정산표'}).status_code)
-        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
-                                  json={'report_date': '2026-06-11'}).get_json()
+        report = self._report(project['id'], '2026-06-11')
+        self.assertEqual(201, self._section(project['id'], report['id'], '비용 정산표').status_code)
         fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
         saved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
             'revision': fetched['revision'],
@@ -2642,11 +2714,8 @@ class DockDailyTests(unittest.TestCase):
         """
         project = self.client.post('/api/dock-daily/projects', json={
             'vessel_id': self.vessel, 'title': '섹션 순서 DD'}).get_json()
-        self.assertEqual(201, self.client.post(
-            f"/api/dock-daily/projects/{project['id']}/sections",
-            json={'label': '비용 정산표'}).status_code)
-        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
-                                  json={'report_date': '2026-06-12'}).get_json()
+        report = self._report(project['id'], '2026-06-12')
+        self.assertEqual(201, self._section(project['id'], report['id'], '비용 정산표').status_code)
         fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
         keys = [s['section_key'] for s in sorted(fetched['sections'], key=lambda s: s['sort_order'])]
         self.assertEqual(['shipyard', 'survey', 'vendor', 'remark', 'sec_1'], keys)
@@ -2712,8 +2781,7 @@ class DockDailyTests(unittest.TestCase):
                             'content': content}]})
         self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
         table = [b for b in saved.get_json()['blocks'] if b['block_type'] == 'table'][0]
-        created = self.client.post(
-            f"/api/dock-daily/projects/{project['id']}/sections", json={'label': '비용 정산표'})
+        created = self._section(project['id'], report['id'], '비용 정산표')
         self.assertEqual(201, created.status_code, created.get_data(as_text=True))
         # 🔴 클라이언트가 응답 목록의 차집합으로 되짚으면, 다른 기기가 같은 순간에 섹션을
         # 추가했을 때 남의 섹션에 표를 넣는다. 방금 만든 key 를 서버가 직접 말해준다.
@@ -2744,10 +2812,8 @@ class DockDailyTests(unittest.TestCase):
         report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
                                   json={'report_date': '2026-06-13'}).get_json()
         rid = report['id']
-        pure = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                                json={'label': '비용 정산표'}).get_json()['created_section_key']
-        mixed = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
-                                 json={'label': '표와 사진'}).get_json()['created_section_key']
+        pure = self._section(project['id'], rid, '비용 정산표').get_json()['created_section_key']
+        mixed = self._section(project['id'], rid, '표와 사진').get_json()['created_section_key']
         up = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
                               data={'file': (io.BytesIO(self._png((300, 200))), 'g.png')},
                               content_type='multipart/form-data')
@@ -3152,7 +3218,7 @@ class DockDailyTests(unittest.TestCase):
     def _final_section_project(self, title):
         """확정본에 내용이 든 special 섹션 + 열려 있는 다음 일자 보고서."""
         p, first = self._dd_project_report(title, '2026-08-20')
-        self.client.post(f"/api/dock-daily/projects/{p['id']}/sections", json={'label': '표 섹션'})
+        self._section(p['id'], first['id'], '표 섹션')
         saved = self.client.put(f"/api/dock-daily/reports/{first['id']}", json={
             'revision': first['revision'],
             'operations': [{'section_key': 'sec_1', 'block_type': 'paragraph',
@@ -3162,7 +3228,13 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(200, finalized.status_code, finalized.get_data(as_text=True))
         second = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
                                   json={'report_date': '2026-08-21'}).get_json()
-        return p, second
+        # report-scoped 섹션은 새 날짜에 자동 전파되지 않는다. 이 테스트는 기존
+        # 프로젝트 스코프 시절의 숨김 가드를 검증하므로, 이전 일자 가져오기로
+        # 두 번째 보고서에도 명시적으로 붙인다.
+        copied = self.client.post(f"/api/dock-daily/reports/{second['id']}/copy-from", json={
+            'revision': second['revision'], 'source_report_id': first['id'], 'mode': 'append'})
+        self.assertEqual(200, copied.status_code, copied.get_data(as_text=True))
+        return p, copied.get_json()
 
     def test_hiding_a_section_is_refused_while_a_final_report_holds_it(self):
         """🔴 `section_delete` 만 확정본을 봤고 `enabled=0` 은 안 봤다.
@@ -3198,7 +3270,7 @@ class DockDailyTests(unittest.TestCase):
     def test_hiding_an_empty_section_still_works(self):
         """가드는 **내용이 있는** 확정본에만 걸린다. 빈 섹션은 그냥 감춰진다."""
         p, r = self._dd_project_report('빈 섹션 감추기 DD')
-        self.client.post(f"/api/dock-daily/projects/{p['id']}/sections", json={'label': '빈 섹션'})
+        self._section(p['id'], r['id'], '빈 섹션')
         ok = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
             'sections': [{'section_key': 'sec_1', 'enabled': False}]})
         self.assertEqual(200, ok.status_code, ok.get_data(as_text=True))
@@ -3242,7 +3314,7 @@ class DockDailyTests(unittest.TestCase):
         **정확한** CAS 동작이다(그 기기는 진짜로 낡은 목록을 들고 있다).
         """
         p, first = self._dd_project_report('형제 bump DD', '2026-08-20')
-        self.client.post(f"/api/dock-daily/projects/{p['id']}/sections", json={'label': '원래 이름'})
+        self._section(p['id'], first['id'], '원래 이름')
         second = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
                                   json={'report_date': '2026-08-21'}).get_json()
         stale = self.client.get(f"/api/dock-daily/reports/{second['id']}").get_json()['revision']
@@ -3272,8 +3344,7 @@ class DockDailyTests(unittest.TestCase):
         **아무것도 안 바꾼 저장마다** 다른 기기가 409 를 맞는다.
         """
         p, first = self._dd_project_report('echo 저장 DD', '2026-08-20')
-        created = self.client.post(f"/api/dock-daily/projects/{p['id']}/sections",
-                                   json={'label': '그대로'}).get_json()['sections']
+        created = self._section(p['id'], first['id'], '그대로').get_json()['sections']
         current = {s['section_key']: s for s in created}
         second = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
                                   json={'report_date': '2026-08-21'}).get_json()
@@ -3314,7 +3385,7 @@ class DockDailyTests(unittest.TestCase):
         옛 섹션 목록 echo** 2단계로 방금 바꾼 설정을 되돌린다.  올려 두면 ①에서 끊긴다.
         """
         p, first = self._dd_project_report('확정본 bump DD', '2026-08-20')
-        self.client.post(f"/api/dock-daily/projects/{p['id']}/sections", json={'label': '원래 이름'})
+        self._section(p['id'], first['id'], '원래 이름')
         rev = self.client.get(f"/api/dock-daily/reports/{first['id']}").get_json()['revision']
         finalized = self.client.put(f"/api/dock-daily/reports/{first['id']}",
                                     json={'revision': rev, 'status': 'final', 'operations': []})

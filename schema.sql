@@ -216,10 +216,26 @@ CREATE TABLE IF NOT EXISTS dock_daily_section_def (
     sort_order INTEGER NOT NULL DEFAULT 0,
     kind TEXT NOT NULL CHECK(kind IN ('fixed','special')),
     enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    -- 어느 일자에 나타나는지. 'project' = 이 프로젝트의 모든 보고서(고정 섹션과
+    -- 프로젝트 생성 때 고른 EGCS 류), 'report' = `dock_daily_report_section` 에
+    -- 행이 있는 일자에만(형 지시 2026-08-23: 그날 이슈로 추가한 섹션이 다른
+    -- 일자에까지 생기고 그 일자에서 지울 수도 없었다).
+    scope TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('project','report')),
     UNIQUE(project_id, section_key),
     FOREIGN KEY (project_id) REFERENCES dock_daily_project(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_dock_daily_section_project ON dock_daily_section_def(project_id, sort_order);
+
+-- 일자 스코프 섹션의 소속. 행이 있는 보고서에만 그 섹션이 보인다.
+-- 만든 날에만 행이 생기므로 **만든 날짜 이전 보고서에는 구조적으로 없다**.
+-- 다른 일자로는 '이전 일자 가져오기'(copy-from)가 옮기고, 각 일자에서 따로 지운다.
+CREATE TABLE IF NOT EXISTS dock_daily_report_section (
+    report_id INTEGER NOT NULL,
+    section_key TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (report_id, section_key),
+    FOREIGN KEY (report_id) REFERENCES dock_daily_report(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS dock_daily_report (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -2042,6 +2042,45 @@ def _auto_migrate():
         except Exception as e:
             print(f'[auto_migrate] dock_daily_project SVMS dock 캐시 점검 건너뜀: {e}')
 
+        # 입거 Daily 섹션의 **일자 스코프**(형 지시 2026-08-23).
+        #
+        # 🔴 `CREATE TABLE IF NOT EXISTS` 를 여기서 다시 쓴다. 위의 schema.sql 재적용이
+        #    어떤 이유로든 건너뛰어졌으면(그 블록은 예외를 삼킨다) 아래 backfill 이
+        #    "no such table" 로 죽는데, ALTER 는 이미 이 커넥션에 남아 마지막 commit 으로
+        #    들어간다 -- 그 조합은 **scope 는 report 인데 membership 은 하나도 없는** 상태,
+        #    즉 형이 만들어 둔 섹션이 전부 화면에서 사라지는 상태다.
+        # 🔴 독립 try -- 앞 블록들과 운명을 묶지 않는다.
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS dock_daily_report_section (
+                                report_id INTEGER NOT NULL,
+                                section_key TEXT NOT NULL,
+                                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                                PRIMARY KEY (report_id, section_key),
+                                FOREIGN KEY (report_id) REFERENCES dock_daily_report(id) ON DELETE CASCADE)""")
+            scols = {r[1] for r in conn.execute(
+                'PRAGMA table_info(dock_daily_section_def)').fetchall()}
+            if scols and 'scope' not in scols:
+                conn.execute("ALTER TABLE dock_daily_section_def ADD COLUMN scope TEXT"
+                             " NOT NULL DEFAULT 'project'")
+                # 이미 만들어 둔 섹션은 오늘 **모든 일자에 보인다**. 그대로 유지한 뒤
+                # 일자별로 지울 수 있게만 바꾼다 = 지금 있는 보고서 전부에 membership 을
+                # 심고 scope 를 report 로 올린다. 그래서 화면은 그대로이고, 새로 만드는
+                # 보고서에는 안 따라온다(그게 이번 지시의 핵심).
+                #
+                # 🔴 `sec_%` 만 옮긴다. 프로젝트 생성 때 고른 `egcs` 는 프로젝트 전체를
+                #    뜻하는 선택이라 일자 스코프로 바꾸면 앞으로 생성되는 보고서에서
+                #    조용히 사라진다. `LIKE 'sec_%'` 의 `_` 는 와일드카드라 ESCAPE 필수.
+                conn.execute(r"UPDATE dock_daily_section_def SET scope='report'"
+                             r" WHERE kind='special' AND section_key LIKE 'sec\_%' ESCAPE '\'")
+                conn.execute("""INSERT OR IGNORE INTO dock_daily_report_section(report_id, section_key)
+                                SELECT r.id, d.section_key
+                                  FROM dock_daily_report r
+                                  JOIN dock_daily_section_def d ON d.project_id=r.project_id
+                                 WHERE d.kind='special' AND d.scope='report'""")
+                print('[auto_migrate] dock_daily_section_def.scope 추가 + 기존 섹션 membership backfill')
+        except Exception as e:
+            print(f'[auto_migrate] dock_daily 섹션 일자 스코프 점검 건너뜀: {e}')
+
         conn.commit()
     finally:
         conn.close()
