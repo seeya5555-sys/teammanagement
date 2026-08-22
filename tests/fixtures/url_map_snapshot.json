@@ -1113,6 +1113,16 @@
   "defaults": {}
  },
  {
+  "rule": "/api/dock-daily/projects/<int:pid>/sections/<section_key>",
+  "methods": [
+   "DELETE",
+   "OPTIONS"
+  ],
+  "endpoint": "routes_dock_daily.section_delete",
+  "strict_slashes": true,
+  "defaults": {}
+ },
+ {
   "rule": "/api/dock-daily/reports/<int:rid>",
   "methods": [
    "DELETE",

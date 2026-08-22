@@ -2193,6 +2193,135 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(404, self.client.post(
             '/api/dock-daily/projects/999999/sections', json={'label': 'X'}).status_code)
 
+    def test_an_empty_section_is_deleted_outright(self):
+        """형 지시 2026-08-22: 잘못 만든 섹션을 목록에서 아주 지운다.
+
+        전엔 `enabled=0` 으로 숨기는 것뿐이라 빈 카드가 프로젝트에 계속 쌓였다.
+        """
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '섹션 삭제 DD'}).get_json()
+        self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                         json={'label': '잘못 만든 섹션'})
+        gone = self.client.delete(f"/api/dock-daily/projects/{project['id']}/sections/sec_1")
+        self.assertEqual(200, gone.status_code, gone.get_data(as_text=True))
+        body = gone.get_json()
+        self.assertEqual('sec_1', body['deleted_section_key'])
+        self.assertEqual(0, body['deleted_blocks'])
+        self.assertNotIn('sec_1', {s['section_key'] for s in body['sections']},
+                         '숨김이 아니라 목록에서 사라져야 한다')
+        # 🔴 고정 섹션은 못 지운다 -- 메일 서식과 SVMS 필드가 이름으로 물려 있다.
+        for key in ('shipyard', 'survey', 'vendor', 'remark'):
+            resp = self.client.delete(f"/api/dock-daily/projects/{project['id']}/sections/{key}")
+            self.assertEqual(409, resp.status_code, key)
+            self.assertEqual('fixed_section', resp.get_json()['code'])
+        self.assertEqual(404, self.client.delete(
+            f"/api/dock-daily/projects/{project['id']}/sections/sec_9").status_code)
+        self.assertEqual(404, self.client.delete(
+            '/api/dock-daily/projects/999999/sections/sec_1').status_code)
+
+    def test_a_section_with_content_needs_confirmation_and_takes_its_blocks(self):
+        """내용이 있으면 한 번 확인받고, 지울 땐 블록까지 함께 지운다.
+
+        🔴 블록을 남기면 `create_section` 이 비어 있는 가장 작은 번호를 다시 쓰므로,
+        `sec_1` 을 지우고 새 섹션을 만드는 순간 옛 블록이 그 안에서 되살아난다.
+        """
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '내용 있는 섹션 삭제 DD'}).get_json()
+        self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                         json={'label': '비용 정산표'})
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-13'}).get_json()
+        fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+            'revision': fetched['revision'],
+            'operations': [{'op': 'upsert', 'section_key': 'sec_1', 'block_type': 'table',
+                            'content': {'columns': ['항목'], 'rows': [['도장']]}}]})
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        before_rev = saved.get_json()['revision']
+
+        blocked = self.client.delete(f"/api/dock-daily/projects/{project['id']}/sections/sec_1")
+        self.assertEqual(409, blocked.status_code)
+        self.assertEqual('section_not_empty', blocked.get_json()['code'])
+        self.assertEqual(1, blocked.get_json()['blocks'])
+        self.assertEqual(['2026-06-13'], blocked.get_json()['dates'])
+        self.assertTrue(self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()['blocks'],
+                        '거절된 요청은 아무것도 지우지 않는다')
+
+        gone = self.client.delete(f"/api/dock-daily/projects/{project['id']}/sections/sec_1",
+                                  json={'confirm': 'delete-section'})
+        self.assertEqual(200, gone.status_code, gone.get_data(as_text=True))
+        self.assertEqual(1, gone.get_json()['deleted_blocks'])
+        after = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        self.assertEqual([], [b for b in after['blocks'] if b['section_key'] == 'sec_1'])
+        # 🔴 revision 을 올려야 그 보고서를 열어 둔 다른 기기가 옛 값으로 되살리지 못한다.
+        self.assertGreater(after['revision'], before_rev)
+
+        # 같은 번호를 다시 써도 옛 블록이 따라오지 않는다.
+        again = self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                                 json={'label': '새 표'})
+        self.assertEqual('sec_1', again.get_json()['created_section_key'])
+        fresh = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        self.assertEqual([], [b for b in fresh['blocks'] if b['section_key'] == 'sec_1'],
+                         '지운 블록이 같은 key 의 새 섹션에서 되살아나면 안 된다')
+
+    def test_a_stale_client_cannot_write_into_a_deleted_section(self):
+        """삭제된 섹션으로 들어오는 저장은 서버가 끊는다.
+
+        올마이트가 "블록이 없던 보고서는 revision 이 안 오르니, 그 보고서를 열어 둔
+        기기가 지운 섹션에 그대로 저장해 고아 블록을 만든다" 고 지적했다. 실제로는
+        보고서 `PUT` 이 upsert 마다 `dock_daily_section_def` 를 확인하므로 막힌다 --
+        그 검증이 이 삭제 계약의 안전판이라 여기서 못박아 둔다(빠지면 `sec_N` 재사용
+        때 고아 블록이 새 섹션에서 되살아난다).
+        """
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'stale 저장 DD'}).get_json()
+        self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                         json={'label': '비용 정산표'})
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-15'}).get_json()
+        # 이 보고서에는 sec_1 블록이 없다 -> 삭제해도 revision 이 오르지 않는다.
+        stale = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        self.assertEqual(200, self.client.delete(
+            f"/api/dock-daily/projects/{project['id']}/sections/sec_1").status_code)
+        after = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        self.assertEqual(stale['revision'], after['revision'],
+                         '블록이 없던 보고서는 건드리지 않는다')
+
+        rejected = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+            'revision': stale['revision'],
+            'operations': [{'op': 'upsert', 'section_key': 'sec_1', 'block_type': 'paragraph',
+                            'content': {'text': '옛 화면에서 쓴 글'}}]})
+        self.assertEqual(400, rejected.status_code, rejected.get_data(as_text=True))
+        self.assertEqual([], self.client.get(
+            f"/api/dock-daily/reports/{report['id']}").get_json()['blocks'])
+
+    def test_a_final_report_blocks_section_deletion(self):
+        """확정본에 내용이 있으면 거절한다 -- 확정 취소가 정상 경로다."""
+        project = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': '확정 섹션 삭제 DD'}).get_json()
+        self.client.post(f"/api/dock-daily/projects/{project['id']}/sections",
+                         json={'label': '비용 정산표'})
+        report = self.client.post(f"/api/dock-daily/projects/{project['id']}/reports/generate",
+                                  json={'report_date': '2026-06-14'}).get_json()
+        fetched = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{report['id']}", json={
+            'revision': fetched['revision'],
+            'operations': [{'op': 'upsert', 'section_key': 'sec_1', 'block_type': 'paragraph',
+                            'content': {'body': '도장 100'}}]})
+        self.assertEqual(200, saved.status_code)
+        final = self.client.post(f"/api/dock-daily/reports/{report['id']}/status", json={
+            'status': 'final', 'revision': saved.get_json()['revision']})
+        self.assertEqual(200, final.status_code, final.get_data(as_text=True))
+
+        for payload in (None, {'confirm': 'delete-section'}):
+            resp = self.client.delete(f"/api/dock-daily/projects/{project['id']}/sections/sec_1",
+                                      json=payload)
+            self.assertEqual(409, resp.status_code, resp.get_data(as_text=True))
+            self.assertEqual('final_report_has_content', resp.get_json()['code'])
+            self.assertEqual(['2026-06-14'], resp.get_json()['dates'])
+        still = self.client.get(f"/api/dock-daily/reports/{report['id']}").get_json()
+        self.assertTrue([b for b in still['blocks'] if b['section_key'] == 'sec_1'])
+
     def test_added_section_gets_its_own_numbered_mail_heading(self):
         """새 섹션은 메일에서 다른 섹션과 같은 `N. 제목` 머리글을 받는다."""
         project = self.client.post('/api/dock-daily/projects', json={

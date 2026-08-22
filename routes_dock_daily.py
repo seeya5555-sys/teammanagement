@@ -469,6 +469,90 @@ def create_section(pid):
     return _error('section key is exhausted', 409)
 
 
+@bp.route('/api/dock-daily/projects/<int:pid>/sections/<section_key>', methods=['DELETE'])
+@login_required
+def section_delete(pid, section_key):
+    """섹션을 목록에서 아주 지운다(형 지시 2026-08-22).
+
+    지금까지 없앨 방법은 `enabled=0` 뿐이었다.  숨긴 섹션은 화면·메일에서 안 보일 뿐
+    목록에는 그대로 남아, 잘못 만든 빈 카드가 프로젝트마다 쌓인다.
+
+    🔴 **블록도 같이 지운다.**  `dock_daily_block.section_key` 는 텍스트일 뿐 FK 가
+    아니라서 섹션 행만 지우면 블록이 고아로 남는다.  그냥 두면 두 가지가 터진다 --
+    ① 어떤 화면에서도 안 보이는데 DB 에는 남아 있고, ② `create_section` 이 **비어 있는
+    가장 작은 번호**를 다시 쓰므로 `sec_1` 을 지운 뒤 새 섹션을 만들면 그 자리에 옛
+    블록들이 되살아난다.
+
+    🔴 확정본에 내용이 있으면 거절한다.  확정된 보고서의 본문을 지우는 길을 열어 두면
+    "확정" 이 뜻하는 게 없어진다.  확정 취소 -> 삭제 -> 재확정이 정상 경로다.
+
+    내용이 있는 섹션은 `confirm=delete-section` 을 요구한다.  형이 지우는 건 대개 빈
+    카드이므로 빈 섹션은 한 번에 지워지고, 내용이 있을 때만 앱이 개수를 보여준다.
+    """
+    if not _project(pid):
+        return _error('project not found', 404)
+    confirm = _body().get('confirm')
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        section = db.execute('SELECT id, kind, label FROM dock_daily_section_def'
+                             ' WHERE project_id=? AND section_key=?', (pid, section_key)).fetchone()
+        if not section:
+            db.rollback(); return _error('section not found', 404)
+        if section['kind'] != 'special':
+            # Shipyard/Survey/Vendor/Remark 는 메일 서식과 SVMS 필드가 이름으로 물려
+            # 있는 보고서 계약이다. 지우면 그 자리에 다시 만들 수단도 없다.
+            db.rollback()
+            return _error('fixed sections cannot be deleted', 409, code='fixed_section')
+        # 이 프로젝트의 모든 보고서에서 이 섹션에 든 블록.  일자별이 아니라 프로젝트
+        # 전체다 -- 섹션 자체가 프로젝트 값이므로 지우면 모든 일자에서 사라진다.
+        rows = db.execute('''SELECT b.id AS block_id, b.report_id, r.report_date, r.status
+                             FROM dock_daily_block b
+                             JOIN dock_daily_report r ON r.id=b.report_id
+                             WHERE r.project_id=? AND b.section_key=?''',
+                          (pid, section_key)).fetchall()
+        finals = sorted({x['report_date'] for x in rows if x['status'] == 'final'})
+        if finals:
+            db.rollback()
+            return _error('확정된 보고서에 이 섹션의 내용이 있습니다. 확정을 취소한 뒤 지우세요.',
+                          409, code='final_report_has_content', dates=finals)
+        if rows and confirm != 'delete-section':
+            db.rollback()
+            return _error('section is not empty', 409, code='section_not_empty',
+                          blocks=len(rows),
+                          dates=sorted({x['report_date'] for x in rows}))
+        report_ids = sorted({x['report_id'] for x in rows})
+        if rows:
+            # 블록 삭제는 FK(`ON DELETE SET NULL`)로 첨부의 `block_id` 만 끊는다.  첨부
+            # 자체는 블록 삭제 op 와 같은 계약으로 tombstone 한다 -- 파일은 남기고
+            # 보고서 삭제 때 함께 쓸린다(`_delete_cascade` 가 `deleted_at` 행도 센다).
+            db.executemany("UPDATE dock_daily_attachment SET deleted_at=datetime('now','localtime')"
+                           ' WHERE block_id=? AND deleted_at IS NULL',
+                           [(x['block_id'],) for x in rows])
+            db.executemany('DELETE FROM dock_daily_block WHERE id=?',
+                           [(x['block_id'],) for x in rows])
+        for rid in report_ids:
+            # 🔴 revision 을 올린다.  안 올리면 그 보고서를 열어 둔 다른 기기가 옛
+            # revision 으로 저장에 성공해, 방금 지운 블록을 자기 화면에서 되살린다.
+            db.execute("UPDATE dock_daily_report SET revision=revision+1,"
+                       " updated_at=datetime('now','localtime') WHERE id=?", (rid,))
+            db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor)'
+                       ' VALUES (?,?,?,?)',
+                       (rid, db.execute('SELECT revision FROM dock_daily_report WHERE id=?',
+                                        (rid,)).fetchone()['revision'],
+                        json.dumps(_snapshot(rid), ensure_ascii=False), session_actor()))
+        cur = db.execute('DELETE FROM dock_daily_section_def WHERE id=?', (section['id'],))
+        if cur.rowcount != 1:
+            db.rollback(); return _error('section not found', 404)
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    body = _project_response(_project(pid))
+    body['deleted_section_key'] = section_key
+    body['deleted_blocks'] = len(rows)
+    return jsonify(body)
+
+
 def _purge_files(stored_names):
     """Remove attachment blobs; returns how many were actually unlinked.
 

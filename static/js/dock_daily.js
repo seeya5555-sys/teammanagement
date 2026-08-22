@@ -109,16 +109,29 @@
     // 새 프로젝트의 일자를 전부 숨겨 "보고서가 없다" 처럼 보인다.
     $('#dd-report-search').value = ''; $('#dd-report-status').value = '';
     $('#dd-project-tools').style.display = 'block'; $('#dd-generate-date').value = today(); renderReportDates();
-    const specials = (state.project.sections||[]).filter(s => s.kind === 'special');
-    // 표는 다른 카드의 하위항목이 아니라 **제목을 가진 자기 섹션**이다(형 지시 2026-08-21).
-    // 그 섹션이 곧 special 섹션이므로 새 저장소도, 새 라우트도 필요 없다 — 메일에서도
-    // 다른 섹션과 같은 `N. 제목` 머리글을 받는다.
-    const add = '<div class="dd-row" style="margin-top:9px"><input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:0"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button></div>'
-      + '<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 지우려면 체크를 해제하세요.</p>';
-    $('#dd-special-tools').innerHTML = (specials.length ? '<b>Special 항목</b>'+specials.map(s => `<label style="display:block;margin-top:7px"><input type="checkbox" class="dd-special-toggle" data-key="${esc(s.section_key)}" ${s.enabled?'checked':''}> ${esc(s.label)}</label>`).join('') : '<span class="dd-muted">Special 항목 없음</span>') + add;
-    document.querySelectorAll('.dd-special-toggle').forEach(t => t.onchange = () => toggleSpecial(t.dataset.key, t.checked));
-    $('#dd-section-add').onclick = () => addSection($('#dd-section-label').value);
+    renderSpecialTools();
     $('#dd-empty').style.display='block'; $('#dd-report').classList.remove('show'); if (state.reports.length) await selectReport(state.reports[0].id);
+  }
+  // 표는 다른 카드의 하위항목이 아니라 **제목을 가진 자기 섹션**이다(형 지시 2026-08-21).
+  // 그 섹션이 곧 special 섹션이므로 새 저장소도, 새 라우트도 필요 없다 — 메일에서도
+  // 다른 섹션과 같은 `N. 제목` 머리글을 받는다.
+  //
+  // 🔴 이 markup 은 여기 한 곳에서만 만든다. 전엔 `selectProject` 와 `addSection` 이
+  // 같은 HTML 을 각자 들고 있어서, 행에 버튼을 하나 더 다는 순간 한쪽만 고치면
+  // "섹션을 추가하고 나면 삭제 버튼이 사라지는" 화면이 된다.
+  function renderSpecialTools() {
+    const specials = (state.project?.sections||[]).filter(s => s.kind === 'special');
+    const rows = specials.length
+      ? '<b>Special 항목</b>' + specials.map(s =>
+          `<div class="dd-list-row" style="border-bottom:0;margin-top:7px"><label style="flex:1;min-width:0"><input type="checkbox" class="dd-special-toggle" data-key="${esc(s.section_key)}" ${s.enabled?'checked':''}> ${esc(s.label||s.section_key)}</label>`
+          + `<button class="dd-list-del" type="button" data-del-section="${esc(s.section_key)}" title="이 섹션을 아주 삭제" aria-label="${esc(s.label||s.section_key)} 섹션 삭제">삭제</button></div>`).join('')
+      : '<span class="dd-muted">Special 항목 없음</span>';
+    $('#dd-special-tools').innerHTML = rows
+      + '<div class="dd-row" style="margin-top:9px"><input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:0"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button></div>'
+      + '<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 잠시 감추려면 체크를 해제하고, 아주 지우려면 삭제를 누르세요.</p>';
+    document.querySelectorAll('.dd-special-toggle').forEach(t => t.onchange = () => toggleSpecial(t.dataset.key, t.checked));
+    document.querySelectorAll('[data-del-section]').forEach(b => b.onclick = () => once(b, () => deleteSection(b.dataset.delSection)));
+    $('#dd-section-add').onclick = () => addSection($('#dd-section-label').value);
   }
   function ensureSectionEditors() {
     for (const s of (state.report.sections||[]).filter(x => x.enabled)) {
@@ -365,15 +378,45 @@
       state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
       $('#dd-section-label').value='';
       // 섹션 목록을 다시 그린다. 열린 보고서에도 바로 카드가 생겨야 한다.
-      const specials=(updated.sections||[]).filter(x=>x.kind==='special');
-      $('#dd-special-tools').innerHTML='<b>Special 항목</b>'+specials.map(x=>`<label style="display:block;margin-top:7px"><input type="checkbox" class="dd-special-toggle" data-key="${esc(x.section_key)}" ${x.enabled?'checked':''}> ${esc(x.label)}</label>`).join('')
-        +'<div class="dd-row" style="margin-top:9px"><input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:0"><button class="dd-btn alt" id="dd-section-add" type="button">＋ 섹션</button></div>'
-        +'<p class="dd-muted dd-block-note">섹션은 이 프로젝트의 모든 일자에 생깁니다. 비어 있는 날은 메일에 NIL 로 나갑니다. 지우려면 체크를 해제하세요.</p>';
-      document.querySelectorAll('.dd-special-toggle').forEach(t=>t.onchange=()=>toggleSpecial(t.dataset.key,t.checked));
-      $('#dd-section-add').onclick=()=>addSection($('#dd-section-label').value);
+      renderSpecialTools();
       if(state.report){state.report.sections=updated.sections;ensureSectionEditors();renderSections();}
       notice(`섹션 "${name}" 을 추가했습니다.`);
     }catch(error){err(error);}
+  }
+  // 섹션을 목록에서 아주 지운다(형 지시 2026-08-22). 체크 해제는 숨김일 뿐이라,
+  // 잘못 만든 빈 카드가 프로젝트에 영원히 남아 있었다.
+  //
+  // 🔴 서버가 그 섹션의 블록을 **모든 일자에서** 함께 지운다(안 지우면 `sec_N` 번호를
+  // 재사용할 때 옛 블록이 새 섹션에서 되살아난다). 그래서 내용이 있으면 서버가 409
+  // `section_not_empty` 로 한 번 끊고, 그때만 개수를 보여주고 다시 물어본다.
+  async function deleteSection(key){
+    const section=(state.project?.sections||[]).find(s=>s.section_key===key);
+    const name=String(section?.label||'').trim()||key;
+    clearErr();
+    // 🔴 삭제하면 열린 보고서를 다시 읽어야 하는데(서버가 블록을 지웠다), 그 재조회가
+    // 저장 안 한 편집을 통째로 버린다 -- 형은 지운 적 없는 문장이 사라진 걸 본다.
+    // 미리보기와 같은 계약으로 먼저 저장한다(올마이트 지적).
+    if(state.dirty)await save();
+    const send=async confirmed=>api(`/api/dock-daily/projects/${state.project.id}/sections/${encodeURIComponent(key)}`,
+      {...json(confirmed?{confirm:'delete-section'}:{}),method:'DELETE'});
+    let body;
+    try{ body=await send(false); }
+    catch(error){
+      if(error.status!==409||error.code!=='section_not_empty'){err(error);return;}
+      const dates=(error.body?.dates||[]).join(', ');
+      // 🔴 "이 날짜만" 이 아니라 모든 일자에서 사라진다는 걸 반드시 말한다.
+      if(!confirm(`섹션 "${name}" 에 내용 ${error.body?.blocks||0}개가 있습니다${dates?` (${dates})`:''}.\n\n`
+        +'지우면 이 프로젝트의 모든 일자에서 함께 사라지고 되돌릴 수 없습니다.')) return;
+      try{ body=await send(true); }catch(retry){err(retry);return;}
+    }
+    state.project=body;state.projects=state.projects.map(p=>p.id===body.id?body:p);
+    renderSpecialTools();
+    // 열려 있는 보고서에서도 그 카드와 내용이 사라져야 한다. 서버가 블록을 지웠으므로
+    // 여기서 다시 읽는다 -- 화면의 옛 블록을 그대로 두면 다음 저장이 없는 블록을 올린다.
+    if(state.report)await selectReport(state.report.id);
+    notice(body.deleted_blocks>0
+      ? `섹션 "${name}" 과 그 안의 내용 ${body.deleted_blocks}개를 지웠습니다.`
+      : `섹션 "${name}" 을 지웠습니다.`);
   }
   async function toggleSpecial(key,enabled){const updated=await api(`/api/dock-daily/projects/${state.project.id}`,{...json({sections:[{section_key:key,enabled}]}),method:'PATCH'});state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);if(state.report){state.report.sections=updated.sections;ensureSectionEditors();renderSections();}}
 
