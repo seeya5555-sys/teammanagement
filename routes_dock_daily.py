@@ -59,6 +59,11 @@ DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 # renderers apply their own numbering.  Without this a saved "1) foo" would
 # render as "1) 1) foo".
 ITEM_NO_RE = re.compile(r'^\s*\d+\s*\)\s*')
+# 사진 캡션이 이미 한국어인지.  🔴 이걸로 걸러야 "번역이 필요했는데 안 됐다" 를 정확히
+# 셀 수 있다 -- 한국어 캡션을 번역기에 보내면 같은 문장이 돌아와 `photo_translated` 가
+# 안 오르고, 화면은 실패하지도 않은 번역을 실패했다고 말한다(반대로 그 오탐이 싫어
+# 경고를 아예 빼면 영문 캡션이 조용히 조선소로 나간다).
+HANGUL_RE = re.compile(r'[가-힣]')
 MAX_ATTACHMENT = 20 * 1024 * 1024
 MAX_OOXML_UNCOMPRESSED = 64 * 1024 * 1024
 MAX_OOXML_PART = 8 * 1024 * 1024
@@ -1503,6 +1508,19 @@ DOCX_SOURCE_ID = 'daily'
 #:    합치면 형이 Crew 를 화면에서 따로 빼낼 수 없다.
 DOCX_NEW_SECTIONS = {'crew': 'Crew'}
 
+#: 문서에 박힌 사진이 들어갈 섹션 라벨(형 지시 2026-08-23 "사진도 자동으로").
+#: 🔴 작업 섹션(Shipyard/Crew…)에 나눠 넣지 않는다.  캡션에서 섹션을 알아맞히는
+#:    셈이 되고, 틀리면 형이 조선소 작업 밑에 선원 사진을 넣어 보낸다.  문서 자신도
+#:    사진을 `Pictures Documenting the Status & Budgets` 라는 **자기 섹션**에 모아
+#:    두므로(실측) 같은 모양으로 들여온다.
+#: 🔴 SVMS `RMK` 에는 안 간다 -- `_render_section` 이 image 블록을 건너뛰고
+#:    `SVMS_RMK_SPECIAL_LABEL_HINTS` 에도 안 걸린다.  사진은 메일·화면에만 실린다.
+DOCX_PHOTO_SECTION = 'Photos'
+
+#: 사진 격자 열 수.  라이브 두 템플릿이 모두 2열이고(실측) 메일 상한도 이 값을 넘지
+#: 않는다.  형이 앱에서 바꾸면 그 값이 남는다(재적용은 기존 블록을 덮지 않는다).
+DOCX_PHOTO_COLUMNS = 2
+
 #: 읽을 수 있는 확장자 → 파서 모듈.  두 파서는 **같은 판정 함수**(`dock_daily_docx.judge`)
 #: 를 쓰므로 형식이 달라도 포함/제외 판정은 같다(형 지시 2026-08-23 "pdf도 읽어오기").
 #: 🔴 옛 바이너리 `.doc` 는 목록에 없다 -- python-docx 가 못 열고, 열리는 척하다 빈
@@ -1637,6 +1655,59 @@ def _docx_applied_keys(rid):
     return out
 
 
+def _docx_photos(path, module):
+    """문서 사진 목록.  `(payload, None)` 또는 `(None, 에러응답)`.
+
+    `payload['photos']` 의 각 항목에 `sha256`(전체)·`stored_ext` 를 채운다.  파서는
+    12자 `photo_key` 만 만들지만, 첨부 중복 판정은 `dock_daily_attachment.sha256`
+    (전체 64자) 와 맞대야 하므로 여기서 계산한다.
+
+    🔴 사진 하나가 첨부 상한(`MAX_ATTACHMENT`)을 넘으면 **그 장만** 뺀다.  통째로
+       실패시키면 사진 한 장 때문에 나머지 열 장을 못 넣는다.
+    """
+    if module == 'dock_daily_pdf':
+        import dock_daily_pdf as parser
+    else:
+        import dock_daily_docx as parser
+    try:
+        payload = parser.photos(path)
+    except Exception as exc:                  # pragma: no cover - 손상 파일
+        app.logger.warning('dock-daily %s photos: %s', module, exc)
+        return None, _error('문서의 사진을 읽을 수 없습니다.', 400, code='photos_unreadable')
+    kept, oversize = [], 0
+    for photo in payload['photos']:
+        if photo['size'] > MAX_ATTACHMENT:
+            oversize += 1
+            continue
+        photo['sha256'] = hashlib.sha256(photo['data']).hexdigest()
+        kept.append(photo)
+    payload['photos'] = kept
+    payload['oversize'] = oversize
+    return payload, None
+
+
+def _docx_photo_state(rid, digests):
+    """지금 이 보고서에 살아 있는 사진의 `sha256` 집합.
+
+    🔴 지운 첨부(`deleted_at`)는 **없는 것으로 본다**.  카드(행)와 규칙이 다른데
+       이유가 있다: 행은 판정이 '포함' 이면 자동으로 체크돼 들어오므로 형이 지운 줄이
+       되살아나지 않게 막아야 하지만, 사진은 **형이 매번 직접 고를 때만** 들어온다
+       (`photo_keys` 없으면 0장, 화면 기본값도 체크 해제).  고른 것을 "전에 지웠으니
+       안 넣는다" 로 거절하면 그게 조용한 무동작이다 -- 고른 대로 넣는다.
+       되살아남 방지선은 **기본 체크 해제**이고, 그건 규칙 모듈에 잠가 뒀다.
+
+    개별 첨부 삭제는 행까지 지우는 하드 삭제(`attachment_delete`)라 tombstone 이
+    남지도 않는다.  블록 삭제만 `deleted_at` 을 남기는데, 그 둘을 다르게 취급하면
+    형은 왜 어떤 사진은 다시 들어오고 어떤 건 안 들어오는지 알 수 없다.
+    """
+    if not digests:
+        return set()
+    marks = ','.join('?' * len(digests))
+    return {row['sha256'] for row in query(
+        'SELECT sha256 FROM dock_daily_attachment WHERE report_id=? AND deleted_at IS NULL'
+        ' AND sha256 IN (%s)' % marks, (rid,) + tuple(digests))}
+
+
 def _docx_preview(rid, row, path):
     """scan/apply 가 공유하는 미리보기 페이로드."""
     r = _report(rid)
@@ -1657,6 +1728,23 @@ def _docx_preview(rid, row, path):
     # 작업이 두 줄로 남는다(올마이트 지적 2026-08-23).  자동으로 알아맞힐 수는 없으니
     # **숫자로 알린다** -- 조용히 두면 형은 중복된 채로 메일을 보낸다.
     in_file = {row_['row_key'] for g in payload['groups'] for row_ in g['rows']}
+    # 사진.  바이트는 응답에 싣지 않는다 -- 목록만 보여 주고, 실제 파일은 형이 고른
+    # 뒤 apply 가 문서에서 다시 뽑는다(응답에 넣으면 스캔 한 번에 수 MB 가 오간다).
+    shots, err = _docx_photos(path, _docx_reader(row['original_name']) or 'dock_daily_docx')
+    if err:
+        return None, err
+    state = _docx_photo_state(rid, [p['sha256'] for p in shots['photos']])
+    payload.update(
+        photos=[{'photo_key': p['photo_key'], 'caption': p['caption'], 'size': p['size'],
+                 'mime': p['mime'], 'applied': p['sha256'] in state}
+                for p in shots['photos']],
+        photo_captions=shots['captions'], photo_duplicates=shots['duplicates'],
+        photo_skipped=shots['skipped'] + shots['oversize'], photo_limit=shots['photo_limit'],
+        # 🔴 레터헤드로 빼낸 장수도 **말한다**.  세어만 두고 화면에 안 올리면 "쪽마다
+        #    반복되는 사진" 을 우리가 조용히 지운 것이고, 형은 문서의 사진 수와 화면의
+        #    사진 수가 다른 이유를 알 수 없다(올마이트 지적).
+        photo_letterhead=shots.get('letterhead', 0),
+        photo_section=DOCX_PHOTO_SECTION)
     payload.update(report_id=rid, attachment_id=row['id'], filename=row['original_name'],
                    file_sha256=row['sha256'], applied=applied,
                    file_kind=(_docx_reader(row['original_name']) or '').replace(
@@ -1746,6 +1834,43 @@ def _docx_entries_of(block, subkeys):
     return out
 
 
+def _docx_photo_section(db, rid, project_id):
+    """사진이 갈 섹션 key.  crew 와 **같은 규칙**으로 찾고, 없으면 만든다.
+
+    반환 `(section_key, 만들었으면 {'section_key','label'} 아니면 None, 붙였으면 1)`.
+    🔴 프로젝트 스코프로 만들지 않는다 -- 그러면 사진이 없는 모든 일자 보고서에 빈
+       `Photos` 섹션이 생기고 메일에 `Photos NIL` 이 나간다.
+    """
+    label = DOCX_PHOTO_SECTION
+    on_report = {r['section_key'] for r in db.execute(
+        'SELECT section_key FROM dock_daily_report_section WHERE report_id=?', (rid,))}
+    found = None
+    for row in db.execute('SELECT section_key, label, scope FROM dock_daily_section_def'
+                          ' WHERE project_id=? AND enabled=1 ORDER BY sort_order, id',
+                          (project_id,)):
+        if (row['label'] or '').strip().lower() == label.lower():
+            found = row
+            break
+    if found is not None and (found['scope'] != 'report' or found['section_key'] in on_report):
+        return found['section_key'], None, 0
+    if found is not None:
+        # 다른 일자에만 있던 정의는 재사용하고 이 일자에 붙인다(crew 와 같은 이유 --
+        # 또 만들면 프로젝트 섹션 목록이 같은 이름으로 도배된다).
+        cur = db.execute('INSERT OR IGNORE INTO dock_daily_report_section(report_id,section_key)'
+                         ' VALUES (?,?)', (rid, found['section_key']))
+        return found['section_key'], None, cur.rowcount or 0
+    key = _alloc_section_key(db, project_id)
+    top = db.execute('SELECT MAX(sort_order) t FROM dock_daily_section_def WHERE project_id=?',
+                     (project_id,)).fetchone()
+    db.execute('INSERT INTO dock_daily_section_def'
+               ' (project_id,section_key,label,sort_order,kind,enabled,scope)'
+               " VALUES (?,?,?,?,'special',1,'report')",
+               (project_id, key, label, int(top['t'] if top and top['t'] is not None else 19) + 1))
+    db.execute('INSERT OR IGNORE INTO dock_daily_report_section(report_id,section_key)'
+               ' VALUES (?,?)', (rid, key))
+    return key, {'section_key': key, 'label': label}, 0
+
+
 @bp.route('/api/dock-daily/reports/<int:rid>/docx-apply', methods=['POST'])
 @login_required
 def report_docx_apply(rid):
@@ -1789,13 +1914,40 @@ def report_docx_apply(rid):
             take = item['row_key'] in picked if picked is not None else item['verdict'] == 'include'
             if take:
                 jobs.append((group, item))
-    if not jobs:
+    # 문서 안 사진.  🔴 `photo_keys` 가 **없으면 한 장도 안 넣는다**(빈 배열과 같다).
+    #    지금 라이브인 클라이언트(웹·OTA 258)는 이 키를 모른다 -- 없을 때 '전부'로
+    #    읽으면 형이 고르지도 않은 사진 11장이 조용히 붙고, 그 파일은 형이 손으로
+    #    지워야 한다.  넣는 쪽이 명시할 때만 넣는다.
+    pkeys = data.get('photo_keys')
+    if pkeys is not None and not isinstance(pkeys, list):
+        return _error('photo_keys must be an array')
+    photo_jobs, photo_already, unknown_photos = [], 0, []
+    if pkeys:
+        want_p = set(str(x) for x in pkeys)
+        shots, err = _docx_photos(path, _docx_reader(row['original_name']) or 'dock_daily_docx')
+        if err:
+            return err
+        state = _docx_photo_state(rid, [p['sha256'] for p in shots['photos']])
+        for photo in shots['photos']:
+            if photo['photo_key'] not in want_p:
+                continue
+            if photo['sha256'] in state:
+                photo_already += 1        # 이미 이 보고서에 있는 사진 -- 두 번 붙이지 않는다
+            else:
+                photo_jobs.append(photo)
+        unknown_photos = sorted(want_p - {p['photo_key'] for p in shots['photos']})
+    # 🔴 **아무것도 고르지 않은** 요청만 400 이다.  고른 사진이 전부 `already`·`unknown`
+    #    이어서 할 일이 0장인 경우까지 400 으로 끊으면 `photos_already`·
+    #    `unknown_photo_keys` 안내가 사라지고 형은 사유 없는 "넣을 항목이 없습니다" 만
+    #    본다(올마이트 지적).  할 일이 없으면 아래 no-writes 경로가 200 + 개수로 답한다.
+    if not wanted and not pkeys and not jobs:
         return _error('넣을 항목이 없습니다.', 400, code='no_rows')
     unknown_keys = sorted(picked - {i['row_key'] for _, i in jobs}) if picked is not None else []
 
     translated = 0
     ko = [None] * len(jobs)
-    if data.get('translate', True):
+    want_ko = bool(data.get('translate', True))
+    if jobs and want_ko:
         try:
             from helpers_shared import translate_texts_ko
             out = translate_texts_ko([i['desc'] for _, i in jobs])
@@ -1807,11 +1959,34 @@ def report_docx_apply(rid):
                 if out[n] and out[n].strip() != item['desc'].strip():
                     ko[n] = out[n]
                     translated += 1
+    # 사진 캡션도 번역한다(같은 메일에 나가므로 한쪽만 영문이면 그게 더 이상하다).
+    # 🔴 행과 **따로** 호출하고 **따로 센다**.  한 리스트에 붙여 보내고 잘라 쓰면 길이가
+    #    어긋나는 날 행 설명이 캡션으로 조용히 밀린다.  또 캡션 번역을 `translated` 에
+    #    같이 세면 화면의 "일부는 영문 원문으로 들어갔습니다" 판정
+    #    (`translated < 고른수 - skipped - unchanged`)이 캡션 수만큼 부풀어, 행 번역이
+    #    실패한 날에도 경고가 안 뜬다 -- 그게 화면에서 안 보이는 종류의 거짓이다.
+    photo_translated = 0
+    photo_ko = [None] * len(photo_jobs)
+    caps = [(n, p['caption']) for n, p in enumerate(photo_jobs)
+            if p['caption'] and not HANGUL_RE.search(p['caption'])]
+    if caps and want_ko:
+        try:
+            from helpers_shared import translate_texts_ko
+            out = translate_texts_ko([c for _, c in caps])
+        except Exception as exc:              # pragma: no cover - 외부 API
+            app.logger.warning('dock-daily photo translate: %s', exc)
+            out = None
+        if out and len(out) == len(caps):
+            for k, (n, cap) in enumerate(caps):
+                if out[k] and out[k].strip() != cap.strip():
+                    photo_ko[n] = out[k]
+                    photo_translated += 1
 
     db = get_db()
     lock, err = _cas_begin(rid, data['revision'])
     if err:
         return err
+    written = []          # 방금 디스크에 쓴 사진.  rollback 하면 지운다(아래 참조).
     try:
         created_section = None
         applied = updated = unchanged = skipped_edited = skipped_unmapped = 0
@@ -2003,15 +2178,85 @@ def report_docx_apply(rid):
             db.execute('DELETE FROM dock_daily_block WHERE id=?', (bid,))
             merged += 1
             writes += 1
+        # ── 문서 안 사진 ────────────────────────────────────────────────────────
+        # 🔴 파일 쓰기가 **트랜잭션 안**이다(첨부 업로드와 반대).  업로드는 파일 하나에
+        #    행 하나라 먼저 써도 되지만, 여기는 revision CAS·섹션 생성과 한 덩어리라
+        #    중간에 409 가 나면 행 없는 blob 이 남는다 -- 그래서 rollback 경로마다
+        #    `_purge_files(written)` 를 붙인다(행 없는 파일은 어떤 purge 도 못 찾는다).
+        photos_added = 0
+        if photo_jobs:
+            pkey, made, patt = _docx_photo_section(db, rid, lock['project_id'])
+            attached += patt
+            # 카드가 만든 섹션이 있으면 그쪽을 먼저 알린다(화면 문구는 한 칸뿐이다).
+            created_section = created_section or made
+            # 이 섹션의 문서-사진 격자를 재사용한다.  🔴 형이 손댄 격자(`manual_override`)
+            #    는 건드리지 않고 새 격자를 만든다 -- 카드에서 지켜 온 선과 같다.
+            # 🔴 `origin` 은 스키마 CHECK 가 `manual|dock_auto` 만 받는다.  전용 값
+            #    (`dock_photo`)을 쓰려면 마이그레이션+baseline 이 필요하고, 그건 사진
+            #    한 장 넣자고 열 계약이 아니다.  `block_type='image'` + `dock_auto`
+            #    조합이 이미 "문서에서 들어온 격자" 를 정확히 가른다(형이 만든 격자는
+            #    `manual`).
+            gal = db.execute("SELECT id, content_json FROM dock_daily_block WHERE report_id=?"
+                             " AND section_key=? AND block_type='image' AND origin='dock_auto'"
+                             ' AND manual_override=0 ORDER BY sort_order, id LIMIT 1',
+                             (rid, pkey)).fetchone()
+            images, cols = [], DOCX_PHOTO_COLUMNS
+            if gal is not None:
+                try:
+                    cur = json.loads(gal['content_json'] or '{}')
+                except ValueError:
+                    cur = {}
+                images = [x for x in (cur.get('images') or []) if isinstance(x, dict)]
+                cols = cur.get('columns') or DOCX_PHOTO_COLUMNS
+                bid = gal['id']
+            else:
+                order = nexts.get(pkey, 0)
+                nexts[pkey] = order + 1
+                bid = db.execute('''INSERT INTO dock_daily_block(report_id,section_key,sort_order,
+                                    block_type,content_json,origin)
+                                    VALUES (?,?,?,'image',?,'dock_auto')''',
+                                 (rid, pkey, order,
+                                  json.dumps({'images': [], 'columns': cols}))).lastrowid
+            base = os.path.splitext(row['original_name'] or 'document')[0]
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            root = os.path.realpath(UPLOAD_DIR)
+            for n, photo in enumerate(photo_jobs):
+                stored = 'dock_daily_' + uuid.uuid4().hex + '.' + photo['ext']
+                dest = os.path.realpath(os.path.join(UPLOAD_DIR, stored))
+                if os.path.commonpath((dest, root)) != root:
+                    raise RuntimeError('unsafe upload path')      # 그럴 리 없다(uuid)
+                # 🔴 이름을 **열린 직후** 청소 목록에 넣는다.  `write`/`close` 가 실패한
+                #    뒤에 넣으면 반쯤 쓰인 파일이 어떤 rollback 경로에도 안 걸려 영구히
+                #    남는다(행이 없으니 어떤 청소 스윕도 못 찾는다 -- 올마이트 지적).
+                with open(dest, 'xb') as fh:
+                    written.append(stored)
+                    fh.write(photo['data'])
+                name = secure_filename('%s_photo%02d.%s' % (base, len(images) + n + 1,
+                                                            photo['ext'])) or stored
+                aid = db.execute('''INSERT INTO dock_daily_attachment(report_id,block_id,
+                                    stored_name,original_name,mime_type,size,sha256)
+                                    VALUES (?,?,?,?,?,?,?)''',
+                                 (rid, bid, stored, name[:255], photo['mime'], photo['size'],
+                                  photo['sha256'])).lastrowid
+                images.append({'attachment_id': aid,
+                               'caption': photo_ko[n] or photo['caption'] or ''})
+                photos_added += 1
+            db.execute("UPDATE dock_daily_block SET content_json=?,"
+                       " updated_at=datetime('now','localtime') WHERE id=?",
+                       (json.dumps({'images': images, 'columns': cols}, ensure_ascii=False), bid))
+            writes += 1
         if not writes and not created_section and not attached:
             # 아무것도 안 바뀌었으면 revision 을 올리지 않는다 -- 올리면 이 보고서를 열어
             # 둔 다른 기기가 이유 없이 409 를 맞는다.
-            db.rollback()
+            db.rollback(); _purge_files(written)
             out = _report_json(rid)
             out.update(applied=0, updated=0, unchanged=unchanged, merged_cards=0,
                        skipped_edited=skipped_edited, attached_sections=0,
                        skipped_unmapped=skipped_unmapped, translated=0,
-                       unknown_row_keys=unknown_keys, created_section=None)
+                       unknown_row_keys=unknown_keys, created_section=None,
+                       photos_added=0, photos_already=photo_already,
+                       photos_untranslated=0, photos_translated=0,
+                       unknown_photo_keys=unknown_photos)
             return jsonify(out)
         newrev = lock['revision'] + 1
         cur = db.execute("UPDATE dock_daily_report SET revision=?,"
@@ -2019,19 +2264,28 @@ def report_docx_apply(rid):
                          " updated_at=datetime('now','localtime') WHERE id=? AND revision=?",
                          (newrev, rid, lock['revision']))
         if cur.rowcount != 1:
-            db.rollback(); return _error('revision conflict', 409, code='revision_conflict',
-                                         current_revision=lock['revision'])
+            db.rollback(); _purge_files(written)
+            return _error('revision conflict', 409, code='revision_conflict',
+                          current_revision=lock['revision'])
         db.execute('INSERT INTO dock_daily_report_revision(report_id,revision,snapshot_json,actor)'
                    ' VALUES (?,?,?,?)',
                    (rid, newrev, json.dumps(_snapshot(rid), ensure_ascii=False), session_actor()))
         db.commit()
     except Exception:
-        db.rollback(); raise
+        db.rollback(); _purge_files(written); raise
     out = _report_json(rid)
     out.update(applied=applied, updated=updated, unchanged=unchanged, merged_cards=merged,
                skipped_edited=skipped_edited, attached_sections=attached,
                skipped_unmapped=skipped_unmapped, translated=translated,
-               unknown_row_keys=unknown_keys, created_section=created_section)
+               unknown_row_keys=unknown_keys, created_section=created_section,
+               photos_added=photos_added, photos_already=photo_already,
+               # 🔴 캡션 번역 실패는 **서버가 세서** 준다.  이게 없으면 화면은 캡션 번역이
+               #    실패했는지 알 수 없고 영문 캡션이 조용히 그대로 나간다(올마이트 지적).
+               #    행의 `translated` 처럼 화면에서 뺄셈하게 두지 않는다 -- 캡션은 이미
+               #    한국어인 것을 애초에 안 보내므로, 뺄셈식은 화면에서 재현할 수 없다.
+               photos_untranslated=len(caps) - photo_translated,
+               photos_translated=photo_translated,
+               unknown_photo_keys=unknown_photos)
     return jsonify(out)
 
 

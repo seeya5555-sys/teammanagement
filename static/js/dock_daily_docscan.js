@@ -49,9 +49,48 @@
     return row.verdict === 'include';
   }
 
+  /* ── 문서 안 사진 (형 지시 2026-08-23 Phase 3) ──────────────────────────────
+   * 🔴 사진은 **기본 체크가 아니다**. 행과 규칙이 다른 이유가 둘이다.
+   *    ① 서버가 `photo_keys` 를 안 받으면 0장을 넣는다 — 고른 것만 들어온다는 계약이고,
+   *       화면 기본값이 체크면 그 계약이 화면에서 무의미해진다.
+   *    ② 사진은 형이 지워도 tombstone 이 없다(`attachment_delete` 는 하드 삭제).
+   *       기본 체크면 지운 사진이 다시 읽기 한 번으로 되살아난다 — 되살아남 방지선이
+   *       바로 이 기본값이다.
+   * 🔴 이미 들어간 사진(`applied`)은 고를 수 없다. 서버도 같은 바이트면 `photos_already`
+   *    로 건너뛰므로, 체크해 두면 "넣었다" 고 믿게 만드는 조용한 무동작이 된다. */
+  function isPhotoSelectable(photo) {
+    return !!photo && !photo.applied;
+  }
+
+  function isPhotoDefaultChecked() {
+    return false;
+  }
+
+  /* 사진 행에 붙는 사유. 못 고르는 이유는 화면에 글로 적는다(툴팁은 터치기기에서 안 보인다). */
+  function photoNote(photo) {
+    if (!photo) return '';
+    return photo.applied ? '이미 이 보고서에 있음' : '';
+  }
+
+  /* 사진 묶음에 대해 형이 알아야 하는 것. 조용히 빠지면 문서에 있던 사진이 빠진 걸 모른다. */
+  function photoWarnings(scan) {
+    var out = [];
+    if (!scan) return out;
+    if (scan.photo_captions === false) out.push('PDF 는 사진 설명을 읽을 수 없어 빈 칸으로 들어갑니다');
+    if (scan.photo_duplicates) out.push('같은 사진 ' + scan.photo_duplicates + '장을 접었습니다');
+    /* 🔴 레터헤드로 빼낸 것도 말한다. 세어만 두고 안 말하면 우리가 조용히 지운 것이다. */
+    if (scan.photo_letterhead) out.push('쪽마다 반복되는 그림 ' + scan.photo_letterhead
+                                        + '장은 레터헤드로 보고 뺐습니다');
+    if (scan.photo_skipped) out.push('⚠ 넣을 수 없는 그림 ' + scan.photo_skipped + '장은 빠집니다(형식·용량)');
+    if (scan.photo_limit) out.push('⚠ 상한을 넘은 사진 ' + scan.photo_limit + '장은 빠집니다');
+    return out;
+  }
+
   var api = {
     isDropped: isDropped, isUnusable: isUnusable, isLocked: isLocked,
-    isSelectable: isSelectable, isDefaultChecked: isDefaultChecked
+    isSelectable: isSelectable, isDefaultChecked: isDefaultChecked,
+    isPhotoSelectable: isPhotoSelectable, isPhotoDefaultChecked: isPhotoDefaultChecked,
+    photoNote: photoNote, photoWarnings: photoWarnings
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.DockDailyDocScanRules = api;

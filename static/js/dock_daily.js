@@ -1220,6 +1220,28 @@
     // 가릴 수 없다.
     if(!rows.length)box.innerHTML=`<p class="dd-muted">읽을 수 있는 작업표를 찾지 못했습니다.`
       +`${scan.file_kind==='pdf'?' 글자 없이 사진으로만 스캔한 PDF 는 읽을 수 없습니다 — 원본 Word(.docx) 나 텍스트가 있는 PDF 를 올려 주세요.':' 문서에 <b>Description / Date start</b> 머리글이 있는 작업표가 있는지 확인해 주세요.'}</p>`;
+    // ── 문서 안 사진 (형 지시 2026-08-23 Phase 3) ────────────────────────────
+    // 🔴 기본 체크가 **아니다**. 규칙과 이유는 `dock_daily_docscan.js` 가 정본이다
+    // (사진은 지워도 tombstone 이 없어 기본 체크면 되살아난다).
+    const RULES=window.DockDailyDocScanRules;
+    const shots=scan.photos||[];
+    const pbox=$('#dd-docx-photos');
+    if(!shots.length){
+      pbox.innerHTML=scan.photo_skipped||scan.photo_limit
+        ? `<p class="dd-muted">⚠ 문서의 그림 ${(scan.photo_skipped||0)+(scan.photo_limit||0)}장은 넣을 수 없는 형식·용량입니다.</p>`:'';
+    }else{
+      pbox.innerHTML=`<div class="dd-docx-group"><h3>사진 <span class="dd-muted">${shots.length}장 · `
+        +`고른 사진만 <b>${esc(scan.photo_section||'Photos')}</b> 섹션 격자로 들어갑니다`
+        +`${RULES.photoWarnings(scan).length?' · '+esc(RULES.photoWarnings(scan).join(' · ')):''}</span></h3>`
+        +shots.map(p=>{
+          const note=RULES.photoNote(p);
+          return `<label class="dd-docx-row"><input type="checkbox" data-photo="1" value="${esc(p.photo_key)}"`
+            +`${RULES.isPhotoDefaultChecked(p)?' checked':''}${RULES.isPhotoSelectable(p)?'':' disabled'}>`
+            +`<span><b>${esc(p.caption||'(설명 없음)')}</b>`
+            +`<br><span class="dd-muted">${Math.round((p.size||0)/1024)}KB · ${esc(p.mime||'')}`
+            +`${note?' · '+esc(note):''}</span></span></label>`;
+        }).join('')+'</div>';
+    }
     // 접힌 행·모르는 제목·짝이 없어진 옛 카드를 전부 여기서 말한다. 조용히 넘기면
     // 형은 문서에 있던 작업이 빠진 걸(또는 중복으로 남은 걸) 모른다.
     const warn=[];
@@ -1229,16 +1251,23 @@
     $('#dd-docx-summary').textContent=`${scan.filename} · 기준 일자 ${scan.report_date} · `
       +`포함 ${scan.counts.include||0} / 제외 ${scan.counts.exclude||0} / 판정불가 ${scan.counts.unknown||0}`
       +(warn.length?' · '+warn.join(' · '):'');
-    box.querySelectorAll('input[type=checkbox]').forEach(c=>c.onchange=updateDocxRun);
+    // 🔴 사진 체크박스도 같이 묶는다. 한쪽만 묶으면 사진을 골라도 넣기 버튼이 안 열린다.
+    $('#dd-docx-modal').querySelectorAll('input[type=checkbox]').forEach(c=>c.onchange=updateDocxRun);
     updateDocxRun();
   }
   function docxPicked(){
     return Array.from($('#dd-docx-groups').querySelectorAll('input[type=checkbox]:checked')).map(c=>c.value);
   }
+  function docxPickedPhotos(){
+    return Array.from($('#dd-docx-photos').querySelectorAll('input[type=checkbox]:checked')).map(c=>c.value);
+  }
   function updateDocxRun(){
-    const n=docxPicked().length, locked=state.report?.status==='final';
-    $('#dd-docx-run').disabled=!n||locked;
-    $('#dd-docx-status').textContent=locked?'':(n?`${n}건 선택`:'선택한 항목이 없습니다');
+    const n=docxPicked().length, p=docxPickedPhotos().length, locked=state.report?.status==='final';
+    $('#dd-docx-run').disabled=(!n&&!p)||locked;
+    // 사진만 골라도 넣을 수 있다(서버도 행 0건 + 사진만 받는다). 개수를 따로 적는다 --
+    // 합쳐 세면 형은 사진이 들어가는지 화면에서 확인할 수 없다.
+    const bits=[]; if(n)bits.push(`${n}건 선택`); if(p)bits.push(`사진 ${p}장`);
+    $('#dd-docx-status').textContent=locked?'':(bits.length?bits.join(' · '):'선택한 항목이 없습니다');
   }
   async function openDocxModal(aid){
     if(!state.report)return; clearErr();
@@ -1266,12 +1295,14 @@
   async function runDocxApply(){
     const scan=state.docx; if(!scan||!state.report)return;
     const rid=state.report.id, pid=state.project.id, picked=docxPicked();
-    if(!picked.length){$('#dd-docx-error').textContent='넣을 항목을 고르세요.';return;}
+    const shots=docxPickedPhotos();
+    if(!picked.length&&!shots.length){$('#dd-docx-error').textContent='넣을 항목을 고르세요.';return;}
     const run=$('#dd-docx-run'); run.disabled=true;
     $('#dd-docx-error').textContent=''; $('#dd-docx-status').textContent='번역하고 넣는 중…';
     try{
       const out=await api(`/api/dock-daily/reports/${rid}/docx-apply`,
-        {...json({attachment_id:scan.attachment_id,revision:state.report.revision,row_keys:picked}),method:'POST'});
+        {...json({attachment_id:scan.attachment_id,revision:state.report.revision,row_keys:picked,
+                  photo_keys:shots}),method:'POST'});
       closeDocxModal();
       if(state.project?.id!==pid)return;
       if(state.report?.id===rid)await selectReport(rid);
@@ -1291,6 +1322,15 @@
       if((out.unknown_row_keys||[]).length)bits.push(`⚠ ${out.unknown_row_keys.length}줄은 지금 파일에 없어 넣지 못했습니다(문서가 바뀌었으면 다시 읽으세요)`);
       if(out.created_section)bits.push(`${out.created_section.label} 섹션을 이 일자에 만들었습니다`);
       if(out.attached_sections)bits.push(`기존 섹션 ${out.attached_sections}개를 이 일자에 붙였습니다`);
+      if(out.photos_added)bits.push(`사진 ${out.photos_added}장을 넣었습니다`);
+      if(out.photos_already)bits.push(`사진 ${out.photos_already}장은 이미 있어 그대로 뒀습니다`);
+      if((out.unknown_photo_keys||[]).length)bits.push(`⚠ 사진 ${out.unknown_photo_keys.length}장은 지금 파일에 없어 넣지 못했습니다`);
+      // 🔴 캡션 번역 실패는 서버가 센 값을 그대로 말한다. 아래 행 경고에 얹으면 캡션만
+      // 실패한 날엔 아무 말도 안 나오고 영문 캡션이 그대로 조선소로 나간다.
+      if(out.photos_untranslated)bits.push(`사진 설명 ${out.photos_untranslated}장은 번역 없이 영문 원문으로 들어갔습니다`);
+      // 🔴 번역 경고는 **행만** 센다. 서버가 캡션 번역을 `photos_translated` 로 따로
+      // 주는 이유가 이것이다 — 합쳐 세면 캡션 수만큼 부풀어 행 번역이 실패한 날에도
+      // 경고가 안 뜬다.
       if(out.translated<picked.length-out.skipped_edited-out.unchanged)bits.push('일부는 번역 없이 영문 원문으로 들어갔습니다');
       notice(bits.length?bits.join(' · ')+'.':'바뀐 내용이 없습니다.');
     }catch(e){

@@ -52,6 +52,7 @@ party` 와 달리 **중간에 `Engine` 이 낀다**.  옛 규칙은 `leading wor
   응답의 `stale_applied`(이 보고서 카드에 있는데 지금 파일에 없는 줄)로, 화면이
   "문장이 수정되었을 수 있음 -- 중복으로 남으면 직접 지우세요" 라고 말해 준다.
 """
+import hashlib
 import re
 
 import dock_daily_docx as rules
@@ -311,3 +312,84 @@ def parse(path):
 def scan(path, report_date):
     """`.docx` 의 `scan()` 과 **같은 페이로드**.  판정은 그쪽 규칙을 그대로 쓴다."""
     return rules.judge(parse(path), report_date)
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  PDF 에 박힌 사진 (형 지시 2026-08-23 "사진도 자동으로")
+# ─────────────────────────────────────────────────────────────────────
+def photo_pages(path):
+    """`[[{'key','data','ext','mime','page','top','x0'}]]` — 쪽별 사진 목록.
+
+    바이트를 못 뽑는 이미지는 `None` 자리를 남기지 않고 세어서 올린다.
+    """
+    import pdfplumber                      # 지연 import: PDF 를 안 읽는 요청엔 부담 0
+    pages, skipped = [], 0
+    with pdfplumber.open(path) as pdf:
+        for index, page in enumerate(pdf.pages):
+            found = []
+            for image in page.images:
+                stream = image.get('stream')
+                try:
+                    data = stream.get_data() if stream is not None else b''
+                except Exception:             # pragma: no cover - 손상 스트림
+                    data = b''
+                ext, mime = rules.photo_kind(data or b'')
+                if not ext:
+                    skipped += 1
+                    continue
+                # 🔴 `key` 는 **full sha256** 이다.  접기·레터헤드 판정을 12자로 하면
+                #    앞자리가 겹친 서로 다른 사진이 조용히 하나로 접힌다.
+                found.append({'key': hashlib.sha256(data).hexdigest(), 'data': data,
+                              'ext': ext, 'mime': mime, 'page': index,
+                              'top': float(image.get('top') or 0),
+                              'x0': float(image.get('x0') or 0)})
+            pages.append(found)
+    return pages, skipped
+
+
+def photos(path):
+    """PDF 사진.  `.docx` 의 `photos()` 와 **같은 모양**을 돌려준다.
+
+    🔴 캡션을 못 읽는다 -- 만들지 않는다(`captions: False`).  실측 22.08 파일의
+       사진쪽은 3장씩 쌓인 두 열이고, 그 아래 글줄은 **두 열의 캡션이 한 줄로
+       뭉쳐**(`'ME Overhauling by Cat Asea Marine Rope guard removal'`) 뽑힌다.
+       어느 반쪽이 어느 사진인지 좌표로 가릴 수 없으므로, 반을 잘라 붙이면 절반의
+       사진에 **틀린 설명**이 달린 채 형이 그대로 조선소에 보낸다.  캡션은 빈칸으로
+       두고 형이 앱에서 쓴다.
+    🔴 **모든 쪽에 반복되는 그림은 레터헤드**다(실측: 같은 10,697 byte 그림이 10쪽
+       전부에 있다 = 회사 로고).  두 쪽 이상에 같은 바이트가 나오면 사진이 아니다.
+       "쪽마다 나오는 걸 한 장으로 접기" 로 짜면 로고가 사진 1장으로 들어온다.
+    """
+    return fold_photos(*photo_pages(path))
+
+
+def fold_photos(pages, skipped=0):
+    """쪽별 이미지 목록 → 사진 목록.  `photos()` 의 판정부만 떼어 낸 것(테스트용).
+
+    실제 PDF 를 fixture 로 두지 않기 위해 좌표·바이트만 먹여 잠근다(이 모듈의 다른
+    파서와 같은 이유 -- 라이브 파일은 선박 공사 내용이라 저장소에 못 넣는다).
+    """
+    page_count = {}
+    for found in pages:
+        for key in {p['key'] for p in found}:
+            page_count[key] = page_count.get(key, 0) + 1
+    out, seen, keys, dupes, furniture, over = [], set(), set(), 0, 0, 0
+    for found in pages:
+        for photo in sorted(found, key=lambda p: (p['top'], p['x0'])):
+            if page_count.get(photo['key'], 0) > 1:
+                furniture += 1
+                continue
+            if photo['key'] in seen:
+                dupes += 1
+                continue
+            seen.add(photo['key'])
+            if len(out) >= rules.PHOTO_MAX:
+                over += 1
+                continue
+            short = rules.photo_key(photo['key'], keys)
+            keys.add(short)
+            out.append({'photo_key': short, 'caption': '', 'data': photo['data'],
+                        'ext': photo['ext'], 'mime': photo['mime'],
+                        'size': len(photo['data'])})
+    return {'photos': out, 'captions': False, 'duplicates': dupes, 'skipped': skipped,
+            'photo_limit': over, 'letterhead': furniture}

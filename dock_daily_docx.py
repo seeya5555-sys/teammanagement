@@ -317,3 +317,164 @@ def judge(parsed, report_date):
     parsed['counts'] = counts
     parsed['report_date'] = report_date.isoformat()
     return parsed
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  문서에 박힌 사진 (형 지시 2026-08-23 "사진도 자동으로")
+# ─────────────────────────────────────────────────────────────────────
+#: 캡션 칸의 **템플릿 자리표시자**.  라이브 문서 끝에는 채우지 않은
+#: `Photo 1: Description` … `Photo 16: Description` 이 16줄 그대로 남아 있다(실측).
+#: 이걸 캡션으로 쓰면 형이 사내 메일로 `Photo 7: Description` 을 보낸다.
+PHOTO_PLACEHOLDER_RE = re.compile(r'^\s*photo\s*\d*\s*[:.]?\s*(description)?\s*$', re.I)
+
+#: 한 문서에서 받아올 사진 수 상한.  넘으면 **자르되 몇 장을 잘랐는지 올린다**
+#: (`photo_limit`) -- 조용히 자르면 형은 문서에 있던 사진이 빠진 걸 모른다.
+PHOTO_MAX = 40
+
+#: 사진으로 인정할 magic.  raw bitmap(Flate) 은 재인코딩이 필요한데 실측 문서에는
+#: 없다 -- 검증 못 한 경로를 만드는 대신 `skipped` 로 세어 화면에 올린다.
+PHOTO_MAGIC = ((b'\xff\xd8\xff', 'jpg', 'image/jpeg'),
+               (b'\x89PNG\r\n\x1a\n', 'png', 'image/png'))
+
+
+def photo_kind(data):
+    """`(확장자, mime)` 또는 `(None, None)`."""
+    for magic, ext, mime in PHOTO_MAGIC:
+        if data[:len(magic)] == magic:
+            return ext, mime
+    return None, None
+
+
+def photo_caption(text):
+    """캡션 후보 문자열 → 쓸 만한 캡션.  자리표시자·빈칸은 `''`."""
+    clean = re.sub(r'\s+', ' ', text or '').strip()
+    return '' if PHOTO_PLACEHOLDER_RE.match(clean) else clean
+
+
+def photo_key(digest, used):
+    """짧은 표시·전송용 키.  접기 판정은 **full sha256** 으로 하고 이것만 자른다.
+
+    🔴 문서 안에서 **유일**해야 한다.  두 사진이 같은 키를 받으면 형이 한 장을 골라도
+       서버가 두 장을 넣는다(`photo_keys` 는 키로 고른다).  앞자리가 겹치면 길이를
+       늘리고, 끝까지 겹치면 full digest 를 쓴다.
+    """
+    for size in range(12, 65, 8):
+        short = digest[:size]
+        if short not in used:
+            return short
+    return digest
+
+
+def _cell_rids(cell):
+    """이 칸 **자기 문단**의 그림만.
+
+    🔴 `iter()` 로 훑으면 중첩 표 안 그림까지 딸려 온다.  `_all_tables` 가 중첩 표를
+       따로 한 번 더 돌기 때문에 같은 사진이 바깥칸·안쪽칸에서 **두 번** 발견되고,
+       바이트로 접히기는 하지만 `duplicates` 가 부풀고 캡션은 먼저 만난 **바깥칸**
+       것이 채택된다 -- 엉뚱한 문장이 사진에 붙어 그대로 조선소로 나간다.
+    """
+    return [b.get(qn('r:embed')) for b in cell._tc.xpath('./w:p//a:blip')
+            if b.get(qn('r:embed'))]
+
+
+def _all_tables(doc):
+    """중첩 표까지 문서 순서대로.  `doc.tables` 는 최상위만 준다."""
+    out = []
+
+    def walk(tables):
+        for table in tables:
+            out.append(table)
+            for row in table.rows:
+                for cell in row.cells:
+                    walk(cell.tables)
+
+    walk(doc.tables)
+    return out
+
+
+def _grid(table):
+    """`[[{'text','rids'}]]`.  병합 칸은 `row.cells` 가 반복해 주므로 그대로 쓴다."""
+    grid = []
+    for row in table.rows:
+        try:
+            cells = list(row.cells)
+        except (IndexError, ValueError):       # pragma: no cover - 손상 표
+            continue
+        grid.append([{'text': c.text, 'rids': _cell_rids(c)} for c in cells])
+    return grid
+
+
+def _caption_for(grid, i, j):
+    """`(i,j)` 칸에 있는 사진의 캡션.
+
+    실측 템플릿이 두 가지다 -- 둘 다 맞춰야 한다.
+      · `Superintendets_Daily_DD_report_20.08` : `[캡션][사진]` **같은 행**.
+      · `TDF-04.7c … 21.08`                    : `[사진][사진]` 다음 행이 `[캡션][캡션]`.
+    🔴 없는 캡션을 만들지 않는다.  후보가 없으면 빈 캡션으로 사진만 들여온다 --
+       엉뚱한 문장을 붙이면 형이 그 캡션을 그대로 조선소에 보낸다.
+    """
+    own = photo_caption(grid[i][j]['text'])
+    if own:
+        return own
+    row = grid[i]
+    # 같은 행: 가까운 칸부터.  사진이 든 칸도 후보다 -- 라이브 문서에 캡션칸으로
+    # 사진 한 장이 더 붙은 행이 있고(20.08 3행), 그 문장은 옆 사진의 캡션이기도 하다.
+    for dist in range(1, len(row)):
+        for k in (j - dist, j + dist):
+            if 0 <= k < len(row) and k != j:
+                text = photo_caption(row[k]['text'])
+                if text:
+                    return text
+    # 아래 행 같은 열: 사진행/캡션행이 번갈아 오는 템플릿.
+    if i + 1 < len(grid) and j < len(grid[i + 1]):
+        below = grid[i + 1][j]
+        if not below['rids']:
+            return photo_caption(below['text'])
+    return ''
+
+
+def photos(path):
+    """문서에 박힌 사진.  `{'photos': [...], 'captions': True, ...}`.
+
+    각 사진 = `{'photo_key', 'caption', 'data', 'ext', 'mime', 'size'}`.
+
+    🔴 **표 안에 있는 사진만** 가져온다(실측 근거).  라이브 20.08 문서는 본문
+       사진 11장 중 10장이 사진표 안에 있고 1장은 표 밖 머리글 그림이며, 21.08
+       문서의 `image12.png` 는 body 에 아예 없는 머리글(header part) 로고다.
+       "미디어 폴더를 전부 가져오기" 로 짜면 형의 보고서에 로고가 사진으로 박힌다.
+    🔴 동일 바이트는 한 장으로 접는다(`duplicates`).  같은 사진이 두 칸에 붙어
+       있으면 첨부도 두 개가 되고, 형은 왜 같은 사진이 두 장인지 알 수 없다.
+    """
+    doc = Document(path)
+    part = doc.part
+    out, seen, keys, dupes, skipped, over = [], set(), set(), 0, 0, 0
+    for table in _all_tables(doc):
+        grid = _grid(table)
+        for i, row in enumerate(grid):
+            for j, cell in enumerate(row):
+                for rid in cell['rids']:
+                    image = part.related_parts.get(rid)
+                    if image is None:          # pragma: no cover - 깨진 관계
+                        skipped += 1
+                        continue
+                    data = image.blob
+                    ext, mime = photo_kind(data or b'')
+                    if not ext:
+                        skipped += 1
+                        continue
+                    # 🔴 접기 판정은 **full digest** 다.  12자로 접으면 앞자리가 겹친
+                    #    서로 다른 사진 한 장이 조용히 사라진다.
+                    digest = hashlib.sha256(data).hexdigest()
+                    if digest in seen:
+                        dupes += 1
+                        continue
+                    seen.add(digest)
+                    if len(out) >= PHOTO_MAX:
+                        over += 1
+                        continue
+                    key = photo_key(digest, keys)
+                    keys.add(key)
+                    out.append({'photo_key': key, 'caption': _caption_for(grid, i, j),
+                                'data': data, 'ext': ext, 'mime': mime, 'size': len(data)})
+    return {'photos': out, 'captions': True, 'duplicates': dupes,
+            'skipped': skipped, 'photo_limit': over, 'letterhead': 0}

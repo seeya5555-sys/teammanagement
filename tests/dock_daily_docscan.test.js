@@ -56,6 +56,39 @@ test('키나 문장이 빈 행은 고를 수 없고 체크되지 않는다', () 
   assert.equal(R.isUnusable(row()), false);
 });
 
+test('사진은 절대 기본 체크가 아니다', () => {
+  // 🔴 이게 되살아남 방지선이다. 사진은 지워도 tombstone 이 없어(하드 삭제) 서버가
+  //    막을 수 없고, 서버는 `photo_keys` 를 받은 대로 넣는다. 기본 체크로 바꾸면
+  //    형이 지운 사진이 다시 읽기 한 번으로 되돌아온다.
+  for (const photo of [{ photo_key: 'a1', caption: 'Rope guard', applied: false },
+                       { photo_key: 'a2', caption: '', applied: true },
+                       null]) {
+    assert.equal(R.isPhotoDefaultChecked(photo), false, JSON.stringify(photo));
+  }
+});
+
+test('이미 들어간 사진은 고를 수 없고 사유가 보인다', () => {
+  const fresh = { photo_key: 'a1', caption: 'Rope guard', applied: false };
+  const done = { photo_key: 'a2', caption: 'Anode', applied: true };
+  assert.equal(R.isPhotoSelectable(fresh), true);
+  assert.equal(R.isPhotoSelectable(done), false);
+  assert.equal(R.photoNote(fresh), '');
+  assert.match(R.photoNote(done), /이미/);
+  assert.equal(R.isPhotoSelectable(null), false);
+});
+
+test('사진에서 조용히 빠지는 것은 전부 글로 나온다', () => {
+  assert.deepEqual(R.photoWarnings({ photo_captions: true }), []);
+  // 🔴 PDF 는 캡션을 못 읽는다(두 열이 한 줄로 뭉쳐 뽑힌다). 말 안 하면 형은 설명이
+  //    빠진 걸 앱에서 보고 고장으로 읽는다.
+  assert.match(R.photoWarnings({ photo_captions: false })[0], /PDF/);
+  const warn = R.photoWarnings({ photo_captions: true, photo_duplicates: 2,
+                                 photo_skipped: 1, photo_limit: 3 });
+  assert.equal(warn.length, 3);
+  assert.ok(warn.some(w => w.includes('2장')));
+  assert.ok(warn.filter(w => w.startsWith('⚠')).length === 2);
+});
+
 test('앱과 같은 매트릭스: dropped·unusable·applied·edited 조합', () => {
   // 앱 `DockDailyDocScanContractTests` 와 같은 표다. 한쪽만 고치면 두 화면이 갈린다.
   const cases = [

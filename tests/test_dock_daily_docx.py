@@ -6,6 +6,7 @@
 """
 import datetime as dt
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -887,6 +888,407 @@ class DocxRouteTests(unittest.TestCase):
         self.assertEqual('remark', scan['groups'][0]['target_key'])
         self._apply(rid, aid, self.report['revision'])
         self.assertEqual(['remark'], [b['section_key'] for b in self._blocks(rid)])
+
+
+def _png(color, size=(8, 8)):
+    """서로 다른 바이트의 작은 PNG.  같은 색이면 바이트도 같다(중복 판정 fixture)."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new('RGB', size, color).save(buf, 'PNG')
+    return buf.getvalue()
+
+
+RED, BLUE, GREEN = _png((200, 10, 10)), _png((10, 10, 200)), _png((10, 200, 10))
+
+
+def _put(cell, data):
+    from docx.shared import Inches
+    cell.paragraphs[0].add_run().add_picture(io.BytesIO(data), width=Inches(1))
+
+
+def build_photo_docx(path, rows=True, loose=None, pairs=None, stacked=None, own=None):
+    """사진표가 있는 fixture.  실측 두 템플릿을 모두 만든다.
+
+    · `pairs`   : `[(캡션, bytes)]` -> `[캡션][사진]` **같은 행** (20.08 템플릿)
+    · `stacked` : `[(캡션, bytes)]` -> 사진행 다음에 캡션행 (21.08 템플릿)
+    · `own`     : `[(캡션, bytes)]` -> 한 칸에 사진과 글이 같이
+    · `loose`   : 표 **밖** 본문에 박은 그림(= 머리글 로고 자리)
+    """
+    doc = Document()
+    if rows:
+        _table(doc, 'Leading Deck Works done by the Yard', HEADER,
+               [['1', 'Vessel arrived to SY 11:42 LT', '20.08.2026', '', '']])
+    if loose:
+        from docx.shared import Inches
+        doc.add_paragraph().add_run().add_picture(io.BytesIO(loose), width=Inches(1))
+    doc.add_paragraph('Pictures Documenting the Status & Budgets')
+    if pairs:
+        table = doc.add_table(rows=0, cols=2)
+        for caption, data in pairs:
+            cells = table.add_row().cells
+            cells[0].text = caption
+            _put(cells[1], data)
+    if stacked:
+        table = doc.add_table(rows=0, cols=2)
+        for start in range(0, len(stacked), 2):
+            chunk = stacked[start:start + 2]
+            shots = table.add_row().cells
+            caps = table.add_row().cells
+            for k, (caption, data) in enumerate(chunk):
+                _put(shots[k], data)
+                caps[k].text = caption
+    if own:
+        table = doc.add_table(rows=0, cols=1)
+        for caption, data in own:
+            cell = table.add_row().cells[0]
+            _put(cell, data)
+            cell.paragraphs[0].add_run(caption)
+    doc.save(path)
+
+
+class PhotoParserTests(unittest.TestCase):
+    """문서 안 사진 (형 지시 2026-08-23 "1. 고고" = Phase 3)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, 'p.docx')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_only_pictures_inside_tables_are_photos(self):
+        """🔴 표 밖 그림은 사진이 아니다 -- 실측상 그 자리가 회사 로고다.
+
+        "문서의 이미지를 전부 가져오기" 로 짜면 형 보고서 사진 격자 첫 칸에 시노코
+        로고가 박히고, 그 메일이 조선소로 나간다.
+        """
+        build_photo_docx(self.path, loose=GREEN, pairs=[('Rope guard removal', RED)])
+        out = parser.photos(self.path)
+        self.assertEqual(['Rope guard removal'], [p['caption'] for p in out['photos']])
+        self.assertNotIn(GREEN, [p['data'] for p in out['photos']])
+        self.assertTrue(out['captions'])
+
+    def test_both_live_caption_layouts(self):
+        """실측 템플릿 두 개: 같은 행 왼쪽 칸 / 아래 행 같은 열."""
+        build_photo_docx(self.path, pairs=[('ME Overhauling by Cat Asea', RED)],
+                         stacked=[('Rope guard removal', BLUE), ('Anode renewal', GREEN)])
+        got = {p['caption']: p['size'] for p in parser.photos(self.path)['photos']}
+        self.assertEqual({'ME Overhauling by Cat Asea', 'Rope guard removal', 'Anode renewal'},
+                         set(got))
+
+    def test_caption_in_the_same_cell_is_used(self):
+        build_photo_docx(self.path, own=[('Tail shaft drawn out', RED)])
+        self.assertEqual(['Tail shaft drawn out'],
+                         [p['caption'] for p in parser.photos(self.path)['photos']])
+
+    def test_placeholder_caption_is_left_empty_not_invented(self):
+        """🔴 채워지지 않은 `Photo 3: Description` 은 캡션이 아니다.
+
+        실측 문서에 그 자리표시자가 그대로 남아 있다.  그걸 캡션으로 넣으면 메일에
+        `Photo 3: Description` 이 나간다 -- 없는 캡션은 빈 칸으로 둔다.
+        """
+        for text in ('Photo 3: Description', 'photo:', 'Photo 11', '   ', 'photo. description'):
+            self.assertEqual('', parser.photo_caption(text), text)
+        self.assertEqual('Rope guard', parser.photo_caption(' Rope\n guard '))
+        build_photo_docx(self.path, pairs=[('Photo 2: Description', RED)])
+        self.assertEqual([''], [p['caption'] for p in parser.photos(self.path)['photos']])
+
+    def test_identical_bytes_are_folded_and_counted(self):
+        build_photo_docx(self.path, pairs=[('A', RED), ('B', RED), ('C', BLUE)])
+        out = parser.photos(self.path)
+        self.assertEqual(2, len(out['photos']))
+        self.assertEqual(1, out['duplicates'])
+        self.assertEqual(['A', 'C'], [p['caption'] for p in out['photos']])
+
+    def test_photo_kind_rejects_formats_we_cannot_store(self):
+        self.assertEqual(('jpg', 'image/jpeg'), parser.photo_kind(b'\xff\xd8\xff\xe0rest'))
+        self.assertEqual(('png', 'image/png'), parser.photo_kind(RED))
+        self.assertEqual((None, None), parser.photo_kind(b'GIF89a'))
+        self.assertEqual((None, None), parser.photo_kind(b''))
+
+    def test_unsupported_pictures_are_counted_not_dropped_silently(self):
+        build_photo_docx(self.path, pairs=[('ok', RED)])
+        # 실제 EMF/WMF 를 python-docx 로 넣기 어려우므로 magic 판정만으로 잠근다.
+        out = parser.photos(self.path)
+        self.assertEqual(0, out['skipped'])
+        self.assertEqual(0, out['photo_limit'])
+
+    def test_pdf_letterhead_repeated_on_every_page_is_not_a_photo(self):
+        """🔴 실측: 같은 10,697 byte 그림이 10쪽 전부에 있다(회사 레터헤드).
+
+        "쪽마다 나오는 걸 한 장으로 접기" 로 짜면 그 로고가 사진 1장으로 들어온다.
+        """
+        import dock_daily_pdf as pdf
+
+        def img(key, page, top=0.0):
+            return {'key': key, 'data': key.encode(), 'ext': 'png', 'mime': 'image/png',
+                    'page': page, 'top': top, 'x0': 0.0}
+
+        pages = [[img('logo', 0), img('shot1', 0, 100)],
+                 [img('logo', 1), img('shot2', 1, 100)],
+                 [img('logo', 2)]]
+        out = pdf.fold_photos(pages, skipped=1)
+        self.assertEqual(['shot1', 'shot2'], [p['photo_key'] for p in out['photos']])
+        self.assertEqual(3, out['letterhead'])
+        self.assertEqual(1, out['skipped'])
+        # 🔴 PDF 캡션은 만들지 않는다(두 열이 한 줄로 뭉쳐 뽑힌다 -- 절반이 틀린다).
+        self.assertFalse(out['captions'])
+        self.assertEqual([''], list({p['caption'] for p in out['photos']}))
+
+
+class PhotoRouteTests(unittest.TestCase):
+    """`docx-scan` / `docx-apply` 의 사진 계약.
+
+    🔴 `DocxRouteTests` 를 **상속하지 않는다**.  상속하면 위쪽 행 테스트 30여 개가
+       사진 fixture(`_upload` 를 덮었으므로)로 한 번 더 돌아, 통과 개수는 늘지만
+       잠그는 계약은 하나도 늘지 않는다.  필요한 준비·helper 만 빌려 쓴다.
+    """
+    setUp = DocxRouteTests.setUp
+    tearDown = DocxRouteTests.tearDown
+    _project_report = DocxRouteTests._project_report
+    _scan = DocxRouteTests._scan
+    _apply = DocxRouteTests._apply
+    _blocks = DocxRouteTests._blocks
+
+    def _upload(self, rid, name='p.docx', **kwargs):
+        path = os.path.join(self.tmp.name, 'up_photo.docx')
+        build_photo_docx(path, **kwargs)
+        with open(path, 'rb') as fh:
+            data = fh.read()
+        res = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
+                               data={'file': (io.BytesIO(data), name)},
+                               content_type='multipart/form-data')
+        self.assertEqual(201, res.status_code, res.get_data(as_text=True))
+        return res.get_json()['id']
+
+    def _shots(self, rid, pairs=None, **kw):
+        aid = self._upload(rid, pairs=pairs if pairs is not None else [('Rope guard', RED)], **kw)
+        scan = self._scan(rid, aid).get_json()
+        return aid, scan
+
+    def _images(self, rid):
+        """`[(section_key, [캡션…])]` -- 사진 격자 블록만."""
+        out = []
+        for b in self._blocks(rid):
+            if b['block_type'] == 'image':
+                content = routes_dock_daily._json(b['content_json'], {})
+                out.append((b['section_key'], [x['caption'] for x in content['images']],
+                            content['columns']))
+        return out
+
+    def _files(self, rid):
+        """사진 첨부만.  읽은 문서(.docx) 자체도 첨부이므로 걸러야 수가 맞는다."""
+        with appmod.app.app_context():
+            return [dict(x) for x in appmod.query(
+                'SELECT id, block_id, original_name, mime_type, size, sha256, deleted_at'
+                ' FROM dock_daily_attachment WHERE report_id=? AND deleted_at IS NULL'
+                " AND mime_type LIKE 'image/%' ORDER BY id", (rid,))]
+
+    def test_scan_reports_photos_without_shipping_the_bytes(self):
+        rid = self.report['id']
+        _, scan = self._shots(rid, pairs=[('Rope guard', RED), ('Anode', BLUE)])
+        self.assertEqual(['Rope guard', 'Anode'], [p['caption'] for p in scan['photos']])
+        self.assertTrue(all('data' not in p for p in scan['photos']))
+        self.assertTrue(all(p['size'] > 0 and p['mime'] == 'image/png' for p in scan['photos']))
+        self.assertTrue(scan['photo_captions'])
+        self.assertEqual(0, scan['photo_duplicates'] + scan['photo_skipped'])
+        self.assertFalse(any(p['applied'] for p in scan['photos']))
+
+    def test_a_client_that_does_not_know_photo_keys_attaches_nothing(self):
+        """🔴 지금 라이브인 웹·OTA 258 은 `photo_keys` 를 모른다.
+
+        없을 때 '전부' 로 읽으면 형이 고르지도 않은 사진이 조용히 붙고, 그 파일은
+        형이 손으로 하나씩 지워야 한다.
+        """
+        rid = self.report['id']
+        aid, _ = self._shots(rid)
+        body = self._apply(rid, aid, self.report['revision']).get_json()
+        self.assertEqual(0, body['photos_added'])
+        self.assertEqual([], self._files(rid))
+        self.assertEqual([], self._images(rid))
+
+    def test_picked_photos_become_one_grid_in_its_own_section(self):
+        rid = self.report['id']
+        aid, scan = self._shots(rid, pairs=[('Rope guard', RED), ('Anode', BLUE)])
+        keys = [p['photo_key'] for p in scan['photos']]
+        body = self._apply(rid, aid, self.report['revision'], photo_keys=keys).get_json()
+        self.assertEqual(2, body['photos_added'])
+        self.assertEqual('Photos', body['created_section']['label'])
+        images = self._images(rid)
+        self.assertEqual(1, len(images))
+        self.assertEqual(['Rope guard', 'Anode'], images[0][1])
+        self.assertEqual(routes_dock_daily.DOCX_PHOTO_COLUMNS, images[0][2])
+        files = self._files(rid)
+        self.assertEqual(2, len(files))
+        # 🔴 첨부는 방금 만든 격자 블록에 매달려야 한다.  `block_id` 가 비면 사진이
+        #    카드에서 떨어져 화면에 안 보이고 purge 도 못 찾는다.
+        self.assertEqual({images[0][0]}, {b['section_key'] for b in self._blocks(rid)
+                                          if b['block_type'] == 'image'})
+        self.assertTrue(all(f['block_id'] for f in files))
+        self.assertEqual([True, True], [f['original_name'].endswith('.png') for f in files])
+        with appmod.app.app_context():
+            stored = [x['stored_name'] for x in appmod.query(
+                'SELECT stored_name FROM dock_daily_attachment WHERE report_id=?', (rid,))]
+        for name in stored:
+            self.assertTrue(os.path.exists(os.path.join(routes_dock_daily.UPLOAD_DIR, name)), name)
+
+    def test_photos_can_be_applied_without_any_rows(self):
+        """사진만 골라도 들어가야 한다(`row_keys=[]`)."""
+        rid = self.report['id']
+        aid, scan = self._shots(rid)
+        res = self._apply(rid, aid, self.report['revision'], row_keys=[],
+                          photo_keys=[scan['photos'][0]['photo_key']])
+        self.assertEqual(200, res.status_code, res.get_data(as_text=True))
+        body = res.get_json()
+        self.assertEqual(1, body['photos_added'])
+        self.assertEqual(0, body['applied'])
+        self.assertEqual(1, len(self._files(rid)))
+
+    def test_nothing_picked_at_all_is_still_a_400(self):
+        rid = self.report['id']
+        aid, _ = self._shots(rid)
+        res = self._apply(rid, aid, self.report['revision'], row_keys=[], photo_keys=[])
+        self.assertEqual(400, res.status_code)
+        self.assertEqual('no_rows', res.get_json()['code'])
+
+    def test_re_reading_the_same_file_does_not_duplicate_or_bump_revision(self):
+        rid = self.report['id']
+        aid, scan = self._shots(rid)
+        key = scan['photos'][0]['photo_key']
+        first = self._apply(rid, aid, self.report['revision'], photo_keys=[key]).get_json()
+        again = self._apply(rid, aid, first['revision'], photo_keys=[key]).get_json()
+        self.assertEqual(0, again['photos_added'])
+        self.assertEqual(1, again['photos_already'])
+        self.assertEqual(1, len(self._files(rid)))
+        # 🔴 아무것도 안 바뀌었으면 revision 을 올리지 않는다(다른 기기가 409 를 맞는다).
+        self.assertEqual(first['revision'], again['revision'])
+        # 두 번째 스캔은 그 사진을 '이미 넣음' 으로 표시한다.
+        rescan = self._scan(rid, aid).get_json()
+        self.assertEqual([True], [p['applied'] for p in rescan['photos']])
+
+    def test_a_deleted_photo_can_be_picked_again_and_is_not_pre_checked(self):
+        """🔴 사진은 행과 규칙이 다르다 -- 고른 대로 넣는다.
+
+        행은 판정이 '포함' 이면 자동 체크라 형이 지운 줄을 되살리지 않게 막아야
+        하지만, 사진은 매번 형이 직접 고를 때만 들어온다.  고른 것을 "전에 지웠으니"
+        로 거절하면 그게 조용한 무동작이다.  되살아남 방지선은 **기본 체크 해제**이고
+        그건 `dock_daily_docscan.js` 규칙에 잠겨 있다(node 테스트).
+        """
+        rid = self.report['id']
+        aid, scan = self._shots(rid)
+        key = scan['photos'][0]['photo_key']
+        first = self._apply(rid, aid, self.report['revision'], photo_keys=[key]).get_json()
+        fid = self._files(rid)[0]['id']
+        self.assertEqual(200, self.client.delete(
+            f'/api/dock-daily/attachments/{fid}').status_code)
+        self.assertEqual([], self._files(rid))
+        rescan = self._scan(rid, aid).get_json()
+        self.assertEqual([False], [p['applied'] for p in rescan['photos']])
+        again = self._apply(rid, aid, self._report_now(rid)['revision'],
+                            photo_keys=[key]).get_json()
+        self.assertEqual(1, again['photos_added'])
+        self.assertEqual(1, len(self._files(rid)))
+
+    def test_a_second_document_appends_to_the_same_grid(self):
+        rid = self.report['id']
+        aid, scan = self._shots(rid, pairs=[('Rope guard', RED)])
+        first = self._apply(rid, aid, self.report['revision'],
+                            photo_keys=[scan['photos'][0]['photo_key']]).get_json()
+        aid2 = self._upload(rid, name='p2.docx', pairs=[('Anode', BLUE)])
+        scan2 = self._scan(rid, aid2).get_json()
+        body = self._apply(rid, aid2, first['revision'],
+                           photo_keys=[scan2['photos'][0]['photo_key']]).get_json()
+        self.assertEqual(1, body['photos_added'])
+        images = self._images(rid)
+        self.assertEqual(1, len(images), '격자는 한 장이어야 한다')
+        self.assertEqual(['Rope guard', 'Anode'], images[0][1])
+        self.assertIsNone(body['created_section'], '섹션은 다시 만들지 않는다')
+
+    def test_a_grid_the_user_edited_is_left_alone(self):
+        """🔴 형이 손댄 격자는 안 건드리고 새 격자를 만든다(카드와 같은 규칙)."""
+        rid = self.report['id']
+        aid, scan = self._shots(rid, pairs=[('Rope guard', RED)])
+        first = self._apply(rid, aid, self.report['revision'],
+                            photo_keys=[scan['photos'][0]['photo_key']]).get_json()
+        with appmod.app.app_context():
+            appmod.execute('UPDATE dock_daily_block SET manual_override=1'
+                           " WHERE report_id=? AND block_type='image'", (rid,))
+        aid2 = self._upload(rid, name='p3.docx', pairs=[('Anode', BLUE)])
+        scan2 = self._scan(rid, aid2).get_json()
+        self._apply(rid, aid2, first['revision'],
+                    photo_keys=[scan2['photos'][0]['photo_key']])
+        images = self._images(rid)
+        self.assertEqual(2, len(images))
+        self.assertEqual([['Rope guard'], ['Anode']], [x[1] for x in images])
+
+    def test_photos_never_reach_the_svms_remark(self):
+        """🔴 `Photos` 섹션은 SVMS `RMK` 로 가지 않는다.
+
+        Crew 는 라벨 부분일치로 들어가지만 사진 섹션은 그 목록에 없고, `_render_section`
+        이 image 블록을 건너뛴다.  둘 중 하나만 믿으면 나중에 조용히 뚫린다.
+        """
+        rid = self.report['id']
+        aid, scan = self._shots(rid)
+        self._apply(rid, aid, self.report['revision'],
+                    photo_keys=[scan['photos'][0]['photo_key']])
+        self.assertNotIn(routes_dock_daily.DOCX_PHOTO_SECTION.lower(),
+                         routes_dock_daily.SVMS_RMK_SPECIAL_LABEL_HINTS)
+        with appmod.app.app_context():
+            preview = routes_dock_daily._svms(rid)
+        self.assertNotIn('Rope guard', json.dumps(preview, ensure_ascii=False))
+
+    def test_an_oversize_photo_is_dropped_alone(self):
+        """사진 한 장이 상한을 넘어도 나머지는 들어간다."""
+        rid = self.report['id']
+        old = routes_dock_daily.MAX_ATTACHMENT
+        big = _png((7, 7, 7), size=(400, 400))
+        # 🔴 문서 업로드는 원래 상한으로 먼저 받는다.  상한을 먼저 낮추면 docx 자체가
+        #    413 이 되고, 그러면 이 테스트는 사진 한 장 규칙을 아예 안 밟는다.
+        aid = self._upload(rid, pairs=[('Big', big), ('Small', RED)])
+        try:
+            routes_dock_daily.MAX_ATTACHMENT = len(big) - 1
+            scan = self._scan(rid, aid).get_json()
+            self.assertEqual(['Small'], [p['caption'] for p in scan['photos']])
+            self.assertEqual(1, scan['photo_skipped'])
+            body = self._apply(rid, aid, self.report['revision'],
+                               photo_keys=[p['photo_key'] for p in scan['photos']]).get_json()
+            self.assertEqual(1, body['photos_added'])
+        finally:
+            routes_dock_daily.MAX_ATTACHMENT = old
+
+    def test_unknown_photo_keys_are_reported(self):
+        rid = self.report['id']
+        aid, scan = self._shots(rid)
+        body = self._apply(rid, aid, self.report['revision'],
+                           photo_keys=[scan['photos'][0]['photo_key'], 'deadbeef1234']).get_json()
+        self.assertEqual(['deadbeef1234'], body['unknown_photo_keys'])
+        self.assertEqual(1, body['photos_added'])
+
+    def test_photo_keys_must_be_an_array(self):
+        rid = self.report['id']
+        aid, _ = self._shots(rid)
+        res = self._apply(rid, aid, self.report['revision'], photo_keys='all')
+        self.assertEqual(400, res.status_code)
+
+    def test_a_final_report_takes_no_photos(self):
+        rid = self.report['id']
+        aid, scan = self._shots(rid)
+        fin = self.client.post(f'/api/dock-daily/reports/{rid}/status',
+                               json={'status': 'final',
+                                     'revision': self._report_now(rid)['revision']})
+        self.assertEqual(200, fin.status_code, fin.get_data(as_text=True))
+        res = self._apply(rid, aid, self._report_now(rid)['revision'],
+                          photo_keys=[scan['photos'][0]['photo_key']])
+        self.assertEqual(409, res.status_code)
+        self.assertEqual([], self._files(rid))
+        # 🔴 파일도 남지 않아야 한다.  사진 쓰기는 트랜잭션 안이라, rollback 하면서
+        #    안 지우면 행 없는 blob 이 영구히 남는다(어떤 purge 도 못 찾는다).
+        left = [x for x in os.listdir(routes_dock_daily.UPLOAD_DIR)
+                if x.endswith('.png')] if os.path.isdir(routes_dock_daily.UPLOAD_DIR) else []
+        self.assertEqual([], left)
+
+    def _report_now(self, rid):
+        return self.client.get(f'/api/dock-daily/reports/{rid}').get_json()
 
 
 if __name__ == '__main__':
