@@ -353,7 +353,13 @@
     return `<table class="dd-block-table dd-table-edit"><thead><tr>${head}<th class="dd-tbl-rowtool"></th></tr></thead><tbody>${body}</tbody></table>`
       +`<div class="dd-tbl-tools"><button class="dd-btn alt" type="button" data-tbl-add-row="1" data-key="${key}">＋ 행</button>`
       +`<button class="dd-btn alt" type="button" data-tbl-add-col="1" data-key="${key}">＋ 열</button>`
-      +`<span class="dd-muted">고친 표는 저장을 눌러야 반영됩니다.</span></div>`;
+      +`<span class="dd-muted">엑셀에서 복사한 표를 칸에 붙여넣으면 표 크기가 맞춰집니다. 고친 표는 저장을 눌러야 반영됩니다.</span></div>`
+      // 🔴 붙여넣기 결과는 **표 옆에** 쓴다. 페이지 위 `#dd-notice` 만 쓰면 카드가 40행
+      // 아래에 있는 형에게는 화면 밖이라 아무 일도 안 일어난 것으로 보인다(같은 함정을
+      // iOS 배너에서 이미 한 번 맞았다).
+      // 전용 클래스 `dd-tbl-note` -- 손으로 고칠 때 이 안내만 골라 지운다. `dd-block-note`
+      // 는 확정본 표·사진 카드에도 붙어 있어 그걸로 집으면 엉뚱한 설명이 사라진다.
+      +(b._pasteNote?`<p class="dd-muted dd-block-note dd-tbl-note">${esc(b._pasteNote)}</p>`:'');
   }
   // 내용은 통째로 교체한다 -- 서버 upsert 도 content 를 통째로 바꾸므로 남은 옛 키가
   // 있으면 저장 전후 모양이 달라진다.
@@ -362,11 +368,39 @@
     document.querySelectorAll('.dd-tbl-cell').forEach(i=>i.oninput=()=>{
       const b=findBlock(i.dataset.key); if(!b)return;
       const g=TABLE.read(b.content), col=Number(i.dataset.col);
+      // 🔴 손으로 고치면 붙여넣기 안내를 지운다(올마이트 지적 2026-08-23). 남겨두면 지난
+      //    붙여넣기의 행·열 수가 지금 표 크기인 것처럼 읽히고, 저장을 이미 눌렀는데도
+      //    "저장을 눌러야 반영됩니다" 가 계속 붙어 있어 저장이 안 된 것처럼 보인다.
+      //    지우기는 `renderSections()` 없이 -- 글 치는 중에 다시 그리면 커서가 튄다.
+      delete b._pasteNote;
+      i.closest('.dd-block-editor')?.querySelector('.dd-tbl-note')?.remove();
       // 헤더 칸에는 data-row 가 없다.
       setTable(b,i.dataset.row===undefined?TABLE.setColumn(g,col,i.value)
                                           :TABLE.setCell(g,Number(i.dataset.row),col,i.value));
     });
-    const mutate=(btn,fn)=>{const b=findBlock(btn.dataset.key);if(!b)return;setTable(b,fn(TABLE.read(b.content)));renderSections();};
+    // 엑셀 표 붙여넣기(형 지시 2026-08-23). 규칙 정본은 dock_daily_table.js 다.
+    //
+    // 🔴 클립보드 글을 **직접** 읽는다(`text/plain`). input 값이 바뀐 뒤에 보면 붙인 글이
+    //    칸에 이미 있던 글과 섞여 첫 칸이 엉킨다.
+    // 🔴 `text/html` 은 쓰지 않는다 -- 엑셀이 붙이는 HTML 은 표 구조가 더 정확하지만
+    //    남의 문서에서 온 마크업을 화면에 넣는 경로가 생긴다. TSV 만으로 충분하다.
+    // 🔴 표가 아니면 `preventDefault` 를 하지 않는다 -- 칸 안에서 글자 몇 개 붙이는
+    //    평소 붙여넣기가 살아 있어야 한다.
+    document.querySelectorAll('.dd-tbl-cell').forEach(i=>i.onpaste=e=>{
+      const b=findBlock(i.dataset.key); if(!b)return;
+      const raw=(e.clipboardData||window.clipboardData)?.getData('text/plain')||'';
+      const r=TABLE.pasteInto(TABLE.read(b.content),
+        {row:i.dataset.row===undefined?null:Number(i.dataset.row),col:Number(i.dataset.col)},raw);
+      if(!r)return;
+      e.preventDefault();
+      setTable(b,r.grid);
+      b._pasteNote=TABLE.pasteNote(r);
+      renderSections();
+      notice(b._pasteNote);
+    });
+    // 붙여넣기 안내는 그 표를 다시 손대면 지운다 -- 남겨두면 이미 지난 붙여넣기의 크기가
+    // 지금 표 크기인 것처럼 읽힌다.
+    const mutate=(btn,fn)=>{const b=findBlock(btn.dataset.key);if(!b)return;delete b._pasteNote;setTable(b,fn(TABLE.read(b.content)));renderSections();};
     document.querySelectorAll('[data-tbl-add-row]').forEach(x=>x.onclick=()=>mutate(x,g=>TABLE.addRow(g)));
     document.querySelectorAll('[data-tbl-add-col]').forEach(x=>x.onclick=()=>mutate(x,g=>TABLE.addColumn(g)));
     document.querySelectorAll('[data-tbl-del-row]').forEach(x=>x.onclick=()=>mutate(x,g=>TABLE.removeRow(g,Number(x.dataset.tblDelRow))));

@@ -141,8 +141,152 @@
     return !locked && !!section && section.kind === 'special' && blockCount === 0;
   }
 
+  /* ── 엑셀 표 붙여넣기 (형 지시 2026-08-23 "표 첫칸에 엑셀표 복사 붙여넣기하면 그대로") ──
+   *
+   * 앱 `DockDailyTablePaste` 와 **같은 규칙**이다. 서버는 이 경로에 관여하지 않는다 --
+   * 붙여넣기는 화면 조작이고, 서버에는 이미 만들어진 grid 만 간다.
+   *
+   * 🔴 한 표의 상한을 여기서 잡는다. 서버 `_table_grid` 에는 표 크기 상한이 **없어서**
+   *    시트를 통째로 붙이면 칸 수천 개가 카드에 들어가고, 그 표가 그대로 메일 한 통과
+   *    SVMS `RMK`(4000 byte) 로 나가려다 `over_limit` 으로 막힌다. 막히는 건 옳지만
+   *    그때는 이미 형이 적어둔 표가 화면에서 밀려 있다.
+   * 🔴 잘라낸 건 **반드시 말한다**(`pasteNote`). 조용히 자르면 엑셀에 있던 행이 어디로
+   *    갔는지 알 방법이 없다. */
+  var PASTE_MAX_ROWS = 200;
+  var PASTE_MAX_COLUMNS = 30;
+
+  /** 클립보드 글을 표로 읽는다(엑셀·구글시트·넘버스 공통 TSV).
+   *
+   * 🔴 `null` 은 "표가 아니다" 는 뜻이고, 호출부는 그때 **평소 붙여넣기를 막지 않는다**.
+   *    탭도 줄바꿈도 없는 글까지 가로채면 셀 안 글자 일부를 골라 붙이는 보통 붙여넣기가
+   *    통째로 망가진다(붙인 값이 칸 전체를 덮어쓴다).
+   * 🔴 엑셀은 탭·줄바꿈·인용부호가 든 칸을 `"` 로 감싸고 안쪽 `"` 를 두 번 쓴다. 그걸
+   *    안 풀면 줄바꿈 든 칸 하나가 엉뚱한 행 두 개로 갈라진다.
+   */
+  /* 한 번 훑기. `quotes=false` 면 인용을 글자로 보고 탭·줄바꿈만 본다. `open` 은 인용이
+   * 닫히지 않고 끝났다는 표시다. */
+  function scanRows(text, quotes) {
+    var rows = [], row = [], cell = '', quoted = false, i = 0;
+    while (i < text.length) {
+      var ch = text.charAt(i);
+      if (quoted) {
+        if (ch === '"') {
+          if (text.charAt(i + 1) === '"') { cell += '"'; i += 2; continue; }
+          quoted = false; i += 1; continue;
+        }
+        cell += ch; i += 1; continue;
+      }
+      // 인용은 칸의 **처음에만** 열린다(엑셀도 칸 전체만 감싼다). 값 중간의 `"` 는 글자다.
+      if (quotes && ch === '"' && cell === '') { quoted = true; i += 1; continue; }
+      if (ch === '\t') { row.push(cell); cell = ''; i += 1; continue; }
+      if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; i += 1; continue; }
+      cell += ch; i += 1;
+    }
+    row.push(cell); rows.push(row);
+    return {rows: rows, open: quoted};
+  }
+
+  function parseClipboard(raw) {
+    if (typeof raw !== 'string' || !raw) return null;
+    // 🔴 줄 구분을 LF 하나로 맞춘다. 앱은 Swift 에서 `"\r\n"` 이 **글자 하나**(확장 자소군)라
+    //    이 정규화가 없으면 CRLF 를 아예 못 읽는다. 웹만 CR 를 살려두면 인용된 칸 안의
+    //    줄바꿈이 웹은 CRLF, 앱은 LF 로 저장돼 **같은 붙여넣기가 기기마다 다른 표**가 된다
+    //    (올마이트 지적 2026-08-23).
+    var text = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (text.indexOf('\t') < 0 && text.indexOf('\n') < 0) return null;
+    var scan = scanRows(text, true);
+    // 🔴 인용이 끝까지 안 닫혔으면 인용 해석이 틀린 것이다(엑셀이 아닌 곳에서 온 TSV,
+    //    예: `"인용 으로 시작하는 메모`). 그대로 두면 남은 줄 전부가 한 칸으로 먹힌다 --
+    //    인용 없이 다시 읽어 표를 구한다(값은 하나도 안 버린다).
+    var rows = scan.open ? scanRows(text, false).rows : scan.rows;
+    // 🔴 엑셀은 끝에 줄바꿈을 하나 붙인다. 그걸 살리면 붙여넣기마다 빈 행이 하나 늘어난다.
+    //    중간의 빈 행은 형이 비워 둔 행이므로 **뒤에서만** 떨어낸다.
+    while (rows.length && rows[rows.length - 1].every(function (v) { return v === ''; })) rows.pop();
+    if (!rows.length) return null;
+    // 🔴 여기서는 **상한을 걸지 않는다.** 잘라내기는 붙인 자리(anchor)를 알아야 정확해서
+    //    `pasteInto` 한 곳에서만 한다 -- 두 곳에서 세면 같은 초과분을 두 번 세거나
+    //    (150행 표의 끝에 붙일 때처럼) 결과가 상한을 넘는데 아무 말도 안 하게 된다.
+    var width = 0;
+    rows.forEach(function (r) { if (r.length > width) width = r.length; });
+    return {rows: rows, width: width};
+  }
+
+  /** 붙여넣기를 표에 얹는다. 표가 아니면 `null`(= 호출부는 평소 붙여넣기에 맡긴다).
+   *
+   * `anchor.row` 가 `null`/`undefined` 면 **열 이름 칸**에 붙인 것이다 -- 그때만 첫 줄이
+   * 열 이름이 되고 남은 줄이 본문 첫 행부터 들어간다. 형이 말한 "표 첫칸" 이 이 자리다.
+   *
+   * 🔴 **넓히기만 하고 줄이지 않는다.** 붙인 사각형 밖의 칸은 그대로 남는다 -- 표를
+   *    통째로 갈아치우면 이미 적어둔 옆 열·아래 행이 붙여넣기 한 번에 사라진다.
+   * 🔴 사각형 맞추기는 `normalize` 가 한다(서버 `_table_grid`·앱과 같은 규칙). 그래서
+   *    붙인 표가 기존 표보다 넓으면 열 이름이 빈 열이 늘어나고, 값은 하나도 안 잘린다.
+   */
+  function pasteInto(grid0, anchor, raw) {
+    var parsed = parseClipboard(raw);
+    if (!parsed) return null;
+    var g = normalize(grid0);
+    var a = (anchor && typeof anchor === 'object') ? anchor : {};
+    var col = Math.max(0, Number(a.col) || 0);
+    var toHeader = (a.row === null || a.row === undefined);
+    var lines = parsed.rows.slice();
+    var start = toHeader ? 0 : Math.max(0, Number(a.row) || 0);
+    // 🔴 상한은 **붙인 원본이 아니라 결과 표**를 기준으로 잡는다(올마이트 지적 2026-08-23).
+    //    150행짜리 표의 마지막 행에 200행을 붙이면 원본만 재던 옛 계산은 상한을 통과시키고
+    //    결과가 350행이 됐다. 대신 **이미 있던 행·열은 절대 지우지 않는다** -- 붙여넣기가
+    //    형이 적어둔 줄을 잘라내면 그게 더 큰 손실이다.
+    var roomRows = Math.max(0, PASTE_MAX_ROWS - start);
+    var roomCols = Math.max(0, PASTE_MAX_COLUMNS - col);
+    var head = toHeader ? lines.shift() : null;
+    // 넘친 열은 붙인 줄 중 **가장 넓은 줄** 기준으로 센다(줄마다 세면 같은 초과를 여러 번 센다).
+    var wide = head ? head.length : 0;
+    lines.forEach(function (line) { if (line.length > wide) wide = line.length; });
+    var droppedColumns = Math.max(0, wide - roomCols);
+    var droppedRows = Math.max(0, lines.length - roomRows);
+    if (droppedRows) lines = lines.slice(0, roomRows);
+    if (droppedColumns) {
+      if (head) head = head.slice(0, roomCols);
+      lines = lines.map(function (line) { return line.slice(0, roomCols); });
+    }
+    var columns = g.columns.slice();
+    if (head) for (var c = 0; c < head.length; c++) columns[col + c] = head[c];
+    var body = g.rows.map(function (r) { return r.slice(); });
+    lines.forEach(function (line, n) {
+      var ri = start + n;
+      while (body.length <= ri) body.push([]);
+      var target = body[ri].slice();
+      for (var k = 0; k < line.length; k++) target[col + k] = line[k];
+      body[ri] = target;
+    });
+    var out = normalize({columns: columns, rows: body});
+    return {grid: out, usedHeader: toHeader, addedRows: lines.length,
+            droppedRows: droppedRows, droppedColumns: droppedColumns};
+  }
+
+  /** 붙여넣기 결과를 형에게 말할 문장. 앱과 같은 문장이어야 한다. */
+  function pasteNote(result) {
+    if (!result) return '';
+    var g = result.grid;
+    // 🔴 형이 세는 방식으로 쓴다(올마이트 지적 2026-08-23). 형은 5줄짜리 붙여넣기를
+    //    "5x4 표" 라고 부르는데 그 첫 줄은 열 이름이다 -- 그냥 `4행` 이라고만 쓰면 한 줄이
+    //    사라진 것으로 읽힌다. 열 이름을 먹었을 때는 그 사실을 **숫자 안에** 넣는다.
+    var out = ['붙여넣기로 ' + (result.usedHeader ? '열 이름 + ' : '')
+               + g.rows.length + '행 × ' + g.columns.length + '열이 되었습니다'];
+    if (result.droppedRows) {
+      out.push('⚠ ' + result.droppedRows + '행은 상한을 넘어 빠졌습니다(표 하나에 '
+               + PASTE_MAX_ROWS + '행까지)');
+    }
+    if (result.droppedColumns) {
+      out.push('⚠ ' + result.droppedColumns + '열은 상한을 넘어 빠졌습니다(표 하나에 '
+               + PASTE_MAX_COLUMNS + '열까지)');
+    }
+    out.push('저장을 눌러야 반영됩니다');
+    return out.join(' · ');
+  }
+
   var api = {DEFAULT_COLUMNS: DEFAULT_COLUMNS, normalize: normalize, grid: grid, read: read, empty: empty,
              canAddTable: canAddTable,
+             PASTE_MAX_ROWS: PASTE_MAX_ROWS, PASTE_MAX_COLUMNS: PASTE_MAX_COLUMNS,
+             parseClipboard: parseClipboard, pasteInto: pasteInto, pasteNote: pasteNote,
              setCell: setCell, setColumn: setColumn, addRow: addRow, addColumn: addColumn,
              canRemoveRow: canRemoveRow, canRemoveColumn: canRemoveColumn,
              removeRow: removeRow, removeColumn: removeColumn};
