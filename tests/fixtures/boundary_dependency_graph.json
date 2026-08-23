@@ -106,6 +106,9 @@
   },
   "csrf.py": {},
   "dock_daily_docx.py": {},
+  "dock_daily_pdf.py": {
+    "dock_daily_docx.py": []
+  },
   "dock_report_docx.py": {
     "app_core.py": [
       "app",
@@ -252,6 +255,7 @@
       "query"
     ],
     "dock_daily_docx.py": [],
+    "dock_daily_pdf.py": [],
     "helpers_shared.py": [
       "api_key_required",
       "login_required",

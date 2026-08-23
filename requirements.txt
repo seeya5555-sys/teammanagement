@@ -9,5 +9,8 @@ Pillow>=10.0
 # 아이폰 기본 촬영 포맷(HEIC/HEIF) 디코드. 없으면 앱은 그대로 돌고 HEIC 만 예전처럼
 # '못 읽는 형식' 으로 떨어진다(app_core.ensure_heif_opener 가 실패를 삼킨다).
 pillow-heif>=0.16
+# 감독 DD report **PDF** 읽기(`dock_daily_pdf`). 좌표까지 필요해서 텍스트 추출만 하는
+# 라이브러리로는 안 되고, 없으면 PDF `읽기` 만 400 으로 떨어진다(다른 기능 영향 0).
+pdfplumber>=0.11,<0.12
 gunicorn>=21,<24
 extract-msg>=0.55,<0.56

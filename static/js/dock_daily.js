@@ -518,17 +518,18 @@
     // click would fire both), so each attachment is a flex pair. On a 확정본 the
     // x is left out entirely rather than shown disabled: the server answers 409
     // there, and an always-refused button reads as a bug.
-    // `읽기` 는 .docx 에만 붙는다. 감독 DD report 를 카드로 옮기는 입구이고, 다른
+    // `읽기` 는 .docx/.pdf 에만 붙는다. 감독 DD report 를 카드로 옮기는 입구이고, 다른
     // 확장자에는 눌러도 400 이 돌아오는 버튼을 보여줄 이유가 없다. 확정본에서는
     // 빼는데, 서버가 잠금 전에 409(final_locked) 로 끊기 때문이다.
-    $('#dd-attachments').innerHTML=ats.length?ats.map(a=>`<div class="dd-attachment-row"><button class="dd-attachment" type="button" data-attachment="${a.id}" data-name="${esc(a.original_name)}"><b>${esc(a.original_name)}</b><span>${esc(a.mime_type)} · ${(a.size/1024).toFixed(1)} KB · 미리보기</span></button>${locked||!isDocx(a)?'':`<button class="dd-att-read" type="button" data-read-attachment="${a.id}" title="감독 DD report 읽기">읽기</button>`}${locked?'':`<button class="dd-att-del" type="button" data-del-attachment="${a.id}" title="첨부 삭제" aria-label="${esc(a.original_name)} 삭제">✕</button>`}</div>`).join(''):`<p class="dd-muted">등록된 첨부파일이 없습니다.</p>`;
+    $('#dd-attachments').innerHTML=ats.length?ats.map(a=>`<div class="dd-attachment-row"><button class="dd-attachment" type="button" data-attachment="${a.id}" data-name="${esc(a.original_name)}"><b>${esc(a.original_name)}</b><span>${esc(a.mime_type)} · ${(a.size/1024).toFixed(1)} KB · 미리보기</span></button>${locked||!isReadable(a)?'':`<button class="dd-att-read" type="button" data-read-attachment="${a.id}" title="감독 DD report 읽기">읽기</button>`}${locked?'':`<button class="dd-att-del" type="button" data-del-attachment="${a.id}" title="첨부 삭제" aria-label="${esc(a.original_name)} 삭제">✕</button>`}</div>`).join(''):`<p class="dd-muted">등록된 첨부파일이 없습니다.</p>`;
     document.querySelectorAll('[data-attachment]').forEach(b=>b.onclick=()=>openFilePreview(+b.dataset.attachment,b.dataset.name));
     document.querySelectorAll('[data-read-attachment]').forEach(b=>b.onclick=()=>once(b,()=>openDocxModal(+b.dataset.readAttachment)));
     document.querySelectorAll('[data-del-attachment]').forEach(b=>b.onclick=()=>once(b,()=>deleteAttachment(+b.dataset.delAttachment)));
   }
   // 이름으로 본다. 서버도 `original_name` 으로 판정하므로(mime 은 브라우저마다 다르게
-  // 온다) 화면과 서버가 같은 기준을 쓴다.
-  const isDocx=a=>/\.docx$/i.test(a.original_name||'');
+  // 온다) 화면과 서버가 같은 기준을 쓴다. 목록은 서버의 `DOCX_READERS` 와 같이 간다 --
+  // 여기만 늘리면 눌러도 400, 서버만 늘리면 버튼이 안 보인다.
+  const isReadable=a=>/\.(docx|pdf)$/i.test(a.original_name||'');
   // Removing the row from local state instead of re-fetching the report: the
   // server only touched attachments, and a reload here would throw away
   // unsaved section edits (uploadFiles guards on state.dirty for the same
@@ -1164,7 +1165,7 @@
   $('#dd-copy-append').onclick=()=>runCopy('append').catch(e=>{$('#dd-copy-error').textContent=conflictText(e);});
   $('#dd-copy-close').onclick=closeCopyModal; $('#dd-copy-cancel').onclick=closeCopyModal;
 
-  // ── 감독 DD report(.docx) 읽기 ─────────────────────────────────────────────
+  // ── 감독 DD report(.docx/.pdf) 읽기 ─────────────────────────────────────────────
   // 미리보기와 넣기를 두 단계로 나눈 이유는 서버 주석과 같다: 형이 무엇이 들어오고
   // **무엇이 왜 빠지는지** 먼저 보고 골라야 한다. 판정 규칙이 하루 틀리면 그 본문이
   // 그대로 사내 메일로 나간다.
@@ -1205,6 +1206,11 @@
             +`<br><span class="dd-muted">${esc(g.label||'섹션 미상')}${esc(target)} · ${esc(DOCX_REASON[r.reason]||r.reason)}${esc(tail)}</span></span></label>`;
         }).join('')+'</div>';
     }).join('');
+    // 🔴 빈 화면을 그대로 두지 않는다. 사진으로만 만든 스캔 PDF 는 글자가 없어 표를
+    // 한 줄도 못 읽는데, 아무 말이 없으면 형은 "기능이 고장" 인지 "문서에 없음" 인지
+    // 가릴 수 없다.
+    if(!rows.length)box.innerHTML=`<p class="dd-muted">읽을 수 있는 작업표를 찾지 못했습니다.`
+      +`${scan.file_kind==='pdf'?' 글자 없이 사진으로만 스캔한 PDF 는 읽을 수 없습니다 — 원본 Word(.docx) 나 텍스트가 있는 PDF 를 올려 주세요.':' 문서에 <b>Description / Date start</b> 머리글이 있는 작업표가 있는지 확인해 주세요.'}</p>`;
     // 접힌 행·모르는 제목·짝이 없어진 옛 카드를 전부 여기서 말한다. 조용히 넘기면
     // 형은 문서에 있던 작업이 빠진 걸(또는 중복으로 남은 걸) 모른다.
     const warn=[];
@@ -1243,8 +1249,8 @@
       renderDocxGroups();
     }catch(e){
       $('#dd-docx-summary').textContent='';
-      $('#dd-docx-error').textContent=e.code==='not_docx'?'감독 DD report(.docx) 파일만 읽을 수 있습니다.'
-        :e.code==='docx_unreadable'?'파일을 열 수 없습니다. 손상되었거나 .docx 가 아닌 파일입니다.'
+      $('#dd-docx-error').textContent=e.code==='not_docx'?'감독 DD report 는 Word(.docx) 또는 PDF 파일만 읽을 수 있습니다.'
+        :e.code==='docx_unreadable'?'파일을 열 수 없습니다. 손상되었거나 형식이 다른 파일입니다.'
         :conflictText(e);
     }
   }
@@ -1271,6 +1277,9 @@
       // 🔴 갈 섹션이 없어 빠진 건 반드시 말한다 — 비고 섹션이 없거나 꺼져 있으면
       // 고른 행이 통째로 사라지는데 옛 문구는 "바뀐 내용이 없습니다" 뿐이었다.
       if(out.skipped_unmapped)bits.push(`⚠ ${out.skipped_unmapped}개는 넣을 섹션이 없어 빠졌습니다(비고 섹션을 열어 두세요)`);
+      // 🔴 고른 줄인데 서버가 지금 파일에서 못 찾은 것(문서가 그 사이 바뀜). 이 값을
+      // 버리면 고른 줄이 조용히 빠지고 화면은 성공만 말한다(앱과 같은 문구).
+      if((out.unknown_row_keys||[]).length)bits.push(`⚠ ${out.unknown_row_keys.length}줄은 지금 파일에 없어 넣지 못했습니다(문서가 바뀌었으면 다시 읽으세요)`);
       if(out.created_section)bits.push(`${out.created_section.label} 섹션을 이 일자에 만들었습니다`);
       if(out.attached_sections)bits.push(`기존 섹션 ${out.attached_sections}개를 이 일자에 붙였습니다`);
       if(out.translated<picked.length-out.skipped_edited-out.unchanged)bits.push('일부는 번역 없이 영문 원문으로 들어갔습니다');

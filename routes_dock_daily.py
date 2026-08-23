@@ -1486,6 +1486,17 @@ DOCX_SOURCE_ID = 'daily'
 #: Crew 작업(선원 자체작업)은 Shipyard/Vendor 와 성격이 달라 Remark 에 섞으면 안 된다.
 DOCX_NEW_SECTIONS = {'crew': 'Crew'}
 
+#: 읽을 수 있는 확장자 → 파서 모듈.  두 파서는 **같은 판정 함수**(`dock_daily_docx.judge`)
+#: 를 쓰므로 형식이 달라도 포함/제외 판정은 같다(형 지시 2026-08-23 "pdf도 읽어오기").
+#: 🔴 옛 바이너리 `.doc` 는 목록에 없다 -- python-docx 가 못 열고, 열리는 척하다 빈
+#:    결과를 주면 형은 "문서에 없는 줄" 이 아니라 "기능이 조용히 안 먹는다" 를 본다.
+DOCX_READERS = {'.docx': 'dock_daily_docx', '.pdf': 'dock_daily_pdf'}
+
+
+def _docx_reader(name):
+    """첨부 이름 → 파서 모듈 이름.  못 읽는 형식이면 `None`."""
+    return DOCX_READERS.get(os.path.splitext((name or '').lower())[1])
+
 
 def _docx_source(rid, aid):
     """`((첨부행, 파일경로), None)` 또는 `(None, 에러응답)`."""
@@ -1499,15 +1510,16 @@ def _docx_source(rid, aid):
                 ' AND deleted_at IS NULL', (aid, rid), one=True)
     if not row:
         return None, _error('attachment not found', 404)
-    if not (row['original_name'] or '').lower().endswith('.docx'):
-        return None, _error('Word(.docx) 파일만 읽을 수 있습니다.', 400, code='not_docx')
+    if not _docx_reader(row['original_name']):
+        # 코드 이름(`not_docx`)은 옛 클라이언트가 이미 문구를 매핑해 두어 그대로 둔다.
+        return None, _error('Word(.docx) 또는 PDF 파일만 읽을 수 있습니다.', 400, code='not_docx')
     path = _attachment_path(row['stored_name'])
     if not path:
         return None, _error('첨부 파일을 찾을 수 없습니다.', 404, code='file_missing')
     return (row, path), None
 
 
-def _docx_parse(path, report_date):
+def _docx_parse(path, report_date, module='dock_daily_docx'):
     """`(payload, None)` 또는 `(None, 에러응답)`.  중복 `row_key` 는 첫 행만 남긴다.
 
     `row_key` 가 표 라벨 기준이 된 뒤로 Deck/Engine 교차충돌은 없어졌지만, **같은
@@ -1516,12 +1528,19 @@ def _docx_parse(path, report_date):
     남기고 `duplicate_rows` 로 몇 건을 접었는지 **화면까지 올린다**(올마이트 지적
     2026-08-23) -- 숫자를 안 보여주면 형은 접힌 걸 모른다.
     """
-    import dock_daily_docx as parser          # 지연 import: leaf 모듈, 층위 게이트 준수
+    # 지연 import: leaf 모듈, 층위 게이트 준수.  🔴 `importlib.import_module(module)` 로
+    # 쓰지 않는다 -- 의존 그래프 게이트는 **import 문**을 읽으므로, 문자열로 부르면
+    # 두 파서가 "아무도 import 하지 않는 모듈" 이 되어 층위·미해결이름 검사에서
+    # 조용히 빠진다(실측: fixture 에서 `dock_daily_docx` 가 사라졌다).
+    if module == 'dock_daily_pdf':
+        import dock_daily_pdf as parser
+    else:
+        import dock_daily_docx as parser
     try:
         payload = parser.scan(path, report_date)
     except Exception as exc:                  # pragma: no cover - 손상 파일
-        app.logger.warning('dock-daily docx parse: %s', exc)
-        return None, _error('문서를 읽을 수 없습니다. Word(.docx) 파일이 맞는지 확인하세요.',
+        app.logger.warning('dock-daily %s parse: %s', module, exc)
+        return None, _error('문서를 읽을 수 없습니다. 파일이 손상되지 않았는지 확인하세요.',
                             400, code='docx_unreadable')
     seen, dupes = set(), 0
     for group in payload['groups']:
@@ -1610,7 +1629,8 @@ def _docx_preview(rid, row, path):
         report_date = datetime.strptime(r['report_date'], '%Y-%m-%d').date()
     except (TypeError, ValueError):           # pragma: no cover - 스키마상 불가
         return None, _error('report date is invalid', 500)
-    payload, err = _docx_parse(path, report_date)
+    payload, err = _docx_parse(path, report_date,
+                               _docx_reader(row['original_name']) or 'dock_daily_docx')
     if err:
         return None, err
     _docx_targets(payload, rid, r['project_id'])
@@ -1622,6 +1642,8 @@ def _docx_preview(rid, row, path):
     in_file = {row_['row_key'] for g in payload['groups'] for row_ in g['rows']}
     payload.update(report_id=rid, attachment_id=row['id'], filename=row['original_name'],
                    file_sha256=row['sha256'], applied=applied,
+                   file_kind=(_docx_reader(row['original_name']) or '').replace(
+                       'dock_daily_', '') or 'docx',
                    stale_applied=sorted(k for k in applied if k not in in_file),
                    revision=r['revision'], status=r['status'])
     return payload, None

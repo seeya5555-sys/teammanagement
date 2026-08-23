@@ -180,6 +180,30 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(out['groups'][0]['section_key'])
         self.assertEqual(1, len(out['groups'][0]['rows']), '모르는 제목이어도 행은 살린다')
 
+    def test_the_third_party_heading_accepts_deck_engine_but_not_any_word(self):
+        """🔴 제목 규칙을 임의의 한 단어(`\\w+`)까지 열면 안 된다(올마이트 지적 2026-08-23).
+
+        `Leading Deck Works ... 3rd party` 같은 실제 변형은 받아야 하지만, 아무 단어나
+        받으면 기존 `.docx` 의 엉뚱한 제목까지 vendor/crew 로 새로 분류돼 이미 비고에
+        들어간 카드가 다른 섹션에 중복된다.  모르는 제목은 `unmapped_headings` 로 올린다.
+        """
+        cases = [('Leading Deck Works done by the 3rd party', 'vendor'),
+                 ('Leading Engine Works done by the 3rd party', 'vendor'),
+                 ('Leading Works done by 3rd party', 'vendor'),
+                 ('Leading Deck Works done by the Crew', 'crew'),
+                 ('Leading Engine Works done by the Crew', 'crew'),
+                 ('Leading Hull Works done by the 3rd party', None),
+                 ('Leading Repair Works done by the Crew', None)]
+        for heading, want in cases:
+            path = os.path.join(self.tmp.name, 'h%d.docx' % abs(hash(heading)))
+            doc = Document()
+            _table(doc, heading, HEADER, [['1', 'Anode renewal', '20.08.2026', '', '']])
+            doc.save(path)
+            out = parser.parse(path)
+            self.assertEqual(want, out['groups'][0]['section_key'], heading)
+            self.assertEqual([] if want else [heading], out['unmapped_headings'], heading)
+            self.assertEqual(1, len(out['groups'][0]['rows']), '어느 쪽이든 행은 살린다')
+
     def test_the_same_sentence_in_the_deck_and_engine_tables_stays_two_rows(self):
         """🔴 Deck 표와 Engine 표는 둘 다 `shipyard` 섹션으로 간다.
 
@@ -343,16 +367,36 @@ class DocxRouteTests(unittest.TestCase):
         self.assertEqual(('vendor', None), targets['vendor'])
         self.assertEqual((None, 'Crew'), targets['crew'], 'Crew 섹션은 apply 가 만든다')
 
-    def test_scan_refuses_a_non_docx_attachment(self):
+    def test_scan_refuses_an_unreadable_extension(self):
         rid = self.report['id']
         res = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
-                               data={'file': (io.BytesIO(b'%PDF-1.4 x'), 'note.pdf')},
+                               data={'file': (io.BytesIO(b'hello'), 'note.txt')},
                                content_type='multipart/form-data')
         aid = res.get_json()['id']
         out = self._scan(rid, aid)
         self.assertEqual(400, out.status_code)
         self.assertEqual('not_docx', out.get_json()['code'])
         self.assertEqual(404, self._scan(rid, aid + 999).status_code)
+
+    def test_pdf_passes_the_extension_gate(self):
+        """`.pdf` 는 이제 확장자에서 막지 않는다(형 지시 2026-08-23).
+
+        내용이 PDF 가 아니면 `not_docx` 가 아니라 **`docx_unreadable`** 로 떨어져야
+        한다 -- 두 사유를 합치면 형은 "형식이 안 된다" 와 "파일이 깨졌다" 를 못 가린다.
+        """
+        rid = self.report['id']
+        res = self.client.post(f'/api/dock-daily/reports/{rid}/attachments',
+                               data={'file': (io.BytesIO(b'%PDF-1.4 not really'), 'note.pdf')},
+                               content_type='multipart/form-data')
+        out = self._scan(rid, res.get_json()['id'])
+        self.assertEqual(400, out.status_code)
+        self.assertEqual('docx_unreadable', out.get_json()['code'])
+
+    def test_reader_is_chosen_by_extension(self):
+        self.assertEqual('dock_daily_pdf', routes_dock_daily._docx_reader('a.PDF'))
+        self.assertEqual('dock_daily_docx', routes_dock_daily._docx_reader('a.docx'))
+        self.assertIsNone(routes_dock_daily._docx_reader('a.doc'))
+        self.assertIsNone(routes_dock_daily._docx_reader(None))
 
     def test_scan_reports_a_corrupt_file_as_400_not_500(self):
         """형에게 500 은 "서버가 죽었다" 로 읽힌다. 못 읽는 파일은 사람이 고칠 일이다."""

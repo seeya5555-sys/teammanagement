@@ -64,8 +64,15 @@ from docx.text.paragraph import Paragraph
 HEADING_RULES = (
     (re.compile(r'leading\s+deck\s+works.*yard', re.I), 'shipyard', 'Deck (Yard)'),
     (re.compile(r'leading\s+engine\s+works.*yard', re.I), 'shipyard', 'Engine (Yard)'),
-    (re.compile(r'leading\s+works.*(3rd|third)\s*part', re.I), 'vendor', '3rd party'),
-    (re.compile(r'leading\s+works.*crew', re.I), 'crew', 'Crew'),
+    # 🔴 `works` 앞의 `deck`/`engine` 만 관용한다.  같은 보고서의 PDF 템플릿(TDF-04.7c)은
+    # `Leading Engine Works done by the 3rd party` / `... the Crew` 라고 쓴다(실측).
+    # 붙여 읽던 옛 규칙에서는 이 두 표가 통째로 비고 섹션으로 흘렀다.
+    # 🔴 임의의 한 단어(`\w+`)를 받으면 안 된다(올마이트 지적 2026-08-23) -- 기존 `.docx`
+    # 의 엉뚱한 제목까지 vendor/crew 로 새로 분류돼 이미 비고로 들어간 카드가 다른
+    # 섹션에 중복된다.  라벨은 그대로다 -- 바꾸면 `row_key` 가 재키잉돼 중복된다.
+    (re.compile(r'leading\s+(?:deck\s+|engine\s+)?works.*(3rd|third)\s*part', re.I),
+     'vendor', '3rd party'),
+    (re.compile(r'leading\s+(?:deck\s+|engine\s+)?works.*crew', re.I), 'crew', 'Crew'),
 )
 
 #: 제목처럼 보이지만 규칙에 안 맞을 때 쓰는 신호.  이 단어들이 있으면 작업표 제목
@@ -81,6 +88,9 @@ _DATE_RE = re.compile(r'(\d{1,2})\s*[./\-]\s*(\d{1,2})\s*[./\-]\s*(\d{2,4})')
 BAD_DATE = 'BAD'
 
 COL_ALIASES = (
+    # `sn` 은 `.docx` 경로에선 안 쓰지만(번호칸을 읽지 않는다) PDF 경로가 "번호도
+    # 날짜도 없고 설명만 있는 행" = 페이지 넘김에 잘린 조각인지 가리는 데 쓴다.
+    ('sn', re.compile(r'^\s*s\s*/?\s*n\b|^\s*no\.?\s*$', re.I)),
     ('desc', re.compile(r'descrip', re.I)),
     ('start', re.compile(r'date\s*start|start\s*date', re.I)),
     ('sched', re.compile(r'schedul', re.I)),
@@ -135,7 +145,8 @@ def _iter_blocks(doc):
             yield Table(child, doc)
 
 
-def _heading_target(text):
+def heading_target(text):
+    """제목 문단 → `(섹션 key, 라벨)`.  PDF 경로도 **이 규칙표를 그대로** 쓴다."""
     for pattern, key, label in HEADING_RULES:
         if pattern.search(text):
             return key, label
@@ -172,7 +183,7 @@ def parse(path):
             text = re.sub(r'\s+', ' ', block.text).strip()
             if not text:
                 continue
-            key, label = _heading_target(text)
+            key, label = heading_target(text)
             if key:
                 pending = (text, label, key)
             elif HEADING_HINT.search(text):
@@ -287,7 +298,15 @@ def scan(path, report_date):
     `marker` 를 갖고, 제외된 행도 **버리지 않고** 그대로 실려 온다 — 형이 화면에서
     "왜 안 들어왔는지" 를 보고 필요하면 직접 고를 수 있어야 한다.
     """
-    parsed = parse(path)
+    return judge(parse(path), report_date)
+
+
+def judge(parsed, report_date):
+    """파싱 결과에 판정을 얹는다(제자리 수정 후 그대로 반환).
+
+    `.pdf` 경로(`dock_daily_pdf.scan`)가 **이 함수를 그대로** 부른다 — 판정 규칙이
+    파일형식에 따라 갈리면 같은 보고서가 형식만 바꿔도 다르게 들어온다.
+    """
     counts = {'include': 0, 'exclude': 0, 'unknown': 0}
     for group in parsed['groups']:
         for row in group['rows']:
