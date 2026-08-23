@@ -1013,6 +1013,45 @@ class PhotoParserTests(unittest.TestCase):
         self.assertEqual(0, out['skipped'])
         self.assertEqual(0, out['photo_limit'])
 
+    def test_a_photo_inside_a_nested_table_is_found_once_with_its_own_caption(self):
+        """🔴 중첩 표는 두 번 발견되기 쉬운 자리다.
+
+        칸의 그림을 `iter()` 로 훑으면 **바깥 칸**이 안쪽 표의 그림까지 자기 것으로
+        보고, 파서가 안쪽 표를 한 번 더 돌기 때문에 같은 사진이 두 번 나온다.  접기가
+        살려 주는 것도 한 장뿐이고, 캡션은 먼저 만난 바깥 칸 글이 채택된다 -- 엉뚱한
+        문장이 붙은 사진이 그대로 조선소로 나간다.
+        """
+        doc = Document()
+        doc.add_paragraph('Pictures Documenting the Status & Budgets')
+        outer = doc.add_table(rows=1, cols=1)
+        cell = outer.rows[0].cells[0]
+        cell.text = 'Engine room general'          # 바깥 칸 글 = 엉뚱한 캡션 후보
+        inner = cell.add_table(rows=1, cols=2)
+        inner.rows[0].cells[0].text = 'Rope guard removal'
+        _put(inner.rows[0].cells[1], RED)
+        doc.save(self.path)
+        out = parser.photos(self.path)
+        self.assertEqual(1, len(out['photos']))
+        self.assertEqual(0, out['duplicates'], '두 번 발견하면 접기 수가 오른다')
+        self.assertEqual('Rope guard removal', out['photos'][0]['caption'])
+
+    def test_short_photo_keys_stay_unique_inside_one_document(self):
+        """🔴 표시용 키가 겹치면 형이 한 장을 골라도 서버가 두 장을 넣는다.
+
+        접기 판정은 **full sha256** 으로 하고, 짧은 키는 문서 안에서 유일할 때까지만
+        늘린다(같은 digest 는 애초에 접혀서 여기 두 번 오지 않는다).
+        """
+        used = set()
+        a = parser.photo_key('c' * 12 + '1' * 52, used)
+        used.add(a)
+        b = parser.photo_key('c' * 12 + '2' * 52, used)
+        used.add(b)
+        self.assertNotEqual(a, b)
+        self.assertEqual(12, len(a))
+        self.assertGreater(len(b), 12, '앞 12자가 같으면 더 길게 잡는다')
+        # 같은 digest 가 두 번 와도 서로 다른 키를 받는다(마지막 방어선).
+        self.assertNotEqual(a, parser.photo_key('c' * 12 + '1' * 52, used))
+
     def test_pdf_letterhead_repeated_on_every_page_is_not_a_photo(self):
         """🔴 실측: 같은 10,697 byte 그림이 10쪽 전부에 있다(회사 레터헤드).
 
@@ -1093,6 +1132,81 @@ class PhotoRouteTests(unittest.TestCase):
         self.assertTrue(scan['photo_captions'])
         self.assertEqual(0, scan['photo_duplicates'] + scan['photo_skipped'])
         self.assertFalse(any(p['applied'] for p in scan['photos']))
+
+    def test_the_scan_always_says_how_many_were_taken_for_letterhead(self):
+        """🔴 레터헤드로 빼낸 장수는 **키가 항상 있어야** 한다.
+
+        화면(웹 규칙·앱 규칙)이 이 값으로 "쪽마다 반복되는 그림 N장은 뺐습니다" 를
+        말한다.  docx 는 표 안 그림만 보므로 0 이지만, 키가 빠지면 PDF 에서만 값이
+        생기는 필드가 되어 두 화면 중 한쪽이 조용히 아무 말도 안 한다.
+        """
+        rid = self.report['id']
+        _, scan = self._shots(rid)
+        self.assertEqual(0, scan['photo_letterhead'])
+        self.assertEqual('Photos', scan['photo_section'])
+
+    def test_english_captions_that_fail_to_translate_are_counted_and_korean_ones_are_not_sent(self):
+        """🔴 캡션 번역 실패는 **서버가 센다**(`photos_untranslated`).
+
+        화면에서 뺄셈으로 만들 수 없다 -- 이미 한국어인 캡션은 애초에 번역기에 보내지
+        않으므로, 화면이 "캡션 수 - 성공 수" 로 계산하면 한국어 캡션 하나가 매번
+        "번역 실패" 로 잡힌다(있지도 않은 실패를 경고하는 것도 거짓이다).
+        """
+        import helpers_shared
+        rid = self.report['id']
+        aid, scan = self._shots(rid, pairs=[('Rope guard', RED), ('선미관 점검', BLUE)])
+        keys = [p['photo_key'] for p in scan['photos']]
+        sent, real = [], helpers_shared.translate_texts_ko
+
+        def boom(texts):
+            sent.append(list(texts))
+            raise RuntimeError('no api key')
+
+        helpers_shared.translate_texts_ko = boom
+        try:
+            # 🔴 `row_keys` 를 **비워서** 보낸다. 빼면 서버가 행 전체로 읽어(옛 클라이언트
+            #    계약) 행 번역까지 섞여, 이 테스트가 캡션 규칙을 잠그지 못한다.
+            body = self._apply(rid, aid, self.report['revision'],
+                               row_keys=[], photo_keys=keys).get_json()
+        finally:
+            helpers_shared.translate_texts_ko = real
+        self.assertEqual([['Rope guard']], sent, '한국어 캡션은 보내지 않는다')
+        self.assertEqual(2, body['photos_added'])
+        self.assertEqual(0, body['photos_translated'])
+        self.assertEqual(1, body['photos_untranslated'], '영문 캡션 한 장만 실패다')
+        self.assertEqual(0, body['translated'], '캡션은 행 번역 수에 섞이지 않는다')
+
+    def test_translated_captions_are_not_reported_as_untranslated(self):
+        import helpers_shared
+        rid = self.report['id']
+        aid, scan = self._shots(rid, pairs=[('Rope guard', RED)])
+        real = helpers_shared.translate_texts_ko
+        helpers_shared.translate_texts_ko = lambda texts: ['[KO] ' + t for t in texts]
+        try:
+            body = self._apply(rid, aid, self.report['revision'],
+                               photo_keys=[scan['photos'][0]['photo_key']]).get_json()
+        finally:
+            helpers_shared.translate_texts_ko = real
+        self.assertEqual(1, body['photos_translated'])
+        self.assertEqual(0, body['photos_untranslated'])
+        self.assertEqual([['[KO] Rope guard']], [x[1] for x in self._images(rid)])
+
+    def test_picking_only_photos_already_in_the_report_explains_itself(self):
+        """🔴 할 일이 0장이어도 400 이 아니다.
+
+        400 으로 끊으면 `photos_already` 안내가 사라지고 형은 사유 없는 "넣을 항목이
+        없습니다" 만 본다 -- 고른 사진이 왜 안 들어갔는지 화면에서 알 수 없다.
+        """
+        rid = self.report['id']
+        aid, scan = self._shots(rid)
+        key = scan['photos'][0]['photo_key']
+        first = self._apply(rid, aid, self.report['revision'], photo_keys=[key]).get_json()
+        again = self._apply(rid, aid, first['revision'], row_keys=[], photo_keys=[key])
+        self.assertEqual(200, again.status_code, again.get_data(as_text=True))
+        body = again.get_json()
+        self.assertEqual(1, body['photos_already'])
+        self.assertEqual(0, body['photos_added'])
+        self.assertEqual(0, body['photos_untranslated'])
 
     def test_a_client_that_does_not_know_photo_keys_attaches_nothing(self):
         """🔴 지금 라이브인 웹·OTA 258 은 `photo_keys` 를 모른다.

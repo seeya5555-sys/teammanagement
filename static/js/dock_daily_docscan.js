@@ -86,11 +86,25 @@
     return out;
   }
 
+  /* 사진이 한 장도 없을 때. 🔴 빠진 그림이 있으면 그 사유만 말하고, 아무 것도 없으면
+   * 아무 말도 하지 않는다(문서에 사진이 없는 게 정상인 날도 있다). 사진이 0장인 이유가
+   * 레터헤드뿐일 수도 있어 그때도 말한다 -- 안 말하면 형은 "문서엔 그림이 보이는데
+   * 앱은 0장" 으로 읽는다. */
+  function photoEmptyNote(scan) {
+    if (!scan || (scan.photos || []).length) return '';
+    var out = [];
+    var dropped = (scan.photo_skipped || 0) + (scan.photo_limit || 0);
+    if (dropped) out.push('⚠ 문서의 그림 ' + dropped + '장은 넣을 수 없는 형식·용량입니다.');
+    if (scan.photo_letterhead) out.push('쪽마다 반복되는 그림 ' + scan.photo_letterhead
+                                        + '장은 레터헤드로 보고 뺐습니다.');
+    return out.join(' ');
+  }
+
   var api = {
     isDropped: isDropped, isUnusable: isUnusable, isLocked: isLocked,
     isSelectable: isSelectable, isDefaultChecked: isDefaultChecked,
     isPhotoSelectable: isPhotoSelectable, isPhotoDefaultChecked: isPhotoDefaultChecked,
-    photoNote: photoNote, photoWarnings: photoWarnings
+    photoNote: photoNote, photoWarnings: photoWarnings, photoEmptyNote: photoEmptyNote
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.DockDailyDocScanRules = api;

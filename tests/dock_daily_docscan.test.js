@@ -105,3 +105,27 @@ test('앱과 같은 매트릭스: dropped·unusable·applied·edited 조합', ()
                  JSON.stringify({ group: group.label, r, applied }));
   }
 });
+
+test('레터헤드로 빼낸 장수도 말한다', () => {
+  // 🔴 세어만 두고 안 말하면 우리가 문서의 그림을 조용히 지운 것이다. 형은 문서의
+  //    사진 수와 화면의 사진 수가 다른 이유를 알 수 없다.
+  const warn = R.photoWarnings({ photo_captions: true, photo_letterhead: 10 });
+  assert.equal(warn.length, 1);
+  assert.match(warn[0], /레터헤드/);
+  assert.ok(warn[0].includes('10장'));
+});
+
+test('사진이 0장인 이유는 레터헤드뿐일 때도 말한다', () => {
+  // 사진이 없는 게 정상인 날은 아무 말도 하지 않는다.
+  assert.equal(R.photoEmptyNote({ photos: [] }), '');
+  assert.equal(R.photoEmptyNote({ photos: [{ photo_key: 'a1' }], photo_skipped: 2 }), '',
+               '사진이 있으면 이 안내는 나오지 않는다');
+  const dropped = R.photoEmptyNote({ photos: [], photo_skipped: 1, photo_limit: 2 });
+  assert.ok(dropped.includes('3장'), dropped);
+  // 🔴 쪽마다 같은 로고만 있는 PDF: 여기서 아무 말도 안 하면 형은 "문서엔 그림이
+  //    보이는데 앱은 0장" 으로 읽는다.
+  const only = R.photoEmptyNote({ photos: [], photo_letterhead: 10 });
+  assert.match(only, /레터헤드/);
+  const both = R.photoEmptyNote({ photos: [], photo_skipped: 1, photo_letterhead: 10 });
+  assert.ok(both.includes('1장') && both.includes('10장'), both);
+});

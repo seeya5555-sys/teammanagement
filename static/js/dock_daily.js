@@ -1227,8 +1227,9 @@
     const shots=scan.photos||[];
     const pbox=$('#dd-docx-photos');
     if(!shots.length){
-      pbox.innerHTML=scan.photo_skipped||scan.photo_limit
-        ? `<p class="dd-muted">⚠ 문서의 그림 ${(scan.photo_skipped||0)+(scan.photo_limit||0)}장은 넣을 수 없는 형식·용량입니다.</p>`:'';
+      // 문구 정본은 규칙 파일이다(앱과 같은 문장 — 한쪽만 고치면 "웹에서는 다르게 나옴").
+      const note=RULES.photoEmptyNote(scan);
+      pbox.innerHTML=note?`<p class="dd-muted">${esc(note)}</p>`:'';
     }else{
       pbox.innerHTML=`<div class="dd-docx-group"><h3>사진 <span class="dd-muted">${shots.length}장 · `
         +`고른 사진만 <b>${esc(scan.photo_section||'Photos')}</b> 섹션 격자로 들어갑니다`
