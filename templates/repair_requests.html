@@ -16,7 +16,7 @@
         <label>Maker<input id="rr-maker"></label><label>Type<input id="rr-type"></label>
         <label>Voyage<input id="rr-voy" required></label><label>Port Code<input id="rr-port" required placeholder="CNZOS"></label>
         <label>예정일<input id="rr-date" type="date" required></label><label>Stock<select id="rr-stock"><option value="vendor">Vendor Supply</option><option value="owner">Owner Supply</option></select></label>
-        <label>Reason Code<input id="rr-reason" value="P" required></label><label>Department Code<input id="rr-dept" value="E" required></label>
+        <label>Reason Code<select id="rr-reason" required></select></label><label>Department Code<select id="rr-dept" required></select></label>
         <label class="rr-full">Cause of Defect<textarea id="rr-cause" rows="3" required></textarea></label>
         <label class="rr-full">Ship's Inspection Result<textarea id="rr-inspection" rows="3" required></textarea></label>
         <label class="rr-full">Detail / Job Scope<textarea id="rr-detail" rows="8" required></textarea></label>
@@ -29,13 +29,25 @@
     <section class="rr-panel"><div class="rr-row" style="margin-bottom:12px"><h2 style="font-size:16px;margin:0;flex:1">신청 목록</h2><button class="btn" id="rr-refresh">새로고침</button></div><div id="rr-list"></div></section>
   </div>
 </div>
+<script src="{{ url_for('static', filename='js/repair_code_select.js') }}"></script>
 <script>
 const $=s=>document.querySelector(s); let rows=[],saveBusy=false,createCid='rr-web-'+crypto.randomUUID();
 async function api(method,path,body){const o={method,headers:{Accept:'application/json'}};if(body!==undefined){o.headers['Content-Type']='application/json';o.body=JSON.stringify(body)}const r=await fetch(path,o),j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||`HTTP ${r.status}`);return j}
 function payload(){return {client_request_id:createCid,vessel_id:+$('#rr-vessel').value,subject:$('#rr-subject').value,category:$('#rr-category').value,equipment:$('#rr-equipment').value,maker:$('#rr-maker').value,type_nm:$('#rr-type').value,app_voy:$('#rr-voy').value,app_port_cd:$('#rr-port').value,app_dt:$('#rr-date').value,cause:$('#rr-cause').value,inspection:$('#rr-inspection').value,detail:$('#rr-detail').value,stock:$('#rr-stock').value,reason_cd:$('#rr-reason').value,dept_cd:$('#rr-dept').value,dock_yn:$('#rr-dock').checked,urgent_yn:$('#rr-urgent').checked,critical_yn:$('#rr-critical').checked,version:+$('#rr-version').value}}
-function reset(){ $('#rr-form').reset();$('#rr-id').value='';$('#rr-version').value='1';$('#rr-reason').value='P';$('#rr-dept').value='E';$('#rr-form-title').textContent='신규 작성';$('#rr-cancel').hidden=true;createCid='rr-web-'+crypto.randomUUID() }
+// 코드 목록·기본값·목록 밖 값 처리 규칙 정본 = `static/js/repair_code_select.js`(node 실행형 테스트).
+// 🔴 목록을 여기 다시 적지 않는다 — 두 벌이 되면 한쪽만 늘어난다.
+// 🔴 매번 option 을 통째로 다시 그린다. 지난 "목록 외" option 을 지우는 별도 경로를 두면
+//    한 군데만 빠뜨렸을 때 남의 코드가 목록에 남는다. 다시 그리면 그 경로가 아예 없다.
+function setCode(sel,value){
+  const kind=sel.id==='rr-reason'?'reason':'dept', built=RepairCodeSelect.build(kind,value);
+  sel.innerHTML=built.options.map(o=>`<option value="${esc(o.code)}"${o.code===built.selected?' selected':''}>${esc(RepairCodeSelect.label(o))}</option>`).join('');
+  sel.value=built.selected;
+}
+// 🔴 `form.reset()` 만으로는 안 된다 — 직전 편집에서 붙은 "목록 외" option 이 남고, 그게
+//    `selected` 면 새 신청서가 남의 코드로 시작한다. 두 칸을 기본값으로 다시 그린다.
+function reset(){ $('#rr-form').reset();$('#rr-id').value='';$('#rr-version').value='1';setCode($('#rr-reason'),'');setCode($('#rr-dept'),'');$('#rr-form-title').textContent='신규 작성';$('#rr-cancel').hidden=true;createCid='rr-web-'+crypto.randomUUID() }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function edit(id){const r=rows.find(x=>x.id===id);if(!r)return;for(const [k,v] of Object.entries({subject:r.subject,category:r.category,equipment:r.equipment,maker:r.maker,type:r.type_nm,voy:r.app_voy,port:r.app_port_cd,cause:r.cause,inspection:r.inspection,detail:r.detail,reason:r.reason_cd,dept:r.dept_cd}))$('#rr-'+k).value=v||'';$('#rr-vessel').value=r.vessel_id;$('#rr-date').value=(r.app_dt||'').replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3');$('#rr-stock').value=r.stock;$('#rr-dock').checked=r.dock_yn==='Y';$('#rr-urgent').checked=r.urgent_yn==='Y';$('#rr-critical').checked=r.critical_yn==='Y';$('#rr-id').value=id;$('#rr-version').value=r.version;$('#rr-form-title').textContent='초안 편집 #'+id;$('#rr-cancel').hidden=false;scrollTo({top:0,behavior:'smooth'})}
+function edit(id){const r=rows.find(x=>x.id===id);if(!r)return;for(const [k,v] of Object.entries({subject:r.subject,category:r.category,equipment:r.equipment,maker:r.maker,type:r.type_nm,voy:r.app_voy,port:r.app_port_cd,cause:r.cause,inspection:r.inspection,detail:r.detail}))$('#rr-'+k).value=v||'';setCode($('#rr-reason'),r.reason_cd);setCode($('#rr-dept'),r.dept_cd);$('#rr-vessel').value=r.vessel_id;$('#rr-date').value=(r.app_dt||'').replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3');$('#rr-stock').value=r.stock;$('#rr-dock').checked=r.dock_yn==='Y';$('#rr-urgent').checked=r.urgent_yn==='Y';$('#rr-critical').checked=r.critical_yn==='Y';$('#rr-id').value=id;$('#rr-version').value=r.version;$('#rr-form-title').textContent='초안 편집 #'+id;$('#rr-cancel').hidden=false;scrollTo({top:0,behavior:'smooth'})}
 async function load(){const j=await api('GET','/api/repair-requests');rows=j.requests||[];$('#rr-list').innerHTML=rows.length?rows.map(r=>`<article class="rr-card"><div class="rr-row"><span class="rr-badge">${r.dock_yn==='Y'?'DOCK '+esc(r.req_no):'일반수리'}</span><h3>${esc(r.subject)}</h3><span class="rr-badge">${esc(r.status)}</span></div><div class="rr-meta">${esc(r.vsl_nm)} · ${esc(r.equipment)} · ${esc(r.rep_cd||'SVMS 미저장')} · ${esc(r.svms_status||'')}</div><div class="rr-detail">${esc(r.detail)}</div><div class="rr-actions">${['pending','failed'].includes(r.status)&&!r.rep_cd?`<button class="btn" onclick="edit(${r.id})">수정</button><button class="btn btn-primary" onclick="approve(${r.id})">SVMS DRAFT 저장</button><button class="btn" onclick="del(${r.id})">삭제</button>`:''}${r.status==='saving'||(r.status==='failed'&&r.rep_cd)?`<button class="btn" onclick="resolveRepair(${r.id})">저장상태 복구</button>`:''}${r.rep_cd?`<button class="btn btn-primary" onclick="goProcure(${r.id})">견적·업체선정·전자결재</button>`:''}</div>${r.result?`<div class="rr-meta">${esc(r.result)}</div>`:''}</article>`).join(''):'<div class="rr-empty">작성된 수리신청서 없음</div>'}
 async function approve(id){if(!confirm('이 내용을 SVMS 수리 DRAFT로 저장할까요? 저장 후 TRMT 수정은 불가합니다.'))return;try{await api('POST',`/api/repair-requests/${id}/approve`,{});await load()}catch(e){alert(e.message)}}
 async function del(id){if(!confirm('이 초안을 삭제할까요?'))return;try{await api('DELETE',`/api/repair-requests/${id}`);await load()}catch(e){alert(e.message)}}
@@ -43,6 +55,7 @@ function goProcure(id){location.href='/repair-requests?procure_id='+encodeURICom
 async function resolveRepair(id){const rep=(prompt('SVMS에서 확인한 REP_CD를 입력하세요. 문서가 생성되지 않은 것을 확인했다면 빈칸으로 확인을 누르세요.')||'').trim();try{if(rep){if(!confirm(`REP_CD ${rep}로 저장 완료 처리할까요?`))return;await api('POST',`/api/repair-requests/${id}/resolve`,{action:'mark_saved',rep_cd:rep,confirmation:'SVMS확인'})}else{if(!confirm('SVMS에 이 수리신청서가 생성되지 않았음을 직접 확인했습니까? 확인 시 재시도 가능 상태로 돌립니다.'))return;await api('POST',`/api/repair-requests/${id}/resolve`,{action:'release',confirmation:'SVMS미생성확인'})}await load()}catch(e){alert(e.message)}}
 $('#rr-save').onclick=async()=>{if(saveBusy||!$('#rr-form').reportValidity())return;saveBusy=true;$('#rr-save').disabled=true;try{const id=$('#rr-id').value,p=payload();if(id){delete p.client_request_id;await api('PATCH',`/api/repair-requests/${id}`,p)}else await api('POST','/api/repair-requests',p);reset();await load()}catch(e){alert(e.message)}finally{saveBusy=false;$('#rr-save').disabled=false}};
 $('#rr-new').onclick=reset;$('#rr-cancel').onclick=reset;$('#rr-refresh').onclick=load;
+setCode($('#rr-reason'),'');setCode($('#rr-dept'),'');
 Promise.all([api('GET','/api/vessels'),load()]).then(([vs])=>{$('#rr-vessel').innerHTML=vs.map(v=>`<option value="${v.id}">${esc(v.name)} · ${esc(v.vsl_cd||'SVMS코드 없음')}</option>`).join('')}).catch(e=>alert(e.message));
 </script>
 {% endblock %}
