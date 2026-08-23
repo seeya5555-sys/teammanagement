@@ -39,6 +39,19 @@ FIXED = (
     ('remark', 'Remark', 50),
 )
 FIXED_KEYS = {x[0] for x in FIXED}
+#: SVMS `RMK` 에 Survey/Remark 와 함께 실어 보내는 **special 섹션 라벨 조각**(소문자·trim
+#: 후 부분일치).  형 지시 2026-08-23 "Crew section이 스페셜로 있을 경우, 이건 SVMS리마크에
+#: 푸시되도록".
+#: 🔴 `section_key` 로는 못 고른다 -- 이 섹션은 `_alloc_section_key` 가 만든 `sec_N` 이다
+#:    (라이브 = `sec_2` / label `Crew`).  파서 쪽 `_docx_targets` 도 같은 **라벨** 기준으로
+#:    Crew 섹션을 찾으므로 두 곳이 같은 규칙을 쓴다.
+#: 🔴 라벨 기준의 대가 = 이름을 바꾸면 RMK 에서 빠진다(올마이트 지적).  그래서 **완전일치가
+#:    아니라 부분일치**이고 `선원` 도 같이 본다 -- 현실적인 개명(`선원작업`, `Crew Work`)은
+#:    그대로 살아남는다.  그래도 아예 다른 이름으로 바꾸면 빠지는데, 그건 숨지 않는다:
+#:    미리보기 RMK 본문에 `Crew` 블록이 있는지 눈에 보이고 상신은 그 승인이 필수다.
+#: 🔴 `special` **전체를 넣지 않는다.**  EGCS 류는 SVMS 화면 매핑이 따로 있고, 라이브
+#:    프로젝트에는 형이 만든 시험용 special(`ㅍㅍ`)도 있다.  여기 걸리는 것만 간다.
+SVMS_RMK_SPECIAL_LABEL_HINTS = ('crew', '선원')
 BLOCK_TYPES = {'item', 'paragraph', 'table', 'image'}
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 # The editor cards now auto-number every work item as "1) ", so any leading
@@ -1483,7 +1496,11 @@ DOCX_SOURCE_TABLE = 'sup_dd_report'
 DOCX_SOURCE_ID = 'daily'
 
 #: 파서 섹션 key 중 프로젝트 고정 섹션이 아닌 것 → 자동으로 만들 섹션 이름.
-#: Crew 작업(선원 자체작업)은 Shipyard/Vendor 와 성격이 달라 Remark 에 섞으면 안 된다.
+#: Crew 작업(선원 자체작업)은 Shipyard/Vendor 와 성격이 달라 **전용 필드로 보내지 않는다.**
+#: 🔴 옛 주석은 "Remark 에 섞으면 안 된다" 였는데, 형 지시 2026-08-23 로 SVMS `RMK` 에는
+#:    간다.  섞는 게 아니라 `Crew` 라벨을 달고 자기 블록으로 들어간다
+#:    (`SVMS_RMK_SPECIAL_LABELS`).  Remark 섹션 카드에 합치는 것은 여전히 금지 --
+#:    합치면 형이 Crew 를 화면에서 따로 빼낼 수 없다.
 DOCX_NEW_SECTIONS = {'crew': 'Crew'}
 
 #: 읽을 수 있는 확장자 → 파서 모듈.  두 파서는 **같은 판정 함수**(`dock_daily_docx.judge`)
@@ -3012,20 +3029,48 @@ def _svms_payload_hash(preview):
     return 'sha256:' + hashlib.sha256(raw).hexdigest()
 
 
+def _svms_rmk_sections(sections):
+    """SVMS `RMK` 에 실을 섹션을 **화면 순서(`sort_order`)대로** 고른다.
+
+    · 고정 `survey`/`remark` = 원래 계약.
+    · `SVMS_RMK_SPECIAL_LABEL_HINTS` 에 걸리는 special 섹션(= Crew, 형 지시 2026-08-23).
+
+    🔴 순서를 하드코딩하지 않는다.  `_email` 이 같은 이유로 `sort_order` 로 바뀌었고
+       (형 지시 2026-08-22), 화면·메일·SVMS 세 출구가 어긋나면 그 자체가 거짓말이 된다.
+       `sections` 는 `_sections_for_report` 가 `ORDER BY sort_order, id` 로 주므로 순위가
+       같아도 순서가 흔들리지 않는다 -- `_svms_payload_hash` 가 흔들리면 러너가 승인본을
+       `failed` 로 떨어뜨린다(올마이트 지적).
+    🔴 같은 이름의 Crew 섹션이 둘이면 **둘 다** 간다.  화면과 메일도 둘 다 보여 주므로
+       여기서만 하나를 지우면 SVMS 본문이 형이 보낸 메일과 달라진다.  중복은 섹션을 두 개
+       만든 시점의 문제이고, 지우는 건 `create_section` 계약(별건)이다.
+    🔴 꺼 둔 섹션(`enabled=0`)은 애초에 `sections` 에 없다 -- 호출자가
+       `include_disabled=False` 로 준다(메일과 같은 입력).
+    """
+    out = []
+    for section in sections:
+        if section['section_key'] in ('survey', 'remark'):
+            out.append(section)
+            continue
+        if section.get('kind') != 'special':
+            continue
+        label = (section.get('label') or '').strip().lower()
+        if label and any(hint in label for hint in SVMS_RMK_SPECIAL_LABEL_HINTS):
+            out.append(section)
+    return out
+
+
 def _svms(rid):
     r = _report(rid)
     sections = _sections_for_report(rid, r['project_id'], include_disabled=False)
     syd = _render_section(rid, 'shipyard')
     vendor = _render_section(rid, 'vendor')
-    # SVMS Daily Report 계약: Shipyard/Vendor는 전용 필드, Survey+Remark만 RMK.
-    # EGCS 등 Special을 RMK에 섞으면 형이 지정한 SVMS 화면 매핑과 달라진다.
+    # SVMS Daily Report 계약: Shipyard/Vendor 는 전용 필드, 나머지는 RMK 한 칸.
+    # RMK 에 뭐가 실리는지는 `_svms_rmk_sections` 가 정본이다(Survey/Remark + Crew).
     rest = []
-    for key in ('survey', 'remark'):
-        section = next((s for s in sections if s['section_key'] == key), None)
-        if section:
-            text = _render_section(rid, key)
-            if text:
-                rest.append('%s\n%s' % (section['label'], text))
+    for section in _svms_rmk_sections(sections):
+        text = _render_section(rid, section['section_key'])
+        if text:
+            rest.append('%s\n%s' % (section['label'], text))
     # 🔴 DK_CD 는 프로젝트에 등록된 SVMS Dock No 하나뿐이다. 없을 때 선박코드(`vsl_cd`)로
     # 대체하면 안 된다 -- 둘은 다른 키이고(예: DK_CD=`KWPSMD2603250001`), 대체값을
     # 보여 주면 미리보기가 "이 dock 에 반영된다" 고 거짓말을 한다.

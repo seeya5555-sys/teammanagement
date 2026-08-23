@@ -1642,6 +1642,152 @@ class DockDailyTests(unittest.TestCase):
             self.assertIn('본문 저장 완료', note)
             self.assertIn('첨부 업로드 실패', note)   # 셀 수 없으면 건수 없이 적는다
 
+    def _dd_report_with_sections(self, title, date, labels, dk_cd='ATGRMD2607130001'):
+        """프로젝트+보고서를 만들고 `labels` 이름의 special 섹션을 그 일자에 붙인다."""
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': title, 'svms_dk_cd': dk_cd}).get_json()
+        r = self.client.post(f"/api/dock-daily/projects/{p['id']}/reports/generate",
+                             json={'report_date': date}).get_json()
+        keys = {}
+        for label in labels:
+            made = self.client.post(f"/api/dock-daily/projects/{p['id']}/sections",
+                                    json={'label': label, 'report_id': r['id']})
+            self.assertEqual(201, made.status_code, made.get_data(as_text=True))
+            keys[label] = made.get_json()['created_section_key']
+        return p, r, keys
+
+    def _dd_write(self, rid, section_key, body):
+        current = self.client.get(f"/api/dock-daily/reports/{rid}").get_json()
+        put = self.client.put(f"/api/dock-daily/reports/{rid}", json={
+            'revision': current['revision'],
+            'operations': [{'section_key': section_key, 'block_type': 'item',
+                            'content': {'title': body}}]})
+        self.assertEqual(200, put.status_code, put.get_data(as_text=True))
+
+    def test_crew_special_section_goes_into_svms_rmk_but_other_specials_do_not(self):
+        """형 지시 2026-08-23 "Crew section이 스페셜로 있을 경우, 이건 SVMS리마크에 푸시".
+
+        🔴 라이브 Crew 섹션은 `section_key` 가 `sec_2` 다(`_alloc_section_key`).  key 로
+        고르면 영원히 안 걸리므로 **라벨**로 고른다는 것을 여기서 잠근다.
+        🔴 special 전체가 아니다 -- 같은 프로젝트의 다른 special(EGCS 류)은 그대로 빠진다.
+        """
+        _, r, keys = self._dd_report_with_sections(
+            'Crew RMK DD', '2026-08-14', ['Crew', 'EGCS Special'])
+        self.assertTrue(keys['Crew'].startswith('sec_'),
+                        'Crew 는 고정 key 가 아니다 — 라벨로 골라야 한다')
+        self._dd_write(r['id'], keys['Crew'], '선원 자체 도장작업 실시함.')
+        self._dd_write(r['id'], keys['EGCS Special'], 'EGCS 배관 절단함.')
+        self._dd_write(r['id'], 'remark', '금일 특이사항 없음.')
+        with self._svms_env():
+            rmk = self.client.get(
+                f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()['fields']['RMK']
+        self.assertIn('Crew\n1) 선원 자체 도장작업 실시함.', rmk)
+        self.assertNotIn('EGCS', rmk)
+        # 순서는 `sort_order`(화면·메일과 같은 순서)다. Crew 는 새로 만들어 맨 뒤로 간다.
+        self.assertLess(rmk.index('Remark'), rmk.index('Crew'))
+        # 전용 필드는 건드리지 않는다.
+        self.assertNotIn('Crew', self.client.get(
+            f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()['fields']['RMK_SYD'])
+
+    def _dd_rename_section(self, pid, title, section_key, label):
+        patched = self.client.patch(f"/api/dock-daily/projects/{pid}", json={
+            'title': title, 'sections': [{'section_key': section_key, 'label': label}]})
+        self.assertEqual(200, patched.status_code, patched.get_data(as_text=True))
+
+    def _dd_rmk(self, rid):
+        with self._svms_env():
+            return self.client.get(
+                f"/api/dock-daily/reports/{rid}/svms-preview").get_json()['fields']['RMK']
+
+    def test_renaming_the_crew_section_keeps_it_in_rmk_unless_the_name_stops_meaning_crew(self):
+        """라벨 기준의 대가를 명시적으로 잠근다(올마이트 지적).
+
+        🔴 완전일치가 아니라 **부분일치 + `선원`** 이라 현실적인 개명은 살아남는다.
+        아예 다른 이름으로 바꾸면 빠지는데, 조용한 손실이 아니다 — 미리보기 RMK 본문에서
+        블록이 사라진 게 보이고 상신은 그 승인이 필수다.  **메일·화면에는 그대로 남는다.**
+        """
+        p, r, keys = self._dd_report_with_sections('Crew Rename DD', '2026-08-13', ['Crew'])
+        self._dd_write(r['id'], keys['Crew'], '선원 자체작업 1건.')
+        self.assertIn('선원 자체작업 1건.', self._dd_rmk(r['id']))
+        for label in ('선원작업', 'Crew Work', ' CREW ', 'Crew (선원 자체작업)'):
+            self._dd_rename_section(p['id'], 'Crew Rename DD', keys['Crew'], label)
+            self.assertIn('선원 자체작업 1건.', self._dd_rmk(r['id']), label)
+        # 이름이 Crew 를 뜻하지 않게 되면 빠진다 — 그 대가를 계약으로 못박는다.
+        self._dd_rename_section(p['id'], 'Crew Rename DD', keys['Crew'], '기타')
+        self.assertNotIn('선원 자체작업 1건.', self._dd_rmk(r['id']))
+        mail = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+        self.assertIn('선원 자체작업 1건.', mail['text'])
+
+    def test_two_crew_sections_both_go_to_rmk_exactly_like_the_mail_does(self):
+        """🔴 같은 이름 섹션이 둘일 때 RMK 에서만 하나를 지우면 SVMS 본문이 형이 보낸
+        메일과 달라진다(올마이트 지적: 중복 전송).  중복은 섹션을 둘 만든 시점의 문제이고,
+        막는 건 `create_section` 계약(별건)이다.  여기서는 **메일과 같게** 둔다."""
+        _, r, _ = self._dd_report_with_sections('Crew Dup DD', '2026-08-11', ['Crew', 'Crew'])
+        # `_dd_report_with_sections` 는 같은 라벨 두 번이면 dict 키가 겹치므로 직접 읽는다.
+        sections = [s for s in self.client.get(f"/api/dock-daily/reports/{r['id']}")
+                    .get_json()['sections'] if (s['label'] or '').lower() == 'crew']
+        self.assertEqual(2, len(sections), '같은 이름 섹션 2개가 실제로 만들어져야 이 테스트가 의미 있다')
+        for n, s in enumerate(sections, 1):
+            self._dd_write(r['id'], s['section_key'], '선원 작업 %d.' % n)
+        rmk = self._dd_rmk(r['id'])
+        self.assertIn('선원 작업 1.', rmk)
+        self.assertIn('선원 작업 2.', rmk)
+        mail = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+        self.assertIn('선원 작업 1.', mail['text'])
+        self.assertIn('선원 작업 2.', mail['text'])
+
+    def test_a_disabled_crew_section_stays_out_of_rmk_like_it_stays_out_of_the_mail(self):
+        p, r, keys = self._dd_report_with_sections('Crew Off DD', '2026-08-10', ['Crew'])
+        self._dd_write(r['id'], keys['Crew'], '선원 작업 있음.')
+        self.assertIn('선원 작업 있음.', self._dd_rmk(r['id']))
+        off = self.client.patch(f"/api/dock-daily/projects/{p['id']}", json={
+            'title': 'Crew Off DD',
+            'sections': [{'section_key': keys['Crew'], 'label': 'Crew', 'enabled': False}]})
+        self.assertEqual(200, off.status_code, off.get_data(as_text=True))
+        self.assertNotIn('선원 작업 있음.', self._dd_rmk(r['id']))
+        mail = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+        self.assertNotIn('선원 작업 있음.', mail['text'])
+
+    def test_an_empty_crew_section_sends_nil_exactly_like_survey_and_remark(self):
+        """빈 Crew 를 생략하지 않고 `NIL` 로 보낸다 — Survey/Remark 와 같은 동작이고
+        메일도 `NIL` 로 나간다.  생략하면 SVMS 본문과 메일이 갈린다."""
+        _, r, _ = self._dd_report_with_sections('Crew NIL DD', '2026-08-09', ['Crew'])
+        rmk = self._dd_rmk(r['id'])
+        self.assertIn('Crew\nNIL', rmk)
+        self.assertIn('Remark\nNIL', rmk)
+
+    def test_rmk_order_and_hash_are_stable_when_two_sections_share_a_sort_order(self):
+        """🔴 순위가 같을 때 순서가 흔들리면 `_svms_payload_hash` 가 흔들리고, 러너가
+        승인본을 `approval snapshot no longer matches` 로 떨어뜨린다(올마이트 지적).
+        `_sections` 는 `ORDER BY sort_order, id` 라 흔들리지 않는다."""
+        import routes_dock_daily as mod
+        _, r, keys = self._dd_report_with_sections(
+            'Crew Tie DD', '2026-08-08', ['Crew', 'Crew Extra'])
+        self._dd_write(r['id'], keys['Crew'], '선원 작업 A.')
+        self._dd_write(r['id'], keys['Crew Extra'], '선원 작업 B.')
+        with appmod.app.app_context():
+            appmod.execute('UPDATE dock_daily_section_def SET sort_order=51 '
+                           'WHERE section_key IN (?,?)', (keys['Crew'], keys['Crew Extra']))
+        with self._svms_env(), appmod.app.test_request_context():
+            first = mod._svms(r['id'])
+            second = mod._svms(r['id'])
+        self.assertEqual(first['fields']['RMK'], second['fields']['RMK'])
+        self.assertEqual(mod._svms_payload_hash(first), mod._svms_payload_hash(second))
+        self.assertLess(first['fields']['RMK'].index('선원 작업 A.'),
+                        first['fields']['RMK'].index('선원 작업 B.'))
+
+    def test_crew_lines_count_against_the_rmk_byte_limit_without_truncating(self):
+        """🔴 Crew 를 RMK 에 넣으면 한도 초과가 쉬워진다.  자르지 않고 **막는다** —
+        문장을 줄이는 건 사람이 고르는 일이다(기존 계약)."""
+        _, r, keys = self._dd_report_with_sections('Crew Limit DD', '2026-08-12', ['Crew'])
+        self._dd_write(r['id'], keys['Crew'], '가' * 200)
+        with self._svms_env(rmk='120'):
+            preview = self.client.get(
+                f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
+        self.assertIn('RMK', preview['over_limit'])
+        self.assertFalse(preview['publishable'])
+        self.assertIn('가' * 200, preview['fields']['RMK'], '자동 truncate 금지')
+
     def test_manual_reconcile_closes_unknown_both_ways(self):
         """🔴 `unknown`/`partial` 은 재상신이 상태로 막혀 있어서, 확인 결과를 기록할 출구가
         없으면 **영구 고착**이다(올마이트 blocking). 서버는 판정하지 않고 사람이 본 것을

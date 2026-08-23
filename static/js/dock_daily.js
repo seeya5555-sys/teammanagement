@@ -823,7 +823,7 @@
       // 🔴 사유를 적는다. 전엔 "상신 불가" 만 떠서 형이 뭘 고쳐야 하는지 화면에 없었다.
       const blockers=S.blockerList(v);
       const why=blockers.length?`<div class="dd-svms-blockers"><b>상신 불가 사유</b><ul>${blockers.map(b=>`<li>${esc(b)}</li>`).join('')}</ul></div>`:'';
-      $('#dd-preview-content').innerHTML=`<p class="dd-modal-intro"><b>${v.publishable?'SVMS 반영 준비 완료':'Preview only 안전게이트'}</b><br>DK_CD와 byte limit 계약이 모두 확인되어야 실제 반영됩니다.<br>표·사진은 SVMS 본문에 넣지 않습니다(이메일 본문에만 나갑니다).</p>${why}<div id="dd-svms-dock-link"></div><div class="dd-svms-grid"><b>DK_CD</b><pre>${esc(f.DK_CD||'')}</pre><b>DR_DT</b><pre>${esc(f.DR_DT||'')}</pre><b>Shipyard</b><pre>${esc(f.RMK_SYD||'')}</pre><b>Vendor</b><pre>${esc(f.RMK_VNDR||'')}</pre><b>Remark</b><pre>${esc(f.RMK||'')}</pre></div>`;
+      $('#dd-preview-content').innerHTML=`<p class="dd-modal-intro"><b>${v.publishable?'SVMS 반영 준비 완료':'Preview only 안전게이트'}</b><br>DK_CD와 byte limit 계약이 모두 확인되어야 실제 반영됩니다.<br>표·사진은 SVMS 본문에 넣지 않습니다(이메일 본문에만 나갑니다).</p>${why}<div id="dd-svms-dock-link"></div><div class="dd-svms-grid"><b>DK_CD</b><pre>${esc(f.DK_CD||'')}</pre><b>DR_DT</b><pre>${esc(f.DR_DT||'')}</pre><b>Shipyard</b><pre>${esc(f.RMK_SYD||'')}</pre><b>Vendor</b><pre>${esc(f.RMK_VNDR||'')}</pre><b>RMK</b><pre>${esc(f.RMK||'')}</pre></div>`;
       if(S.needsDockLink(v)) renderDockLink();}
     previewModal.hidden=false;document.body.style.overflow='hidden';
   }
