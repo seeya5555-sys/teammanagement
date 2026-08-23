@@ -1711,10 +1711,26 @@ class DockDailyTests(unittest.TestCase):
                               cwd=root, capture_output=True, text=True, timeout=120)
         self.assertEqual(0, done.returncode, done.stdout + done.stderr)
 
+    def test_docscan_selection_module_rules_actually_run(self):
+        """읽기 시트의 고를 수 있는 행·기본 체크 규칙은 앱과 웹이 같아야 한다. render
+        템플릿 문자열 안에 있으면 실행해 잠글 수 없어 별 모듈로 뺐다
+        (tests/dock_daily_docscan.test.js)."""
+        import shutil
+        import subprocess
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('node 없음 — `node --test tests/dock_daily_docscan.test.js`')
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        done = subprocess.run([node, '--test', os.path.join('tests', 'dock_daily_docscan.test.js')],
+                              cwd=root, capture_output=True, text=True, timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+
     def test_dock_daily_page_loads_the_svms_state_module(self):
         page = self.client.get('/dock-daily').get_data(as_text=True)
         self.assertIn('js/dock_daily_svms.js', page)
         self.assertIn('id="dd-svms-state"', page)
+        # 🔴 읽기 시트 규칙 모듈이 빠지면 체크박스 render 가 그 자리에서 터진다.
+        self.assertIn('js/dock_daily_docscan.js', page)
 
     def test_email_preview_uses_outlook_numbered_card_format(self):
         p = self.client.post('/api/dock-daily/projects', json={

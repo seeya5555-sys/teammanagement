@@ -1,0 +1,58 @@
+/* 감독 DD report(.docx/.pdf) 읽기 시트의 **고를 수 있는 행 / 기본 체크** 규칙
+ * (형 지시 2026-08-23 "당일자 작업항목은 읽어올때 체크박스 자동 표시되도록해줘(포함 20건)").
+ *
+ * 아이폰 앱 `DockDailyDocScanRules.defaultSelection`/`isUnusable`/`isDropped` 와 **같은
+ * 규칙**이다. 별 파일로 뺀 이유는 dock_daily_svms.js 와 같다: 규칙이 render 템플릿
+ * 문자열 안에 있으면 실행해서 잠글 수 없다(tests/dock_daily_docscan.test.js).
+ *
+ * 🔴 기본 체크는 `이미 카드에 있음` 도 포함한다. 라이브 템플릿이 누적식이라 두 번째
+ *    읽기부터는 포함 판정 전부가 이미 들어간 줄이고, 그때 체크가 0건이면 형이 매번 손으로
+ *    20번 눌러야 한다. 옛 근거("다시 체크하면 revision 만 올라간다")는 죽었다 — 서버는
+ *    내용이 같으면 아무 쓰기도 하지 않고 revision 도 올리지 않는다(routes_dock_daily.py).
+ * 🔴 형이 직접 고친 줄(`edited`)은 고를 수도, 체크될 수도 없다. 서버도 `skipped_edited` 로
+ *    건너뛰므로 체크해 두면 "넣었다" 고 믿게 만드는 조용한 무동작이 된다.
+ * 🔴 갈 섹션이 없는 group·키나 문장이 빈 행도 체크하지 않는다(올마이트 지적 2026-08-23).
+ *    넣기를 눌러도 서버가 건너뛰거나 `unknown_row_keys` 로 되돌리는데, 체크돼 있으면
+ *    형은 반영된 줄로 읽는다. */
+(function () {
+  'use strict';
+
+  function text(v) { return typeof v === 'string' ? v.trim() : ''; }
+
+  /* 갈 섹션이 없는 group. 넣기를 눌러도 그 행은 빠진다. */
+  function isDropped(group) {
+    if (!group) return true;
+    return !group.target_key && !group.target_new && !group.target_attach;
+  }
+
+  /* 키나 문장이 비어 못 쓰는 행. */
+  function isUnusable(row) {
+    if (!row) return true;
+    return !text(row.row_key) || !text(row.desc);
+  }
+
+  /* 형이 직접 고친 카드에 있는 행 — 덮을 근거가 없다. */
+  function isLocked(row, applied) {
+    var done = row && applied ? applied[row.row_key] : null;
+    return !!(done && done.edited);
+  }
+
+  /* 화면에서 체크박스를 누를 수 있는 행. */
+  function isSelectable(group, row, applied) {
+    return !isUnusable(row) && !isLocked(row, applied);
+  }
+
+  /* 읽은 직후 기본으로 체크돼 있는 행. */
+  function isDefaultChecked(group, row, applied) {
+    if (!isSelectable(group, row, applied)) return false;
+    if (isDropped(group)) return false;
+    return row.verdict === 'include';
+  }
+
+  var api = {
+    isDropped: isDropped, isUnusable: isUnusable, isLocked: isLocked,
+    isSelectable: isSelectable, isDefaultChecked: isDefaultChecked
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else window.DockDailyDocScanRules = api;
+})();

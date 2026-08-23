@@ -1190,10 +1190,18 @@
       if(!mine.length)return '';
       return `<div class="dd-docx-group"><h3>${esc(label)} <span class="dd-muted">${mine.length}건 · ${esc(note)}</span></h3>`
         +mine.map(([g,r])=>{
-          // 이미 들어간 행은 다시 체크해 두지 않는다. 기본 체크로 두면 "넣기" 를 누를 때마다
-          // 같은 카드를 갱신해 revision 만 올라간다.
+          // 🔴 포함 판정은 **이미 들어간 행도 기본 체크**다(형 지시 2026-08-23). 문서가
+          // 누적식이라 두 번째 읽기부터는 포함 20건이 전부 `이미 카드에 있음` 이고, 그때
+          // 체크가 하나도 없으면 형이 매번 20번 손으로 눌러야 한다. 옛 근거("같은 카드를
+          // 갱신해 revision 만 올라간다")는 죽었다 — 서버는 내용이 같으면 아무 쓰기도 하지
+          // 않고 revision 도 올리지 않는다. 단, 형이 직접 고친 행(`edited`)은 여전히 제외다.
+          // 🔴 고를 수 있는지 / 기본 체크인지는 `dock_daily_docscan.js` 가 정본이다(앱
+          // `DockDailyDocScanRules` 와 같은 규칙, tests/dock_daily_docscan.test.js).
+          const RULES=window.DockDailyDocScanRules;
           const done=scan.applied[r.row_key];
-          const tail=done?(done.edited?' · 직접 고친 카드(덮지 않음)':' · 이미 카드에 있음'):'';
+          const unusable=RULES.isUnusable(r);
+          const tail=(done?(done.edited?' · 직접 고친 카드(덮지 않음)':' · 이미 카드에 있음'):'')
+                    +(unusable?' · ⚠ 식별키나 문장이 비어 고를 수 없습니다':'');
           // 🔴 갈 곳이 없으면 그렇게 적는다. "넣기" 를 눌러도 조용히 빠지면 형은
           // 들어간 줄 알고 메일을 보낸다(올마이트 지적).
           const target=!g.target_key&&!g.target_new&&!g.target_attach?' · ⚠ 넣을 섹션이 없어 빠집니다'
@@ -1201,7 +1209,8 @@
                       :(g.target_new?` · ${esc(g.target_new)} 섹션을 새로 만듭니다`
                       :(g.target_attach?` · ${esc(g.target_label)} 섹션을 이 일자에 붙입니다`:''));
           return `<label class="dd-docx-row"><input type="checkbox" value="${esc(r.row_key)}"`
-            +`${verdict==='include'&&!done?' checked':''}${done&&done.edited?' disabled':''}>`
+            +`${RULES.isDefaultChecked(g,r,scan.applied)?' checked':''}`
+            +`${RULES.isSelectable(g,r,scan.applied)?'':' disabled'}>`
             +`<span><b>${esc(r.desc)}</b>${r.marker?` <em>(${esc(r.marker)})</em>`:''}`
             +`<br><span class="dd-muted">${esc(g.label||'섹션 미상')}${esc(target)} · ${esc(DOCX_REASON[r.reason]||r.reason)}${esc(tail)}</span></span></label>`;
         }).join('')+'</div>';
