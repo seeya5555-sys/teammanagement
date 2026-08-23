@@ -1044,9 +1044,19 @@ class DockDailyTests(unittest.TestCase):
         # 🔴 셀 입력에서는 다시 그리지 않는다 -- 한 글자마다 renderSections 를 돌리면
         # 포커스와 커서가 날아가 한글 조합이 깨진다.  구조 변경 버튼에서만 다시 그린다.
         bind = script.split('function bindTableEditors(', 1)[1].split('function renderSections(', 1)[0]
-        cell = bind.split('.dd-tbl-cell', 1)[1].split('const mutate', 1)[0]
+        # 🔴 구간을 `oninput` 핸들러 **하나로** 좁힌다(형 지시 2026-08-23 붙여넣기 기능).
+        # 옛 구간은 `const mutate` 까지라 붙여넣기 핸들러까지 덮었는데, 붙여넣기는 표 **크기가
+        # 바뀌는** 한 번의 동작이라 다시 그리는 게 맞다 -- 넓은 구간을 그대로 두면 이 규칙이
+        # "붙여넣기도 다시 그리지 마라" 로 잘못 읽혀, 5x4 를 붙여도 화면은 2x2 로 남는다.
+        cell = bind.split('.dd-tbl-cell', 1)[1].split('.dd-tbl-cell', 1)[0]
         self.assertNotIn('renderSections()', cell)
+        # 손으로 고칠 때는 붙여넣기 안내만 DOM 에서 떼고 재렌더는 안 한다.
+        self.assertIn('.dd-tbl-note', cell)
         self.assertIn('renderSections()', bind.split('const mutate', 1)[1])
+        # 🔴 붙여넣기는 **반드시** 다시 그린다. 안 그리면 표가 커진 걸 형이 볼 수 없다.
+        paste = bind.split('i.onpaste', 1)[1].split('const mutate', 1)[0]
+        self.assertIn('renderSections()', paste)
+        self.assertIn('preventDefault', paste)
 
     def test_revision_conflict_and_final_lock(self):
         p = self.client.post('/api/dock-daily/projects', json={'vessel_id': self.vessel, 'title': 'Test DD'}).get_json()
