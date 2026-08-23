@@ -98,6 +98,34 @@
     return '';
   }
 
+  /* 동작줄(toolbar) 상신 버튼 한 개의 표시 상태.  앱은 보고서 화면 동작줄에 `상신` 버튼이
+   * 따로 있는데 웹은 **미리보기 모달 안에만** 있어서, 형이 보고서를 열고 "푸시 버튼이
+   * 어디있음?" 을 두 번 물었다(2026-08-22 앱, 2026-08-23 웹).  같은 규칙표를 쓰되 그리는
+   * 곳이 둘이므로 라벨·비활성·사유를 여기서 한 번에 만든다.
+   *
+   * 🔴 `publishable` 이 `null`/`undefined` 면 계약을 **모르는** 것이고, 모른다고 버튼을
+   *    닫으면 미리보기를 한 번도 안 연 확정본에서 상신 경로가 사라진다.  그래서 모를 때는
+   *    서버 판정에 맡긴다(앱 `svmsPreview == nil ? true` 와 같은 선택).  서버는
+   *    `svms-publish` 에서 계약을 다시 계산해 409 `preview_blocked` 로 막는다.
+   * 🔴 그래서 웹 동작줄은 계약을 **캐시하지 않고 항상 `null` 을 넘긴다**.  `false` 를
+   *    캐시하면 형이 DK_CD·본문을 고쳐도 미리보기를 다시 열기 전엔 버튼이 영구 비활성이라
+   *    서버가 다시 판정할 기회조차 없다(올마이트 지적 2026-08-23).  계약은 누른 순간
+   *    새로 받고, 위반이면 상신하지 않고 미리보기(사유·Dock 연결)로 데려간다.
+   *    남는 입력은 `status`·`sync` 뿐이고 둘 다 보고서 정본 필드라 stale 이 없다.
+   * 🔴 라벨은 `failed` 일 때만 `재상신` 이다.  나머지 상태에서 재상신을 권하면 SVMS 에
+   *    중복 행이 생긴다(`SP_SET_DOCK_DR` 비멱등). */
+  function publishButtonState(opts) {
+    var o = opts || {};
+    var known = (o.publishable === null || o.publishable === undefined) ? true : !!o.publishable;
+    var reason = publishBlockReason({ publishable: known, status: o.status, sync: o.sync });
+    return {
+      label: normalize(o.sync) === 'failed' ? 'SVMS 재상신' : 'SVMS 상신',
+      disabled: !!reason,
+      reason: reason,
+      text: publishBlockText(reason, o.sync)
+    };
+  }
+
   /* 미리보기의 `blockers` 는 서버가 판정한 **상신 불가 사유**다.
    * 🔴 사유를 화면에 안 뿌리면 "상신 불가" 한 줄만 남아 형이 고칠 방법을 알 수 없다
    *    (2026-08-22 형 캡쳐: DK_CD 가 비어 있었는데 화면엔 사유가 없었다). */
@@ -132,7 +160,8 @@
     normalize: normalize, title: title, tone: tone, listSuffix: listSuffix,
     allowsPublish: allowsPublish, needsManualCheck: needsManualCheck, guidance: guidance,
     blockerList: blockerList, needsDockLink: needsDockLink, candidateLabel: candidateLabel,
-    publishBlockReason: publishBlockReason, publishBlockText: publishBlockText
+    publishBlockReason: publishBlockReason, publishBlockText: publishBlockText,
+    publishButtonState: publishButtonState
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.DockDailySVMS = api;

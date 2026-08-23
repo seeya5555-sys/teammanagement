@@ -214,6 +214,9 @@
    * 🔴 상신은 맥 러너가 나중에 처리하는 비동기 경로다. 이 줄이 없으면 형은 상신을 누른 뒤
    *    결과(반영됨 / 본문만 / 실패 / 불명)를 웹에서 영구히 알 수 없다. */
   function renderSvmsState(){
+    // 동작줄 상신 버튼도 같은 입력(status·svms_sync_status)으로 결정된다. 여기서 같이
+    // 그려야 상태를 바꾸는 모든 경로(선택·새로고침·상신 ack·수동확인)가 버튼까지 갱신한다.
+    renderPublishButton();
     const box=$('#dd-svms-state'); if(!box) return;
     const r=state.report;
     if(!r||r.status!=='final'){box.hidden=true;box.innerHTML='';return;}
@@ -864,13 +867,53 @@
     const v=state.preview?.data;if(!v)return;const plain=`제목: ${v.subject}\n\n${v.text}`;
     try{if(window.ClipboardItem&&navigator.clipboard?.write){await navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([plain],{type:'text/plain'}),'text/html':new Blob([`<div style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;line-height:1.5;color:#222"><p style="margin:0"><span style="font-family:Arial,Helvetica,sans-serif;font-size:11pt"><b>제목: ${esc(v.subject)}</b></span></p><p style="margin:0;line-height:1.5"><span style="font-family:Arial,Helvetica,sans-serif;font-size:11pt">&nbsp;</span></p></div>${v.html}`],{type:'text/html'})})]);}else await navigator.clipboard.writeText(plain);$('#dd-preview-status').textContent='전체 내용이 복사되었습니다.';}catch(e){$('#dd-preview-status').textContent='복사 실패: '+e.message;}
   }
+  /* 🔴 진행상황을 어디에 쓸지는 **어느 버튼을 눌렀는지**가 아니라 모달이 열려 있는지로
+     정한다. 동작줄에서 눌렀는데 숨은 모달에 글을 쓰면 형에겐 아무 일도 안 일어난 화면이다. */
+  function pushStatus(msg){
+    if(!previewModal.hidden){$('#dd-preview-status').textContent=msg;return;}
+    if(msg) notice(msg);
+  }
+  /* 모달 버튼. 형은 지금 보낼 내용을 화면에서 보고 있다. */
   async function pushSvms(){
+    if(!state.report||publishing)return;
     if(!confirm('현재 미리보기 내용으로 SVMS 입거 Daily Report에 반영할까요?'))return;
-    const btn=$('#dd-svms-push');btn.disabled=true;$('#dd-preview-status').textContent='SVMS 반영 요청 중…';
+    await sendPublish(state.report.id);
+  }
+  /* 동작줄 버튼. 🔴 누른 순간 서버에서 계약을 **새로 받는다**. 계약 위반이면 상신하지 않고
+     미리보기를 연다 -- 사유(blockers)와 `DK_CD` 연결 UI 가 거기 있고, 동작줄엔 없다.
+     계약을 실제로 받아 확인문에 핵심값을 보여주므로 `user_preview_approved` 도 사실이다. */
+  async function publishFromToolbar(){
+    if(!state.report||publishing)return;
     const rid=state.report.id;
+    publishing=true; renderPublishButton();
+    let v=null;
+    try{
+      if(state.dirty) await save();
+      v=await api(`/api/dock-daily/reports/${rid}/svms-preview`);
+    }catch(e){ err(e); }
+    publishing=false; renderPublishButton();
+    // 응답을 기다리는 동안 형이 다른 일자를 골랐으면 그 보고서를 상신해선 안 된다.
+    if(!v||!state.report||state.report.id!==rid) return;
+    if(!v.publishable){
+      await openPreview('svms');
+      notice('SVMS 저장 계약을 충족하지 못했습니다. 미리보기의 사유를 먼저 해결해주세요.');
+      return;
+    }
+    const f=v.fields||{};
+    if(!confirm('이 확정본을 SVMS 입거 Daily Report에 반영할까요?\n\n'
+                +`DK_CD  ${f.DK_CD||''}\nDR_DT  ${f.DR_DT||''}\n\n`
+                +'전체 내용은 `SVMS 미리보기` 에서 볼 수 있습니다.')) return;
+    if(!state.report||state.report.id!==rid) return;
+    await sendPublish(rid);
+  }
+  async function sendPublish(rid){
+    if(publishing)return;
+    publishing=true;
+    const btn=$('#dd-svms-push');btn.disabled=true;renderPublishButton();
+    pushStatus('SVMS 반영 요청 중…');
     try{
       const v=await api(`/api/dock-daily/reports/${rid}/svms-publish`,{...json({confirmation:'user_preview_approved'}),method:'POST'});
-      $('#dd-preview-status').textContent=v.message||'SVMS 반영 대기열 등록 완료 — 맥 runner가 저장·첨부 후 결과를 이 화면에 표시합니다.';
+      pushStatus(v.message||'SVMS 반영 대기열 등록 완료 — 맥 runner가 저장·첨부 후 결과를 이 화면에 표시합니다.');
       // 🔴 재조회 **전에** 로컬 상태를 잠근다(올마이트 blocking). 아래 재조회가 실패하면
       //    화면은 여전히 `preview_only` 라서 버튼이 다시 열리고, 그 두 번째 클릭이 SVMS 에
       //    중복 행을 만든다(`SP_SET_DOCK_DR` 비멱등).
@@ -884,11 +927,13 @@
         if(state.report&&state.report.id===rid){state.report=fresh;ensureSectionEditors();renderSvmsState();}
       }catch(_){}
     }
-    catch(e){$('#dd-preview-status').textContent=e.message;}
+    catch(e){pushStatus(e.message);}
     finally{
       // 🔴 무조건 되살리지 않는다. 성공했으면 이 보고서는 더 이상 상신 대상이 아니다
       //    (`SP_SET_DOCK_DR` 는 멱등이 아니라 같은 날짜 재저장이 새 seq 행을 만든다).
+      publishing=false;
       btn.disabled=!svmsPublishAllowed();
+      renderPublishButton();
     }
   }
   /* 상신·수동확인 2xx 응답을 로컬(열린 보고서 + 목록 행)에 반영한다. 앱
@@ -937,6 +982,20 @@
    * 한다 — 계약만 보면 이미 상신한 보고서에서 버튼이 계속 열린다. */
   /* 🔴 `status` 도 봐야 한다. 전엔 계약+반영상태만 봐서 **편집 중인 보고서에서도 버튼이
      활성**이었고, 누르면 서버가 409 `final_required` 로 거절했다(화면이 거짓말). */
+  /* 🔴 상신 버튼이 동작줄·미리보기 모달 두 곳이 되었으므로 in-flight 잠금을 **공용**으로
+     둔다. 하나만 잠그면 요청 중에 다른 쪽을 눌러 SVMS 에 중복 행이 생긴다. */
+  let publishing=false;
+  /* 동작줄 버튼의 표시 상태. 🔴 계약(`publishable`)을 **캐시하지 않는다** -- 캐시한
+     `false` 는 버튼을 막아버려서, 형이 DK_CD 나 본문을 고쳐도 미리보기를 다시 열기 전엔
+     영구히 못 누른다(= 서버 재판정 기회조차 사라진다, 올마이트 지적 2026-08-23). 그래서
+     여기서 보는 건 보고서 정본 필드(`status`·`svms_sync_status`) 둘뿐이고, 계약은 누른
+     순간 서버에서 새로 받는다. */
+  function svmsPublishState(){
+    if(!state.report) return null;
+    return window.DockDailySVMS.publishButtonState(
+      {publishable:null, status:state.report.status, sync:state.report.svms_sync_status});
+  }
+  /* 모달 버튼은 방금 받은 미리보기 계약을 알고 있으므로 그 값을 쓴다. */
   function svmsPublishBlock(){
     const v=state.preview&&state.preview.kind==='svms'?state.preview.data:null;
     if(!v||!state.report) return 'contract';
@@ -944,6 +1003,21 @@
       {publishable:v.publishable, status:state.report.status, sync:state.report.svms_sync_status});
   }
   function svmsPublishAllowed(){ return !svmsPublishBlock(); }
+  /* 동작줄 상신 버튼. 🔴 못 누를 때도 **버튼을 그리고 사유를 옆에 글로 적는다** — 숨기면
+     형이 화면에서 상신을 못 찾고(2026-08-23 형 질문), 사유를 `title` 에만 넣으면 터치
+     기기에서 영구히 안 보인다. */
+  function renderPublishButton(){
+    const btn=$('#dd-svms-publish'), why=$('#dd-svms-publish-why');
+    if(!btn||!why) return;
+    const s=svmsPublishState();
+    if(!s){btn.hidden=true;why.hidden=true;return;}
+    btn.hidden=false;
+    btn.textContent=s.label;
+    btn.disabled=s.disabled||publishing;
+    btn.title=s.disabled?s.text:'확정본을 SVMS 입거 Daily Report에 반영';
+    why.textContent=s.disabled?s.text:'';
+    why.hidden=!s.disabled;
+  }
   function openFilePreview(id,name){$('#dd-file-title').textContent=name;$('#dd-file-frame').src=`/api/dock-daily/attachments/${id}/preview`;$('#dd-file-modal').hidden=false;document.body.style.overflow='hidden';}
   function closeFilePreview(){$('#dd-file-modal').hidden=true;$('#dd-file-frame').src='about:blank';document.body.style.overflow='';}
   async function uploadOne(rid,file){const fd=new FormData();fd.append('file',file);const r=await fetch(`/api/dock-daily/reports/${rid}/attachments`,{method:'POST',body:fd});const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.error||`업로드 실패 (${r.status})`);return body;}
@@ -1271,7 +1345,7 @@
   // Without this the browser navigates away to the dropped file when the user
   // misses the zone, which would silently lose unsaved edits.
   ['dragover','drop'].forEach(t=>window.addEventListener(t,e=>{if(!dropzone.contains(e.target))e.preventDefault();}));
-  $('#dd-preview-close').onclick=closePreview;$('#dd-preview-done').onclick=closePreview;$('#dd-copy-all').onclick=copyEmail;$('#dd-svms-push').onclick=pushSvms;$('#dd-file-close').onclick=closeFilePreview;
+  $('#dd-preview-close').onclick=closePreview;$('#dd-preview-done').onclick=closePreview;$('#dd-copy-all').onclick=copyEmail;$('#dd-svms-push').onclick=pushSvms;$('#dd-svms-publish').onclick=publishFromToolbar;$('#dd-file-close').onclick=closeFilePreview;
 
   const projectModal=$('#dd-project-modal'),projectForm=$('#dd-project-form'),projectError=$('#ddp-error');
   async function openProjectModal(){projectForm.reset();projectError.textContent='';try{if(!state.vessels.length)state.vessels=await api('/api/vessels');$('#ddp-vessel').innerHTML='<option value="">활성 선박을 선택하세요</option>'+state.vessels.map(v=>`<option value="${v.id}">${esc(v.name)}${v.vsl_cd?` · ${esc(v.vsl_cd)}`:''}</option>`).join('');projectModal.hidden=false;document.body.style.overflow='hidden';$('#ddp-vessel').focus();}catch(e){err(e);}}

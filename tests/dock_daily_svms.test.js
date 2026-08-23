@@ -122,3 +122,52 @@ test('상신 차단 사유는 반드시 화면에 적을 문구를 가진다', (
   // 막히지 않았으면 문구도 없다.
   assert.equal(S.publishBlockText('', 'preview_only'), '');
 });
+
+test('동작줄 상신 버튼은 계약을 모를 때도 그려진다', () => {
+  // 🔴 형이 보고서를 열고 "웹에는 SVMS 푸싱 버튼이 안보이는데" 라고 물었다(2026-08-23).
+  //    웹은 버튼이 미리보기 모달 안에만 있었다. 동작줄 버튼은 미리보기를 안 열어도
+  //    그려져야 하고, 그때 계약은 **모르는** 상태다 -- 모른다고 닫으면 상신 경로가 없다.
+  const unknown = S.publishButtonState({ publishable: null, status: 'final', sync: 'preview_only' });
+  assert.equal(unknown.disabled, false);
+  assert.equal(unknown.label, 'SVMS 상신');
+  assert.equal(unknown.reason, '');
+  // 인자 자체가 없어도 죽지 않는다(계약·상태 모름 → 확정 아님으로 막힌다).
+  assert.equal(S.publishButtonState().reason, 'draft');
+  // 🔴 동작줄은 계약을 캐시하지 않고 항상 `null` 을 넘긴다. 계약이 동작줄 버튼을 막는
+  //    입력이 되면, 고친 뒤에도 미리보기를 다시 열기 전엔 영구 비활성이다(캐시 stale).
+  //    그래서 확정+상신가능 상태에서 계약을 모른다는 이유로 막히는 일이 없어야 한다.
+  ['preview_only', 'failed', null].forEach(function (sync) {
+    assert.equal(S.publishButtonState({ publishable: null, status: 'final', sync: sync }).disabled,
+                 false, String(sync) + ' 에서 계약 미상으로 버튼이 막히면 안 된다');
+  });
+  assert.equal(S.publishButtonState({ publishable: undefined, status: 'final', sync: 'preview_only' })
+                .disabled, false);
+});
+
+test('동작줄 상신 버튼은 못 누를 때도 사유를 들고 있다', () => {
+  const draft = S.publishButtonState({ publishable: true, status: 'editing', sync: 'preview_only' });
+  assert.equal(draft.disabled, true);
+  assert.match(draft.text, /확정/);
+  // 계약을 아는 경우엔 그 판정을 그대로 쓴다.
+  const blocked = S.publishButtonState({ publishable: false, status: 'final', sync: 'preview_only' });
+  assert.equal(blocked.reason, 'contract');
+  assert.ok(blocked.text);
+  // 이미 반영된 보고서는 막히고, 문구는 "다시 시도" 를 권하지 않는다.
+  const done = S.publishButtonState({ publishable: true, status: 'final', sync: 'synced' });
+  assert.equal(done.disabled, true);
+  assert.equal(done.label, 'SVMS 상신');
+});
+
+test('재상신 라벨은 failed 에서만 나온다', () => {
+  // 🔴 `SP_SET_DOCK_DR` 는 멱등이 아니다. failed 외의 상태에서 재상신을 권하면 SVMS 에
+  //    중복 행이 생긴다.
+  assert.equal(S.publishButtonState({ publishable: true, status: 'final', sync: 'failed' }).label,
+               'SVMS 재상신');
+  assert.equal(S.publishButtonState({ publishable: true, status: 'final', sync: 'failed' }).disabled,
+               false);
+  ['preview_only', 'approved', 'submitting', 'synced', 'unknown', 'partial', null]
+    .forEach(function (sync) {
+      assert.equal(S.publishButtonState({ publishable: true, status: 'final', sync: sync }).label,
+                   'SVMS 상신', String(sync) + ' 에서 재상신 라벨이 나오면 안 된다');
+    });
+});
