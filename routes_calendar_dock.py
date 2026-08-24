@@ -3302,16 +3302,21 @@ def _ext_surveys():
     surveys = query("""SELECT cs.*, v.name AS vessel_name, v.imo AS imo
                          FROM cs_surveys cs LEFT JOIN vessels v ON v.id = cs.vessel_id
                         ORDER BY cs.year DESC, cs.quarter DESC, cs.id""")
+    findings_by_survey = {}
+    for row in query("""SELECT survey_id, id, category, no, item, description, remark, status
+                          FROM cs_findings
+                         ORDER BY survey_id,
+                                  CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id"""):
+        finding = dict(row)
+        survey_id = finding.pop('survey_id')
+        finding['ref'] = _ref('cs_finding', finding['id'])
+        findings_by_survey.setdefault(survey_id, []).append(finding)
     out = []
     for s in surveys:
         d = dict(s)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
         d['ref'] = _ref('survey', d.get('id'))
-        d['findings'] = [dict(f) | {'ref': _ref('cs_finding', f['id'])} for f in query(
-            """SELECT id, category, no, item, description, remark, status
-                 FROM cs_findings WHERE survey_id=?
-                ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id""",
-            (s['id'],))]
+        d['findings'] = findings_by_survey.get(s['id'], [])
         out.append(d)
     return out
 
@@ -3320,14 +3325,21 @@ def _ext_vettings():
     vts = query("""SELECT vt.*, v.name AS vessel_name, v.imo AS imo
                      FROM vettings vt LEFT JOIN vessels v ON v.id = vt.vessel_id
                     ORDER BY vt.inspection_date DESC, vt.id""")
+    findings_by_vetting = {}
+    for row in query("""SELECT vetting_id, id, no, item, description, remark,
+                                user_remark, priority, status
+                           FROM vt_findings
+                          ORDER BY vetting_id, no, id"""):
+        finding = dict(row)
+        vetting_id = finding.pop('vetting_id')
+        finding['ref'] = _ref('vt_finding', finding['id'])
+        findings_by_vetting.setdefault(vetting_id, []).append(finding)
     out = []
     for v in vts:
         d = dict(v)
         d['vessel_key'] = _vkey(d.get('vessel_name'))
         d['ref'] = _ref('vetting', d.get('id'))
-        d['findings'] = [dict(f) | {'ref': _ref('vt_finding', f['id'])} for f in query(
-            """SELECT id, no, item, description, remark, user_remark, priority, status
-                 FROM vt_findings WHERE vetting_id=? ORDER BY no, id""", (v['id'],))]
+        d['findings'] = findings_by_vetting.get(v['id'], [])
         out.append(d)
     return out
 
@@ -3337,13 +3349,13 @@ def _report_tree(report_id, sec_table, blk_table):
     blk_kind = blk_table[:-1]   # dock_report_blocks   → dock_report_block
     secs = query(f"SELECT * FROM {sec_table} WHERE report_id=? ORDER BY display_order, id",
                  (report_id,))
-    out = []
-    for s in secs:
-        sd = dict(s)
-        sd['ref'] = _ref(sec_kind, s['id'])
-        blocks = []
-        for b in query(f"SELECT * FROM {blk_table} WHERE section_id=? ORDER BY display_order, id",
-                       (s['id'],)):
+    blocks_by_section = {}
+    if secs:
+        rows = query(
+            f"SELECT b.* FROM {blk_table} b JOIN {sec_table} s ON s.id=b.section_id "
+            "WHERE s.report_id=? ORDER BY b.section_id, b.display_order, b.id",
+            (report_id,))
+        for b in rows:
             bd = dict(b)
             bd['ref'] = _ref(blk_kind, b['id'])
             try:
@@ -3352,8 +3364,12 @@ def _report_tree(report_id, sec_table, blk_table):
                 app.logger.warning('report-tree: %s', e)
                 bd['content'] = None
             bd.pop('content_json', None)
-            blocks.append(bd)
-        sd['blocks'] = blocks
+            blocks_by_section.setdefault(b['section_id'], []).append(bd)
+    out = []
+    for s in secs:
+        sd = dict(s)
+        sd['ref'] = _ref(sec_kind, s['id'])
+        sd['blocks'] = blocks_by_section.get(s['id'], [])
         out.append(sd)
     return out
 

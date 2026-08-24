@@ -94,8 +94,20 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # 2026-08-23 baseline update — two reviewed dynamic SQL expressions in the
 # dock-daily date-scope membership/delete paths. Both interpolate only fixed
 # server SQL fragments; all values remain bound parameters.
-EXPECTED_COUNT = 168
-EXPECTED_SHA256 = "32fd9d8cb15f8d3314e51c011252933d77a1e8c3eb6838f4bd4eb92cc341eec5"
+# 2026-08-24 baseline update — two sites added after the prior baseline were
+# shipped without updating this gate; both were reconstructed against commit
+# 3d4a271 and reviewed before restoring green:
+#   1. routes_dock_daily `_existing_attachment_digests`: `% marks` contains
+#      only a comma-joined list of `?` placeholders sized from the in-memory
+#      digest list; every digest remains a bound parameter.
+#   2. routes_repair_request `_dock_delete_blockers`: `{cols}` is derived only
+#      from the first elements of module constant `_DELETE_BLOCKERS`; request
+#      data cannot supply an identifier and `dock_rid` remains bound.
+# This change also replaces `_report_tree`'s per-section dynamic query with one
+# joined query. Both table identifiers still come from the same two internal
+# literal call sites; `report_id` remains the query's sole bound value.
+EXPECTED_COUNT = 170
+EXPECTED_SHA256 = "8f64c657b4d9c69f5eb01c19275e31c93efc37bdaa9c0554a143a39a4f59df11"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }
