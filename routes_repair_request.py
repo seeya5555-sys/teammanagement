@@ -215,20 +215,103 @@ def repair_request_approve(rid):
     return jsonify({'id': rid, 'status': 'approved', 'save_run': run})
 
 
+# 🔴 SVMS 저장본(REP_CD 있음) 삭제에 필요한 확인 문구. 문구 자체가 실제로 벌어지는 일을
+#    말한다 — TRMT 목록에서만 사라지고 **SVMS 문서는 그대로 남는다**. TRMT 가 SVMS 수리신청서를
+#    지우는 경로는 없다(있다고 착각하면 형이 SVMS 를 정리했다고 믿게 된다).
+_DELETE_CONFIRM = 'TRMT에서만삭제'
+# 러너가 **이미 물었다**. 지금 SVMS 와 대화하는 중일 수 있어 문서가 생겼는지 알 수 없고,
+# 지우면 `/result` 콜백이 404 로 사라져 **영구히 모른다** → 확인 문구로도 뚫어 주지 않는다.
+# 저장이 끝나거나 `/resolve`(사람이 SVMS 확인) 로 정리한 뒤 삭제한다.
+_DELETE_INFLIGHT = ('saving',)
+# REP_CD 없이 지워도 되는 상태 **whitelist**. 🔴 낯선 상태·`saved` 인데 REP_CD 가 없는 이상행은
+# 막는다(fail-closed) — 무엇이 SVMS 에 있는지 모르는 행을 조용히 지우는 쪽이 더 위험하다.
+# 🔴 `approved` 는 아직 SVMS 전이다: LIVE 러너는 `peek` 없이 claim 해서 status 를 먼저
+#    `saving` 으로 돌린 뒤에만 SVMS 에 쓴다(`automation/svms-soa-opex/reqgen_save.py` 의
+#    `/api/ext/repair-requests/approved`, `?peek=1` 은 DRY 전용). 삭제 직전에 물렸다면
+#    아래 WHERE 가드가 0행 → 409 로 막는다. 막아만 두면 러너가 죽은 사이 `approved` 로
+#    고인 행은 편집·삭제·resolve 가 전부 안 되는 영구 stuck 이 된다.
+_DELETE_DRAFTISH = ('pending', 'failed', 'approved')
+# 견적·업체선정·발주 = 돈 경로. 붙어 있으면 지우지 않고 사유를 돌려준다.
+# 🔴 `stg_quote` 는 판단에 쓰지 않는다 — `repair_request_result` 가 저장 성공 시 항상 1 로
+#    올리므로 "사람이 한 일" 이 아니다. 이걸 넣으면 저장된 건은 전부 삭제 불가가 된다.
+_DELETE_BLOCKERS = (('stg_vendor', '벤더 제출'), ('stg_confirm', '벤더 컨펌·결재 상신'),
+                    ('stg_order', '발주 완료'), ('sub_quotes', '제출견적'),
+                    ('att_files', '견적서 첨부'), ('ord_vendors', '분할발주'),
+                    ('quote_amt', '확정 견적금액'))
+
+
+def _delete_blockers(db, dock_rid):
+    """삭제를 막는 downstream 데이터 목록. dock_procure 행이 없으면 막을 것도 없다.
+
+    🔴 **삭제와 같은 트랜잭션(`db`)에서** 읽는다. 밖에서 읽으면 검사 직후 벤더 제출·발주가
+       붙어도 그대로 지워진다(`BEGIN IMMEDIATE` 가 그 사이 다른 writer 를 막아 준다).
+    """
+    if not dock_rid:
+        return []
+    cols = ','.join(k for k, _ in _DELETE_BLOCKERS)
+    row = db.execute(f'SELECT {cols} FROM dock_procure WHERE id=?', (dock_rid,)).fetchone()
+    if not row:
+        return []
+    return [label for key, label in _DELETE_BLOCKERS
+            if row[key] not in (None, 0, '', '[]', '{}')]
+
+
 @bp.route('/api/repair-requests/<int:rid>', methods=['DELETE'])
 @admin_required
 def repair_request_delete(rid):
-    row = query('SELECT status,rep_cd,dock_rid FROM repair_request WHERE id=?', (rid,), one=True)
-    if not row: return jsonify({'error': 'not found'}), 404
-    if row['rep_cd'] or row['status'] not in _EDITABLE:
-        return jsonify({'error': 'SVMS 저장 전 초안만 삭제 가능'}), 409
+    """신청 목록에서 삭제. 초안은 그대로, SVMS 저장본은 확인 문구를 받고 지운다(형 지시 2026-08-24).
+
+    🔴 판정 **전부**를 삭제와 같은 트랜잭션 안에서 한다. 밖에서 읽으면 검사 직후 러너가 이 건을
+       물거나(approved→saving→saved) 벤더 제출이 붙어도 그대로 지워진다. DELETE 에는 읽은
+       status·rep_cd 를 WHERE 가드로 다시 걸어, 그 사이 바뀌면 0행 → 409 로 되돌린다.
+    🔴 거부는 전부 fail-closed 다 — 낯선 상태는 "아마 초안" 으로 봐 주지 않는다.
+    """
+    d = request.get_json(silent=True) or {}
     db = get_db(); db.execute('BEGIN IMMEDIATE')
     try:
-        db.execute('DELETE FROM repair_request WHERE id=?', (rid,))
+        row = db.execute('SELECT status,rep_cd,dock_rid FROM repair_request WHERE id=?',
+                         (rid,)).fetchone()
+        if not row:
+            db.rollback(); return jsonify({'error': 'not found'}), 404
+        status = row['status'] or ''
+        rep_cd = row['rep_cd'] or None      # 빈 문자열 = 미저장(웹·iOS 규칙과 같은 결)
+        if status in _DELETE_INFLIGHT:
+            db.rollback()
+            return jsonify({'error': 'SVMS 저장 진행 중인 건은 삭제할 수 없습니다. '
+                                     '저장이 끝난 뒤(또는 SVMS 확인으로 상태를 정리한 뒤) 삭제하세요.',
+                            'status': status}), 409
+        if not rep_cd and status not in _DELETE_DRAFTISH:
+            # SVMS 에 무엇이 있는지 모르는 이상행. 지우는 쪽이 더 위험하다.
+            db.rollback()
+            return jsonify({'error': f'삭제할 수 없는 상태입니다({status or "미지정"}). '
+                                     'REP_CD 가 없는데 초안도 아닙니다 — 상태를 먼저 정리하세요.',
+                            'status': status}), 409
+        # 🔴 돈 경로는 초안이든 저장본이든 똑같이 막는다. REP_CD 가 있을 때만 검사하면
+        #    저장 실패(failed)로 남은 건에 붙은 견적·발주가 조용히 사라진다.
+        blockers = _delete_blockers(db, row['dock_rid'])
+        if blockers:
+            db.rollback()
+            return jsonify({'error': '견적·업체선정·발주 데이터가 붙어 있어 삭제할 수 없습니다: '
+                                     + ', '.join(blockers), 'blockers': blockers}), 409
+        if rep_cd and d.get('confirmation') != _DELETE_CONFIRM:
+            db.rollback()
+            return jsonify({'error': f'SVMS 저장본 삭제에는 {_DELETE_CONFIRM} 확인이 필요합니다. '
+                                     'SVMS 문서는 삭제되지 않고 TRMT 목록에서만 사라집니다.',
+                            'need_confirmation': _DELETE_CONFIRM, 'rep_cd': rep_cd}), 400
+        # 읽었던 상태 그대로일 때만 지운다. 바뀌었으면 0행 → 409(500 도, 조용한 삭제도 아니다).
+        cur = db.execute('DELETE FROM repair_request WHERE id=? AND status=? '
+                         'AND rep_cd IS ?', (rid, row['status'], row['rep_cd']))
+        if not cur.rowcount:
+            db.rollback()
+            return jsonify({'error': '상태가 바뀌었습니다. 새로고침 후 다시 확인하세요.'}), 409
+        # dock_procure 행은 이 신청서 전용 shim(견적엔진 진입점)이라 함께 지운다.
+        # 🔴 `dock_procure_vessel` 은 건드리지 않는다 — 진짜 입거선박과 공용 키라
+        #    지우면 Dock 발주현황에서 그 배가 통째로 사라진다.
         db.execute('DELETE FROM dock_procure WHERE id=?', (row['dock_rid'],)); db.commit()
     except Exception:
         db.rollback(); raise
-    return jsonify({'ok': True, 'id': rid, 'deleted': True})
+    return jsonify({'ok': True, 'id': rid, 'deleted': True,
+                    'rep_cd': rep_cd, 'svms_kept': bool(rep_cd)})
 
 
 @bp.route('/api/ext/repair-requests/approved')
