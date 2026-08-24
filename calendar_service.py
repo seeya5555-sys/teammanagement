@@ -16,6 +16,45 @@ _MUTABLE_FIELDS = (
 )
 
 
+class CalendarInputError(ValueError):
+    """A client-supplied calendar value that must become HTTP 400."""
+
+
+def validate_event_payload(data, *, creating=False):
+    required_messages = {
+        "title": "title 이 필요합니다.",
+        "start_date": "start_date 가 필요합니다.",
+    }
+    for field, message in required_messages.items():
+        if not creating and field not in data:
+            continue
+        value = data.get(field)
+        # Preserve the historical whitespace contract while rejecting values
+        # that cannot be valid text. Previously falsy non-strings were rejected
+        # on create but this shared validator accidentally let them through.
+        if not isinstance(value, str) or value == "":
+            raise CalendarInputError(message)
+
+    # Omitted color still means the historical default blue. An explicitly
+    # empty color used to become SQL NULL on PUT, which violates the row's
+    # normal color contract and later renders inconsistently.
+    if not creating and "color" in data:
+        color = data.get("color")
+        if not isinstance(color, str) or color == "":
+            raise CalendarInputError("color 가 필요합니다.")
+
+
+def _supervisor_scope(value):
+    if not value or value == "all":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise CalendarInputError(
+            "supervisor_id 는 정수 또는 all 이어야 합니다."
+        ) from exc
+
+
 def list_events(start=None, end=None, supervisor_id=None):
     sql = "SELECT * FROM calendar_events WHERE 1=1"
     params = []
@@ -25,9 +64,10 @@ def list_events(start=None, end=None, supervisor_id=None):
     if end:
         sql += " AND (start_date <= ?)"
         params.append(end)
-    if supervisor_id and supervisor_id != "all":
+    supervisor_scope = _supervisor_scope(supervisor_id)
+    if supervisor_scope is not None:
         sql += " AND (supervisor_id = ? OR supervisor_id IS NULL)"
-        params.append(int(supervisor_id))
+        params.append(supervisor_scope)
     sql += ' ORDER BY start_date, COALESCE(start_time, "00:00")'
     return [dict(row) for row in query(sql, tuple(params))]
 

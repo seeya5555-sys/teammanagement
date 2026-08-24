@@ -52,6 +52,53 @@ class CalendarCompletionTests(unittest.TestCase):
         row = self.client.get(f'/api/cal/events/{eid}').get_json()
         self.assertEqual(0, row['completed'])
 
+    def test_invalid_input_returns_400_without_mutating_the_event(self):
+        bad_scope = self.client.get('/api/cal/events?supervisor_id=nope')
+        self.assertEqual(400, bad_scope.status_code)
+        self.assertEqual(
+            {'error': 'supervisor_id 는 정수 또는 all 이어야 합니다.'},
+            bad_scope.get_json(),
+        )
+
+        for payload, message in (
+            ({'title': 0, 'start_date': '2026-08-25'}, 'title 이 필요합니다.'),
+            ({'title': 'Event', 'start_date': ''}, 'start_date 가 필요합니다.'),
+        ):
+            with self.subTest(payload=payload):
+                response = self.client.post('/api/cal/events', json=payload)
+                self.assertEqual(400, response.status_code)
+                self.assertEqual({'error': message}, response.get_json())
+
+        legacy_color = self.client.post('/api/cal/events', json={
+            'title': 'Legacy color default', 'start_date': ' ', 'color': '',
+        })
+        self.assertEqual(201, legacy_color.status_code)
+        legacy_row = self.client.get(
+            f"/api/cal/events/{legacy_color.get_json()['id']}"
+        ).get_json()
+        self.assertEqual('blue', legacy_row['color'])
+
+        created = self.client.post('/api/cal/events', json={
+            'title': 'Keep me', 'start_date': '2026-08-25', 'color': 'blue',
+        })
+        self.assertEqual(201, created.status_code)
+        eid = created.get_json()['id']
+
+        for payload, message in (
+            ({'title': ''}, 'title 이 필요합니다.'),
+            ({'start_date': []}, 'start_date 가 필요합니다.'),
+            ({'color': None}, 'color 가 필요합니다.'),
+        ):
+            with self.subTest(payload=payload):
+                response = self.client.put(f'/api/cal/events/{eid}', json=payload)
+                self.assertEqual(400, response.status_code)
+                self.assertEqual({'error': message}, response.get_json())
+
+        row = self.client.get(f'/api/cal/events/{eid}').get_json()
+        self.assertEqual('Keep me', row['title'])
+        self.assertEqual('2026-08-25', row['start_date'])
+        self.assertEqual('blue', row['color'])
+
 
 if __name__ == '__main__':
     unittest.main()

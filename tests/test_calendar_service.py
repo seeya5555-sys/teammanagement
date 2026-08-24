@@ -72,6 +72,30 @@ class CalendarServiceTests(unittest.TestCase):
         self.assertEqual(public_id, calendar_service.find_event("issue", 44)["id"])
         self.assertIsNone(calendar_service.find_event("", 44))
 
+    def test_invalid_scope_and_empty_required_fields_are_rejected(self):
+        with self.assertRaisesRegex(
+            calendar_service.CalendarInputError,
+            "supervisor_id 는 정수 또는 all 이어야 합니다",
+        ):
+            calendar_service.list_events(supervisor_id="not-a-number")
+
+        for payload, message in (
+            ({"title": 0, "start_date": "2026-08-25"}, "title 이 필요합니다"),
+            ({"title": "Event", "start_date": []}, "start_date 가 필요합니다"),
+        ):
+            with self.subTest(payload=payload), self.assertRaisesRegex(
+                calendar_service.CalendarInputError, message
+            ):
+                calendar_service.validate_event_payload(payload, creating=True)
+
+        # POST historically treats an explicit empty color like omission and
+        # applies blue; only PUT's empty color used to create SQL NULL.
+        calendar_service.validate_event_payload({
+            "title": "Whitespace stays compatible",
+            "start_date": " ",
+            "color": "",
+        }, creating=True)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

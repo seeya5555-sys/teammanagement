@@ -67,7 +67,10 @@ def api_cal_events_list():
     end   = request.args.get('end')
     sup   = request.args.get('supervisor_id')
 
-    return jsonify(calendar_service.list_events(start, end, sup))
+    try:
+        return jsonify(calendar_service.list_events(start, end, sup))
+    except calendar_service.CalendarInputError as exc:
+        return jsonify({'error': str(exc)}), 400
 
 
 @bp.route('/api/cal/events/find', methods=['GET'])
@@ -86,10 +89,10 @@ def api_cal_event_find():
 @login_required
 def api_cal_event_create():
     d = request.get_json() or {}
-    if not d.get('title'):
-        return jsonify({'error': 'title 이 필요합니다.'}), 400
-    if not d.get('start_date'):
-        return jsonify({'error': 'start_date 가 필요합니다.'}), 400
+    try:
+        calendar_service.validate_event_payload(d, creating=True)
+    except calendar_service.CalendarInputError as exc:
+        return jsonify({'error': str(exc)}), 400
 
     new_id = calendar_service.create_event(
         d, session.get('username'), CAL_VALID_COLORS,
@@ -112,6 +115,10 @@ def api_cal_event_update(eid):
     if not calendar_service.event_exists(eid):
         abort(404)
     d = request.get_json() or {}
+    try:
+        calendar_service.validate_event_payload(d)
+    except calendar_service.CalendarInputError as exc:
+        return jsonify({'error': str(exc)}), 400
     calendar_service.update_event(eid, d, CAL_VALID_COLORS)
     return jsonify({'ok': True})
 
