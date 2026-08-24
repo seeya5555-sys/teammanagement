@@ -68,6 +68,7 @@
       "_aor_active_index_install",
       "_aor_status_list_sql"
     ],
+    "migration_steps.py": [],
     "routes_calendar_dock.py": [],
     "routes_core.py": [],
     "routes_dock_daily.py": [],
@@ -145,6 +146,7 @@
     ]
   },
   "krcon_client.py": {},
+  "migration_steps.py": {},
   "routes_calendar_dock.py": {
     "app_core.py": [
       "AOR_PDF_DIR",

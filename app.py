@@ -37,6 +37,7 @@ import hmac, hashlib
 from itsdangerous import BadData
 
 import csrf
+import migration_steps
 
 from app_core import (
     ALLOWED_EXT, AOR_PDF_DIR, BASE_DIR, DATABASE, DOCKATT_FILE_DIR, FUNDREQ_FILE_DIR,
@@ -1589,41 +1590,9 @@ def _auto_migrate():
                 conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
         except Exception as e:
             print(f'[auto_migrate] schema 재적용 건너뜀: {e}')
-        try:
-            cols = [r[1] for r in conn.execute('PRAGMA table_info(calendar_events)').fetchall()]
-            if cols and 'completed' not in cols:
-                conn.execute('ALTER TABLE calendar_events ADD COLUMN completed INTEGER NOT NULL DEFAULT 0')
-                print('[auto_migrate] calendar_events.completed 추가됨')
-        except Exception as e:
-            print(f'[auto_migrate] calendar_events.completed 점검 건너뜀: {e}')
-        # 🔴 CREATE TABLE IF NOT EXISTS 재적용으로는 **기존 테이블에 컬럼이 안 붙는다** —
-        #    schema.sql 만 고치고 여기를 빼먹으면 라이브에서 "no such column" 으로 화면이 죽는다.
-        # 🔴 **독립 try**(올마이트 지적) — 위 블록이 먼저 죽으면 이 컬럼까지 같이 건너뛰어
-        #    푸시 상태 화면이 통째로 500 이 된다. 마이그레이션끼리 운명을 묶지 않는다.
-        try:
-            pcols = [r[1] for r in conn.execute('PRAGMA table_info(push_log)').fetchall()]
-            if pcols and 'hidden_at' not in pcols:
-                conn.execute('ALTER TABLE push_log ADD COLUMN hidden_at TEXT')
-                print('[auto_migrate] push_log.hidden_at 추가됨')
-            # 화면은 "안 감춰진 최근 5건" 만 본다. soft hide 가 쌓이면 감춘 행을 계속 훑으므로
-            # partial index. 🔴 schema.sql 이 아니라 **여기서** 만든다 — 컬럼보다 먼저 실행되면
-            # "no such column" 으로 schema 재적용 전체가 그 줄에서 끊긴다.
-            if pcols:
-                conn.execute('CREATE INDEX IF NOT EXISTS idx_push_log_visible '
-                             'ON push_log(id DESC) WHERE hidden_at IS NULL')
-        except Exception as e:
-            print(f'[auto_migrate] push_log.hidden_at 점검 건너뜀: {e}')
-        # 러너 중간보고(진행률) 컬럼. 🔴 init_db 의 인라인 마이그는 기존 DB 배포에선 안 돈다
-        #    (__main__ 에서 DB 가 있으면 _auto_migrate 만 호출) — 여기에 없으면 /api/automation/runs
-        #    SELECT 가 "no such column: progress" 로 죽어 자동화 탭이 통째로 500 이 된다.
-        # 🔴 독립 try — 위 블록과 운명을 묶지 않는다.
-        try:
-            acols = [r[1] for r in conn.execute('PRAGMA table_info(automation_run)').fetchall()]
-            if acols and 'progress' not in acols:
-                conn.execute('ALTER TABLE automation_run ADD COLUMN progress TEXT')
-                print('[auto_migrate] automation_run.progress 추가됨')
-        except Exception as e:
-            print(f'[auto_migrate] automation_run.progress 점검 건너뜀: {e}')
+        # 가장 독립적인 additive 보강부터 순서가 고정된 하위 모듈에서 실행한다.
+        # 각 step은 자체 try/except를 유지해 하나의 legacy table 실패가 뒤 step을 막지 않는다.
+        migration_steps.run_foundation_migrations(conn)
         # /liscr 범용화(2026-08-19) — 등록 유형·Vendor·Expense 를 행에 남긴다.
         # 🔴 liscr_job 은 **schema.sql 이 아니라 init_db 안에서** 만들어지는 표라, 위의
         #    schema 재적용으로는 손도 안 닿는다. 그리고 CREATE TABLE IF NOT EXISTS 는 이미

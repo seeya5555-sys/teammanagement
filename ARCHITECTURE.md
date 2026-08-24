@@ -162,6 +162,14 @@ state and must not be treated as disposable test fixtures.  Tests use isolated
 temporary databases and must not send mail, push notifications, call SVMS, or
 mutate production files.
 
+The first extracted migration slice lives in `migration_steps.py`.
+`FOUNDATION_MIGRATIONS` freezes the order of three independent additive repairs
+(calendar completion, hidden push history, automation progress), and every step
+keeps its own exception boundary. `tests/test_migration_foundation.py` proves
+legacy-row preservation, exact schema/data equality after a second run, and
+that one failed probe cannot skip later steps. Remaining migrations stay in
+`app._auto_migrate` until they receive equivalent domain-specific gates.
+
 ## Deployment and rollback
 
 Web delivery is implemented by the repository's `deploy/autodeploy.sh`, invoked
