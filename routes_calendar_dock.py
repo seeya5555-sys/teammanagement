@@ -27,6 +27,7 @@ import mimetypes
 import re
 from flask import send_file
 from io import BytesIO
+import calendar_service
 from app_core import (
     AOR_PDF_DIR, FUNDREQ_FILE_DIR, INVOICE_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT,
     STT_LEASE_SEC, STT_MAX_ATTEMPTS, STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, app,
@@ -63,22 +64,7 @@ def api_cal_events_list():
     end   = request.args.get('end')
     sup   = request.args.get('supervisor_id')
 
-    sql = 'SELECT * FROM calendar_events WHERE 1=1'
-    params = []
-    if start:
-        # 시작일이 end 보다 작거나, end_date가 start보다 크거나 (멀티데이 겹침)
-        sql += ' AND (COALESCE(end_date, start_date) >= ?)'
-        params.append(start)
-    if end:
-        sql += ' AND (start_date <= ?)'
-        params.append(end)
-    if sup and sup != 'all':
-        sql += ' AND (supervisor_id = ? OR supervisor_id IS NULL)'
-        params.append(int(sup))
-    sql += ' ORDER BY start_date, COALESCE(start_time, "00:00")'
-
-    rows = query(sql, tuple(params))
-    return jsonify([dict(r) for r in rows])
+    return jsonify(calendar_service.list_events(start, end, sup))
 
 
 @bp.route('/api/cal/events/find', methods=['GET'])
@@ -90,11 +76,7 @@ def api_cal_event_find():
     """
     src_type = request.args.get('source_type')
     src_id   = request.args.get('source_id', type=int)
-    if not src_type or not src_id:
-        return jsonify(None)
-    r = query('SELECT * FROM calendar_events WHERE source_type=? AND source_id=?',
-              (src_type, src_id), one=True)
-    return jsonify(dict(r) if r else None)
+    return jsonify(calendar_service.find_event(src_type, src_id))
 
 
 @bp.route('/api/cal/events', methods=['POST'])
@@ -106,80 +88,35 @@ def api_cal_event_create():
     if not d.get('start_date'):
         return jsonify({'error': 'start_date 가 필요합니다.'}), 400
 
-    color = (d.get('color') or 'blue').lower()
-    if color not in CAL_VALID_COLORS:
-        color = 'blue'
-
-    all_day = 1 if d.get('all_day', True) else 0
-
-    new_id = execute("""
-        INSERT INTO calendar_events
-            (supervisor_id, vessel_id, title, start_date, end_date,
-             all_day, start_time, end_time, category, color, location, notes, completed,
-             source_type, source_id, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        d.get('supervisor_id') or None,
-        d.get('vessel_id') or None,
-        d['title'],
-        d['start_date'],
-        d.get('end_date') or None,
-        all_day,
-        d.get('start_time') or None,
-        d.get('end_time') or None,
-        d.get('category') or '',
-        color,
-        d.get('location') or '',
-        d.get('notes') or '',
-        1 if d.get('completed') else 0,
-        d.get('source_type') or 'manual',
-        d.get('source_id') or None,
-        session.get('username'),
-    ))
+    new_id = calendar_service.create_event(
+        d, session.get('username'), CAL_VALID_COLORS,
+    )
     return jsonify({'id': new_id}), 201
 
 
 @bp.route('/api/cal/events/<int:eid>', methods=['GET'])
 @login_required
 def api_cal_event_get(eid):
-    r = query('SELECT * FROM calendar_events WHERE id=?', (eid,), one=True)
-    if not r:
+    event = calendar_service.get_event(eid)
+    if not event:
         abort(404)
-    return jsonify(dict(r))
+    return jsonify(event)
 
 
 @bp.route('/api/cal/events/<int:eid>', methods=['PUT'])
 @login_required
 def api_cal_event_update(eid):
-    if not query('SELECT id FROM calendar_events WHERE id=?', (eid,), one=True):
+    if not calendar_service.event_exists(eid):
         abort(404)
     d = request.get_json() or {}
-    sets, params = [], []
-    for f in ('supervisor_id','vessel_id','title','start_date','end_date',
-              'all_day','start_time','end_time','category','color',
-              'location','notes','completed'):
-        if f in d:
-            v = d[f]
-            if f == 'color' and v:
-                v = v.lower()
-                if v not in CAL_VALID_COLORS:
-                    v = 'blue'
-            if f in ('all_day', 'completed'):
-                v = 1 if v else 0
-            sets.append(f'{f} = ?')
-            params.append(None if v == '' else v)
-    if not sets:
-        return jsonify({'ok': True})
-    sets.append("updated_at = datetime('now','localtime')")
-    execute(f'UPDATE calendar_events SET {", ".join(sets)} WHERE id=?',
-            tuple(params + [eid]))
+    calendar_service.update_event(eid, d, CAL_VALID_COLORS)
     return jsonify({'ok': True})
 
 
 @bp.route('/api/cal/events/<int:eid>', methods=['DELETE'])
 @login_required
 def api_cal_event_delete(eid):
-    execute('DELETE FROM calendar_events WHERE id=?', (eid,))
+    calendar_service.delete_event(eid)
     return jsonify({'ok': True})
 
 

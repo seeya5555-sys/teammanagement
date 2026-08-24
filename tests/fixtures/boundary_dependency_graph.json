@@ -104,6 +104,12 @@
       "_temp_files"
     ]
   },
+  "calendar_service.py": {
+    "app_core.py": [
+      "execute",
+      "query"
+    ]
+  },
   "csrf.py": {},
   "dock_daily_docx.py": {},
   "dock_daily_pdf.py": {
@@ -156,6 +162,7 @@
     "boarding_report_docx.py": [
       "build_docx"
     ],
+    "calendar_service.py": [],
     "dock_report_docx.py": [
       "build_docx"
     ],

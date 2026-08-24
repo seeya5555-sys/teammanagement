@@ -106,8 +106,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # This change also replaces `_report_tree`'s per-section dynamic query with one
 # joined query. Both table identifiers still come from the same two internal
 # literal call sites; `report_id` remains the query's sole bound value.
+# 2026-08-24 calendar service extraction — count remains 170. The two calendar
+# sites moved byte-for-byte from `routes_calendar_dock.py` to
+# `calendar_service.py`: the list query appends only fixed server-owned clauses,
+# and the PATCH identifiers still come exclusively from `_MUTABLE_FIELDS`.
+# Request values remain bound parameters. Only file ownership changed.
 EXPECTED_COUNT = 170
-EXPECTED_SHA256 = "8f64c657b4d9c69f5eb01c19275e31c93efc37bdaa9c0554a143a39a4f59df11"
+EXPECTED_SHA256 = "b79272fc884e5d0e5f6d76c944aee01eff33a71ce90ae69291af4fd41b28dfee"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

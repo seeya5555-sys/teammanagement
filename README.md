@@ -9,7 +9,11 @@ Tanker Management Team 3 (Sinokor Shipmanagement) 내부 업무관리 시스템.
 - `routes_core.py` — 로그인·대시보드·이슈·선박·사용자·감독자·Condition Survey 페이지/API
 - `ai_gemini.py` — Vetting CRUD, findings/attachments, report extraction
 - `routes_calendar_dock.py` — `/api/ext/*` 워커, 캘린더·리포트·비용·출장·STT 및 Invoice/Fund Request/AOR/Reqgen API
+- `calendar_service.py` — 캘린더 조회·CRUD 데이터 연산(HTTP/auth 계약은 기존 Blueprint에 유지)
 - `routes_dock_submit.py` — Dock procurement/inquiry/submit/yard workflow 및 ShipWiki 카드
+- `routes_dock_daily.py` — Dock Daily Report·SVMS 동기화 API
+- `routes_repair_request.py` — Repair Request 생성·수정·정규화 API
+- `routes_liscr.py` — LISCR job/profile API
 - `routes_tail.py` — Class Status, fleet map, iOS/push delivery, ShipWiki push callback, classic dashboard
 - `helpers_shared.py` — 여러 경계가 공유하는 인증·Gemini·dock/SOA·fleet/push·automation helper
 - `app.py` — Flask 인스턴스, 설정, SQLite primitive, authentication hooks, Blueprint 등록 및 역사적 public helper 이름
@@ -33,6 +37,7 @@ teammanagement/
 ├── templates/                   # Flask HTML templates
 ├── app.py                        # Flask 앱·공통 기반·Blueprint 등록
 ├── routes_*.py / ai_gemini.py   # 기능별 라우트 경계
+├── calendar_service.py           # 캘린더 데이터 서비스
 ├── helpers_shared.py             # 공유 helper 경계
 ├── wsgi.py                       # gunicorn 통합 진입점
 ├── schema.sql / seed.sql         # 스키마·초기 데이터

@@ -4,20 +4,18 @@
 
 `app.py` remains the Flask application and WSGI compatibility surface.  It owns
 configuration, the Flask instance, database primitives, authentication hooks,
-and the historical public helper names.  Since 2026-08-11 all five route
-boundaries are **real imported modules with Blueprints**; the only file still
-executed into the `app` namespace is `helpers_shared.py`.
+and the historical public helper names. Since 2026-08-12 all route and helper
+boundaries are **real imported modules**; route modules expose Blueprints.
 
 Boundary contents below are measured from the route decorators actually present
 in each file, not from intent.  Counts are `@bp.route` declarations.
 
-- `helpers_shared.py` (0 routes, exec'd first): every helper or constant that
+- `helpers_shared.py` (0 routes, imported first): every helper or constant that
   two or more boundaries consume, or that `app.py` itself consumes — auth
   decorators (`login_required`, `admin_required`, `api_key_required`), Gemini
   call/config, dock-procure and SOA helpers, fleet/push helpers, automation
-  task metadata.  Nothing route-shaped lives here.  It stays exec'd (not
-  imported) so its names land in the `app` module namespace, which is what the
-  route modules' `from app import ...` lines rely on;
+  task metadata. Nothing route-shaped lives here. `app.py` explicitly re-exports
+  its historical public names for compatibility;
 - `routes_core.py` (59 routes): login/logout/auth, dashboard, issues, vessels,
   users/supervisors, widget, condition-survey CRUD (`/api/cs/surveys`), and the
   `/calendar`, `/condition-survey`, `/vetting-status`, `/dry-dock` **pages**;
@@ -29,13 +27,22 @@ in each file, not from intent.  Counts are `@bp.route` declarations.
   names by `test_converted_modules_are_self_contained`.  Endpoints carry the
   `ai_gemini.` prefix; URLs are unchanged and zero call sites referenced the
   old endpoint names (measured);
-- `routes_calendar_dock.py` (204 routes): the `/api/ext/*` worker surface (74),
+- `routes_calendar_dock.py`: the `/api/ext/*` worker surface,
   calendar/report/expense/business-trip APIs, STT, and the money APIs
-  (`/api/invoice`, `/api/fundreq`, `/api/aor`, `/api/reqgen`);
-- `routes_dock_submit.py` (73 routes): dock procurement/inquiry/submit/yard
+  (`/api/invoice`, `/api/fundreq`, `/api/aor`, `/api/reqgen`). Calendar's six
+  HTTP adapters remain here to preserve endpoint names, while their request-
+  independent SQL/normalization lives in `calendar_service.py`;
+- `routes_dock_submit.py`: dock procurement/inquiry/submit/yard
   workflows and the ShipWiki card surface (`/shipwiki`, `/api/shipwiki/*`);
-- `routes_tail.py` (38 routes): Class Status, fleet map, iOS and `/api/ext/push`
+- `routes_tail.py`: Class Status, fleet map, iOS and `/api/ext/push`
   delivery, ShipWiki push callbacks, and `/dashboard/classic`.
+- `routes_dock_daily.py`: Dock Daily Report and SVMS synchronization;
+- `routes_repair_request.py`: Repair Request lifecycle and vessel-name
+  normalization;
+- `routes_liscr.py`: LISCR job/profile operations.
+
+Route counts are intentionally not copied into this document: the enforced URL
+map snapshot is the executable source of truth and cannot silently go stale.
 
 Two naming traps follow from the measurement and are load-bearing when locating
 code: **vetting APIs live in `ai_gemini.py`, not `routes_calendar_dock.py`**, and
@@ -43,17 +50,11 @@ the **`/calendar` page lives in `routes_core.py`** while only calendar *APIs* ar
 in `routes_calendar_dock.py`.  ShipWiki is split by direction: the card surface
 is in `routes_dock_submit.py`, the push callbacks in `routes_tail.py`.
 
-The loader executes each boundary in the application namespace.  This is
-intentional: decorators still register on the one Flask app, `import app` and
-`wsgi:application` remain valid, and existing imports do not silently change.
-New non-trivial code goes directly into an extracted boundary; `app.py` is not
-the destination for new features.
-
-The development server does not watch these files by default: they never enter
-`sys.modules`, and the reloader watches imported modules only.  `app.py` records
-each loaded path in `EXTRACTED_BOUNDARY_PATHS` and passes it to `app.run` as
-`extra_files`, so an edit to a boundary restarts the dev server instead of
-silently doing nothing.  Production runs under gunicorn and is unaffected.
+Every boundary is imported normally and registered on the one Flask app;
+`import app` and `wsgi:application` remain valid. New non-trivial code goes into
+the appropriate route boundary or a lower service/support module, not `app.py`.
+Because these are ordinary imports, the development reloader observes them
+through `sys.modules`; production continues to run under gunicorn.
 
 ## Boundary coupling (read before any Blueprint work)
 
@@ -114,8 +115,9 @@ a Blueprint conversion can now proceed one boundary at a time, importing only
 prefixes, `url_for` call sites, the 396-entry contract snapshot) remains the
 open cost and is a per-boundary, reviewable change.
 
-All five boundaries were converted on 2026-08-11 (ai_gemini as the canary,
-then the remaining four in one reviewed batch).  The conversion recipe:
+The original five extracted boundaries were converted on 2026-08-11
+(ai_gemini as the canary, then the remaining four in one reviewed batch).
+Additional feature Blueprints were added afterward. The conversion recipe:
 measure `url_for`/`request.endpoint`/test references to the boundary's
 endpoint names first, add explicit imports for exactly the module's free names
 (derived with `symtable`, not by hand), swap `@app.route` → `@bp.route`, and
