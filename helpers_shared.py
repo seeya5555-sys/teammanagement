@@ -225,8 +225,12 @@ def _issue_to_dict(row):
         d['actions'] = []
     return d
 def _gen_summary_rows(supervisor_id=None):
-    """해당 스코프(특정 감독 또는 전체)의 모든 이슈(진행중+완료)를 Gemini 요약하여
-    [{no, vessel_name, issue, priority, status}] 반환."""
+    """해당 스코프의 현재 이슈 행을 만든다.
+
+    Gemini 입력은 상태가 정확히 Open/InProgress 인 행으로 제한한다. Closed 행은
+    ``_run_summary_generate`` 가 저장된 이전 요약을 재사용하고, 이전 요약이 없는
+    첫 실행만 아래 결정적 원문 fallback 을 쓴다.
+    """
     conds, params = ['1=1'], []
     if supervisor_id:
         conds.append('i.supervisor_id = ?'); params.append(supervisor_id)
@@ -243,7 +247,8 @@ def _gen_summary_rows(supervisor_id=None):
     payload = [{'i': idx,
                 'description': r.get('description') or '',
                 'action': _latest_action_progress(r.get('actions'))}
-               for idx, r in enumerate(rows)]
+               for idx, r in enumerate(rows)
+               if r.get('status') in ('Open', 'InProgress')]
     summaries = _gen_issue_summaries(payload)
     STAT = {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'}
     out = []
@@ -274,34 +279,80 @@ def _gen_summary_rows(supervisor_id=None):
 def _ensure_summary_table():
     execute("""CREATE TABLE IF NOT EXISTS issue_summaries (
                  scope TEXT PRIMARY KEY, data TEXT, generated_at TEXT )""")
+
+
+def _preserve_closed_summary(rows, previous_rows, fallback_rows=None):
+    """Closed 행의 AI 요약 본문을 같은 ``issue_id`` 의 저장본에서 복원한다.
+
+    상태·우선순위·선박명 같은 표시 메타데이터는 현재 DB 값을 유지한다. 따라서
+    직전 생성 뒤 종결된 항목도 마지막 진행중 요약 본문은 그대로 두되 완료 탭으로
+    정확히 이동한다. ID 없는 legacy 저장행이나 깨진 저장값은 추측 매칭하지 않는다.
+    """
+    previous_by_id = {}
+    # 전체 scope는 감독 재배정 뒤 새 감독 scope에 저장본이 없을 때의 보조 저장본이다.
+    # 같은 ID가 둘 다 있으면 더 구체적인 현재 scope 저장본이 마지막에 덮어쓴다.
+    for source in (fallback_rows, previous_rows):
+        for old in source if isinstance(source, list) else []:
+            if isinstance(old, dict) and old.get('issue_id') is not None:
+                previous_by_id[str(old['issue_id'])] = old
+
+    merged = []
+    for row in rows:
+        current = dict(row)
+        if current.get('status_raw') == 'Closed':
+            old = previous_by_id.get(str(current.get('issue_id')))
+            if old and isinstance(old.get('issue'), str):
+                current['issue'] = old['issue']
+        merged.append(current)
+    return merged
+
+
 def _run_summary_generate(sid=None):
-    """업무요약 생성+저장 코어 (UI 버튼·API키 스케줄러 공용). (rows, gen_at, counts) 반환."""
+    """업무요약 생성+저장 코어 (UI 버튼·API키 스케줄러 공용).
+
+    Open/InProgress 만 새로 요약하고 Closed 본문은 각 저장 scope의 직전 값을
+    유지한다. 반환값은 ``(rows, gen_at, counts)``.
+    """
     from datetime import datetime
     _ensure_summary_table()
     rows = _gen_summary_rows(sid)
     gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
 
+    def _load(scope):
+        old = query('SELECT data FROM issue_summaries WHERE scope=?', (scope,), one=True)
+        try:
+            return json.loads(old['data']) if old and old['data'] else []
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+
     def _save(scope, scope_rows):
+        previous = _load(scope)
+        fallback = _load('all') if scope != 'all' else []
+        scope_rows = _preserve_closed_summary(scope_rows, previous, fallback)
         # scope 내에서 No. 재넘버링
         renum = []
         for i, r in enumerate(scope_rows, start=1):
             rr = dict(r); rr['no'] = i; renum.append(rr)
         execute("INSERT OR REPLACE INTO issue_summaries (scope, data, generated_at) VALUES (?, ?, ?)",
                 (scope, json.dumps(renum, ensure_ascii=False), gen_at))
-        return len(renum)
+        return renum
 
     counts = {}
     if sid:
-        counts[str(sid)] = _save(str(sid), rows)
+        rows = _save(str(sid), rows)
+        counts[str(sid)] = len(rows)
     else:
-        counts['all'] = _save('all', rows)
+        all_rows = _save('all', rows)
+        counts['all'] = len(all_rows)
         # 감독별로 분리 저장 (각 감독 탭의 요약도 동시 갱신)
         by_sv = {}
         for r in rows:
             by_sv.setdefault(r.get('supervisor_id'), []).append(r)
         all_sv = [s['id'] for s in query('SELECT id FROM supervisors')]
         for sv_id in all_sv:
-            counts[str(sv_id)] = _save(str(sv_id), by_sv.get(sv_id, []))
+            saved = _save(str(sv_id), by_sv.get(sv_id, []))
+            counts[str(sv_id)] = len(saved)
+        rows = all_rows
     return rows, gen_at, counts
 def _issue_write_scope(iid=None, payload=None):
     """Return a scoped issue row or raise 403 for non-admin cross-supervisor writes."""
