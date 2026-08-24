@@ -10,6 +10,7 @@ Tanker Management Team 3 (Sinokor Shipmanagement) 내부 업무관리 시스템.
 - `ai_gemini.py` — Vetting CRUD, findings/attachments, report extraction
 - `routes_calendar_dock.py` — `/api/ext/*` 워커, 캘린더·리포트·비용·출장·STT 및 Invoice/Fund Request/AOR/Reqgen API
 - `calendar_service.py` — 캘린더 조회·CRUD 데이터 연산(HTTP/auth 계약은 기존 Blueprint에 유지)
+- `dock_report_projection.py` — Dry Dock Report 목록·상세·내보내기용 읽기 투영
 - `routes_dock_submit.py` — Dock procurement/inquiry/submit/yard workflow 및 ShipWiki 카드
 - `routes_dock_daily.py` — Dock Daily Report·SVMS 동기화 API
 - `routes_repair_request.py` — Repair Request 생성·수정·정규화 API

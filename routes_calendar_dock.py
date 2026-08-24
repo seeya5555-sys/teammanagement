@@ -28,6 +28,7 @@ import re
 from flask import send_file
 from io import BytesIO
 import calendar_service
+import dock_report_projection
 from app_core import (
     AOR_PDF_DIR, FUNDREQ_FILE_DIR, INVOICE_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT,
     STT_LEASE_SEC, STT_MAX_ATTEMPTS, STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, app,
@@ -125,12 +126,6 @@ def api_cal_event_delete(eid):
 #   · Step 1: 보고서 자체의 생성/조회/수정/삭제만
 #   · 섹션·블록 편집 / 추출은 Step 2~3에서 추가
 # ═════════════════════════════════════════════════════════════════
-def _dock_to_dict(row):
-    d = dict(row)
-    # 출력 시 None → '' 변환은 프론트에서 처리
-    return d
-
-
 def _can_edit_dock_report(report_row_or_id):
     """
     현재 세션 사용자가 이 보고서를 편집할 권한이 있는가?
@@ -198,46 +193,14 @@ def _require_dock_edit_via_block(bid):
 @login_required
 def api_dock_list():
     """목록 조회 — 필터: vessel_id, status, is_template, q"""
-    conds, params = ['1=1'], []
-
-    is_tmpl = request.args.get('is_template')
-    if is_tmpl is not None:
-        conds.append('d.is_template = ?')
-        params.append(1 if is_tmpl in ('1', 'true', 'yes') else 0)
-    else:
-        # 기본은 보고서만 (템플릿 제외)
-        conds.append('d.is_template = 0')
-
-    if request.args.get('vessel_id'):
-        conds.append('d.vessel_id = ?')
-        params.append(request.args.get('vessel_id'))
-
-    if request.args.get('status'):
-        conds.append('d.status = ?')
-        params.append(request.args.get('status'))
-
-    if request.args.get('q'):
-        like = f'%{request.args.get("q")}%'
-        conds.append('(d.title LIKE ? OR d.shipyard LIKE ? OR d.dock_no LIKE ?)')
-        params += [like, like, like]
-
-    sql = f'''
-        SELECT d.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               s.name       AS supervisor_name
-          FROM dock_reports d
-          JOIN vessels       v ON v.id = d.vessel_id
-          LEFT JOIN supervisors s ON s.id = d.supervisor_id
-         WHERE {' AND '.join(conds)}
-         ORDER BY d.updated_at DESC, d.id DESC
-    '''
-    rows = query(sql, params)
-    out = []
-    for r in rows:
-        d = _dock_to_dict(r)
-        d['can_edit'] = _can_edit_dock_report(r)
-        out.append(d)
+    out = dock_report_projection.list_reports(
+        is_template=request.args.get('is_template'),
+        vessel_id=request.args.get('vessel_id'),
+        status=request.args.get('status'),
+        search=request.args.get('q'),
+    )
+    for report in out:
+        report['can_edit'] = _can_edit_dock_report(report)
     return jsonify(out)
 
 
@@ -303,53 +266,12 @@ def api_dock_create():
 @login_required
 def api_dock_get(rid):
     """보고서 상세 — 메타 + 섹션 트리 + 블록 모두 포함"""
-    r = query('''
-        SELECT d.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               s.name       AS supervisor_name
-          FROM dock_reports d
-          JOIN vessels       v ON v.id = d.vessel_id
-          LEFT JOIN supervisors s ON s.id = d.supervisor_id
-         WHERE d.id = ?
-    ''', (rid,), one=True)
-    if not r:
+    out = dock_report_projection.get_report(
+        rid, lambda exc: app.logger.warning('dock-get: %s', exc),
+    )
+    if not out:
         abort(404)
-
-    out = _dock_to_dict(r)
-    out['can_edit'] = _can_edit_dock_report(r)
-
-    # 섹션 + 블록 (Step 2에서 활용; 현재는 빈 리스트라도 채워줌)
-    secs = query('''
-        SELECT * FROM dock_report_sections
-         WHERE report_id = ?
-         ORDER BY display_order, id
-    ''', (rid,))
-    sec_list = [dict(s) for s in secs]
-
-    sec_ids = [s['id'] for s in sec_list]
-    blocks = []
-    if sec_ids:
-        placeholders = ','.join('?' for _ in sec_ids)
-        blocks = query(f'''
-            SELECT * FROM dock_report_blocks
-             WHERE section_id IN ({placeholders})
-             ORDER BY section_id, display_order, id
-        ''', sec_ids)
-    blocks_by_sec = {}
-    for b in blocks:
-        bd = dict(b)
-        try:
-            bd['content'] = json.loads(bd.pop('content_json'))
-        except Exception as e:
-            app.logger.warning('dock-get: %s', e)
-            bd['content'] = {}
-        blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
-
-    for s in sec_list:
-        s['blocks'] = blocks_by_sec.get(s['id'], [])
-
-    out['sections'] = sec_list
+    out['can_edit'] = _can_edit_dock_report(out)
     return jsonify(out)
 
 
@@ -863,48 +785,9 @@ def api_dock_upload_image(rid):
 # ─── Word / PDF Export ───────────────────────────────────────
 def _get_full_report_data(rid):
     """build_docx에 넘길 보고서 데이터 빌드 — api_dock_get과 동일한 구조"""
-    r = query('''
-        SELECT d.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               v.vessel_type AS vessel_type,
-               s.name       AS supervisor_name
-          FROM dock_reports d
-          JOIN vessels       v ON v.id = d.vessel_id
-          LEFT JOIN supervisors s ON s.id = d.supervisor_id
-         WHERE d.id = ?
-    ''', (rid,), one=True)
-    if not r:
-        return None
-    out = dict(r)
-
-    secs = query('''
-        SELECT * FROM dock_report_sections
-         WHERE report_id = ?
-         ORDER BY display_order, id
-    ''', (rid,))
-    sec_list = [dict(s) for s in secs]
-    sec_ids = [s['id'] for s in sec_list]
-    blocks_by_sec = {}
-    if sec_ids:
-        placeholders = ','.join('?' for _ in sec_ids)
-        blocks = query(f'''
-            SELECT * FROM dock_report_blocks
-             WHERE section_id IN ({placeholders})
-             ORDER BY section_id, display_order, id
-        ''', sec_ids)
-        for b in blocks:
-            bd = dict(b)
-            try:
-                bd['content'] = json.loads(bd.pop('content_json'))
-            except Exception as e:
-                app.logger.warning('get-full-report-data: %s', e)
-                bd['content'] = {}
-            blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
-    for s in sec_list:
-        s['blocks'] = blocks_by_sec.get(s['id'], [])
-    out['sections'] = sec_list
-    return out
+    return dock_report_projection.get_export_report(
+        rid, lambda exc: app.logger.warning('get-full-report-data: %s', exc),
+    )
 
 
 

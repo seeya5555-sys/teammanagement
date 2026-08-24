@@ -31,7 +31,9 @@ in each file, not from intent.  Counts are `@bp.route` declarations.
   calendar/report/expense/business-trip APIs, STT, and the money APIs
   (`/api/invoice`, `/api/fundreq`, `/api/aor`, `/api/reqgen`). Calendar's six
   HTTP adapters remain here to preserve endpoint names, while their request-
-  independent SQL/normalization lives in `calendar_service.py`;
+  independent SQL/normalization lives in `calendar_service.py`. Dry Dock
+  Report list/detail/export adapters likewise stay here while their read-only
+  SQLite projection lives in `dock_report_projection.py`;
 - `routes_dock_submit.py`: dock procurement/inquiry/submit/yard
   workflows and the ShipWiki card surface (`/shipwiki`, `/api/shipwiki/*`);
 - `routes_tail.py`: Class Status, fleet map, iOS and `/api/ext/push`

@@ -121,6 +121,11 @@
       "ensure_heif_opener"
     ]
   },
+  "dock_report_projection.py": {
+    "app_core.py": [
+      "query"
+    ]
+  },
   "docx_preview.py": {},
   "helpers_shared.py": {
     "apns_push.py": [],
@@ -166,6 +171,7 @@
     "dock_report_docx.py": [
       "build_docx"
     ],
+    "dock_report_projection.py": [],
     "helpers_shared.py": [
       "AUTOMATION_TASKS_BASE",
       "CAL_VALID_COLORS",

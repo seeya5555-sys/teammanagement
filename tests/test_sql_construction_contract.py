@@ -111,8 +111,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # `calendar_service.py`: the list query appends only fixed server-owned clauses,
 # and the PATCH identifiers still come exclusively from `_MUTABLE_FIELDS`.
 # Request values remain bound parameters. Only file ownership changed.
-EXPECTED_COUNT = 170
-EXPECTED_SHA256 = "b79272fc884e5d0e5f6d76c944aee01eff33a71ce90ae69291af4fd41b28dfee"
+# 2026-08-24 Dry Dock Report read-projection extraction — count 170 -> 168.
+# The list query moved intact to `dock_report_projection.py`. Two variable-size
+# `section_id IN (?,...)` expressions (API detail and DOCX/PDF export) were
+# removed and replaced by literal JOIN queries scoped with one bound report_id.
+# This removes SQLite variable-limit exposure without adding an identifier path.
+EXPECTED_COUNT = 168
+EXPECTED_SHA256 = "3d0d478529fd3900e88c243f45961a9d0f4a91995141d604482d947ecf61039c"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }
