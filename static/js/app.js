@@ -633,36 +633,10 @@ const RISK_PRI = new Set(['COC & Flag', 'Urgent']);
 const isActiveStatus = (s) => s === 'Open' || s === 'InProgress';
 function vtypeRank(t) { const i = VTYPE_ORDER.indexOf((t || '').toUpperCase()); return i < 0 ? VTYPE_ORDER.length : i; }
 
-// 선박 단위 집계. 베이스=S.vessels(담당 전 선박 → 0건 선박도 표시), 거기에 S.issues 병합.
-// vessel_id null(미배정) 이슈는 별도 '(미배정)' 그룹으로(소실 방지). active=진행중+Open, risk=활성 COC&Flag/Urgent.
+// 선박 단위 집계. 현재 담당 로스터(S.vessels)만 베이스로 삼고 그 선박의 이슈만 병합한다.
+// 담당 해제된 선박의 과거 이슈는 숨기며, 재지정되어 로스터에 돌아오면 자동으로 다시 표시한다.
 function vesselGroups() {
-  const byId = new Map();
-  for (const v of S.vessels) {
-    byId.set(String(v.id), { id: v.id, name: v.name, type: v.vessel_type || '',
-                             issues: [], active: 0, risk: false, latest: '' });
-  }
-  let unassigned = null;
-  for (const i of S.issues) {
-    let g;
-    if (i.vessel_id == null) {
-      if (!unassigned) unassigned = { id: '__none__', name: '(미배정)', type: '기타',
-                                      issues: [], active: 0, risk: false, latest: '', unassigned: true };
-      g = unassigned;
-    } else {
-      g = byId.get(String(i.vessel_id));
-      if (!g) {                                 // S.vessels에 없는(비활성 등) 선박이 이슈 보유
-        g = { id: i.vessel_id, name: i.vessel_name || '(선박)', type: '',
-              issues: [], active: 0, risk: false, latest: '' };
-        byId.set(String(i.vessel_id), g);
-      }
-    }
-    g.issues.push(i);
-    if (isActiveStatus(i.status)) { g.active++; if (RISK_PRI.has(i.priority)) g.risk = true; }
-    if ((i.issue_date || '') > g.latest) g.latest = i.issue_date || '';
-  }
-  const arr = [...byId.values()];
-  if (unassigned) arr.push(unassigned);
-  return arr;
+  return DailyVesselScope.assignedGroups(S.vessels, S.issues, isActiveStatus, RISK_PRI);
 }
 
 // 선종별 묶음 → 선종순서(VLCC→LR→AFRAMAX→MR→CNTR), 그룹 내 고위험 우선 → 활성수 → 최근발생
