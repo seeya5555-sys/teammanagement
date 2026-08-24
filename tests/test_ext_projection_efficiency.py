@@ -104,6 +104,56 @@ class ExtProjectionEfficiencyTests(unittest.TestCase):
         self.assertEqual([], result)
         self.assertEqual(1, len(calls))
 
+    def test_class_status_batches_vessels_and_items_without_shape_drift(self):
+        calls = []
+
+        def fake_query(sql, params=(), one=False):
+            calls.append((sql, params))
+            if 'FROM class_status ORDER BY' in sql:
+                return [
+                    {'id': 2, 'vessel_id': None, 'vessel_name_raw': 'RAW',
+                     'class_society': 'BV', 'report_date': '2026-08-02', 'updated_at': 'B'},
+                    {'id': 1, 'vessel_id': 7, 'vessel_name_raw': 'OLD',
+                     'class_society': 'DNV', 'report_date': '2026-08-01', 'updated_at': 'A'},
+                ]
+            if 'SELECT id, name FROM vessels' in sql:
+                return [{'id': 7, 'name': 'VESSEL'}]
+            if 'FROM class_status_items' in sql:
+                return [
+                    {'cs_id': 1, 'id': 11, 'category': 'COC', 'no': 1,
+                     'issued_date': '', 'description': 'D', 'due_date': '',
+                     'remark': 'R', 'importance': '', 'action_taken': ''},
+                    {'cs_id': 1, 'id': 12, 'category': 'STATUTORY', 'no': 2,
+                     'issued_date': '', 'description': 'S', 'due_date': '',
+                     'remark': '', 'importance': '', 'action_taken': ''},
+                    {'cs_id': 999, 'id': 99, 'category': 'COC', 'no': 1,
+                     'issued_date': '', 'description': 'orphan', 'due_date': '',
+                     'remark': '', 'importance': '', 'action_taken': ''},
+                ]
+            self.fail(sql)
+
+        with patch.object(routes, 'query', fake_query):
+            result = routes._ext_class_status()
+
+        self.assertEqual(3, len(calls))
+        self.assertEqual(['RAW', 'VESSEL'], [row['vessel_name'] for row in result])
+        self.assertEqual([], result[0]['coc'])
+        self.assertEqual([11], [row['id'] for row in result[1]['coc']])
+        self.assertEqual([12], [row['id'] for row in result[1]['statutory']])
+        self.assertNotIn('cs_id', result[1]['coc'][0])
+        self.assertEqual('class_item:11', result[1]['coc'][0]['ref'])
+
+    def test_class_status_empty_short_circuits_batch_queries(self):
+        calls = []
+
+        def fake_query(sql, params=(), one=False):
+            calls.append(sql)
+            return []
+
+        with patch.object(routes, 'query', fake_query):
+            self.assertEqual([], routes._ext_class_status())
+        self.assertEqual(1, len(calls))
+
 
 if __name__ == '__main__':
     unittest.main()

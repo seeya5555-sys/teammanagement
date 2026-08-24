@@ -1873,22 +1873,36 @@ def api_trips_list():
         conds.append('t.title LIKE ?')
         params.append(f"%{request.args.get('q')}%")
     sql = f'''
-        SELECT t.*, s.name AS supervisor_name
+        SELECT t.*, s.name AS supervisor_name,
+               r.currency AS receipt_currency,
+               COUNT(r.id) AS currency_count,
+               COALESCE(SUM(r.amount), 0) AS currency_total
           FROM biz_trips t
           LEFT JOIN supervisors s ON s.id = t.supervisor_id
+          LEFT JOIN biz_receipts r ON r.trip_id = t.id
          WHERE {' AND '.join(conds)}
-         ORDER BY t.updated_at DESC, t.id DESC
+         GROUP BY t.id, r.currency
+         ORDER BY t.updated_at DESC, t.id DESC, r.currency
     '''
     rows = query(sql, params)
     out = []
+    by_id = {}
     for r in rows:
-        d = _trip_to_dict(r)
-        d['can_edit'] = _trip_owned(r)
-        cnt = query('SELECT COUNT(*) AS c FROM biz_receipts WHERE trip_id=?', (r['id'],), one=True)['c']
-        d['receipt_count'] = cnt
-        sums = query('SELECT currency, COALESCE(SUM(amount),0) AS s FROM biz_receipts WHERE trip_id=? GROUP BY currency', (r['id'],))
-        d['totals'] = {(row['currency'] or '?'): row['s'] for row in sums}
-        out.append(d)
+        d = by_id.get(r['id'])
+        if d is None:
+            d = _trip_to_dict(r)
+            # JOIN aggregate용 내부 컬럼은 기존 API 응답에 노출하지 않는다.
+            for key in ('receipt_currency', 'currency_count', 'currency_total'):
+                d.pop(key, None)
+            d['can_edit'] = _trip_owned(r)
+            d['receipt_count'] = 0
+            d['totals'] = {}
+            by_id[r['id']] = d
+            out.append(d)
+        count = r['currency_count'] or 0
+        d['receipt_count'] += count
+        if count:
+            d['totals'][r['receipt_currency'] or '?'] = r['currency_total']
     return jsonify(out)
 
 
@@ -3218,15 +3232,26 @@ def _class_digest(coc_list, stat_list, society):
 
 def _ext_class_status():
     """선급 Class Status 스냅샷(선박별 + 미매칭)."""
+    snapshots = query('SELECT * FROM class_status ORDER BY updated_at DESC')
+    if not snapshots:
+        return []
+
+    # snapshot마다 vessels/items를 읽던 1+2N 경로를 batch map으로 고정한다.
+    vessel_names = {row['id']: row['name'] for row in query('SELECT id, name FROM vessels')}
+    items_by_status = {}
+    for row in query(
+            'SELECT cs_id, id, category, no, issued_date, description, due_date, remark, '
+            'importance, action_taken FROM class_status_items ORDER BY cs_id, category, no'):
+        item = dict(row)
+        cs_id = item.pop('cs_id')
+        items_by_status.setdefault(cs_id, []).append(item)
+
     out = []
-    for cs in query('SELECT * FROM class_status ORDER BY updated_at DESC'):
+    for cs in snapshots:
         vname = cs['vessel_name_raw']
         if cs['vessel_id']:
-            v = query('SELECT name FROM vessels WHERE id=?', (cs['vessel_id'],), one=True)
-            if v:
-                vname = v['name']
-        items = query('SELECT id, category, no, issued_date, description, due_date, remark, importance, action_taken '
-                      'FROM class_status_items WHERE cs_id=? ORDER BY category, no', (cs['id'],))
+            vname = vessel_names.get(cs['vessel_id'], vname)
+        items = items_by_status.get(cs['id'], [])
         coc_l = [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'COC']
         stat_l = [dict(i) | {'ref': _ref('class_item', i['id'])} for i in items if i['category'] == 'STATUTORY']
         out.append({
