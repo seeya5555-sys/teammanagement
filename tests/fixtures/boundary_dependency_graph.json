@@ -105,6 +105,11 @@
       "_temp_files"
     ]
   },
+  "boarding_report_projection.py": {
+    "app_core.py": [
+      "query"
+    ]
+  },
   "calendar_service.py": {
     "app_core.py": [
       "execute",
@@ -147,6 +152,7 @@
   },
   "krcon_client.py": {},
   "migration_steps.py": {},
+  "report_export_service.py": {},
   "routes_calendar_dock.py": {
     "app_core.py": [
       "AOR_PDF_DIR",
@@ -169,6 +175,7 @@
     "boarding_report_docx.py": [
       "build_docx"
     ],
+    "boarding_report_projection.py": [],
     "calendar_service.py": [],
     "dock_report_docx.py": [
       "build_docx"
@@ -220,7 +227,8 @@
       "login_required",
       "soa_task_key"
     ],
-    "krcon_client.py": []
+    "krcon_client.py": [],
+    "report_export_service.py": []
   },
   "routes_core.py": {
     "app_core.py": [

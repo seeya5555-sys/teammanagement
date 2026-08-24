@@ -162,8 +162,10 @@ chk("d=j&&j.error?(' — '+j.error):''" in web, '웹 writeJson 이 서버 error 
 ios = os.path.expanduser('~/.openclaw/workspace/trmt-mobile/ios/TRMT/Sources/Features/More/'
                          'DockProcureViewModel.swift')
 vm = open(ios, encoding='utf-8').read()
-chk('return code == 400 ? "요청 거부: \\(e)" : e' in vm,
-    'iOS 가 409 본문의 error 문자열을 그대로 보여준다')
+chk('let details = APIHTTPErrorDetails(error)' in vm
+    and 'let e = details.serverError, !e.isEmpty' in vm
+    and 'return details.statusCode == 400 ? "요청 거부: \\(e)" : e' in vm,
+    'iOS 가 공통 파서로 409 본문의 error 문자열을 그대로 보여준다')
 
 print()
 print(('❌ FAIL: ' + ', '.join(fails)) if fails else '✅ 전부 통과')

@@ -33,7 +33,10 @@ in each file, not from intent.  Counts are `@bp.route` declarations.
   HTTP adapters remain here to preserve endpoint names, while their request-
   independent SQL/normalization lives in `calendar_service.py`. Dry Dock
   Report list/detail/export adapters likewise stay here while their read-only
-  SQLite projection lives in `dock_report_projection.py`;
+  SQLite projection lives in `dock_report_projection.py`. Boarding Report
+  export projection is isolated in `boarding_report_projection.py`, and both
+  report families share framework-level DOCX/PDF response mechanics through
+  `report_export_service.py` without moving authentication or URL ownership;
 - `routes_dock_submit.py`: dock procurement/inquiry/submit/yard
   workflows and the ShipWiki card surface (`/shipwiki`, `/api/shipwiki/*`);
 - `routes_tail.py`: Class Status, fleet map, iOS and `/api/ext/push`
@@ -162,13 +165,15 @@ state and must not be treated as disposable test fixtures.  Tests use isolated
 temporary databases and must not send mail, push notifications, call SVMS, or
 mutate production files.
 
-The first extracted migration slice lives in `migration_steps.py`.
+Extracted migration slices live in `migration_steps.py`.
 `FOUNDATION_MIGRATIONS` freezes the order of three independent additive repairs
 (calendar completion, hidden push history, automation progress), and every step
 keeps its own exception boundary. `tests/test_migration_foundation.py` proves
 legacy-row preservation, exact schema/data equality after a second run, and
-that one failed probe cannot skip later steps. Remaining migrations stay in
-`app._auto_migrate` until they receive equivalent domain-specific gates.
+that one failed probe cannot skip later steps. `MANAGEMENT_METADATA_MIGRATIONS`
+does the same for Class Status source/action fields, vessel management fields,
+and mail-card metadata. Remaining migrations stay in `app._auto_migrate` until
+they receive equivalent domain-specific gates.
 
 ## Deployment and rollback
 

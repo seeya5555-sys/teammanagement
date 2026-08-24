@@ -28,7 +28,9 @@ import re
 from flask import send_file
 from io import BytesIO
 import calendar_service
+import boarding_report_projection
 import dock_report_projection
+import report_export_service
 from app_core import (
     AOR_PDF_DIR, FUNDREQ_FILE_DIR, INVOICE_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT,
     STT_LEASE_SEC, STT_MAX_ATTEMPTS, STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, app,
@@ -804,22 +806,10 @@ def api_dock_export_docx(rid):
     if not data:
         abort(404)
 
-    try:
-        docx_bytes = build_docx(data)
-    except Exception as e:
-        app.logger.exception('dock-export-docx')
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
-
-    from io import BytesIO
-    from flask import send_file
     fname = _safe_filename(data.get('title') or f'DryDock_Report_{rid}') + '.docx'
-    return send_file(
-        BytesIO(docx_bytes),
-        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        as_attachment=True,
-        download_name=fname,
+    return report_export_service.docx_response(
+        builder=build_docx, data=data, filename=fname,
+        logger=app.logger, log_label='dock-export-docx',
     )
 
 
@@ -835,60 +825,14 @@ def api_dock_export_pdf(rid):
     if not data:
         abort(404)
 
-    # 1) docx 생성
-    try:
-        docx_bytes = build_docx(data)
-    except Exception as e:
-        app.logger.exception('dock-export-pdf')
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
-
-    # 2) docx → pdf (LibreOffice headless)
-    import tempfile, subprocess, shutil, os as _os
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            docx_path = _os.path.join(tmp, 'report.docx')
-            with open(docx_path, 'wb') as f:
-                f.write(docx_bytes)
-
-            soffice = shutil.which('soffice') or shutil.which('libreoffice')
-            if not soffice:
-                return jsonify({
-                    'error': 'PDF 변환 도구(LibreOffice)가 설치되지 않았습니다. '
-                             '서버에 sudo dnf install -y libreoffice-core libreoffice-writer 명령으로 설치해주세요.'
-                }), 500
-
-            proc = subprocess.run(
-                [soffice, '--headless', '--convert-to', 'pdf',
-                 '--outdir', tmp, docx_path],
-                capture_output=True, timeout=120,
-            )
-            if proc.returncode != 0:
-                return jsonify({
-                    'error': f'PDF 변환 실패: {proc.stderr.decode("utf-8", errors="ignore")[:500]}'
-                }), 500
-
-            pdf_path = _os.path.join(tmp, 'report.pdf')
-            if not _os.path.exists(pdf_path):
-                return jsonify({'error': 'PDF 파일이 생성되지 않았습니다.'}), 500
-
-            with open(pdf_path, 'rb') as f:
-                pdf_bytes = f.read()
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'PDF 변환 시간 초과 (2분).'}), 500
-    except Exception as e:
-        app.logger.exception('dock-export-pdf')
-        return jsonify({'error': f'PDF 변환 오류: {e}'}), 500
-
-    from io import BytesIO
-    from flask import send_file
     fname = _safe_filename(data.get('title') or f'DryDock_Report_{rid}') + '.pdf'
-    return send_file(
-        BytesIO(pdf_bytes),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=fname,
+    return report_export_service.pdf_response(
+        builder=build_docx, data=data, filename=fname,
+        logger=app.logger, log_label='dock-export-pdf',
+        missing_tool_message=(
+            'PDF 변환 도구(LibreOffice)가 설치되지 않았습니다. '
+            '서버에 sudo dnf install -y libreoffice-core libreoffice-writer 명령으로 설치해주세요.'
+        ),
     )
 
 
@@ -1514,47 +1458,9 @@ def api_brep_upload_image(rid):
 
 # ─── Boarding Report Word/PDF Export ────────────────────────────
 def _get_full_brep_data(rid):
-    r = query('''
-        SELECT b.*,
-               v.name       AS vessel_name,
-               v.short_name AS vessel_short,
-               s.name       AS supervisor_name
-          FROM boarding_reports b
-          JOIN vessels       v ON v.id = b.vessel_id
-          LEFT JOIN supervisors s ON s.id = b.supervisor_id
-         WHERE b.id = ?
-    ''', (rid,), one=True)
-    if not r:
-        return None
-    out = dict(r)
-
-    secs = query('''
-        SELECT * FROM boarding_report_sections
-         WHERE report_id = ?
-         ORDER BY display_order, id
-    ''', (rid,))
-    sec_list = [dict(s) for s in secs]
-    sec_ids = [s['id'] for s in sec_list]
-    blocks_by_sec = {}
-    if sec_ids:
-        placeholders = ','.join('?' for _ in sec_ids)
-        blocks = query(f'''
-            SELECT * FROM boarding_report_blocks
-             WHERE section_id IN ({placeholders})
-             ORDER BY section_id, display_order, id
-        ''', sec_ids)
-        for b in blocks:
-            bd = dict(b)
-            try:
-                bd['content'] = json.loads(bd.pop('content_json'))
-            except Exception as e:
-                app.logger.warning('get-full-brep-data: %s', e)
-                bd['content'] = {}
-            blocks_by_sec.setdefault(bd['section_id'], []).append(bd)
-    for s in sec_list:
-        s['blocks'] = blocks_by_sec.get(s['id'], [])
-    out['sections'] = sec_list
-    return out
+    return boarding_report_projection.get_export_report(
+        rid, lambda exc: app.logger.warning('get-full-brep-data: %s', exc),
+    )
 
 
 @bp.route('/api/boarding-reports/<int:rid>/export/docx')
@@ -1568,21 +1474,10 @@ def api_brep_export_docx(rid):
     data = _get_full_brep_data(rid)
     if not data:
         abort(404)
-    try:
-        docx_bytes = build_docx(data)
-    except Exception as e:
-        app.logger.exception('brep-export-docx')
-        import traceback; traceback.print_exc()
-        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
-
-    from io import BytesIO
-    from flask import send_file
     fname = _safe_filename(data.get('title') or f'BoardingReport_{rid}') + '.docx'
-    return send_file(
-        BytesIO(docx_bytes),
-        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        as_attachment=True,
-        download_name=fname,
+    return report_export_service.docx_response(
+        builder=build_docx, data=data, filename=fname,
+        logger=app.logger, log_label='brep-export-docx',
     )
 
 
@@ -1597,53 +1492,14 @@ def api_brep_export_pdf(rid):
     data = _get_full_brep_data(rid)
     if not data:
         abort(404)
-    try:
-        docx_bytes = build_docx(data)
-    except Exception as e:
-        app.logger.exception('brep-export-pdf')
-        import traceback; traceback.print_exc()
-        return jsonify({'error': f'문서 생성 실패: {e}'}), 500
-
-    import tempfile, subprocess, shutil, os as _os
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            docx_path = _os.path.join(tmp, 'report.docx')
-            with open(docx_path, 'wb') as f:
-                f.write(docx_bytes)
-            soffice = shutil.which('soffice') or shutil.which('libreoffice')
-            if not soffice:
-                return jsonify({
-                    'error': 'PDF 변환 도구(LibreOffice)가 설치되지 않았습니다. '
-                             'sudo dnf install -y libreoffice-core libreoffice-writer'
-                }), 500
-            proc = subprocess.run(
-                [soffice, '--headless', '--convert-to', 'pdf',
-                 '--outdir', tmp, docx_path],
-                capture_output=True, timeout=120,
-            )
-            if proc.returncode != 0:
-                return jsonify({
-                    'error': f'PDF 변환 실패: {proc.stderr.decode("utf-8", errors="ignore")[:500]}'
-                }), 500
-            pdf_path = _os.path.join(tmp, 'report.pdf')
-            if not _os.path.exists(pdf_path):
-                return jsonify({'error': 'PDF 파일이 생성되지 않았습니다.'}), 500
-            with open(pdf_path, 'rb') as f:
-                pdf_bytes = f.read()
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'PDF 변환 시간 초과 (2분).'}), 500
-    except Exception as e:
-        app.logger.exception('brep-export-pdf')
-        return jsonify({'error': f'PDF 변환 오류: {e}'}), 500
-
-    from io import BytesIO
-    from flask import send_file
     fname = _safe_filename(data.get('title') or f'BoardingReport_{rid}') + '.pdf'
-    return send_file(
-        BytesIO(pdf_bytes),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=fname,
+    return report_export_service.pdf_response(
+        builder=build_docx, data=data, filename=fname,
+        logger=app.logger, log_label='brep-export-pdf',
+        missing_tool_message=(
+            'PDF 변환 도구(LibreOffice)가 설치되지 않았습니다. '
+            'sudo dnf install -y libreoffice-core libreoffice-writer'
+        ),
     )
 
 

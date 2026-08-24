@@ -11,6 +11,8 @@ Tanker Management Team 3 (Sinokor Shipmanagement) 내부 업무관리 시스템.
 - `routes_calendar_dock.py` — `/api/ext/*` 워커, 캘린더·리포트·비용·출장·STT 및 Invoice/Fund Request/AOR/Reqgen API
 - `calendar_service.py` — 캘린더 조회·CRUD 데이터 연산(HTTP/auth 계약은 기존 Blueprint에 유지)
 - `dock_report_projection.py` — Dry Dock Report 목록·상세·내보내기용 읽기 투영
+- `boarding_report_projection.py` — Boarding Report 내보내기용 읽기 투영
+- `report_export_service.py` — Report DOCX/PDF 생성 응답·변환 공통 기반
 - `migration_steps.py` — 부팅 시 additive migration의 순서·독립 실패 경계
 - `routes_dock_submit.py` — Dock procurement/inquiry/submit/yard workflow 및 ShipWiki 카드
 - `routes_dock_daily.py` — Dock Daily Report·SVMS 동기화 API
@@ -40,6 +42,8 @@ teammanagement/
 ├── app.py                        # Flask 앱·공통 기반·Blueprint 등록
 ├── routes_*.py / ai_gemini.py   # 기능별 라우트 경계
 ├── calendar_service.py           # 캘린더 데이터 서비스
+├── *_report_projection.py        # Report 읽기 투영
+├── report_export_service.py      # DOCX/PDF 응답 공통 기반
 ├── helpers_shared.py             # 공유 helper 경계
 ├── wsgi.py                       # gunicorn 통합 진입점
 ├── schema.sql / seed.sql         # 스키마·초기 데이터

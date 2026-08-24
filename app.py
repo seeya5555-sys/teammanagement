@@ -1846,69 +1846,8 @@ def _auto_migrate():
         except Exception as e:
             print(f'[auto_migrate] vt_attachments provenance 점검 건너뜀: {e}')
 
-        # class_status.source_path (업로드 원본 파일 보관 경로, 선박별 최신만)
-        try:
-            cols = [r[1] for r in conn.execute('PRAGMA table_info(class_status)').fetchall()]
-            if cols and 'source_path' not in cols:
-                conn.execute("ALTER TABLE class_status ADD COLUMN source_path TEXT")
-                print('[auto_migrate] class_status.source_path 추가됨')
-        except Exception as e:
-            print(f'[auto_migrate] class_status.source_path 점검 건너뜀: {e}')
-
-        # class_status_items.action_taken (손유석 수동입력 조치사항 — 스냅샷 교체에도 description 매칭으로 유지)
-        try:
-            cols = [r[1] for r in conn.execute('PRAGMA table_info(class_status_items)').fetchall()]
-            if cols and 'action_taken' not in cols:
-                conn.execute("ALTER TABLE class_status_items ADD COLUMN action_taken TEXT NOT NULL DEFAULT ''")
-                print('[auto_migrate] class_status_items.action_taken 추가됨')
-        except Exception as e:
-            print(f'[auto_migrate] class_status_items.action_taken 점검 건너뜀: {e}')
-
-        # vessels.manager (관리사 — 선급처럼 텍스트 지정, Class Status 관리사별 추출용)
-        try:
-            cols = [r[1] for r in conn.execute('PRAGMA table_info(vessels)').fetchall()]
-            if cols and 'manager' not in cols:
-                conn.execute("ALTER TABLE vessels ADD COLUMN manager TEXT")
-                print('[auto_migrate] vessels.manager 추가됨')
-        except Exception as e:
-            print(f'[auto_migrate] vessels.manager 점검 건너뜀: {e}')
-
-        # vessels.manager_supervisor (관리사 측 담당감독 이름 — 수동 입력)
-        try:
-            cols = [r[1] for r in conn.execute('PRAGMA table_info(vessels)').fetchall()]
-            if cols and 'manager_supervisor' not in cols:
-                conn.execute("ALTER TABLE vessels ADD COLUMN manager_supervisor TEXT NOT NULL DEFAULT ''")
-                print('[auto_migrate] vessels.manager_supervisor 추가됨')
-        except Exception as e:
-            print(f'[auto_migrate] vessels.manager_supervisor 점검 건너뜀: {e}')
-
-        # mail_card.pending (보류 플래그)
-        try:
-            cols = [r[1] for r in conn.execute('PRAGMA table_info(mail_card)').fetchall()]
-            if cols and 'pending' not in cols:
-                conn.execute("ALTER TABLE mail_card ADD COLUMN pending INTEGER NOT NULL DEFAULT 0")
-                print('[auto_migrate] mail_card.pending 추가됨')
-            if cols and 'thread_summary_ko' not in cols:
-                conn.execute("ALTER TABLE mail_card ADD COLUMN thread_summary_ko TEXT")
-                print('[auto_migrate] mail_card.thread_summary_ko 추가됨')
-            if cols and 'body_en' not in cols:
-                conn.execute("ALTER TABLE mail_card ADD COLUMN body_en TEXT")
-                print('[auto_migrate] mail_card.body_en 추가됨')
-            if cols and 'thread_key' not in cols:      # 스레드 단위 upsert 키(폴더|정규화제목)
-                conn.execute("ALTER TABLE mail_card ADD COLUMN thread_key TEXT")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_mail_card_thread ON mail_card(thread_key, card_status)")
-                print('[auto_migrate] mail_card.thread_key 추가됨')
-            if cols and 'action_summary' not in cols:   # 현안 액션추가용 1~2문장 요약
-                conn.execute("ALTER TABLE mail_card ADD COLUMN action_summary TEXT")
-                print('[auto_migrate] mail_card.action_summary 추가됨')
-            if cols and 'category_seed' not in cols:    # direct `현안` seed 여부: 무범주 회신 상속 검증용
-                conn.execute("ALTER TABLE mail_card ADD COLUMN category_seed INTEGER NOT NULL DEFAULT 0")
-                print('[auto_migrate] mail_card.category_seed 추가됨')
-            if cols and 'card_category' not in cols:    # Outlook 현안 여부와 분리된 TRMT 카드 적재 범주
-                conn.execute("ALTER TABLE mail_card ADD COLUMN card_category TEXT")
-                print('[auto_migrate] mail_card.card_category 추가됨')
-        except Exception as e:
-            print(f'[auto_migrate] mail_card.pending 점검 건너뜀: {e}')
+        # 독립적인 표시/분류 메타데이터 보강은 순서와 실패 경계를 하위 모듈에서 고정한다.
+        migration_steps.run_management_metadata_migrations(conn)
 
         # vettings.valid: 옛 CHECK(valid IN ('Valid','Invalid')) 제거 → 'Next Plan'/'Last Result' 허용
         try:

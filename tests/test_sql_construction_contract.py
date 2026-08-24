@@ -116,8 +116,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # `section_id IN (?,...)` expressions (API detail and DOCX/PDF export) were
 # removed and replaced by literal JOIN queries scoped with one bound report_id.
 # This removes SQLite variable-limit exposure without adding an identifier path.
-EXPECTED_COUNT = 168
-EXPECTED_SHA256 = "3d0d478529fd3900e88c243f45961a9d0f4a91995141d604482d947ecf61039c"
+# 2026-08-24 Boarding Report export projection extraction — count 168 -> 167.
+# The remaining variable-size `section_id IN (?,...)` expression moved to a
+# literal JOIN on boarding_report_sections, scoped by one bound report_id. The
+# management metadata migration was also moved to migration_steps.py with every
+# ALTER kept as a literal; it adds no dynamic identifier or DDL construction.
+EXPECTED_COUNT = 167
+EXPECTED_SHA256 = "c003d15bb36c7aac495f0bc8ec743083908328d9da4a7f977a4e1f2fca3961ca"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }
