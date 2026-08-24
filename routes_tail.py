@@ -1781,13 +1781,77 @@ def _class_export_vessels(sup_id=None):
     else:
         vrows = query("""SELECT id, name, class_society, manager FROM vessels
                           WHERE active = 1 ORDER BY name COLLATE NOCASE""")
+    if not vrows:
+        return []
+
+    if sup_id:
+        snapshots = query("""WITH ranked AS (
+                               SELECT cs.id, cs.vessel_id,
+                                      ROW_NUMBER() OVER (
+                                          PARTITION BY cs.vessel_id
+                                          ORDER BY cs.updated_at DESC
+                                      ) AS rn
+                                 FROM class_status cs
+                                 JOIN vessels v ON v.id = cs.vessel_id
+                                 JOIN supervisor_vessels sv ON sv.vessel_id = v.id
+                                WHERE v.active = 1 AND sv.supervisor_id = ?
+                           )
+                           SELECT id, vessel_id FROM ranked WHERE rn = 1""", (sup_id,))
+    else:
+        snapshots = query("""WITH ranked AS (
+                               SELECT cs.id, cs.vessel_id,
+                                      ROW_NUMBER() OVER (
+                                          PARTITION BY cs.vessel_id
+                                          ORDER BY cs.updated_at DESC
+                                      ) AS rn
+                                 FROM class_status cs
+                                 JOIN vessels v ON v.id = cs.vessel_id
+                                WHERE v.active = 1
+                           )
+                           SELECT id, vessel_id FROM ranked WHERE rn = 1""")
+    snapshot_by_vessel = {}
+    for snapshot in snapshots:
+        snapshot_by_vessel.setdefault(snapshot['vessel_id'], snapshot['id'])
+
+    if sup_id:
+        item_rows = query("""WITH ranked AS (
+                              SELECT cs.id,
+                                     ROW_NUMBER() OVER (
+                                         PARTITION BY cs.vessel_id
+                                         ORDER BY cs.updated_at DESC
+                                     ) AS rn
+                                FROM class_status cs
+                                JOIN vessels v ON v.id = cs.vessel_id
+                                JOIN supervisor_vessels sv ON sv.vessel_id = v.id
+                               WHERE v.active = 1 AND sv.supervisor_id = ?
+                          )
+                          SELECT i.* FROM class_status_items i
+                          JOIN ranked r ON r.id = i.cs_id AND r.rn = 1
+                          ORDER BY i.cs_id, i.category, i.no""", (sup_id,))
+    else:
+        item_rows = query("""WITH ranked AS (
+                              SELECT cs.id,
+                                     ROW_NUMBER() OVER (
+                                         PARTITION BY cs.vessel_id
+                                         ORDER BY cs.updated_at DESC
+                                     ) AS rn
+                                FROM class_status cs
+                                JOIN vessels v ON v.id = cs.vessel_id
+                               WHERE v.active = 1
+                          )
+                          SELECT i.* FROM class_status_items i
+                          JOIN ranked r ON r.id = i.cs_id AND r.rn = 1
+                          ORDER BY i.cs_id, i.category, i.no""")
+    items_by_snapshot = {}
+    for item in item_rows:
+        items_by_snapshot.setdefault(item['cs_id'], []).append(item)
+
     out = []
     for v in vrows:
-        snap = query('SELECT id FROM class_status WHERE vessel_id=? ORDER BY updated_at DESC LIMIT 1',
-                     (v['id'],), one=True)
-        if not snap:
+        snapshot_id = snapshot_by_vessel.get(v['id'])
+        if snapshot_id is None:
             continue
-        items = query('SELECT * FROM class_status_items WHERE cs_id=? ORDER BY category, no', (snap['id'],))
+        items = items_by_snapshot.get(snapshot_id, [])
         if not items:
             continue   # 지적 없는 선박 제외
         out.append({'id': v['id'], 'name': v['name'],
