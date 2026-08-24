@@ -142,7 +142,6 @@
           </div>
         </div>
 
-        {% if session.role == 'admin' %}{{ nlink('routes_calendar_dock.krcon_page', '룰 검색', icon='book-open') }}{% endif %}
         {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
         {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
         {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
@@ -255,7 +254,6 @@
         </div>
         <div class="mm-section"></div>
         <button type="button" class="mm-manual" id="btn-page-manual-mobile"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>현재 탭 설명서</button>
-        {% if session.role == 'admin' %}{{ nlink('routes_calendar_dock.krcon_page', '룰 검색', icon='book-open') }}{% endif %}
         {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
         {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
         {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
