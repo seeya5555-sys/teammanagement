@@ -13,10 +13,14 @@ PoC(poc_merged.py 11/11 PASS)에서 검증된 로직을 프로덕션 모듈로 �
 from contextlib import contextmanager
 from datetime import date as _date, datetime as _datetime, timezone as _timezone
 import hashlib
+import io
 import json
 import os
 import re
+import secrets
 import sqlite3
+import threading
+import time
 
 
 DAILY_EVENTS_PATH = "/api/integration/daily-events"
@@ -33,6 +37,23 @@ DAILY_EVENT_SOURCES = (
     "gas_free",
 )
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+YARD_JOB_SECTION_MAP = {
+    "2": "GENERAL", "3": "GENERAL", "4": "PAINT", "6": "STEEL",
+    "5": "DECK", "9": "DECK", "10": "DECK", "11": "DECK",
+    "12": "DECK", "18": "DECK", "24": "DECK",
+    "7": "ENGINE", "8": "ENGINE", "13": "ENGINE", "14": "ENGINE",
+    "15": "ENGINE", "19": "ENGINE", "20": "ENGINE", "21": "ENGINE",
+    "22": "ENGINE", "23": "ENGINE", "25": "ENGINE", "40": "ENGINE",
+    "16": "ELECTRIC", "17": "ELECTRIC",
+}
+_YARD_TOTAL_ROW = re.compile(
+    r"total price|final discount|after di(?:s)?count|normal total|sub\s*total|소계|합계",
+    re.I,
+)
+_YARD_ITEM_NO = re.compile(r"^\d+(?:\.\d+)*$")
+_YARD_IMPORT_TTL = 30 * 60
+_YARD_IMPORT_MAX = 8
 
 
 def _text(value):
@@ -412,6 +433,302 @@ def _install_daily_events_endpoint(dd, trmt_app, dd_app):
     dd_app._trmt_daily_events_installed = True
 
 
+def _yard_cell_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return format(value, ".15g")
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def _yard_number(value):
+    raw = _yard_cell_text(value).replace(" ", "")
+    return raw if _YARD_ITEM_NO.fullmatch(raw) else ""
+
+
+def _yard_numeric_after(row, start):
+    for value in row[start + 1:]:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+def _yard_find_sheet_and_columns(workbook):
+    aliases = {
+        "item": ("itemno", "itemnumber"),
+        "description": ("workdescription", "description"),
+        "net_total": ("nettotal", "netamount"),
+    }
+    preferred = sorted(workbook.worksheets, key=lambda ws: ws.title.lower() != "quotation")
+    for sheet in preferred:
+        for row_no, row in enumerate(sheet.iter_rows(min_row=1, max_row=min(30, sheet.max_row), values_only=True), 1):
+            normalized = [re.sub(r"[^a-z]", "", _yard_cell_text(value).lower()) for value in row]
+            found = {}
+            for key, names in aliases.items():
+                found[key] = next((idx for idx, value in enumerate(normalized) if value in names), None)
+            if all(value is not None for value in found.values()):
+                return sheet, row_no, found
+    raise ValueError("Item No. / Work Description / Net Total 헤더를 찾지 못했습니다")
+
+
+def _yard_scan_quote_totals(workbook, quote_sheet):
+    discount = gross = net = None
+    for sheet in (quote_sheet,):
+        for row in sheet.iter_rows(values_only=True):
+            for idx, value in enumerate(row):
+                label = _yard_cell_text(value).lower()
+                if not label:
+                    continue
+                number = _yard_numeric_after(row, idx)
+                if number is None:
+                    continue
+                if "final discount" in label:
+                    discount = number * 100 if 0 <= number <= 1 else number
+                elif "normal total" in label:
+                    gross = number
+                elif "total price after" in label or "after discount" in label or "after dicount" in label:
+                    net = number
+    if discount is None:
+        for sheet in workbook.worksheets:
+            if sheet is quote_sheet:
+                continue
+            for row in sheet.iter_rows(values_only=True):
+                for idx, value in enumerate(row):
+                    if "final discount" not in _yard_cell_text(value).lower():
+                        continue
+                    number = _yard_numeric_after(row, idx)
+                    if number is not None:
+                        discount = number * 100 if 0 <= number <= 1 else number
+                        break
+                if discount is not None:
+                    break
+            if discount is not None:
+                break
+    return discount, gross, net
+
+
+def _parse_yard_job_workbook(raw_bytes):
+    """YiuLian-style quotation workbook -> Dock Manager Job Progress preview.
+
+    Every numbered line remains visible as a Job, matching the Kuwait project.
+    Money below a third-level line rolls up to its second-level parent; a
+    stand-alone top-level job (for example item 24) owns its own amount.
+    """
+    try:
+        from openpyxl import load_workbook
+        workbook = load_workbook(io.BytesIO(raw_bytes), data_only=True, read_only=True)
+    except Exception as exc:
+        raise ValueError("엑셀 파일을 읽지 못했습니다") from exc
+
+    sheet, header_row, columns = _yard_find_sheet_and_columns(workbook)
+    source_rows = list(sheet.iter_rows(min_row=header_row + 1, values_only=True))
+    numbered = []
+    roots_with_children = set()
+    for row in source_rows:
+        number = _yard_number(row[columns["item"]] if columns["item"] < len(row) else None)
+        if number:
+            numbered.append(number)
+            if "." in number:
+                roots_with_children.add(number.split(".", 1)[0])
+    if not numbered:
+        raise ValueError("파싱 가능한 Job 번호가 없습니다")
+
+    jobs = []
+    jobs_by_number = {}
+    budget_owner = None
+    warnings = []
+    for row in source_rows:
+        number = _yard_number(row[columns["item"]] if columns["item"] < len(row) else None)
+        description = _yard_cell_text(
+            row[columns["description"]] if columns["description"] < len(row) else None
+        )
+        if number:
+            if number in jobs_by_number:
+                raise ValueError("중복 Job 번호가 있습니다: %s" % number)
+            root = number.split(".", 1)[0]
+            section = YARD_JOB_SECTION_MAP.get(root, "ADD")
+            if section == "ADD" and root not in {"1"}:
+                warnings.append("미지정 섹션 %s → ADD로 분류" % root)
+            job = {
+                "number": number,
+                "section": section,
+                "category": "Shipyard",
+                "description": description or ("Item %s" % number),
+                "budget": 0.0,
+            }
+            jobs.append(job)
+            jobs_by_number[number] = job
+            depth = number.count(".") + 1
+            if depth == 1:
+                budget_owner = None if root in roots_with_children else job
+            elif depth == 2:
+                budget_owner = job
+            # Third-level headings stay visible but their money belongs to the
+            # second-level repair item, as in Kuwait Prosperity.
+
+        net_value = row[columns["net_total"]] if columns["net_total"] < len(row) else None
+        row_text = " ".join(_yard_cell_text(value) for value in row if isinstance(value, str))
+        if (budget_owner is not None and isinstance(net_value, (int, float))
+                and not isinstance(net_value, bool) and net_value
+                and not _YARD_TOTAL_ROW.search(row_text)):
+            budget_owner["budget"] += float(net_value)
+
+    for job in jobs:
+        job["budget"] = round(job["budget"], 2)
+    gross_total = round(sum(job["budget"] for job in jobs), 2)
+    discount, quoted_gross, quoted_net = _yard_scan_quote_totals(workbook, sheet)
+    discount = round(discount, 4) if discount is not None and 0 <= discount <= 100 else None
+    after_discount = round(gross_total * (1 - (discount or 0) / 100), 2)
+    if quoted_gross is not None and abs(gross_total - quoted_gross) > 0.05:
+        warnings.append("견적 Gross Total과 파싱 합계가 일치하지 않습니다")
+    if quoted_net is not None and discount is not None and abs(after_discount - quoted_net) > 0.05:
+        warnings.append("견적 D/C 후 합계와 파싱 합계가 일치하지 않습니다")
+    return {
+        "sheet": sheet.title,
+        "jobs": jobs,
+        "job_count": len(jobs),
+        "priced_count": sum(bool(job["budget"]) for job in jobs),
+        "gross_total": gross_total,
+        "discount_rate": discount,
+        "after_discount": after_discount,
+        "quoted_gross": round(quoted_gross, 2) if quoted_gross is not None else None,
+        "quoted_net": round(quoted_net, 2) if quoted_net is not None else None,
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
+def _apply_yard_job_import(db, vessel_id, parsed):
+    vessel = db.execute("SELECT id FROM vessels WHERE id=?", (vessel_id,)).fetchone()
+    if not vessel:
+        raise ValueError("선박을 찾을 수 없습니다")
+    existing_rows = db.execute(
+        "SELECT id,number,category,description,budget FROM jobs WHERE vessel_id=? ORDER BY id",
+        (vessel_id,),
+    ).fetchall()
+    existing = {}
+    for row in existing_rows:
+        number = row["number"] if isinstance(row, sqlite3.Row) else row[1]
+        if number and number not in existing:
+            existing[number] = row
+    inserted = updated = preserved_manual = unchanged = 0
+    for job in parsed["jobs"]:
+        current = existing.get(job["number"])
+        if current is None:
+            db.execute(
+                "INSERT INTO jobs(vessel_id,number,section,category,description,vendor,budget,"
+                "consumption,start_date,end_date,completion,remarks) VALUES(?,?,?,?,?,'',?,0,NULL,NULL,0,'[]')",
+                (vessel_id, job["number"], job["section"], "Shipyard", job["description"], job["budget"]),
+            )
+            inserted += 1
+            continue
+        category = current["category"] if isinstance(current, sqlite3.Row) else current[2]
+        if category != "Shipyard":
+            preserved_manual += 1
+            continue
+        old_description = current["description"] if isinstance(current, sqlite3.Row) else current[3]
+        old_budget = current["budget"] if isinstance(current, sqlite3.Row) else current[4]
+        description = old_description or job["description"]
+        if abs(float(old_budget or 0) - job["budget"]) <= 0.005 and description == old_description:
+            unchanged += 1
+            continue
+        # Deliberately preserve section/vendor/consumption/dates/progress/remarks:
+        # those fields may contain an owner's cancellation or live progress.
+        db.execute("UPDATE jobs SET description=?,budget=?,updated_at=datetime('now') WHERE id=?",
+                   (description, job["budget"], current["id"] if isinstance(current, sqlite3.Row) else current[0]))
+        updated += 1
+    if parsed.get("discount_rate") is not None:
+        db.execute("UPDATE vessels SET dc_rate=? WHERE id=?", (parsed["discount_rate"], vessel_id))
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "preserved_manual": preserved_manual,
+        "unchanged": unchanged,
+        "discount_rate": parsed.get("discount_rate"),
+    }
+
+
+def _install_yard_job_import(dd, dd_app):
+    if getattr(dd_app, "_trmt_yard_import_installed", False):
+        return
+    from flask import jsonify, request
+
+    cache = {}
+    cache_lock = threading.Lock()
+
+    def prune(now):
+        expired = [token for token, entry in cache.items() if now - entry["created"] > _YARD_IMPORT_TTL]
+        for token in expired:
+            cache.pop(token, None)
+        while len(cache) >= _YARD_IMPORT_MAX:
+            oldest = min(cache, key=lambda token: cache[token]["created"])
+            cache.pop(oldest, None)
+
+    @dd_app.route("/api/vessels/<vid>/jobs/xlsx/preview", methods=["POST"])
+    def _trmt_yard_xlsx_preview(vid):
+        upload = request.files.get("file")
+        filename = (upload.filename or "") if upload else ""
+        if not upload or not filename.lower().endswith((".xlsx", ".xlsm")):
+            return jsonify({"error": ".xlsx 또는 .xlsm 조선소 견적서가 필요합니다"}), 400
+        raw = upload.read()
+        if not raw.startswith(b"PK\x03\x04"):
+            return jsonify({"error": "올바른 Excel OOXML 파일이 아닙니다"}), 400
+        try:
+            parsed = _parse_yard_job_workbook(raw)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        db = dd.get_db()
+        if not db.execute("SELECT 1 FROM vessels WHERE id=?", (vid,)).fetchone():
+            return jsonify({"error": "선박을 찾을 수 없습니다"}), 404
+        token = secrets.token_urlsafe(24)
+        now = time.time()
+        with cache_lock:
+            prune(now)
+            cache[token] = {"created": now, "vessel_id": vid, "parsed": parsed}
+        preview = dict(parsed)
+        preview["jobs"] = parsed["jobs"][:12]
+        preview["preview_token"] = token
+        return jsonify(preview)
+
+    @dd_app.route("/api/vessels/<vid>/jobs/xlsx/apply", methods=["POST"])
+    def _trmt_yard_xlsx_apply(vid):
+        token = _yard_cell_text((request.get_json(silent=True) or {}).get("preview_token"))
+        now = time.time()
+        with cache_lock:
+            prune(now)
+            entry = cache.pop(token, None)
+        if not entry or entry["vessel_id"] != vid:
+            return jsonify({"error": "미리보기가 만료됐습니다. 견적서를 다시 선택하세요"}), 409
+        db = dd.get_db()
+        try:
+            result = _apply_yard_job_import(db, vid, entry["parsed"])
+            db.commit()
+        except (sqlite3.Error, ValueError) as exc:
+            db.rollback()
+            dd_app.logger.warning("yard job import failed: %s", exc)
+            return jsonify({"error": "견적서 반영에 실패했습니다"}), 500
+        result["job_count"] = entry["parsed"]["job_count"]
+        result["gross_total"] = entry["parsed"]["gross_total"]
+        result["after_discount"] = entry["parsed"]["after_discount"]
+        return jsonify(result)
+
+    @dd_app.after_request
+    def _trmt_yard_import_asset(response):
+        if (request.method == "GET" and request.path == "/" and response.status_code == 200
+                and response.mimetype == "text/html" and not response.headers.get("Content-Encoding")):
+            body = response.get_data(as_text=True)
+            asset = '<script src="/static/js/drydock-yard-import.js?v=20260825"></script>'
+            if asset not in body and "</body>" in body:
+                response.set_data(body.replace("</body>", asset + "</body>"))
+                response.headers["Content-Length"] = len(response.get_data())
+        return response
+
+    dd_app._trmt_yard_import_installed = True
+
+
 def apply(dd, trmt_app):
     """dd = import된 drydock app.py 모듈, trmt_app = TRMT Flask app.
     반환 = 통합 적용된 dd.app (서브마운트용)."""
@@ -442,6 +759,7 @@ def apply(dd, trmt_app):
     dd.get_current_user = _session_user
     dd.is_admin = lambda: (_session_user() or {}).get("role") == "admin"
     _install_daily_events_endpoint(dd, trmt_app, dd_app)
+    _install_yard_job_import(dd, dd_app)
     # is_viewer/can_access_vessel도 세션 유저 기준으로 동작(원본이 get_current_user 참조)
 
     # ── 3. 전 route admin 게이팅 + login/logout 차단 (결정2, C2·C3 해소) ─
