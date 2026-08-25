@@ -15,6 +15,7 @@ from datetime import date as _date, datetime as _datetime, timezone as _timezone
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -25,6 +26,8 @@ import time
 
 DAILY_EVENTS_PATH = "/api/integration/daily-events"
 ROSTER_VESSELS_PATH = "/api/integration/roster-vessels"
+SVMS_IMPORT_PENDING_PATH = "/api/integration/svms-job-import/pending"
+SVMS_IMPORT_COMPLETE_PATH = "/api/integration/svms-job-import/complete"
 DAILY_EVENT_SOURCES = (
     "jobs",
     "discussions",
@@ -55,6 +58,8 @@ _YARD_TOTAL_ROW = re.compile(
 _YARD_ITEM_NO = re.compile(r"^\d+(?:\.\d+)*$")
 _YARD_IMPORT_TTL = 30 * 60
 _YARD_IMPORT_MAX = 8
+_SVMS_JOB_TAG = re.compile(r"^\s*\[([^\]]+)\]\s*(.*)$")
+_SVMS_IMPORT_TTL_SECONDS = 15 * 60
 
 
 def _text(value):
@@ -547,6 +552,142 @@ def _yard_cell_text(value):
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
+def _svms_number(value):
+    try:
+        number = float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return round(number, 2)
+
+
+def _svms_job_category(subject, source_key):
+    """Map an SVMS Dock sub-tab row to the Dock Manager category/section."""
+    if source_key == "P_RS_DP":
+        return "Paint", "PAINT"
+    if source_key == "P_RS_SR":
+        return "Shore Repair", "SHORE REPAIR"
+    upper = subject.upper()
+    local_tail = upper.split("LOCAL SUPPLY", 1)[1] if "LOCAL SUPPLY" in upper else ""
+    if re.search(r"\bSTORES?\b", local_tail):
+        return "Store", "STORE"
+    if re.search(r"\bSPARE\b", local_tail):
+        return "Spare", "SPARE"
+    tag_match = _SVMS_JOB_TAG.match(subject)
+    tag = (tag_match.group(1) if tag_match else "").strip().upper()
+    if re.fullmatch(r"ST\d+[A-Z0-9-]*", tag):
+        return "Store", "STORE"
+    # [S1-A]/[S2]/[S3] and every unclassified Spare/Store row default to Spare.
+    return "Spare", "SPARE"
+
+
+def _svms_job_budget(row, warnings, label):
+    """Use SVMS's own USD conversion, never a locally invented exchange rate."""
+    amount = _svms_number(row.get("AMT"))
+    usd = _svms_number(row.get("AMT_USD"))
+    currency = _text(row.get("CUR_CD")).upper()
+    if amount is None and usd is None:
+        amount = _svms_number(row.get("R_AMT"))
+        usd = _svms_number(row.get("R_AMT_USD"))
+        currency = _text(row.get("R_CUR_CD")).upper()
+    if amount is None:
+        if usd is not None:
+            return usd
+        return 0.0
+    if usd is not None:
+        return usd
+    if not currency or currency == "USD":
+        return amount
+    warnings.append("%s: %s 금액에 SVMS USD 환산값이 없어 Budget 0으로 보류" % (label, currency))
+    return 0.0
+
+
+def _normalize_svms_dock_jobs(payload):
+    """Minimal SP_GET_DOCK_INFO payload -> deterministic Dock Manager preview."""
+    if not isinstance(payload, dict):
+        raise ValueError("SVMS 응답 형식이 올바르지 않습니다")
+    jobs = []
+    seen = set()
+    warnings = []
+    for source_key in ("P_RS_DP", "P_RS_SS", "P_RS_SR"):
+        source_rows = payload.get(source_key) or []
+        if not isinstance(source_rows, list):
+            raise ValueError("%s 응답 형식이 올바르지 않습니다" % source_key)
+        for row in source_rows:
+            if not isinstance(row, dict):
+                continue
+            subject = _text(row.get("SUBJ"))
+            match = _SVMS_JOB_TAG.match(subject)
+            number = _text(match.group(1) if match else "")
+            description = _text(match.group(2) if match else subject)
+            if not number:
+                warnings.append("%s: [Job No.]가 없어 반영 보류" % (subject or "빈 SUBJECT"))
+                continue
+            if not description:
+                description = subject or "SVMS Dock Job"
+            category, section = _svms_job_category(subject, source_key)
+            label = number or description
+            identity = (category.lower(), (number or description).upper())
+            if identity in seen:
+                warnings.append("%s: 같은 Category/Job No.가 중복되어 첫 행만 사용" % label)
+                continue
+            seen.add(identity)
+            jobs.append({
+                "number": number,
+                "section": section,
+                "category": category,
+                "description": description,
+                "vendor": _text(row.get("VNDR_NM")),
+                "budget": _svms_job_budget(row, warnings, label),
+            })
+    return {
+        "jobs": jobs,
+        "job_count": len(jobs),
+        "total_budget": round(sum(job["budget"] for job in jobs), 2),
+        "counts": {category: sum(job["category"] == category for job in jobs)
+                   for category in ("Paint", "Spare", "Store", "Shore Repair")},
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
+def _apply_svms_job_import(db, vessel_id, parsed):
+    if not db.execute("SELECT 1 FROM vessels WHERE id=?", (vessel_id,)).fetchone():
+        raise ValueError("선박을 찾을 수 없습니다")
+    existing = {}
+    for row in db.execute("SELECT * FROM jobs WHERE vessel_id=? ORDER BY id", (vessel_id,)).fetchall():
+        number = _text(row["number"]).upper()
+        key = (_text(row["category"]).lower(), number or _text(row["description"]).upper())
+        existing.setdefault(key, row)
+    inserted = updated = unchanged = 0
+    for job in parsed["jobs"]:
+        number_key = _text(job["number"]).upper() or _text(job["description"]).upper()
+        key = (_text(job["category"]).lower(), number_key)
+        current = existing.get(key)
+        values = (job["section"], job["category"], job["description"],
+                  job["vendor"], job["budget"])
+        if current is None:
+            cursor = db.execute(
+                "INSERT INTO jobs(vessel_id,number,section,category,description,vendor,budget,"
+                "consumption,start_date,end_date,completion,remarks) VALUES(?,?,?,?,?,?,?,0,NULL,NULL,0,'[]')",
+                (vessel_id, job["number"]) + values,
+            )
+            inserted += 1
+            existing[key] = db.execute("SELECT * FROM jobs WHERE id=?", (cursor.lastrowid,)).fetchone()
+            continue
+        current_values = (current["section"], current["category"], current["description"],
+                          current["vendor"], round(float(current["budget"] or 0), 2))
+        if current_values == values:
+            unchanged += 1
+            continue
+        # Preserve progress, consumption, dates and remarks; refresh only SVMS-owned fields.
+        db.execute("UPDATE jobs SET section=?,category=?,description=?,vendor=?,budget=?,"
+                   "updated_at=datetime('now') WHERE id=?", values + (current["id"],))
+        updated += 1
+    return {"inserted": inserted, "updated": updated, "unchanged": unchanged,
+            "job_count": parsed["job_count"], "total_budget": parsed["total_budget"]}
+
+
 def _yard_number(value):
     raw = _yard_cell_text(value).replace(" ", "")
     return raw if _YARD_ITEM_NO.fullmatch(raw) else ""
@@ -822,13 +963,169 @@ def _install_yard_job_import(dd, dd_app):
         if (request.method == "GET" and request.path == "/" and response.status_code == 200
                 and response.mimetype == "text/html" and not response.headers.get("Content-Encoding")):
             body = response.get_data(as_text=True)
-            asset = '<script src="/static/js/drydock-yard-import.js?v=20260825"></script>'
+            asset = '<script src="/static/js/drydock-yard-import.js?v=20260825-2"></script>'
             if asset not in body and "</body>" in body:
                 response.set_data(body.replace("</body>", asset + "</body>"))
                 response.headers["Content-Length"] = len(response.get_data())
         return response
 
     dd_app._trmt_yard_import_installed = True
+
+
+def _install_svms_job_import(dd, trmt_app, dd_app):
+    """Queue a live read on the credential-holding Mac, then preview/apply it here."""
+    if getattr(dd_app, "_trmt_svms_job_import_installed", False):
+        return
+    from flask import jsonify, request
+
+    db = dd.get_db()
+    db.execute("""CREATE TABLE IF NOT EXISTS trmt_svms_job_import (
+        token TEXT PRIMARY KEY,
+        vessel_id TEXT NOT NULL,
+        vsl_cd TEXT NOT NULL,
+        dk_cd TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        payload_json TEXT,
+        error TEXT,
+        requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT,
+        applied_at TEXT
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_trmt_svms_job_import_status "
+               "ON trmt_svms_job_import(status,requested_at)")
+    db.commit()
+
+    def _trmt_db():
+        path = trmt_app.config.get("DATABASE")
+        if not path:
+            raise RuntimeError("TRMT database is not configured")
+        conn = sqlite3.connect("file:%s?mode=ro" % os.path.abspath(path), uri=True)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _target(vid):
+        vessel = dd.get_db().execute("SELECT name,imo FROM vessels WHERE id=?", (vid,)).fetchone()
+        if not vessel:
+            return None
+        conn = _trmt_db()
+        try:
+            return conn.execute("""
+                SELECT v.vsl_cd, dpv.dk_cd
+                  FROM vessels v
+                  JOIN dock_procure_vessel dpv
+                    ON UPPER(TRIM(dpv.vsl_nm))=UPPER(TRIM(v.name))
+                 WHERE v.active=1 AND TRIM(COALESCE(v.vsl_cd,''))<>''
+                   AND TRIM(COALESCE(dpv.dk_cd,''))<>''
+                   AND (UPPER(TRIM(v.name))=UPPER(TRIM(?))
+                        OR (TRIM(COALESCE(?,''))<>'' AND TRIM(v.imo)=TRIM(?)))
+                 ORDER BY dpv.updated_at DESC LIMIT 1
+            """, (_text(vessel["name"]), _text(vessel["imo"]), _text(vessel["imo"]))).fetchone()
+        finally:
+            conn.close()
+
+    @dd_app.route("/api/vessels/<vid>/jobs/svms-import/request", methods=["POST"])
+    def _trmt_svms_import_request(vid):
+        target = _target(vid)
+        if target is None:
+            return jsonify({"error": "이 선박에 연결된 SVMS 입거수리 Draft(Dock No)가 없습니다"}), 409
+        now = time.time()
+        dd.get_db().execute(
+            "UPDATE trmt_svms_job_import SET status='failed',error='가져오기 요청 만료',"
+            "completed_at=datetime('now') WHERE vessel_id=? AND status='pending' "
+            "AND requested_at < datetime('now', ?)",
+            (vid, "-%d seconds" % _SVMS_IMPORT_TTL_SECONDS),
+        )
+        dd.get_db().commit()
+        recent = dd.get_db().execute(
+            "SELECT token,status FROM trmt_svms_job_import WHERE vessel_id=? "
+            "AND (status='pending' OR (status='ready' AND completed_at >= datetime('now', ?))) "
+            "ORDER BY requested_at DESC LIMIT 1",
+            (vid, "-%d seconds" % _SVMS_IMPORT_TTL_SECONDS),
+        ).fetchone()
+        if recent:
+            return jsonify({"preview_token": recent["token"], "status": recent["status"]}), 202
+        token = secrets.token_urlsafe(24)
+        dd.get_db().execute(
+            "INSERT INTO trmt_svms_job_import(token,vessel_id,vsl_cd,dk_cd,status,requested_at) "
+            "VALUES(?,?,?,?, 'pending', datetime('now'))",
+            (token, vid, target["vsl_cd"], target["dk_cd"]),
+        )
+        dd.get_db().commit()
+        return jsonify({"preview_token": token, "status": "pending", "requested_at": now}), 202
+
+    @dd_app.route("/api/vessels/<vid>/jobs/svms-import/status/<token>", methods=["GET"])
+    def _trmt_svms_import_status(vid, token):
+        row = dd.get_db().execute(
+            "SELECT status,payload_json,error,completed_at FROM trmt_svms_job_import "
+            "WHERE token=? AND vessel_id=?", (token, vid),
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "가져오기 요청을 찾을 수 없습니다"}), 404
+        result = {"status": row["status"], "preview_token": token,
+                  "error": row["error"], "completed_at": row["completed_at"]}
+        if row["status"] == "ready":
+            result.update(json.loads(row["payload_json"] or "{}"))
+            result["jobs"] = (result.get("jobs") or [])[:20]
+        return jsonify(result)
+
+    @dd_app.route("/api/vessels/<vid>/jobs/svms-import/apply", methods=["POST"])
+    def _trmt_svms_import_apply(vid):
+        token = _text((request.get_json(silent=True) or {}).get("preview_token"))
+        row = dd.get_db().execute(
+            "SELECT status,payload_json FROM trmt_svms_job_import WHERE token=? AND vessel_id=? "
+            "AND completed_at >= datetime('now', ?)",
+            (token, vid, "-%d seconds" % _SVMS_IMPORT_TTL_SECONDS),
+        ).fetchone()
+        if not row or row["status"] != "ready":
+            return jsonify({"error": "적용 가능한 SVMS 미리보기가 없습니다"}), 409
+        try:
+            parsed = json.loads(row["payload_json"] or "{}")
+            result = _apply_svms_job_import(dd.get_db(), vid, parsed)
+            dd.get_db().execute("UPDATE trmt_svms_job_import SET status='applied',"
+                                "applied_at=datetime('now') WHERE token=? AND status='ready'", (token,))
+            dd.get_db().commit()
+        except (ValueError, sqlite3.Error, TypeError) as exc:
+            dd.get_db().rollback()
+            dd_app.logger.warning("SVMS job import apply failed: %s", exc)
+            return jsonify({"error": "SVMS Job 반영에 실패했습니다"}), 500
+        return jsonify(result)
+
+    @dd_app.route(SVMS_IMPORT_PENDING_PATH, methods=["GET"])
+    def _trmt_svms_import_pending():
+        row = dd.get_db().execute(
+            "SELECT token,vsl_cd,dk_cd FROM trmt_svms_job_import WHERE status='pending' "
+            "ORDER BY requested_at LIMIT 1"
+        ).fetchone()
+        return jsonify(dict(row) if row else {})
+
+    @dd_app.route(SVMS_IMPORT_COMPLETE_PATH, methods=["POST"])
+    def _trmt_svms_import_complete():
+        body = request.get_json(silent=True) or {}
+        token = _text(body.get("token"))
+        row = dd.get_db().execute(
+            "SELECT status FROM trmt_svms_job_import WHERE token=?", (token,),
+        ).fetchone()
+        if not row or row["status"] != "pending":
+            return jsonify({"error": "pending 요청을 찾을 수 없습니다"}), 409
+        if body.get("error"):
+            dd.get_db().execute(
+                "UPDATE trmt_svms_job_import SET status='failed',error=?,completed_at=datetime('now') "
+                "WHERE token=? AND status='pending'", (_text(body.get("error"))[:300], token),
+            )
+        else:
+            try:
+                parsed = _normalize_svms_dock_jobs(body.get("payload"))
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            dd.get_db().execute(
+                "UPDATE trmt_svms_job_import SET status='ready',payload_json=?,error=NULL,"
+                "completed_at=datetime('now') WHERE token=? AND status='pending'",
+                (json.dumps(parsed, ensure_ascii=False, separators=(",", ":")), token),
+            )
+        dd.get_db().commit()
+        return jsonify({"ok": True})
+
+    dd_app._trmt_svms_job_import_installed = True
 
 
 def apply(dd, trmt_app):
@@ -863,6 +1160,7 @@ def apply(dd, trmt_app):
     _install_daily_events_endpoint(dd, trmt_app, dd_app)
     _install_roster_vessels_endpoints(dd, trmt_app, dd_app)
     _install_yard_job_import(dd, dd_app)
+    _install_svms_job_import(dd, trmt_app, dd_app)
     # is_viewer/can_access_vessel도 세션 유저 기준으로 동작(원본이 get_current_user 참조)
 
     # ── 3. 전 route admin 게이팅 + login/logout 차단 (결정2, C2·C3 해소) ─
@@ -871,7 +1169,9 @@ def apply(dd, trmt_app):
         # The read-only daily adapter is the sole API-key exception.  Keep the
         # comparison exact (path and method) so a trailing-slash, case, or
         # neighbouring Dock Manager API cannot inherit TRMT key access.
-        if request.path == DAILY_EVENTS_PATH and request.method == "GET":
+        if ((request.path == DAILY_EVENTS_PATH and request.method == "GET")
+                or (request.path == SVMS_IMPORT_PENDING_PATH and request.method == "GET")
+                or (request.path == SVMS_IMPORT_COMPLETE_PATH and request.method == "POST")):
             if not dd_app._trmt_check_daily_api_key():
                 return jsonify({"error": "Unauthorized"}), 401
             return None

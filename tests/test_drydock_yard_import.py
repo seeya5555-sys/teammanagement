@@ -83,6 +83,72 @@ class DockYardImportTests(unittest.TestCase):
         self.assertEqual(1, result["preserved_manual"])
         self.assertEqual(10.0, db.execute("SELECT dc_rate FROM vessels WHERE id='v_test'").fetchone()[0])
 
+    def test_svms_dock_rows_classify_subject_vendor_and_svms_usd(self):
+        parsed = integration._normalize_svms_dock_jobs({
+            "P_RS_DP": [{"SUBJ": "[P1] DOCK PAINT", "VNDR_NM": "Paint Co",
+                          "AMT": 100, "AMT_USD": 100, "CUR_CD": "USD"}],
+            "P_RS_SS": [
+                {"SUBJ": "[S1-A] M/E SPARE", "VNDR_NM": "Maker",
+                 "AMT": 1350000, "AMT_USD": 1000, "CUR_CD": "KRW"},
+                {"SUBJ": "[ST2] CABIN STORE", "AMT": 200, "AMT_USD": 200, "CUR_CD": "USD"},
+                {"SUBJ": "[S3] LOCAL SUPPLY - STORE", "AMT": 16000,
+                 "AMT_USD": 100, "CUR_CD": "JPY"},
+                {"SUBJ": "[X4] UNCLASSIFIED ITEM", "R_AMT": 50,
+                 "R_AMT_USD": 50, "R_CUR_CD": "USD"},
+            ],
+            "P_RS_SR": [{"SUBJ": "[R1] M/E OVHL", "VNDR_NM": "Repair Co",
+                          "AMT": 45000, "AMT_USD": 45000, "CUR_CD": "USD"}],
+        })
+        jobs = {job["number"]: job for job in parsed["jobs"]}
+        self.assertEqual(("Paint", "PAINT", "DOCK PAINT"),
+                         (jobs["P1"]["category"], jobs["P1"]["section"], jobs["P1"]["description"]))
+        self.assertEqual("Spare", jobs["S1-A"]["category"])
+        self.assertEqual(1000, jobs["S1-A"]["budget"])
+        self.assertEqual("Maker", jobs["S1-A"]["vendor"])
+        self.assertEqual("Store", jobs["ST2"]["category"])
+        self.assertEqual("Store", jobs["S3"]["category"])
+        self.assertEqual("Spare", jobs["X4"]["category"])
+        self.assertEqual("Shore Repair", jobs["R1"]["category"])
+        self.assertEqual({"Paint": 1, "Spare": 2, "Store": 2, "Shore Repair": 1}, parsed["counts"])
+
+    def test_svms_apply_is_idempotent_and_preserves_live_progress(self):
+        db = make_db()
+        db.execute("""INSERT INTO jobs(vessel_id,number,section,category,description,vendor,budget,
+            consumption,start_date,end_date,completion,remarks)
+            VALUES('v_test','S1','SPARE','Spare','Old title','Old vendor',1,55,
+                   '2026-01-01','2026-01-02',80,'[{"date":"2026-01-01"}]')""")
+        parsed = integration._normalize_svms_dock_jobs({
+            "P_RS_DP": [],
+            "P_RS_SS": [{"SUBJ": "[S1] New title", "VNDR_NM": "New vendor",
+                          "AMT": 1350000, "AMT_USD": 1000, "CUR_CD": "KRW"}],
+            "P_RS_SR": [],
+        })
+        first = integration._apply_svms_job_import(db, "v_test", parsed)
+        second = integration._apply_svms_job_import(db, "v_test", parsed)
+        row = db.execute("SELECT * FROM jobs WHERE vessel_id='v_test' AND number='S1'").fetchone()
+        self.assertEqual((0, 1, 0), (first["inserted"], first["updated"], first["unchanged"]))
+        self.assertEqual((0, 0, 1), (second["inserted"], second["updated"], second["unchanged"]))
+        self.assertEqual(("New title", "New vendor", 1000),
+                         (row["description"], row["vendor"], row["budget"]))
+        self.assertEqual((55, 80, '2026-01-01', '[{"date":"2026-01-01"}]'),
+                         (row["consumption"], row["completion"], row["start_date"], row["remarks"]))
+
+    def test_svms_import_holds_numberless_and_accepts_svms_usd_only(self):
+        parsed = integration._normalize_svms_dock_jobs({
+            "P_RS_DP": [],
+            "P_RS_SS": [
+                {"SUBJ": "NO JOB NUMBER", "AMT": 10, "AMT_USD": 10, "CUR_CD": "USD"},
+                {"SUBJ": "[S7] LOCAL SUPPLY - STORES", "AMT_USD": 25, "CUR_CD": "KRW"},
+                {"SUBJ": "[S8] LOCAL SUPPLY - SPARE", "AMT": 1350,
+                 "AMT_USD": 1, "CUR_CD": "KRW"},
+            ],
+            "P_RS_SR": [],
+        })
+        self.assertEqual(2, parsed["job_count"])
+        self.assertEqual(("Store", 25), (parsed["jobs"][0]["category"], parsed["jobs"][0]["budget"]))
+        self.assertEqual(("Spare", 1), (parsed["jobs"][1]["category"], parsed["jobs"][1]["budget"]))
+        self.assertIn("[Job No.]가 없어 반영 보류", parsed["warnings"][0])
+
 
 if __name__ == "__main__":
     unittest.main()
