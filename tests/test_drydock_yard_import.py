@@ -45,7 +45,34 @@ def make_db():
     return db
 
 
+def make_queue_db():
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.executescript("""
+        CREATE TABLE trmt_svms_job_import (
+            token TEXT PRIMARY KEY, vessel_id TEXT NOT NULL, vsl_cd TEXT NOT NULL,
+            dk_cd TEXT NOT NULL, status TEXT NOT NULL, payload_json TEXT, error TEXT,
+            requested_at TEXT NOT NULL, completed_at TEXT, applied_at TEXT
+        );
+    """)
+    return db
+
+
 class DockYardImportTests(unittest.TestCase):
+    def test_svms_request_coalesces_pending_but_never_reuses_ready_preview(self):
+        db = make_queue_db()
+        db.execute("""INSERT INTO trmt_svms_job_import
+            (token,vessel_id,vsl_cd,dk_cd,status,requested_at,completed_at)
+            VALUES('old-ready','v_test','V1','D1','ready',datetime('now'),datetime('now'))""")
+        reusable = integration._pending_svms_import_request(db, 'v_test')
+        self.assertIsNone(reusable)
+
+        db.execute("""INSERT INTO trmt_svms_job_import
+            (token,vessel_id,vsl_cd,dk_cd,status,requested_at)
+            VALUES('in-flight','v_test','V1','D1','pending',datetime('now'))""")
+        reusable = integration._pending_svms_import_request(db, 'v_test')
+        self.assertEqual(('in-flight', 'pending'), (reusable['token'], reusable['status']))
+
     def test_parser_matches_quote_total_and_kuwait_rollup_shape(self):
         parsed = integration._parse_yard_job_workbook(workbook_bytes())
         jobs = {job["number"]: job for job in parsed["jobs"]}

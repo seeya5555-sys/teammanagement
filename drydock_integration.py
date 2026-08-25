@@ -1006,6 +1006,14 @@ def _install_yard_job_import(dd, dd_app):
     dd_app._trmt_yard_import_installed = True
 
 
+def _pending_svms_import_request(db, vessel_id):
+    return db.execute(
+        "SELECT token,status FROM trmt_svms_job_import WHERE vessel_id=? "
+        "AND status='pending' ORDER BY requested_at DESC LIMIT 1",
+        (vessel_id,),
+    ).fetchone()
+
+
 def _install_svms_job_import(dd, trmt_app, dd_app):
     """Queue a live read on the credential-holding Mac, then preview/apply it here."""
     if getattr(dd_app, "_trmt_svms_job_import_installed", False):
@@ -1094,12 +1102,11 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
             (vid, "-%d seconds" % _SVMS_IMPORT_TTL_SECONDS),
         )
         dd.get_db().commit()
-        recent = dd.get_db().execute(
-            "SELECT token,status FROM trmt_svms_job_import WHERE vessel_id=? "
-            "AND (status='pending' OR (status='ready' AND completed_at >= datetime('now', ?))) "
-            "ORDER BY requested_at DESC LIMIT 1",
-            (vid, "-%d seconds" % _SVMS_IMPORT_TTL_SECONDS),
-        ).fetchone()
+        # Coalesce only an in-flight read. A ready preview is deliberately not
+        # reused: the user can update the SVMS draft and immediately press the
+        # import button again, in which case a fresh Mac-side read is required.
+        # The old ready token remains independently applicable until its TTL.
+        recent = _pending_svms_import_request(dd.get_db(), vid)
         if recent:
             return jsonify({"preview_token": recent["token"], "status": recent["status"]}), 202
         token = secrets.token_urlsafe(24)
