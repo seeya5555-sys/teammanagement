@@ -978,22 +978,25 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
         return
     from flask import jsonify, request
 
-    db = dd.get_db()
-    db.execute("""CREATE TABLE IF NOT EXISTS trmt_svms_job_import (
-        token TEXT PRIMARY KEY,
-        vessel_id TEXT NOT NULL,
-        vsl_cd TEXT NOT NULL,
-        dk_cd TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        payload_json TEXT,
-        error TEXT,
-        requested_at TEXT NOT NULL DEFAULT (datetime('now')),
-        completed_at TEXT,
-        applied_at TEXT
-    )""")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_trmt_svms_job_import_status "
-               "ON trmt_svms_job_import(status,requested_at)")
-    db.commit()
+    # apply() runs while the parent TRMT app is importing, outside the mounted
+    # Dock Manager app context. Enter the owning app explicitly for its g-bound DB.
+    with dd_app.app_context():
+        db = dd.get_db()
+        db.execute("""CREATE TABLE IF NOT EXISTS trmt_svms_job_import (
+            token TEXT PRIMARY KEY,
+            vessel_id TEXT NOT NULL,
+            vsl_cd TEXT NOT NULL,
+            dk_cd TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            payload_json TEXT,
+            error TEXT,
+            requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT,
+            applied_at TEXT
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_trmt_svms_job_import_status "
+                   "ON trmt_svms_job_import(status,requested_at)")
+        db.commit()
 
     def _trmt_db():
         path = trmt_app.config.get("DATABASE")
