@@ -62,6 +62,7 @@ _SVMS_JOB_TAG = re.compile(r"^\s*\[([^\]]+)\]\s*(.*)$")
 _SVMS_JOB_BARE_TAG = re.compile(
     r"^\s*((?:ST|S|P|R)\d+(?:-[A-Z0-9]+)?)\b\s*[-:]?\s*(.*)$", re.I
 )
+_SVMS_JOB_CANONICAL_NUMBER = re.compile(r"^(?:ST|S|P|R)\d+(?:-[A-Z0-9]+)?$", re.I)
 _SVMS_IMPORT_TTL_SECONDS = 15 * 60
 
 
@@ -616,6 +617,29 @@ def _svms_job_budget(row, warnings, label):
     return 0.0
 
 
+def _svms_job_identity(job):
+    """Stable re-import identity.
+
+    Canonical P/S/ST/R numbers are globally identified by Job No. because their prefix
+    encodes the source. Non-canonical bracket tags keep Category in the key so an old
+    manual/foreign tag cannot absorb an unrelated SVMS row. Numberless rows need
+    Category + title.
+    """
+    def value(key):
+        try:
+            return job[key]
+        except (KeyError, IndexError, TypeError):
+            return ""
+
+    number = _text(value("number")).upper()
+    if _SVMS_JOB_CANONICAL_NUMBER.fullmatch(number):
+        return ("number", number)
+    if number:
+        return ("category_number", _text(value("category")).lower(), number)
+    return ("title", _text(value("category")).lower(),
+            _text(value("description")).upper())
+
+
 def _normalize_svms_dock_jobs(payload):
     """Minimal SP_GET_DOCK_INFO payload -> deterministic Dock Manager preview."""
     if not isinstance(payload, dict):
@@ -638,9 +662,10 @@ def _normalize_svms_dock_jobs(payload):
                 warnings.append("%s: Job No. 없음 → 제목 기준으로 재가져오기 매칭" % description)
             category, section = _svms_job_category(subject, source_key)
             label = number or description
-            identity = (category.lower(), (number or description).upper())
+            candidate = {"number": number, "category": category, "description": description}
+            identity = _svms_job_identity(candidate)
             if identity in seen:
-                warnings.append("%s: 같은 Category/Job No.가 중복되어 첫 행만 사용" % label)
+                warnings.append("%s: 같은 Job 식별자가 중복되어 첫 행만 사용" % label)
                 continue
             seen.add(identity)
             jobs.append({
@@ -666,13 +691,11 @@ def _apply_svms_job_import(db, vessel_id, parsed):
         raise ValueError("선박을 찾을 수 없습니다")
     existing = {}
     for row in db.execute("SELECT * FROM jobs WHERE vessel_id=? ORDER BY id", (vessel_id,)).fetchall():
-        number = _text(row["number"]).upper()
-        key = (_text(row["category"]).lower(), number or _text(row["description"]).upper())
+        key = _svms_job_identity(row)
         existing.setdefault(key, row)
     inserted = updated = unchanged = 0
     for job in parsed["jobs"]:
-        number_key = _text(job["number"]).upper() or _text(job["description"]).upper()
-        key = (_text(job["category"]).lower(), number_key)
+        key = _svms_job_identity(job)
         current = existing.get(key)
         values = (job["section"], job["category"], job["description"],
                   job["vendor"], job["budget"])
@@ -685,14 +708,15 @@ def _apply_svms_job_import(db, vessel_id, parsed):
             inserted += 1
             existing[key] = db.execute("SELECT * FROM jobs WHERE id=?", (cursor.lastrowid,)).fetchone()
             continue
-        current_values = (current["section"], current["category"], current["description"],
-                          current["vendor"], round(float(current["budget"] or 0), 2))
-        if current_values == values:
+        incoming_budget = round(float(job["budget"] or 0), 2)
+        current_budget = round(float(current["budget"] or 0), 2)
+        if current_budget == incoming_budget:
             unchanged += 1
             continue
-        # Preserve progress, consumption, dates and remarks; refresh only SVMS-owned fields.
-        db.execute("UPDATE jobs SET section=?,category=?,description=?,vendor=?,budget=?,"
-                   "updated_at=datetime('now') WHERE id=?", values + (current["id"],))
+        # Existing Job identity is authoritative in TRMT. A re-import may only refresh
+        # the SVMS USD Budget; preserve title/vendor/classification and every live field.
+        db.execute("UPDATE jobs SET budget=?,updated_at=datetime('now') WHERE id=?",
+                   (incoming_budget, current["id"]))
         updated += 1
     return {"inserted": inserted, "updated": updated, "unchanged": unchanged,
             "job_count": parsed["job_count"], "total_budget": parsed["total_budget"]}

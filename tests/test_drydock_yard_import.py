@@ -128,10 +128,67 @@ class DockYardImportTests(unittest.TestCase):
         row = db.execute("SELECT * FROM jobs WHERE vessel_id='v_test' AND number='S1'").fetchone()
         self.assertEqual((0, 1, 0), (first["inserted"], first["updated"], first["unchanged"]))
         self.assertEqual((0, 0, 1), (second["inserted"], second["updated"], second["unchanged"]))
-        self.assertEqual(("New title", "New vendor", 1000),
+        self.assertEqual(("Old title", "Old vendor", 1000),
                          (row["description"], row["vendor"], row["budget"]))
         self.assertEqual((55, 80, '2026-01-01', '[{"date":"2026-01-01"}]'),
                          (row["consumption"], row["completion"], row["start_date"], row["remarks"]))
+
+    def test_svms_reimport_matches_number_across_category_drift_and_updates_budget_only(self):
+        db = make_db()
+        db.execute("""INSERT INTO jobs(vessel_id,number,section,category,description,vendor,budget,
+            consumption,start_date,end_date,completion,remarks)
+            VALUES('v_test','S9','SPARE','Spare','Manual title','Manual vendor',10,55,
+                   '2026-01-01','2026-01-02',80,'[{"date":"2026-01-01"}]')""")
+        parsed = {"jobs": [{"number": "S9", "section": "STORE", "category": "Store",
+                             "description": "SVMS changed title", "vendor": "SVMS vendor",
+                             "budget": 20}],
+                  "job_count": 1, "total_budget": 20}
+        result = integration._apply_svms_job_import(db, "v_test", parsed)
+        rows = db.execute("SELECT * FROM jobs WHERE vessel_id='v_test'").fetchall()
+        self.assertEqual((0, 1, 0), (result["inserted"], result["updated"], result["unchanged"]))
+        self.assertEqual(1, len(rows))
+        self.assertEqual(("SPARE", "Spare", "Manual title", "Manual vendor", 20),
+                         (rows[0]["section"], rows[0]["category"], rows[0]["description"],
+                          rows[0]["vendor"], rows[0]["budget"]))
+
+    def test_svms_preview_deduplicates_same_number_even_if_category_drifts(self):
+        parsed = integration._normalize_svms_dock_jobs({
+            "P_RS_DP": [],
+            "P_RS_SS": [
+                {"SUBJ": "[S9] FIRST", "AMT_USD": 10, "CUR_CD": "USD"},
+                {"SUBJ": "[S9] LOCAL SUPPLY - STORE", "AMT_USD": 20, "CUR_CD": "USD"},
+            ],
+            "P_RS_SR": [],
+        })
+        self.assertEqual(1, parsed["job_count"])
+        self.assertEqual(("S9", "Spare", 10),
+                         (parsed["jobs"][0]["number"], parsed["jobs"][0]["category"],
+                          parsed["jobs"][0]["budget"]))
+
+    def test_svms_noncanonical_number_does_not_cross_category_boundary(self):
+        parsed = integration._normalize_svms_dock_jobs({
+            "P_RS_DP": [],
+            "P_RS_SS": [{"SUBJ": "[X4] SPARE ITEM", "AMT_USD": 10, "CUR_CD": "USD"}],
+            "P_RS_SR": [{"SUBJ": "[X4] REPAIR ITEM", "AMT_USD": 20, "CUR_CD": "USD"}],
+        })
+        self.assertEqual(2, parsed["job_count"])
+        self.assertEqual(["Spare", "Shore Repair"], [job["category"] for job in parsed["jobs"]])
+
+    def test_svms_numberless_reimport_updates_budget_only_when_title_is_stable(self):
+        db = make_db()
+        db.execute("""INSERT INTO jobs(vessel_id,number,section,category,description,vendor,budget,
+            consumption,start_date,end_date,completion,remarks)
+            VALUES('v_test','','SPARE','Spare','NO NUMBER','Manual vendor',10,55,
+                   '2026-01-01','2026-01-02',80,'[]')""")
+        parsed = {"jobs": [{"number": "", "section": "SPARE", "category": "Spare",
+                             "description": "NO NUMBER", "vendor": "SVMS vendor",
+                             "budget": 20}],
+                  "job_count": 1, "total_budget": 20}
+        result = integration._apply_svms_job_import(db, "v_test", parsed)
+        row = db.execute("SELECT * FROM jobs WHERE vessel_id='v_test'").fetchone()
+        self.assertEqual((0, 1, 0), (result["inserted"], result["updated"], result["unchanged"]))
+        self.assertEqual(("Manual vendor", 20, 55, 80),
+                         (row["vendor"], row["budget"], row["consumption"], row["completion"]))
 
     def test_svms_import_accepts_bare_and_numberless_subjects(self):
         parsed = integration._normalize_svms_dock_jobs({
