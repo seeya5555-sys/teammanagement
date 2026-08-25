@@ -978,10 +978,13 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
         return
     from flask import jsonify, request
 
-    # apply() runs while the parent TRMT app is importing, outside the mounted
-    # Dock Manager app context. Enter the owning app explicitly for its g-bound DB.
-    with dd_app.app_context():
-        db = dd.get_db()
+    def _ensure_table(db):
+        try:
+            db.execute("SELECT 1 FROM trmt_svms_job_import LIMIT 0")
+            return
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc).lower():
+                raise
         db.execute("""CREATE TABLE IF NOT EXISTS trmt_svms_job_import (
             token TEXT PRIMARY KEY,
             vessel_id TEXT NOT NULL,
@@ -997,6 +1000,11 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
         db.execute("CREATE INDEX IF NOT EXISTS idx_trmt_svms_job_import_status "
                    "ON trmt_svms_job_import(status,requested_at)")
         db.commit()
+
+    # apply() runs while the parent TRMT app is importing, outside the mounted
+    # Dock Manager app context. Enter the owning app explicitly for its g-bound DB.
+    with dd_app.app_context():
+        _ensure_table(dd.get_db())
 
     def _trmt_db():
         path = trmt_app.config.get("DATABASE")
@@ -1028,6 +1036,7 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
 
     @dd_app.route("/api/vessels/<vid>/jobs/svms-import/request", methods=["POST"])
     def _trmt_svms_import_request(vid):
+        _ensure_table(dd.get_db())
         target = _target(vid)
         if target is None:
             return jsonify({"error": "이 선박에 연결된 SVMS 입거수리 Draft(Dock No)가 없습니다"}), 409
@@ -1058,6 +1067,7 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
 
     @dd_app.route("/api/vessels/<vid>/jobs/svms-import/status/<token>", methods=["GET"])
     def _trmt_svms_import_status(vid, token):
+        _ensure_table(dd.get_db())
         row = dd.get_db().execute(
             "SELECT status,payload_json,error,completed_at FROM trmt_svms_job_import "
             "WHERE token=? AND vessel_id=?", (token, vid),
@@ -1073,6 +1083,7 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
 
     @dd_app.route("/api/vessels/<vid>/jobs/svms-import/apply", methods=["POST"])
     def _trmt_svms_import_apply(vid):
+        _ensure_table(dd.get_db())
         token = _text((request.get_json(silent=True) or {}).get("preview_token"))
         row = dd.get_db().execute(
             "SELECT status,payload_json FROM trmt_svms_job_import WHERE token=? AND vessel_id=? "
@@ -1095,6 +1106,7 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
 
     @dd_app.route(SVMS_IMPORT_PENDING_PATH, methods=["GET"])
     def _trmt_svms_import_pending():
+        _ensure_table(dd.get_db())
         row = dd.get_db().execute(
             "SELECT token,vsl_cd,dk_cd FROM trmt_svms_job_import WHERE status='pending' "
             "ORDER BY requested_at LIMIT 1"
@@ -1103,6 +1115,7 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
 
     @dd_app.route(SVMS_IMPORT_COMPLETE_PATH, methods=["POST"])
     def _trmt_svms_import_complete():
+        _ensure_table(dd.get_db())
         body = request.get_json(silent=True) or {}
         token = _text(body.get("token"))
         row = dd.get_db().execute(
