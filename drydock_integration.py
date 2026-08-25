@@ -59,6 +59,9 @@ _YARD_ITEM_NO = re.compile(r"^\d+(?:\.\d+)*$")
 _YARD_IMPORT_TTL = 30 * 60
 _YARD_IMPORT_MAX = 8
 _SVMS_JOB_TAG = re.compile(r"^\s*\[([^\]]+)\]\s*(.*)$")
+_SVMS_JOB_BARE_TAG = re.compile(
+    r"^\s*((?:ST|S|P|R)\d+(?:-[A-Z0-9]+)?)\b\s*[-:]?\s*(.*)$", re.I
+)
 _SVMS_IMPORT_TTL_SECONDS = 15 * 60
 
 
@@ -574,12 +577,22 @@ def _svms_job_category(subject, source_key):
         return "Store", "STORE"
     if re.search(r"\bSPARE\b", local_tail):
         return "Spare", "SPARE"
-    tag_match = _SVMS_JOB_TAG.match(subject)
-    tag = (tag_match.group(1) if tag_match else "").strip().upper()
+    tag, _description = _svms_subject_parts(subject)
+    tag = tag.upper()
     if re.fullmatch(r"ST\d+[A-Z0-9-]*", tag):
         return "Store", "STORE"
     # [S1-A]/[S2]/[S3] and every unclassified Spare/Store row default to Spare.
     return "Spare", "SPARE"
+
+
+def _svms_subject_parts(subject):
+    bracketed = _SVMS_JOB_TAG.match(subject)
+    if bracketed:
+        return _text(bracketed.group(1)), _text(bracketed.group(2))
+    bare = _SVMS_JOB_BARE_TAG.match(subject)
+    if bare:
+        return _text(bare.group(1)), _text(bare.group(2))
+    return "", _text(subject)
 
 
 def _svms_job_budget(row, warnings, label):
@@ -618,14 +631,11 @@ def _normalize_svms_dock_jobs(payload):
             if not isinstance(row, dict):
                 continue
             subject = _text(row.get("SUBJ"))
-            match = _SVMS_JOB_TAG.match(subject)
-            number = _text(match.group(1) if match else "")
-            description = _text(match.group(2) if match else subject)
-            if not number:
-                warnings.append("%s: [Job No.]가 없어 반영 보류" % (subject or "빈 SUBJECT"))
-                continue
+            number, description = _svms_subject_parts(subject)
             if not description:
                 description = subject or "SVMS Dock Job"
+            if not number:
+                warnings.append("%s: Job No. 없음 → 제목 기준으로 재가져오기 매칭" % description)
             category, section = _svms_job_category(subject, source_key)
             label = number or description
             identity = (category.lower(), (number or description).upper())

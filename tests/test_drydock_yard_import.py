@@ -133,7 +133,7 @@ class DockYardImportTests(unittest.TestCase):
         self.assertEqual((55, 80, '2026-01-01', '[{"date":"2026-01-01"}]'),
                          (row["consumption"], row["completion"], row["start_date"], row["remarks"]))
 
-    def test_svms_import_holds_numberless_and_accepts_svms_usd_only(self):
+    def test_svms_import_accepts_bare_and_numberless_subjects(self):
         parsed = integration._normalize_svms_dock_jobs({
             "P_RS_DP": [],
             "P_RS_SS": [
@@ -141,13 +141,18 @@ class DockYardImportTests(unittest.TestCase):
                 {"SUBJ": "[S7] LOCAL SUPPLY - STORES", "AMT_USD": 25, "CUR_CD": "KRW"},
                 {"SUBJ": "[S8] LOCAL SUPPLY - SPARE", "AMT": 1350,
                  "AMT_USD": 1, "CUR_CD": "KRW"},
+                {"SUBJ": "ST9 BARE STORE", "AMT": 30, "AMT_USD": 30, "CUR_CD": "USD"},
             ],
             "P_RS_SR": [],
         })
-        self.assertEqual(2, parsed["job_count"])
-        self.assertEqual(("Store", 25), (parsed["jobs"][0]["category"], parsed["jobs"][0]["budget"]))
-        self.assertEqual(("Spare", 1), (parsed["jobs"][1]["category"], parsed["jobs"][1]["budget"]))
-        self.assertIn("[Job No.]가 없어 반영 보류", parsed["warnings"][0])
+        self.assertEqual(4, parsed["job_count"])
+        self.assertEqual(("", "Spare", 10),
+                         (parsed["jobs"][0]["number"], parsed["jobs"][0]["category"], parsed["jobs"][0]["budget"]))
+        self.assertEqual(("Store", 25), (parsed["jobs"][1]["category"], parsed["jobs"][1]["budget"]))
+        self.assertEqual(("Spare", 1), (parsed["jobs"][2]["category"], parsed["jobs"][2]["budget"]))
+        self.assertEqual(("ST9", "Store", "BARE STORE"),
+                         (parsed["jobs"][3]["number"], parsed["jobs"][3]["category"], parsed["jobs"][3]["description"]))
+        self.assertIn("Job No. 없음", parsed["warnings"][0])
 
 
 if __name__ == "__main__":
