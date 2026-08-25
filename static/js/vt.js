@@ -365,11 +365,19 @@ function vesselSummary(item) {
   // 안 받은 계획)을 맨 앞에 두므로 vts[0] 을 그대로 쓰면 계획이 Last 로 찍힌다.
   // 계획밖에 없는 선박은 Last 를 지어내지 않고 '이력 없음' 으로 둔다.
   const lastReport = vts.find(v => (v.valid || '') !== 'Next Plan');
+  const latestLastResult = vtLatestLastResult(vts);
   if (lastReport) {
     const dateLabel = lastReport.inspection_date || '날짜 미정';
     const compLabel = lastReport.inspection_company || '미정';
     wrap.append(el('span', { class: 'vt-summary-last' },
       `Last: ${dateLabel} · ${compLabel}`));
+    if (vtNeedsInspection(latestLastResult)) {
+      const warningDateLabel = latestLastResult.inspection_date;
+      wrap.append(el('span', {
+        class: 'vt-summary-inspection-due',
+        title: `Last Result 검사일(${warningDateLabel})로부터 3개월 경과`,
+      }, '수검 필요'));
+    }
   } else {
     wrap.append(el('span', { class: 'vt-summary-last' }, 'Last: 이력 없음 · 계획만'));
   }
@@ -386,6 +394,37 @@ function vesselSummary(item) {
     wrap.append(el('span', { class: 'vt-summary-allclosed' }, '모두 완료 ✓'));
   }
   return wrap;
+}
+
+// Last Result 검사일로부터 달력 기준 3개월이 되는 날부터 수검 필요.
+// Date.setMonth()를 원일자에 바로 호출하면 1/31 + 3개월이 5월로 넘치므로,
+// 목표 월의 마지막 날로 clamp한다(예: 1/31 → 4/30).
+function vtInspectionDateParts(raw) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw || '');
+  if (!m) return false;
+  const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]);
+  const parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return null;
+  return { year, month, day };
+}
+
+function vtLatestLastResult(vts) {
+  return (vts || [])
+    .filter(v => v && v.valid === 'Last Result' && vtInspectionDateParts(v.inspection_date))
+    .reduce((latest, v) => !latest || v.inspection_date > latest.inspection_date ? v : latest, null);
+}
+
+function vtNeedsInspection(vt, now = new Date()) {
+  if (!vt || vt.valid !== 'Last Result') return false;
+  const parts = vtInspectionDateParts(vt.inspection_date);
+  if (!parts) return false;
+  const { year, month, day } = parts;
+
+  const targetFirst = new Date(year, month - 1 + 3, 1);
+  const targetLastDay = new Date(targetFirst.getFullYear(), targetFirst.getMonth() + 1, 0).getDate();
+  const due = new Date(targetFirst.getFullYear(), targetFirst.getMonth(), Math.min(day, targetLastDay));
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return today >= due;
 }
 
 function toggleVessel(vid) {
