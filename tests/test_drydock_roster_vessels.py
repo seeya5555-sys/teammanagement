@@ -19,16 +19,16 @@ class DockRosterVesselTests(unittest.TestCase):
         trmt.executescript("""
             CREATE TABLE vessels (
                 id INTEGER PRIMARY KEY, name TEXT, vessel_type TEXT, imo TEXT,
-                class_society TEXT, active INTEGER
+                class_society TEXT, gross_tonnage TEXT, dead_weight TEXT, active INTEGER
             );
             CREATE TABLE supervisor_vessels (supervisor_id INTEGER, vessel_id INTEGER);
             CREATE TABLE dock_reports (
                 id INTEGER PRIMARY KEY, vessel_id INTEGER, gross_tonnage TEXT,
                 dead_weight TEXT, updated_at TEXT
             );
-            INSERT INTO vessels VALUES(1,'MY VESSEL','VLCC','9123456','BV',1);
-            INSERT INTO vessels VALUES(2,'OTHER VESSEL','CNTR','9234567','DNV',1);
-            INSERT INTO vessels VALUES(3,'INACTIVE','VLCC','9345678','KR',0);
+            INSERT INTO vessels VALUES(1,'MY VESSEL','VLCC','9123456','BV','154380','299534',1);
+            INSERT INTO vessels VALUES(2,'OTHER VESSEL','CNTR','9234567','DNV',NULL,NULL,1);
+            INSERT INTO vessels VALUES(3,'INACTIVE','VLCC','9345678','KR',NULL,NULL,0);
             INSERT INTO supervisor_vessels VALUES(7,1);
             INSERT INTO supervisor_vessels VALUES(8,2);
             INSERT INTO supervisor_vessels VALUES(7,3);
@@ -96,8 +96,8 @@ class DockRosterVesselTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertEqual([{
             "id": 1, "name": "MY VESSEL", "type": "VLCC", "imo": "9123456",
-            "classSociety": "BV", "grtDwt": "GRT 154379 / DWT 299533",
-            "grossTonnage": "154379", "deadWeight": "299533",
+            "classSociety": "BV", "grtDwt": "GRT 154380 / DWT 299534",
+            "grossTonnage": "154380", "deadWeight": "299534",
         }], response.get_json())
 
     def test_create_rejects_other_roster_and_ignores_spoofed_particulars(self):
@@ -115,8 +115,18 @@ class DockRosterVesselTests(unittest.TestCase):
         self.assertEqual("VLCC", body["type"])
         self.assertEqual("9123456", body["imo"])
         self.assertEqual("BV", body["classSociety"])
-        self.assertEqual("GRT 154379 / DWT 299533", body["grt"])
+        self.assertEqual("GRT 154380 / DWT 299534", body["grt"])
         self.assertEqual("YARD", body["shipyard"])
+
+    def test_saved_report_is_fallback_when_svms_cache_is_blank(self):
+        self.login()
+        db = sqlite3.connect(self.trmt_path)
+        db.execute("UPDATE vessels SET gross_tonnage=NULL, dead_weight=NULL WHERE id=1")
+        db.commit()
+        db.close()
+        body = self.client.get(integration.ROSTER_VESSELS_PATH).get_json()[0]
+        self.assertEqual("154379", body["grossTonnage"])
+        self.assertEqual("299533", body["deadWeight"])
 
     def test_missing_supervisor_has_no_roster(self):
         self.login(supervisor_id=None)

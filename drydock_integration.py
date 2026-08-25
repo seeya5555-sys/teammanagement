@@ -460,12 +460,14 @@ def _install_roster_vessels_endpoints(dd, trmt_app, dd_app):
             params.append(vessel_id)
         sql = """
             SELECT v.id, v.name, v.vessel_type, v.imo, v.class_society,
-                   (SELECT d.gross_tonnage FROM dock_reports d
-                     WHERE d.vessel_id=v.id AND TRIM(COALESCE(d.gross_tonnage,''))<>''
-                     ORDER BY d.updated_at DESC, d.id DESC LIMIT 1) AS gross_tonnage,
-                   (SELECT d.dead_weight FROM dock_reports d
-                     WHERE d.vessel_id=v.id AND TRIM(COALESCE(d.dead_weight,''))<>''
-                     ORDER BY d.updated_at DESC, d.id DESC LIMIT 1) AS dead_weight
+                   COALESCE(NULLIF(TRIM(v.gross_tonnage), ''),
+                     (SELECT d.gross_tonnage FROM dock_reports d
+                       WHERE d.vessel_id=v.id AND TRIM(COALESCE(d.gross_tonnage,''))<>''
+                       ORDER BY d.updated_at DESC, d.id DESC LIMIT 1)) AS gross_tonnage,
+                   COALESCE(NULLIF(TRIM(v.dead_weight), ''),
+                     (SELECT d.dead_weight FROM dock_reports d
+                       WHERE d.vessel_id=v.id AND TRIM(COALESCE(d.dead_weight,''))<>''
+                       ORDER BY d.updated_at DESC, d.id DESC LIMIT 1)) AS dead_weight
               FROM vessels v
               JOIN supervisor_vessels sv ON sv.vessel_id=v.id
              WHERE %s

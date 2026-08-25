@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS vessels (
     vsl_cd        TEXT,                            -- SSOT(P0): SVMS 4자 코드
     vt_vessel_id  INTEGER,                         -- SSOT(P0): vesseltracker 내부 vesselId
     aliases       TEXT,                            -- SSOT(P0): 구선명·표기 별칭 JSON 배열 문자열
+    gross_tonnage TEXT,                            -- SVMS 선박상세 GT
+    dead_weight   TEXT,                            -- SVMS 선박상세 SUMMER_DW(DWT fallback)
     active        INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime'))

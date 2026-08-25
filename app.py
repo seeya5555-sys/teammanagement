@@ -1045,6 +1045,12 @@ def init_db(drop=False):
             if 'aliases' not in ves_cols:
                 conn.execute('ALTER TABLE vessels ADD COLUMN aliases TEXT')
                 print('  - vessels.aliases column added')
+            if 'gross_tonnage' not in ves_cols:
+                conn.execute('ALTER TABLE vessels ADD COLUMN gross_tonnage TEXT')
+                print('  - vessels.gross_tonnage column added')
+            if 'dead_weight' not in ves_cols:
+                conn.execute('ALTER TABLE vessels ADD COLUMN dead_weight TEXT')
+                print('  - vessels.dead_weight column added')
 
         # ── SOA 자동화 그룹 SSOT (P0) ─────────────────────────────────
         #  그룹 = "어느 배치로 언제 검토할지"의 스케줄링 파티션일 뿐.

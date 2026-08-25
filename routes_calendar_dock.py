@@ -3142,6 +3142,8 @@ def _ext_roster(sup_id=None, include_inactive=False):
     has_vsl_cd = 'vsl_cd' in vcols
     has_vt_id = 'vt_vessel_id' in vcols
     has_aliases = 'aliases' in vcols
+    has_gross_tonnage = 'gross_tonnage' in vcols
+    has_dead_weight = 'dead_weight' in vcols
 
     where = []
     params = []
@@ -3186,6 +3188,9 @@ def _ext_roster(sup_id=None, include_inactive=False):
             'vt_vessel_id': d.get('vt_vessel_id') if has_vt_id else None,
             'aliases':      parsed_aliases,
             'vessel_type':  d.get('vessel_type'),
+            'class_society': d.get('class_society'),
+            'gross_tonnage': d.get('gross_tonnage') if has_gross_tonnage else None,
+            'dead_weight':  d.get('dead_weight') if has_dead_weight else None,
             'active':       d['active'] if has_active else 1,
             'supervisors':  sorted(sup_map.get(d['id'], [])),
         })
@@ -3761,12 +3766,38 @@ def _vsl_cd_sane(code):
     return None
 
 
+def _particular_number(value):
+    """SVMS GT/DWT를 양수 숫자 문자열로 정규화한다(0/음수/비숫자 거부)."""
+    from decimal import Decimal, InvalidOperation
+    if isinstance(value, bool):
+        return None
+    raw = str(value or '').strip().replace(',', '')
+    if not raw:
+        return None
+    try:
+        number = Decimal(raw)
+    except InvalidOperation:
+        return None
+    if not number.is_finite() or number <= 0 or number > Decimal('1000000000'):
+        return None
+    return format(number.normalize(), 'f')
+
+
+def _particular_text(value):
+    """선종/선급 코드: 공백 정리, 제어문자·과대 입력 거부."""
+    text = ' '.join(str(value or '').split())
+    if not text or len(text) > 64 or any(ord(ch) < 32 for ch in text):
+        return None
+    return text
+
+
 @bp.route('/api/ext/vessels/<int:vid>/identifiers', methods=['PUT'])
 @api_key_required
 def api_ext_vessel_identifiers(vid):
     """자동화 write-back 접점(설계 §3) — 선박 식별자 메타 부분 갱신.
 
-    body(모두 optional): {"vsl_cd","imo","vt_vessel_id","aliases":[...]}.
+    body(모두 optional): {"vsl_cd","imo","vt_vessel_id","aliases":[...],
+      "vessel_type","class_society","gross_tonnage","dead_weight"}.
       - payload 에 있는 필드만 UPDATE. 없는 필드는 건드리지 않음(NULL 로 안 지움 —
         기존 invoice edit 교훈). 값이 기존과 동일하면 no-op(변경목록에서 제외).
       - imo: 7자리+체크섬 실패 시 400 거부. vsl_cd: 영숫자 2~6자 아니면 400.
@@ -3859,9 +3890,41 @@ def api_ext_vessel_identifiers(vid):
             sets.append('aliases = ?'); params.append(new_json)
             changed['aliases'] = {'from': old_list, 'to': al}
 
+    # --- SVMS 선박상세 particulars ---
+    for field in ('vessel_type', 'class_society'):
+        if field not in d or d[field] is None:
+            continue
+        if field not in vcols:
+            return jsonify({'error': 'no_column', 'message': f'vessels.{field} 컬럼 없음'}), 400
+        norm = _particular_text(d[field])
+        if norm is None:
+            return jsonify({'error': f'bad_{field}', 'value': d[field]}), 400
+        old = _particular_text(cur.get(field))
+        if old == norm:
+            noop.append(field)
+        else:
+            sets.append(f'{field} = ?'); params.append(norm)
+            changed[field] = {'from': cur.get(field), 'to': norm}
+
+    for field in ('gross_tonnage', 'dead_weight'):
+        if field not in d or d[field] is None:
+            continue
+        if field not in vcols:
+            return jsonify({'error': 'no_column', 'message': f'vessels.{field} 컬럼 없음'}), 400
+        norm = _particular_number(d[field])
+        if norm is None:
+            return jsonify({'error': f'bad_{field}', 'value': d[field]}), 400
+        old = _particular_number(cur.get(field))
+        if old == norm:
+            noop.append(field)
+        else:
+            sets.append(f'{field} = ?'); params.append(norm)
+            changed[field] = {'from': cur.get(field), 'to': norm}
+
     if sets:
         params.append(vid)
         execute(f'UPDATE vessels SET {", ".join(sets)} WHERE id = ?', params)
+        app.logger.info('vessel metadata sync id=%s fields=%s', vid, ','.join(sorted(changed)))
 
     return jsonify({'id': vid, 'name': cur.get('name'),
                     'changed': changed, 'noop': noop})
