@@ -100,6 +100,9 @@ class DockDailyAdapterTests(unittest.TestCase):
             DATABASE=self.db_path,
             get_db=lambda: sqlite3.connect(self.db_path),
         )
+        @self.dd_app.route("/api/vessels", methods=["POST"])
+        def legacy_create_vessel():
+            return {"legacy": True}, 201
         self.trmt_app = Flask("fake_trmt")
         self.trmt_app.secret_key = "trmt-secret"
         with patch("helpers_shared._check_api_key", return_value=True):
@@ -171,6 +174,17 @@ class DockDailyAdapterTests(unittest.TestCase):
             response = self.client.get("/api/integration/daily-events?project_ids=v_DM17&date=2026-08-20")
         self.assertEqual(503, response.status_code)
         self.assertFalse(response.get_json()["complete"])
+
+    def test_admin_gate_blocks_legacy_freeform_create_and_viewer_direct_post(self):
+        with self.client.session_transaction() as sess:
+            sess.update({"username": "admin", "role": "admin", "supervisor_id": 7})
+        legacy = self.client.post("/api/vessels", json={"name": "FREEFORM"})
+        self.assertEqual(410, legacy.status_code)
+
+        with self.client.session_transaction() as sess:
+            sess.update({"username": "viewer", "role": "viewer", "supervisor_id": 7})
+        direct = self.client.post(integration.ROSTER_VESSELS_PATH, json={"trmtVesselId": 1})
+        self.assertEqual(401, direct.status_code)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ import time
 
 
 DAILY_EVENTS_PATH = "/api/integration/daily-events"
+ROSTER_VESSELS_PATH = "/api/integration/roster-vessels"
 DAILY_EVENT_SOURCES = (
     "jobs",
     "discussions",
@@ -433,6 +434,105 @@ def _install_daily_events_endpoint(dd, trmt_app, dd_app):
     dd_app._trmt_daily_events_installed = True
 
 
+def _install_roster_vessels_endpoints(dd, trmt_app, dd_app):
+    """Bridge the signed-in supervisor's canonical TRMT roster into Dock Manager."""
+    from flask import jsonify, request, session
+
+    if getattr(dd_app, "_trmt_roster_vessels_installed", False):
+        return
+
+    def _trmt_db():
+        path = trmt_app.config.get("DATABASE")
+        if not path:
+            raise RuntimeError("TRMT database is not configured")
+        db = sqlite3.connect("file:%s?mode=ro" % os.path.abspath(path), uri=True)
+        db.row_factory = sqlite3.Row
+        return db
+
+    def _assigned_vessel(vessel_id=None):
+        supervisor_id = session.get("supervisor_id")
+        if supervisor_id is None:
+            return [] if vessel_id is None else None
+        params = [supervisor_id]
+        where = "sv.supervisor_id=? AND v.active=1"
+        if vessel_id is not None:
+            where += " AND v.id=?"
+            params.append(vessel_id)
+        sql = """
+            SELECT v.id, v.name, v.vessel_type, v.imo, v.class_society,
+                   (SELECT d.gross_tonnage FROM dock_reports d
+                     WHERE d.vessel_id=v.id AND TRIM(COALESCE(d.gross_tonnage,''))<>''
+                     ORDER BY d.updated_at DESC, d.id DESC LIMIT 1) AS gross_tonnage,
+                   (SELECT d.dead_weight FROM dock_reports d
+                     WHERE d.vessel_id=v.id AND TRIM(COALESCE(d.dead_weight,''))<>''
+                     ORDER BY d.updated_at DESC, d.id DESC LIMIT 1) AS dead_weight
+              FROM vessels v
+              JOIN supervisor_vessels sv ON sv.vessel_id=v.id
+             WHERE %s
+             ORDER BY v.name
+        """ % where
+        db = _trmt_db()
+        try:
+            result = db.execute(sql, params).fetchall()
+        finally:
+            db.close()
+        if vessel_id is not None:
+            return result[0] if result else None
+        return result
+
+    def _grt_dwt(vessel):
+        parts = []
+        if _text(vessel["gross_tonnage"]):
+            parts.append("GRT %s" % _text(vessel["gross_tonnage"]))
+        if _text(vessel["dead_weight"]):
+            parts.append("DWT %s" % _text(vessel["dead_weight"]))
+        return " / ".join(parts)
+
+    def _payload(vessel):
+        return {
+            "id": vessel["id"],
+            "name": _text(vessel["name"]),
+            "type": _text(vessel["vessel_type"]),
+            "imo": _text(vessel["imo"]),
+            "classSociety": _text(vessel["class_society"]),
+            "grtDwt": _grt_dwt(vessel),
+            "grossTonnage": _text(vessel["gross_tonnage"]),
+            "deadWeight": _text(vessel["dead_weight"]),
+        }
+
+    @dd_app.route(ROSTER_VESSELS_PATH, methods=["GET"])
+    def _trmt_roster_vessels():
+        return jsonify([_payload(vessel) for vessel in _assigned_vessel()])
+
+    @dd_app.route(ROSTER_VESSELS_PATH, methods=["POST"])
+    def _trmt_create_roster_vessel():
+        body = request.get_json(silent=True) or {}
+        try:
+            vessel_id = int(body.get("trmtVesselId"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "담당선박을 선택하세요"}), 400
+        vessel = _assigned_vessel(vessel_id)
+        if vessel is None:
+            return jsonify({"error": "선택한 선박은 내 TRMT 담당선박이 아닙니다"}), 403
+
+        canonical = _payload(vessel)
+        dock_id = "v_%s" % secrets.token_hex(4)
+        db = dd.get_db()
+        db.execute(
+            "INSERT INTO vessels(id,name,type,imo,shipyard,class_society,berthing_date,"
+            "dock_in,dock_out,departure_date,duration,grt) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (dock_id, canonical["name"], canonical["type"], canonical["imo"],
+             _text(body.get("shipyard")), canonical["classSociety"],
+             body.get("berthingDate") or None, body.get("dockIn") or None,
+             body.get("dockOut") or None, body.get("departureDate") or None,
+             body.get("duration") or None, canonical["grtDwt"]),
+        )
+        db.commit()
+        return jsonify(dd.to_vessel(dd.row("SELECT * FROM vessels WHERE id=?", dock_id))), 201
+
+    dd_app._trmt_roster_vessels_installed = True
+
+
 def _yard_cell_text(value):
     if value is None:
         return ""
@@ -759,6 +859,7 @@ def apply(dd, trmt_app):
     dd.get_current_user = _session_user
     dd.is_admin = lambda: (_session_user() or {}).get("role") == "admin"
     _install_daily_events_endpoint(dd, trmt_app, dd_app)
+    _install_roster_vessels_endpoints(dd, trmt_app, dd_app)
     _install_yard_job_import(dd, dd_app)
     # is_viewer/can_access_vessel도 세션 유저 기준으로 동작(원본이 get_current_user 참조)
 
@@ -790,6 +891,10 @@ def apply(dd, trmt_app):
             # login_required 호환 shim — 이미 있으면 재대입 안 함(Set-Cookie 반복 방지, 올마이트)
             if not session.get("logged_in"):
                 session["logged_in"] = True
+            # 신규 생성은 TRMT 담당선박 정본을 강제하는 integration route만 허용한다.
+            # 구버전 자유입력 POST를 남겨두면 직접 호출로 roster scope를 우회할 수 있다.
+            if request.path == "/api/vessels" and request.method == "POST":
+                return jsonify({"error": "TRMT 담당선박 선택 경로를 사용하세요"}), 410
             return None
         # 3-e. 비인가 → API는 401 JSON, 그 외는 TRMT(루트) 로그인으로
         if low.startswith("/api"):
