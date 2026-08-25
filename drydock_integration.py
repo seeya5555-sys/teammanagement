@@ -1014,6 +1014,18 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _queue_db():
+        """Open the Dock DB explicitly for API-key worker routes.
+
+        The parent TRMT API-key checker uses Flask ``g.db`` too. On the mounted
+        app it can therefore populate that shared slot with the TRMT database
+        before our route runs. Worker routes must never trust the shared slot.
+        """
+        conn = sqlite3.connect(os.path.abspath(dd_app.config["DATABASE"]), timeout=5)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
     def _target(vid):
         vessel = dd.get_db().execute("SELECT name,imo FROM vessels WHERE id=?", (vid,)).fetchone()
         if not vessel:
@@ -1106,39 +1118,47 @@ def _install_svms_job_import(dd, trmt_app, dd_app):
 
     @dd_app.route(SVMS_IMPORT_PENDING_PATH, methods=["GET"])
     def _trmt_svms_import_pending():
-        _ensure_table(dd.get_db())
-        row = dd.get_db().execute(
-            "SELECT token,vsl_cd,dk_cd FROM trmt_svms_job_import WHERE status='pending' "
-            "ORDER BY requested_at LIMIT 1"
-        ).fetchone()
+        db = _queue_db()
+        try:
+            _ensure_table(db)
+            row = db.execute(
+                "SELECT token,vsl_cd,dk_cd FROM trmt_svms_job_import WHERE status='pending' "
+                "ORDER BY requested_at LIMIT 1"
+            ).fetchone()
+        finally:
+            db.close()
         return jsonify(dict(row) if row else {})
 
     @dd_app.route(SVMS_IMPORT_COMPLETE_PATH, methods=["POST"])
     def _trmt_svms_import_complete():
-        _ensure_table(dd.get_db())
         body = request.get_json(silent=True) or {}
         token = _text(body.get("token"))
-        row = dd.get_db().execute(
-            "SELECT status FROM trmt_svms_job_import WHERE token=?", (token,),
-        ).fetchone()
-        if not row or row["status"] != "pending":
-            return jsonify({"error": "pending 요청을 찾을 수 없습니다"}), 409
-        if body.get("error"):
-            dd.get_db().execute(
-                "UPDATE trmt_svms_job_import SET status='failed',error=?,completed_at=datetime('now') "
-                "WHERE token=? AND status='pending'", (_text(body.get("error"))[:300], token),
-            )
-        else:
-            try:
-                parsed = _normalize_svms_dock_jobs(body.get("payload"))
-            except ValueError as exc:
-                return jsonify({"error": str(exc)}), 400
-            dd.get_db().execute(
-                "UPDATE trmt_svms_job_import SET status='ready',payload_json=?,error=NULL,"
-                "completed_at=datetime('now') WHERE token=? AND status='pending'",
-                (json.dumps(parsed, ensure_ascii=False, separators=(",", ":")), token),
-            )
-        dd.get_db().commit()
+        db = _queue_db()
+        try:
+            _ensure_table(db)
+            row = db.execute(
+                "SELECT status FROM trmt_svms_job_import WHERE token=?", (token,),
+            ).fetchone()
+            if not row or row["status"] != "pending":
+                return jsonify({"error": "pending 요청을 찾을 수 없습니다"}), 409
+            if body.get("error"):
+                db.execute(
+                    "UPDATE trmt_svms_job_import SET status='failed',error=?,completed_at=datetime('now') "
+                    "WHERE token=? AND status='pending'", (_text(body.get("error"))[:300], token),
+                )
+            else:
+                try:
+                    parsed = _normalize_svms_dock_jobs(body.get("payload"))
+                except ValueError as exc:
+                    return jsonify({"error": str(exc)}), 400
+                db.execute(
+                    "UPDATE trmt_svms_job_import SET status='ready',payload_json=?,error=NULL,"
+                    "completed_at=datetime('now') WHERE token=? AND status='pending'",
+                    (json.dumps(parsed, ensure_ascii=False, separators=(",", ":")), token),
+                )
+            db.commit()
+        finally:
+            db.close()
         return jsonify({"ok": True})
 
     dd_app._trmt_svms_job_import_installed = True
