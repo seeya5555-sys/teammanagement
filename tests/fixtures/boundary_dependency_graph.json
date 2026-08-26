@@ -221,6 +221,7 @@
       "_soa_review_attachment_path",
       "_soa_review_case_unlock",
       "_vetting_pick",
+      "_vetting_summary_counts",
       "_vkey",
       "admin_required",
       "api_key_required",
@@ -254,6 +255,7 @@
       "_soa_review_attachment_path",
       "_translate_rows_en",
       "_vetting_pick",
+      "_vetting_summary_counts",
       "_vkey",
       "admin_required",
       "login_required"

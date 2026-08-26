@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Vetting 요약행 OBS/OPEN 출처 — **소비처 3곳이 같은 숫자를 내는지** 실제로 호출해 본다.
+"""Vetting 요약행 OBS/OPEN 계약 — 소비처 3곳이 같은 값/공란을 내는지 실제 호출한다.
 
 손유석 지시 2026-08-11: "메인 섹션의 OBS(전체/잔여)를 'Next Plan'일 경우, 해당 Next Plan의
-OBS 및 OPEN 숫자가 표시되게" — 이전에는 상단이 Next Plan 이면 OBS 만 직전 Report 에서
-끌어왔다(obs_src 폴백). 그 폴백을 폐기했다.
+OBS 및 OPEN 숫자가 표시되게"였으나, 2026-08-26 지시로 Next Plan 은 수검 전이므로
+숫자 0/0 대신 공란/공란으로 정정했다. 직전 Report 폴백은 계속 폐기 상태다.
 
 🔴 여기서 잡으려는 회귀: `_vetting_pick` 단위 테스트만으로는 소비처가 조용히 갈리는 걸 못 잡는다.
    웹(`vt.js`)·앱 위젯(`/api/widget/vetting`)·ext(`_ext_vetting_digests`)가 서로 다른 숫자를
@@ -72,10 +72,8 @@ chk(len(enr) == 2 and enr[0]['id'] == latest['id'], '_vetting_pick: enr[0] == la
 row = next((d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == VNAME), None)
 chk(row is not None, 'ext digest: 대상 선박 존재')
 if row:
-    chk(row['obs_total'] == PLAN['obs'], 'ext digest: obs_total = 계획행 값', str(row['obs_total']))
-    chk(row['obs_open'] == PLAN['open'], 'ext digest: obs_open = 계획행 값', str(row['obs_open']))
-    chk(row['obs_total'] != PREV['obs'] and row['obs_open'] != PREV['open'],
-        'ext digest: 직전 Report 수치가 아님')
+    chk(row['obs_total'] is None and row['obs_open'] is None,
+        'ext digest: Next Plan OBS = 공란(null)', f"{row['obs_total']}/{row['obs_open']}")
     chk(row['status'] == 'Next Plan' and row['oil_major'] == PLAN['company'],
         'ext digest: 상태·오일메이저도 같은 행')
     # 🔴 화면 숫자는 어디서나 obs_*(요약행) 다 — vercel 카드도 fleet-map 도 탭의 미러이므로
@@ -97,9 +95,8 @@ chk(w.status_code == 200, '위젯 API 200', str(w.status_code))
 wrow = next((r for r in w.get_json()['vetting'] if r['vessel'] == VNAME), None)
 chk(wrow is not None, '위젯: 대상 선박 존재')
 if wrow:
-    chk(wrow['obs_total'] == PLAN['obs'] and wrow['obs_open'] == PLAN['open']
-        and wrow['obs_closed'] == PLAN['closed'],
-        '위젯: obs_* 전부 계획행 값',
+    chk(wrow['obs_total'] is None and wrow['obs_open'] is None and wrow['obs_closed'] is None,
+        '위젯: Next Plan obs_* 전부 공란(null)',
         f"{wrow['obs_total']}/{wrow['obs_open']}/{wrow['obs_closed']}")
     # obs_oil_major/obs_date 는 폴백 시절 "수치의 출처"를 따로 알리던 키다. 폴백이 사라졌으니
     # 상단행과 같아야 한다 — 안 그러면 앱 부제에 지난 수검 메타가 섞여 보인다.
@@ -112,17 +109,20 @@ only, _enr = shared_ns._vetting_pick(VID)
 chk(only['valid'] == 'Last Result' and only['observation_count'] == PREV['obs']
     and only['open_count'] == PREV['open'],
     'Next Plan 없으면 Report 수치 그대로(현행 동일)')
+chk(shared_ns._vetting_summary_counts(only) == (PREV['obs'], PREV['open'], 3),
+    'Last Result 요약은 실제 숫자 유지')
 
 # ---- 5) Report 가 아예 없고 계획만 있을 때 — report_* 는 상단행으로 폴백(구 동작과 동일) ----
 A.execute("DELETE FROM vettings WHERE vessel_id=?", (VID,))
 add_vetting('Next Plan', '', 'BP', 'SINGAPORE', 7, 4, 3)
 row2 = next((d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == VNAME), None)
-chk(row2 is not None and row2['report_obs_total'] == PLAN['obs']
-    and row2['report_obs_open'] == PLAN['open'],
-    '계획만 있을 때 report_* 는 그 행으로 폴백')
+chk(row2 is not None and row2['obs_total'] is None and row2['obs_open'] is None,
+    '계획만 있을 때 화면/mirror OBS 는 공란')
+chk(row2 is not None and row2['report_obs_total'] is None and row2['report_obs_open'] is None,
+    '계획만 있을 때 report_* 는 모름(null) — obsNote 보존')
 
 print()
 if fails:
     print(f'❌ 실패 {len(fails)}건: ' + ', '.join(fails))
     sys.exit(1)
-print('✅ Vetting 요약 OBS 출처 — 소비처 3곳 전부 상단행 기준으로 일치')
+print('✅ Vetting 요약 OBS — Next Plan 공란 / Last Result 실수치 계약 일치')

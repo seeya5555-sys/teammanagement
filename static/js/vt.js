@@ -294,12 +294,13 @@ function vettingDigest(item) {
   const status = latest.valid || '';
   const statusCls = status === 'Next Plan' ? 'vt-dg-next'
     : status === 'Last Result' ? 'vt-dg-last' : '';
-  // OBS(전체/잔여)도 상단행 그 자체의 수치다 — 상태·항구·DATE·OIL MAJOR 와 같은 한 건.
-  // 🔴 'Next Plan'일 때만 직전 Report 수치를 끌어오던 폴백은 2026-08-11 형 지시로 폐기했다
-  //    (상태는 계획인데 숫자는 지난 수검 것이라 한 줄 안에서 출처가 갈렸음).
-  //    서버 정본은 app.py `_vetting_pick` — 여기 규칙을 바꾸면 앱/위젯과 숫자가 갈린다.
-  const total = (latest.observation_count != null) ? latest.observation_count : 0;
-  const openCnt = (latest.open_count != null) ? latest.open_count : 0;
+  // Next Plan 은 아직 수검 전이므로 OBS 0건이라는 결과와 구분해 양쪽 모두 공란으로 표시한다.
+  // Last Result 의 실제 0건은 계속 0 / 0으로 표시한다. 서버/iOS/VLCC-SIRE도 같은 계약.
+  const isNextPlan = status === 'Next Plan';
+  const total = isNextPlan ? ''
+    : ((latest.observation_count != null) ? latest.observation_count : 0);
+  const openCnt = isNextPlan ? ''
+    : ((latest.open_count != null) ? latest.open_count : 0);
 
   // 지적 상세: Open 항목이 있는 모든 Report의 Overall Remark, 최신순, 빈 줄 구분
   let detail = vts
@@ -338,7 +339,7 @@ function vettingDigest(item) {
     el('td', { class: 'vt-dg-obs' },
       el('span', { class: 'vt-dg-total' }, String(total)),
       el('span', { class: 'vt-dg-sep' }, ' / '),
-      el('span', { class: (openCnt > 0 ? 'vt-dg-open' : 'vt-dg-open-zero') }, String(openCnt))),
+      el('span', { class: (!isNextPlan && openCnt > 0 ? 'vt-dg-open' : 'vt-dg-open-zero') }, String(openCnt))),
     detailCell,
   )));
 

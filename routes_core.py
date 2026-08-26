@@ -28,7 +28,8 @@ from token_auth import (
 from helpers_shared import (
     VETTING_TYPES, _automation_health_summary, _dashboard_ctx, _ensure_summary_table,
     _fleet_visible_auto_vessels, _issue_to_dict, _issue_write_scope, _run_summary_generate,
-    _safe_filename, _soa_review_attachment_path, _translate_rows_en, _vetting_pick, _vkey,
+    _safe_filename, _soa_review_attachment_path, _translate_rows_en, _vetting_pick,
+    _vetting_summary_counts, _vkey,
     admin_required, login_required,
 )
 
@@ -684,15 +685,18 @@ def api_widget_vetting():
         latest, _enr = _vetting_pick(ve['id'])
         if not latest:
             continue                        # 수검 이력이 아예 없는 선박은 그릴 게 없다
+        obs_total, obs_open, obs_closed = _vetting_summary_counts(latest)
         out.append({
             'vessel': ve['name'],
             'status': latest.get('valid') or '',                 # 'Next Plan' / 'Last Result' / ''
             'oil_major': latest.get('inspection_company') or '',
             'date': latest.get('inspection_date') or '',         # Next Plan 은 미입력일 수 있음
             'port': latest.get('port') or '',
-            'obs_total': latest.get('observation_count') or 0,
-            'obs_open': latest.get('open_count') or 0,
-            'obs_closed': latest.get('close_count') or 0,
+            # Next Plan 은 아직 수검 전이라 OBS 자체가 미입력이다. 0건이라는 결과와 구분해
+            # null 로 내려 iOS 앱/위젯도 Open 0이라는 실제 결과로 오독하지 않게 한다.
+            'obs_total': obs_total,
+            'obs_open': obs_open,
+            'obs_closed': obs_closed,
             # obs_* 는 전부 상단행 한 건에서만 나온다(`_vetting_pick` 정본). 아래 두 키는
             # 구 폴백 시절 "수치의 출처"를 따로 알리려고 둔 것이고 지금은 위 oil_major/date 와
             # 같은 값이다. 위젯(WidgetModel)이 아직 읽고 있어 **키는 유지**한다 — 지우면

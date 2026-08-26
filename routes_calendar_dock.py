@@ -47,7 +47,8 @@ from helpers_shared import (
     _gemini_call_json, _get_api_key, _issue_write_scope, _match_vessel_by_name, _model_for,
     _reqgen_build_subj, _reqgen_vsl_prefix, _run_summary_generate, _safe_filename,
     _soa_group_members, _soa_groups_load, _soa_owner_map, _soa_review_attachment_path,
-    _soa_review_case_unlock, _vetting_pick, _vkey, admin_required, api_key_required,
+    _soa_review_case_unlock, _vetting_pick, _vetting_summary_counts, _vkey,
+    admin_required, api_key_required,
     login_required, soa_task_key,
 )
 
@@ -3315,6 +3316,7 @@ def _ext_vetting_digests():
         if not any((v.get('open_count') or 0) > 0 for v in enr):
             detail = next(((v.get('overall_remark') or '').strip()
                            for v in enr if (v.get('overall_remark') or '').strip()), '')
+        obs_total, obs_open, _obs_closed = _vetting_summary_counts(latest)
         out.append({
             'ref': _ref('vetting_digest', ve['id']),
             'vessel_name': ve['name'],
@@ -3324,15 +3326,16 @@ def _ext_vetting_digests():
             'port': latest.get('port') or '',
             'inspection_date': latest.get('inspection_date') or '',
             'oil_major': latest.get('inspection_company') or '',
-            'obs_total': latest.get('observation_count') or 0,
-            'obs_open': latest.get('open_count') or 0,
-            # 🔴 위 obs_* = 화면 요약행(상단행 그 자체)이고, 아래 report_* = **직전에 실제로 받은
-            #    Report** 의 수치다. 둘을 합치지 마라 — 하류 미러(automation/vlcc-sire-push →
-            #    vlcc-sire.vercel.app 카드, automation/fleet-map)는 "지난 수검 지적이 몇 건이냐"를
-            #    묻는 것이라, 계획행이 상단에 오면 값이 0 으로 덮여 카드가 지워진다.
-            #    2026-08-11 요약행 규칙을 바꾸면서 그 미러들의 의미를 보존하려고 분리했다.
-            'report_obs_total': (report or latest).get('observation_count') or 0,
-            'report_obs_open': (report or latest).get('open_count') or 0,
+            # Next Plan 은 수검 결과가 아니므로 0/0을 만들어내지 않고 명시적 미입력(null).
+            # VLCC-SIRE push 는 이 null을 공란으로 완전 미러한다.
+            'obs_total': obs_total,
+            'obs_open': obs_open,
+            # 🔴 위 obs_* = 화면 요약값(Next Plan 이면 null), 아래 report_* = 직전에 실제로 받은
+            #    Report 수치다. VLCC-SIRE 숫자는 위 obs_* 를 완전 미러하고, report_obs_open 은
+            #    obsNote 클리어 판정에만 쓴다. 다음 계획 때문에 지난 Report 메모를 지우면 안 된다.
+            # 실제 Report 가 없으면 모름(null)이다. Next Plan 의 자동 0으로 obsNote 를 지우지 않는다.
+            'report_obs_total': (report.get('observation_count') or 0) if report else None,
+            'report_obs_open': (report.get('open_count') or 0) if report else None,
             'detail': detail,
             'latest_vetting_ref': _ref('vetting', latest.get('id')),
         })

@@ -155,11 +155,10 @@ class VettingOrderConsumerGuardTests(unittest.TestCase):
         self.assertNotIn("obsSrc", VT_JS)
 
     def test_digest_payloads_take_numbers_from_the_top_row(self):
-        for key in ("'obs_total': latest.get('observation_count') or 0",
-                    "'obs_open': latest.get('open_count') or 0"):
-            self.assertIn(key, APP_SRC)
-        self.assertIn("const total = (latest.observation_count != null)", VT_JS)
-        self.assertIn("const openCnt = (latest.open_count != null)", VT_JS)
+        self.assertIn("obs_total, obs_open, _obs_closed = _vetting_summary_counts(latest)", APP_SRC)
+        self.assertIn("const isNextPlan = status === 'Next Plan';", VT_JS)
+        self.assertIn("const total = isNextPlan ? ''", VT_JS)
+        self.assertIn("const openCnt = isNextPlan ? ''", VT_JS)
 
     def test_web_summary_does_not_call_a_plan_the_last_report(self):
         # 'Last:' 는 실제로 받은 Report 만 가리켜야 한다. vts[0] 직접 사용 금지.

@@ -852,6 +852,15 @@ def _vetting_pick(vessel_id):
         return None, []
     enr = _vetting_display_order([_vetting_with_counts(v) for v in vts])
     return enr[0], enr
+
+def _vetting_summary_counts(latest):
+    """요약/미러용 OBS 수치. Next Plan 은 아직 수검 전이므로 미입력(null)으로 둔다."""
+    if not latest or (latest.get('valid') or '') == 'Next Plan':
+        return None, None, None
+    # Last Result 의 기존 계약은 결측도 0으로 표시하는 것. Next Plan 외 동작은 바꾸지 않는다.
+    return (latest.get('observation_count') or 0,
+            latest.get('open_count') or 0,
+            latest.get('close_count') or 0)
 # ═════════════════════════════════════════════════════════════════
 #  API — Calendar Events (일정 모듈)
 # ═════════════════════════════════════════════════════════════════
