@@ -106,6 +106,14 @@
     var last = value.slice(0, to).split('\n').length - 1;
     if (to > from && to > 0 && value[to - 1] === '\n') last -= 1;
     var lines = value.split('\n');
+    var original = lines[first] || '';
+    var originalBody = itemBody(original);
+    var originalLineStart = value.lastIndexOf('\n', Math.max(0, from - 1)) + 1;
+    var originalCol = from - originalLineStart;
+    // 접두어(`N) ` / `  - `)가 바뀌어도 caret 은 본문 안의 같은 글자 뒤에 둔다.
+    // 접두어 안에 있던 caret 만 본문 시작으로 정착시킨다.
+    var bodyCol = Math.max(0, Math.min(originalBody.length,
+      originalCol - (original.length - originalBody.length)));
     for (var i = first; i <= last && i < lines.length; i++) {
       var body = itemBody(lines[i]);
       if (outdent) {
@@ -115,7 +123,9 @@
       }
     }
     var before = lines.slice(0, first).join('\n');
-    var caret = (before ? before.length + 1 : 0) + (outdent ? 3 : 4) + itemBody(lines[first]).length;
+    var transformedBody = itemBody(lines[first]);
+    var transformedPrefixLength = lines[first].length - transformedBody.length;
+    var caret = (before ? before.length + 1 : 0) + transformedPrefixLength + bodyCol;
     return renumber(lines.join('\n'), caret, true);
   }
 

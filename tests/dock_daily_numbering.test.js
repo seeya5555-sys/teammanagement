@@ -23,7 +23,23 @@ test('Tab 은 현재 줄을 하위 - 항목으로 만들고 상위 번호만 다
   const pos = value.indexOf('작업중');
   const child = N.indentLine(value, pos, pos, false);
   assert.strictEqual(child.value, '1) 작업 시작\n  - 작업중\n2) 다음 작업');
-  assert.strictEqual(child.value.slice(0, child.caret), '1) 작업 시작\n  - 작업중');
+  assert.strictEqual(child.value.slice(0, child.caret), '1) 작업 시작\n  - ',
+    '본문 시작에 있던 caret 은 본문 시작에 남는다');
+});
+
+test('Tab 은 문단 끝으로 튀지 않고 본문 안의 같은 글자 뒤에 caret 을 유지한다', () => {
+  const value = '1) FF Lifeboat 점검 완료 (진행 중, 계획 완료 09.01)\n2) 다음 작업';
+  const caret = value.indexOf('완료 (') + '완료'.length;
+  const child = N.indentLine(value, caret, caret, false);
+  assert.strictEqual(child.value, '  - FF Lifeboat 점검 완료 (진행 중, 계획 완료 09.01)\n1) 다음 작업');
+  assert.strictEqual(child.value.slice(child.caret), ' (진행 중, 계획 완료 09.01)\n1) 다음 작업');
+});
+
+test('Tab caret 보존은 이모지 UTF-16 뒤에서도 같은 본문 위치를 유지한다', () => {
+  const value = '1) 점검 🚢 완료 후속';
+  const caret = value.indexOf(' 완료') + ' 완료'.length;
+  const child = N.indentLine(value, caret, caret, false);
+  assert.strictEqual(child.value.slice(child.caret), ' 후속');
 });
 
 test('하위항목에서 Enter 를 누르면 다음 - 항목이 이어진다', () => {
