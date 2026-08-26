@@ -186,7 +186,8 @@
     <div class="modal-head"><h2>연차 일수 설정</h2><button class="modal-close" data-close-leave="1" aria-label="닫기">×</button></div>
     <div class="modal-body">
       <div class="form-row"><label for="cal-leave-days"><span id="cal-leave-modal-year"></span>년 연차 일수</label><input id="cal-leave-days" type="number" min="0" max="365" step="0.25"></div>
-      <p class="hint">해당 연도의 연차·반차·반반차 일정이 각각 1일·0.5일·0.25일 차감됩니다.</p>
+      <div class="form-row"><label for="cal-leave-manual-used">이미 사용한 연차 (수동)</label><input id="cal-leave-manual-used" type="number" min="0" max="365" step="0.25"></div>
+      <p class="hint">캘린더에 등록하지 않은 기존 사용분을 입력하세요. 캘린더의 연차·반차·반반차 차감분과 합산됩니다.</p>
     </div>
     <div class="modal-foot"><button class="btn btn-outline" data-close-leave="1">취소</button><button class="btn btn-primary" id="cal-leave-save">저장</button></div>
   </div>

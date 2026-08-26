@@ -97,7 +97,7 @@ class CalendarServiceTests(unittest.TestCase):
         }, creating=True)
 
     def test_leave_allowance_and_quarter_day_counting(self):
-        calendar_service.set_leave_allowance(2026, 2, 15.0, "admin")
+        calendar_service.set_leave_allowance(2026, 2, 15.0, "admin", 2.25)
         for leave_type, date in (
             ("annual", "2026-01-10"), ("half", "2026-02-10"),
             ("quarter", "2026-03-10"), ("annual", "2027-01-10"),
@@ -109,9 +109,41 @@ class CalendarServiceTests(unittest.TestCase):
 
         summary = calendar_service.leave_summary(2026, 2)
         self.assertEqual(15.0, summary["allowance"])
-        self.assertEqual(1.75, summary["used"])
-        self.assertEqual(13.25, summary["remaining"])
+        self.assertEqual(1.75, summary["calendar_used"])
+        self.assertEqual(2.25, summary["manual_used"])
+        self.assertEqual(4.0, summary["used"])
+        self.assertEqual(11.0, summary["remaining"])
         self.assertEqual({"annual": 1, "half": 1, "quarter": 1}, summary["counts"])
+
+    def test_init_db_migrates_legacy_leave_allowance_table(self):
+        appmod.execute("DROP TABLE calendar_leave_allowances")
+        appmod.execute("""
+            CREATE TABLE calendar_leave_allowances (
+                supervisor_id INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                days REAL NOT NULL,
+                updated_by TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (supervisor_id, year)
+            )
+        """)
+        appmod.execute("""
+            INSERT INTO calendar_leave_allowances
+                (supervisor_id, year, days, updated_by)
+            VALUES (2, 2026, 17, 'legacy')
+        """)
+
+        appmod.init_db(False)
+
+        columns = {
+            row["name"] for row in appmod.query(
+                "PRAGMA table_info(calendar_leave_allowances)"
+            )
+        }
+        self.assertIn("manual_used", columns)
+        summary = calendar_service.leave_summary(2026, 2)
+        self.assertEqual(17, summary["allowance"])
+        self.assertEqual(0, summary["manual_used"])
 
     def test_leave_validation_rejects_invalid_type_range_and_multi_day(self):
         for payload, message in (
@@ -134,9 +166,17 @@ class CalendarServiceTests(unittest.TestCase):
         token = client.get("/api/csrf-token").get_json()["token"]
         saved = client.put("/api/cal/leave-summary", json={
             "year": 2026, "supervisor_id": 2, "days": 12.25,
+            "manual_used": 3.5,
         }, headers={"X-CSRF-Token": token})
         self.assertEqual(200, saved.status_code)
         self.assertEqual(12.25, saved.get_json()["allowance"])
+        self.assertEqual(3.5, saved.get_json()["manual_used"])
+        self.assertEqual(3.5, saved.get_json()["used"])
+        legacy_saved = client.put("/api/cal/leave-summary", json={
+            "year": 2026, "supervisor_id": 2, "days": 13,
+        }, headers={"X-CSRF-Token": token})
+        self.assertEqual(3.5, legacy_saved.get_json()["manual_used"])
+        saved = legacy_saved
         loaded = client.get("/api/cal/leave-summary?year=2026&supervisor_id=2")
         self.assertEqual(saved.get_json(), loaded.get_json())
         self.assertEqual(403, client.get(

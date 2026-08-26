@@ -2898,12 +2898,16 @@ col.c-edit   { width: 156px; }
    ═══════════════════════════════════════════════════════════════ */
 
 .cal-toolbar { gap: 10px; }
-.cal-leave-summary { display:flex; justify-content:space-between; align-items:center; gap:16px; margin:0 0 14px; padding:13px 16px; border:1px solid var(--border); border-radius:12px; background:var(--surface); }
+.cal-leave-summary { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:0 0 10px; padding:9px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
 .cal-leave-summary > div:first-child { display:flex; flex-direction:column; gap:4px; }
 .cal-leave-summary #cal-leave-breakdown { color:var(--text-muted); font-size:12px; }
-.cal-leave-numbers { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
-.cal-leave-numbers b { font-size:18px; color:var(--primary); }
-@media (max-width: 720px) { .cal-leave-summary { align-items:flex-start; flex-direction:column; } }
+.cal-leave-numbers { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.cal-leave-numbers b { font-size:16px; color:var(--primary); }
+@media (max-width: 720px) {
+  .cal-leave-summary { align-items:flex-start; flex-wrap:wrap; gap:6px 10px; }
+  .cal-leave-summary > div:first-child { flex:1 1 100%; }
+  .cal-leave-numbers { gap:10px; width:100%; }
+}
 
 .cal-layout {
   display: grid;

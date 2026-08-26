@@ -178,10 +178,11 @@ def leave_summary(year, supervisor_id):
     if not 2000 <= year <= 2100:
         raise CalendarInputError("year 는 2000~2100 범위여야 합니다.")
     allowance_row = query(
-        "SELECT days FROM calendar_leave_allowances WHERE supervisor_id=? AND year=?",
+        "SELECT days, manual_used FROM calendar_leave_allowances WHERE supervisor_id=? AND year=?",
         (supervisor_id, year), one=True,
     )
     allowance = float(allowance_row["days"]) if allowance_row else 0.0
+    manual_used = float(allowance_row["manual_used"]) if allowance_row else 0.0
     rows = query("""
         SELECT leave_type, COUNT(*) AS count
           FROM calendar_events
@@ -192,30 +193,47 @@ def leave_summary(year, supervisor_id):
     for row in rows:
         if row["leave_type"] in counts:
             counts[row["leave_type"]] = int(row["count"])
-    used = sum(counts[key] * days for key, days in LEAVE_DAYS.items())
+    calendar_used = sum(counts[key] * days for key, days in LEAVE_DAYS.items())
+    used = calendar_used + manual_used
     return {
         "year": year, "supervisor_id": supervisor_id, "allowance": allowance,
+        "calendar_used": calendar_used, "manual_used": manual_used,
         "used": used, "remaining": allowance - used, "counts": counts,
     }
 
 
-def set_leave_allowance(year, supervisor_id, days, username):
+def _quarter_day_value(value, label):
     try:
-        days = float(days)
+        value = float(value)
     except (TypeError, ValueError) as exc:
-        raise CalendarInputError("연차 일수는 숫자여야 합니다.") from exc
-    if not 0 <= days <= 365 or not math.isfinite(days):
-        raise CalendarInputError("연차 일수는 0~365 범위여야 합니다.")
-    if round(days * 4) != days * 4:
-        raise CalendarInputError("연차 일수는 0.25일 단위로 입력하세요.")
+        raise CalendarInputError(f"{label}은 숫자여야 합니다.") from exc
+    if not 0 <= value <= 365 or not math.isfinite(value):
+        raise CalendarInputError(f"{label}은 0~365 범위여야 합니다.")
+    if round(value * 4) != value * 4:
+        raise CalendarInputError(f"{label}은 0.25일 단위로 입력하세요.")
+    return value
+
+
+def set_leave_allowance(year, supervisor_id, days, username, manual_used=None):
+    days = _quarter_day_value(days, "연차 일수")
     summary = leave_summary(year, supervisor_id)
+    # 구버전 앱은 manual_used 키를 보내지 않는다. 그 요청이 이미 입력한
+    # 수동 사용분을 0으로 덮지 않도록 생략은 "기존 값 유지"로 해석한다.
+    if manual_used is None:
+        manual_used = summary["manual_used"]
+    else:
+        manual_used = _quarter_day_value(manual_used, "수동 사용일수")
     if not query("SELECT 1 FROM supervisors WHERE id=?", (summary["supervisor_id"],), one=True):
         raise CalendarInputError("존재하지 않는 담당 감독입니다.")
     execute("""
-        INSERT INTO calendar_leave_allowances (supervisor_id, year, days, updated_by)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO calendar_leave_allowances
+            (supervisor_id, year, days, manual_used, updated_by)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(supervisor_id, year) DO UPDATE SET
-            days=excluded.days, updated_by=excluded.updated_by,
+            days=excluded.days, manual_used=excluded.manual_used,
+            updated_by=excluded.updated_by,
             updated_at=datetime('now','localtime')
-    """, (summary["supervisor_id"], summary["year"], days, username))
+    """, (
+        summary["supervisor_id"], summary["year"], days, manual_used, username,
+    ))
     return leave_summary(summary["year"], summary["supervisor_id"])

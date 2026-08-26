@@ -210,7 +210,7 @@ function renderLeaveSummary() {
   $('#cal-leave-allowance').textContent = fmtDays(s.allowance);
   $('#cal-leave-used').textContent = fmtDays(s.used);
   $('#cal-leave-remaining').textContent = fmtDays(s.remaining);
-  $('#cal-leave-breakdown').textContent = `연차 ${s.counts.annual}회 · 반차 ${s.counts.half}회 · 반반차 ${s.counts.quarter}회`;
+  $('#cal-leave-breakdown').textContent = `연차 ${s.counts.annual}회 · 반차 ${s.counts.half}회 · 반반차 ${s.counts.quarter}회 · 수동 ${fmtDays(s.manual_used)}일`;
 }
 
 function renderGrid() {
@@ -576,6 +576,7 @@ function openLeaveSettings() {
   const year = S.cursor.getFullYear();
   $('#cal-leave-modal-year').textContent = year;
   $('#cal-leave-days').value = S.leaveSummary?.year === year ? S.leaveSummary.allowance : 0;
+  $('#cal-leave-manual-used').value = S.leaveSummary?.year === year ? S.leaveSummary.manual_used : 0;
   $('#cal-leave-modal').hidden = false;
   document.body.style.overflow = 'hidden';
 }
@@ -587,13 +588,17 @@ function closeLeaveSettings() {
 
 async function saveLeaveSettings() {
   const days = Number($('#cal-leave-days').value);
+  const manualUsed = Number($('#cal-leave-manual-used').value);
   if (!Number.isFinite(days) || days < 0 || days > 365 || Math.round(days * 4) !== days * 4) {
     alert('연차 일수는 0~365 범위에서 0.25일 단위로 입력하세요.'); return;
+  }
+  if (!Number.isFinite(manualUsed) || manualUsed < 0 || manualUsed > 365 || Math.round(manualUsed * 4) !== manualUsed * 4) {
+    alert('수동 사용일수는 0~365 범위에서 0.25일 단위로 입력하세요.'); return;
   }
   try {
     S.leaveSummary = await api('/api/cal/leave-summary', {
       method: 'PUT', body: JSON.stringify({
-        year: S.cursor.getFullYear(), days,
+        year: S.cursor.getFullYear(), days, manual_used: manualUsed,
         supervisor_id: S.activeTab === 'all' ? S.user.supervisor_id : S.activeTab,
       }),
     });

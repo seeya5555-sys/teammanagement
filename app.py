@@ -216,6 +216,18 @@ def init_db(drop=False):
             conn.execute('ALTER TABLE calendar_events ADD COLUMN leave_type TEXT')
             print('  · calendar_events.leave_type 컬럼 추가')
 
+        leave_allowance_cols = [
+            r[1] for r in conn.execute(
+                'PRAGMA table_info(calendar_leave_allowances)'
+            ).fetchall()
+        ]
+        if leave_allowance_cols and 'manual_used' not in leave_allowance_cols:
+            conn.execute(
+                'ALTER TABLE calendar_leave_allowances '
+                'ADD COLUMN manual_used REAL NOT NULL DEFAULT 0'
+            )
+            print('  · calendar_leave_allowances.manual_used 컬럼 추가')
+
         # cs_surveys 에 manual_*_count 컬럼이 없으면 추가 (기존 DB 보강)
         cs_cols = [r[1] for r in conn.execute('PRAGMA table_info(cs_surveys)').fetchall()]
         if cs_cols:  # cs_surveys 테이블이 존재할 때만

@@ -161,6 +161,7 @@ def api_cal_leave_summary():
         if request.method == 'PUT':
             return jsonify(calendar_service.set_leave_allowance(
                 year, supervisor_id, data.get('days'), session.get('username'),
+                data.get('manual_used'),
             ))
         return jsonify(calendar_service.leave_summary(year, supervisor_id))
     except calendar_service.CalendarInputError as exc:

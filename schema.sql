@@ -490,6 +490,7 @@ CREATE TABLE IF NOT EXISTS calendar_leave_allowances (
     supervisor_id   INTEGER NOT NULL,
     year            INTEGER NOT NULL CHECK (year BETWEEN 2000 AND 2100),
     days            REAL NOT NULL CHECK (days >= 0 AND days <= 365),
+    manual_used     REAL NOT NULL DEFAULT 0 CHECK (manual_used >= 0 AND manual_used <= 365),
     updated_by      TEXT,
     updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     PRIMARY KEY (supervisor_id, year),
