@@ -205,7 +205,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('window.DockDailyNumbering', script)
         self.assertIn("document.querySelectorAll('.dd-section-edit').forEach(bindItemNumbering)", script)
         self.assertIn('NUM.breakLine(ta.value,ta.selectionStart,ta.selectionEnd)', script)
-        self.assertIn('NUM.indentLine(ta.value,ta.selectionStart,ta.selectionEnd,e.shiftKey)', script)
+        # Shift+Tab은 브라우저의 이전 포커스 이동이고, Tab만 하위항목으로 바꾼다.
+        self.assertIn('NUM.indentLine(ta.value,ta.selectionStart,ta.selectionEnd,false)', script)
         self.assertIn('oncompositionstart', script)
         self.assertIn('oncompositionend', script)
         self.assertIn('Tab: 들여쓴 - 하위항목', script)
@@ -1955,6 +1956,56 @@ class DockDailyTests(unittest.TestCase):
                       '<p style="margin:0 0 6px">%s' % (spacer, run % '<b>2. &nbsp;EGCS Retrofit</b>'),
                       preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
+
+    def test_email_preview_keeps_child_item_as_indented_dash_without_consuming_number(self):
+        """편집기의 `  - `는 이메일에서도 부모 번호 아래 dash이고 다음 번호를 밀지 않는다."""
+        p = self.client.post('/api/dock-daily/projects', json={
+            'vessel_id': self.vessel, 'title': 'Email Child DD'}).get_json()
+        r = self.client.post(
+            f"/api/dock-daily/projects/{p['id']}/reports/generate",
+            json={'report_date': '2026-08-26'},
+        ).get_json()
+        saved = self.client.put(f"/api/dock-daily/reports/{r['id']}", json={
+            'revision': r['revision'],
+            'operations': [{
+                'section_key': 'shipyard', 'block_type': 'paragraph',
+                'content': {'body': ('1) FF Lifeboat 점검\n'
+                                     '  - Sand Blasting <Hull & Valve> 50%\n'
+                                     '  - Paint touch-up\n'
+                                     '2) FWD winch 정비')},
+            }],
+        })
+        self.assertEqual(200, saved.status_code, saved.get_data(as_text=True))
+        preview = self.client.get(f"/api/dock-daily/reports/{r['id']}/email-preview").get_json()
+
+        self.assertIn('1) FF Lifeboat 점검\n'
+                      '  - Sand Blasting <Hull & Valve> 50%\n'
+                      '  - Paint touch-up\n'
+                      '2) FWD winch 정비',
+                      preview['text'])
+        self.assertNotIn('2) - Sand Blasting', preview['text'])
+        self.assertNotIn('3) FWD winch', preview['text'])
+
+        root = _Tree.parse(preview['html'])
+        def node_text(node):
+            return node['text'] + ''.join(node_text(kid) for kid in node['kids'])
+        item_tables = [table for table in _Tree.find(root, 'table')
+                       if table['attrs'].get('role') == 'presentation'
+                       and any(marker in node_text(table)
+                               for marker in ('FF Lifeboat', 'Sand Blasting',
+                                              'Paint touch-up', 'FWD winch'))]
+        self.assertEqual(4, len(item_tables))
+        child_cells = [kid for kid in _Tree.find(item_tables[1], 'tr')[0]['kids']
+                       if kid['tag'] == 'td']
+        self.assertEqual(['40', '12', None],
+                         [cell['attrs'].get('width') for cell in child_cells])
+        self.assertIn('>-</span>', preview['html'])
+        self.assertIn('>Sand Blasting &lt;Hull &amp; Valve&gt; 50%</span>', preview['html'])
+        self.assertIn('>Paint touch-up</span>', preview['html'])
+
+        # 본문 선두 하이픈/음수는 하위항목으로 오인하면 안 된다.
+        self.assertFalse(routes_dock_daily.CHILD_BULLET_RE.match('1) -20도 시험'))
+        self.assertFalse(routes_dock_daily.CHILD_BULLET_RE.match('-압력 확인'))
 
     def test_email_table_cells_wrap_text_in_paragraphs(self):
         """On the Outlook iOS paste that was measured, text sitting directly inside a

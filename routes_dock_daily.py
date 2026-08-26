@@ -59,6 +59,9 @@ DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 # renderers apply their own numbering.  Without this a saved "1) foo" would
 # render as "1) 1) foo".
 ITEM_NO_RE = re.compile(r'^\s*\d+\s*\)\s*')
+# 웹/iOS 번호엔진과 같은 하위항목 계약. 두 칸 이상 들여쓴 `- `만 하위로 보고,
+# `-20도`·`-압력`처럼 본문 자체가 하이픈으로 시작하는 상위항목은 건드리지 않는다.
+CHILD_BULLET_RE = re.compile(r'^\s{2,}-\s+')
 # 사진 캡션이 이미 한국어인지.  🔴 이걸로 걸러야 "번역이 필요했는데 안 됐다" 를 정확히
 # 셀 수 있다 -- 한국어 캡션을 번역기에 보내면 같은 문장이 돌아와 `photo_translated` 가
 # 안 오르고, 화면은 실패하지도 않은 번역을 실패했다고 말한다(반대로 그 오탐이 싫어
@@ -2852,9 +2855,10 @@ def _mail_entries(rid, key):
                 out.append({'kind': 'image', 'grid': columns, 'photos': photos})
             continue
         for line in _plain(block).splitlines():
-            stripped = ITEM_NO_RE.sub('', line).strip()
+            child = bool(CHILD_BULLET_RE.match(line))
+            stripped = (CHILD_BULLET_RE if child else ITEM_NO_RE).sub('', line).strip()
             if stripped:
-                out.append({'kind': 'text', 'text': stripped})
+                out.append({'kind': 'child_text' if child else 'text', 'text': stripped})
     return out
 
 
@@ -2998,6 +3002,23 @@ def _email(rid):
                 % (cell_font, cell_font, p % run('&nbsp;'),
                    cell_font, p % run('%d)' % no), cell_font, p % run(inner)))
 
+    def child_item(inner):
+        """상위번호를 소비하지 않는 `  - ` 하위항목.
+
+        Outlook iOS가 paragraph margin을 버리므로 item()과 같은 presentation table을 쓴다.
+        40px spacer + 12px dash로 dash만 번호보다 안쪽에 두고, 본문 시작선은 부모와 같은
+        52px에 맞춘다. 긴 줄도 부모처럼 본문 셀 안에서 줄바꿈한다.
+        """
+        p = '<p style="margin:0;%s">%%s</p>' % cell_font
+        return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                'width="100%%" style="width:100%%;border-collapse:collapse;'
+                'margin:0 0 3px 0;%s"><tr>'
+                '<td width="40" style="width:40px;vertical-align:top;%s">%s</td>'
+                '<td width="12" style="width:12px;vertical-align:top;white-space:nowrap;%s">%s</td>'
+                '<td style="vertical-align:top;%s">%s</td></tr></table>'
+                % (cell_font, cell_font, p % run('&nbsp;'),
+                   cell_font, p % run('-'), cell_font, p % run(inner)))
+
     def table(entry, indent_px=52):
         """카드의 표를 메일 표로. 셀 텍스트는 `cell()` 계약대로 `<td>` 안 `<p>` 에 넣는다.
 
@@ -3140,6 +3161,10 @@ def _email(rid):
                 grid, texts, budget, photos = photo_grid(entry, budget, photos)
                 lines.extend(texts)
                 chunks.extend(grid)
+                continue
+            if entry['kind'] == 'child_text':
+                lines.append('  - %s' % entry['text'])
+                chunks.append(child_item(html.escape(entry['text'])))
                 continue
             item_no += 1
             lines.append('%d) %s' % (item_no, entry['text']))
