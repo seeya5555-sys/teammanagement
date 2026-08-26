@@ -64,6 +64,20 @@ ITEM_NO_RE = re.compile(r'^\s*\d+\s*\)\s*')
 # 안 오르고, 화면은 실패하지도 않은 번역을 실패했다고 말한다(반대로 그 오탐이 싫어
 # 경고를 아예 빼면 영문 캡션이 조용히 조선소로 나간다).
 HANGUL_RE = re.compile(r'[가-힣]')
+
+
+def _strip_generated_ham(value):
+    """자동번역 결과의 보고체 종결 `~함`만 제거한다.
+
+    작업동사 allowlist 뒤의 `함`만 종결어미로 본다. `공구함`·`보관함`·`결함`·`포함`처럼
+    같은 글자로 끝나는 명사는 보존하고, 사람이 직접 입력한 본문에는 적용하지 않는다.
+    """
+    text = str(value or '').strip()
+    action = ('완료|진행|실시|시행|수행|착수|개시|종료|중단|재개|예정|확인|점검|검사|'
+              '시험|검토|협의|보고|요청|조치|작업|보수|수리|정비|교체|설치|철거|분해|'
+              '조립|세척|청소|도장|용접|절단|연결|분리|제거|보존|유지|확보|준비|사용|'
+              '적용|반영|운전|정지')
+    return re.sub(r'(%s)함(?=\s*[.!?。！？]?\s*$)' % action, r'\1', text)
 MAX_ATTACHMENT = 20 * 1024 * 1024
 MAX_OOXML_UNCOMPRESSED = 64 * 1024 * 1024
 MAX_OOXML_PART = 8 * 1024 * 1024
@@ -1957,8 +1971,10 @@ def report_docx_apply(rid):
         if out and len(out) == len(jobs):
             for n, (_, item) in enumerate(jobs):
                 if out[n] and out[n].strip() != item['desc'].strip():
-                    ko[n] = out[n]
-                    translated += 1
+                    cleaned = _strip_generated_ham(out[n])
+                    if cleaned:
+                        ko[n] = cleaned
+                        translated += 1
     # 사진 캡션도 번역한다(같은 메일에 나가므로 한쪽만 영문이면 그게 더 이상하다).
     # 🔴 행과 **따로** 호출하고 **따로 센다**.  한 리스트에 붙여 보내고 잘라 쓰면 길이가
     #    어긋나는 날 행 설명이 캡션으로 조용히 밀린다.  또 캡션 번역을 `translated` 에
@@ -1979,8 +1995,10 @@ def report_docx_apply(rid):
         if out and len(out) == len(caps):
             for k, (n, cap) in enumerate(caps):
                 if out[k] and out[k].strip() != cap.strip():
-                    photo_ko[n] = out[k]
-                    photo_translated += 1
+                    cleaned = _strip_generated_ham(out[k])
+                    if cleaned:
+                        photo_ko[n] = cleaned
+                        photo_translated += 1
 
     db = get_db()
     lock, err = _cas_begin(rid, data['revision'])

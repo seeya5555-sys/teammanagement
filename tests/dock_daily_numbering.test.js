@@ -18,6 +18,46 @@ test('엔터를 누르면 새 줄에 다음 번호가 붙는다', () => {
   assert.strictEqual(third.caret, third.value.length);
 });
 
+test('Tab 은 현재 줄을 하위 - 항목으로 만들고 상위 번호만 다시 매긴다', () => {
+  const value = '1) 작업 시작\n2) 작업중\n3) 다음 작업';
+  const pos = value.indexOf('작업중');
+  const child = N.indentLine(value, pos, pos, false);
+  assert.strictEqual(child.value, '1) 작업 시작\n  - 작업중\n2) 다음 작업');
+  assert.strictEqual(child.value.slice(0, child.caret), '1) 작업 시작\n  - 작업중');
+});
+
+test('하위항목에서 Enter 를 누르면 다음 - 항목이 이어진다', () => {
+  const value = '1) 작업 시작\n  - 작업중';
+  const out = N.breakLine(value, value.length, value.length);
+  assert.strictEqual(out.value, '1) 작업 시작\n  - 작업중\n  - ');
+  assert.strictEqual(out.caret, out.value.length);
+});
+
+test('Shift+Tab 은 하위항목을 다음 상위 번호로 되돌린다', () => {
+  const value = '1) 작업 시작\n  - 작업중\n  - 작업중';
+  const pos = value.lastIndexOf('작업중');
+  const out = N.indentLine(value, pos, pos, true);
+  assert.strictEqual(out.value, '1) 작업 시작\n  - 작업중\n2) 작업중');
+});
+
+test('여러 하위항목 사이에서도 상위 번호는 연속된다', () => {
+  const out = N.renumber('7) A\n  - a1\n  - a2\n9) B\n  - b1', 0, false);
+  assert.strictEqual(out.value, '1) A\n  - a1\n  - a2\n2) B\n  - b1');
+  assert.strictEqual(N.renumber(out.value, 0, false).value, out.value, '계층 번호도 멱등');
+});
+
+test('상위항목 본문 선두 하이픈과 음수는 하위항목으로 오인하지 않는다', () => {
+  assert.strictEqual(N.renumber('1) -20도에서 시험', 0, false).value, '1) -20도에서 시험');
+  assert.strictEqual(N.renumber('1) -압력 확인', 0, false).value, '1) -압력 확인');
+  assert.strictEqual(N.itemBody('1) -20도'), '-20도');
+});
+
+test('하위항목 접두어 Backspace 는 글자를 잃지 않고 앞줄과 합친다', () => {
+  assert.strictEqual(N.deleteBackward('1) 작업 시작\n  - 작업중', 13).value, '1) 작업 시작작업중');
+  assert.strictEqual(N.deleteBackward('1) 작업 시작\n  - 작업중\n  - 계속', 21).value,
+                     '1) 작업 시작\n  - 작업중계속');
+});
+
 test('중간 줄 끝에서 엔터를 치면 이후 항목이 다시 매겨진다', () => {
   const value = '1) A\n2) B\n3) C';
   const out = N.breakLine(value, 9, 9); // "2) B" 끝

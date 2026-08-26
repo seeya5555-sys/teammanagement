@@ -7,10 +7,16 @@
 (function () {
   'use strict';
   var ITEM_NO = /^\s*\d+\s*\)\s*/;
+  // 하위항목은 **2칸 이상 들여쓰기 + `- `** 일 때만이다. `-20도`·`-압력`처럼
+  // 본문 자체가 하이픈으로 시작하는 상위항목을 하위항목으로 오인해 지우면 안 된다.
+  var CHILD_BULLET = /^\s{2,}-\s+/;
   var LEADING_WS = /^\s+/;
 
   /* 줄에서 번호와 들여쓰기를 걷어낸 순수 작업내용. */
-  function itemBody(line) { return line.replace(ITEM_NO, '').replace(LEADING_WS, ''); }
+  function itemBody(line) {
+    return line.replace(ITEM_NO, '').replace(CHILD_BULLET, '').replace(LEADING_WS, '');
+  }
+  function isChild(line) { return CHILD_BULLET.test(line); }
 
   /* value 안의 모든 작업항목 줄을 1) 2) 3) 으로 다시 매긴다.
    * 빈 줄은 목록에서 통째로 빠지므로 고아 번호나 빈 항목이 남지 않는다.
@@ -28,12 +34,14 @@
       var raw = lines[i];
       var body = itemBody(raw);
       var keep = body.trim() !== '' || (keepCaretLine === true && i === caretLine);
-      var line = keep ? (no + 1) + ') ' + body : null;
+      var child = isChild(raw);
+      var prefix = child ? '  - ' : (no + 1) + ') ';
+      var line = keep ? prefix + body : null;
       if (i === caretLine) {
         var bodyCol = Math.max(0, caretCol - (raw.length - body.length));
         newCaret = keep ? offset + Math.min(line.length, (line.length - body.length) + bodyCol) : offset;
       }
-      if (keep) { no += 1; out.push(line); offset += line.length + 1; }
+      if (keep) { if (!child) no += 1; out.push(line); offset += line.length + 1; }
     }
     var next = out.join('\n');
     return { value: next, caret: Math.max(0, Math.min(newCaret, next.length)) };
@@ -57,13 +65,14 @@
     var lines = value.split('\n');
     var caretLine = head.split('\n').length - 1;
     if (caretLine >= lines.length) return null;
-    var prefix = ITEM_NO.exec(lines[caretLine]);
+    var prefix = ITEM_NO.exec(lines[caretLine]) || CHILD_BULLET.exec(lines[caretLine]);
     if (!prefix || caretCol > prefix[0].length) return null;   // 접두어 밖 → 평범한 글자 삭제
     if (caretLine === 0) return { value: value, caret: safeCaret };
     var previous = itemBody(lines[caretLine - 1]);
     // 합친 줄에 접두어를 하나 달아서 넘긴다. renumber 는 줄마다 접두어 하나를 걷어내므로,
     // 맨몸으로 주면 본문이 `3) x` 처럼 생긴 경우 그 `3) ` 까지 먹혀 글자가 사라진다.
-    lines.splice(caretLine - 1, 2, '1) ' + previous + itemBody(lines[caretLine]));
+    var previousMarker = isChild(lines[caretLine - 1]) ? '  - ' : '1) ';
+    lines.splice(caretLine - 1, 2, previousMarker + previous + itemBody(lines[caretLine]));
     var offset = 0;
     for (var i = 0; i < caretLine - 1; i++) offset += lines[i].length + 1;
     return renumber(lines.join('\n'), offset + 3 + previous.length, true);
@@ -73,8 +82,34 @@
   function breakLine(value, start, end) {
     var from = Math.max(0, Math.min(Number(start) || 0, value.length));
     var to = Math.max(from, Math.min(Number(end) || from, value.length));
-    var next = value.slice(0, from) + '\n' + value.slice(to);
-    return renumber(next, from + 1, true);
+    var lineStart = value.lastIndexOf('\n', Math.max(0, from - 1)) + 1;
+    var lineEnd = value.indexOf('\n', from);
+    var current = value.slice(lineStart, lineEnd < 0 ? value.length : lineEnd);
+    var marker = isChild(current) ? '  - ' : '';
+    var next = value.slice(0, from) + '\n' + marker + value.slice(to);
+    return renumber(next, from + 1 + marker.length, true);
+  }
+
+  /* Tab: 현재 상위 항목을 한 단계 하위(`  - `)로 바꾼다. 계층은 한 단계만 둔다.
+   * Shift+Tab 은 하위 항목을 상위 번호 항목으로 되돌린다. */
+  function indentLine(value, start, end, outdent) {
+    var from = Math.max(0, Math.min(Number(start) || 0, value.length));
+    var to = Math.max(from, Math.min(Number(end) || from, value.length));
+    var first = value.slice(0, from).split('\n').length - 1;
+    var last = value.slice(0, to).split('\n').length - 1;
+    if (to > from && to > 0 && value[to - 1] === '\n') last -= 1;
+    var lines = value.split('\n');
+    for (var i = first; i <= last && i < lines.length; i++) {
+      var body = itemBody(lines[i]);
+      if (outdent) {
+        if (isChild(lines[i])) lines[i] = '1) ' + body;
+      } else if (!isChild(lines[i])) {
+        lines[i] = '  - ' + body;
+      }
+    }
+    var before = lines.slice(0, first).join('\n');
+    var caret = (before ? before.length + 1 : 0) + (outdent ? 3 : 4) + itemBody(lines[first]).length;
+    return renumber(lines.join('\n'), caret, true);
   }
 
   /* 이미 번호가 붙은 첫 줄은 건드리지 않는다. 번호 없는 옛 카드만 정규화 대상. */
@@ -82,9 +117,10 @@
     return value.trim() !== '' && !ITEM_NO.test(value.split('\n')[0] || '');
   }
 
-  var api = { ITEM_NO: ITEM_NO, itemBody: itemBody, renumber: renumber,
+  var api = { ITEM_NO: ITEM_NO, CHILD_BULLET: CHILD_BULLET, itemBody: itemBody,
+              isChild: isChild, renumber: renumber,
               breakLine: breakLine, deleteBackward: deleteBackward,
-              needsNumbering: needsNumbering };
+              indentLine: indentLine, needsNumbering: needsNumbering };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.DockDailyNumbering = api;
 })();

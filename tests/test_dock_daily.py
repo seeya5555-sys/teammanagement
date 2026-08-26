@@ -205,9 +205,10 @@ class DockDailyTests(unittest.TestCase):
         self.assertIn('window.DockDailyNumbering', script)
         self.assertIn("document.querySelectorAll('.dd-section-edit').forEach(bindItemNumbering)", script)
         self.assertIn('NUM.breakLine(ta.value,ta.selectionStart,ta.selectionEnd)', script)
+        self.assertIn('NUM.indentLine(ta.value,ta.selectionStart,ta.selectionEnd,e.shiftKey)', script)
         self.assertIn('oncompositionstart', script)
         self.assertIn('oncompositionend', script)
-        self.assertIn('엔터를 누르면 1) 2) 번호가 붙습니다', script)
+        self.assertIn('Tab: 들여쓴 - 하위항목', script)
         self.assertNotIn("?'자동수집':'수동'", script)
 
         with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js',

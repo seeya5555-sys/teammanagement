@@ -851,6 +851,30 @@ class DocxRouteTests(unittest.TestCase):
         self.assertTrue(all(not r['source_en'].startswith('[KO] ') for r in rows),
                         '영문 원문은 추적용으로 남는다')
 
+    def test_translation_removes_terminal_ham_but_preserves_nouns(self):
+        import routes_dock_daily as routes
+        self.assertEqual('도장 작업 완료.', routes._strip_generated_ham('도장 작업 완료함.'))
+        self.assertEqual('배관 검사 진행', routes._strip_generated_ham('배관 검사 진행함'))
+        self.assertEqual('검사 범위에 포함.', routes._strip_generated_ham('검사 범위에 포함.'))
+        self.assertEqual('선체 결함.', routes._strip_generated_ham('선체 결함.'))
+        self.assertEqual('공구함.', routes._strip_generated_ham('공구함.'))
+        self.assertEqual('구급함 점검.', routes._strip_generated_ham('구급함 점검함.'))
+
+        rid = self.report['id']
+        aid = self._upload(rid)
+        import helpers_shared
+        real = helpers_shared.translate_texts_ko
+        helpers_shared.translate_texts_ko = lambda texts: ['작업 완료함.' for _ in texts]
+        try:
+            body = self._apply(rid, aid, self.report['revision']).get_json()
+        finally:
+            helpers_shared.translate_texts_ko = real
+        self.assertEqual(5, body['translated'])
+        applied = self._lines(rid)
+        self.assertEqual(5, len(applied))
+        self.assertTrue(all(line.startswith('작업 완료.') for line in applied), applied)
+        self.assertTrue(all('완료함' not in line for line in applied), applied)
+
     def test_a_failing_translator_falls_back_to_the_english_text(self):
         """🔴 번역 실패로 파일 읽기 전체를 실패시키지 않는다. 영문 원문이라도 들어와야 한다."""
         rid = self.report['id']
