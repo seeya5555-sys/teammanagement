@@ -474,15 +474,15 @@
     ta.onkeydown=e=>{
       if(e.isComposing||composing)return;
       // Tab 은 브라우저 포커스 이동 대신 현재 줄을 한 단계 하위항목으로 바꾼다.
-      // Shift+Tab 으로 다시 상위 번호 항목으로 돌아온다.
-      if(e.key==='Tab'){
+      // Shift+Tab 은 브라우저의 이전 포커스 이동을 유지한다. 상위 복귀는 Backspace.
+      if(e.key==='Tab'&&!e.shiftKey){
         e.preventDefault();
-        applyNumbering(ta,NUM.indentLine(ta.value,ta.selectionStart,ta.selectionEnd,e.shiftKey));
+        applyNumbering(ta,NUM.indentLine(ta.value,ta.selectionStart,ta.selectionEnd,false));
         commitItems(ta);
         return;
       }
-      // 번호 접두어 안에서의 백스페이스는 그 줄을 앞줄과 합친다(= 엔터 취소). 기본 삭제에
-      // 맡기면 남은 조각이 작업내용으로 보여 번호가 다시 붙는다(`2) 2`).
+      // 하위 접두어의 백스페이스는 그 줄을 상위항목으로 되돌린다. 상위 번호 접두어에서는
+      // 앞줄과 합쳐 엔터를 취소한다. 기본 삭제에 맡기면 번호 조각이 되살아난다(`2) 2`).
       // Shift 여부는 보지 않는다 — Shift+Backspace 도 한 글자를 지우므로 그냥 두면
       // 접두어가 부서지는 같은 버그가 그 조합에서만 되살아난다(올마이트 지적).
       if(e.key==='Backspace'&&ta.selectionStart===ta.selectionEnd){
@@ -534,7 +534,7 @@
     const all=state.report.sections||[];
     $('#dd-sections').innerHTML=all.filter(s=>s.enabled).map(s=>{
       const bs=blocks.filter(b=>b.section_key===s.section_key&&!b._delete);
-      return `<div class="dd-card dd-section" data-section="${esc(s.section_key)}"><div class="dd-section-head"><h3>${esc(s.label)}</h3><span class="dd-section-aside"><span class="dd-muted">Enter: 1) 2) 자동번호 · Tab: 들여쓴 - 하위항목 · Shift+Tab: 상위항목</span>${sectionTools(s,all,locked,bs.filter(b=>!b._new).length)}</span></div>${bs.map((b,i)=>{const key=b._key??b.id;
+      return `<div class="dd-card dd-section" data-section="${esc(s.section_key)}"><div class="dd-section-head"><h3>${esc(s.label)}</h3><span class="dd-section-aside"><span class="dd-muted">Enter: 1) 2) 자동번호 · Tab: 들여쓴 - 하위항목 · Backspace: 상위항목</span>${sectionTools(s,all,locked,bs.filter(b=>!b._new).length)}</span></div>${bs.map((b,i)=>{const key=b._key??b.id;
       // Provenance badges only carry meaning for auto-collected blocks; hand
       // written cards showed a permanent "수동" pair that said nothing.
       const badges=b.origin==='dock_auto'?`<span class="dd-badge auto">자동수집</span>${b.manual_override?'<span class="dd-badge">수동 수정 보호</span>':''}`:'';

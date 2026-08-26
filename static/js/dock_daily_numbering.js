@@ -54,7 +54,8 @@
    * 붙인다(`2) 2`). 2026-08-22 형 제보(iOS)에서 3회 주기 무한반복으로 확인됐고, 웹은
    * blur 시점에 같은 결과가 된다.
    *
-   * 규칙: 접두어 안(또는 줄 맨 앞)에서의 백스페이스는 그 줄을 앞줄과 합친다(= 엔터 취소).
+   * 규칙: 하위항목 접두어에서의 백스페이스는 그 줄을 상위 번호 항목으로 되돌린다.
+   * 상위 번호 접두어에서는 기존처럼 앞줄과 합친다(= 엔터 취소).
    * 첫 줄이면 합칠 앞줄이 없으니 아무 일도 하지 않는다(전체선택 삭제는 여기를 안 지난다).
    * null = 기본 삭제에 맡김. */
   function deleteBackward(value, caret) {
@@ -67,6 +68,12 @@
     if (caretLine >= lines.length) return null;
     var prefix = ITEM_NO.exec(lines[caretLine]) || CHILD_BULLET.exec(lines[caretLine]);
     if (!prefix || caretCol > prefix[0].length) return null;   // 접두어 밖 → 평범한 글자 삭제
+    if (isChild(lines[caretLine])) {
+      lines[caretLine] = '1) ' + itemBody(lines[caretLine]);
+      var childOffset = 0;
+      for (var j = 0; j < caretLine; j++) childOffset += lines[j].length + 1;
+      return renumber(lines.join('\n'), childOffset + 3, true);
+    }
     if (caretLine === 0) return { value: value, caret: safeCaret };
     var previous = itemBody(lines[caretLine - 1]);
     // 합친 줄에 접두어를 하나 달아서 넘긴다. renumber 는 줄마다 접두어 하나를 걷어내므로,
@@ -90,8 +97,8 @@
     return renumber(next, from + 1 + marker.length, true);
   }
 
-  /* Tab: 현재 상위 항목을 한 단계 하위(`  - `)로 바꾼다. 계층은 한 단계만 둔다.
-   * Shift+Tab 은 하위 항목을 상위 번호 항목으로 되돌린다. */
+  /* 현재 상위 항목을 한 단계 하위(`  - `)로 바꾼다. 계층은 한 단계만 둔다.
+   * 상위 복귀는 하위 접두어에서 Backspace 로 한다. */
   function indentLine(value, start, end, outdent) {
     var from = Math.max(0, Math.min(Number(start) || 0, value.length));
     var to = Math.max(from, Math.min(Number(end) || from, value.length));

@@ -33,11 +33,19 @@ test('하위항목에서 Enter 를 누르면 다음 - 항목이 이어진다', (
   assert.strictEqual(out.caret, out.value.length);
 });
 
-test('Shift+Tab 은 하위항목을 다음 상위 번호로 되돌린다', () => {
+test('하위항목 접두어 Backspace 는 그 줄을 다음 상위 번호로 되돌린다', () => {
   const value = '1) 작업 시작\n  - 작업중\n  - 작업중';
-  const pos = value.lastIndexOf('작업중');
-  const out = N.indentLine(value, pos, pos, true);
+  const pos = value.lastIndexOf('  - ') + 4;
+  const out = N.deleteBackward(value, pos);
   assert.strictEqual(out.value, '1) 작업 시작\n  - 작업중\n2) 작업중');
+  assert.strictEqual(out.caret, value.lastIndexOf('  - ') + 3);
+});
+
+test('10번째 상위항목으로 복귀해도 caret 은 두 자리 번호 접두어 뒤에 놓인다', () => {
+  const value = [...Array(9)].map((_,i)=>`${i+1}) 항목${i+1}`).join('\n')+'\n  - 열번째';
+  const out = N.deleteBackward(value, value.lastIndexOf('  - ')+4);
+  assert.strictEqual(out.value.endsWith('\n10) 열번째'), true);
+  assert.strictEqual(out.value.slice(out.caret), '열번째');
 });
 
 test('여러 하위항목 사이에서도 상위 번호는 연속된다', () => {
@@ -52,9 +60,9 @@ test('상위항목 본문 선두 하이픈과 음수는 하위항목으로 오�
   assert.strictEqual(N.itemBody('1) -20도'), '-20도');
 });
 
-test('하위항목 접두어 Backspace 는 글자를 잃지 않고 앞줄과 합친다', () => {
-  assert.strictEqual(N.deleteBackward('1) 작업 시작\n  - 작업중', 13).value, '1) 작업 시작작업중');
-  assert.strictEqual(N.deleteBackward('1) 작업 시작\n  - 작업중\n  - 계속', 21).value,
+test('상위항목 접두어 Backspace 는 글자를 잃지 않고 앞줄과 합친다', () => {
+  assert.strictEqual(N.deleteBackward('1) 작업 시작\n2) 작업중', 12).value, '1) 작업 시작작업중');
+  assert.strictEqual(N.deleteBackward('1) 작업 시작\n  - 작업중\n2) 계속', 20).value,
                      '1) 작업 시작\n  - 작업중계속');
 });
 
