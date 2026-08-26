@@ -92,6 +92,7 @@ const S = {
   // 현재 표시 중인 달
   cursor:      new Date(today0.getFullYear(), today0.getMonth(), 1),
   selectedDate: null,       // 'YYYY-MM-DD'
+  leaveSummary: null,
 };
 
 // ───────────── Helpers ─────────────
@@ -185,6 +186,31 @@ function render() {
 
   renderGrid();
   renderSideList();
+  renderLeaveSummary();
+}
+
+function fmtDays(value) {
+  return Number(value || 0).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
+}
+
+function renderLeaveSummary() {
+  const s = S.leaveSummary;
+  const year = S.cursor.getFullYear();
+  const box = $('#cal-leave-summary');
+  $('#cal-leave-year').textContent = `${year}년 연차`;
+  if (!s || s.year !== year) {
+    box.hidden = true;
+    $('#cal-leave-allowance').textContent = '0';
+    $('#cal-leave-used').textContent = '0';
+    $('#cal-leave-remaining').textContent = '0';
+    $('#cal-leave-breakdown').textContent = '';
+    return;
+  }
+  box.hidden = false;
+  $('#cal-leave-allowance').textContent = fmtDays(s.allowance);
+  $('#cal-leave-used').textContent = fmtDays(s.used);
+  $('#cal-leave-remaining').textContent = fmtDays(s.remaining);
+  $('#cal-leave-breakdown').textContent = `연차 ${s.counts.annual}회 · 반차 ${s.counts.half}회 · 반반차 ${s.counts.quarter}회`;
 }
 
 function renderGrid() {
@@ -379,7 +405,14 @@ async function reloadEvents() {
   const start = ymd(days[0]);
   const end   = ymd(days[days.length - 1]);
   const supParam = S.activeTab === 'all' ? '' : `&supervisor_id=${S.activeTab}`;
-  S.events = await api(`/api/cal/events?start=${start}&end=${end}${supParam}`);
+  const supervisorId = S.activeTab === 'all' ? S.user.supervisor_id : S.activeTab;
+  const summaryQuery = supervisorId ? `&supervisor_id=${supervisorId}` : '';
+  [S.events, S.leaveSummary] = await Promise.all([
+    api(`/api/cal/events?start=${start}&end=${end}${supParam}`),
+    supervisorId
+      ? api(`/api/cal/leave-summary?year=${S.cursor.getFullYear()}${summaryQuery}`).catch(() => null)
+      : Promise.resolve(null),
+  ]);
   render();
 }
 
@@ -409,6 +442,7 @@ function openCreateModal(presetDate) {
   $('#cal-f-supervisor').value = (S.activeTab !== 'all') ? S.activeTab : (S.user.supervisor_id || '');
   $('#cal-f-vessel').value = '';
   $('#cal-f-category').value = '';
+  $('#cal-f-leave-type').value = '';
   setColor('blue');
   $('#cal-f-location').value = '';
   $('#cal-f-notes').value = '';
@@ -434,6 +468,7 @@ function openEditModal(ev) {
   $('#cal-f-supervisor').value = ev.supervisor_id || '';
   $('#cal-f-vessel').value = ev.vessel_id || '';
   $('#cal-f-category').value = ev.category || '';
+  $('#cal-f-leave-type').value = ev.leave_type || '';
   setColor(ev.color || 'blue');
   $('#cal-f-location').value = ev.location || '';
   $('#cal-f-notes').value = ev.notes || '';
@@ -489,7 +524,8 @@ async function saveModal() {
   if (!title)  { alert('제목을 입력하세요.'); $('#cal-f-title').focus(); return; }
   if (!start)  { alert('시작일을 선택하세요.'); $('#cal-f-start').focus(); return; }
   const allday = $('#cal-f-allday').checked;
-  const end = $('#cal-f-end').value || null;
+  const leaveType = $('#cal-f-leave-type').value || null;
+  const end = leaveType ? null : ($('#cal-f-end').value || null);
   // 종료일이 시작일보다 빠르면 자동 보정
   if (end && end < start) { alert('종료일이 시작일보다 빠를 수 없습니다.'); return; }
 
@@ -507,6 +543,7 @@ async function saveModal() {
     color:      getColor(),
     location:   $('#cal-f-location').value.trim(),
     notes:      $('#cal-f-notes').value.trim(),
+    leave_type: leaveType,
   };
 
   try {
@@ -533,6 +570,35 @@ async function saveModal() {
   } catch (err) {
     alert('저장 실패: ' + err.message);
   }
+}
+
+function openLeaveSettings() {
+  const year = S.cursor.getFullYear();
+  $('#cal-leave-modal-year').textContent = year;
+  $('#cal-leave-days').value = S.leaveSummary?.year === year ? S.leaveSummary.allowance : 0;
+  $('#cal-leave-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLeaveSettings() {
+  $('#cal-leave-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+
+async function saveLeaveSettings() {
+  const days = Number($('#cal-leave-days').value);
+  if (!Number.isFinite(days) || days < 0 || days > 365 || Math.round(days * 4) !== days * 4) {
+    alert('연차 일수는 0~365 범위에서 0.25일 단위로 입력하세요.'); return;
+  }
+  try {
+    S.leaveSummary = await api('/api/cal/leave-summary', {
+      method: 'PUT', body: JSON.stringify({
+        year: S.cursor.getFullYear(), days,
+        supervisor_id: S.activeTab === 'all' ? S.user.supervisor_id : S.activeTab,
+      }),
+    });
+    closeLeaveSettings(); renderLeaveSummary();
+  } catch (err) { alert('연차 설정 저장 실패: ' + err.message); }
 }
 
 async function deleteCurrent() {
@@ -562,6 +628,19 @@ async function init() {
     }
 
     await reloadEvents();
+
+    $('#cal-leave-settings').addEventListener('click', openLeaveSettings);
+    $('#cal-leave-save').addEventListener('click', saveLeaveSettings);
+    $$('[data-close-leave="1"]').forEach(x => x.addEventListener('click', closeLeaveSettings));
+    $('#cal-f-leave-type').addEventListener('change', (e) => {
+      if (!e.target.value) return;
+      $('#cal-f-category').value = '휴가';
+      $('#cal-f-allday').checked = true;
+      $('#cal-f-time-row').hidden = true;
+      $('#cal-f-end').value = '';
+      const labels = { annual: '연차', half: '반차', quarter: '반반차' };
+      if (!$('#cal-f-title').value.trim()) $('#cal-f-title').value = labels[e.target.value];
+    });
 
     // 월 이동
     $('#cal-prev').addEventListener('click', async () => {

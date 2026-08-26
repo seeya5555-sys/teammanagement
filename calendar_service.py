@@ -6,6 +6,8 @@ Blueprint remains the public HTTP boundary so URL rules, endpoint names, auth
 decorators, and idempotency middleware keep their current contracts.
 """
 
+import math
+
 from app_core import execute, query
 
 
@@ -13,7 +15,10 @@ _MUTABLE_FIELDS = (
     "supervisor_id", "vessel_id", "title", "start_date", "end_date",
     "all_day", "start_time", "end_time", "category", "color",
     "location", "notes", "completed",
+    "leave_type",
 )
+
+LEAVE_DAYS = {"annual": 1.0, "half": 0.5, "quarter": 0.25}
 
 
 class CalendarInputError(ValueError):
@@ -42,6 +47,18 @@ def validate_event_payload(data, *, creating=False):
         color = data.get("color")
         if not isinstance(color, str) or color == "":
             raise CalendarInputError("color 가 필요합니다.")
+
+    if "leave_type" in data:
+        leave_type = data.get("leave_type") or None
+        if leave_type is not None and leave_type not in LEAVE_DAYS:
+            raise CalendarInputError("leave_type 은 annual, half, quarter 중 하나여야 합니다.")
+        if leave_type is not None:
+            if not data.get("supervisor_id"):
+                raise CalendarInputError("연차 일정에는 담당 감독이 필요합니다.")
+            start = data.get("start_date")
+            end = data.get("end_date")
+            if end and start and end != start:
+                raise CalendarInputError("연차 일정은 하루 단위로 등록하세요.")
 
 
 def _supervisor_scope(value):
@@ -91,8 +108,8 @@ def create_event(data, username, valid_colors):
         INSERT INTO calendar_events
             (supervisor_id, vessel_id, title, start_date, end_date,
              all_day, start_time, end_time, category, color, location, notes, completed,
-             source_type, source_id, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             source_type, source_id, created_by, leave_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         data.get("supervisor_id") or None,
         data.get("vessel_id") or None,
@@ -110,6 +127,7 @@ def create_event(data, username, valid_colors):
         data.get("source_type") or "manual",
         data.get("source_id") or None,
         username,
+        data.get("leave_type") or None,
     ))
 
 
@@ -149,3 +167,55 @@ def update_event(event_id, data, valid_colors):
 
 def delete_event(event_id):
     execute("DELETE FROM calendar_events WHERE id=?", (event_id,))
+
+
+def leave_summary(year, supervisor_id):
+    try:
+        year = int(year)
+        supervisor_id = int(supervisor_id)
+    except (TypeError, ValueError) as exc:
+        raise CalendarInputError("year 와 supervisor_id 는 정수여야 합니다.") from exc
+    if not 2000 <= year <= 2100:
+        raise CalendarInputError("year 는 2000~2100 범위여야 합니다.")
+    allowance_row = query(
+        "SELECT days FROM calendar_leave_allowances WHERE supervisor_id=? AND year=?",
+        (supervisor_id, year), one=True,
+    )
+    allowance = float(allowance_row["days"]) if allowance_row else 0.0
+    rows = query("""
+        SELECT leave_type, COUNT(*) AS count
+          FROM calendar_events
+         WHERE supervisor_id=? AND start_date BETWEEN ? AND ? AND leave_type IS NOT NULL
+         GROUP BY leave_type
+    """, (supervisor_id, f"{year:04d}-01-01", f"{year:04d}-12-31"))
+    counts = {key: 0 for key in LEAVE_DAYS}
+    for row in rows:
+        if row["leave_type"] in counts:
+            counts[row["leave_type"]] = int(row["count"])
+    used = sum(counts[key] * days for key, days in LEAVE_DAYS.items())
+    return {
+        "year": year, "supervisor_id": supervisor_id, "allowance": allowance,
+        "used": used, "remaining": allowance - used, "counts": counts,
+    }
+
+
+def set_leave_allowance(year, supervisor_id, days, username):
+    try:
+        days = float(days)
+    except (TypeError, ValueError) as exc:
+        raise CalendarInputError("연차 일수는 숫자여야 합니다.") from exc
+    if not 0 <= days <= 365 or not math.isfinite(days):
+        raise CalendarInputError("연차 일수는 0~365 범위여야 합니다.")
+    if round(days * 4) != days * 4:
+        raise CalendarInputError("연차 일수는 0.25일 단위로 입력하세요.")
+    summary = leave_summary(year, supervisor_id)
+    if not query("SELECT 1 FROM supervisors WHERE id=?", (summary["supervisor_id"],), one=True):
+        raise CalendarInputError("존재하지 않는 담당 감독입니다.")
+    execute("""
+        INSERT INTO calendar_leave_allowances (supervisor_id, year, days, updated_by)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(supervisor_id, year) DO UPDATE SET
+            days=excluded.days, updated_by=excluded.updated_by,
+            updated_at=datetime('now','localtime')
+    """, (summary["supervisor_id"], summary["year"], days, username))
+    return leave_summary(summary["year"], summary["supervisor_id"])

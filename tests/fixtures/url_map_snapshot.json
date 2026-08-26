@@ -696,6 +696,18 @@
     "defaults": {}
   },
   {
+    "rule": "/api/cal/leave-summary",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_calendar_dock.api_cal_leave_summary",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/class-status",
     "methods": [
       "GET",

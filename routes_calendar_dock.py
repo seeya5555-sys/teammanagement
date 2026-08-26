@@ -113,11 +113,14 @@ def api_cal_event_get(eid):
 @bp.route('/api/cal/events/<int:eid>', methods=['PUT'])
 @login_required
 def api_cal_event_update(eid):
-    if not calendar_service.event_exists(eid):
+    current = calendar_service.get_event(eid)
+    if not current:
         abort(404)
     d = request.get_json() or {}
     try:
-        calendar_service.validate_event_payload(d)
+        # 연차 불변조건은 partial PUT의 조각이 아니라 저장될 최종 행으로 검사한다.
+        # 그렇지 않으면 leave_type을 생략한 채 end_date만 바꿔 다일 연차를 만들 수 있다.
+        calendar_service.validate_event_payload({**current, **d})
     except calendar_service.CalendarInputError as exc:
         return jsonify({'error': str(exc)}), 400
     calendar_service.update_event(eid, d, CAL_VALID_COLORS)
@@ -129,6 +132,39 @@ def api_cal_event_update(eid):
 def api_cal_event_delete(eid):
     calendar_service.delete_event(eid)
     return jsonify({'ok': True})
+
+
+def _leave_supervisor_id(value=None):
+    requested = value or session.get('supervisor_id')
+    if not requested:
+        raise calendar_service.CalendarInputError('담당 감독 정보가 필요합니다.')
+    try:
+        requested = int(requested)
+    except (TypeError, ValueError) as exc:
+        raise calendar_service.CalendarInputError('supervisor_id 는 정수여야 합니다.') from exc
+    own = session.get('supervisor_id')
+    if session.get('role') != 'admin':
+        if not own or requested != int(own):
+            abort(403)
+    return requested
+
+
+@bp.route('/api/cal/leave-summary', methods=['GET', 'PUT'])
+@login_required
+def api_cal_leave_summary():
+    data = request.get_json(silent=True) or {} if request.method == 'PUT' else {}
+    year = data.get('year') or request.args.get('year') or datetime.now().year
+    try:
+        supervisor_id = _leave_supervisor_id(
+            data.get('supervisor_id') or request.args.get('supervisor_id')
+        )
+        if request.method == 'PUT':
+            return jsonify(calendar_service.set_leave_allowance(
+                year, supervisor_id, data.get('days'), session.get('username'),
+            ))
+        return jsonify(calendar_service.leave_summary(year, supervisor_id))
+    except calendar_service.CalendarInputError as exc:
+        return jsonify({'error': str(exc)}), 400
 
 
 # ═════════════════════════════════════════════════════════════════

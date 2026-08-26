@@ -472,6 +472,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     location        TEXT,
     notes           TEXT,
     completed       INTEGER NOT NULL DEFAULT 0,         -- 1=완료(모든 미러 화면 취소선)
+    leave_type      TEXT CHECK (leave_type IN ('annual','half','quarter') OR leave_type IS NULL),
     -- 다른 모듈에서 가져온 경우 (Phase B에서 사용)
     source_type     TEXT,                               -- 'issue'|'cs'|'vetting'|'manual'(default)|null
     source_id       INTEGER,                            -- 원본 row id
@@ -484,6 +485,16 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE INDEX IF NOT EXISTS idx_cal_events_date ON calendar_events(start_date);
 CREATE INDEX IF NOT EXISTS idx_cal_events_supervisor ON calendar_events(supervisor_id);
 CREATE INDEX IF NOT EXISTS idx_cal_events_source ON calendar_events(source_type, source_id);
+
+CREATE TABLE IF NOT EXISTS calendar_leave_allowances (
+    supervisor_id   INTEGER NOT NULL,
+    year            INTEGER NOT NULL CHECK (year BETWEEN 2000 AND 2100),
+    days            REAL NOT NULL CHECK (days >= 0 AND days <= 365),
+    updated_by      TEXT,
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (supervisor_id, year),
+    FOREIGN KEY (supervisor_id) REFERENCES supervisors(id) ON DELETE CASCADE
+);
 
 
 -- ═════════════════════════════════════════════════════════════

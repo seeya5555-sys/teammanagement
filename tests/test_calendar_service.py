@@ -96,6 +96,66 @@ class CalendarServiceTests(unittest.TestCase):
             "color": "",
         }, creating=True)
 
+    def test_leave_allowance_and_quarter_day_counting(self):
+        calendar_service.set_leave_allowance(2026, 2, 15.0, "admin")
+        for leave_type, date in (
+            ("annual", "2026-01-10"), ("half", "2026-02-10"),
+            ("quarter", "2026-03-10"), ("annual", "2027-01-10"),
+        ):
+            calendar_service.create_event({
+                "title": leave_type, "start_date": date,
+                "supervisor_id": 2, "leave_type": leave_type,
+            }, "admin", {"blue"})
+
+        summary = calendar_service.leave_summary(2026, 2)
+        self.assertEqual(15.0, summary["allowance"])
+        self.assertEqual(1.75, summary["used"])
+        self.assertEqual(13.25, summary["remaining"])
+        self.assertEqual({"annual": 1, "half": 1, "quarter": 1}, summary["counts"])
+
+    def test_leave_validation_rejects_invalid_type_range_and_multi_day(self):
+        for payload, message in (
+            ({"leave_type": "hour", "supervisor_id": 2}, "leave_type"),
+            ({"leave_type": "annual"}, "담당 감독"),
+            ({"leave_type": "annual", "supervisor_id": 2,
+              "start_date": "2026-01-01", "end_date": "2026-01-02"}, "하루 단위"),
+        ):
+            with self.subTest(payload=payload), self.assertRaisesRegex(
+                calendar_service.CalendarInputError, message
+            ):
+                calendar_service.validate_event_payload(payload)
+        with self.assertRaisesRegex(calendar_service.CalendarInputError, "0.25일 단위"):
+            calendar_service.set_leave_allowance(2026, 2, 10.1, "admin")
+
+    def test_leave_summary_http_contract_and_scope(self):
+        client = appmod.app.test_client()
+        with client.session_transaction() as sess:
+            sess.update(user_id=1, username="sup2", role="user", supervisor_id=2)
+        token = client.get("/api/csrf-token").get_json()["token"]
+        saved = client.put("/api/cal/leave-summary", json={
+            "year": 2026, "supervisor_id": 2, "days": 12.25,
+        }, headers={"X-CSRF-Token": token})
+        self.assertEqual(200, saved.status_code)
+        self.assertEqual(12.25, saved.get_json()["allowance"])
+        loaded = client.get("/api/cal/leave-summary?year=2026&supervisor_id=2")
+        self.assertEqual(saved.get_json(), loaded.get_json())
+        self.assertEqual(403, client.get(
+            "/api/cal/leave-summary?year=2026&supervisor_id=3"
+        ).status_code)
+
+        event_id = calendar_service.create_event({
+            "title": "Annual", "start_date": "2026-06-01",
+            "supervisor_id": 2, "leave_type": "annual",
+        }, "sup2", {"blue"})
+        bypass = client.put(f"/api/cal/events/{event_id}", json={
+            "end_date": "2026-06-02",
+        }, headers={"X-CSRF-Token": token})
+        self.assertEqual(400, bypass.status_code)
+        self.assertIn("하루 단위", bypass.get_json()["error"])
+
+        with self.assertRaisesRegex(calendar_service.CalendarInputError, "존재하지 않는"):
+            calendar_service.set_leave_allowance(2026, 999, 12, "sup2")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

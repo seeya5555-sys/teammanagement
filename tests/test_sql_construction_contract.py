@@ -121,8 +121,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # literal JOIN on boarding_report_sections, scoped by one bound report_id. The
 # management metadata migration was also moved to migration_steps.py with every
 # ALTER kept as a literal; it adds no dynamic identifier or DDL construction.
-EXPECTED_COUNT = 167
-EXPECTED_SHA256 = "c003d15bb36c7aac495f0bc8ec743083908328d9da4a7f977a4e1f2fca3961ca"
+# 2026-08-26 baseline correction — exact set comparison against 7609d36 found
+# one later site: `drydock_integration.py::execute(sql)`. `where` starts as the
+# literal `sv.supervisor_id=?` and can only append literal `AND v.id=?`; both
+# values stay parameter-bound and no request value can become SQL syntax.
+# This calendar change itself adds zero dynamic SQL sites.
+EXPECTED_COUNT = 168
+EXPECTED_SHA256 = "9ded9256652a9766b7a41a180d1ce93689252777faa13ddf13591600f7a3c704"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }
