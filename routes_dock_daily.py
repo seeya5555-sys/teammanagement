@@ -22,7 +22,7 @@ from xml.etree import ElementTree
 # 🔴 `send_file` 은 SVMS 러너 첨부 다운로드 라우트(`svms_attachment_bytes`)가 쓴다.
 #    빠져 있으면 그 라우트가 요청을 받는 순간 NameError 500 이 되고(= 첨부가 영구히
 #    SVMS 로 못 올라감) 다른 경로에서는 아무 증상이 없다. 경계 그래프 게이트가 잡았다.
-from flask import (Blueprint, Response, jsonify, render_template, request, send_file,
+from flask import (Blueprint, Response, jsonify, redirect, render_template, request, send_file,
                    send_from_directory)
 from werkzeug.utils import secure_filename
 
@@ -2625,6 +2625,10 @@ def attachment_preview(aid):
     row = query('SELECT * FROM dock_daily_attachment WHERE id=? AND deleted_at IS NULL', (aid,), one=True)
     if not row: return _error('attachment not found', 404)
     ext = row['original_name'].rsplit('.', 1)[-1].lower() if '.' in row['original_name'] else ''
+    if ext == 'msg':
+        # 공용 MSG 화면은 HTML 본문을 신뢰하지 않고 서버가 추출한 text-only JSON만
+        # textContent로 렌더한다. iframe 모달 구조는 그대로 유지한다.
+        return redirect('/msg-preview?source=dock_daily&aid=%d' % aid)
     if row['mime_type'].startswith('image/') or row['mime_type'] == 'application/pdf':
         response = send_from_directory(UPLOAD_DIR, row['stored_name'], mimetype=row['mime_type'], as_attachment=False,
                                        download_name=row['original_name'])

@@ -60,6 +60,14 @@ class MsgPreviewAllTabsTests(unittest.TestCase):
                 "INSERT INTO vettings(vessel_id,report_number) VALUES(?,?)",
                 (vessel, "PREVIEW"),
             )
+            project = appmod.execute(
+                "INSERT INTO dock_daily_project(vessel_id,title) VALUES(?,?)",
+                (vessel, "MSG Preview Dock"),
+            )
+            report = appmod.execute(
+                "INSERT INTO dock_daily_report(project_id,report_date,status) VALUES(?,?,?)",
+                (project, "2026-08-12", "editing"),
+            )
             self.ids = {
                 "issue": appmod.execute(
                     "INSERT INTO attachments(issue_id,filename,stored_name) VALUES(?,?,?)",
@@ -72,6 +80,13 @@ class MsgPreviewAllTabsTests(unittest.TestCase):
                 "vetting": appmod.execute(
                     "INSERT INTO vt_attachments(vetting_id,filename,stored_name) VALUES(?,?,?)",
                     (vetting, "vetting.msg", "vetting.msg"),
+                ),
+                "dock_daily": appmod.execute(
+                    """INSERT INTO dock_daily_attachment
+                       (report_id,stored_name,original_name,mime_type,size,sha256)
+                       VALUES(?,?,?,?,?,?)""",
+                    (report, "dock_daily.msg", "dock_daily.msg",
+                     "application/vnd.ms-outlook", 24, "fake-sha"),
                 ),
             }
         for source in self.ids:
@@ -110,6 +125,13 @@ class MsgPreviewAllTabsTests(unittest.TestCase):
         legacy = self.client.get(f"/api/attachments/{self.ids['issue']}/msg-preview")
         self.assertEqual(200, legacy.status_code)
 
+    def test_dock_daily_preview_redirects_to_the_shared_msg_shell(self):
+        response = self.client.get(
+            f"/api/dock-daily/attachments/{self.ids['dock_daily']}/preview")
+        self.assertEqual(302, response.status_code)
+        self.assertTrue(response.headers["Location"].endswith(
+            f"/msg-preview?source=dock_daily&aid={self.ids['dock_daily']}"))
+
     def test_unknown_source_and_non_msg_fail_closed(self):
         self.assertEqual(404, self.client.get("/api/msg-preview/nope/1").status_code)
         with appmod.app.app_context():
@@ -118,8 +140,20 @@ class MsgPreviewAllTabsTests(unittest.TestCase):
 
     def test_preview_requires_login(self):
         anon = appmod.app.test_client()
-        self.assertIn(anon.get(f"/api/msg-preview/vetting/{self.ids['vetting']}").status_code,
-                      (302, 401, 403))
+        for source in ("vetting", "dock_daily"):
+            with self.subTest(source=source):
+                self.assertIn(anon.get(
+                    f"/api/msg-preview/{source}/{self.ids[source]}").status_code,
+                    (302, 401, 403))
+
+    def test_deleted_dock_daily_attachment_fails_closed(self):
+        with appmod.app.app_context():
+            appmod.execute(
+                "UPDATE dock_daily_attachment SET deleted_at=datetime('now') WHERE id=?",
+                (self.ids["dock_daily"],),
+            )
+        self.assertEqual(404, self.client.get(
+            f"/api/msg-preview/dock_daily/{self.ids['dock_daily']}").status_code)
 
     def test_issue_preview_keeps_supervisor_scope(self):
         with self.client.session_transaction() as session:

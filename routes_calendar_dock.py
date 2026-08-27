@@ -1606,11 +1606,14 @@ _MSG_PREVIEW_SOURCES = {
     'issue': ('attachments', 'issue_id'),
     'cs': ('cs_attachments', 'survey_id'),
     'vetting': ('vt_attachments', 'vetting_id'),
+    # 입거 Daily Report 첨부도 같은 parser/UI를 쓴다. 이 저장소만 파일명 컬럼이
+    # `original_name` 이므로 아래 resolver에서 공용 `filename` 키로 정규화한다.
+    'dock_daily': ('dock_daily_attachment', 'report_id'),
 }
 
 
 def _msg_preview_source(source, aid):
-    """Resolve one of the 3 user-upload attachment stores without accepting SQL identifiers from input."""
+    """Resolve a whitelisted upload store without accepting SQL identifiers from input."""
     spec = _MSG_PREVIEW_SOURCES.get(source)
     if not spec:
         abort(404)
@@ -1618,11 +1621,17 @@ def _msg_preview_source(source, aid):
     a = query(f'SELECT * FROM {table} WHERE id=?', (aid,), one=True)
     if not a:
         abort(404)
-    # Issue attachments are supervisor-scoped. CS/Vetting downloads are login-scoped today;
+    # Issue attachments are supervisor-scoped. Other downloads are login-scoped today;
     # preview deliberately preserves the exact same authorization boundary as their download routes.
     if source == 'issue':
         _issue_write_scope(a[owner_col])
-    return a
+    resolved = dict(a)
+    if source == 'dock_daily':
+        if resolved.get('deleted_at') is not None:
+            abort(404)
+        resolved['filename'] = resolved.get('original_name')
+        resolved['file_size'] = resolved.get('size')
+    return resolved
 
 
 def _msg_preview_attachment_name(att, index):

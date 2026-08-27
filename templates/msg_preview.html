@@ -23,7 +23,7 @@
   const card=title=>{const c=add(root,'section','card');add(c,'h1','',title);return c};
   const row=(c,label,value)=>{const r=add(c,'div','row');add(r,'span','label',label);add(r,'span','',value||'-')};
   async function load(){
-    if(!['issue','cs','vetting'].includes(source)||!/^[1-9]\d*$/.test(aid)) throw new Error('잘못된 미리보기 주소입니다.');
+    if(!['issue','cs','vetting','dock_daily'].includes(source)||!/^[1-9]\d*$/.test(aid)) throw new Error('잘못된 미리보기 주소입니다.');
     const res=await fetch(`/api/msg-preview/${source}/${aid}`,{credentials:'same-origin'}), data=await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.error||`메일을 불러오지 못했습니다 (${res.status})`);
     const m=data.message; root.innerHTML=''; document.title=m.subject||'Outlook 메일 미리보기';
