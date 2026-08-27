@@ -15,6 +15,14 @@ class VettingFullReportApplyTests(unittest.TestCase):
         self.old_db = appmod.DATABASE
         self.old_cfg = appmod.app.config['DATABASE']
         self.old_gemini = routes._gemini_call_json
+        self.old_assessment_blocks = routes._full_report_assessment_blocks
+        self.assessment_blocks = [
+            {'label': 'Not as expected', 'negative': True,
+             'text': 'Condition of Class outstanding'},
+            {'label': 'Not as expected', 'negative': True,
+             'text': 'Liferaft card omitted'},
+        ]
+        routes._full_report_assessment_blocks = lambda raw: self.assessment_blocks
         db = os.path.join(self.tmp.name, 'full-report.db')
         appmod.DATABASE = db
         appmod.app.config['DATABASE'] = db
@@ -48,6 +56,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
 
     def tearDown(self):
         routes._gemini_call_json = self.old_gemini
+        routes._full_report_assessment_blocks = self.old_assessment_blocks
         appmod.DATABASE = self.old_db
         appmod.app.config['DATABASE'] = self.old_cfg
         self.tmp.cleanup()
@@ -154,6 +163,12 @@ class VettingFullReportApplyTests(unittest.TestCase):
             {'finding_id': self.f2, 'matched': False, 'absence_confirmed': True, 'status': 'Open',
              'remark': 'not found', 'evidence': 'not found'},
         ]
+        self.assessment_blocks = [
+            {'label': 'Not as expected', 'negative': True,
+             'text': 'Condition of Class outstanding'},
+            {'label': 'Not as expected', 'negative': True,
+             'text': new_item['description']},
+        ]
         routes._gemini_call_json = lambda *args, **kwargs: self._result(
             items=first_items, new_items=[new_item, {
                 **new_item,
@@ -194,6 +209,139 @@ class VettingFullReportApplyTests(unittest.TestCase):
                 'SELECT COUNT(*) n FROM vt_findings WHERE vetting_id=?',
                 (self.vetting,), one=True)['n']
         self.assertEqual(3, count)
+
+    def test_positive_source_label_cannot_be_forged_into_new_observation(self):
+        helicopter = {
+            'item': '(Process)Not as expected - procedure and/or document deficient',
+            'description': ('Upon reviewing the hard copy emergency response plans and checklists '
+                            'provided onboard, a specific procedure for helicopter operations '
+                            'relating to medical evacuation was not available onboard.'),
+            'translation': 'Helicopter medical evacuation 절차 미비치됨.',
+            'status': 'Open',
+            'action_remark': '관련 응급 절차서 보완 필요.',
+            'evidence': 'a specific procedure was not available onboard',
+        }
+        self.assessment_blocks.append({
+            'label': 'Largely as expected - procedure and/or document present.',
+            'negative': False,
+            'text': helicopter['description'],
+        })
+        routes._gemini_call_json = lambda *args, **kwargs: self._result(
+            new_items=[helicopter])
+        response = self._post()
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertEqual(0, payload['created'])
+        self.assertEqual('source_label_not_negative',
+                         payload['rejected_non_observations'][0]['reason'])
+        self.assertIn('Largely as expected',
+                      payload['rejected_non_observations'][0]['source_label'])
+        with appmod.app.app_context():
+            count = appmod.query(
+                'SELECT COUNT(*) n FROM vt_findings WHERE vetting_id=?',
+                (self.vetting,), one=True)['n']
+        self.assertEqual(2, count)
+
+    def test_assessment_parser_ignores_category_words_without_known_label(self):
+        text = '''
+Process       Largely as expected - procedure and/or document present.
+Positive paragraph about helicopter medical evacuation.
+Process for maintaining documents was reviewed by the operator.
+Hardware      Observable or detectable deficiency.
+Negative crane paragraph.
+'''
+        blocks = routes._full_report_assessment_blocks_from_text(text)
+        self.assertEqual(2, len(blocks))
+        self.assertEqual('Largely as expected - procedure and/or document present.',
+                         blocks[0]['label'])
+        self.assertFalse(blocks[0]['negative'])
+        self.assertTrue(blocks[1]['negative'])
+
+    def test_description_fallback_requires_ordered_phrases(self):
+        source = ('Upon reviewing the emergency response plan it was noted that a specific '
+                  'procedure for helicopter operations relating to medical evacuation was '
+                  'not available onboard the vessel.')
+        self.assertTrue(routes._description_matches_assessment(
+            'Upon reviewing the emergency response plan, a specific procedure for helicopter '
+            'operations relating to medical evacuation was not available onboard the vessel.',
+            source))
+        self.assertFalse(routes._description_matches_assessment(
+            'The vessel procedure included response operations and medical equipment while '
+            'the emergency plan was available for helicopter evacuation.', source))
+
+    def test_pdf_label_parse_failure_is_fail_closed(self):
+        routes._full_report_assessment_blocks = lambda raw: (_ for _ in ()).throw(
+            ValueError('no labels'))
+        routes._gemini_call_json = lambda *args, **kwargs: self._result()
+        response = self._post()
+        self.assertEqual(422, response.status_code)
+        self.assertEqual('PDF_TEXT_PARSE_FAILED', response.get_json()['reason'])
+        with appmod.app.app_context():
+            statuses = [r['status'] for r in appmod.query(
+                'SELECT status FROM vt_findings WHERE vetting_id=? ORDER BY no',
+                (self.vetting,))]
+        self.assertEqual(['Open', 'Open'], statuses)
+
+    def test_rejected_only_returns_success_with_exclusion_reason(self):
+        helicopter = {
+            'item': '(Process)Not as expected',
+            'description': 'A specific procedure for helicopter medical evacuation was unavailable.',
+            'translation': 'Helicopter medical evacuation 절차 미비치됨.',
+            'status': 'Open', 'action_remark': '관련 절차서 보완 필요.',
+            'evidence': 'procedure was unavailable',
+        }
+        self.assessment_blocks = [{
+            'label': 'Largely as expected - procedure and/or document present.',
+            'negative': False, 'text': helicopter['description'],
+        }]
+        routes._gemini_call_json = lambda *args, **kwargs: self._result(
+            items=[
+                {'finding_id': self.f1, 'matched': False, 'absence_confirmed': False},
+                {'finding_id': self.f2, 'matched': False, 'absence_confirmed': False},
+            ], new_items=[helicopter])
+        response = self._post()
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertEqual((0, 0, 2),
+                         (payload['updated'], payload['created'], payload['unmatched']))
+        self.assertEqual('source_label_not_negative',
+                         payload['rejected_non_observations'][0]['reason'])
+
+    def test_confirmed_absence_is_downgraded_when_source_text_still_exists(self):
+        routes._gemini_call_json = lambda *args, **kwargs: self._result(items=[
+            {'finding_id': self.f1, 'matched': True, 'status': 'Open',
+             'remark': 'Condition of Class 모니터링 중임.', 'evidence': 'pending Class survey'},
+            {'finding_id': self.f2, 'matched': False, 'absence_confirmed': True},
+        ])
+        response = self._post()
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        self.assertEqual(0, response.get_json()['closed_absent'])
+        self.assertEqual(1, response.get_json()['unmatched'])
+        with appmod.app.app_context():
+            status = appmod.query(
+                'SELECT status FROM vt_findings WHERE id=?', (self.f2,), one=True)['status']
+        self.assertEqual('Open', status)
+
+    def test_existing_row_under_positive_label_is_preserved_not_updated(self):
+        self.assessment_blocks = [
+            {'label': 'Not as expected', 'negative': True,
+             'text': 'Condition of Class outstanding'},
+            {'label': 'Largely as expected - procedure and/or document present.',
+             'negative': False, 'text': 'Liferaft card omitted'},
+        ]
+        routes._gemini_call_json = lambda *args, **kwargs: self._result()
+        response = self._post()
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        payload = response.get_json()
+        self.assertEqual(1, payload['updated'])
+        self.assertEqual(1, payload['unmatched'])
+        self.assertEqual(self.f2,
+                         payload['rejected_existing_non_observations'][0]['finding_id'])
+        with appmod.app.app_context():
+            row = appmod.query(
+                'SELECT status,user_remark FROM vt_findings WHERE id=?',
+                (self.f2,), one=True)
+        self.assertEqual(('Open', ''), (row['status'], row['user_remark']))
 
     def test_uncertain_unmatched_existing_is_preserved_open(self):
         routes._gemini_call_json = lambda *args, **kwargs: self._result(items=[

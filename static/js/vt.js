@@ -1635,8 +1635,13 @@ function pickVtFullReport(vt, button) {
     try {
       const res = await api(`/api/vettings/${vt.id}/apply-full-report`, { method: 'POST', body: fd });
       await reloadData();
+      const excluded = (res.rejected_non_observations || []).length;
+      const existingExcluded = (res.rejected_existing_non_observations || []).length;
       alert(`Full report 반영 완료: 기존 ${res.updated}건 갱신 · 신규 ${res.created || 0}건 추가` +
-        ` · 기존 미매칭 ${res.unmatched || 0}건 보존 (Open ${res.open} / Closed ${res.closed})`);
+        ` · 기존 미매칭 ${res.unmatched || 0}건 보존` +
+        (excluded ? ` · 부정 Observation 아님 ${excluded}건 제외` : '') +
+        (existingExcluded ? ` · 기존 행 중 부정 Observation 아님 ${existingExcluded}건 보존` : '') +
+        ` (Open ${res.open} / Closed ${res.closed})`);
     } catch (e) {
       alert('Full report 반영 실패: ' + e.message);
     } finally {

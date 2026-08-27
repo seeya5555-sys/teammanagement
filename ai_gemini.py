@@ -15,6 +15,7 @@ unchanged and no template or Python code referenced the old endpoint names
 (measured 2026-08-11: zero ``url_for``/nav hits).
 """
 import json
+import io
 import os
 import re as _re_cls
 import uuid
@@ -839,6 +840,76 @@ def _finding_text_similar(left, right):
     )
 
 
+_FULL_REPORT_ASSESSMENT_RE = _re_cls.compile(
+    r'(?im)^[ \t]*(Hardware|Human|Process|Photograph|Other)[ \t]+'
+    r'(?=[^\r\n]*(?:as expected|deficiency|representative|not answerable))([^\r\n]+)$'
+)
+_FULL_REPORT_NEGATIVE_LABELS = (
+    'not as expected',
+    'observable or detectable deficiency',
+    'photo not representative',
+)
+
+
+def _full_report_assessment_blocks_from_text(text):
+    """추출 텍스트를 실제 assessment label 경계로 분할한다."""
+    matches = list(_FULL_REPORT_ASSESSMENT_RE.finditer(text))
+    blocks = []
+    for idx, match in enumerate(matches):
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        label = _re_cls.sub(r'\s+', ' ', match.group(2)).strip()
+        normalized_label = _re_cls.sub(r'[–—−]', '-', label).lower()
+        blocks.append({
+            'category': match.group(1),
+            'label': label,
+            'negative': any(token in normalized_label for token in _FULL_REPORT_NEGATIVE_LABELS),
+            'text': text[match.start():end],
+        })
+    if not blocks:
+        raise ValueError('assessment labels not found in PDF text')
+    return blocks
+
+
+def _full_report_assessment_blocks(raw):
+    """PDF 원문에서 assessment label과 그 구간을 결정론적으로 뽑는다.
+
+    Gemini가 ``Largely as expected`` 문장을 ``Not as expected`` 신규 지적으로
+    바꿔 반환해도 원문 label과 맞지 않으면 저장하지 않기 위한 독립 검증층이다.
+    """
+    import pdfplumber
+
+    pages = []
+    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+        for page in pdf.pages:
+            pages.append(page.extract_text(layout=True) or '')
+    return _full_report_assessment_blocks_from_text('\n\f\n'.join(pages))
+
+
+def _description_matches_assessment(description, block_text):
+    """AI가 복사한 description이 실제 assessment 구간에 존재하는지 보수적으로 확인."""
+    def normalized(value):
+        return _re_cls.sub(r'[^a-z0-9]+', ' ', (value or '').lower()).strip()
+
+    needle = normalized(description)
+    haystack = normalized(block_text)
+    if not needle or not haystack:
+        return False
+    if needle in haystack:
+        return True
+    needle_tokens = [t for t in needle.split() if len(t) > 2]
+    haystack_tokens = [t for t in haystack.split() if len(t) > 2]
+    if len(needle_tokens) < 5:
+        return False
+    # 단어 집합 비교는 순서를 잃어 unrelated positive/negative 문장이 공통 해사
+    # 어휘만으로 엮일 수 있다. 연속 3-gram의 순서 있는 포함률만 fallback으로 허용한다.
+    needle_grams = {tuple(needle_tokens[i:i + 3])
+                    for i in range(len(needle_tokens) - 2)}
+    haystack_grams = {tuple(haystack_tokens[i:i + 3])
+                      for i in range(len(haystack_tokens) - 2)}
+    overlap = len(needle_grams & haystack_grams)
+    return overlap >= 4 and overlap / max(1, len(needle_grams)) >= 0.65
+
+
 def _full_report_prompt(vetting, findings):
     existing = [{
         'finding_id': f['id'],
@@ -964,6 +1035,16 @@ def _extract_full_report_updates(f, vetting, findings):
         return None, {'reason': 'BAD_PDF', 'message': '유효한 PDF 파일이 아닙니다.'}
     if size_mb > 15:
         return None, {'reason': 'TOO_LARGE', 'message': f'PDF가 너무 큽니다({size_mb:.1f}MB). 15MB 이하로 줄여주세요.'}
+    try:
+        assessment_blocks = _full_report_assessment_blocks(raw)
+    except ModuleNotFoundError:
+        app.logger.exception('full-report-pdf-reader-unavailable')
+        return None, {'reason': 'PDF_READER_UNAVAILABLE',
+                      'message': '서버의 PDF 판독 모듈을 확인할 수 없어 반영하지 않았습니다.'}
+    except Exception:
+        app.logger.exception('full-report-assessment-parse')
+        return None, {'reason': 'PDF_TEXT_PARSE_FAILED',
+                      'message': 'Full report의 assessment label을 안전하게 확인하지 못해 반영하지 않았습니다.'}
     b64 = __import__('base64').standard_b64encode(raw).decode()
     parsed = _gemini_call_json([
         {'inline_data': {'mime_type': 'application/pdf', 'data': b64}},
@@ -982,6 +1063,8 @@ def _extract_full_report_updates(f, vetting, findings):
 
     expected_ids = {int(f['id']) for f in findings}
     updates, absent_ids, unresolved_ids, seen = [], [], [], set()
+    rejected_existing_non_observations = []
+    finding_by_id = {int(f['id']): f for f in findings}
     invalid_match_set = False
     for item in parsed.get('items') or []:
         if not isinstance(item, dict):
@@ -996,9 +1079,29 @@ def _extract_full_report_updates(f, vetting, findings):
         seen.add(fid)
         if item.get('matched') is not True:
             if item.get('absence_confirmed') is True:
-                absent_ids.append(fid)
+                original = next((f for f in findings if int(f['id']) == fid), None)
+                # AI가 기존 지적을 놓쳤더라도 원문 assessment 구간에 실제 문장이 있으면
+                # Initial-only로 확정하지 않는다. 자동 Close보다 보존이 우선이다.
+                if original and any(_description_matches_assessment(
+                        original['description'], block['text']) for block in assessment_blocks):
+                    unresolved_ids.append(fid)
+                else:
+                    absent_ids.append(fid)
             else:
                 unresolved_ids.append(fid)
+            continue
+        original = finding_by_id[fid]
+        matching_source_blocks = [
+            block for block in assessment_blocks
+            if _description_matches_assessment(original['description'], block['text'])
+        ]
+        if matching_source_blocks and not any(block['negative'] for block in matching_source_blocks):
+            unresolved_ids.append(fid)
+            rejected_existing_non_observations.append({
+                'finding_id': fid,
+                'source_label': matching_source_blocks[0]['label'],
+                'reason': 'source_label_not_negative',
+            })
             continue
         status = (item.get('status') or '').strip()
         remark = _concise_full_report_remark(item.get('remark'))
@@ -1018,6 +1121,7 @@ def _extract_full_report_updates(f, vetting, findings):
 
     existing_desc = [(f['description'] or '') for f in findings]
     new_items = []
+    rejected_non_observations = []
     for item in parsed.get('new_items') or []:
         if not isinstance(item, dict):
             continue
@@ -1034,6 +1138,20 @@ def _extract_full_report_updates(f, vetting, findings):
             'not as expected', 'observable or detectable deficiency',
             'photo not representative',
         ))
+        matching_negative = next((block for block in assessment_blocks
+                                  if block['negative'] and _description_matches_assessment(
+                                      rec['description'], block['text'])), None)
+        matching_any = next((block for block in assessment_blocks
+                             if _description_matches_assessment(
+                                 rec['description'], block['text'])), None)
+        if rec['description'] and not matching_negative:
+            rejected_non_observations.append({
+                'item': rec['item'],
+                'source_label': matching_any['label'] if matching_any else None,
+                'reason': ('source_label_not_negative' if matching_any
+                           else 'description_not_found_under_negative_label'),
+            })
+            continue
         if (not explicitly_negative or not rec['item'] or not rec['description'] or not rec['translation']
                 or rec['status'] not in ('Open', 'Closed') or not rec['action_remark']
                 or not rec['evidence']
@@ -1043,7 +1161,9 @@ def _extract_full_report_updates(f, vetting, findings):
             continue
         new_items.append(rec)
     return {'updates': updates, 'absent_ids': absent_ids,
-            'unresolved_ids': unresolved_ids, 'new_items': new_items}, None
+            'unresolved_ids': unresolved_ids, 'new_items': new_items,
+            'rejected_non_observations': rejected_non_observations,
+            'rejected_existing_non_observations': rejected_existing_non_observations}, None
 
 
 @bp.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
@@ -1102,7 +1222,17 @@ def api_vt_apply_full_report(vid):
     new_items = result['new_items']
     absent_ids = result['absent_ids']
     unresolved_ids = result['unresolved_ids']
+    rejected_non_observations = result['rejected_non_observations']
+    rejected_existing_non_observations = result['rejected_existing_non_observations']
     if not updates and not new_items and not absent_ids:
+        if rejected_non_observations or rejected_existing_non_observations:
+            return jsonify({
+                'ok': True, 'updated': 0, 'created': 0, 'closed_absent': 0,
+                'closed_absent_items': [], 'unmatched': len(unresolved_ids),
+                'open': 0, 'closed': 0, 'items': [], 'new_items': [],
+                'rejected_non_observations': rejected_non_observations,
+                'rejected_existing_non_observations': rejected_existing_non_observations,
+            })
         message = 'Full report에서 반영 가능한 기존 또는 신규 Observation을 찾지 못했습니다.'
         return jsonify({'ok': False, 'reason': 'NO_APPLICABLE_ITEMS',
                         'message': message, 'error': message}), 422
@@ -1194,7 +1324,9 @@ def api_vt_apply_full_report(vid):
                     'created': len(created), 'closed_absent': len(absent_closed),
                     'closed_absent_items': absent_closed,
                     'unmatched': len(unresolved_ids), 'open': opened,
-                    'closed': closed, 'items': updates, 'new_items': created})
+                    'closed': closed, 'items': updates, 'new_items': created,
+                    'rejected_non_observations': rejected_non_observations,
+                    'rejected_existing_non_observations': rejected_existing_non_observations})
 
 
 def _md_from_date(d):
