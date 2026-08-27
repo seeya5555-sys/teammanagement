@@ -1839,6 +1839,22 @@ def _auto_migrate():
                 print('[auto_migrate] vt_findings.priority 추가됨')
         except Exception as e:
             print(f'[auto_migrate] vt_findings 컬럼 점검 건너뜀: {e}')
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS vt_full_report_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vetting_id INTEGER NOT NULL,
+                report_number TEXT NOT NULL,
+                file_sha256 TEXT NOT NULL,
+                filename TEXT,
+                before_json TEXT NOT NULL,
+                after_json TEXT NOT NULL,
+                applied_by TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (vetting_id) REFERENCES vettings(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_vt_full_report_audit_vetting "
+                     "ON vt_full_report_audit(vetting_id, created_at DESC)")
 
         # SVMS SIRE attachment provenance; pre-existing rows remain manual.
         try:

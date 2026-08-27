@@ -433,6 +433,22 @@ CREATE TABLE IF NOT EXISTS vt_findings (
 );
 CREATE INDEX IF NOT EXISTS idx_vt_findings_vetting ON vt_findings(vetting_id, no);
 
+-- SIRE Full report 자동반영 실행 이력(전건 변경 전/후 스냅샷).
+CREATE TABLE IF NOT EXISTS vt_full_report_audit (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    vetting_id    INTEGER NOT NULL,
+    report_number TEXT NOT NULL,
+    file_sha256   TEXT NOT NULL,
+    filename      TEXT,
+    before_json   TEXT NOT NULL,
+    after_json    TEXT NOT NULL,
+    applied_by    TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (vetting_id) REFERENCES vettings(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_vt_full_report_audit_vetting
+    ON vt_full_report_audit(vetting_id, created_at DESC);
+
 -- Vetting Attachments
 CREATE TABLE IF NOT EXISTS vt_attachments (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

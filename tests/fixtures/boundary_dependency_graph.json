@@ -4,6 +4,7 @@
       "UPLOAD_DIR",
       "app",
       "execute",
+      "get_db",
       "query"
     ],
     "docx_preview.py": [

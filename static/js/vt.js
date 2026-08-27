@@ -721,6 +721,11 @@ function detailRow(vt) {
       ' 보고서에서 자동 생성'),
     el('button', {
       class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
+      onclick: (ev) => pickVtFullReport(vt, ev.currentTarget),
+      title: 'SIRE Full report의 Operator Comments를 기존 Observation Remark와 Open/Closed에 자동 반영',
+    }, ' SIRE Full report 반영'),
+    el('button', {
+      class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
       onclick: () => { window.location = `/api/vettings/${vt.id}/export`; },
     }, ' 엑셀 추출')));
 
@@ -1607,6 +1612,37 @@ document.addEventListener('DOMContentLoaded', init);
 //  · 검토 목록 → 선택 추가
 // ════════════════════════════════════════════════════════════════
 const VTX = { vettingId: null, items: [], bound: false };
+
+function pickVtFullReport(vt, button) {
+  if (!(vt.findings || []).length) {
+    alert('먼저 Initial report로 Observation을 생성하세요.');
+    return;
+  }
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.pdf,application/pdf';
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const ok = confirm(
+      `SIRE Full report "${file.name}"의 조치 결과로 기존 Observation ${vt.findings.length}건의 Remark와 Open/Closed를 자동 변경할까요?\n\n` +
+      'Report 번호가 다르거나 전 항목을 확실히 매칭하지 못하면 아무것도 변경하지 않습니다.'
+    );
+    if (!ok) return;
+    const oldText = button.textContent;
+    button.disabled = true; button.textContent = ' 분석·반영 중...';
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const res = await api(`/api/vettings/${vt.id}/apply-full-report`, { method: 'POST', body: fd });
+      await reloadData();
+      alert(`Full report 반영 완료: ${res.updated}건 (Open ${res.open} / Closed ${res.closed})`);
+    } catch (e) {
+      alert('Full report 반영 실패: ' + e.message);
+    } finally {
+      button.disabled = false; button.textContent = oldText;
+    }
+  }, { once: true });
+  input.click();
+}
 
 function openVtExtract(vt) {
   VTX.vettingId = vt.id;

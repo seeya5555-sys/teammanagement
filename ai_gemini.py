@@ -26,7 +26,7 @@ from flask import abort, jsonify, request, send_from_directory, session, Respons
 from flask import Blueprint
 
 from app_core import (
-    UPLOAD_DIR, app, execute, query,
+    UPLOAD_DIR, app, execute, get_db, query,
 )
 from helpers_shared import (
     GEMINI_API_KEY, VETTING_TYPES, _MARITIME_TERMS, _coerce_translation_items,
@@ -764,6 +764,111 @@ def _extract_vetting_from_upload(f):
     return items, meta, None
 
 
+_FULL_REPORT_MARKER = '[SIRE Full Report 자동반영]'
+_FULL_REPORT_END_MARKER = '[/SIRE Full Report 자동반영]'
+
+
+def _norm_report_number(value):
+    """Report 번호 비교용 정규화. 구두점은 보존하고 공백/대소문자만 무시한다."""
+    return _re_cls.sub(r'\s+', '', (value or '')).upper()
+
+
+def _full_report_prompt(vetting, findings):
+    existing = [{
+        'finding_id': f['id'],
+        'no': f['no'],
+        'item': f['item'] or '',
+        'description': f['description'] or '',
+    } for f in findings]
+    return (
+        "다음 PDF는 선박 SIRE 2.0 Full Report다. 아래 기존 Observation 각각을 보고서의 동일 지적과 "
+        "일대일로 매칭하고 Operator Comments의 조치 결과를 판정하라. JSON으로만 답하라.\n"
+        "- report_type: 표지의 Report Type을 그대로 추출(반드시 Full인지 확인).\n"
+        "- report_number: 표지의 Report 번호를 그대로 추출.\n"
+        "- 기존 Observation을 새로 만들거나 합치거나 생략하지 말고 finding_id를 그대로 사용한다.\n"
+        "- status는 Open 또는 Closed만 사용한다. Corrective Action이 명시적으로 완료되고 핵심 결함에 "
+        "남은 시정·검사·승인·Class closure가 없으면 Closed. 시정/검사/승인/자재/후속 확인이 예정·진행·보류, "
+        "임시조치 또는 모니터링 단계면 Open. Preventative Action이 상시/미래형이라는 이유만으로, 이미 완료된 "
+        "Corrective Action을 Open으로 두지는 않는다. 적합성 확인으로 시정 불필요가 명확하고 후속조치가 없으면 Closed.\n"
+        "- remark는 Operator Comments의 Immediate Cause, Root Cause, Corrective Action, Preventative Action을 "
+        "근거로 실제 조치 결과와 남은 조치를 한국어 음슴체 2~5문장으로 요약한다. 없는 내용을 만들지 않는다.\n"
+        "- evidence는 status 판정에 직접 사용한 영문 원문 핵심 문장이다.\n"
+        "- 보고서에서 동일 지적을 확실히 찾지 못하거나 Open/Closed 판정이 불확실하면 matched=false로 둔다. "
+        "추측으로 Closed를 선택하지 않는다.\n"
+        '형식: {"report_type":"Full","report_number":"...","items":['
+        '{"finding_id":1,"matched":true,"status":"Closed","remark":"...","evidence":"..."}]}\n\n'
+        f"[대상 Vetting]\nreport_number={vetting['report_number'] or ''}\n"
+        f"[기존 Observation JSON]\n{json.dumps(existing, ensure_ascii=False)}"
+    )
+
+
+def _replace_full_report_remark(existing, generated):
+    """수동 Remark는 보존하고 이전 자동반영 블록만 멱등 교체한다."""
+    current = (existing or '').strip()
+    current = _re_cls.sub(
+        r'^' + _re_cls.escape(_FULL_REPORT_MARKER) + r'\n.*?^'
+        + _re_cls.escape(_FULL_REPORT_END_MARKER) + r'\n?',
+        '', current, flags=_re_cls.S | _re_cls.M,
+    ).strip()
+    block = (f'{_FULL_REPORT_MARKER}\n{(generated or "").strip()}\n'
+             f'{_FULL_REPORT_END_MARKER}')
+    return f'{current}\n\n{block}'.strip() if current else block
+
+
+def _extract_full_report_updates(f, vetting, findings):
+    """SIRE Full PDF와 기존 findings를 AI에 함께 주고 원자적 갱신 후보를 검증한다."""
+    name = (f.filename or '').lower()
+    if not name.endswith('.pdf'):
+        return None, {'reason': 'BAD_TYPE', 'message': 'SIRE Full report PDF만 지원합니다.'}
+    raw = f.read()
+    size_mb = len(raw) / (1024 * 1024)
+    if not raw:
+        return None, {'reason': 'EMPTY_FILE', 'message': '빈 PDF 파일입니다.'}
+    if not raw.lstrip().startswith(b'%PDF-'):
+        return None, {'reason': 'BAD_PDF', 'message': '유효한 PDF 파일이 아닙니다.'}
+    if size_mb > 15:
+        return None, {'reason': 'TOO_LARGE', 'message': f'PDF가 너무 큽니다({size_mb:.1f}MB). 15MB 이하로 줄여주세요.'}
+    b64 = __import__('base64').standard_b64encode(raw).decode()
+    parsed = _gemini_call_json([
+        {'inline_data': {'mime_type': 'application/pdf', 'data': b64}},
+        {'text': _full_report_prompt(vetting, findings)},
+    ], model=_model_for('findings'))
+    if not isinstance(parsed, dict) or parsed.get('error'):
+        return None, {'reason': (parsed or {}).get('error', 'PARSE_FAILED') if isinstance(parsed, dict) else 'PARSE_FAILED',
+                      'message': 'Full report 자동 분석에 실패했습니다.'}
+    if (parsed.get('report_type') or '').strip().lower() != 'full':
+        return None, {'reason': 'NOT_FULL_REPORT', 'message': 'Report Type이 Full인 SIRE 보고서가 아닙니다.'}
+    expected_report = _norm_report_number(vetting['report_number'])
+    actual_report = _norm_report_number(parsed.get('report_number'))
+    if not expected_report or actual_report != expected_report:
+        return None, {'reason': 'REPORT_MISMATCH',
+                      'message': f"Report 번호가 일치하지 않습니다. 기존 {vetting['report_number'] or '-'} / 업로드 {parsed.get('report_number') or '-'}"}
+
+    expected_ids = {int(f['id']) for f in findings}
+    updates, seen = [], set()
+    for item in parsed.get('items') or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            fid = int(item.get('finding_id'))
+        except (TypeError, ValueError):
+            continue
+        status = (item.get('status') or '').strip()
+        remark = (item.get('remark') or '').strip()
+        evidence = (item.get('evidence') or '').strip()
+        if (fid not in expected_ids or fid in seen or item.get('matched') is not True
+                or status not in ('Open', 'Closed') or not remark or not evidence):
+            continue
+        updates.append({'finding_id': fid, 'status': status, 'remark': remark,
+                        'evidence': evidence})
+        seen.add(fid)
+    if seen != expected_ids:
+        missing = sorted(expected_ids - seen)
+        return None, {'reason': 'INCOMPLETE_MATCH',
+                      'message': f'기존 Observation 전부를 확실히 매칭하지 못해 반영하지 않았습니다. 미매칭 {len(missing)}건.'}
+    return updates, None
+
+
 @bp.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
 @login_required
 def api_vt_extract_report(vid):
@@ -788,6 +893,77 @@ def api_vt_extract_report(vid):
         execute(f'UPDATE vettings SET {", ".join(sets)} WHERE id=?', tuple(params))
     return jsonify({'ok': True, 'items': items, 'count': len(items),
                     'meta': meta, 'applied': applied})
+
+
+@bp.route('/api/vettings/<int:vid>/apply-full-report', methods=['POST'])
+@login_required
+def api_vt_apply_full_report(vid):
+    """SIRE Full report의 Operator Comments로 기존 Observation만 원자적 갱신한다."""
+    vetting = query('SELECT id, report_number FROM vettings WHERE id=?', (vid,), one=True)
+    if not vetting:
+        abort(404)
+    findings = query(
+        'SELECT id, no, item, description, user_remark, status '
+        'FROM vt_findings WHERE vetting_id=? ORDER BY no, id', (vid,))
+    if not findings:
+        message = '먼저 Initial report로 Observation을 생성하세요.'
+        return jsonify({'ok': False, 'reason': 'NO_FINDINGS',
+                        'message': message, 'error': message}), 422
+    if 'file' not in request.files or not request.files['file'].filename:
+        message = '파일이 없습니다.'
+        return jsonify({'ok': False, 'reason': 'NO_FILE', 'message': message,
+                        'error': message}), 400
+
+    uploaded = request.files['file']
+    raw_for_hash = uploaded.read()
+    uploaded.stream.seek(0)
+    file_sha256 = hashlib.sha256(raw_for_hash).hexdigest()
+    updates, err = _extract_full_report_updates(uploaded, vetting, findings)
+    if err:
+        return jsonify({'ok': False, **err, 'error': err['message']}), 422
+
+    by_id = {int(f['id']): f for f in findings}
+    before = [{'finding_id': int(f['id']), 'status': f['status'],
+               'user_remark': f['user_remark'] or ''} for f in findings]
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        after = []
+        for item in updates:
+            fid = item['finding_id']
+            old = by_id[fid]
+            user_remark = _replace_full_report_remark(old['user_remark'], item['remark'])
+            cur = db.execute(
+                "UPDATE vt_findings SET status=?, user_remark=?, updated_at=datetime('now','localtime') "
+                'WHERE id=? AND vetting_id=?',
+                (item['status'], user_remark, fid, vid),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError(f'finding changed during full report apply: {fid}')
+            after.append({'finding_id': fid, 'status': item['status'],
+                          'user_remark': user_remark, 'evidence': item['evidence']})
+        db.execute(
+            "UPDATE vettings SET updated_at=datetime('now','localtime') WHERE id=?", (vid,))
+        db.execute(
+            "INSERT INTO vt_full_report_audit "
+            "(vetting_id,report_number,file_sha256,filename,before_json,after_json,applied_by) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (vid, vetting['report_number'], file_sha256, uploaded.filename,
+             json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False),
+             session.get('username') or session.get('display_name')),
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        app.logger.exception('apply-full-report')
+        message = '분석 결과 저장에 실패해 아무 항목도 변경하지 않았습니다.'
+        return jsonify({'ok': False, 'reason': 'DB_UPDATE_FAILED',
+                        'message': message, 'error': message}), 500
+
+    opened = sum(1 for item in updates if item['status'] == 'Open')
+    closed = len(updates) - opened
+    return jsonify({'ok': True, 'updated': len(updates), 'open': opened,
+                    'closed': closed, 'items': updates})
 
 
 def _md_from_date(d):
