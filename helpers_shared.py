@@ -786,6 +786,24 @@ _MARITIME_TERMS = (
 #  API — Vetting Status (비정기, 선박당 0~N건, CNTR 제외)
 # ═════════════════════════════════════════════════════════════════
 VETTING_TYPES = ('VLCC', 'AFRAMAX', 'LR', 'MR')
+
+
+def _clean_vetting_overall_remark(value):
+    """과거 종합소견에 잘못 포함된 Full report 내부 블록만 표시 전에 제거한다."""
+    begin = '[SIRE Full Report 자동반영]'
+    end = '[/SIRE Full Report 자동반영]'
+    text = value or ''
+    text = re.sub(
+        r'\s*-\s*' + re.escape(begin) + r'\n.*?^' + re.escape(end) + r'\s*',
+        '\n', text, flags=re.S | re.M,
+    )
+    text = re.sub(
+        r'^' + re.escape(begin) + r'\n.*?^' + re.escape(end) + r'\s*',
+        '', text, flags=re.S | re.M,
+    )
+    return '\n'.join(line.rstrip() for line in text.splitlines() if line.strip()).strip()
+
+
 def _vetting_with_counts(v):
     """vetting dict에 카운트 추가. manual override 적용."""
     vid = v['id']
@@ -802,6 +820,7 @@ def _vetting_with_counts(v):
     auto_total = auto_open + auto_closed
 
     d = dict(v)
+    d['overall_remark'] = _clean_vetting_overall_remark(d.get('overall_remark'))
     d['observation_count'] = v['manual_observation_count'] if v['manual_observation_count'] is not None else auto_total
     d['close_count']       = v['manual_close_count']       if v['manual_close_count']       is not None else auto_closed
     d['open_count']        = v['manual_open_count']        if v['manual_open_count']        is not None else max(0, d['observation_count'] - d['close_count'])

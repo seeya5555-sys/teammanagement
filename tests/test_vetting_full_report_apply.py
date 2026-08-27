@@ -6,6 +6,7 @@ import unittest
 
 import app as appmod
 import ai_gemini as routes
+import helpers_shared
 
 
 class VettingFullReportApplyTests(unittest.TestCase):
@@ -25,8 +26,8 @@ class VettingFullReportApplyTests(unittest.TestCase):
                 ('GHANA PROSPERITY', 'GHANA'),
             )
             self.vetting = appmod.execute(
-                "INSERT INTO vettings(vessel_id,report_number) VALUES(?,?)",
-                (vessel, 'LVKX-0383-3966-7845'),
+                "INSERT INTO vettings(vessel_id,report_number,inspection_date) VALUES(?,?,?)",
+                (vessel, 'LVKX-0383-3966-7845', '2026-08-06'),
             )
             self.f1 = appmod.execute(
                 "INSERT INTO vt_findings(vetting_id,no,item,description,user_remark,status) "
@@ -234,6 +235,54 @@ class VettingFullReportApplyTests(unittest.TestCase):
             'The total number of persons was not identified on Form E.',
             'The SIMOPS plan omitted cargo discharge and stores supply.',
         ))
+
+    def test_legacy_auto_block_is_hidden_from_overall_remark(self):
+        legacy = (
+            '8/6 PETROVIETNAM DISCHARGE SIRE OBS 잔여 3건 조치 중\n'
+            '1. M/E NO.6 Cylinder cover Condition of Class 미종결 - '
+            f'{routes._FULL_REPORT_MARKER}\n긴 자동 조치 설명\n'
+            f'{routes._FULL_REPORT_END_MARKER}\n그 외 Minor 지적 2건'
+        )
+        with appmod.app.app_context():
+            appmod.execute('UPDATE vettings SET overall_remark=? WHERE id=?',
+                           (legacy, self.vetting))
+        shown = self.client.get(f'/api/vettings/{self.vetting}').get_json()['overall_remark']
+        self.assertNotIn('자동반영', shown)
+        self.assertNotIn('긴 자동 조치 설명', shown)
+        self.assertIn('1. M/E NO.6 Cylinder cover Condition of Class 미종결', shown)
+        self.assertIn('그 외 Minor 지적 2건', shown)
+        self.assertEqual('수동 메모', helpers_shared._clean_vetting_overall_remark('수동 메모'))
+        incomplete = f'수동 메모\n{routes._FULL_REPORT_MARKER}\n미완료 블록'
+        self.assertEqual(incomplete, helpers_shared._clean_vetting_overall_remark(incomplete))
+
+    def test_obs_summary_keeps_original_one_line_style_without_user_remark(self):
+        marked = routes._replace_full_report_remark(
+            '', 'starting valve seating 수리 후 Condition of Class 모니터링 중임.')
+        with appmod.app.app_context():
+            appmod.execute(
+                'UPDATE vt_findings SET priority=1, remark=?, user_remark=? WHERE id=?',
+                ('M/E NO.6 Cylinder cover Condition of Class 미종결', marked, self.f1))
+        routes._gemini_call_json = lambda *args, **kwargs: {
+            'items': [{'i': 0, 'short': 'M/E NO.6 Cylinder cover Condition of Class 미종결'}]
+        }
+        response = self.client.post(
+            f'/api/vettings/{self.vetting}/obs-summary',
+            headers={'X-CSRF-Token': self.csrf})
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        summary = response.get_json()['summary']
+        self.assertIn('1. M/E NO.6 Cylinder cover Condition of Class 미종결', summary)
+        self.assertNotIn('자동반영', summary)
+        self.assertNotIn('starting valve seating 수리 후', summary)
+
+    def test_full_report_action_remark_is_one_sentence_and_length_bounded(self):
+        concise = routes._concise_full_report_remark(
+            'starting valve seating 수리 완료함. Root Cause 장문 설명은 종합소견에 불필요함.')
+        self.assertEqual('starting valve seating 수리 완료함.', concise)
+        long_text = 'Condition of Class에 따라 UT/MPI 재검사 및 모니터링 예정이며 ' + ('추가 설명 ' * 20)
+        bounded = routes._concise_full_report_remark(long_text)
+        self.assertLessEqual(len(bounded), 90)
+        self.assertIn('Condition of Class', bounded)
+        self.assertIn('UT/MPI', bounded)
 
     def test_requires_existing_findings_and_file_part(self):
         with appmod.app.app_context():

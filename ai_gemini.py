@@ -826,13 +826,16 @@ def _full_report_prompt(vetting, findings):
         "남은 시정·검사·승인·Class closure가 없으면 Closed. 시정/검사/승인/자재/후속 확인이 예정·진행·보류, "
         "임시조치 또는 모니터링 단계면 Open. Preventative Action이 상시/미래형이라는 이유만으로, 이미 완료된 "
         "Corrective Action을 Open으로 두지는 않는다. 적합성 확인으로 시정 불필요가 명확하고 후속조치가 없으면 Closed.\n"
-        "- 기존 items의 remark는 Operator Comments의 Immediate Cause, Root Cause, Corrective Action, Preventative Action을 "
-        "근거로 실제 조치 결과와 남은 조치를 한국어 음슴체 2~5문장으로 요약한다. 없는 내용을 만들지 않는다.\n"
+        "- 기존 items의 remark는 Operator Comments를 근거로 현재 조치상태와 남은 핵심 조치만 한국어 음슴체 "
+        "한 문장(권장 60자 이내)으로 간결하게 요약한다. Immediate Cause/Root Cause의 경위 설명은 반복하지 않는다. "
+        "Condition of Class, starting valve seating, Cylinder cover, UT/MPI, FIVA, ECDIS 등 기술 명칭·장비명·약어는 "
+        "번역하지 말고 보고서의 영문 표기를 그대로 유지한다. 없는 내용을 만들지 않는다.\n"
         "- evidence는 status 판정에 직접 사용한 영문 원문 핵심 문장이다.\n"
         "- 보고서에서 동일 지적을 확실히 찾지 못하거나 Open/Closed 판정이 불확실하면 matched=false로 둔다. "
         "추측으로 Closed를 선택하지 않는다.\n"
         "- new_items.item은 보고서 분류 라벨을 괄호로 붙인 제목, description은 지적 원문, translation은 지적의 "
-        "한국어 요약, action_remark는 Operator Comments 조치 결과의 한국어 요약이다.\n"
+        "한국어 요약, action_remark는 Operator Comments의 현재 조치상태와 남은 핵심 조치만 담은 한국어 음슴체 "
+        "한 문장(권장 60자 이내)이다. 기술 명칭·장비명·약어는 영문 그대로 유지한다.\n"
         '형식: {"report_type":"Full","report_number":"...","items":['
         '{"finding_id":1,"matched":true,"status":"Closed","remark":"...","evidence":"..."}],'
         '"new_items":[{"item":"(Process)Not as expected","description":"영문 지적 원문",'
@@ -854,6 +857,20 @@ def _replace_full_report_remark(existing, generated):
     block = (f'{_FULL_REPORT_MARKER}\n{(generated or "").strip()}\n'
              f'{_FULL_REPORT_END_MARKER}')
     return f'{current}\n\n{block}'.strip() if current else block
+
+
+def _concise_full_report_remark(value, limit=90):
+    """AI 조치 Remark를 단일 문장·화면 한두 줄 길이로 강제한다."""
+    text = _re_cls.sub(r'\s+', ' ', (value or '')).strip()
+    if not text:
+        return ''
+    sentence = _re_cls.split(r'(?<=[.!?])\s+', text, maxsplit=1)[0].strip()
+    if len(sentence) <= limit:
+        return sentence
+    cut = sentence[:limit - 1].rstrip()
+    if ' ' in cut:
+        cut = cut.rsplit(' ', 1)[0]
+    return cut.rstrip(' ,.;:') + '…'
 
 
 def _extract_full_report_updates(f, vetting, findings):
@@ -903,7 +920,7 @@ def _extract_full_report_updates(f, vetting, findings):
             unmatched_ids.append(fid)
             continue
         status = (item.get('status') or '').strip()
-        remark = (item.get('remark') or '').strip()
+        remark = _concise_full_report_remark(item.get('remark'))
         evidence = (item.get('evidence') or '').strip()
         if status not in ('Open', 'Closed') or not remark or not evidence:
             invalid_match_set = True
@@ -928,7 +945,7 @@ def _extract_full_report_updates(f, vetting, findings):
             'description': (item.get('description') or '').strip(),
             'translation': (item.get('translation') or '').strip(),
             'status': (item.get('status') or '').strip(),
-            'action_remark': (item.get('action_remark') or '').strip(),
+            'action_remark': _concise_full_report_remark(item.get('action_remark')),
             'evidence': (item.get('evidence') or '').strip(),
         }
         label = rec['item'].lower()
@@ -1167,8 +1184,7 @@ def api_vt_obs_summary(vid):
     lines = [header]
     for i, f in enumerate(prio):
         short = shorts.get(i) or (f['remark'] or f['item'] or '').strip()
-        ur = (f['user_remark'] or '').strip()
-        lines.append(f'{i + 1}. {short}' + (f' - {ur}' if ur else ''))
+        lines.append(f'{i + 1}. {short}')
     if minor > 0:
         lines.append(f'그 외 Minor 지적 {minor}건')
     text = '\n'.join(lines)
