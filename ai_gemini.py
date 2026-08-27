@@ -873,6 +873,19 @@ def _concise_full_report_remark(value, limit=90):
     return cut.rstrip(' ,.;:') + '…'
 
 
+def _summary_full_report_remark(value):
+    """종합소견용 Remark: 내부 marker는 숨기고 자동반영 조치문만 간결하게 반환한다."""
+    text = (value or '').strip()
+    if not text:
+        return ''
+    blocks = _re_cls.findall(
+        r'^[ \t]*' + _re_cls.escape(_FULL_REPORT_MARKER) + r'[ \t]*\r?\n(.*?)^[ \t]*'
+        + _re_cls.escape(_FULL_REPORT_END_MARKER) + r'[ \t]*$',
+        text, flags=_re_cls.S | _re_cls.M,
+    )
+    return _concise_full_report_remark(blocks[-1] if blocks else text)
+
+
 def _extract_full_report_updates(f, vetting, findings):
     """SIRE Full PDF와 기존 findings를 AI에 함께 주고 원자적 갱신 후보를 검증한다."""
     name = (f.filename or '').lower()
@@ -1184,7 +1197,8 @@ def api_vt_obs_summary(vid):
     lines = [header]
     for i, f in enumerate(prio):
         short = shorts.get(i) or (f['remark'] or f['item'] or '').strip()
-        lines.append(f'{i + 1}. {short}')
+        action = _summary_full_report_remark(f['user_remark'])
+        lines.append(f'{i + 1}. {short}' + (f' - {action}' if action else ''))
     if minor > 0:
         lines.append(f'그 외 Minor 지적 {minor}건')
     text = '\n'.join(lines)

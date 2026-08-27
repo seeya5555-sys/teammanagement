@@ -255,7 +255,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
         incomplete = f'수동 메모\n{routes._FULL_REPORT_MARKER}\n미완료 블록'
         self.assertEqual(incomplete, helpers_shared._clean_vetting_overall_remark(incomplete))
 
-    def test_obs_summary_keeps_original_one_line_style_without_user_remark(self):
+    def test_obs_summary_keeps_finding_dash_concise_remark_style(self):
         marked = routes._replace_full_report_remark(
             '', 'starting valve seating 수리 후 Condition of Class 모니터링 중임.')
         with appmod.app.app_context():
@@ -270,9 +270,39 @@ class VettingFullReportApplyTests(unittest.TestCase):
             headers={'X-CSRF-Token': self.csrf})
         self.assertEqual(200, response.status_code, response.get_data(as_text=True))
         summary = response.get_json()['summary']
-        self.assertIn('1. M/E NO.6 Cylinder cover Condition of Class 미종결', summary)
+        self.assertIn(
+            '1. M/E NO.6 Cylinder cover Condition of Class 미종결 - '
+            'starting valve seating 수리 후 Condition of Class 모니터링 중임.',
+            summary,
+        )
         self.assertNotIn('자동반영', summary)
-        self.assertNotIn('starting valve seating 수리 후', summary)
+
+    def test_obs_summary_concises_unmarked_manual_remark(self):
+        with appmod.app.app_context():
+            appmod.execute(
+                'UPDATE vt_findings SET priority=1, remark=?, user_remark=? WHERE id=?',
+                ('ECDIS 점검 필요', 'ECDIS software update 완료함. 불필요한 원인 설명임.', self.f1))
+        routes._gemini_call_json = lambda *args, **kwargs: {
+            'items': [{'i': 0, 'short': 'ECDIS 점검 필요'}]
+        }
+        response = self.client.post(
+            f'/api/vettings/{self.vetting}/obs-summary',
+            headers={'X-CSRF-Token': self.csrf})
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        summary = response.get_json()['summary']
+        self.assertIn('1. ECDIS 점검 필요 - ECDIS software update 완료함.', summary)
+        self.assertNotIn('불필요한 원인 설명', summary)
+
+    def test_summary_remark_hides_marker_with_crlf_and_manual_prefix(self):
+        value = (
+            '수동 메모 보존\r\n\r\n'
+            f'  {routes._FULL_REPORT_MARKER}  \r\n'
+            'UT/MPI 재검사 완료함. Root Cause 장문 설명임.\r\n'
+            f'  {routes._FULL_REPORT_END_MARKER}  '
+        )
+        shown = routes._summary_full_report_remark(value)
+        self.assertEqual('UT/MPI 재검사 완료함.', shown)
+        self.assertNotIn('[', shown)
 
     def test_full_report_action_remark_is_one_sentence_and_length_bounded(self):
         concise = routes._concise_full_report_remark(
