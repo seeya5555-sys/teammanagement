@@ -20,6 +20,7 @@ import re as _re_cls
 import uuid
 import hashlib
 import tempfile
+from difflib import SequenceMatcher
 from datetime import datetime
 
 from flask import abort, jsonify, request, send_from_directory, session, Response
@@ -773,6 +774,36 @@ def _norm_report_number(value):
     return _re_cls.sub(r'\s+', '', (value or '')).upper()
 
 
+def _finding_text_similar(left, right):
+    """같은 영문 지적의 경미한 표현 변형을 재업로드 중복으로 판정한다."""
+    stopwords = {
+        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'by', 'for',
+        'from', 'in', 'is', 'it', 'noted', 'of', 'on', 'or', 'that', 'the',
+        'this', 'to', 'was', 'were', 'with',
+    }
+
+    def tokens(value):
+        return [
+            token for token in _re_cls.findall(r'[a-z0-9]+', (value or '').lower())
+            if token not in stopwords
+        ]
+    a, b = tokens(left), tokens(right)
+    if not a or not b:
+        return False
+    ac, bc = ''.join(a), ''.join(b)
+    if ac == bc:
+        return True
+    aset, bset = set(a), set(b)
+    overlap = len(aset & bset)
+    jaccard = overlap / max(1, len(aset | bset))
+    containment = overlap / max(1, min(len(aset), len(bset)))
+    return (
+        (overlap >= 4 and containment >= 0.80)
+        or jaccard >= 0.72
+        or SequenceMatcher(None, ac, bc).ratio() >= 0.88
+    )
+
+
 def _full_report_prompt(vetting, findings):
     existing = [{
         'finding_id': f['id'],
@@ -782,21 +813,31 @@ def _full_report_prompt(vetting, findings):
     } for f in findings]
     return (
         "다음 PDF는 선박 SIRE 2.0 Full Report다. 아래 기존 Observation 각각을 보고서의 동일 지적과 "
-        "일대일로 매칭하고 Operator Comments의 조치 결과를 판정하라. JSON으로만 답하라.\n"
+        "일대일로 매칭하고, Full report에만 새로 추가된 Observation도 빠짐없이 추출하라. JSON으로만 답하라.\n"
         "- report_type: 표지의 Report Type을 그대로 추출(반드시 Full인지 확인).\n"
         "- report_number: 표지의 Report 번호를 그대로 추출.\n"
-        "- 기존 Observation을 새로 만들거나 합치거나 생략하지 말고 finding_id를 그대로 사용한다.\n"
+        "- items에는 기존 Observation을 합치거나 생략하지 말고 finding_id를 각각 정확히 한 번씩 모두 반환한다. "
+        "Full report에서 찾지 못한 기존 항목은 matched=false로 둔다.\n"
+        "- new_items에는 Full report의 부정적 지적 중 기존 Observation 어느 것과도 동일하지 않은 신규 항목만 넣는다. "
+        "포함 대상은 'Not as expected', 'Observable or detectable deficiency', 'Photo not representative'처럼 "
+        "명시적으로 부정 판정된 항목뿐이다. 'As expected', 'Largely as expected', 일반 권고·정보성 코멘트는 제외한다. "
+        "기존 항목의 표현 차이·Operator Comments 상세는 신규로 중복 생성하지 않는다.\n"
         "- status는 Open 또는 Closed만 사용한다. Corrective Action이 명시적으로 완료되고 핵심 결함에 "
         "남은 시정·검사·승인·Class closure가 없으면 Closed. 시정/검사/승인/자재/후속 확인이 예정·진행·보류, "
         "임시조치 또는 모니터링 단계면 Open. Preventative Action이 상시/미래형이라는 이유만으로, 이미 완료된 "
         "Corrective Action을 Open으로 두지는 않는다. 적합성 확인으로 시정 불필요가 명확하고 후속조치가 없으면 Closed.\n"
-        "- remark는 Operator Comments의 Immediate Cause, Root Cause, Corrective Action, Preventative Action을 "
+        "- 기존 items의 remark는 Operator Comments의 Immediate Cause, Root Cause, Corrective Action, Preventative Action을 "
         "근거로 실제 조치 결과와 남은 조치를 한국어 음슴체 2~5문장으로 요약한다. 없는 내용을 만들지 않는다.\n"
         "- evidence는 status 판정에 직접 사용한 영문 원문 핵심 문장이다.\n"
         "- 보고서에서 동일 지적을 확실히 찾지 못하거나 Open/Closed 판정이 불확실하면 matched=false로 둔다. "
         "추측으로 Closed를 선택하지 않는다.\n"
+        "- new_items.item은 보고서 분류 라벨을 괄호로 붙인 제목, description은 지적 원문, translation은 지적의 "
+        "한국어 요약, action_remark는 Operator Comments 조치 결과의 한국어 요약이다.\n"
         '형식: {"report_type":"Full","report_number":"...","items":['
-        '{"finding_id":1,"matched":true,"status":"Closed","remark":"...","evidence":"..."}]}\n\n'
+        '{"finding_id":1,"matched":true,"status":"Closed","remark":"...","evidence":"..."}],'
+        '"new_items":[{"item":"(Process)Not as expected","description":"영문 지적 원문",'
+        '"translation":"한글 지적 요약","status":"Open","action_remark":"한글 조치 결과",'
+        '"evidence":"상태 판정 영문 근거"}]}\n\n'
         f"[대상 Vetting]\nreport_number={vetting['report_number'] or ''}\n"
         f"[기존 Observation JSON]\n{json.dumps(existing, ensure_ascii=False)}"
     )
@@ -845,7 +886,8 @@ def _extract_full_report_updates(f, vetting, findings):
                       'message': f"Report 번호가 일치하지 않습니다. 기존 {vetting['report_number'] or '-'} / 업로드 {parsed.get('report_number') or '-'}"}
 
     expected_ids = {int(f['id']) for f in findings}
-    updates, seen = [], set()
+    updates, unmatched_ids, seen = [], [], set()
+    invalid_match_set = False
     for item in parsed.get('items') or []:
         if not isinstance(item, dict):
             continue
@@ -853,20 +895,56 @@ def _extract_full_report_updates(f, vetting, findings):
             fid = int(item.get('finding_id'))
         except (TypeError, ValueError):
             continue
+        if fid not in expected_ids or fid in seen:
+            invalid_match_set = True
+            continue
+        seen.add(fid)
+        if item.get('matched') is not True:
+            unmatched_ids.append(fid)
+            continue
         status = (item.get('status') or '').strip()
         remark = (item.get('remark') or '').strip()
         evidence = (item.get('evidence') or '').strip()
-        if (fid not in expected_ids or fid in seen or item.get('matched') is not True
-                or status not in ('Open', 'Closed') or not remark or not evidence):
+        if status not in ('Open', 'Closed') or not remark or not evidence:
+            invalid_match_set = True
             continue
         updates.append({'finding_id': fid, 'status': status, 'remark': remark,
                         'evidence': evidence})
-        seen.add(fid)
+    if invalid_match_set:
+        return None, {'reason': 'INVALID_MATCH_SET',
+                      'message': '기존 Observation ID 분석 결과가 중복·오류여서 반영하지 않았습니다.'}
     if seen != expected_ids:
         missing = sorted(expected_ids - seen)
         return None, {'reason': 'INCOMPLETE_MATCH',
-                      'message': f'기존 Observation 전부를 확실히 매칭하지 못해 반영하지 않았습니다. 미매칭 {len(missing)}건.'}
-    return updates, None
+                      'message': f'기존 Observation 전건의 분석 결과가 없어 반영하지 않았습니다. 누락 {len(missing)}건.'}
+
+    existing_desc = [(f['description'] or '') for f in findings]
+    new_items = []
+    for item in parsed.get('new_items') or []:
+        if not isinstance(item, dict):
+            continue
+        rec = {
+            'item': (item.get('item') or '').strip(),
+            'description': (item.get('description') or '').strip(),
+            'translation': (item.get('translation') or '').strip(),
+            'status': (item.get('status') or '').strip(),
+            'action_remark': (item.get('action_remark') or '').strip(),
+            'evidence': (item.get('evidence') or '').strip(),
+        }
+        label = rec['item'].lower()
+        explicitly_negative = any(token in label for token in (
+            'not as expected', 'observable or detectable deficiency',
+            'photo not representative',
+        ))
+        if (not explicitly_negative or not rec['item'] or not rec['description'] or not rec['translation']
+                or rec['status'] not in ('Open', 'Closed') or not rec['action_remark']
+                or not rec['evidence']
+                or any(_finding_text_similar(rec['description'], old) for old in existing_desc)):
+            continue
+        if any(_finding_text_similar(rec['description'], n['description']) for n in new_items):
+            continue
+        new_items.append(rec)
+    return {'updates': updates, 'unmatched_ids': unmatched_ids, 'new_items': new_items}, None
 
 
 @bp.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
@@ -898,7 +976,7 @@ def api_vt_extract_report(vid):
 @bp.route('/api/vettings/<int:vid>/apply-full-report', methods=['POST'])
 @login_required
 def api_vt_apply_full_report(vid):
-    """SIRE Full report의 Operator Comments로 기존 Observation만 원자적 갱신한다."""
+    """SIRE Full report로 기존 Observation 갱신 + Full 신규 지적을 원자적 추가한다."""
     vetting = query('SELECT id, report_number FROM vettings WHERE id=?', (vid,), one=True)
     if not vetting:
         abort(404)
@@ -918,9 +996,16 @@ def api_vt_apply_full_report(vid):
     raw_for_hash = uploaded.read()
     uploaded.stream.seek(0)
     file_sha256 = hashlib.sha256(raw_for_hash).hexdigest()
-    updates, err = _extract_full_report_updates(uploaded, vetting, findings)
+    result, err = _extract_full_report_updates(uploaded, vetting, findings)
     if err:
         return jsonify({'ok': False, **err, 'error': err['message']}), 422
+    updates = result['updates']
+    new_items = result['new_items']
+    unmatched_ids = result['unmatched_ids']
+    if not updates and not new_items:
+        message = 'Full report에서 반영 가능한 기존 또는 신규 Observation을 찾지 못했습니다.'
+        return jsonify({'ok': False, 'reason': 'NO_APPLICABLE_ITEMS',
+                        'message': message, 'error': message}), 422
 
     by_id = {int(f['id']): f for f in findings}
     before = [{'finding_id': int(f['id']), 'status': f['status'],
@@ -942,6 +1027,29 @@ def api_vt_apply_full_report(vid):
                 raise RuntimeError(f'finding changed during full report apply: {fid}')
             after.append({'finding_id': fid, 'status': item['status'],
                           'user_remark': user_remark, 'evidence': item['evidence']})
+        current_desc = [row[0] or '' for row in db.execute(
+            'SELECT description FROM vt_findings WHERE vetting_id=?', (vid,))]
+        next_no = db.execute(
+            'SELECT COALESCE(MAX(no),0)+1 FROM vt_findings WHERE vetting_id=?', (vid,)
+        ).fetchone()[0]
+        created = []
+        for item in new_items:
+            if any(_finding_text_similar(item['description'], old) for old in current_desc):
+                continue
+            user_remark = _replace_full_report_remark('', item['action_remark'])
+            cur = db.execute(
+                "INSERT INTO vt_findings "
+                "(vetting_id,no,item,description,remark,user_remark,priority,status) "
+                "VALUES(?,?,?,?,?,?,0,?)",
+                (vid, next_no, item['item'], item['description'], item['translation'],
+                 user_remark, item['status']),
+            )
+            fid = cur.lastrowid
+            created.append({'finding_id': fid, 'no': next_no, **item})
+            after.append({'finding_id': fid, 'created': True, 'status': item['status'],
+                          'user_remark': user_remark, 'evidence': item['evidence']})
+            current_desc.append(item['description'])
+            next_no += 1
         db.execute(
             "UPDATE vettings SET updated_at=datetime('now','localtime') WHERE id=?", (vid,))
         db.execute(
@@ -960,10 +1068,12 @@ def api_vt_apply_full_report(vid):
         return jsonify({'ok': False, 'reason': 'DB_UPDATE_FAILED',
                         'message': message, 'error': message}), 500
 
-    opened = sum(1 for item in updates if item['status'] == 'Open')
-    closed = len(updates) - opened
-    return jsonify({'ok': True, 'updated': len(updates), 'open': opened,
-                    'closed': closed, 'items': updates})
+    changed = updates + created
+    opened = sum(1 for item in changed if item['status'] == 'Open')
+    closed = len(changed) - opened
+    return jsonify({'ok': True, 'updated': len(updates), 'created': len(created),
+                    'unmatched': len(unmatched_ids), 'open': opened,
+                    'closed': closed, 'items': updates, 'new_items': created})
 
 
 def _md_from_date(d):

@@ -1624,8 +1624,9 @@ function pickVtFullReport(vt, button) {
     const file = input.files && input.files[0];
     if (!file) return;
     const ok = confirm(
-      `SIRE Full report "${file.name}"의 조치 결과로 기존 Observation ${vt.findings.length}건의 Remark와 Open/Closed를 자동 변경할까요?\n\n` +
-      'Report 번호가 다르거나 전 항목을 확실히 매칭하지 못하면 아무것도 변경하지 않습니다.'
+      `SIRE Full report "${file.name}"의 조치 결과를 반영할까요?\n\n` +
+      `기존 Observation ${vt.findings.length}건은 매칭된 항목만 Remark·Open/Closed를 변경하고, ` +
+      'Full report에만 있는 신규 Observation은 새 행으로 추가합니다.'
     );
     if (!ok) return;
     const oldText = button.textContent;
@@ -1634,7 +1635,8 @@ function pickVtFullReport(vt, button) {
     try {
       const res = await api(`/api/vettings/${vt.id}/apply-full-report`, { method: 'POST', body: fd });
       await reloadData();
-      alert(`Full report 반영 완료: ${res.updated}건 (Open ${res.open} / Closed ${res.closed})`);
+      alert(`Full report 반영 완료: 기존 ${res.updated}건 갱신 · 신규 ${res.created || 0}건 추가` +
+        ` · 기존 미매칭 ${res.unmatched || 0}건 보존 (Open ${res.open} / Closed ${res.closed})`);
     } catch (e) {
       alert('Full report 반영 실패: ' + e.message);
     } finally {

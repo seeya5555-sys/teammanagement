@@ -51,7 +51,8 @@ class VettingFullReportApplyTests(unittest.TestCase):
         appmod.app.config['DATABASE'] = self.old_cfg
         self.tmp.cleanup()
 
-    def _result(self, *, report='LVKX-0383-3966-7845', items=None, report_type='Full'):
+    def _result(self, *, report='LVKX-0383-3966-7845', items=None,
+                new_items=None, report_type='Full'):
         return {
             'report_type': report_type,
             'report_number': report,
@@ -63,6 +64,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
                  'remark': 'Liferaft identification card를 즉시 갱신하고 Master가 확인함.',
                  'evidence': 'card was immediately updated'},
             ],
+            'new_items': new_items or [],
         }
 
     def _post(self):
@@ -79,6 +81,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
         self.assertEqual(200, first.status_code, first.get_data(as_text=True))
         self.assertEqual({'updated': 2, 'open': 1, 'closed': 1}, {
             k: first.get_json()[k] for k in ('updated', 'open', 'closed')})
+        self.assertEqual(0, first.get_json()['created'])
         second = self._post()
         self.assertEqual(200, second.status_code, second.get_data(as_text=True))
         with appmod.app.app_context():
@@ -127,6 +130,57 @@ class VettingFullReportApplyTests(unittest.TestCase):
             )
         self.assertEqual(['Open', 'Open'], [r['status'] for r in rows])
 
+    def test_unmatched_existing_is_preserved_and_full_only_item_is_added_once(self):
+        new_item = {
+            'item': '(Process)Not as expected - procedure and/or document deficient',
+            'description': 'The total number of persons was not identified on Form E.',
+            'translation': 'Form E에 lifesaving appliances 총 정원 미기재됨.',
+            'status': 'Closed',
+            'action_remark': 'Form E를 수정하고 정확한 총 정원을 반영 완료함.',
+            'evidence': 'Form E was corrected and reissued.',
+        }
+        first_items = [
+            {'finding_id': self.f1, 'matched': True, 'status': 'Open',
+             'remark': 'COC 모니터링 중임.', 'evidence': 'pending Class survey'},
+            {'finding_id': self.f2, 'matched': False, 'status': 'Open',
+             'remark': 'not found', 'evidence': 'not found'},
+        ]
+        routes._gemini_call_json = lambda *args, **kwargs: self._result(
+            items=first_items, new_items=[new_item, {
+                **new_item,
+                'item': '(Process)Largely as expected - procedure and/or document present',
+                'description': 'A minor informational comment that is not an Observation.',
+            }])
+        first = self._post()
+        self.assertEqual(200, first.status_code, first.get_data(as_text=True))
+        payload = first.get_json()
+        self.assertEqual((1, 1, 1),
+                         (payload['updated'], payload['created'], payload['unmatched']))
+        with appmod.app.app_context():
+            rows = appmod.query(
+                'SELECT id,no,description,status,user_remark FROM vt_findings '
+                'WHERE vetting_id=? ORDER BY no', (self.vetting,))
+        self.assertEqual(3, len(rows))
+        self.assertEqual('Open', rows[1]['status'])       # Full에 없던 기존행 보존
+        self.assertEqual('Closed', rows[2]['status'])
+        self.assertIn('Form E를 수정', rows[2]['user_remark'])
+
+        new_id = rows[2]['id']
+        second_items = first_items + [
+            {'finding_id': new_id, 'matched': True, 'status': 'Closed',
+             'remark': new_item['action_remark'], 'evidence': new_item['evidence']},
+        ]
+        routes._gemini_call_json = lambda *args, **kwargs: self._result(
+            items=second_items, new_items=[new_item])
+        second = self._post()
+        self.assertEqual(200, second.status_code, second.get_data(as_text=True))
+        self.assertEqual(0, second.get_json()['created'])
+        with appmod.app.app_context():
+            count = appmod.query(
+                'SELECT COUNT(*) n FROM vt_findings WHERE vetting_id=?',
+                (self.vetting,), one=True)['n']
+        self.assertEqual(3, count)
+
     def test_rejects_non_full_report_and_non_pdf(self):
         routes._gemini_call_json = lambda *args, **kwargs: self._result(report_type='Initial')
         response = self._post()
@@ -158,7 +212,28 @@ class VettingFullReportApplyTests(unittest.TestCase):
              'remark': '중복됨.', 'evidence': 'duplicate'},
         ])
         duplicate = self._post()
-        self.assertEqual('INCOMPLETE_MATCH', duplicate.get_json()['reason'])
+        self.assertEqual('INVALID_MATCH_SET', duplicate.get_json()['reason'])
+
+        routes._gemini_call_json = lambda *args, **kwargs: self._result(items=[
+            {'finding_id': self.f1, 'matched': True, 'status': 'Closed',
+             'remark': '완료됨.', 'evidence': 'completed'},
+            {'finding_id': self.f2, 'matched': True, 'status': 'Closed',
+             'remark': '완료됨.', 'evidence': 'completed'},
+            {'finding_id': 999999, 'matched': True, 'status': 'Closed',
+             'remark': '환각.', 'evidence': 'hallucinated'},
+        ])
+        hallucinated = self._post()
+        self.assertEqual('INVALID_MATCH_SET', hallucinated.get_json()['reason'])
+
+    def test_similar_wording_is_deduplicated(self):
+        self.assertTrue(routes._finding_text_similar(
+            'It was noted that the total number of persons was not identified on Form E.',
+            'The total number of persons for life-saving appliances was not identified in the Form E.',
+        ))
+        self.assertFalse(routes._finding_text_similar(
+            'The total number of persons was not identified on Form E.',
+            'The SIMOPS plan omitted cargo discharge and stores supply.',
+        ))
 
     def test_requires_existing_findings_and_file_part(self):
         with appmod.app.app_context():
