@@ -1573,6 +1573,8 @@ import routes_dock_daily
 app.register_blueprint(routes_dock_daily.bp)
 import routes_repair_request
 app.register_blueprint(routes_repair_request.bp)
+import routes_family_assets
+app.register_blueprint(routes_family_assets.bp)
 import routes_liscr
 app.register_blueprint(routes_liscr.bp)
 import routes_tail

@@ -74,6 +74,7 @@
     "routes_core.py": [],
     "routes_dock_daily.py": [],
     "routes_dock_submit.py": [],
+    "routes_family_assets.py": [],
     "routes_liscr.py": [],
     "routes_repair_request.py": [],
     "routes_tail.py": [],
@@ -345,6 +346,15 @@
       "admin_required",
       "api_key_required",
       "automation_tasks",
+      "login_required"
+    ]
+  },
+  "routes_family_assets.py": {
+    "app_core.py": [
+      "get_db",
+      "query"
+    ],
+    "helpers_shared.py": [
       "login_required"
     ]
   },

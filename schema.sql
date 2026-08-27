@@ -177,6 +177,47 @@ CREATE INDEX IF NOT EXISTS idx_attachments_issue  ON attachments(issue_id);
 CREATE INDEX IF NOT EXISTS idx_sv_supervisor      ON supervisor_vessels(supervisor_id);
 CREATE INDEX IF NOT EXISTS idx_sv_vessel          ON supervisor_vessels(vessel_id);
 
+-- -------------------------------------------------------------
+--  우리자산 (iOS 전용) — 2인 가구 공유 자산 원장
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS family_asset_household (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    invite_code TEXT NOT NULL UNIQUE,
+    created_by  INTEGER NOT NULL REFERENCES users(id),
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS family_asset_member (
+    household_id INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    display_name TEXT NOT NULL,
+    role         TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner','member')),
+    joined_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (household_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_family_asset_member_household
+    ON family_asset_member(household_id);
+CREATE TABLE IF NOT EXISTS family_asset_entry (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id  INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL CHECK(kind IN ('income','cash','saving','stock','property','loan','other')),
+    name          TEXT NOT NULL,
+    amount        INTEGER NOT NULL CHECK(amount >= 0),
+    owner_mode    TEXT NOT NULL CHECK(owner_mode IN ('member','joint')),
+    owner_user_id INTEGER REFERENCES users(id),
+    joint_share   INTEGER NOT NULL DEFAULT 50 CHECK(joint_share BETWEEN 0 AND 100),
+    institution   TEXT NOT NULL DEFAULT '',
+    note          TEXT NOT NULL DEFAULT '',
+    created_by    INTEGER NOT NULL REFERENCES users(id),
+    updated_by    INTEGER NOT NULL REFERENCES users(id),
+    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    CHECK((owner_mode='member' AND owner_user_id IS NOT NULL) OR
+          (owner_mode='joint' AND owner_user_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_family_asset_entry_household
+    ON family_asset_entry(household_id,updated_at DESC);
+
 -- =============================================================
 --  Dock Daily Report (입거 준비 일일보고)
 --  완료보고서(dock_reports)와 분리된 draft/revision/source 도메인

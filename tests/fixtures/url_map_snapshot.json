@@ -3166,6 +3166,67 @@
     "defaults": {}
   },
   {
+    "rule": "/api/family-assets",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_family_assets.family_assets_get",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/assets",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_asset_create",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/assets/<int:asset_id>",
+    "methods": [
+      "DELETE",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_family_assets.family_asset_delete",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/assets/<int:asset_id>",
+    "methods": [
+      "OPTIONS",
+      "PATCH"
+    ],
+    "endpoint": "routes_family_assets.family_asset_update",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/households",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_assets_create_household",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/join",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_assets_join",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/fleet-map/data",
     "methods": [
       "GET",
@@ -4342,6 +4403,16 @@
       "PUT"
     ],
     "endpoint": "ai_gemini.api_vetting_update",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/vettings/<int:vid>/apply-full-report",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "ai_gemini.api_vt_apply_full_report",
     "strict_slashes": true,
     "defaults": {}
   },
