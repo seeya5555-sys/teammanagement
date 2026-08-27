@@ -158,6 +158,8 @@ CREATE TABLE IF NOT EXISTS users (
     supervisor_id  INTEGER,
     role           TEXT    NOT NULL DEFAULT 'member'
                    CHECK (role IN ('admin','member')),
+    app_scope      TEXT    NOT NULL DEFAULT 'business'
+                   CHECK (app_scope IN ('business','family')),
     active         INTEGER NOT NULL DEFAULT 1,
     last_login_at  TEXT,
     created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime')),

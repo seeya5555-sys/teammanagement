@@ -206,6 +206,12 @@ def init_db(drop=False):
         # ── 일반 init ──
         with open(SCHEMA_FILE, encoding='utf-8') as f:
             conn.executescript(f.read())
+
+        # 우리자산 전용 계정은 users 행은 재사용하되 업무 API 권한과는 분리한다.
+        # 기존 운영 DB에는 CREATE TABLE IF NOT EXISTS가 컬럼을 보태지 못하므로 명시 migration.
+        _user_cols = {r[1] for r in conn.execute('PRAGMA table_info(users)').fetchall()}
+        if 'app_scope' not in _user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN app_scope TEXT NOT NULL DEFAULT 'business'")
         print('  · 스키마 적용 완료')
 
         cal_cols = [r[1] for r in conn.execute('PRAGMA table_info(calendar_events)').fetchall()]
@@ -1324,8 +1330,34 @@ def _bearer_auth():
     session['display_name']  = u['display_name'] or u['username']
     session['role']          = u['role']
     session['supervisor_id'] = u['supervisor_id']
+    session['app_scope']     = u['app_scope'] if 'app_scope' in u.keys() else 'business'
     g._token_auth = True
     g._token_issued_at = issued_at
+
+
+@app.before_request
+def _family_scope_guard():
+    """자산 전용 계정은 우리자산 API 외의 TRMT 업무 표면을 fail-closed 차단."""
+    uid = session.get('user_id')
+    if not uid:
+        return
+    account = query('SELECT app_scope FROM users WHERE id=? AND active=1', (uid,), one=True)
+    if not account:
+        if session.get('app_scope') == 'family':
+            session.clear()
+            if request.path.startswith('/api/'):
+                return jsonify({'error': 'unauthorized'}), 401
+            abort(403)
+        return
+    if account['app_scope'] != 'family':
+        return
+    path = request.path
+    if (path == '/api/me' or path == '/api/family-assets'
+            or path.startswith('/api/family-assets/') or path == '/logout'):
+        return
+    if path.startswith('/api/'):
+        return jsonify({'error': 'family_scope_only'}), 403
+    abort(403)
 
 @app.after_request
 def _suppress_bearer_session_cookie(response):
@@ -1613,6 +1645,13 @@ def _auto_migrate():
                 conn.executescript(fh.read())   # 전부 IF NOT EXISTS → 무해
         except Exception as e:
             print(f'[auto_migrate] schema 재적용 건너뜀: {e}')
+        try:
+            user_cols = {r[1] for r in conn.execute('PRAGMA table_info(users)').fetchall()}
+            if user_cols and 'app_scope' not in user_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN app_scope TEXT NOT NULL DEFAULT 'business'")
+                print('[auto_migrate] users.app_scope 추가')
+        except Exception as e:
+            print(f'[auto_migrate] users.app_scope 점검 건너뜀: {e}')
         # 가장 독립적인 additive 보강부터 순서가 고정된 하위 모듈에서 실행한다.
         # 각 step은 자체 try/except를 유지해 하나의 legacy table 실패가 뒤 step을 막지 않는다.
         migration_steps.run_foundation_migrations(conn)

@@ -2561,7 +2561,7 @@ function renderAdminUserList() {
   for (const u of ADMIN.users) {
     const item = el('div', { class: 'admin-list-item' + (u.active ? '' : ' inactive') });
     item.append(el('span', { class: `role-pill role-${u.role === 'admin' ? 'admin' : 'user'}` },
-      u.role === 'admin' ? 'ADMIN' : 'USER'));
+      u.app_scope === 'family' ? 'ASSET ONLY' : (u.role === 'admin' ? 'ADMIN' : 'USER')));
     item.append(el('div', { class: 'item-main' },
       el('strong', {}, u.display_name || u.username),
       el('div', { class: 'item-sub' },

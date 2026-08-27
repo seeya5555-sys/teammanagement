@@ -67,6 +67,7 @@ def login():
     session['display_name']  = u['display_name'] or u['username']
     session['role']          = u['role']
     session['supervisor_id'] = u['supervisor_id']
+    session['app_scope']     = u['app_scope'] if 'app_scope' in u.keys() else 'business'
     execute('UPDATE users SET last_login_at=datetime("now","localtime") WHERE id=?',
             (u['id'],))
 
@@ -117,6 +118,7 @@ def api_auth_token():
         'display_name':  u['display_name'] or u['username'],
         'role':          u['role'],
         'supervisor_id': u['supervisor_id'],
+        'app_scope':     u['app_scope'] if 'app_scope' in u.keys() else 'business',
     })
     resp.headers['Cache-Control'] = 'no-store'
     return resp
@@ -349,6 +351,7 @@ def api_me():
         'display_name':  session.get('display_name'),
         'role':          session.get('role'),
         'supervisor_id': session.get('supervisor_id'),
+        'app_scope':     session.get('app_scope', 'business'),
     }
     # Bearer 요청에 한해 이 토큰의 만료시각(epoch)을 함께 준다.
     # 네이티브 앱은 오프라인일 때 캐시 프로필로 진입하는데, 만료시각을 모르면 진입을 거부한다
@@ -1927,7 +1930,7 @@ def api_vessel_delete(vid):
 @admin_required
 def api_users_list():
     rows = query('''
-        SELECT u.id, u.username, u.display_name, u.role, u.supervisor_id, u.active,
+        SELECT u.id, u.username, u.display_name, u.role, u.app_scope, u.supervisor_id, u.active,
                u.created_at, u.last_login_at,
                s.name AS supervisor_name
           FROM users u
@@ -1949,25 +1952,40 @@ def api_user_create():
         return jsonify({'error': '비밀번호는 6자 이상이어야 합니다.'}), 400
     if query('SELECT id FROM users WHERE username=?', (username,), one=True):
         return jsonify({'error': '이미 사용 중인 사용자명입니다.'}), 400
-    role = d.get('role') or 'member'
+    requested_role = d.get('role') or 'member'
+    role = requested_role
     if role not in ('admin', 'member'):
         role = 'member'
+    app_scope = d.get('app_scope') or ('family' if requested_role == 'family' else 'business')
+    if app_scope not in ('business', 'family'):
+        return jsonify({'error': '지원하지 않는 앱 범위입니다.'}), 400
+    if app_scope == 'family':
+        role = 'member'
     uid = execute('''
-        INSERT INTO users (username, password_hash, display_name, role, supervisor_id, active)
-        VALUES (?, ?, ?, ?, ?, 1)
+        INSERT INTO users (username, password_hash, display_name, role, app_scope, supervisor_id, active)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
     ''', (username, generate_password_hash(password),
           d.get('display_name') or username,
           role,
-          d.get('supervisor_id') or None))
+          app_scope,
+          None if app_scope == 'family' else (d.get('supervisor_id') or None)))
     return jsonify({'id': uid}), 201
 
 
 @bp.route('/api/users/<int:uid>', methods=['PUT'])
 @admin_required
 def api_user_update(uid):
-    if not query('SELECT id FROM users WHERE id=?', (uid,), one=True):
+    existing = query('SELECT id,app_scope FROM users WHERE id=?', (uid,), one=True)
+    if not existing:
         abort(404)
     d = request.get_json(silent=True) or {}
+    if 'app_scope' in d:
+        return jsonify({'error': '앱 범위는 계정 생성 후 변경할 수 없습니다.'}), 400
+    if 'role' in d and d['role'] not in ('admin', 'member'):
+        return jsonify({'error': '지원하지 않는 권한입니다.'}), 400
+    if existing['app_scope'] == 'family':
+        d['role'] = 'member'
+        d['supervisor_id'] = None
     sets, params = [], []
     for f in ('display_name', 'role', 'supervisor_id', 'active'):
         if f in d:
