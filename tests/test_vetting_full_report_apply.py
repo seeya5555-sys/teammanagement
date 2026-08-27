@@ -348,6 +348,26 @@ class VettingFullReportApplyTests(unittest.TestCase):
         finding = next(f for f in payload['findings'] if f['id'] == self.f1)
         self.assertNotIn('full_report_remark', finding)
 
+    def test_existing_tracked_remark_is_normalized_in_api_without_losing_manual_text(self):
+        old = (
+            '메인 엔진 6번 실린더 커버 시동 밸브 시트 수리 후 Class Condition이 발행됨. '
+            '수리 부위는 정기 점검 및 모니터링 중이며 차기 연례 검사 시 UT/MPI 재검사가 예정되어 있음.'
+        )
+        with appmod.app.app_context():
+            appmod.execute(
+                'UPDATE vt_findings SET user_remark=?,full_report_remark=? WHERE id=?',
+                (f'수동 메모 보존\n\n{old}', old, self.f1))
+        payload = self.client.get(f'/api/vettings/{self.vetting}').get_json()
+        finding = next(f for f in payload['findings'] if f['id'] == self.f1)
+        shown = finding['user_remark']
+        self.assertIn('수동 메모 보존', shown)
+        self.assertIn('M/E No.6 Cylinder cover starting valve seating', shown)
+        self.assertIn('Condition of Class', shown)
+        self.assertIn('Annual Survey', shown)
+        self.assertIn('UT/MPI', shown)
+        self.assertNotIn('메인 엔진', shown)
+        self.assertNotIn('SIRE Full Report 자동반영', shown)
+
     def test_full_report_action_remark_is_one_sentence_and_length_bounded(self):
         concise = routes._concise_full_report_remark(
             'starting valve seating 수리 완료함. Root Cause 장문 설명은 종합소견에 불필요함.')

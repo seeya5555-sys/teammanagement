@@ -784,11 +784,21 @@ def _public_vetting_finding(row):
     """내부 자동 Remark 추적값은 숨기고 과거 marker도 일반 문장으로 풀어 반환한다."""
     d = dict(row)
     raw = d.get('user_remark') or ''
+    tracked = d.get('full_report_remark') or ''
     blocks = _re_cls.findall(_legacy_full_report_pattern(), raw, flags=_re_cls.S | _re_cls.M)
     if blocks:
         manual = _re_cls.sub(_legacy_full_report_pattern(), '', raw,
                              flags=_re_cls.S | _re_cls.M).strip()
-        automatic = _concise_full_report_remark(blocks[-1])
+        automatic = _concise_full_report_remark(tracked or blocks[-1])
+        d['user_remark'] = f'{manual}\n\n{automatic}'.strip() if manual else automatic
+    elif tracked:
+        if raw == tracked:
+            manual = ''
+        elif raw.endswith('\n\n' + tracked):
+            manual = raw[:-(len(tracked) + 2)].rstrip()
+        else:
+            manual = raw
+        automatic = _concise_full_report_remark(tracked)
         d['user_remark'] = f'{manual}\n\n{automatic}'.strip() if manual else automatic
     d.pop('full_report_remark', None)
     return d
