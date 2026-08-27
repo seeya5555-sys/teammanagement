@@ -366,7 +366,8 @@
   }
 
   // 🔴 코드만 봐서는 어느 벤더인지 모른다 — **돈이 나가는 상대**라 이름이 화면에 보여야 한다.
-  //    (마스터에 없는 코드면 그것도 그 자리에서 말한다. 승인 눌러 400 을 보고 알 일이 아니다.)
+  //    vendors 는 최근 사용 표본이라, 표본 밖 코드는 generic 에서 허용하고 맥 러너가 쓰기 직전
+  //    SVMS 전체 벤더마스터로 실존/정식 이름을 확인한다. 그 전에는 확인 대기임을 숨기지 않는다.
   function showName(el){
     const isV=el.classList.contains('lz-in-vndr');
     const rows=(isV?MASTER.vendors:MASTER.expenses)||[];
@@ -376,8 +377,8 @@
     let nm=lab&&lab.querySelector('.lz-nm');
     if(!nm&&lab){nm=document.createElement('span');nm.className='lz-nm';lab.appendChild(nm);}
     if(!nm) return;
-    nm.textContent=hit?(hit.nm||''):(cd?'마스터에 없는 코드':'');
-    nm.classList.toggle('bad',!!cd&&!hit);
+    nm.textContent=hit?(hit.nm||''):(cd?'SVMS 생성 직전 확인':'');
+    nm.classList.toggle('bad',false);
   }
 
   function restoreDirty(){

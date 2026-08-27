@@ -95,8 +95,8 @@ chk('function vendorChanged' in SRC and "cardEl.querySelector('[data-f=\"pay_dt\
     '🔴 벤더를 바꾸면 Remit 을 비움 — PAY_TERM 은 벤더마다 다르고 계산은 러너만 한다')
 chk("ev==='change'&&el.classList.contains('lz-in-vndr')" in SRC,
     "Remit 비우기는 'change' 에서만(타이핑 한 글자마다 지우면 화면이 흔들린다)")
-chk('function showName' in SRC and '마스터에 없는 코드' in SRC,
-    '🔴 코드 옆에 벤더 이름을 띄움 — 돈 나가는 상대를 코드만 보고 승인하지 않게')
+chk('function showName' in SRC and 'SVMS 생성 직전 확인' in SRC,
+    '🔴 최근사용 표본 밖 Vendor 는 SVMS 실조회 전임을 코드 옆에 표시')
 chk('lz-in-vndr.is-empty' in SRC and 'lz-in-exp.is-empty' in SRC,
     '아직 안 고른 칸은 날짜칸과 같은 표시(승인 눌러 400 보고 알 일이 아니다)')
 chk('Vendor ${body.vndr_cd}' in SRC and 'Remit ${body.pay_dt' in SRC,

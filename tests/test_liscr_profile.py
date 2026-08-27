@@ -379,10 +379,29 @@ miss = r.get_json().get('missing') or []
 chk('Vendor' in miss and 'Expense' in miss,
     '🔴 무엇을 안 골랐는지 이름으로 말해줌(Expense 는 헤더가 아니라 라인이라 놓치기 쉽다)', miss)
 
-for bad, lab in (({'vndr_cd': 'NOPE'}, 'Vendor'), ({'exp_cd': '999999'}, 'Expense')):
-    rr = c.post('/api/liscr/jobs/%d/approve' % CJ, json=dict(bad, pay_dt='20260930'))
-    chk(rr.status_code == 400 and '마스터에 없음' in (rr.get_json().get('error') or ''),
-        '🔴 마스터에 없는 %s 코드는 거부(코드만 믿고 SVMS 로 보내지 않는다)' % lab, rr.get_json())
+rr = c.post('/api/liscr/jobs/%d/approve' % CJ,
+            json={'vndr_cd': 'BAD CODE', 'pay_dt': '20260930'})
+chk(rr.status_code == 400 and '형식' in (rr.get_json().get('error') or ''),
+    '🔴 표본 밖 Vendor 를 열어도 코드 형식은 서버에서 거부', rr.get_json())
+rr = c.post('/api/liscr/jobs/%d/approve' % CJ,
+            json={'exp_cd': '999999', 'pay_dt': '20260930'})
+chk(rr.status_code == 400 and '마스터에 없음' in (rr.get_json().get('error') or ''),
+    '🔴 Expense 는 전체 코드마스터 스냅샷이므로 없는 코드를 계속 거부', rr.get_json())
+
+# Vendor 스냅샷은 전체 마스터가 아니라 최근 사용 표본이다. 표본에 없더라도 generic 에서는
+# 승인 큐에 넣고, 맥 러너가 쓰기 직전 SVMS SP_GET_VNDR 로 실존 여부를 최종 확인한다.
+rr = c.post('/api/liscr/jobs/%d/approve' % CJ,
+            json={'vndr_cd': 'V26084', 'exp_cd': '070205', 'pay_dt': '20260930'})
+chk(rr.status_code == 200, '🔴 generic 은 최근사용 표본 밖 Vendor 코드도 승인 가능', rr.get_json())
+row = job(CJ)
+chk(row['vndr_cd'] == 'V26084' and row['vndr_nm'] is None,
+    '표본 밖 코드는 이름을 지어내지 않고 러너 확인 전까지 비움', dict(row))
+
+# 아래 기존 성공 시나리오는 새 카드를 쓴다(위 표본 밖 코드 카드가 이미 approved 됨).
+CJ = upload(profile='generic').get_json()['id']
+claim_and_report(CJ, 'FIX', dict(FULL, VNDR_CD=None, VNDR_NM=None, PAY_TERM=1),
+                 [dict(LINES[0], EXP_CD=None, EXP_NM=None)],
+                 reasons=['Vendor 미지정 — 카드에서 고를 것', 'Expense 미지정 — 카드에서 고를 것'])
 
 # 🔴 벤더를 고르면 Remit 을 다시 확인받는다 — PAY_TERM 은 벤더마다 다르고(실측: LISCR=1,
 #    뷰로베리타스=없음) 그 계산은 러너만 한다. 앞 벤더 기준 날짜가 조용히 남으면 형이 본 적

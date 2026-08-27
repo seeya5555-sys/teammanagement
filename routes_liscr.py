@@ -475,14 +475,20 @@ def api_liscr_approve(jid):
         cols['vsl_nm'] = None
         header['VSL_NM'] = None
 
-    # 벤더를 카드에서 골랐거나 바꿨으면 이름도 마스터에서 같이 가져온다(선박과 같은 이유).
+    # 벤더를 카드에서 골랐거나 바꿨으면 이름도 화면용 스냅샷에서 같이 가져온다.
+    # 🔴 vendors 는 SVMS 전체 벤더마스터가 아니라 **최근 인보이스 사용 표본**이다. 따라서
+    #    generic 에서 표본 밖 코드를 막으면, SVMS 에 실제 존재하는 신규/저빈도 벤더를 영원히
+    #    등록할 수 없다. generic 만 코드 형식을 확인해 통과시키고, 실제 존재 여부와 정식 이름은
+    #    맥 러너가 쓰기 직전 SP_GET_VNDR 로 재확인한다. 고정 프리셋의 기존 fail-closed 는 유지한다.
     if cols.get('vndr_cd'):
+        if not _CODE_RE.match(cols['vndr_cd']):
+            return jsonify({'error': 'Vendor 코드 형식이 잘못됨'}), 400
         _, vendors = _master('vendors')
         hit = next((v for v in vendors if v.get('cd') == cols['vndr_cd']), None)
-        if not hit:
+        if not hit and pkey != 'generic':
             return jsonify({'error': 'Vendor 코드 %s 가 마스터에 없음' % cols['vndr_cd']}), 400
-        cols['vndr_nm'] = hit.get('nm')
-        header['VNDR_NM'] = hit.get('nm')
+        cols['vndr_nm'] = hit.get('nm') if hit else None
+        header['VNDR_NM'] = hit.get('nm') if hit else None
         # 🔴 PAY_TERM 은 **벤더 마스터 값**이고, Pay Date 는 거기서 나온다. 벤더가 바뀌면
         #    앞 벤더 기준으로 계산된 PAY_TERM/Pay Date 는 더는 근거가 없다 — 그대로 두면
         #    형이 화면에서 본 적도 없는 공식으로 만들어진 날짜가 SVMS 로 나간다.
