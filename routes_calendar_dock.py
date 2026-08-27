@@ -6204,6 +6204,33 @@ def api_fundreq_approve(did):
     return jsonify({'id': did, 'status': 'approved'})
 
 
+@bp.route('/api/fundreq/drafts/approve-bulk', methods=['POST'])
+@admin_required
+def api_fundreq_approve_bulk():
+    """체크된 pending 카드만 사람 승인으로 전환한다."""
+    raw_ids = (request.get_json(silent=True) or {}).get('ids') or []
+    ids = []
+    for value in raw_ids:
+        try:
+            did = int(value)
+        except (TypeError, ValueError):
+            continue
+        if did > 0 and did not in ids:
+            ids.append(did)
+    approved_ids = []
+    for did in ids:
+        rc = execute_rc(
+            "UPDATE fundreq_draft SET status='approved', reject_reason=NULL, "
+            "decided_at=datetime('now','localtime'), decided_by=? "
+            "WHERE id=? AND status='pending' AND raw_row IS NOT NULL AND trim(raw_row)<>''",
+            (session.get('username') or 'web', did),
+        )
+        if rc == 1:
+            approved_ids.append(did)
+    return jsonify({'approved': len(approved_ids), 'skipped': len(ids) - len(approved_ids),
+                    'approved_ids': approved_ids})
+
+
 @bp.route('/api/fundreq/drafts/<int:did>/reject', methods=['POST'])
 @admin_required
 def api_fundreq_reject(did):

@@ -3321,6 +3321,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/fundreq/drafts/approve-bulk",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_fundreq_approve_bulk",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/fundreq/drafts/decided",
     "methods": [
       "DELETE",
