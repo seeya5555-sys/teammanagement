@@ -1828,15 +1828,41 @@ def _auto_migrate():
             conn.commit()
         except Exception as e:
             print(f'[auto_migrate] fleet_next_port_override 점검 건너뜀: {e}')
-        # vt_findings.user_remark (자율 입력 Remark), priority (중요 체크)
+        # vt_findings Remark/priority + 과거 Full report marker 제거
         try:
             cols = [r[1] for r in conn.execute('PRAGMA table_info(vt_findings)').fetchall()]
             if cols and 'user_remark' not in cols:
                 conn.execute("ALTER TABLE vt_findings ADD COLUMN user_remark TEXT NOT NULL DEFAULT ''")
                 print('[auto_migrate] vt_findings.user_remark 추가됨')
+            if cols and 'full_report_remark' not in cols:
+                conn.execute("ALTER TABLE vt_findings ADD COLUMN full_report_remark TEXT NOT NULL DEFAULT ''")
+                print('[auto_migrate] vt_findings.full_report_remark 추가됨')
             if cols and 'priority' not in cols:
                 conn.execute("ALTER TABLE vt_findings ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
                 print('[auto_migrate] vt_findings.priority 추가됨')
+            marker_re = re.compile(
+                r'^[ \t]*\[SIRE Full Report 자동반영\][ \t]*\r?\n(.*?)^[ \t]*'
+                r'\[/SIRE Full Report 자동반영\][ \t]*$', re.S | re.M,
+            )
+            migrated = 0
+            for row in conn.execute(
+                    "SELECT id,user_remark FROM vt_findings "
+                    "WHERE user_remark LIKE '%[SIRE Full Report 자동반영]%'").fetchall():
+                raw = row[1] or ''
+                blocks = marker_re.findall(raw)
+                if not blocks:
+                    continue
+                cleaned = marker_re.sub('', raw).strip()
+                cleaned = re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', cleaned)
+                automatic = re.sub(r'\s+', ' ', blocks[-1]).strip()
+                visible = f'{cleaned}\n\n{automatic}'.strip() if cleaned else automatic
+                conn.execute(
+                    'UPDATE vt_findings SET user_remark=?, full_report_remark=? WHERE id=?',
+                    (visible, automatic, row[0]),
+                )
+                migrated += 1
+            if migrated:
+                print(f'[auto_migrate] SIRE Full report marker 제거: {migrated}건')
         except Exception as e:
             print(f'[auto_migrate] vt_findings 컬럼 점검 건너뜀: {e}')
         conn.execute("""

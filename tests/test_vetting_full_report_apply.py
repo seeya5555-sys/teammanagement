@@ -59,7 +59,8 @@ class VettingFullReportApplyTests(unittest.TestCase):
             'report_number': report,
             'items': items if items is not None else [
                 {'finding_id': self.f1, 'matched': True, 'status': 'Open',
-                 'remark': 'COC 종결을 위한 UT 및 MPI가 예정되어 있어 모니터링 중임.',
+                 'remark': ('메인 엔진 6번 실린더 커버 시동 밸브 시트 수리 후 Class Condition이 발행됨. '
+                            '수리 부위는 정기 점검 및 모니터링 중이며 차기 연례 검사 시 UT/MPI 재검사가 예정되어 있음.'),
                  'evidence': 'pending re-examination by Class'},
                 {'finding_id': self.f2, 'matched': True, 'status': 'Closed',
                  'remark': 'Liferaft identification card를 즉시 갱신하고 Master가 확인함.',
@@ -87,7 +88,8 @@ class VettingFullReportApplyTests(unittest.TestCase):
         self.assertEqual(200, second.status_code, second.get_data(as_text=True))
         with appmod.app.app_context():
             rows = appmod.query(
-                'SELECT id,status,user_remark FROM vt_findings WHERE vetting_id=? ORDER BY no',
+                'SELECT id,status,user_remark,full_report_remark FROM vt_findings '
+                'WHERE vetting_id=? ORDER BY no',
                 (self.vetting,),
             )
             audits = appmod.query(
@@ -96,7 +98,13 @@ class VettingFullReportApplyTests(unittest.TestCase):
             )
         self.assertEqual(['Open', 'Closed'], [r['status'] for r in rows])
         self.assertIn('수동 메모 보존', rows[0]['user_remark'])
-        self.assertEqual(1, rows[0]['user_remark'].count(routes._FULL_REPORT_MARKER))
+        self.assertNotIn('SIRE Full Report 자동반영', rows[0]['user_remark'])
+        self.assertEqual(1, rows[0]['user_remark'].count('M/E No.6 Cylinder cover'))
+        self.assertIn('starting valve seating', rows[0]['full_report_remark'])
+        self.assertIn('Condition of Class', rows[0]['full_report_remark'])
+        self.assertIn('Annual Survey', rows[0]['full_report_remark'])
+        self.assertIn('UT/MPI', rows[0]['full_report_remark'])
+        self.assertNotIn('정기 점검 및 모니터링', rows[0]['full_report_remark'])
         self.assertIn('즉시 갱신', rows[1]['user_remark'])
         self.assertEqual(2, len(audits))
         self.assertEqual(2, len(json.loads(audits[-1]['before_json'])))
@@ -257,7 +265,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
 
     def test_obs_summary_keeps_finding_dash_concise_remark_style(self):
         marked = routes._replace_full_report_remark(
-            '', 'starting valve seating 수리 후 Condition of Class 모니터링 중임.')
+            '', '', 'starting valve seating 수리 후 Condition of Class 모니터링 중임.')
         with appmod.app.app_context():
             appmod.execute(
                 'UPDATE vt_findings SET priority=1, remark=?, user_remark=? WHERE id=?',
@@ -304,15 +312,68 @@ class VettingFullReportApplyTests(unittest.TestCase):
         self.assertEqual('UT/MPI 재검사 완료함.', shown)
         self.assertNotIn('[', shown)
 
+    def test_auto_migrate_removes_existing_marker_and_keeps_manual_text(self):
+        legacy = (
+            '수동 메모 보존\n\n'
+            f'{routes._FULL_REPORT_MARKER}\n'
+            'starting valve seating 수리 완료함.\n'
+            f'{routes._FULL_REPORT_END_MARKER}'
+        )
+        with appmod.app.app_context():
+            appmod.execute('UPDATE vt_findings SET user_remark=? WHERE id=?', (legacy, self.f1))
+            appmod._auto_migrate()
+            row = appmod.query(
+                'SELECT user_remark,full_report_remark FROM vt_findings WHERE id=?',
+                (self.f1,), one=True)
+        self.assertEqual(
+            '수동 메모 보존\n\nstarting valve seating 수리 완료함.', row['user_remark'])
+        self.assertEqual('starting valve seating 수리 완료함.', row['full_report_remark'])
+        self.assertNotIn('SIRE Full Report 자동반영', row['user_remark'])
+
+    def test_manual_remark_edit_clears_auto_tracking_and_internal_field_is_hidden(self):
+        routes._gemini_call_json = lambda *args, **kwargs: self._result()
+        self.assertEqual(200, self._post().status_code)
+        response = self.client.put(
+            f'/api/vt-findings/{self.f1}',
+            json={'user_remark': '사용자가 직접 수정한 Remark'},
+            headers={'X-CSRF-Token': self.csrf})
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        with appmod.app.app_context():
+            row = appmod.query(
+                'SELECT user_remark,full_report_remark FROM vt_findings WHERE id=?',
+                (self.f1,), one=True)
+        self.assertEqual('사용자가 직접 수정한 Remark', row['user_remark'])
+        self.assertEqual('', row['full_report_remark'])
+        payload = self.client.get(f'/api/vettings/{self.vetting}').get_json()
+        finding = next(f for f in payload['findings'] if f['id'] == self.f1)
+        self.assertNotIn('full_report_remark', finding)
+
     def test_full_report_action_remark_is_one_sentence_and_length_bounded(self):
         concise = routes._concise_full_report_remark(
             'starting valve seating 수리 완료함. Root Cause 장문 설명은 종합소견에 불필요함.')
         self.assertEqual('starting valve seating 수리 완료함.', concise)
         long_text = 'Condition of Class에 따라 UT/MPI 재검사 및 모니터링 예정이며 ' + ('추가 설명 ' * 20)
         bounded = routes._concise_full_report_remark(long_text)
-        self.assertLessEqual(len(bounded), 90)
+        self.assertLessEqual(len(bounded), 140)
         self.assertIn('Condition of Class', bounded)
         self.assertIn('UT/MPI', bounded)
+        self.assertEqual(bounded, routes._concise_full_report_remark(bounded))
+
+    def test_echoing_same_user_remark_keeps_auto_tracking(self):
+        routes._gemini_call_json = lambda *args, **kwargs: self._result()
+        self.assertEqual(200, self._post().status_code)
+        payload = self.client.get(f'/api/vettings/{self.vetting}').get_json()
+        finding = next(f for f in payload['findings'] if f['id'] == self.f1)
+        response = self.client.put(
+            f'/api/vt-findings/{self.f1}',
+            json={'user_remark': finding['user_remark'], 'status': finding['status']},
+            headers={'X-CSRF-Token': self.csrf})
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        with appmod.app.app_context():
+            tracked = appmod.query(
+                'SELECT full_report_remark FROM vt_findings WHERE id=?',
+                (self.f1,), one=True)['full_report_remark']
+        self.assertIn('starting valve seating', tracked)
 
     def test_requires_existing_findings_and_file_part(self):
         with appmod.app.app_context():

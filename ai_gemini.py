@@ -417,7 +417,7 @@ def api_vettings_list():
             tuple(vids),
         )
         for f in all_f:
-            findings_by_vid[f['vetting_id']].append(dict(f))
+            findings_by_vid[f['vetting_id']].append(_public_vetting_finding(f))
 
     by_vessel = {}
     for v in vettings:
@@ -508,7 +508,7 @@ def api_vetting_get(vid):
     if not v:
         abort(404)
     d = _vetting_with_counts(v)
-    d['findings'] = [dict(f) for f in query(
+    d['findings'] = [_public_vetting_finding(f) for f in query(
         'SELECT * FROM vt_findings WHERE vetting_id=? ORDER BY no', (vid,))]
     return jsonify(d)
 
@@ -597,7 +597,9 @@ def api_vt_findings_create(vid):
 @bp.route('/api/vt-findings/<int:fid>', methods=['PUT'])
 @login_required
 def api_vt_finding_update(fid):
-    cur = query('SELECT vetting_id, status FROM vt_findings WHERE id=?', (fid,), one=True)
+    cur = query(
+        'SELECT vetting_id,status,user_remark,full_report_remark FROM vt_findings WHERE id=?',
+        (fid,), one=True)
     if not cur:
         abort(404)
     d = request.get_json() or {}
@@ -606,6 +608,8 @@ def api_vt_finding_update(fid):
         if f in d:
             sets.append(f'{f} = ?')
             params.append(d[f] or '')
+    if 'user_remark' in d and (d.get('user_remark') or '') != (cur['user_remark'] or ''):
+        sets.append("full_report_remark = ''")
     if 'priority' in d:
         sets.append('priority = ?')
         params.append(1 if d.get('priority') else 0)
@@ -769,6 +773,27 @@ _FULL_REPORT_MARKER = '[SIRE Full Report 자동반영]'
 _FULL_REPORT_END_MARKER = '[/SIRE Full Report 자동반영]'
 
 
+def _legacy_full_report_pattern():
+    return (
+        r'^[ \t]*' + _re_cls.escape(_FULL_REPORT_MARKER) + r'[ \t]*\r?\n(.*?)^[ \t]*'
+        + _re_cls.escape(_FULL_REPORT_END_MARKER) + r'[ \t]*$'
+    )
+
+
+def _public_vetting_finding(row):
+    """내부 자동 Remark 추적값은 숨기고 과거 marker도 일반 문장으로 풀어 반환한다."""
+    d = dict(row)
+    raw = d.get('user_remark') or ''
+    blocks = _re_cls.findall(_legacy_full_report_pattern(), raw, flags=_re_cls.S | _re_cls.M)
+    if blocks:
+        manual = _re_cls.sub(_legacy_full_report_pattern(), '', raw,
+                             flags=_re_cls.S | _re_cls.M).strip()
+        automatic = _concise_full_report_remark(blocks[-1])
+        d['user_remark'] = f'{manual}\n\n{automatic}'.strip() if manual else automatic
+    d.pop('full_report_remark', None)
+    return d
+
+
 def _norm_report_number(value):
     """Report 번호 비교용 정규화. 구두점은 보존하고 공백/대소문자만 무시한다."""
     return _re_cls.sub(r'\s+', '', (value or '')).upper()
@@ -827,15 +852,18 @@ def _full_report_prompt(vetting, findings):
         "임시조치 또는 모니터링 단계면 Open. Preventative Action이 상시/미래형이라는 이유만으로, 이미 완료된 "
         "Corrective Action을 Open으로 두지는 않는다. 적합성 확인으로 시정 불필요가 명확하고 후속조치가 없으면 Closed.\n"
         "- 기존 items의 remark는 Operator Comments를 근거로 현재 조치상태와 남은 핵심 조치만 한국어 음슴체 "
-        "한 문장(권장 60자 이내)으로 간결하게 요약한다. Immediate Cause/Root Cause의 경위 설명은 반복하지 않는다. "
+        "한 문장으로 간결하게 요약하고 현재 상태와 남은 핵심 조치만 남긴다. Immediate Cause/Root Cause의 경위 설명은 반복하지 않는다. "
         "Condition of Class, starting valve seating, Cylinder cover, UT/MPI, FIVA, ECDIS 등 기술 명칭·장비명·약어는 "
-        "번역하지 말고 보고서의 영문 표기를 그대로 유지한다. 없는 내용을 만들지 않는다.\n"
+        "번역하지 말고 보고서의 영문 표기를 그대로 유지한다. "
+        "나쁜 예: '메인 엔진 6번 실린더 커버 시동 밸브 시트 수리 후 Class Condition이 발행됨. 수리 부위는 정기 점검 및 모니터링 중이며 차기 연례 검사 시 UT/MPI 재검사가 예정되어 있음.' "
+        "좋은 예: 'M/E No.6 Cylinder cover starting valve seating 수리 후 Condition of Class 발행됨, 차기 Annual Survey 시 UT/MPI 재검사 예정.' "
+        "없는 내용을 만들지 않는다.\n"
         "- evidence는 status 판정에 직접 사용한 영문 원문 핵심 문장이다.\n"
         "- 보고서에서 동일 지적을 확실히 찾지 못하거나 Open/Closed 판정이 불확실하면 matched=false로 둔다. "
         "추측으로 Closed를 선택하지 않는다.\n"
         "- new_items.item은 보고서 분류 라벨을 괄호로 붙인 제목, description은 지적 원문, translation은 지적의 "
         "한국어 요약, action_remark는 Operator Comments의 현재 조치상태와 남은 핵심 조치만 담은 한국어 음슴체 "
-        "한 문장(권장 60자 이내)이다. 기술 명칭·장비명·약어는 영문 그대로 유지한다.\n"
+        "한 문장이다. 기술 명칭·장비명·약어는 영문 그대로 유지하고 위 좋은 예의 문체를 따른다.\n"
         '형식: {"report_type":"Full","report_number":"...","items":['
         '{"finding_id":1,"matched":true,"status":"Closed","remark":"...","evidence":"..."}],'
         '"new_items":[{"item":"(Process)Not as expected","description":"영문 지적 원문",'
@@ -846,25 +874,52 @@ def _full_report_prompt(vetting, findings):
     )
 
 
-def _replace_full_report_remark(existing, generated):
-    """수동 Remark는 보존하고 이전 자동반영 블록만 멱등 교체한다."""
+def _replace_full_report_remark(existing, previous_auto, generated):
+    """marker 없이 자동 Remark를 멱등 교체하며 수동 입력은 보존한다."""
     current = (existing or '').strip()
-    current = _re_cls.sub(
-        r'^' + _re_cls.escape(_FULL_REPORT_MARKER) + r'\n.*?^'
-        + _re_cls.escape(_FULL_REPORT_END_MARKER) + r'\n?',
-        '', current, flags=_re_cls.S | _re_cls.M,
-    ).strip()
-    block = (f'{_FULL_REPORT_MARKER}\n{(generated or "").strip()}\n'
-             f'{_FULL_REPORT_END_MARKER}')
-    return f'{current}\n\n{block}'.strip() if current else block
+    legacy = _re_cls.findall(_legacy_full_report_pattern(), current,
+                             flags=_re_cls.S | _re_cls.M)
+    if legacy:
+        current = _re_cls.sub(_legacy_full_report_pattern(), '', current,
+                              flags=_re_cls.S | _re_cls.M).strip()
+    else:
+        previous = (previous_auto or '').strip()
+        if previous and current == previous:
+            current = ''
+        elif previous and current.endswith('\n\n' + previous):
+            current = current[:-(len(previous) + 2)].rstrip()
+    automatic = _re_cls.sub(r'\s+', ' ', (generated or '')).strip()
+    return f'{current}\n\n{automatic}'.strip() if current else automatic
 
 
-def _concise_full_report_remark(value, limit=90):
+def _concise_full_report_remark(value, limit=140):
     """AI 조치 Remark를 단일 문장·화면 한두 줄 길이로 강제한다."""
-    text = _re_cls.sub(r'\s+', ' ', (value or '')).strip()
+    text = (value or '')
+    replacements = (
+        (r'메인\s*엔진', 'M/E'),
+        (r'(\d+)\s*번\s*실린더\s*커버', r'No.\1 Cylinder cover'),
+        (r'실린더\s*커버', 'Cylinder cover'),
+        (r'시동\s*밸브\s*(?:시트|시팅)', 'starting valve seating'),
+        (r'(?:Class\s*Condition|선급\s*조건)(?:이|가)?', 'Condition of Class'),
+        (r'연례\s*검사', 'Annual Survey'),
+        (r'재검사가\s*예정되어\s*있음', '재검사 예정'),
+    )
+    for pattern, replacement in replacements:
+        text = _re_cls.sub(pattern, replacement, text, flags=_re_cls.I)
+    text = _re_cls.sub(r'\s+', ' ', text).strip()
     if not text:
         return ''
-    sentence = _re_cls.split(r'(?<=[.!?])\s+', text, maxsplit=1)[0].strip()
+    parts = [part.strip() for part in _re_cls.split(r'(?<=[.!?])\s+', text) if part.strip()]
+    chosen = parts[:1]
+    if len(parts) > 1 and not _re_cls.search(r'Root\s*Cause|Immediate\s*Cause|원인|경위',
+                                             parts[1], flags=_re_cls.I):
+        if _re_cls.search(r'예정|검사|Survey|UT/MPI|모니터링|monitor|pending|완료|발행',
+                          parts[1], flags=_re_cls.I):
+            future = _re_cls.search(r'(차기\s+.+)', parts[1])
+            chosen.append(future.group(1) if future else parts[1])
+    sentence = ', '.join(part.rstrip(' .!?') for part in chosen).strip()
+    if chosen and chosen[-1].endswith(('.', '!', '?')):
+        sentence += chosen[-1][-1]
     if len(sentence) <= limit:
         return sentence
     cut = sentence[:limit - 1].rstrip()
@@ -878,11 +933,8 @@ def _summary_full_report_remark(value):
     text = (value or '').strip()
     if not text:
         return ''
-    blocks = _re_cls.findall(
-        r'^[ \t]*' + _re_cls.escape(_FULL_REPORT_MARKER) + r'[ \t]*\r?\n(.*?)^[ \t]*'
-        + _re_cls.escape(_FULL_REPORT_END_MARKER) + r'[ \t]*$',
-        text, flags=_re_cls.S | _re_cls.M,
-    )
+    blocks = _re_cls.findall(_legacy_full_report_pattern(), text,
+                             flags=_re_cls.S | _re_cls.M)
     return _concise_full_report_remark(blocks[-1] if blocks else text)
 
 
@@ -1011,7 +1063,7 @@ def api_vt_apply_full_report(vid):
     if not vetting:
         abort(404)
     findings = query(
-        'SELECT id, no, item, description, user_remark, status '
+        'SELECT id, no, item, description, user_remark, full_report_remark, status '
         'FROM vt_findings WHERE vetting_id=? ORDER BY no, id', (vid,))
     if not findings:
         message = '먼저 Initial report로 Observation을 생성하세요.'
@@ -1047,16 +1099,20 @@ def api_vt_apply_full_report(vid):
         for item in updates:
             fid = item['finding_id']
             old = by_id[fid]
-            user_remark = _replace_full_report_remark(old['user_remark'], item['remark'])
+            automatic = _concise_full_report_remark(item['remark'])
+            user_remark = _replace_full_report_remark(
+                old['user_remark'], old['full_report_remark'], automatic)
             cur = db.execute(
-                "UPDATE vt_findings SET status=?, user_remark=?, updated_at=datetime('now','localtime') "
+                "UPDATE vt_findings SET status=?, user_remark=?, full_report_remark=?, "
+                "updated_at=datetime('now','localtime') "
                 'WHERE id=? AND vetting_id=?',
-                (item['status'], user_remark, fid, vid),
+                (item['status'], user_remark, automatic, fid, vid),
             )
             if cur.rowcount != 1:
                 raise RuntimeError(f'finding changed during full report apply: {fid}')
             after.append({'finding_id': fid, 'status': item['status'],
-                          'user_remark': user_remark, 'evidence': item['evidence']})
+                          'user_remark': user_remark, 'full_report_remark': automatic,
+                          'evidence': item['evidence']})
         current_desc = [row[0] or '' for row in db.execute(
             'SELECT description FROM vt_findings WHERE vetting_id=?', (vid,))]
         next_no = db.execute(
@@ -1066,18 +1122,20 @@ def api_vt_apply_full_report(vid):
         for item in new_items:
             if any(_finding_text_similar(item['description'], old) for old in current_desc):
                 continue
-            user_remark = _replace_full_report_remark('', item['action_remark'])
+            automatic = _concise_full_report_remark(item['action_remark'])
+            user_remark = _replace_full_report_remark('', '', automatic)
             cur = db.execute(
                 "INSERT INTO vt_findings "
-                "(vetting_id,no,item,description,remark,user_remark,priority,status) "
-                "VALUES(?,?,?,?,?,?,0,?)",
+                "(vetting_id,no,item,description,remark,user_remark,full_report_remark,priority,status) "
+                "VALUES(?,?,?,?,?,?,?,0,?)",
                 (vid, next_no, item['item'], item['description'], item['translation'],
-                 user_remark, item['status']),
+                 user_remark, automatic, item['status']),
             )
             fid = cur.lastrowid
             created.append({'finding_id': fid, 'no': next_no, **item})
             after.append({'finding_id': fid, 'created': True, 'status': item['status'],
-                          'user_remark': user_remark, 'evidence': item['evidence']})
+                          'user_remark': user_remark, 'full_report_remark': automatic,
+                          'evidence': item['evidence']})
             current_desc.append(item['description'])
             next_no += 1
         db.execute(
@@ -1197,7 +1255,8 @@ def api_vt_obs_summary(vid):
     lines = [header]
     for i, f in enumerate(prio):
         short = shorts.get(i) or (f['remark'] or f['item'] or '').strip()
-        action = _summary_full_report_remark(f['user_remark'])
+        action = _concise_full_report_remark(
+            f['full_report_remark'] or _summary_full_report_remark(f['user_remark']))
         lines.append(f'{i + 1}. {short}' + (f' - {action}' if action else ''))
     if minor > 0:
         lines.append(f'그 외 Minor 지적 {minor}건')
