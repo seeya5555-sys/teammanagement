@@ -852,7 +852,8 @@ def _full_report_prompt(vetting, findings):
         "- report_type: 표지의 Report Type을 그대로 추출(반드시 Full인지 확인).\n"
         "- report_number: 표지의 Report 번호를 그대로 추출.\n"
         "- items에는 기존 Observation을 합치거나 생략하지 말고 finding_id를 각각 정확히 한 번씩 모두 반환한다. "
-        "Full report에서 찾지 못한 기존 항목은 matched=false로 둔다.\n"
+        "Full report에서 찾지 못한 기존 항목은 matched=false로 둔다. Full report의 Observation 전건을 확인해 "
+        "해당 Initial 항목이 실제로 미등재된 것이 확실하면 absence_confirmed=true, 단순 매칭 불확실이면 false로 둔다.\n"
         "- new_items에는 Full report의 부정적 지적 중 기존 Observation 어느 것과도 동일하지 않은 신규 항목만 넣는다. "
         "포함 대상은 'Not as expected', 'Observable or detectable deficiency', 'Photo not representative'처럼 "
         "명시적으로 부정 판정된 항목뿐이다. 'As expected', 'Largely as expected', 일반 권고·정보성 코멘트는 제외한다. "
@@ -870,12 +871,14 @@ def _full_report_prompt(vetting, findings):
         "없는 내용을 만들지 않는다.\n"
         "- evidence는 status 판정에 직접 사용한 영문 원문 핵심 문장이다.\n"
         "- 보고서에서 동일 지적을 확실히 찾지 못하거나 Open/Closed 판정이 불확실하면 matched=false로 둔다. "
-        "추측으로 Closed를 선택하지 않는다.\n"
+        "Initial에는 있으나 Full 전체 Observation 목록에 없는 것이 확정된 항목만 absence_confirmed=true로 반환한다. "
+        "추측으로 absence_confirmed=true 또는 Closed를 선택하지 않는다.\n"
         "- new_items.item은 보고서 분류 라벨을 괄호로 붙인 제목, description은 지적 원문, translation은 지적의 "
         "한국어 요약, action_remark는 Operator Comments의 현재 조치상태와 남은 핵심 조치만 담은 한국어 음슴체 "
         "한 문장이다. 기술 명칭·장비명·약어는 영문 그대로 유지하고 위 좋은 예의 문체를 따른다.\n"
         '형식: {"report_type":"Full","report_number":"...","items":['
-        '{"finding_id":1,"matched":true,"status":"Closed","remark":"...","evidence":"..."}],'
+        '{"finding_id":1,"matched":true,"absence_confirmed":false,"status":"Closed","remark":"...","evidence":"..."},'
+        '{"finding_id":2,"matched":false,"absence_confirmed":true}],'
         '"new_items":[{"item":"(Process)Not as expected","description":"영문 지적 원문",'
         '"translation":"한글 지적 요약","status":"Open","action_remark":"한글 조치 결과",'
         '"evidence":"상태 판정 영문 근거"}]}\n\n'
@@ -978,7 +981,7 @@ def _extract_full_report_updates(f, vetting, findings):
                       'message': f"Report 번호가 일치하지 않습니다. 기존 {vetting['report_number'] or '-'} / 업로드 {parsed.get('report_number') or '-'}"}
 
     expected_ids = {int(f['id']) for f in findings}
-    updates, unmatched_ids, seen = [], [], set()
+    updates, absent_ids, unresolved_ids, seen = [], [], [], set()
     invalid_match_set = False
     for item in parsed.get('items') or []:
         if not isinstance(item, dict):
@@ -992,7 +995,10 @@ def _extract_full_report_updates(f, vetting, findings):
             continue
         seen.add(fid)
         if item.get('matched') is not True:
-            unmatched_ids.append(fid)
+            if item.get('absence_confirmed') is True:
+                absent_ids.append(fid)
+            else:
+                unresolved_ids.append(fid)
             continue
         status = (item.get('status') or '').strip()
         remark = _concise_full_report_remark(item.get('remark'))
@@ -1036,7 +1042,8 @@ def _extract_full_report_updates(f, vetting, findings):
         if any(_finding_text_similar(rec['description'], n['description']) for n in new_items):
             continue
         new_items.append(rec)
-    return {'updates': updates, 'unmatched_ids': unmatched_ids, 'new_items': new_items}, None
+    return {'updates': updates, 'absent_ids': absent_ids,
+            'unresolved_ids': unresolved_ids, 'new_items': new_items}, None
 
 
 @bp.route('/api/vettings/<int:vid>/extract-report', methods=['POST'])
@@ -1093,8 +1100,9 @@ def api_vt_apply_full_report(vid):
         return jsonify({'ok': False, **err, 'error': err['message']}), 422
     updates = result['updates']
     new_items = result['new_items']
-    unmatched_ids = result['unmatched_ids']
-    if not updates and not new_items:
+    absent_ids = result['absent_ids']
+    unresolved_ids = result['unresolved_ids']
+    if not updates and not new_items and not absent_ids:
         message = 'Full report에서 반영 가능한 기존 또는 신규 Observation을 찾지 못했습니다.'
         return jsonify({'ok': False, 'reason': 'NO_APPLICABLE_ITEMS',
                         'message': message, 'error': message}), 422
@@ -1123,6 +1131,19 @@ def api_vt_apply_full_report(vid):
             after.append({'finding_id': fid, 'status': item['status'],
                           'user_remark': user_remark, 'full_report_remark': automatic,
                           'evidence': item['evidence']})
+        absent_closed = []
+        for fid in absent_ids:
+            cur = db.execute(
+                "UPDATE vt_findings SET status='Closed', updated_at=datetime('now','localtime') "
+                'WHERE id=? AND vetting_id=?',
+                (fid, vid),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError(f'finding changed during full report absence close: {fid}')
+            rec = {'finding_id': fid, 'status': 'Closed', 'absence_confirmed': True,
+                   'reason': 'not_listed_in_full_report'}
+            absent_closed.append(rec)
+            after.append(rec)
         current_desc = [row[0] or '' for row in db.execute(
             'SELECT description FROM vt_findings WHERE vetting_id=?', (vid,))]
         next_no = db.execute(
@@ -1166,11 +1187,13 @@ def api_vt_apply_full_report(vid):
         return jsonify({'ok': False, 'reason': 'DB_UPDATE_FAILED',
                         'message': message, 'error': message}), 500
 
-    changed = updates + created
+    changed = updates + created + absent_closed
     opened = sum(1 for item in changed if item['status'] == 'Open')
     closed = len(changed) - opened
-    return jsonify({'ok': True, 'updated': len(updates), 'created': len(created),
-                    'unmatched': len(unmatched_ids), 'open': opened,
+    return jsonify({'ok': True, 'updated': len(updates) + len(absent_closed),
+                    'created': len(created), 'closed_absent': len(absent_closed),
+                    'closed_absent_items': absent_closed,
+                    'unmatched': len(unresolved_ids), 'open': opened,
                     'closed': closed, 'items': updates, 'new_items': created})
 
 

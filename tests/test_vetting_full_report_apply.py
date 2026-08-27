@@ -139,7 +139,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
             )
         self.assertEqual(['Open', 'Open'], [r['status'] for r in rows])
 
-    def test_unmatched_existing_is_preserved_and_full_only_item_is_added_once(self):
+    def test_confirmed_absent_existing_is_closed_and_full_only_item_is_added_once(self):
         new_item = {
             'item': '(Process)Not as expected - procedure and/or document deficient',
             'description': 'The total number of persons was not identified on Form E.',
@@ -151,7 +151,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
         first_items = [
             {'finding_id': self.f1, 'matched': True, 'status': 'Open',
              'remark': 'COC 모니터링 중임.', 'evidence': 'pending Class survey'},
-            {'finding_id': self.f2, 'matched': False, 'status': 'Open',
+            {'finding_id': self.f2, 'matched': False, 'absence_confirmed': True, 'status': 'Open',
              'remark': 'not found', 'evidence': 'not found'},
         ]
         routes._gemini_call_json = lambda *args, **kwargs: self._result(
@@ -163,14 +163,18 @@ class VettingFullReportApplyTests(unittest.TestCase):
         first = self._post()
         self.assertEqual(200, first.status_code, first.get_data(as_text=True))
         payload = first.get_json()
-        self.assertEqual((1, 1, 1),
-                         (payload['updated'], payload['created'], payload['unmatched']))
+        self.assertEqual((2, 1, 1, 0),
+                         (payload['updated'], payload['created'],
+                          payload['closed_absent'], payload['unmatched']))
+        self.assertEqual(self.f2, payload['closed_absent_items'][0]['finding_id'])
+        self.assertEqual('not_listed_in_full_report',
+                         payload['closed_absent_items'][0]['reason'])
         with appmod.app.app_context():
             rows = appmod.query(
                 'SELECT id,no,description,status,user_remark FROM vt_findings '
                 'WHERE vetting_id=? ORDER BY no', (self.vetting,))
         self.assertEqual(3, len(rows))
-        self.assertEqual('Open', rows[1]['status'])       # Full에 없던 기존행 보존
+        self.assertEqual('Closed', rows[1]['status'])     # Initial에만 있으면 삭제 대신 Close
         self.assertEqual('Closed', rows[2]['status'])
         self.assertIn('Form E를 수정', rows[2]['user_remark'])
 
@@ -184,11 +188,51 @@ class VettingFullReportApplyTests(unittest.TestCase):
         second = self._post()
         self.assertEqual(200, second.status_code, second.get_data(as_text=True))
         self.assertEqual(0, second.get_json()['created'])
+        self.assertEqual(1, second.get_json()['closed_absent'])
         with appmod.app.app_context():
             count = appmod.query(
                 'SELECT COUNT(*) n FROM vt_findings WHERE vetting_id=?',
                 (self.vetting,), one=True)['n']
         self.assertEqual(3, count)
+
+    def test_uncertain_unmatched_existing_is_preserved_open(self):
+        routes._gemini_call_json = lambda *args, **kwargs: self._result(items=[
+            {'finding_id': self.f1, 'matched': True, 'status': 'Open',
+             'remark': 'Condition of Class 모니터링 중임.', 'evidence': 'pending Class survey'},
+            {'finding_id': self.f2, 'matched': False, 'absence_confirmed': False,
+             'status': 'Open', 'remark': 'uncertain', 'evidence': 'uncertain'},
+        ])
+        response = self._post()
+        self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+        self.assertEqual(0, response.get_json()['closed_absent'])
+        self.assertEqual(1, response.get_json()['unmatched'])
+        with appmod.app.app_context():
+            status = appmod.query(
+                'SELECT status FROM vt_findings WHERE id=?', (self.f2,), one=True)['status']
+        self.assertEqual('Open', status)
+
+    def test_missing_or_non_boolean_absence_confirmation_never_closes(self):
+        for absence_value in ('missing', 'true', 1, None):
+            with self.subTest(absence_value=absence_value):
+                item = {'finding_id': self.f2, 'matched': False,
+                        'status': 'Open', 'remark': 'not found', 'evidence': 'not found'}
+                if absence_value != 'missing':
+                    item['absence_confirmed'] = absence_value
+                routes._gemini_call_json = lambda *args, _item=item, **kwargs: self._result(items=[
+                    {'finding_id': self.f1, 'matched': True, 'status': 'Open',
+                     'remark': 'Condition of Class 모니터링 중임.',
+                     'evidence': 'pending Class survey'},
+                    _item,
+                ])
+                response = self._post()
+                self.assertEqual(200, response.status_code, response.get_data(as_text=True))
+                self.assertEqual(0, response.get_json()['closed_absent'])
+                self.assertEqual(1, response.get_json()['unmatched'])
+                with appmod.app.app_context():
+                    status = appmod.query(
+                        'SELECT status FROM vt_findings WHERE id=?',
+                        (self.f2,), one=True)['status']
+                self.assertEqual('Open', status)
 
     def test_rejects_non_full_report_and_non_pdf(self):
         routes._gemini_call_json = lambda *args, **kwargs: self._result(report_type='Initial')
