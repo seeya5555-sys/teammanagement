@@ -194,6 +194,37 @@ def _family_cashflow_tables(conn):
             );
             CREATE INDEX IF NOT EXISTS idx_family_allowance_expense_budget
                 ON family_allowance_expense(budget_id,spent_on DESC,id DESC);
+            CREATE TABLE IF NOT EXISTS family_cashflow_monthly_input (
+                household_id INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+                month TEXT NOT NULL,
+                salary_income INTEGER NOT NULL CHECK(salary_income >= 0),
+                saving_transfers INTEGER NOT NULL CHECK(saving_transfers >= 0),
+                investment_transfers INTEGER NOT NULL CHECK(investment_transfers >= 0),
+                loan_principal_payments INTEGER NOT NULL CHECK(loan_principal_payments >= 0),
+                revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+                updated_by INTEGER NOT NULL REFERENCES users(id),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+                PRIMARY KEY(household_id,month)
+            );
+            CREATE TABLE IF NOT EXISTS family_cashflow_monthly_close (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                household_id INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+                month TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                salary_income INTEGER NOT NULL,
+                ordinary_expenses INTEGER NOT NULL,
+                allowance_allocated INTEGER NOT NULL,
+                saving_transfers INTEGER NOT NULL,
+                investment_transfers INTEGER NOT NULL,
+                loan_principal_payments INTEGER NOT NULL,
+                allocated_income INTEGER NOT NULL,
+                unallocated_income INTEGER NOT NULL,
+                closed_by INTEGER NOT NULL REFERENCES users(id),
+                closed_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+                UNIQUE(household_id,month,revision)
+            );
+            CREATE INDEX IF NOT EXISTS idx_family_cashflow_close_household
+                ON family_cashflow_monthly_close(household_id,month DESC,revision DESC);
         """)
     except Exception as exc:
         print(f"[auto_migrate] family cashflow 표 점검 건너뜀: {exc}")

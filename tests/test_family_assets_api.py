@@ -498,6 +498,76 @@ assert c1.delete(f'/api/family-assets/assets/{salary_id}',
 zero_flow = c1.get('/api/family-assets').json['cash_flow']
 assert zero_flow['salary_income'] == zero_flow['allocated_income'] == zero_flow['unallocated_income'] == 0
 
+# 월급날 통합입력은 자산잔액과 분리된 월 원장이고, 마감 재저장은 revision 이력으로 보존한다.
+monthly_input = c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'salary_income': 5_000_000, 'saving_transfers': 1_000_000,
+    'investment_transfers': 500_000, 'loan_principal_payments': 200_000,
+    'expected_revision': 0,
+})
+assert monthly_input.status_code == 200
+input_flow = monthly_input.json['cash_flow']
+assert input_flow['input_source'] == 'monthly_input' and input_flow['monthly_input_revision'] == 1
+assert input_flow['allocated_income'] == 1_700_000 and input_flow['unallocated_income'] == 3_300_000
+assert c2.put('/api/family-assets/cash-flow/monthly-input', json={
+    'salary_income': 1, 'saving_transfers': 0, 'investment_transfers': 0,
+    'loan_principal_payments': 0, 'expected_revision': 0,
+}).status_code == 409
+closed1 = c1.post('/api/family-assets/cash-flow/close', json={'expected_revision': 0})
+assert closed1.status_code == 201
+assert closed1.json['cash_flow']['close_revision'] == 1
+assert closed1.json['cash_flow']['close_stale'] is False
+updated_input = c2.put('/api/family-assets/cash-flow/monthly-input', json={
+    'salary_income': 5_000_000, 'saving_transfers': 1_100_000,
+    'investment_transfers': 500_000, 'loan_principal_payments': 200_000,
+    'expected_revision': 1,
+})
+assert updated_input.status_code == 200
+assert updated_input.json['cash_flow']['close_stale'] is True
+assert c1.post('/api/family-assets/cash-flow/close',
+               json={'expected_revision': 0}).status_code == 409
+closed2 = c1.post('/api/family-assets/cash-flow/close', json={'expected_revision': 1})
+assert closed2.status_code == 201
+assert closed2.json['cash_flow']['close_revision'] == 2
+assert closed2.json['cash_flow']['close_stale'] is False
+close_history = closed2.json['cash_flow_history']
+assert [x['revision'] for x in close_history[:2]] == [2, 1]
+assert close_history[0]['saving_transfers'] == 1_100_000
+assert close_history[1]['saving_transfers'] == 1_000_000
+close_barrier = Barrier(2)
+def race_month_close(client_):
+    close_barrier.wait()
+    return client_.post('/api/family-assets/cash-flow/close',
+                        json={'expected_revision': 2}).status_code
+with ThreadPoolExecutor(max_workers=2) as pool:
+    close_f1 = pool.submit(race_month_close, client(u1, 'husband'))
+    close_f2 = pool.submit(race_month_close, client(u1, 'husband'))
+    assert sorted((close_f1.result(), close_f2.result())) == [201, 409]
+previous_month = db.execute("SELECT strftime('%Y-%m','now','+9 hours','-1 month')").fetchone()[0]
+assert c1.post('/api/family-assets/cash-flow/close', json={
+    'month': previous_month, 'expected_revision': 0,
+}).status_code == 409
+previous_input = c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'month': previous_month, 'salary_income': 4_900_000, 'saving_transfers': 900_000,
+    'investment_transfers': 400_000, 'loan_principal_payments': 190_000,
+    'expected_revision': 0,
+})
+assert previous_input.status_code == 200
+assert any(x['month'] == previous_month for x in previous_input.json['cash_flow_inputs'])
+previous_close = c1.post('/api/family-assets/cash-flow/close', json={
+    'month': previous_month, 'expected_revision': 0,
+})
+assert previous_close.status_code == 201
+assert any(x['month'] == previous_month and x['revision'] == 1
+           for x in previous_close.json['cash_flow_history'])
+assert c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'month': previous_month, 'salary_income': -1, 'saving_transfers': 0,
+    'investment_transfers': 0, 'loan_principal_payments': 0, 'expected_revision': 1,
+}).status_code == 400
+assert c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'month': previous_month, 'salary_income': 1, 'saving_transfers': 0,
+    'loan_principal_payments': 0, 'expected_revision': 1,
+}).status_code == 400
+
 # GET은 DB를 쓰지 않는다. 실데이터 전에는 현재 달만, 이후 빈 달은 직전 잔액을 이월한다.
 hid = c1.get('/api/family-assets').json['household']['id']
 db = A.get_db()
@@ -561,6 +631,8 @@ assert db.execute('SELECT revision FROM family_asset_entry WHERE id=?',
 
 # 운영처럼 기존 DB에 신규 표가 없는 상태에서도 _auto_migrate가 schema.sql을 재적용한다.
 db.execute('DROP TABLE family_allowance_expense'); db.execute('DROP TABLE family_allowance_budget')
+db.execute('DROP TABLE family_cashflow_monthly_close')
+db.execute('DROP TABLE family_cashflow_monthly_input')
 db.execute('DROP TABLE family_cash_expense')
 db.execute('DROP TABLE family_asset_loan_payment'); db.execute('DROP TABLE family_asset_loan_schedule')
 db.execute('DROP TABLE family_asset_history'); db.execute('DROP TABLE family_asset_monthly_snapshot')
@@ -569,6 +641,7 @@ db.execute('DROP TABLE family_asset_household'); db.commit()
 A._auto_migrate()
 for table in ('family_asset_household', 'family_asset_member', 'family_asset_entry',
               'family_asset_history', 'family_asset_monthly_snapshot', 'family_cash_expense',
+              'family_cashflow_monthly_input', 'family_cashflow_monthly_close',
               'family_allowance_budget', 'family_allowance_expense', 'family_asset_loan_schedule',
               'family_asset_loan_payment'):
     assert A.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,), one=True), table

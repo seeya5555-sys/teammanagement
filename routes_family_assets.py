@@ -106,6 +106,19 @@ def _snapshot(member):
         'history': [dict(x) for x in history],
         'trends': trends,
         'cash_flow': _cashflow_snapshot(hid, members, assets, month),
+        'cash_flow_history': [dict(x) for x in query(
+            "SELECT c.id,c.month,c.revision,c.salary_income,c.ordinary_expenses,"
+            "c.allowance_allocated,c.saving_transfers,c.investment_transfers,"
+            "c.loan_principal_payments,c.allocated_income,c.unallocated_income,"
+            "c.closed_by,COALESCE(u.display_name,u.username,'구성원') closed_by_name,c.closed_at "
+            "FROM family_cashflow_monthly_close c LEFT JOIN users u ON u.id=c.closed_by "
+            "WHERE c.household_id=? AND c.month BETWEEN ? AND ? "
+            "ORDER BY c.month DESC,c.revision DESC", (hid, first_month, month))],
+        'cash_flow_inputs': [dict(x) for x in query(
+            "SELECT month,salary_income,saving_transfers,investment_transfers,"
+            "loan_principal_payments,revision,updated_at FROM family_cashflow_monthly_input "
+            "WHERE household_id=? AND month BETWEEN ? AND ? ORDER BY month DESC",
+            (hid, first_month, month))],
     }
 
 
@@ -151,13 +164,27 @@ def _cashflow_snapshot(household_id, members, assets, month):
             'remaining_amount': allocated - spent, 'revision': revision,
             'expenses': spent_items, 'details_private': member['id'] != session['user_id'],
         })
-    salary = sum(int(row['amount']) for row in assets if row['kind'] == 'income')
-    saving_transfers = sum(int(row['monthly_flow_amount']) for row in assets
-                           if row['kind'] == 'saving')
-    investment_transfers = sum(int(row['monthly_flow_amount']) for row in assets
-                               if row['kind'] == 'stock')
-    loan_payments = sum(int(row['monthly_flow_amount']) for row in assets
-                        if row['kind'] == 'loan')
+    monthly_input = query(
+        "SELECT salary_income,saving_transfers,investment_transfers,"
+        "loan_principal_payments,revision FROM family_cashflow_monthly_input "
+        "WHERE household_id=? AND month=?", (household_id, month), one=True)
+    if monthly_input:
+        salary = int(monthly_input['salary_income'])
+        saving_transfers = int(monthly_input['saving_transfers'])
+        investment_transfers = int(monthly_input['investment_transfers'])
+        loan_payments = int(monthly_input['loan_principal_payments'])
+        input_revision = int(monthly_input['revision'])
+        input_source = 'monthly_input'
+    else:
+        salary = sum(int(row['amount']) for row in assets if row['kind'] == 'income')
+        saving_transfers = sum(int(row['monthly_flow_amount']) for row in assets
+                               if row['kind'] == 'saving')
+        investment_transfers = sum(int(row['monthly_flow_amount']) for row in assets
+                                   if row['kind'] == 'stock')
+        loan_payments = sum(int(row['monthly_flow_amount']) for row in assets
+                            if row['kind'] == 'loan')
+        input_revision = 0
+        input_source = 'asset_fallback'
     # In allocation model v2 every loan monthly_flow_amount is principal-only.
     # Interest is recorded independently as an ordinary expense, so it cannot be double counted.
     loan_principal_payments = loan_payments
@@ -169,9 +196,23 @@ def _cashflow_snapshot(household_id, members, assets, month):
     expense_total = ordinary_total + allowance_total
     allocated_income = (expense_total + saving_transfers + investment_transfers
                         + loan_principal_payments)
+    latest_close = query(
+        "SELECT revision,salary_income,ordinary_expenses,allowance_allocated,saving_transfers,"
+        "investment_transfers,loan_principal_payments,allocated_income,unallocated_income,closed_at "
+        "FROM family_cashflow_monthly_close WHERE household_id=? AND month=? "
+        "ORDER BY revision DESC LIMIT 1", (household_id, month), one=True)
+    current_values = (salary, ordinary_total, allowance_total, saving_transfers,
+                      investment_transfers, loan_principal_payments, allocated_income,
+                      salary - allocated_income)
+    close_values = tuple(int(latest_close[key]) for key in (
+        'salary_income', 'ordinary_expenses', 'allowance_allocated', 'saving_transfers',
+        'investment_transfers', 'loan_principal_payments', 'allocated_income',
+        'unallocated_income')) if latest_close else None
     return {
         'month': month,
         'allocation_model_version': 2,
+        'monthly_input_revision': input_revision,
+        'input_source': input_source,
         'salary_income': salary,
         'ordinary_expenses': ordinary_total,
         'my_ordinary_expenses': sum(int(row['amount']) for row in expenses),
@@ -184,6 +225,9 @@ def _cashflow_snapshot(household_id, members, assets, month):
         'loan_principal_payments': loan_principal_payments,
         'allocated_income': allocated_income,
         'unallocated_income': salary - allocated_income,
+        'close_revision': int(latest_close['revision']) if latest_close else 0,
+        'closed_at': latest_close['closed_at'] if latest_close else None,
+        'close_stale': bool(latest_close and close_values != current_values),
         'expense_total': expense_total,
         'available_after_expenses': salary - expense_total,
         'expenses': [dict(row) for row in expenses],
@@ -224,6 +268,13 @@ def _shift_month(month, delta):
     year, number = (int(part) for part in month.split('-'))
     index = year * 12 + number - 1 + delta
     return f'{index // 12:04d}-{index % 12 + 1:02d}'
+
+
+def _editable_cashflow_month(raw, current):
+    month = str(raw or current).strip()
+    if not re.fullmatch(r'\d{4}-\d{2}', month) or not _shift_month(current, -11) <= month <= current:
+        raise ValueError('최근 12개월만 입력·마감할 수 있음')
+    return month
 
 
 def _continuous_trends(stored_rows, opening_row, current_month, current_totals):
@@ -747,6 +798,105 @@ def family_cash_expense_delete(expense_id):
     except Exception:
         db.rollback(); raise
     return jsonify(_snapshot(_member()))
+
+
+@bp.put('/api/family-assets/cash-flow/monthly-input')
+@login_required
+def family_cashflow_monthly_input_set():
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        current = query("SELECT strftime('%Y-%m','now','+9 hours') month", one=True)['month']
+        month = _editable_cashflow_month(d.get('month'), current)
+        values = {key: _money(d, key, label, allow_zero=True) for key, label in (
+            ('salary_income', '월급·기타수입'), ('saving_transfers', '저축 이체'),
+            ('investment_transfers', '투자 이체'),
+            ('loan_principal_payments', '대출 원금'))}
+        expected = d.get('expected_revision', 0)
+        if isinstance(expected, bool) or int(expected) != expected or int(expected) < 0:
+            raise ValueError('입력 revision 오류')
+        expected = int(expected)
+    except (ValueError, TypeError, OverflowError) as e:
+        return jsonify({'error': str(e)}), 400
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        existing = db.execute(
+            "SELECT revision FROM family_cashflow_monthly_input WHERE household_id=? AND month=?",
+            (member['household_id'], month)).fetchone()
+        current_revision = int(existing['revision']) if existing else 0
+        if current_revision != expected:
+            db.rollback(); return jsonify({'error': 'revision_conflict'}), 409
+        if existing:
+            db.execute(
+                "UPDATE family_cashflow_monthly_input SET salary_income=?,saving_transfers=?,"
+                "investment_transfers=?,loan_principal_payments=?,revision=revision+1,updated_by=?,"
+                "updated_at=datetime('now','+9 hours') WHERE household_id=? AND month=?",
+                (values['salary_income'], values['saving_transfers'],
+                 values['investment_transfers'], values['loan_principal_payments'],
+                 session['user_id'], member['household_id'], month))
+        else:
+            db.execute(
+                "INSERT INTO family_cashflow_monthly_input(household_id,month,salary_income,"
+                "saving_transfers,investment_transfers,loan_principal_payments,updated_by) "
+                "VALUES(?,?,?,?,?,?,?)", (member['household_id'], month, values['salary_income'],
+                 values['saving_transfers'], values['investment_transfers'],
+                 values['loan_principal_payments'], session['user_id']))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member()))
+
+
+@bp.post('/api/family-assets/cash-flow/close')
+@login_required
+def family_cashflow_close():
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        current = query("SELECT strftime('%Y-%m','now','+9 hours') month", one=True)['month']
+        month = _editable_cashflow_month(d.get('month'), current)
+        expected = d.get('expected_revision', 0)
+        if isinstance(expected, bool) or int(expected) != expected or int(expected) < 0:
+            raise ValueError
+        expected = int(expected)
+    except (ValueError, TypeError, OverflowError):
+        return jsonify({'error': '입력 revision 오류'}), 400
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        latest = db.execute(
+            "SELECT COALESCE(MAX(revision),0) revision FROM family_cashflow_monthly_close "
+            "WHERE household_id=? AND month=?", (member['household_id'], month)).fetchone()
+        current_revision = int(latest['revision'])
+        if current_revision != expected:
+            db.rollback(); return jsonify({'error': 'revision_conflict'}), 409
+        members = query("SELECT user_id id,display_name FROM family_asset_member "
+                        "WHERE household_id=? ORDER BY joined_at,user_id", (member['household_id'],))
+        if month != current and not db.execute(
+                "SELECT 1 FROM family_cashflow_monthly_input WHERE household_id=? AND month=?",
+                (member['household_id'], month)).fetchone():
+            db.rollback(); return jsonify({'error': 'monthly_input_required'}), 409
+        assets = query(
+            "SELECT id,kind,amount,CASE WHEN monthly_flow_month=strftime('%Y-%m','now','+9 hours') "
+            "THEN monthly_flow_amount ELSE 0 END monthly_flow_amount FROM family_asset_entry "
+            "WHERE household_id=?", (member['household_id'],)) if month == current else []
+        flow = _cashflow_snapshot(member['household_id'], members, assets, month)
+        db.execute(
+            "INSERT INTO family_cashflow_monthly_close(household_id,month,revision,salary_income,"
+            "ordinary_expenses,allowance_allocated,saving_transfers,investment_transfers,"
+            "loan_principal_payments,allocated_income,unallocated_income,closed_by) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (member['household_id'], month,
+             current_revision + 1, flow['salary_income'], flow['ordinary_expenses'],
+             flow['allowance_allocated'], flow['saving_transfers'], flow['investment_transfers'],
+             flow['loan_principal_payments'], flow['allocated_income'],
+             flow['unallocated_income'], session['user_id']))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member())), 201
 
 
 @bp.put('/api/family-assets/allowances/<int:member_user_id>')
