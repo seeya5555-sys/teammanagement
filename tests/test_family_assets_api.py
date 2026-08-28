@@ -370,8 +370,59 @@ salary_payload = {'kind': 'income', 'name': '월급', 'amount': 5_000_000,
                   'owner_mode': 'member', 'owner_user_id': u1, 'institution': '회사', 'note': '',
                   'monthly_flow_amount': 0, 'evidence_base64': evidence}
 salary_created = c1.post('/api/family-assets/assets', json=salary_payload)
-assert salary_created.status_code == 201
-salary_id = salary_created.json['id']
+assert salary_created.status_code == 409
+assert salary_created.json['error'] == 'income_use_monthly_input'
+# 기존 build가 남긴 income 행은 월 통합입력 전까지만 fallback으로 읽는다.
+household_id = A.query(
+    'SELECT household_id FROM family_asset_member WHERE user_id=?', (u1,), one=True
+)['household_id']
+db.execute(
+    "INSERT INTO family_asset_entry(household_id,kind,name,amount,owner_mode,owner_user_id,"
+    "institution,note,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    (household_id, 'income', '이전 월급', 5_000_000, 'member', u1, '회사', '', u1, u1)
+)
+salary_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+db.commit()
+salary_row = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == salary_id)
+assert c1.patch(f'/api/family-assets/assets/{salary_id}', json={
+    **salary_payload, 'expected_revision': salary_row['revision']
+}).status_code == 409
+# 통합 원장이 생기면 구 income 행은 즉시 합계에서 빠져 이중합산되지 않는다.
+monthly_over_legacy = c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'salary_income': 4_000_000, 'saving_transfers': 0,
+    'investment_transfers': 0, 'loan_principal_payments': 0,
+    'expected_revision': 0,
+})
+assert monthly_over_legacy.status_code == 200
+assert monthly_over_legacy.json['cash_flow']['salary_income'] == 4_000_000
+assert monthly_over_legacy.json['cash_flow']['input_source'] == 'monthly_input'
+db.execute('DELETE FROM family_cashflow_monthly_input WHERE household_id=?', (household_id,))
+db.commit()
+assert c1.get('/api/family-assets').json['cash_flow']['salary_income'] == 5_000_000
+# 구 income은 actual asset으로 재분류할 수 있다. 증빙 분류는 새 캡처 없이는 차단한다.
+without_salary_evidence = {k: v for k, v in salary_payload.items() if k != 'evidence_base64'}
+assert c1.patch(f'/api/family-assets/assets/{salary_id}', json={
+    **without_salary_evidence, 'kind': 'saving',
+    'expected_revision': salary_row['revision']
+}).json['error'] == 'screenshot_required'
+db.execute(
+    "INSERT INTO family_asset_entry(household_id,kind,name,amount,owner_mode,owner_user_id,"
+    "institution,note,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    (household_id, 'income', '재분류용 급여', 1, 'member', u1, '', '', u1, u1)
+)
+reclass_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+db.commit()
+reclass_row = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == reclass_id)
+reclassified = c1.patch(f'/api/family-assets/assets/{reclass_id}', json={
+    'kind': 'cash', 'name': '입금 통장', 'amount': 1, 'owner_mode': 'member',
+    'owner_user_id': u1, 'institution': '', 'note': '', 'monthly_flow_amount': 0,
+    'expected_revision': reclass_row['revision'],
+})
+assert reclassified.status_code == 200
+reclass_revision = next(a for a in c1.get('/api/family-assets').json['assets']
+                        if a['id'] == reclass_id)['revision']
+assert c1.delete(f'/api/family-assets/assets/{reclass_id}',
+                 json={'expected_revision': reclass_revision}).status_code == 200
 today = db.execute("SELECT date('now','+9 hours')").fetchone()[0]
 future_month = db.execute("SELECT date('now','+9 hours','+1 month')").fetchone()[0]
 assert c1.post('/api/family-assets/cash-expenses', json={

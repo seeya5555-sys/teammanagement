@@ -627,6 +627,10 @@ def family_asset_create():
         p = _asset_payload(request.get_json(silent=True) or {}, member)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+    # 급여는 월별 CAS 원장이 단일 정본이다. income kind는 구버전 데이터 decode와
+    # 월 원장 미입력 시 fallback을 위해 읽기만 유지하고 신규 생성은 막는다.
+    if p['kind'] == 'income':
+        return jsonify({'error': 'income_use_monthly_input'}), 409
     if p['kind'] in EVIDENCE_KINDS and not p['evidence_provided']:
         return jsonify({'error': 'screenshot_required'}), 400
     db = get_db()
@@ -667,6 +671,10 @@ def family_asset_update(asset_id):
         expected_revision = _expected_revision(body)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+    # 기존 income 행은 삭제하거나 실제 자산 분류로 재분류할 수 있지만, 급여 금액을
+    # 자산 편집기에서 계속 수정하거나 다른 자산을 income으로 바꾸지는 못한다.
+    if p['kind'] == 'income':
+        return jsonify({'error': 'income_use_monthly_input'}), 409
     evidence_needed = (p['kind'] in EVIDENCE_KINDS and
                        (p['kind'] != existing['kind'] or p['amount'] != existing['amount']))
     if evidence_needed and not p['evidence_provided']:
