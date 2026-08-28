@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """우리자산 API: 2인 가입, 가구 격리, 소유자 검증, CRUD 계약."""
 import os, sys, sqlite3, tempfile
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from werkzeug.security import generate_password_hash
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -98,6 +100,8 @@ assert r.status_code == 201, r.get_data(as_text=True)
 asset_id = r.json['id']
 snap = c2.get('/api/family-assets').json
 assert snap['assets'][0]['amount'] == 12000000 and snap['assets'][0]['owner_user_id'] == u2
+revision1 = snap['assets'][0]['revision']
+assert revision1 > 0
 assert snap['history'][0]['action'] == 'create' and snap['history'][0]['amount_after'] == 12000000
 assert snap['trends'][-1]['total_assets'] == 12000000 and snap['trends'][-1]['net_worth'] == 12000000
 assert c3.get('/api/family-assets').json['setup_required'] is True
@@ -112,20 +116,64 @@ assert c4.delete(f'/api/family-assets/assets/{asset_id}').status_code == 404
 
 joint = {**payload, 'kind': 'property', 'name': '우리집', 'amount': 700000000,
          'owner_mode': 'joint', 'owner_user_id': None, 'joint_share': 60}
-assert c2.patch(f'/api/family-assets/assets/{asset_id}', json=joint).status_code == 200
+assert c1.patch(f'/api/family-assets/assets/{asset_id}', json=joint).status_code == 400
+assert c2.patch(f'/api/family-assets/assets/{asset_id}',
+                json={**joint, 'expected_revision': revision1}).status_code == 200
 edited = c1.get('/api/family-assets').json['assets'][0]
 assert edited['owner_mode'] == 'joint' and edited['joint_share'] == 60
+revision2 = edited['revision']
+assert revision2 > revision1
 audit = c1.get('/api/family-assets').json
 assert [h['action'] for h in audit['history'][:2]] == ['update', 'create']
 assert audit['history'][0]['amount_before'] == 12000000
 assert audit['history'][0]['amount_after'] == 700000000
-assert c1.delete(f'/api/family-assets/assets/{asset_id}').status_code == 200
+
+# 두 기기가 같은 revision에서 시작하면 첫 저장만 성공하고 stale 저장/삭제는 원장·이력을 못 건드린다.
+history_count = len(audit['history'])
+stale = c1.patch(f'/api/family-assets/assets/{asset_id}',
+                 json={**payload, 'expected_revision': revision1})
+assert stale.status_code == 409 and stale.json['error'] == 'edit_conflict'
+assert c1.get('/api/family-assets').json['assets'][0]['amount'] == 700000000
+assert len(c1.get('/api/family-assets').json['history']) == history_count
+assert c1.delete(f'/api/family-assets/assets/{asset_id}',
+                 json={'expected_revision': revision1}).status_code == 409
+assert c1.delete(f'/api/family-assets/assets/{asset_id}').status_code == 400
+assert c1.delete(f'/api/family-assets/assets/{asset_id}',
+                 json={'expected_revision': revision2}).status_code == 200
 assert c2.delete(f'/api/family-assets/assets/{asset_id}').status_code == 404
 after_delete = c1.get('/api/family-assets').json
 assert after_delete['history'][0]['action'] == 'delete'
 assert after_delete['history'][0]['amount_before'] == 700000000
 assert after_delete['trends'][-1]['net_worth'] == 0
 assert c3.get('/api/family-assets').json['history'] == []  # 가구간 이력 격리
+
+# 진짜 병렬 요청도 같은 revision에서 정확히 하나만 성공한다.
+race_create = c1.post('/api/family-assets/assets', json=payload)
+race_id = race_create.json['id']
+assert race_id > asset_id  # AUTOINCREMENT라 삭제된 asset id를 재사용하지 않음.
+race_revision = c1.get('/api/family-assets').json['assets'][0]['revision']
+for malformed in ('1', -1, 1.5, True):
+    assert c1.patch(f'/api/family-assets/assets/{race_id}',
+                    json={**payload, 'expected_revision': malformed}).status_code == 400
+barrier = Barrier(2)
+def race_update(client_, amount_):
+    barrier.wait()
+    return client_.patch(f'/api/family-assets/assets/{race_id}',
+                         json={**payload, 'amount': amount_,
+                               'expected_revision': race_revision}).status_code
+with ThreadPoolExecutor(max_workers=2) as pool:
+    future1 = pool.submit(race_update, c1, 13000000)
+    future2 = pool.submit(race_update, c2, 14000000)
+    statuses = sorted((future1.result(), future2.result()))
+assert statuses == [200, 409], statuses
+race_snap = c1.get('/api/family-assets').json
+race_asset = next(a for a in race_snap['assets'] if a['id'] == race_id)
+race_history = [h for h in race_snap['history'] if h['asset_id'] == race_id]
+assert race_asset['revision'] == race_revision + 1
+assert race_asset['amount'] in (13000000, 14000000)
+assert [h['action'] for h in race_history] == ['update', 'create']
+assert c1.delete(f'/api/family-assets/assets/{race_id}',
+                 json={'expected_revision': race_asset['revision']}).status_code == 200
 
 bad = {**payload, 'owner_user_id': outsider}
 assert c1.post('/api/family-assets/assets', json=bad).status_code == 400
@@ -159,6 +207,14 @@ db.commit()
 bounded_history = c1.get('/api/family-assets').json['history']
 assert len(bounded_history) == 50
 assert [x['id'] for x in bounded_history] == sorted([x['id'] for x in bounded_history], reverse=True)
+
+# 기존 family_asset_entry 표에도 additive migration으로 revision=1을 보강한다.
+migration_asset = c1.post('/api/family-assets/assets', json=payload).json['id']
+db.execute('ALTER TABLE family_asset_entry DROP COLUMN revision'); db.commit()
+A._auto_migrate()
+assert 'revision' in {r[1] for r in db.execute('PRAGMA table_info(family_asset_entry)')}
+assert db.execute('SELECT revision FROM family_asset_entry WHERE id=?',
+                  (migration_asset,)).fetchone()[0] == 1
 
 # 운영처럼 기존 DB에 신규 표가 없는 상태에서도 _auto_migrate가 schema.sql을 재적용한다.
 db.execute('DROP TABLE family_asset_history'); db.execute('DROP TABLE family_asset_monthly_snapshot')

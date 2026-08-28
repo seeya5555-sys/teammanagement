@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS family_asset_entry (
     joint_share   INTEGER NOT NULL DEFAULT 50 CHECK(joint_share BETWEEN 0 AND 100),
     institution   TEXT NOT NULL DEFAULT '',
     note          TEXT NOT NULL DEFAULT '',
+    revision      INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
     created_by    INTEGER NOT NULL REFERENCES users(id),
     updated_by    INTEGER NOT NULL REFERENCES users(id),
     created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),

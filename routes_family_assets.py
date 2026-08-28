@@ -51,7 +51,7 @@ def _snapshot(member):
         "FROM family_asset_member m WHERE m.household_id=? ORDER BY m.joined_at,m.user_id", (hid,))
     assets = query(
         "SELECT a.id,a.kind,a.name,a.amount,a.owner_mode,a.owner_user_id,a.joint_share,"
-        "a.institution,a.note,a.updated_at,a.updated_by,u.display_name updated_by_name "
+        "a.institution,a.note,a.revision,a.updated_at,a.updated_by,u.display_name updated_by_name "
         "FROM family_asset_entry a LEFT JOIN users u ON u.id=a.updated_by "
         "WHERE a.household_id=? ORDER BY a.updated_at DESC,a.id DESC", (hid,))
     history = query(
@@ -235,6 +235,13 @@ def _asset_payload(d, member):
     }
 
 
+def _expected_revision(d):
+    raw = d.get('expected_revision')
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise ValueError('최신 revision 필수')
+    return raw
+
+
 @bp.post('/api/family-assets/assets')
 @login_required
 def family_asset_create():
@@ -264,22 +271,29 @@ def family_asset_update(asset_id):
     member = _member()
     if not member:
         return jsonify({'error': 'household_required'}), 409
-    existing = query('SELECT id,kind,name,amount FROM family_asset_entry WHERE id=? AND household_id=?',
-                     (asset_id, member['household_id']), one=True)
+    existing = query(
+        "SELECT id,kind,name,amount,revision FROM family_asset_entry "
+        "WHERE id=? AND household_id=?",
+        (asset_id, member['household_id']), one=True)
     if not existing:
         return jsonify({'error': 'not_found'}), 404
     try:
-        p = _asset_payload(request.get_json(silent=True) or {}, member)
+        body = request.get_json(silent=True) or {}
+        p = _asset_payload(body, member)
+        expected_revision = _expected_revision(body)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     db = get_db()
-    db.execute(
+    cur = db.execute(
         "UPDATE family_asset_entry SET kind=?,name=?,amount=?,owner_mode=?,owner_user_id=?,"
-        "joint_share=?,institution=?,note=?,updated_by=?,updated_at=datetime('now','localtime') "
-        "WHERE id=? AND household_id=?",
+        "joint_share=?,institution=?,note=?,updated_by=?,revision=revision+1,"
+        "updated_at=datetime('now','localtime') WHERE id=? AND household_id=? AND revision=?",
         (p['kind'], p['name'], p['amount'], p['owner_mode'], p['owner_user_id'],
          p['joint_share'], p['institution'], p['note'], session['user_id'], asset_id,
-         member['household_id']))
+         member['household_id'], expected_revision))
+    if not cur.rowcount:
+        db.rollback()
+        return jsonify({'error': 'edit_conflict'}), 409
     _record_change(db, member, 'update', asset_id, existing, p)
     _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
@@ -294,15 +308,22 @@ def family_asset_delete(asset_id):
         return jsonify({'error': 'household_required'}), 409
     db = get_db()
     existing = db.execute(
-        'SELECT id,kind,name,amount FROM family_asset_entry WHERE id=? AND household_id=?',
+        "SELECT id,kind,name,amount,revision FROM family_asset_entry "
+        "WHERE id=? AND household_id=?",
         (asset_id, member['household_id'])).fetchone()
     if not existing:
         return jsonify({'error': 'not_found'}), 404
-    cur = db.execute('DELETE FROM family_asset_entry WHERE id=? AND household_id=?',
-                     (asset_id, member['household_id']))
+    try:
+        expected_revision = _expected_revision(request.get_json(silent=True) or {})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    cur = db.execute(
+        "DELETE FROM family_asset_entry WHERE id=? AND household_id=? AND revision=?",
+        (asset_id, member['household_id'], expected_revision))
+    if not cur.rowcount:
+        db.rollback()
+        return jsonify({'error': 'edit_conflict'}), 409
     _record_change(db, member, 'delete', asset_id, existing, None)
     _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
-    if not cur.rowcount:
-        return jsonify({'error': 'not_found'}), 404
     return jsonify({'ok': True})
