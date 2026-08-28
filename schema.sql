@@ -253,6 +253,33 @@ CREATE TABLE IF NOT EXISTS family_asset_monthly_snapshot (
 );
 CREATE INDEX IF NOT EXISTS idx_family_asset_snapshot_household
     ON family_asset_monthly_snapshot(household_id,month DESC);
+CREATE TABLE IF NOT EXISTS family_asset_loan_schedule (
+    asset_id       INTEGER PRIMARY KEY REFERENCES family_asset_entry(id) ON DELETE CASCADE,
+    household_id   INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+    payment_amount INTEGER NOT NULL CHECK(payment_amount > 0),
+    annual_rate_bps INTEGER NOT NULL CHECK(annual_rate_bps BETWEEN 0 AND 10000),
+    due_day        INTEGER NOT NULL CHECK(due_day BETWEEN 1 AND 31),
+    installment_no INTEGER NOT NULL DEFAULT 0 CHECK(installment_no >= 0),
+    last_payment_date TEXT NOT NULL,
+    active         INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now','+9 hours'))
+);
+CREATE TABLE IF NOT EXISTS family_asset_loan_payment (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id       INTEGER NOT NULL REFERENCES family_asset_entry(id) ON DELETE CASCADE,
+    household_id   INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+    installment_no INTEGER NOT NULL,
+    due_date       TEXT NOT NULL,
+    balance_before INTEGER NOT NULL,
+    principal      INTEGER NOT NULL,
+    interest       INTEGER NOT NULL,
+    total_payment  INTEGER NOT NULL,
+    balance_after  INTEGER NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+    UNIQUE(asset_id,due_date)
+);
+CREATE INDEX IF NOT EXISTS idx_family_asset_loan_payment_asset
+    ON family_asset_loan_payment(asset_id,due_date DESC);
 
 -- =============================================================
 --  Dock Daily Report (입거 준비 일일보고)
