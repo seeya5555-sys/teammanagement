@@ -3,7 +3,7 @@ import sqlite3
 import unittest
 from pathlib import Path
 
-from scripts.update_family_loan import apply_due, configure
+from scripts.update_family_loan import apply_due, configure, freeze, record_payment
 
 
 def _db():
@@ -30,6 +30,100 @@ def _db():
 
 
 class FamilyLoanUpdateTests(unittest.TestCase):
+    def test_freeze_preserves_balance_and_manual_payment_uses_actual_values(self):
+        conn, aid = _db()
+        configure(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, balance=292_649_627, payment_amount=902_257,
+            annual_rate_bps=273, due_day=31, last_payment_date="2026-07-31", installment_no=61,
+        ))
+        frozen = freeze(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, as_of_date="2026-08-24",
+        ))
+        self.assertEqual(292_649_627, frozen["balance"])
+        self.assertEqual(0, conn.execute(
+            "SELECT active FROM family_asset_loan_schedule WHERE asset_id=?", (aid,)
+        ).fetchone()[0])
+        with self.assertRaisesRegex(ValueError, "active loan schedule"):
+            apply_due(conn, argparse.Namespace(username="ysson", asset_id=aid, date="2026-08-31"))
+        recorded = record_payment(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, date="2026-08-31", installment_no=62,
+            principal=223_711, interest=678_546,
+        ))
+        self.assertEqual(292_425_916, recorded["balance"])
+        self.assertEqual(902_257, recorded["total"])
+        self.assertEqual((292_425_916, 902_257, "2026-08"), conn.execute(
+            "SELECT amount,monthly_flow_amount,monthly_flow_month "
+            "FROM family_asset_entry WHERE id=?", (aid,),
+        ).fetchone())
+        with self.assertRaisesRegex(ValueError, "rewind"):
+            record_payment(conn, argparse.Namespace(
+                username="ysson", asset_id=aid, date="2026-08-23", installment_no=63,
+                principal=1, interest=0,
+            ))
+        conn.close()
+
+    def test_manual_payment_rejects_rewind_and_is_idempotent(self):
+        conn, aid = _db()
+        configure(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, balance=292_649_627, payment_amount=902_257,
+            annual_rate_bps=273, due_day=31, last_payment_date="2026-07-31", installment_no=61,
+        ))
+        freeze(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, as_of_date="2026-08-24",
+        ))
+        payment = argparse.Namespace(
+            username="ysson", asset_id=aid, date="2026-08-31", installment_no=62,
+            principal=223_711, interest=678_546,
+        )
+        self.assertEqual("recorded", record_payment(conn, payment)["action"])
+        self.assertEqual("skipped", record_payment(conn, payment)["action"])
+        with self.assertRaisesRegex(ValueError, "rewind"):
+            record_payment(conn, argparse.Namespace(
+                username="ysson", asset_id=aid, date="2026-08-30", installment_no=61,
+                principal=1, interest=1,
+            ))
+        self.assertEqual(1, conn.execute(
+            "SELECT COUNT(*) FROM family_asset_loan_payment WHERE asset_id=?", (aid,)
+        ).fetchone()[0])
+        conn.close()
+
+    def test_manual_payment_guards_and_same_month_extra_payment_accumulates_flow(self):
+        conn, aid = _db()
+        configure(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, balance=1_000_000, payment_amount=100_000,
+            annual_rate_bps=273, due_day=31, last_payment_date="2026-07-31", installment_no=61,
+        ))
+        with self.assertRaisesRegex(ValueError, "freeze it first"):
+            record_payment(conn, argparse.Namespace(
+                username="ysson", asset_id=aid, date="2026-08-31", installment_no=62,
+                principal=10_000, interest=1_000,
+            ))
+        freeze(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, as_of_date="2026-08-24",
+        ))
+        record_payment(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, date="2026-08-31", installment_no=62,
+            principal=10_000, interest=1_000,
+        ))
+        record_payment(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, date="2026-09-01", installment_no=63,
+            principal=5_000, interest=500,
+        ))
+        record_payment(conn, argparse.Namespace(
+            username="ysson", asset_id=aid, date="2026-09-15", installment_no=64,
+            principal=2_000, interest=200,
+        ))
+        self.assertEqual((983_000, 7_700, "2026-09"), conn.execute(
+            "SELECT amount,monthly_flow_amount,monthly_flow_month "
+            "FROM family_asset_entry WHERE id=?", (aid,),
+        ).fetchone())
+        with self.assertRaisesRegex(ValueError, "exceeds current balance"):
+            record_payment(conn, argparse.Namespace(
+                username="ysson", asset_id=aid, date="2026-10-01", installment_no=65,
+                principal=1_000_000, interest=0,
+            ))
+        conn.close()
+
     def test_hf_notice_calibrates_and_applies_exact_august_payment(self):
         conn, aid = _db()
         configured = configure(conn, argparse.Namespace(

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Configure and apply an exact family-loan amortization schedule.
+"""Maintain a family loan from actual lender payment notices.
 
-Interest uses Actual/365 and round-half-up. A due day larger than the month's
-last day means month-end. Writes are idempotent per asset and due date.
+Automatic amortization remains available for historical compatibility, but a
+loan can be frozen into manual mode. Manual payments use the lender-provided
+principal and interest without estimating either value.
 """
 
 import argparse
@@ -28,6 +29,13 @@ def _parser():
     configure.add_argument("--installment-no", type=int, required=True)
     apply_due = sub.add_parser("apply-due")
     apply_due.add_argument("--date", required=True)
+    freeze = sub.add_parser("freeze")
+    freeze.add_argument("--as-of-date", required=True)
+    record = sub.add_parser("record-payment")
+    record.add_argument("--date", required=True)
+    record.add_argument("--installment-no", type=int, required=True)
+    record.add_argument("--principal", type=int, required=True)
+    record.add_argument("--interest", type=int, required=True)
     return parser
 
 
@@ -55,12 +63,12 @@ def _member_and_loan(conn, username, asset_id):
         raise ValueError("family-asset member not found")
     if asset_id:
         loan = conn.execute(
-            "SELECT id,name,amount,monthly_flow_amount,revision FROM family_asset_entry "
+            "SELECT id,name,amount,monthly_flow_amount,revision,monthly_flow_month FROM family_asset_entry "
             "WHERE id=? AND household_id=? AND kind='loan'", (asset_id, member[0]),
         ).fetchone()
     else:
         rows = conn.execute(
-            "SELECT id,name,amount,monthly_flow_amount,revision FROM family_asset_entry "
+            "SELECT id,name,amount,monthly_flow_amount,revision,monthly_flow_month FROM family_asset_entry "
             "WHERE household_id=? AND kind='loan' ORDER BY id", (member[0],),
         ).fetchall()
         if len(rows) != 1:
@@ -221,6 +229,117 @@ def apply_due(conn, args):
         raise
 
 
+def freeze(conn, args):
+    """Disable estimated repayments while preserving the confirmed balance."""
+    as_of = _date(args.as_of_date)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        member, loan = _member_and_loan(conn, args.username, args.asset_id)
+        hid, uid = member
+        conn.execute(
+            "UPDATE family_asset_loan_schedule SET active=0,last_payment_date="
+            "CASE WHEN last_payment_date < ? THEN ? ELSE last_payment_date END,"
+            "updated_at=datetime('now','+9 hours') WHERE asset_id=? AND household_id=?",
+            (as_of.isoformat(), as_of.isoformat(), loan[0], hid),
+        )
+        conn.execute(
+            "UPDATE family_asset_entry SET institution='한국주택금융공사',note=?,updated_by=?,"
+            "revision=revision+1,updated_at=datetime('now','localtime') "
+            "WHERE id=? AND household_id=?",
+            (f"보금자리론 체증식 · 실제 원금/이자 수동 반영 · "
+             f"{as_of.isoformat()} 기준 잔액 {int(loan[2]):,}원", uid, loan[0], hid),
+        )
+        conn.execute(
+            "INSERT INTO family_asset_history(household_id,asset_id,action,asset_name,kind,"
+            "amount_before,amount_after,monthly_flow_before,monthly_flow_after,changed_by) "
+            "VALUES(?,?,'update',?,'loan',?,?,?,?,?)",
+            (hid, loan[0], loan[1], loan[2], loan[2], loan[3], loan[3], uid),
+        )
+        _snapshot(conn, hid)
+        conn.commit()
+        return {"ok": True, "action": "frozen", "asset_id": loan[0],
+                "as_of_date": as_of, "balance": int(loan[2])}
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def record_payment(conn, args):
+    """Apply one lender-confirmed payment; only principal reduces the debt."""
+    paid_on = _date(args.date)
+    if args.installment_no <= 0 or args.principal <= 0 or args.interest < 0:
+        raise ValueError("invalid manual payment")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        member, loan = _member_and_loan(conn, args.username, args.asset_id)
+        hid, uid = member
+        schedule = conn.execute(
+            "SELECT installment_no,last_payment_date,active FROM family_asset_loan_schedule "
+            "WHERE asset_id=? AND household_id=?", (loan[0], hid),
+        ).fetchone()
+        if not schedule:
+            raise ValueError("loan schedule state not found")
+        if schedule[2]:
+            raise ValueError("automatic loan schedule is still active; freeze it first")
+        existing = conn.execute(
+            "SELECT installment_no,principal,interest,balance_after FROM family_asset_loan_payment "
+            "WHERE asset_id=? AND due_date=?", (loan[0], paid_on.isoformat()),
+        ).fetchone()
+        if existing:
+            expected_after = int(loan[2])
+            if (int(existing[0]), int(existing[1]), int(existing[2]), int(existing[3])) == (
+                    args.installment_no, args.principal, args.interest, expected_after):
+                conn.rollback()
+                return {"ok": True, "action": "skipped", "asset_id": loan[0],
+                        "installment_no": args.installment_no, "balance": expected_after}
+            raise ValueError("payment date already recorded with different values")
+        if conn.execute(
+                "SELECT 1 FROM family_asset_loan_payment WHERE asset_id=? AND installment_no=?",
+                (loan[0], args.installment_no)).fetchone():
+            raise ValueError("installment number already recorded")
+        if paid_on <= _date(schedule[1]) or args.installment_no <= int(schedule[0]):
+            raise ValueError("manual payment would rewind the loan ledger")
+        balance = int(loan[2])
+        if args.principal > balance:
+            raise ValueError("principal exceeds current balance")
+        after = balance - args.principal
+        total = args.principal + args.interest
+        prior_flow = int(loan[3])
+        flow = prior_flow + total if loan[5] == paid_on.strftime("%Y-%m") else total
+        conn.execute(
+            "UPDATE family_asset_entry SET amount=?,monthly_flow_amount=?,"
+            "monthly_flow_month=substr(?,1,7),updated_by=?,revision=revision+1,"
+            "updated_at=datetime('now','localtime') WHERE id=? AND household_id=?",
+            (after, flow, paid_on.isoformat(), uid, loan[0], hid),
+        )
+        conn.execute(
+            "INSERT INTO family_asset_history(household_id,asset_id,action,asset_name,kind,"
+            "amount_before,amount_after,monthly_flow_before,monthly_flow_after,changed_by) "
+            "VALUES(?,?,'update',?,'loan',?,?,?,?,?)",
+            (hid, loan[0], loan[1], balance, after, prior_flow, flow, uid),
+        )
+        conn.execute(
+            "INSERT INTO family_asset_loan_payment(asset_id,household_id,installment_no,due_date,"
+            "balance_before,principal,interest,total_payment,balance_after) VALUES(?,?,?,?,?,?,?,?,?)",
+            (loan[0], hid, args.installment_no, paid_on.isoformat(), balance,
+             args.principal, args.interest, total, after),
+        )
+        conn.execute(
+            "UPDATE family_asset_loan_schedule SET installment_no=?,last_payment_date=?,active=0,"
+            "updated_at=datetime('now','+9 hours') WHERE asset_id=?",
+            (args.installment_no, paid_on.isoformat(), loan[0]),
+        )
+        _snapshot(conn, hid)
+        conn.commit()
+        return {"ok": True, "action": "recorded", "asset_id": loan[0],
+                "installment_no": args.installment_no, "date": paid_on,
+                "principal": args.principal, "interest": args.interest,
+                "total": total, "balance": after}
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def main(argv=None):
     args = _parser().parse_args(argv)
     db_path = Path(args.db)
@@ -228,7 +347,14 @@ def main(argv=None):
         raise SystemExit(f"database not found: {db_path}")
     conn = sqlite3.connect(db_path)
     try:
-        result = configure(conn, args) if args.action == "configure" else apply_due(conn, args)
+        if args.action == "configure":
+            result = configure(conn, args)
+        elif args.action == "apply-due":
+            result = apply_due(conn, args)
+        elif args.action == "freeze":
+            result = freeze(conn, args)
+        else:
+            result = record_payment(conn, args)
     finally:
         conn.close()
     print(" ".join(f"{key}={value}" for key, value in result.items()))
