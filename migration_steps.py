@@ -62,6 +62,63 @@ def run_foundation_migrations(conn):
         migrate(conn)
 
 
+def _family_asset_entry_columns(conn):
+    try:
+        columns = {row[1] for row in conn.execute(
+            "PRAGMA table_info(family_asset_entry)"
+        ).fetchall()}
+        if columns and "revision" not in columns:
+            conn.execute(
+                "ALTER TABLE family_asset_entry ADD COLUMN "
+                "revision INTEGER NOT NULL DEFAULT 1"
+            )
+            print("[auto_migrate] family_asset_entry.revision 추가됨")
+        if columns and "monthly_flow_amount" not in columns:
+            conn.execute(
+                "ALTER TABLE family_asset_entry ADD COLUMN monthly_flow_amount "
+                "INTEGER NOT NULL DEFAULT 0 CHECK(monthly_flow_amount >= 0)"
+            )
+            print("[auto_migrate] family_asset_entry.monthly_flow_amount 추가됨")
+        if columns and "monthly_flow_month" not in columns:
+            conn.execute(
+                "ALTER TABLE family_asset_entry ADD COLUMN monthly_flow_month TEXT"
+            )
+            print("[auto_migrate] family_asset_entry.monthly_flow_month 추가됨")
+    except Exception as exc:
+        print(f"[auto_migrate] family_asset_entry 컬럼 점검 건너뜀: {exc}")
+
+
+def _family_asset_history_columns(conn):
+    try:
+        columns = {row[1] for row in conn.execute(
+            "PRAGMA table_info(family_asset_history)"
+        ).fetchall()}
+        if columns and "monthly_flow_before" not in columns:
+            conn.execute(
+                "ALTER TABLE family_asset_history ADD COLUMN monthly_flow_before INTEGER"
+            )
+            print("[auto_migrate] family_asset_history.monthly_flow_before 추가됨")
+        if columns and "monthly_flow_after" not in columns:
+            conn.execute(
+                "ALTER TABLE family_asset_history ADD COLUMN monthly_flow_after INTEGER"
+            )
+            print("[auto_migrate] family_asset_history.monthly_flow_after 추가됨")
+    except Exception as exc:
+        print(f"[auto_migrate] family_asset_history 컬럼 점검 건너뜀: {exc}")
+
+
+FAMILY_ASSET_MIGRATIONS = (
+    ("family_asset_entry.columns", _family_asset_entry_columns),
+    ("family_asset_history.columns", _family_asset_history_columns),
+)
+
+
+def run_family_asset_migrations(conn):
+    """Keep legacy 우리자산 tables additive without duplicating boot logic."""
+    for _name, migrate in FAMILY_ASSET_MIGRATIONS:
+        migrate(conn)
+
+
 def _class_status_source_path(conn):
     try:
         columns = [row[1] for row in conn.execute(
