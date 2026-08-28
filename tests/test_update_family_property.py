@@ -27,7 +27,8 @@ def args(**changes):
     values = dict(username="SS0094", asset_id=None, amount=550_000_000, sample_count=3,
                   as_of="2026-08-28", complex_no="104629", complex_name="래미안부평",
                   building_name="105", supply_area="79.72", exclusive_area="59.92",
-                  source_url="https://new.land.naver.com/complexes/104629")
+                  source_url="https://new.land.naver.com/complexes/104629",
+                  allow_large_change=False)
     values.update(changes)
     return argparse.Namespace(**values)
 
@@ -74,6 +75,13 @@ class PropertyUpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "asset-id required"):
             apply_valuation(self.db, args())
         self.assertEqual(first, self.db.execute("SELECT MIN(id) FROM family_asset_entry").fetchone()[0])
+
+    def test_large_weekly_change_requires_manual_override(self):
+        asset_id = apply_valuation(self.db, args())["asset_id"]
+        with self.assertRaisesRegex(ValueError, "more than 20%"):
+            apply_valuation(self.db, args(asset_id=asset_id, amount=800_000_000))
+        self.assertEqual(550_000_000, self.db.execute(
+            "SELECT amount FROM family_asset_entry WHERE id=?", (asset_id,)).fetchone()[0])
 
 
 if __name__ == "__main__":

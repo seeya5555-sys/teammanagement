@@ -31,6 +31,7 @@ def _parser():
     parser.add_argument("--supply-area", required=True)
     parser.add_argument("--exclusive-area", required=True)
     parser.add_argument("--source-url", required=True)
+    parser.add_argument("--allow-large-change", action="store_true")
     return parser
 
 
@@ -104,6 +105,10 @@ def apply_valuation(conn, args):
                 f"전용 {args.exclusive_area}㎡ · 단지 {args.complex_no} · "
                 f"표본 {args.sample_count}건 · 기준일 {args.as_of} · {args.source_url}")
         if existing:
+            previous_amount = int(existing[3])
+            if (previous_amount > 0 and not args.allow_large_change and
+                    abs(args.amount - previous_amount) / previous_amount > 0.20):
+                raise ValueError("valuation changed by more than 20%; manual confirmation required")
             asset_id = existing[0]
             conn.execute(
                 "UPDATE family_asset_entry SET name=?,amount=?,institution='네이버 부동산',"
