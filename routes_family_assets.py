@@ -152,14 +152,38 @@ def _cashflow_snapshot(household_id, members, assets, month):
             'expenses': spent_items, 'details_private': member['id'] != session['user_id'],
         })
     salary = sum(int(row['amount']) for row in assets if row['kind'] == 'income')
+    saving_transfers = sum(int(row['monthly_flow_amount']) for row in assets
+                           if row['kind'] == 'saving')
+    investment_transfers = sum(int(row['monthly_flow_amount']) for row in assets
+                               if row['kind'] == 'stock')
+    loan_payments = sum(int(row['monthly_flow_amount']) for row in assets
+                        if row['kind'] == 'loan')
+    # In allocation model v2 every loan monthly_flow_amount is principal-only.
+    # Interest is recorded independently as an ordinary expense, so it cannot be double counted.
+    loan_principal_payments = loan_payments
+    loan_interest_expenses = int(query(
+        "SELECT COALESCE(SUM(amount),0) total FROM family_cash_expense "
+        "WHERE household_id=? AND substr(spent_on,1,7)=? "
+        "AND category IN ('home_loan_interest','car_loan_interest')",
+        (household_id, month), one=True)['total'])
     expense_total = ordinary_total + allowance_total
+    allocated_income = (expense_total + saving_transfers + investment_transfers
+                        + loan_principal_payments)
     return {
         'month': month,
+        'allocation_model_version': 2,
         'salary_income': salary,
         'ordinary_expenses': ordinary_total,
         'my_ordinary_expenses': sum(int(row['amount']) for row in expenses),
         'expense_details_private': True,
         'allowance_allocated': allowance_total,
+        'saving_transfers': saving_transfers,
+        'investment_transfers': investment_transfers,
+        'loan_payments': loan_payments,
+        'loan_interest_expenses': loan_interest_expenses,
+        'loan_principal_payments': loan_principal_payments,
+        'allocated_income': allocated_income,
+        'unallocated_income': salary - allocated_income,
         'expense_total': expense_total,
         'available_after_expenses': salary - expense_total,
         'expenses': [dict(row) for row in expenses],

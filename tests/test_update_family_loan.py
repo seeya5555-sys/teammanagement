@@ -51,7 +51,7 @@ class FamilyLoanUpdateTests(unittest.TestCase):
         ))
         self.assertEqual(292_425_916, recorded["balance"])
         self.assertEqual(902_257, recorded["total"])
-        self.assertEqual((292_425_916, 902_257, "2026-08"), conn.execute(
+        self.assertEqual((292_425_916, 223_711, "2026-08"), conn.execute(
             "SELECT amount,monthly_flow_amount,monthly_flow_month "
             "FROM family_asset_entry WHERE id=?", (aid,),
         ).fetchone())
@@ -116,7 +116,7 @@ class FamilyLoanUpdateTests(unittest.TestCase):
             username="ysson", asset_id=aid, date="2026-09-15", installment_no=64,
             principal=2_000, interest=200,
         ))
-        self.assertEqual((983_000, 7_700, "2026-09"), conn.execute(
+        self.assertEqual((983_000, 7_000, "2026-09"), conn.execute(
             "SELECT amount,monthly_flow_amount,monthly_flow_month "
             "FROM family_asset_entry WHERE id=?", (aid,),
         ).fetchone())
@@ -144,7 +144,7 @@ class FamilyLoanUpdateTests(unittest.TestCase):
         row = conn.execute(
             "SELECT amount,monthly_flow_amount,monthly_flow_month FROM family_asset_entry WHERE id=?", (aid,)
         ).fetchone()
-        self.assertEqual((292_425_916, 902_257, "2026-08"), row)
+        self.assertEqual((292_425_916, 223_711, "2026-08"), row)
         conn.close()
 
     def test_month_end_and_idempotent_skip(self):

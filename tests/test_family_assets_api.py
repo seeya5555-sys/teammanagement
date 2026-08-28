@@ -389,15 +389,52 @@ assert owner_flow['expense_details_private'] is partner_flow['expense_details_pr
 assert owner_flow['my_ordinary_expenses'] == 300_000 and len(owner_flow['expenses']) == 1
 assert partner_flow['my_ordinary_expenses'] == 0 and partner_flow['expenses'] == []
 assert c2.delete(f'/api/family-assets/cash-expenses/{expense_id}').status_code == 404
+interest_created = c1.post('/api/family-assets/cash-expenses', json={
+    'category': 'car_loan_interest', 'name': '자동차대출 이자',
+    'amount': 100_000, 'spent_on': today,
+})
+assert interest_created.status_code == 201
+interest_id = next(x['id'] for x in interest_created.json['cash_flow']['expenses']
+                   if x['name'] == '자동차대출 이자')
+flow_asset_ids = []
+for kind, name, amount, monthly_flow, needs_evidence in (
+        ('saving', '적금', 10_000_000, 1_000_000, True),
+        ('stock', '투자', 20_000_000, 500_000, True),
+        ('loan', '자동차대출', 30_000_000, 500_000, False),
+        ('loan', '기타대출', 10_000_000, 200_000, False)):
+    payload = {'kind': kind, 'name': name, 'amount': amount,
+               'owner_mode': 'member', 'owner_user_id': u1,
+               'institution': '테스트', 'note': '', 'monthly_flow_amount': monthly_flow}
+    if needs_evidence:
+        payload['evidence_base64'] = evidence
+    created = c1.post('/api/family-assets/assets', json=payload)
+    assert created.status_code == 201
+    flow_asset_ids.append(created.json['id'])
 assert c1.put(f'/api/family-assets/allowances/{u1}',
               json={'allocated_amount': 500_000}).status_code == 200
 allowance_snap = c1.put(f'/api/family-assets/allowances/{u2}',
                         json={'allocated_amount': 400_000}).json['cash_flow']
 assert allowance_snap['salary_income'] == 5_000_000
-assert allowance_snap['ordinary_expenses'] == 300_000
+assert allowance_snap['allocation_model_version'] == 2
+assert allowance_snap['ordinary_expenses'] == 400_000
 assert allowance_snap['allowance_allocated'] == 900_000
-assert allowance_snap['expense_total'] == 1_200_000
-assert allowance_snap['available_after_expenses'] == 3_800_000
+assert allowance_snap['saving_transfers'] == 1_000_000
+assert allowance_snap['investment_transfers'] == 500_000
+assert allowance_snap['loan_payments'] == 700_000
+assert allowance_snap['loan_interest_expenses'] == 100_000
+assert allowance_snap['loan_principal_payments'] == 700_000
+assert allowance_snap['expense_total'] == 1_300_000
+assert allowance_snap['allocated_income'] == 3_500_000
+assert allowance_snap['unallocated_income'] == 1_500_000
+assert allowance_snap['available_after_expenses'] == 3_700_000  # 구버전 호환 필드
+over_allocated = c1.post('/api/family-assets/cash-expenses', json={
+    'category': 'other', 'name': '초과배분 검증', 'amount': 6_000_000, 'spent_on': today,
+})
+assert over_allocated.status_code == 201
+assert over_allocated.json['cash_flow']['unallocated_income'] == -4_500_000
+over_id = next(x['id'] for x in over_allocated.json['cash_flow']['expenses']
+               if x['name'] == '초과배분 검증')
+assert c1.delete(f'/api/family-assets/cash-expenses/{over_id}').status_code == 200
 # BEGIN IMMEDIATE 안의 remaining 재조회로 동시 두 건 중 예산 내 한 건만 성공한다.
 allowance_barrier = Barrier(2)
 def race_allowance_spend(client_):
@@ -430,7 +467,7 @@ assert spend_created.status_code == 201
 spend_flow = spend_created.json['cash_flow']
 mine = next(x for x in spend_flow['allowances'] if x['member_user_id'] == u1)
 assert mine['spent_amount'] == 100_000 and mine['remaining_amount'] == 400_000
-assert spend_flow['expense_total'] == 1_200_000  # 용돈 내부 사용은 가계 지출로 이중차감하지 않음.
+assert spend_flow['expense_total'] == 1_300_000  # 용돈 내부 사용은 가계 지출로 이중차감하지 않음.
 spend_id = mine['expenses'][0]['id']
 partner_u1 = next(x for x in c2.get('/api/family-assets').json['cash_flow']['allowances']
                   if x['member_user_id'] == u1)
@@ -448,10 +485,18 @@ assert c1.delete(f'/api/family-assets/allowance-expenses/{spend_id}').status_cod
 assert c1.put(f'/api/family-assets/allowances/{u1}', json={'allocated_amount': 0}).status_code == 200
 assert c1.put(f'/api/family-assets/allowances/{u2}', json={'allocated_amount': 0}).status_code == 200
 assert c1.delete(f'/api/family-assets/cash-expenses/{expense_id}').status_code == 200
+assert c1.delete(f'/api/family-assets/cash-expenses/{interest_id}').status_code == 200
+for flow_asset_id in flow_asset_ids:
+    flow_revision = next(a for a in c1.get('/api/family-assets').json['assets']
+                         if a['id'] == flow_asset_id)['revision']
+    assert c1.delete(f'/api/family-assets/assets/{flow_asset_id}',
+                     json={'expected_revision': flow_revision}).status_code == 200
 salary_revision = next(a for a in c1.get('/api/family-assets').json['assets']
                        if a['id'] == salary_id)['revision']
 assert c1.delete(f'/api/family-assets/assets/{salary_id}',
                  json={'expected_revision': salary_revision}).status_code == 200
+zero_flow = c1.get('/api/family-assets').json['cash_flow']
+assert zero_flow['salary_income'] == zero_flow['allocated_income'] == zero_flow['unallocated_income'] == 0
 
 # GET은 DB를 쓰지 않는다. 실데이터 전에는 현재 달만, 이후 빈 달은 직전 잔액을 이월한다.
 hid = c1.get('/api/family-assets').json['household']['id']

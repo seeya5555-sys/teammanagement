@@ -197,7 +197,7 @@ def apply_due(conn, args):
                 "UPDATE family_asset_entry SET amount=?,monthly_flow_amount=?,"
                 "monthly_flow_month=strftime('%Y-%m',?,'+9 hours'),updated_by=?,revision=revision+1,"
                 "updated_at=datetime('now','localtime') WHERE id=? AND household_id=?",
-                (after, total, due.isoformat(), uid, loan[0], hid),
+                (after, principal, due.isoformat(), uid, loan[0], hid),
             )
             conn.execute(
                 "INSERT INTO family_asset_history(household_id,asset_id,action,asset_name,kind,"
@@ -305,7 +305,8 @@ def record_payment(conn, args):
         after = balance - args.principal
         total = args.principal + args.interest
         prior_flow = int(loan[3])
-        flow = prior_flow + total if loan[5] == paid_on.strftime("%Y-%m") else total
+        flow = (prior_flow + args.principal
+                if loan[5] == paid_on.strftime("%Y-%m") else args.principal)
         conn.execute(
             "UPDATE family_asset_entry SET amount=?,monthly_flow_amount=?,"
             "monthly_flow_month=substr(?,1,7),updated_by=?,revision=revision+1,"
