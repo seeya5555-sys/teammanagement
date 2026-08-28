@@ -211,6 +211,8 @@ CREATE TABLE IF NOT EXISTS family_asset_entry (
     joint_share   INTEGER NOT NULL DEFAULT 50 CHECK(joint_share BETWEEN 0 AND 100),
     institution   TEXT NOT NULL DEFAULT '',
     note          TEXT NOT NULL DEFAULT '',
+    monthly_flow_amount INTEGER NOT NULL DEFAULT 0 CHECK(monthly_flow_amount >= 0),
+    monthly_flow_month  TEXT,
     revision      INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
     created_by    INTEGER NOT NULL REFERENCES users(id),
     updated_by    INTEGER NOT NULL REFERENCES users(id),
@@ -230,6 +232,8 @@ CREATE TABLE IF NOT EXISTS family_asset_history (
     kind           TEXT NOT NULL,
     amount_before  INTEGER,
     amount_after   INTEGER,
+    monthly_flow_before INTEGER,
+    monthly_flow_after  INTEGER,
     changed_by     INTEGER NOT NULL,
     created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );

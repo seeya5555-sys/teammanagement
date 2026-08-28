@@ -57,12 +57,15 @@ def _snapshot(member):
         "WHERE m.household_id=? ORDER BY m.joined_at,m.user_id", (hid,))
     assets = query(
         "SELECT a.id,a.kind,a.name,a.amount,a.owner_mode,a.owner_user_id,a.joint_share,"
-        "a.institution,a.note,a.revision,a.updated_at,a.updated_by,u.display_name updated_by_name "
+        "a.institution,a.note,CASE WHEN a.monthly_flow_month=strftime('%Y-%m','now','+9 hours') "
+        "THEN a.monthly_flow_amount ELSE 0 END monthly_flow_amount,"
+        "a.revision,a.updated_at,a.updated_by,u.display_name updated_by_name "
         "FROM family_asset_entry a LEFT JOIN users u ON u.id=a.updated_by "
         "WHERE a.household_id=? ORDER BY a.updated_at DESC,a.id DESC", (hid,))
     history = query(
         "SELECT h.id,h.asset_id,h.action,h.asset_name,h.kind,h.amount_before,h.amount_after,"
-        "h.changed_by,h.created_at,COALESCE(u.display_name,u.username,'구성원') changed_by_name "
+        "h.monthly_flow_before,h.monthly_flow_after,h.changed_by,h.created_at,"
+        "COALESCE(u.display_name,u.username,'구성원') changed_by_name "
         "FROM family_asset_history h LEFT JOIN users u ON u.id=h.changed_by "
         "WHERE h.household_id=? ORDER BY h.id DESC LIMIT 50", (hid,))
     current = _totals_from_rows(assets)
@@ -147,9 +150,12 @@ def _record_change(db, member, action, asset_id, before, after):
     row = after or before
     db.execute(
         "INSERT INTO family_asset_history(household_id,asset_id,action,asset_name,kind,"
-        "amount_before,amount_after,changed_by) VALUES(?,?,?,?,?,?,?,?)",
+        "amount_before,amount_after,monthly_flow_before,monthly_flow_after,changed_by) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
         (member['household_id'], asset_id, action, row['name'], row['kind'],
          before['amount'] if before else None, after['amount'] if after else None,
+         before['monthly_flow_amount'] if before else None,
+         after['monthly_flow_amount'] if after else None,
          session['user_id']))
 
 
@@ -365,6 +371,26 @@ def _asset_payload(d, member):
             raise ValueError('공동 지분은 정수로 입력')
         if not 0 <= joint_share <= 100:
             raise ValueError('공동 지분은 0~100')
+    flow_provided = 'monthly_flow_amount' in d
+    monthly_flow_amount = None
+    if flow_provided:
+        raw_flow = d.get('monthly_flow_amount')
+        try:
+            if isinstance(raw_flow, bool) or isinstance(raw_flow, float):
+                raise ValueError
+            monthly_flow_amount = int(raw_flow)
+            if isinstance(raw_flow, str) and str(monthly_flow_amount) != raw_flow.strip():
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError('이번 달 흐름은 원 단위 정수로 입력')
+        if monthly_flow_amount < 0 or monthly_flow_amount > 999_999_999_999_999:
+            raise ValueError('이번 달 흐름 금액 범위 오류')
+    if kind not in {'saving', 'stock', 'loan'}:
+        if monthly_flow_amount not in (None, 0):
+            raise ValueError('저축·투자·대출만 이번 달 흐름을 기록할 수 있음')
+        # 분류를 바꿀 때 옛 납입액이 다른 자산에 붙어 남지 않게 명시 초기화한다.
+        monthly_flow_amount = 0
+        flow_provided = True
     return {
         'kind': kind,
         'name': _clean_text(d.get('name'), '이름', required=True, limit=80),
@@ -374,6 +400,8 @@ def _asset_payload(d, member):
         'joint_share': joint_share,
         'institution': _clean_text(d.get('institution'), '금융기관', limit=80),
         'note': _clean_text(d.get('note'), '메모', limit=300),
+        'monthly_flow_amount': monthly_flow_amount,
+        'monthly_flow_provided': flow_provided,
     }
 
 
@@ -397,10 +425,13 @@ def family_asset_create():
     db = get_db()
     cur = db.execute(
         "INSERT INTO family_asset_entry(household_id,kind,name,amount,owner_mode,owner_user_id,"
-        "joint_share,institution,note,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        "joint_share,institution,note,monthly_flow_amount,monthly_flow_month,created_by,updated_by) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m','now','+9 hours'),?,?)",
         (member['household_id'], p['kind'], p['name'], p['amount'], p['owner_mode'],
          p['owner_user_id'], p['joint_share'], p['institution'], p['note'],
+         p['monthly_flow_amount'] or 0,
          session['user_id'], session['user_id']))
+    p['monthly_flow_amount'] = p['monthly_flow_amount'] or 0
     _record_change(db, member, 'create', cur.lastrowid, None, p)
     _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
@@ -414,7 +445,8 @@ def family_asset_update(asset_id):
     if not member:
         return jsonify({'error': 'household_required'}), 409
     existing = query(
-        "SELECT id,kind,name,amount,revision FROM family_asset_entry "
+        "SELECT id,kind,name,amount,CASE WHEN monthly_flow_month=strftime('%Y-%m','now','+9 hours') "
+        "THEN monthly_flow_amount ELSE 0 END monthly_flow_amount,revision FROM family_asset_entry "
         "WHERE id=? AND household_id=?",
         (asset_id, member['household_id']), one=True)
     if not existing:
@@ -428,14 +460,20 @@ def family_asset_update(asset_id):
     db = get_db()
     cur = db.execute(
         "UPDATE family_asset_entry SET kind=?,name=?,amount=?,owner_mode=?,owner_user_id=?,"
-        "joint_share=?,institution=?,note=?,updated_by=?,revision=revision+1,"
+        "joint_share=?,institution=?,note=?,"
+        "monthly_flow_amount=CASE WHEN ? THEN ? ELSE monthly_flow_amount END,"
+        "monthly_flow_month=CASE WHEN ? THEN strftime('%Y-%m','now','+9 hours') ELSE monthly_flow_month END,"
+        "updated_by=?,revision=revision+1,"
         "updated_at=datetime('now','localtime') WHERE id=? AND household_id=? AND revision=?",
         (p['kind'], p['name'], p['amount'], p['owner_mode'], p['owner_user_id'],
-         p['joint_share'], p['institution'], p['note'], session['user_id'], asset_id,
+         p['joint_share'], p['institution'], p['note'], p['monthly_flow_provided'],
+         p['monthly_flow_amount'] or 0, p['monthly_flow_provided'], session['user_id'], asset_id,
          member['household_id'], expected_revision))
     if not cur.rowcount:
         db.rollback()
         return jsonify({'error': 'edit_conflict'}), 409
+    if p['monthly_flow_amount'] is None:
+        p['monthly_flow_amount'] = existing['monthly_flow_amount']
     _record_change(db, member, 'update', asset_id, existing, p)
     _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
@@ -450,7 +488,8 @@ def family_asset_delete(asset_id):
         return jsonify({'error': 'household_required'}), 409
     db = get_db()
     existing = db.execute(
-        "SELECT id,kind,name,amount,revision FROM family_asset_entry "
+        "SELECT id,kind,name,amount,CASE WHEN monthly_flow_month=strftime('%Y-%m','now','+9 hours') "
+        "THEN monthly_flow_amount ELSE 0 END monthly_flow_amount,revision FROM family_asset_entry "
         "WHERE id=? AND household_id=?",
         (asset_id, member['household_id'])).fetchone()
     if not existing:

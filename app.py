@@ -216,6 +216,16 @@ def init_db(drop=False):
             'PRAGMA table_info(family_asset_entry)').fetchall()}
         if _family_asset_cols and 'revision' not in _family_asset_cols:
             conn.execute('ALTER TABLE family_asset_entry ADD COLUMN revision INTEGER NOT NULL DEFAULT 1')
+        if _family_asset_cols and 'monthly_flow_amount' not in _family_asset_cols:
+            conn.execute('ALTER TABLE family_asset_entry ADD COLUMN monthly_flow_amount INTEGER NOT NULL DEFAULT 0 CHECK(monthly_flow_amount >= 0)')
+        if _family_asset_cols and 'monthly_flow_month' not in _family_asset_cols:
+            conn.execute('ALTER TABLE family_asset_entry ADD COLUMN monthly_flow_month TEXT')
+        _family_history_cols = {r[1] for r in conn.execute(
+            'PRAGMA table_info(family_asset_history)').fetchall()}
+        if _family_history_cols and 'monthly_flow_before' not in _family_history_cols:
+            conn.execute('ALTER TABLE family_asset_history ADD COLUMN monthly_flow_before INTEGER')
+        if _family_history_cols and 'monthly_flow_after' not in _family_history_cols:
+            conn.execute('ALTER TABLE family_asset_history ADD COLUMN monthly_flow_after INTEGER')
         print('  · 스키마 적용 완료')
 
         cal_cols = [r[1] for r in conn.execute('PRAGMA table_info(calendar_events)').fetchall()]
@@ -1662,6 +1672,20 @@ def _auto_migrate():
             if family_asset_cols and 'revision' not in family_asset_cols:
                 conn.execute('ALTER TABLE family_asset_entry ADD COLUMN revision INTEGER NOT NULL DEFAULT 1')
                 print('[auto_migrate] family_asset_entry.revision 추가')
+            if family_asset_cols and 'monthly_flow_amount' not in family_asset_cols:
+                conn.execute('ALTER TABLE family_asset_entry ADD COLUMN monthly_flow_amount INTEGER NOT NULL DEFAULT 0 CHECK(monthly_flow_amount >= 0)')
+                print('[auto_migrate] family_asset_entry.monthly_flow_amount 추가')
+            if family_asset_cols and 'monthly_flow_month' not in family_asset_cols:
+                conn.execute('ALTER TABLE family_asset_entry ADD COLUMN monthly_flow_month TEXT')
+                print('[auto_migrate] family_asset_entry.monthly_flow_month 추가')
+            family_history_cols = {r[1] for r in conn.execute(
+                'PRAGMA table_info(family_asset_history)').fetchall()}
+            if family_history_cols and 'monthly_flow_before' not in family_history_cols:
+                conn.execute('ALTER TABLE family_asset_history ADD COLUMN monthly_flow_before INTEGER')
+                print('[auto_migrate] family_asset_history.monthly_flow_before 추가')
+            if family_history_cols and 'monthly_flow_after' not in family_history_cols:
+                conn.execute('ALTER TABLE family_asset_history ADD COLUMN monthly_flow_after INTEGER')
+                print('[auto_migrate] family_asset_history.monthly_flow_after 추가')
         except Exception as e:
             print(f'[auto_migrate] family_asset_entry.revision 점검 건너뜀: {e}')
         # 가장 독립적인 additive 보강부터 순서가 고정된 하위 모듈에서 실행한다.

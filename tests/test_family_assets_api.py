@@ -178,15 +178,24 @@ assert c1.post('/api/family-assets/partner-account/password',
 assert c3.post('/api/family-assets/join', json={'invite_code': code}).status_code == 409
 
 payload = {'kind': 'saving', 'name': '목돈 통장', 'amount': 12000000,
-           'owner_mode': 'member', 'owner_user_id': u2, 'institution': '은행', 'note': ''}
+           'owner_mode': 'member', 'owner_user_id': u2, 'institution': '은행', 'note': '',
+           'monthly_flow_amount': 500000}
 r = c1.post('/api/family-assets/assets', json=payload)
 assert r.status_code == 201, r.get_data(as_text=True)
 asset_id = r.json['id']
 snap = c2.get('/api/family-assets').json
 assert snap['assets'][0]['amount'] == 12000000 and snap['assets'][0]['owner_user_id'] == u2
+assert snap['assets'][0]['monthly_flow_amount'] == 500000
+try:
+    db = A.get_db()
+    db.execute('UPDATE family_asset_entry SET monthly_flow_amount=-1 WHERE id=?', (asset_id,))
+    raise AssertionError('monthly flow DB CHECK missing')
+except sqlite3.IntegrityError:
+    db.rollback()
 revision1 = snap['assets'][0]['revision']
 assert revision1 > 0
 assert snap['history'][0]['action'] == 'create' and snap['history'][0]['amount_after'] == 12000000
+assert snap['history'][0]['monthly_flow_after'] == 500000
 assert snap['trends'][-1]['total_assets'] == 12000000 and snap['trends'][-1]['net_worth'] == 12000000
 assert c3.get('/api/family-assets').json['setup_required'] is True
 assert c3.patch(f'/api/family-assets/assets/{asset_id}', json=payload).status_code == 409
@@ -199,7 +208,8 @@ assert c3.patch(f'/api/family-assets/assets/{asset_id}', json=payload).status_co
 assert c4.delete(f'/api/family-assets/assets/{asset_id}').status_code == 404
 
 joint = {**payload, 'kind': 'property', 'name': '우리집', 'amount': 700000000,
-         'owner_mode': 'joint', 'owner_user_id': None, 'joint_share': 60}
+         'owner_mode': 'joint', 'owner_user_id': None, 'joint_share': 60,
+         'monthly_flow_amount': 0}
 assert c1.patch(f'/api/family-assets/assets/{asset_id}', json=joint).status_code == 400
 assert c2.patch(f'/api/family-assets/assets/{asset_id}',
                 json={**joint, 'expected_revision': revision1}).status_code == 200
@@ -211,6 +221,16 @@ audit = c1.get('/api/family-assets').json
 assert [h['action'] for h in audit['history'][:2]] == ['update', 'create']
 assert audit['history'][0]['amount_before'] == 12000000
 assert audit['history'][0]['amount_after'] == 700000000
+assert audit['history'][0]['monthly_flow_before'] == 500000
+assert audit['history'][0]['monthly_flow_after'] == 0
+
+# 이번 달 흐름은 KST 월이 지나면 API에서 0이 되며 GET이 원래 값을 지우지 않는다.
+db = A.get_db()
+db.execute("UPDATE family_asset_entry SET monthly_flow_amount=777,monthly_flow_month='2000-01' "
+           "WHERE id=?", (asset_id,)); db.commit()
+assert c1.get('/api/family-assets').json['assets'][0]['monthly_flow_amount'] == 0
+assert db.execute('SELECT monthly_flow_amount FROM family_asset_entry WHERE id=?',
+                  (asset_id,)).fetchone()[0] == 777
 
 # 두 기기가 같은 revision에서 시작하면 첫 저장만 성공하고 stale 저장/삭제는 원장·이력을 못 건드린다.
 history_count = len(audit['history'])
@@ -262,7 +282,41 @@ assert c1.delete(f'/api/family-assets/assets/{race_id}',
 bad = {**payload, 'owner_user_id': outsider}
 assert c1.post('/api/family-assets/assets', json=bad).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**payload, 'amount': 12.9}).status_code == 400
+assert c1.post('/api/family-assets/assets', json={**payload, 'monthly_flow_amount': True}).status_code == 400
+assert c1.post('/api/family-assets/assets', json={**joint, 'monthly_flow_amount': 1}).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**joint, 'joint_share': 101}).status_code == 400
+
+# build 306 이하 앱은 신규 필드를 모르므로 생성은 0, 수정은 현재 달 값을 보존한다.
+legacy_payload = {k: v for k, v in payload.items() if k != 'monthly_flow_amount'}
+legacy_created = c1.post('/api/family-assets/assets', json=legacy_payload)
+assert legacy_created.status_code == 201
+legacy_id = legacy_created.json['id']
+legacy_entry = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == legacy_id)
+assert legacy_entry['monthly_flow_amount'] == 0
+db.execute("UPDATE family_asset_entry SET monthly_flow_amount=321,"
+           "monthly_flow_month=strftime('%Y-%m','now','+9 hours') WHERE id=?", (legacy_id,)); db.commit()
+assert c1.patch(f'/api/family-assets/assets/{legacy_id}',
+                json={**legacy_payload, 'expected_revision': legacy_entry['revision']}).status_code == 200
+legacy_after = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == legacy_id)
+assert legacy_after['monthly_flow_amount'] == 321
+# supported kind끼리의 구버전 변경은 흐름을 보존한다.
+assert c1.patch(f'/api/family-assets/assets/{legacy_id}',
+                json={**legacy_payload, 'kind': 'stock',
+                      'expected_revision': legacy_after['revision']}).status_code == 200
+legacy_after = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == legacy_id)
+assert legacy_after['monthly_flow_amount'] == 321 and legacy_after['kind'] == 'stock'
+# 월 key는 client 값을 받지 않고 서버 KST로만 stamp한다.
+assert c1.patch(f'/api/family-assets/assets/{legacy_id}',
+                json={**legacy_payload, 'kind': 'stock', 'monthly_flow_amount': 999,
+                      'monthly_flow_month': '2099-01',
+                      'expected_revision': legacy_after['revision']}).status_code == 200
+legacy_after = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == legacy_id)
+stored_flow = db.execute('SELECT monthly_flow_amount,monthly_flow_month FROM family_asset_entry '
+                         'WHERE id=?', (legacy_id,)).fetchone()
+server_month = db.execute("SELECT strftime('%Y-%m','now','+9 hours')").fetchone()[0]
+assert tuple(stored_flow) == (999, server_month)
+assert c1.delete(f'/api/family-assets/assets/{legacy_id}',
+                 json={'expected_revision': legacy_after['revision']}).status_code == 200
 
 # GET은 DB를 쓰지 않는다. 실데이터 전에는 현재 달만, 이후 빈 달은 직전 잔액을 이월한다.
 hid = c1.get('/api/family-assets').json['household']['id']
@@ -311,9 +365,16 @@ assert [x['id'] for x in bounded_history] == sorted([x['id'] for x in bounded_hi
 
 # 기존 family_asset_entry 표에도 additive migration으로 revision=1을 보강한다.
 migration_asset = c1.post('/api/family-assets/assets', json=payload).json['id']
-db.execute('ALTER TABLE family_asset_entry DROP COLUMN revision'); db.commit()
+db.execute('ALTER TABLE family_asset_entry DROP COLUMN revision')
+db.execute('ALTER TABLE family_asset_entry DROP COLUMN monthly_flow_amount')
+db.execute('ALTER TABLE family_asset_entry DROP COLUMN monthly_flow_month')
+db.execute('ALTER TABLE family_asset_history DROP COLUMN monthly_flow_before')
+db.execute('ALTER TABLE family_asset_history DROP COLUMN monthly_flow_after'); db.commit()
 A._auto_migrate()
-assert 'revision' in {r[1] for r in db.execute('PRAGMA table_info(family_asset_entry)')}
+entry_cols = {r[1] for r in db.execute('PRAGMA table_info(family_asset_entry)')}
+history_cols = {r[1] for r in db.execute('PRAGMA table_info(family_asset_history)')}
+assert {'revision', 'monthly_flow_amount', 'monthly_flow_month'} <= entry_cols
+assert {'monthly_flow_before', 'monthly_flow_after'} <= history_cols
 assert db.execute('SELECT revision FROM family_asset_entry WHERE id=?',
                   (migration_asset,)).fetchone()[0] == 1
 
