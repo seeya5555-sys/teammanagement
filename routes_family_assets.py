@@ -65,15 +65,19 @@ def _snapshot(member):
         "h.changed_by,h.created_at,COALESCE(u.display_name,u.username,'구성원') changed_by_name "
         "FROM family_asset_history h LEFT JOIN users u ON u.id=h.changed_by "
         "WHERE h.household_id=? ORDER BY h.id DESC LIMIT 50", (hid,))
-    stored_trends = query(
-        "SELECT month,total_assets,total_debt,net_worth,captured_at "
-        "FROM family_asset_monthly_snapshot WHERE household_id=? "
-        "ORDER BY month DESC LIMIT 12", (hid,))
     current = _totals_from_rows(assets)
     # 서비스 기준 시각은 KST로 고정한다. 서버 OS timezone과 무관하게 월 경계가 같다.
     month = query("SELECT strftime('%Y-%m','now','+9 hours') month", one=True)['month']
-    trends_by_month = {r['month']: dict(r) for r in stored_trends}
-    trends_by_month[month] = {'month': month, **current, 'captured_at': None}
+    first_month = _shift_month(month, -11)
+    stored_trends = query(
+        "SELECT month,total_assets,total_debt,net_worth,captured_at "
+        "FROM family_asset_monthly_snapshot WHERE household_id=? AND month BETWEEN ? AND ? "
+        "ORDER BY month", (hid, first_month, month))
+    opening_trend = query(
+        "SELECT month,total_assets,total_debt,net_worth,captured_at "
+        "FROM family_asset_monthly_snapshot WHERE household_id=? AND month<? "
+        "ORDER BY month DESC LIMIT 1", (hid, first_month), one=True)
+    trends = _continuous_trends(stored_trends, opening_trend, month, current)
     return {
         'setup_required': False,
         'household': {'id': hid, 'name': member['household_name'],
@@ -81,8 +85,50 @@ def _snapshot(member):
         'members': [dict(x) for x in members],
         'assets': [dict(x) for x in assets],
         'history': [dict(x) for x in history],
-        'trends': [trends_by_month[k] for k in sorted(trends_by_month)[-12:]],
+        'trends': trends,
     }
+
+
+def _shift_month(month, delta):
+    """YYYY-MM를 연/월 경계를 보존해 delta개월 이동한다."""
+    year, number = (int(part) for part in month.split('-'))
+    index = year * 12 + number - 1 + delta
+    return f'{index // 12:04d}-{index % 12 + 1:02d}'
+
+
+def _continuous_trends(stored_rows, opening_row, current_month, current_totals):
+    """실데이터가 시작된 뒤의 빈 달만 직전 확정 잔액으로 이월한다."""
+    first_month = _shift_month(current_month, -11)
+    stored = {row['month']: dict(row) for row in stored_rows}
+    carried = dict(opening_row) if opening_row else None
+    result = []
+    for offset in range(12):
+        month = _shift_month(first_month, offset)
+        if month == current_month:
+            result.append({'month': month, **current_totals, 'captured_at': None,
+                           'carried_forward': False})
+            continue
+        if month in stored:
+            carried = stored[month]
+            # 쿼리/스키마가 확장돼도 API에는 trend 계약 필드만 노출한다.
+            result.append({
+                'month': month,
+                'total_assets': carried['total_assets'],
+                'total_debt': carried['total_debt'],
+                'net_worth': carried['net_worth'],
+                'captured_at': carried['captured_at'],
+                'carried_forward': False,
+            })
+        elif carried:
+            result.append({
+                'month': month,
+                'total_assets': carried['total_assets'],
+                'total_debt': carried['total_debt'],
+                'net_worth': carried['net_worth'],
+                'captured_at': None,
+                'carried_forward': True,
+            })
+    return result
 
 
 def _totals_from_rows(rows):

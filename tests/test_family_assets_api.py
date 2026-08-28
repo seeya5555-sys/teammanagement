@@ -264,21 +264,38 @@ assert c1.post('/api/family-assets/assets', json=bad).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**payload, 'amount': 12.9}).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**joint, 'joint_share': 101}).status_code == 400
 
-# GET은 DB를 쓰지 않고, 13개월 중 최신 12개월만 월 중복 없이 오름차순 반환한다.
+# GET은 DB를 쓰지 않는다. 실데이터 전에는 현재 달만, 이후 빈 달은 직전 잔액을 이월한다.
 hid = c1.get('/api/family-assets').json['household']['id']
 db = A.get_db()
-for months_ago in range(1, 14):
+db.execute('DELETE FROM family_asset_monthly_snapshot WHERE household_id=?', (hid,))
+db.commit()
+empty_count = db.execute(
+    'SELECT COUNT(*) FROM family_asset_monthly_snapshot WHERE household_id=?', (hid,)).fetchone()[0]
+empty_trends = c1.get('/api/family-assets').json['trends']
+assert len(empty_trends) == 1 and empty_trends[0]['carried_forward'] is False
+assert db.execute('SELECT COUNT(*) FROM family_asset_monthly_snapshot WHERE household_id=?',
+                  (hid,)).fetchone()[0] == empty_count
+
+# 12개월 창보다 앞선 opening 잔액부터 연/월 경계를 넘어 연속 12개월을 만든다.
+for months_ago, amount in ((13, 1300), (9, 900), (3, 300), (0, 999999)):
     db.execute(
         "INSERT OR REPLACE INTO family_asset_monthly_snapshot"
         "(household_id,month,total_assets,total_debt,net_worth) "
         "VALUES(?,strftime('%Y-%m','now','+9 hours',?),?,?,?)",
-        (hid, f'-{months_ago} months', months_ago * 100, 0, months_ago * 100))
+        (hid, f'-{months_ago} months', amount, 0, amount))
 db.commit()
 snapshot_count = db.execute(
     'SELECT COUNT(*) FROM family_asset_monthly_snapshot WHERE household_id=?', (hid,)).fetchone()[0]
 bounded = c1.get('/api/family-assets').json['trends']
 assert len(bounded) == 12 and [x['month'] for x in bounded] == sorted({x['month'] for x in bounded})
 assert len({x['month'] for x in bounded}) == 12
+assert all(set(x) == {'month', 'total_assets', 'total_debt', 'net_worth',
+                      'captured_at', 'carried_forward'} for x in bounded)
+assert bounded[0]['net_worth'] == 1300 and bounded[0]['carried_forward'] is True
+assert any(x['net_worth'] == 900 and x['carried_forward'] is False for x in bounded)
+assert any(x['net_worth'] == 900 and x['carried_forward'] is True for x in bounded)
+# 저장된 현재 달 snapshot이 stale이어도 실제 원장의 현재 합계가 우선한다.
+assert bounded[-1]['net_worth'] == 0 and bounded[-1]['carried_forward'] is False
 assert db.execute('SELECT COUNT(*) FROM family_asset_monthly_snapshot WHERE household_id=?',
                   (hid,)).fetchone()[0] == snapshot_count
 
