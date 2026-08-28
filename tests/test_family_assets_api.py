@@ -98,6 +98,8 @@ assert r.status_code == 201, r.get_data(as_text=True)
 asset_id = r.json['id']
 snap = c2.get('/api/family-assets').json
 assert snap['assets'][0]['amount'] == 12000000 and snap['assets'][0]['owner_user_id'] == u2
+assert snap['history'][0]['action'] == 'create' and snap['history'][0]['amount_after'] == 12000000
+assert snap['trends'][-1]['total_assets'] == 12000000 and snap['trends'][-1]['net_worth'] == 12000000
 assert c3.get('/api/family-assets').json['setup_required'] is True
 assert c3.patch(f'/api/family-assets/assets/{asset_id}', json=payload).status_code == 409
 
@@ -113,20 +115,58 @@ joint = {**payload, 'kind': 'property', 'name': '우리집', 'amount': 700000000
 assert c2.patch(f'/api/family-assets/assets/{asset_id}', json=joint).status_code == 200
 edited = c1.get('/api/family-assets').json['assets'][0]
 assert edited['owner_mode'] == 'joint' and edited['joint_share'] == 60
+audit = c1.get('/api/family-assets').json
+assert [h['action'] for h in audit['history'][:2]] == ['update', 'create']
+assert audit['history'][0]['amount_before'] == 12000000
+assert audit['history'][0]['amount_after'] == 700000000
 assert c1.delete(f'/api/family-assets/assets/{asset_id}').status_code == 200
 assert c2.delete(f'/api/family-assets/assets/{asset_id}').status_code == 404
+after_delete = c1.get('/api/family-assets').json
+assert after_delete['history'][0]['action'] == 'delete'
+assert after_delete['history'][0]['amount_before'] == 700000000
+assert after_delete['trends'][-1]['net_worth'] == 0
+assert c3.get('/api/family-assets').json['history'] == []  # 가구간 이력 격리
 
 bad = {**payload, 'owner_user_id': outsider}
 assert c1.post('/api/family-assets/assets', json=bad).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**payload, 'amount': 12.9}).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**joint, 'joint_share': 101}).status_code == 400
 
-# 운영처럼 기존 DB에 신규 표가 없는 상태에서도 _auto_migrate가 schema.sql을 재적용한다.
+# GET은 DB를 쓰지 않고, 13개월 중 최신 12개월만 월 중복 없이 오름차순 반환한다.
+hid = c1.get('/api/family-assets').json['household']['id']
 db = A.get_db()
+for months_ago in range(1, 14):
+    db.execute(
+        "INSERT OR REPLACE INTO family_asset_monthly_snapshot"
+        "(household_id,month,total_assets,total_debt,net_worth) "
+        "VALUES(?,strftime('%Y-%m','now','+9 hours',?),?,?,?)",
+        (hid, f'-{months_ago} months', months_ago * 100, 0, months_ago * 100))
+db.commit()
+snapshot_count = db.execute(
+    'SELECT COUNT(*) FROM family_asset_monthly_snapshot WHERE household_id=?', (hid,)).fetchone()[0]
+bounded = c1.get('/api/family-assets').json['trends']
+assert len(bounded) == 12 and [x['month'] for x in bounded] == sorted({x['month'] for x in bounded})
+assert len({x['month'] for x in bounded}) == 12
+assert db.execute('SELECT COUNT(*) FROM family_asset_monthly_snapshot WHERE household_id=?',
+                  (hid,)).fetchone()[0] == snapshot_count
+
+# 이력은 최신 id 순서로 정확히 50건만 노출한다.
+for idx in range(51):
+    db.execute("INSERT INTO family_asset_history"
+               "(household_id,asset_id,action,asset_name,kind,amount_after,changed_by) "
+               "VALUES(?,NULL,'create',?,'saving',?,?)", (hid, f'경계-{idx}', idx, u1))
+db.commit()
+bounded_history = c1.get('/api/family-assets').json['history']
+assert len(bounded_history) == 50
+assert [x['id'] for x in bounded_history] == sorted([x['id'] for x in bounded_history], reverse=True)
+
+# 운영처럼 기존 DB에 신규 표가 없는 상태에서도 _auto_migrate가 schema.sql을 재적용한다.
+db.execute('DROP TABLE family_asset_history'); db.execute('DROP TABLE family_asset_monthly_snapshot')
 db.execute('DROP TABLE family_asset_entry'); db.execute('DROP TABLE family_asset_member')
 db.execute('DROP TABLE family_asset_household'); db.commit()
 A._auto_migrate()
-for table in ('family_asset_household', 'family_asset_member', 'family_asset_entry'):
+for table in ('family_asset_household', 'family_asset_member', 'family_asset_entry',
+              'family_asset_history', 'family_asset_monthly_snapshot'):
     assert A.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,), one=True), table
 
 # 데이터가 이미 있는 legacy users 표도 row 손실 없이 business 기본값으로 이동한다.

@@ -4,7 +4,6 @@
 가입하고, 그 가구의 구성원만 자산 원장을 읽고 쓸 수 있다.
 """
 import secrets
-import string
 
 from flask import Blueprint, jsonify, request, session
 
@@ -44,7 +43,8 @@ def _invite_code(db):
 
 def _snapshot(member):
     if not member:
-        return {'setup_required': True, 'household': None, 'members': [], 'assets': []}
+        return {'setup_required': True, 'household': None, 'members': [], 'assets': [],
+                'history': [], 'trends': []}
     hid = member['household_id']
     members = query(
         "SELECT m.user_id id,m.display_name,m.role,m.joined_at "
@@ -54,13 +54,64 @@ def _snapshot(member):
         "a.institution,a.note,a.updated_at,a.updated_by,u.display_name updated_by_name "
         "FROM family_asset_entry a LEFT JOIN users u ON u.id=a.updated_by "
         "WHERE a.household_id=? ORDER BY a.updated_at DESC,a.id DESC", (hid,))
+    history = query(
+        "SELECT h.id,h.asset_id,h.action,h.asset_name,h.kind,h.amount_before,h.amount_after,"
+        "h.changed_by,h.created_at,COALESCE(u.display_name,u.username,'구성원') changed_by_name "
+        "FROM family_asset_history h LEFT JOIN users u ON u.id=h.changed_by "
+        "WHERE h.household_id=? ORDER BY h.id DESC LIMIT 50", (hid,))
+    stored_trends = query(
+        "SELECT month,total_assets,total_debt,net_worth,captured_at "
+        "FROM family_asset_monthly_snapshot WHERE household_id=? "
+        "ORDER BY month DESC LIMIT 12", (hid,))
+    current = _totals_from_rows(assets)
+    # 서비스 기준 시각은 KST로 고정한다. 서버 OS timezone과 무관하게 월 경계가 같다.
+    month = query("SELECT strftime('%Y-%m','now','+9 hours') month", one=True)['month']
+    trends_by_month = {r['month']: dict(r) for r in stored_trends}
+    trends_by_month[month] = {'month': month, **current, 'captured_at': None}
     return {
         'setup_required': False,
         'household': {'id': hid, 'name': member['household_name'],
                       'invite_code': member['invite_code'], 'me_user_id': session['user_id']},
         'members': [dict(x) for x in members],
         'assets': [dict(x) for x in assets],
+        'history': [dict(x) for x in history],
+        'trends': [trends_by_month[k] for k in sorted(trends_by_month)[-12:]],
     }
+
+
+def _totals_from_rows(rows):
+    assets = debt = 0
+    for row in rows:
+        if row['kind'] == 'income':
+            continue
+        if row['kind'] == 'loan':
+            debt += int(row['amount'])
+        else:
+            assets += int(row['amount'])
+    return {'total_assets': assets, 'total_debt': debt, 'net_worth': assets - debt}
+
+
+def _record_change(db, member, action, asset_id, before, after):
+    row = after or before
+    db.execute(
+        "INSERT INTO family_asset_history(household_id,asset_id,action,asset_name,kind,"
+        "amount_before,amount_after,changed_by) VALUES(?,?,?,?,?,?,?,?)",
+        (member['household_id'], asset_id, action, row['name'], row['kind'],
+         before['amount'] if before else None, after['amount'] if after else None,
+         session['user_id']))
+
+
+def _upsert_monthly_snapshot(db, household_id):
+    rows = db.execute("SELECT kind,amount FROM family_asset_entry WHERE household_id=?",
+                      (household_id,)).fetchall()
+    totals = _totals_from_rows(rows)
+    db.execute(
+        "INSERT INTO family_asset_monthly_snapshot(household_id,month,total_assets,total_debt,net_worth) "
+        "VALUES(?,strftime('%Y-%m','now','+9 hours'),?,?,?) "
+        "ON CONFLICT(household_id,month) DO UPDATE SET total_assets=excluded.total_assets,"
+        "total_debt=excluded.total_debt,net_worth=excluded.net_worth,"
+        "captured_at=datetime('now','+9 hours')",
+        (household_id, totals['total_assets'], totals['total_debt'], totals['net_worth']))
 
 
 @bp.get('/api/family-assets')
@@ -201,6 +252,8 @@ def family_asset_create():
         (member['household_id'], p['kind'], p['name'], p['amount'], p['owner_mode'],
          p['owner_user_id'], p['joint_share'], p['institution'], p['note'],
          session['user_id'], session['user_id']))
+    _record_change(db, member, 'create', cur.lastrowid, None, p)
+    _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
     return jsonify({'ok': True, 'id': cur.lastrowid}), 201
 
@@ -211,7 +264,7 @@ def family_asset_update(asset_id):
     member = _member()
     if not member:
         return jsonify({'error': 'household_required'}), 409
-    existing = query('SELECT id FROM family_asset_entry WHERE id=? AND household_id=?',
+    existing = query('SELECT id,kind,name,amount FROM family_asset_entry WHERE id=? AND household_id=?',
                      (asset_id, member['household_id']), one=True)
     if not existing:
         return jsonify({'error': 'not_found'}), 404
@@ -227,6 +280,8 @@ def family_asset_update(asset_id):
         (p['kind'], p['name'], p['amount'], p['owner_mode'], p['owner_user_id'],
          p['joint_share'], p['institution'], p['note'], session['user_id'], asset_id,
          member['household_id']))
+    _record_change(db, member, 'update', asset_id, existing, p)
+    _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
     return jsonify({'ok': True})
 
@@ -238,8 +293,15 @@ def family_asset_delete(asset_id):
     if not member:
         return jsonify({'error': 'household_required'}), 409
     db = get_db()
+    existing = db.execute(
+        'SELECT id,kind,name,amount FROM family_asset_entry WHERE id=? AND household_id=?',
+        (asset_id, member['household_id'])).fetchone()
+    if not existing:
+        return jsonify({'error': 'not_found'}), 404
     cur = db.execute('DELETE FROM family_asset_entry WHERE id=? AND household_id=?',
                      (asset_id, member['household_id']))
+    _record_change(db, member, 'delete', asset_id, existing, None)
+    _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
     if not cur.rowcount:
         return jsonify({'error': 'not_found'}), 404

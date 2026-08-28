@@ -219,6 +219,31 @@ CREATE TABLE IF NOT EXISTS family_asset_entry (
 );
 CREATE INDEX IF NOT EXISTS idx_family_asset_entry_household
     ON family_asset_entry(household_id,updated_at DESC);
+CREATE TABLE IF NOT EXISTS family_asset_history (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id  INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+    asset_id       INTEGER,
+    action         TEXT NOT NULL CHECK(action IN ('create','update','delete')),
+    asset_name     TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    amount_before  INTEGER,
+    amount_after   INTEGER,
+    changed_by     INTEGER NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_family_asset_history_household
+    ON family_asset_history(household_id,id DESC);
+CREATE TABLE IF NOT EXISTS family_asset_monthly_snapshot (
+    household_id  INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+    month          TEXT NOT NULL,
+    total_assets   INTEGER NOT NULL,
+    total_debt     INTEGER NOT NULL,
+    net_worth      INTEGER NOT NULL,
+    captured_at    TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+    PRIMARY KEY (household_id,month)
+);
+CREATE INDEX IF NOT EXISTS idx_family_asset_snapshot_household
+    ON family_asset_monthly_snapshot(household_id,month DESC);
 
 -- =============================================================
 --  Dock Daily Report (입거 준비 일일보고)
