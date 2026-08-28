@@ -241,8 +241,30 @@ def _family_cashflow_tables(conn):
                 amount INTEGER NOT NULL CHECK(amount >= 0),
                 PRIMARY KEY(close_id,member_user_id)
             );
+            CREATE TABLE IF NOT EXISTS family_asset_reconciliation (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                household_id INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+                month TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                reconciled_by INTEGER NOT NULL REFERENCES users(id),
+                reconciled_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+                UNIQUE(household_id,month,revision)
+            );
+            CREATE TABLE IF NOT EXISTS family_asset_reconciliation_item (
+                reconciliation_id INTEGER NOT NULL REFERENCES family_asset_reconciliation(id) ON DELETE CASCADE,
+                asset_id INTEGER NOT NULL,
+                asset_name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                book_amount INTEGER NOT NULL CHECK(book_amount >= 0),
+                actual_amount INTEGER NOT NULL CHECK(actual_amount >= 0),
+                asset_revision INTEGER NOT NULL CHECK(asset_revision >= 1),
+                note TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(reconciliation_id,asset_id)
+            );
             CREATE INDEX IF NOT EXISTS idx_family_cashflow_close_household
                 ON family_cashflow_monthly_close(household_id,month DESC,revision DESC);
+            CREATE INDEX IF NOT EXISTS idx_family_reconciliation_household
+                ON family_asset_reconciliation(household_id,month DESC,revision DESC);
         """)
     except Exception as exc:
         print(f"[auto_migrate] family cashflow 표 점검 건너뜀: {exc}")

@@ -76,10 +76,39 @@ def _salary_projection(total, items):
     return items, int(total) - assigned
 
 
+def _reconciliation_items(reconciliation_id):
+    return [dict(row) for row in query(
+        "SELECT asset_id,asset_name,kind,book_amount,actual_amount,"
+        "actual_amount-book_amount difference,asset_revision,note "
+        "FROM family_asset_reconciliation_item WHERE reconciliation_id=? "
+        "ORDER BY kind,asset_name,asset_id", (reconciliation_id,))]
+
+
+def _reconciliation_projection(row):
+    item = dict(row)
+    items = _reconciliation_items(item['id'])
+    book_assets = sum(int(x['book_amount']) for x in items if x['kind'] != 'loan')
+    actual_assets = sum(int(x['actual_amount']) for x in items if x['kind'] != 'loan')
+    book_debt = sum(int(x['book_amount']) for x in items if x['kind'] == 'loan')
+    actual_debt = sum(int(x['actual_amount']) for x in items if x['kind'] == 'loan')
+    item.update({
+        'items': items,
+        'book_assets': book_assets,
+        'actual_assets': actual_assets,
+        'book_debt': book_debt,
+        'actual_debt': actual_debt,
+        'book_net_worth': book_assets - book_debt,
+        'actual_net_worth': actual_assets - actual_debt,
+        'difference': (actual_assets - actual_debt) - (book_assets - book_debt),
+        'is_balanced': all(int(x['difference']) == 0 for x in items),
+    })
+    return item
+
+
 def _snapshot(member):
     if not member:
         return {'setup_required': True, 'household': None, 'members': [], 'assets': [],
-                'history': [], 'trends': [], 'cash_flow': None}
+                'history': [], 'trends': [], 'cash_flow': None, 'reconciliations': []}
     hid = member['household_id']
     members = query(
         "SELECT m.user_id id,m.display_name,m.role,m.joined_at,"
@@ -141,6 +170,12 @@ def _snapshot(member):
         item['salary_by_member'], item['salary_unassigned'] = _salary_projection(
             item['salary_income'], _input_salary_items(hid, item['month']))
         input_items.append(item)
+    reconciliations = [_reconciliation_projection(row) for row in query(
+        "SELECT r.id,r.month,r.revision,r.reconciled_by,"
+        "COALESCE(u.display_name,u.username,'구성원') reconciled_by_name,r.reconciled_at "
+        "FROM family_asset_reconciliation r LEFT JOIN users u ON u.id=r.reconciled_by "
+        "WHERE r.household_id=? AND r.month BETWEEN ? AND ? "
+        "ORDER BY r.month DESC,r.revision DESC", (hid, first_month, month))]
     return {
         'setup_required': False,
         'household': {'id': hid, 'name': member['household_name'],
@@ -152,6 +187,7 @@ def _snapshot(member):
         'cash_flow': _cashflow_snapshot(hid, members, assets, month),
         'cash_flow_history': close_items,
         'cash_flow_inputs': input_items,
+        'reconciliations': reconciliations,
     }
 
 
@@ -1001,6 +1037,79 @@ def family_cashflow_close():
                 "member_name,amount) VALUES(?,?,?,?)",
                 [(close_insert.lastrowid, item['member_user_id'], item['member_name'], item['amount'])
                  for item in flow['salary_by_member']])
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member())), 201
+
+
+@bp.post('/api/family-assets/reconciliations')
+@login_required
+def family_asset_reconciliation_create():
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        current_month = query("SELECT strftime('%Y-%m','now','+9 hours') month", one=True)['month']
+        month = _clean_text(d.get('month') or current_month, '대조 월', required=True, limit=7)
+        if month != current_month:
+            raise ValueError('현재 월 실제잔액만 대조 가능')
+        expected = d.get('expected_revision', 0)
+        if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
+            raise ValueError('대조 revision 오류')
+        raw_items = d.get('items')
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ValueError('대조할 자산 필수')
+        submitted = {}
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                raise ValueError('실제잔액 형식 오류')
+            asset_id = raw.get('asset_id')
+            asset_revision = raw.get('expected_asset_revision')
+            if (isinstance(asset_id, bool) or not isinstance(asset_id, int) or asset_id < 1 or
+                    isinstance(asset_revision, bool) or not isinstance(asset_revision, int) or
+                    asset_revision < 1):
+                raise ValueError('대조 자산 revision 오류')
+            if asset_id in submitted:
+                raise ValueError('대조 자산 중복')
+            submitted[asset_id] = {
+                'actual_amount': _money(raw, 'actual_amount', '실제잔액', allow_zero=True),
+                'asset_revision': asset_revision,
+                'note': _clean_text(raw.get('note'), '차이 사유', limit=200),
+            }
+    except (ValueError, TypeError, OverflowError) as e:
+        return jsonify({'error': str(e)}), 400
+
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        assets = db.execute(
+            "SELECT id,name,kind,amount,revision FROM family_asset_entry "
+            "WHERE household_id=? AND kind!='income' ORDER BY id",
+            (member['household_id'],)).fetchall()
+        if {int(row['id']) for row in assets} != set(submitted):
+            db.rollback(); return jsonify({'error': 'reconciliation_asset_set_changed'}), 409
+        latest = db.execute(
+            "SELECT COALESCE(MAX(revision),0) revision FROM family_asset_reconciliation "
+            "WHERE household_id=? AND month=?", (member['household_id'], month)).fetchone()
+        if int(latest['revision']) != expected:
+            db.rollback(); return jsonify({'error': 'reconciliation_conflict'}), 409
+        rows = []
+        for asset in assets:
+            item = submitted[int(asset['id'])]
+            if int(asset['revision']) != item['asset_revision']:
+                db.rollback(); return jsonify({'error': 'reconciliation_asset_changed'}), 409
+            if int(asset['amount']) != item['actual_amount'] and not item['note']:
+                db.rollback(); return jsonify({'error': 'reconciliation_note_required'}), 400
+            rows.append((int(asset['id']), asset['name'], asset['kind'], int(asset['amount']),
+                         item['actual_amount'], int(asset['revision']), item['note']))
+        inserted = db.execute(
+            "INSERT INTO family_asset_reconciliation(household_id,month,revision,reconciled_by) "
+            "VALUES(?,?,?,?)", (member['household_id'], month, expected + 1, session['user_id']))
+        db.executemany(
+            "INSERT INTO family_asset_reconciliation_item(reconciliation_id,asset_id,asset_name,kind,"
+            "book_amount,actual_amount,asset_revision,note) VALUES(?,?,?,?,?,?,?,?)",
+            [(inserted.lastrowid, *row) for row in rows])
         db.commit()
     except Exception:
         db.rollback(); raise

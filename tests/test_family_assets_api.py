@@ -461,6 +461,65 @@ for kind, name, amount, monthly_flow, needs_evidence in (
     created = c1.post('/api/family-assets/assets', json=payload)
     assert created.status_code == 201
     flow_asset_ids.append(created.json['id'])
+
+# 월말 실제잔액 대조는 자산을 자동 덮어쓰지 않고 append-only revision으로 비교값을 보존한다.
+reconcile_assets = [a for a in c1.get('/api/family-assets').json['assets'] if a['kind'] != 'income']
+reconcile_items = [{
+    'asset_id': a['id'], 'expected_asset_revision': a['revision'],
+    'actual_amount': a['amount'] + (100_000 if a['id'] == flow_asset_ids[0] else 0),
+    'note': '은행 앱 잔액 반영' if a['id'] == flow_asset_ids[0] else '',
+} for a in reconcile_assets]
+missing_note_items = [{**item, 'note': ''} for item in reconcile_items]
+assert c1.post('/api/family-assets/reconciliations', json={
+    'items': missing_note_items, 'expected_revision': 0,
+}).status_code == 400
+reconciled1 = c1.post('/api/family-assets/reconciliations', json={
+    'items': reconcile_items, 'expected_revision': 0,
+})
+assert reconciled1.status_code == 201
+recon1 = reconciled1.json['reconciliations'][0]
+assert recon1['revision'] == 1 and recon1['is_balanced'] is False
+assert recon1['book_assets'] == 30_000_000 and recon1['actual_assets'] == 30_100_000
+assert recon1['book_debt'] == recon1['actual_debt'] == 40_000_000
+assert recon1['difference'] == 100_000 and len(recon1['items']) == 4
+assert next(a for a in c1.get('/api/family-assets').json['assets']
+            if a['id'] == flow_asset_ids[0])['amount'] == 10_000_000
+assert c2.get('/api/family-assets').json['reconciliations'][0]['difference'] == 100_000
+assert c1.post('/api/family-assets/reconciliations', json={
+    'items': reconcile_items, 'expected_revision': 0,
+}).status_code == 409
+assert c3.post('/api/family-assets/reconciliations', json={
+    'items': reconcile_items, 'expected_revision': 0,
+}).status_code == 409
+assert c1.post('/api/family-assets/reconciliations', json={
+    'items': [*reconcile_items, reconcile_items[0]], 'expected_revision': 1,
+}).status_code == 400
+stale_asset_items = [{**item, 'expected_asset_revision': 999}
+                     if item['asset_id'] == flow_asset_ids[0] else item
+                     for item in reconcile_items]
+assert c1.post('/api/family-assets/reconciliations', json={
+    'items': stale_asset_items, 'expected_revision': 1,
+}).json['error'] == 'reconciliation_asset_changed'
+assert c1.post('/api/family-assets/reconciliations', json={
+    'month': '2000-01', 'items': reconcile_items, 'expected_revision': 1,
+}).status_code == 400
+balanced_items = [{
+    'asset_id': a['id'], 'expected_asset_revision': a['revision'],
+    'actual_amount': a['amount'], 'note': '',
+} for a in reconcile_assets]
+reconcile_barrier = Barrier(2)
+def race_reconciliation(client_):
+    reconcile_barrier.wait()
+    return client_.post('/api/family-assets/reconciliations', json={
+        'items': balanced_items, 'expected_revision': 1,
+    }).status_code
+with ThreadPoolExecutor(max_workers=2) as pool:
+    reconcile_f1 = pool.submit(race_reconciliation, client(u1, 'husband'))
+    reconcile_f2 = pool.submit(race_reconciliation, client(u2, 'wife'))
+    assert sorted((reconcile_f1.result(), reconcile_f2.result())) == [201, 409]
+reconcile_history = c1.get('/api/family-assets').json['reconciliations']
+assert [r['revision'] for r in reconcile_history[:2]] == [2, 1]
+assert reconcile_history[0]['is_balanced'] is True
 assert c1.put(f'/api/family-assets/allowances/{u1}',
               json={'allocated_amount': 500_000}).status_code == 200
 allowance_snap = c1.put(f'/api/family-assets/allowances/{u2}',
@@ -542,6 +601,7 @@ for flow_asset_id in flow_asset_ids:
                          if a['id'] == flow_asset_id)['revision']
     assert c1.delete(f'/api/family-assets/assets/{flow_asset_id}',
                      json={'expected_revision': flow_revision}).status_code == 200
+assert len(c1.get('/api/family-assets').json['reconciliations'][0]['items']) == 4
 salary_revision = next(a for a in c1.get('/api/family-assets').json['assets']
                        if a['id'] == salary_id)['revision']
 assert c1.delete(f'/api/family-assets/assets/{salary_id}',
@@ -734,6 +794,8 @@ db.execute('DROP TABLE family_cashflow_monthly_close_salary')
 db.execute('DROP TABLE family_cashflow_monthly_salary')
 db.execute('DROP TABLE family_cashflow_monthly_close')
 db.execute('DROP TABLE family_cashflow_monthly_input')
+db.execute('DROP TABLE family_asset_reconciliation_item')
+db.execute('DROP TABLE family_asset_reconciliation')
 db.execute('DROP TABLE family_cash_expense')
 db.execute('DROP TABLE family_asset_loan_payment'); db.execute('DROP TABLE family_asset_loan_schedule')
 db.execute('DROP TABLE family_asset_history'); db.execute('DROP TABLE family_asset_monthly_snapshot')
@@ -744,6 +806,7 @@ for table in ('family_asset_household', 'family_asset_member', 'family_asset_ent
               'family_asset_history', 'family_asset_monthly_snapshot', 'family_cash_expense',
               'family_cashflow_monthly_input', 'family_cashflow_monthly_salary',
               'family_cashflow_monthly_close', 'family_cashflow_monthly_close_salary',
+              'family_asset_reconciliation', 'family_asset_reconciliation_item',
               'family_allowance_budget', 'family_allowance_expense', 'family_asset_loan_schedule',
               'family_asset_loan_payment'):
     assert A.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,), one=True), table

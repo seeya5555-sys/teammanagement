@@ -57,7 +57,8 @@ class FamilyAssetMigrationTests(unittest.TestCase):
             ).fetchone())
             for table in ("family_cash_expense", "family_allowance_budget", "family_allowance_expense",
                           "family_cashflow_monthly_input", "family_cashflow_monthly_close",
-                          "family_cashflow_monthly_salary", "family_cashflow_monthly_close_salary"):
+                          "family_cashflow_monthly_salary", "family_cashflow_monthly_close_salary",
+                          "family_asset_reconciliation", "family_asset_reconciliation_item"):
                 self.assertTrue(conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
                 ).fetchone())
