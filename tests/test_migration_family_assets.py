@@ -34,7 +34,8 @@ class FamilyAssetMigrationTests(unittest.TestCase):
 
     def test_step_order_is_frozen(self):
         self.assertEqual(
-            ("family_asset_entry.columns", "family_asset_history.columns", "family_asset_loan.tables"),
+            ("family_asset_entry.columns", "family_asset_history.columns", "family_asset_loan.tables",
+             "family_cashflow.tables"),
             tuple(name for name, _step in migration_steps.FAMILY_ASSET_MIGRATIONS),
         )
 
@@ -54,6 +55,10 @@ class FamilyAssetMigrationTests(unittest.TestCase):
             self.assertTrue(conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='family_asset_loan_payment'"
             ).fetchone())
+            for table in ("family_cash_expense", "family_allowance_budget", "family_allowance_expense"):
+                self.assertTrue(conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                ).fetchone())
             self.assertEqual((1, 500, 1, 0, None, None, None, None), conn.execute(
                 "SELECT id,amount,revision,monthly_flow_amount,monthly_flow_month,"
                 "evidence_image,evidence_mime,evidence_captured_at "

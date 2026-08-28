@@ -8,6 +8,7 @@ import sqlite3
 import re
 import base64
 import binascii
+import datetime as dt
 
 from flask import Blueprint, Response, jsonify, request, session
 from werkzeug.security import generate_password_hash
@@ -23,6 +24,11 @@ CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 USERNAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{3,39}$')
 EVIDENCE_KINDS = {'income', 'saving', 'stock'}
 MAX_EVIDENCE_BYTES = 2_000_000
+CASH_EXPENSE_CATEGORIES = {
+    'living', 'utilities', 'home_loan_interest', 'car_loan_interest',
+    'insurance', 'education', 'medical', 'other',
+}
+MAX_MONEY = 999_999_999_999_999
 
 
 def _clean_text(value, field, *, required=False, limit=120):
@@ -52,7 +58,7 @@ def _invite_code(db):
 def _snapshot(member):
     if not member:
         return {'setup_required': True, 'household': None, 'members': [], 'assets': [],
-                'history': [], 'trends': []}
+                'history': [], 'trends': [], 'cash_flow': None}
     hid = member['household_id']
     members = query(
         "SELECT m.user_id id,m.display_name,m.role,m.joined_at,"
@@ -99,7 +105,85 @@ def _snapshot(member):
         'assets': asset_items,
         'history': [dict(x) for x in history],
         'trends': trends,
+        'cash_flow': _cashflow_snapshot(hid, members, assets, month),
     }
+
+
+def _cashflow_snapshot(household_id, members, assets, month):
+    expenses = query(
+        "SELECT e.id,e.category,e.name,e.amount,e.spent_on,e.created_by,"
+        "COALESCE(u.display_name,u.username,'구성원') created_by_name "
+        "FROM family_cash_expense e LEFT JOIN users u ON u.id=e.created_by "
+        "WHERE e.household_id=? AND substr(e.spent_on,1,7)=? "
+        "ORDER BY e.spent_on DESC,e.id DESC", (household_id, month))
+    ordinary_total = sum(int(row['amount']) for row in expenses)
+    allowance_items = []
+    allowance_total = 0
+    for member in members:
+        budget = query(
+            "SELECT id,allocated_amount,revision FROM family_allowance_budget "
+            "WHERE household_id=? AND member_user_id=? AND month=?",
+            (household_id, member['id'], month), one=True)
+        spent_items = []
+        allocated = revision = budget_id = 0
+        if budget:
+            budget_id = budget['id']; allocated = int(budget['allocated_amount'])
+            revision = int(budget['revision'])
+            spent_items = [dict(row) for row in query(
+                "SELECT e.id,e.name,e.amount,e.spent_on,e.created_by,"
+                "COALESCE(u.display_name,u.username,'구성원') created_by_name "
+                "FROM family_allowance_expense e LEFT JOIN users u ON u.id=e.created_by "
+                "WHERE e.budget_id=? AND e.household_id=? ORDER BY e.spent_on DESC,e.id DESC",
+                (budget_id, household_id))]
+        spent = sum(int(row['amount']) for row in spent_items)
+        allowance_total += allocated
+        allowance_items.append({
+            'id': budget_id, 'member_user_id': member['id'],
+            'member_name': member['display_name'], 'month': month,
+            'allocated_amount': allocated, 'spent_amount': spent,
+            'remaining_amount': allocated - spent, 'revision': revision,
+            'expenses': spent_items,
+        })
+    salary = sum(int(row['amount']) for row in assets if row['kind'] == 'income')
+    expense_total = ordinary_total + allowance_total
+    return {
+        'month': month,
+        'salary_income': salary,
+        'ordinary_expenses': ordinary_total,
+        'allowance_allocated': allowance_total,
+        'expense_total': expense_total,
+        'available_after_expenses': salary - expense_total,
+        'expenses': [dict(row) for row in expenses],
+        'allowances': allowance_items,
+    }
+
+
+def _money(d, key, label, *, allow_zero=False):
+    raw = d.get(key)
+    try:
+        if isinstance(raw, bool) or isinstance(raw, float):
+            raise ValueError
+        value = int(raw)
+        if isinstance(raw, str) and str(value) != raw.strip():
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f'{label}은 원 단위 정수로 입력')
+    minimum = 0 if allow_zero else 1
+    if not minimum <= value <= MAX_MONEY:
+        raise ValueError(f'{label} 범위 오류')
+    return value
+
+
+def _current_spent_on(value):
+    try:
+        spent_on = dt.date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        raise ValueError('사용일은 YYYY-MM-DD 형식')
+    today_text = query("SELECT date('now','+9 hours') today", one=True)['today']
+    today = dt.date.fromisoformat(today_text)
+    if spent_on.strftime('%Y-%m') != today.strftime('%Y-%m') or spent_on > today:
+        raise ValueError('이번 달 오늘까지의 사용내역만 입력 가능')
+    return spent_on.isoformat(), today.strftime('%Y-%m')
 
 
 def _shift_month(month, delta):
@@ -578,3 +662,157 @@ def family_asset_delete(asset_id):
     _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
     return jsonify({'ok': True})
+
+
+@bp.post('/api/family-assets/cash-expenses')
+@login_required
+def family_cash_expense_create():
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        category = _clean_text(d.get('category'), '분류', required=True, limit=30)
+        if category not in CASH_EXPENSE_CATEGORIES:
+            raise ValueError('지원하지 않는 지출 분류')
+        name = _clean_text(d.get('name'), '사용처', required=True, limit=80)
+        amount = _money(d, 'amount', '지출 금액')
+        spent_on, _month = _current_spent_on(d.get('spent_on'))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        db.execute(
+            "INSERT INTO family_cash_expense(household_id,category,name,amount,spent_on,created_by) "
+            "VALUES(?,?,?,?,?,?)",
+            (member['household_id'], category, name, amount, spent_on, session['user_id']))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member())), 201
+
+
+@bp.delete('/api/family-assets/cash-expenses/<int:expense_id>')
+@login_required
+def family_cash_expense_delete(expense_id):
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        row = db.execute(
+            "SELECT source_type FROM family_cash_expense WHERE id=? AND household_id=?",
+            (expense_id, member['household_id'])).fetchone()
+        if not row:
+            db.rollback(); return jsonify({'error': 'not_found'}), 404
+        if row['source_type']:
+            db.rollback(); return jsonify({'error': 'linked_expense_cannot_delete'}), 409
+        db.execute("DELETE FROM family_cash_expense WHERE id=? AND household_id=?",
+                   (expense_id, member['household_id']))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member()))
+
+
+@bp.put('/api/family-assets/allowances/<int:member_user_id>')
+@login_required
+def family_allowance_set(member_user_id):
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        amount = _money(d, 'allocated_amount', '용돈 배정액', allow_zero=True)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        target = db.execute(
+            "SELECT 1 FROM family_asset_member WHERE household_id=? AND user_id=?",
+            (member['household_id'], member_user_id)).fetchone()
+        if not target:
+            db.rollback(); return jsonify({'error': 'not_found'}), 404
+        month = db.execute("SELECT strftime('%Y-%m','now','+9 hours')").fetchone()[0]
+        existing = db.execute(
+            "SELECT id FROM family_allowance_budget WHERE household_id=? AND member_user_id=? AND month=?",
+            (member['household_id'], member_user_id, month)).fetchone()
+        spent = 0
+        if existing:
+            spent = db.execute(
+                "SELECT COALESCE(SUM(amount),0) FROM family_allowance_expense "
+                "WHERE budget_id=? AND household_id=?",
+                (existing['id'], member['household_id'])).fetchone()[0]
+        if amount < int(spent):
+            db.rollback(); return jsonify({'error': 'allowance_below_spent'}), 400
+        if existing:
+            db.execute(
+                "UPDATE family_allowance_budget SET allocated_amount=?,updated_by=?,revision=revision+1,"
+                "updated_at=datetime('now','+9 hours') WHERE id=? AND household_id=?",
+                (amount, session['user_id'], existing['id'], member['household_id']))
+        else:
+            db.execute(
+                "INSERT INTO family_allowance_budget(household_id,member_user_id,month,"
+                "allocated_amount,created_by,updated_by) VALUES(?,?,?,?,?,?)",
+                (member['household_id'], member_user_id, month, amount,
+                 session['user_id'], session['user_id']))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member()))
+
+
+@bp.post('/api/family-assets/allowances/<int:member_user_id>/expenses')
+@login_required
+def family_allowance_expense_create(member_user_id):
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        name = _clean_text(d.get('name'), '사용처', required=True, limit=80)
+        amount = _money(d, 'amount', '용돈 사용액')
+        spent_on, month = _current_spent_on(d.get('spent_on'))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        budget = db.execute(
+            "SELECT id,allocated_amount FROM family_allowance_budget "
+            "WHERE household_id=? AND member_user_id=? AND month=?",
+            (member['household_id'], member_user_id, month)).fetchone()
+        if not budget:
+            db.rollback(); return jsonify({'error': 'allowance_required'}), 409
+        spent = int(db.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM family_allowance_expense "
+            "WHERE budget_id=? AND household_id=?",
+            (budget['id'], member['household_id'])).fetchone()[0])
+        if spent + amount > int(budget['allocated_amount']):
+            db.rollback(); return jsonify({'error': 'allowance_exceeded'}), 400
+        db.execute(
+            "INSERT INTO family_allowance_expense(budget_id,household_id,name,amount,spent_on,created_by) "
+            "VALUES(?,?,?,?,?,?)",
+            (budget['id'], member['household_id'], name, amount, spent_on, session['user_id']))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member())), 201
+
+
+@bp.delete('/api/family-assets/allowance-expenses/<int:expense_id>')
+@login_required
+def family_allowance_expense_delete(expense_id):
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        cur = db.execute(
+            "DELETE FROM family_allowance_expense WHERE id=? AND household_id=?",
+            (expense_id, member['household_id']))
+        if not cur.rowcount:
+            db.rollback(); return jsonify({'error': 'not_found'}), 404
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member()))

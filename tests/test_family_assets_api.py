@@ -365,6 +365,72 @@ assert tuple(stored_flow) == (999, server_month)
 assert c1.delete(f'/api/family-assets/assets/{legacy_id}',
                  json={'expected_revision': legacy_after['revision']}).status_code == 200
 
+# 월급에서 실제 지출+용돈 배정을 차감한다. 용돈 사용은 이미 비용처리된 배정액을 재차감하지 않는다.
+salary_payload = {'kind': 'income', 'name': '월급', 'amount': 5_000_000,
+                  'owner_mode': 'member', 'owner_user_id': u1, 'institution': '회사', 'note': '',
+                  'monthly_flow_amount': 0, 'evidence_base64': evidence}
+salary_created = c1.post('/api/family-assets/assets', json=salary_payload)
+assert salary_created.status_code == 201
+salary_id = salary_created.json['id']
+today = db.execute("SELECT date('now','+9 hours')").fetchone()[0]
+future_month = db.execute("SELECT date('now','+9 hours','+1 month')").fetchone()[0]
+assert c1.post('/api/family-assets/cash-expenses', json={
+    'category': 'utilities', 'name': '관리비', 'amount': 300_000, 'spent_on': future_month,
+}).status_code == 400
+expense_created = c1.post('/api/family-assets/cash-expenses', json={
+    'category': 'utilities', 'name': '관리비', 'amount': 300_000, 'spent_on': today,
+})
+assert expense_created.status_code == 201
+expense_id = expense_created.json['cash_flow']['expenses'][0]['id']
+assert c1.put(f'/api/family-assets/allowances/{u1}',
+              json={'allocated_amount': 500_000}).status_code == 200
+allowance_snap = c1.put(f'/api/family-assets/allowances/{u2}',
+                        json={'allocated_amount': 400_000}).json['cash_flow']
+assert allowance_snap['salary_income'] == 5_000_000
+assert allowance_snap['ordinary_expenses'] == 300_000
+assert allowance_snap['allowance_allocated'] == 900_000
+assert allowance_snap['expense_total'] == 1_200_000
+assert allowance_snap['available_after_expenses'] == 3_800_000
+# BEGIN IMMEDIATE 안의 remaining 재조회로 동시 두 건 중 예산 내 한 건만 성공한다.
+allowance_barrier = Barrier(2)
+def race_allowance_spend(client_):
+    allowance_barrier.wait()
+    return client_.post(f'/api/family-assets/allowances/{u2}/expenses', json={
+        'name': '동시사용', 'amount': 300_000, 'spent_on': today,
+    }).status_code
+with ThreadPoolExecutor(max_workers=2) as pool:
+    allowance_f1 = pool.submit(race_allowance_spend, c1)
+    allowance_f2 = pool.submit(race_allowance_spend, c2)
+    assert sorted((allowance_f1.result(), allowance_f2.result())) == [201, 400]
+u2_budget = next(x for x in c1.get('/api/family-assets').json['cash_flow']['allowances']
+                 if x['member_user_id'] == u2)
+assert u2_budget['spent_amount'] == 300_000 and len(u2_budget['expenses']) == 1
+assert c1.delete(f"/api/family-assets/allowance-expenses/{u2_budget['expenses'][0]['id']}").status_code == 200
+spend_created = c2.post(f'/api/family-assets/allowances/{u1}/expenses', json={
+    'name': '점심', 'amount': 100_000, 'spent_on': today,
+})
+assert spend_created.status_code == 201
+spend_flow = spend_created.json['cash_flow']
+mine = next(x for x in spend_flow['allowances'] if x['member_user_id'] == u1)
+assert mine['spent_amount'] == 100_000 and mine['remaining_amount'] == 400_000
+assert spend_flow['expense_total'] == 1_200_000  # 용돈 내부 사용은 가계 지출로 이중차감하지 않음.
+spend_id = mine['expenses'][0]['id']
+assert c1.post(f'/api/family-assets/allowances/{u1}/expenses', json={
+    'name': '초과', 'amount': 400_001, 'spent_on': today,
+}).status_code == 400
+assert c1.put(f'/api/family-assets/allowances/{u1}',
+              json={'allocated_amount': 99_999}).status_code == 400
+assert c3.delete(f'/api/family-assets/cash-expenses/{expense_id}').status_code == 404
+assert c3.delete(f'/api/family-assets/allowance-expenses/{spend_id}').status_code == 404
+assert c2.delete(f'/api/family-assets/allowance-expenses/{spend_id}').status_code == 200
+assert c1.put(f'/api/family-assets/allowances/{u1}', json={'allocated_amount': 0}).status_code == 200
+assert c1.put(f'/api/family-assets/allowances/{u2}', json={'allocated_amount': 0}).status_code == 200
+assert c1.delete(f'/api/family-assets/cash-expenses/{expense_id}').status_code == 200
+salary_revision = next(a for a in c1.get('/api/family-assets').json['assets']
+                       if a['id'] == salary_id)['revision']
+assert c1.delete(f'/api/family-assets/assets/{salary_id}',
+                 json={'expected_revision': salary_revision}).status_code == 200
+
 # GET은 DB를 쓰지 않는다. 실데이터 전에는 현재 달만, 이후 빈 달은 직전 잔액을 이월한다.
 hid = c1.get('/api/family-assets').json['household']['id']
 db = A.get_db()
@@ -427,12 +493,17 @@ assert db.execute('SELECT revision FROM family_asset_entry WHERE id=?',
                   (migration_asset,)).fetchone()[0] == 1
 
 # 운영처럼 기존 DB에 신규 표가 없는 상태에서도 _auto_migrate가 schema.sql을 재적용한다.
+db.execute('DROP TABLE family_allowance_expense'); db.execute('DROP TABLE family_allowance_budget')
+db.execute('DROP TABLE family_cash_expense')
+db.execute('DROP TABLE family_asset_loan_payment'); db.execute('DROP TABLE family_asset_loan_schedule')
 db.execute('DROP TABLE family_asset_history'); db.execute('DROP TABLE family_asset_monthly_snapshot')
 db.execute('DROP TABLE family_asset_entry'); db.execute('DROP TABLE family_asset_member')
 db.execute('DROP TABLE family_asset_household'); db.commit()
 A._auto_migrate()
 for table in ('family_asset_household', 'family_asset_member', 'family_asset_entry',
-              'family_asset_history', 'family_asset_monthly_snapshot'):
+              'family_asset_history', 'family_asset_monthly_snapshot', 'family_cash_expense',
+              'family_allowance_budget', 'family_allowance_expense', 'family_asset_loan_schedule',
+              'family_asset_loan_payment'):
     assert A.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,), one=True), table
 
 # 데이터가 이미 있는 legacy users 표도 row 손실 없이 business 기본값으로 이동한다.

@@ -151,10 +151,59 @@ def _family_asset_loan_tables(conn):
         print(f"[auto_migrate] family_asset_loan 표 점검 건너뜀: {exc}")
 
 
+def _family_cashflow_tables(conn):
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS family_cash_expense (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                household_id INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+                category TEXT NOT NULL CHECK(category IN ('living','utilities','home_loan_interest','car_loan_interest','insurance','education','medical','other')),
+                name TEXT NOT NULL,
+                amount INTEGER NOT NULL CHECK(amount > 0),
+                spent_on TEXT NOT NULL,
+                source_type TEXT,
+                source_id INTEGER,
+                created_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+                UNIQUE(household_id,source_type,source_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_family_cash_expense_household
+                ON family_cash_expense(household_id,spent_on DESC,id DESC);
+            CREATE TABLE IF NOT EXISTS family_allowance_budget (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                household_id INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+                member_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                month TEXT NOT NULL,
+                allocated_amount INTEGER NOT NULL CHECK(allocated_amount >= 0),
+                revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+                created_by INTEGER NOT NULL REFERENCES users(id),
+                updated_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+                UNIQUE(household_id,member_user_id,month)
+            );
+            CREATE TABLE IF NOT EXISTS family_allowance_expense (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                budget_id INTEGER NOT NULL REFERENCES family_allowance_budget(id) ON DELETE CASCADE,
+                household_id INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                amount INTEGER NOT NULL CHECK(amount > 0),
+                spent_on TEXT NOT NULL,
+                created_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_family_allowance_expense_budget
+                ON family_allowance_expense(budget_id,spent_on DESC,id DESC);
+        """)
+    except Exception as exc:
+        print(f"[auto_migrate] family cashflow 표 점검 건너뜀: {exc}")
+
+
 FAMILY_ASSET_MIGRATIONS = (
     ("family_asset_entry.columns", _family_asset_entry_columns),
     ("family_asset_history.columns", _family_asset_history_columns),
     ("family_asset_loan.tables", _family_asset_loan_tables),
+    ("family_cashflow.tables", _family_cashflow_tables),
 )
 
 

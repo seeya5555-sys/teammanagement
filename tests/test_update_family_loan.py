@@ -55,6 +55,9 @@ class FamilyLoanUpdateTests(unittest.TestCase):
             "SELECT amount,monthly_flow_amount,monthly_flow_month "
             "FROM family_asset_entry WHERE id=?", (aid,),
         ).fetchone())
+        self.assertEqual(("home_loan_interest", 678_546, "2026-08-31"), conn.execute(
+            "SELECT category,amount,spent_on FROM family_cash_expense WHERE household_id=1"
+        ).fetchone())
         with self.assertRaisesRegex(ValueError, "rewind"):
             record_payment(conn, argparse.Namespace(
                 username="ysson", asset_id=aid, date="2026-08-23", installment_no=63,

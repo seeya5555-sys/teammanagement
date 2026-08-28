@@ -318,12 +318,19 @@ def record_payment(conn, args):
             "VALUES(?,?,'update',?,'loan',?,?,?,?,?)",
             (hid, loan[0], loan[1], balance, after, prior_flow, flow, uid),
         )
-        conn.execute(
+        payment_cur = conn.execute(
             "INSERT INTO family_asset_loan_payment(asset_id,household_id,installment_no,due_date,"
             "balance_before,principal,interest,total_payment,balance_after) VALUES(?,?,?,?,?,?,?,?,?)",
             (loan[0], hid, args.installment_no, paid_on.isoformat(), balance,
              args.principal, args.interest, total, after),
         )
+        if args.interest > 0:
+            conn.execute(
+                "INSERT INTO family_cash_expense(household_id,category,name,amount,spent_on,"
+                "source_type,source_id,created_by) VALUES(?, 'home_loan_interest', ?, ?, ?, ?, ?, ?)",
+                (hid, f"{loan[1]} {args.installment_no}회차 이자", args.interest,
+                 paid_on.isoformat(), 'loan_payment', payment_cur.lastrowid, uid),
+            )
         conn.execute(
             "UPDATE family_asset_loan_schedule SET installment_no=?,last_payment_date=?,active=0,"
             "updated_at=datetime('now','+9 hours') WHERE asset_id=?",
