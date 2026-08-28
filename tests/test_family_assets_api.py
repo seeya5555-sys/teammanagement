@@ -551,24 +551,70 @@ assert zero_flow['salary_income'] == zero_flow['allocated_income'] == zero_flow[
 
 # 월급날 통합입력은 자산잔액과 분리된 월 원장이고, 마감 재저장은 revision 이력으로 보존한다.
 monthly_input = c1.put('/api/family-assets/cash-flow/monthly-input', json={
-    'salary_income': 5_000_000, 'saving_transfers': 1_000_000,
+    'salary_by_member': [
+        {'member_user_id': u1, 'amount': 3_000_000},
+        {'member_user_id': u2, 'amount': 2_000_000},
+    ],
+    'saving_transfers': 1_000_000,
     'investment_transfers': 500_000, 'loan_principal_payments': 200_000,
     'expected_revision': 0,
 })
 assert monthly_input.status_code == 200
 input_flow = monthly_input.json['cash_flow']
 assert input_flow['input_source'] == 'monthly_input' and input_flow['monthly_input_revision'] == 1
+assert input_flow['salary_income'] == 5_000_000 and input_flow['salary_unassigned'] == 0
+assert [(x['member_user_id'], x['amount']) for x in input_flow['salary_by_member']] == [
+    (u1, 3_000_000), (u2, 2_000_000)]
 assert input_flow['allocated_income'] == 1_700_000 and input_flow['unallocated_income'] == 3_300_000
 assert c2.put('/api/family-assets/cash-flow/monthly-input', json={
     'salary_income': 1, 'saving_transfers': 0, 'investment_transfers': 0,
     'loan_principal_payments': 0, 'expected_revision': 0,
 }).status_code == 409
+legacy_after_split = c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'salary_income': 5_000_000, 'saving_transfers': 1_000_000,
+    'investment_transfers': 500_000, 'loan_principal_payments': 200_000,
+    'expected_revision': 1,
+})
+assert legacy_after_split.status_code == 409
+assert legacy_after_split.json['error'] == 'salary_breakdown_required'
+missing_member = c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'salary_by_member': [{'member_user_id': u1, 'amount': 5_000_000}],
+    'saving_transfers': 1_000_000, 'investment_transfers': 500_000,
+    'loan_principal_payments': 200_000, 'expected_revision': 1,
+})
+assert missing_member.status_code == 400
+duplicate_member = c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'salary_by_member': [
+        {'member_user_id': u1, 'amount': 3_000_000},
+        {'member_user_id': u1, 'amount': 2_000_000},
+    ],
+    'saving_transfers': 1_000_000, 'investment_transfers': 500_000,
+    'loan_principal_payments': 200_000, 'expected_revision': 1,
+})
+assert duplicate_member.status_code == 400
+outside_member = c1.put('/api/family-assets/cash-flow/monthly-input', json={
+    'salary_by_member': [
+        {'member_user_id': u1, 'amount': 3_000_000},
+        {'member_user_id': outsider, 'amount': 2_000_000},
+    ],
+    'saving_transfers': 1_000_000, 'investment_transfers': 500_000,
+    'loan_principal_payments': 200_000, 'expected_revision': 1,
+})
+assert outside_member.status_code == 400
 closed1 = c1.post('/api/family-assets/cash-flow/close', json={'expected_revision': 0})
 assert closed1.status_code == 201
 assert closed1.json['cash_flow']['close_revision'] == 1
 assert closed1.json['cash_flow']['close_stale'] is False
+assert [(x['member_user_id'], x['amount'])
+        for x in closed1.json['cash_flow_history'][0]['salary_by_member']] == [
+            (u1, 3_000_000), (u2, 2_000_000)]
 updated_input = c2.put('/api/family-assets/cash-flow/monthly-input', json={
-    'salary_income': 5_000_000, 'saving_transfers': 1_100_000,
+    'salary_by_member': [
+        {'member_user_id': u1, 'amount': 2_900_000},
+        {'member_user_id': u2, 'amount': 2_100_000},
+    ],
+    # 총급여와 다른 배분값은 그대로 두고 구성원별 귀속만 바뀌어도 마감 stale이다.
+    'saving_transfers': 1_000_000,
     'investment_transfers': 500_000, 'loan_principal_payments': 200_000,
     'expected_revision': 1,
 })
@@ -582,8 +628,10 @@ assert closed2.json['cash_flow']['close_revision'] == 2
 assert closed2.json['cash_flow']['close_stale'] is False
 close_history = closed2.json['cash_flow_history']
 assert [x['revision'] for x in close_history[:2]] == [2, 1]
-assert close_history[0]['saving_transfers'] == 1_100_000
+assert close_history[0]['saving_transfers'] == 1_000_000
 assert close_history[1]['saving_transfers'] == 1_000_000
+assert close_history[0]['salary_by_member'][0]['amount'] == 2_900_000
+assert close_history[1]['salary_by_member'][0]['amount'] == 3_000_000
 close_barrier = Barrier(2)
 def race_month_close(client_):
     close_barrier.wait()
@@ -682,6 +730,8 @@ assert db.execute('SELECT revision FROM family_asset_entry WHERE id=?',
 
 # 운영처럼 기존 DB에 신규 표가 없는 상태에서도 _auto_migrate가 schema.sql을 재적용한다.
 db.execute('DROP TABLE family_allowance_expense'); db.execute('DROP TABLE family_allowance_budget')
+db.execute('DROP TABLE family_cashflow_monthly_close_salary')
+db.execute('DROP TABLE family_cashflow_monthly_salary')
 db.execute('DROP TABLE family_cashflow_monthly_close')
 db.execute('DROP TABLE family_cashflow_monthly_input')
 db.execute('DROP TABLE family_cash_expense')
@@ -692,7 +742,8 @@ db.execute('DROP TABLE family_asset_household'); db.commit()
 A._auto_migrate()
 for table in ('family_asset_household', 'family_asset_member', 'family_asset_entry',
               'family_asset_history', 'family_asset_monthly_snapshot', 'family_cash_expense',
-              'family_cashflow_monthly_input', 'family_cashflow_monthly_close',
+              'family_cashflow_monthly_input', 'family_cashflow_monthly_salary',
+              'family_cashflow_monthly_close', 'family_cashflow_monthly_close_salary',
               'family_allowance_budget', 'family_allowance_expense', 'family_asset_loan_schedule',
               'family_asset_loan_payment'):
     assert A.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,), one=True), table

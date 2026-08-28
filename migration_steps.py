@@ -223,6 +223,24 @@ def _family_cashflow_tables(conn):
                 closed_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
                 UNIQUE(household_id,month,revision)
             );
+            CREATE TABLE IF NOT EXISTS family_cashflow_monthly_salary (
+                household_id INTEGER NOT NULL REFERENCES family_asset_household(id) ON DELETE CASCADE,
+                month TEXT NOT NULL,
+                member_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                amount INTEGER NOT NULL CHECK(amount >= 0),
+                updated_by INTEGER NOT NULL REFERENCES users(id),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours')),
+                PRIMARY KEY(household_id,month,member_user_id),
+                FOREIGN KEY(household_id,month)
+                    REFERENCES family_cashflow_monthly_input(household_id,month) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS family_cashflow_monthly_close_salary (
+                close_id INTEGER NOT NULL REFERENCES family_cashflow_monthly_close(id) ON DELETE CASCADE,
+                member_user_id INTEGER NOT NULL REFERENCES users(id),
+                member_name TEXT NOT NULL,
+                amount INTEGER NOT NULL CHECK(amount >= 0),
+                PRIMARY KEY(close_id,member_user_id)
+            );
             CREATE INDEX IF NOT EXISTS idx_family_cashflow_close_household
                 ON family_cashflow_monthly_close(household_id,month DESC,revision DESC);
         """)
