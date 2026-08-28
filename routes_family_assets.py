@@ -6,8 +6,10 @@
 import secrets
 import sqlite3
 import re
+import base64
+import binascii
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, Response, jsonify, request, session
 from werkzeug.security import generate_password_hash
 
 from app_core import get_db, query
@@ -19,6 +21,8 @@ KINDS = {'income', 'cash', 'saving', 'stock', 'property', 'loan', 'other'}
 OWNER_MODES = {'member', 'joint'}
 CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 USERNAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{3,39}$')
+EVIDENCE_KINDS = {'income', 'saving', 'stock'}
+MAX_EVIDENCE_BYTES = 2_000_000
 
 
 def _clean_text(value, field, *, required=False, limit=120):
@@ -59,7 +63,8 @@ def _snapshot(member):
         "SELECT a.id,a.kind,a.name,a.amount,a.owner_mode,a.owner_user_id,a.joint_share,"
         "a.institution,a.note,CASE WHEN a.monthly_flow_month=strftime('%Y-%m','now','+9 hours') "
         "THEN a.monthly_flow_amount ELSE 0 END monthly_flow_amount,"
-        "a.revision,a.updated_at,a.updated_by,u.display_name updated_by_name "
+        "a.revision,a.updated_at,a.updated_by,u.display_name updated_by_name,"
+        "CASE WHEN a.evidence_image IS NOT NULL THEN 1 ELSE 0 END evidence_available "
         "FROM family_asset_entry a LEFT JOIN users u ON u.id=a.updated_by "
         "WHERE a.household_id=? ORDER BY a.updated_at DESC,a.id DESC", (hid,))
     history = query(
@@ -81,12 +86,17 @@ def _snapshot(member):
         "FROM family_asset_monthly_snapshot WHERE household_id=? AND month<? "
         "ORDER BY month DESC LIMIT 1", (hid, first_month), one=True)
     trends = _continuous_trends(stored_trends, opening_trend, month, current)
+    asset_items = []
+    for row in assets:
+        item = dict(row)
+        item['evidence_available'] = bool(item['evidence_available'])
+        asset_items.append(item)
     return {
         'setup_required': False,
         'household': {'id': hid, 'name': member['household_name'],
                       'invite_code': member['invite_code'], 'me_user_id': session['user_id']},
         'members': [dict(x) for x in members],
-        'assets': [dict(x) for x in assets],
+        'assets': asset_items,
         'history': [dict(x) for x in history],
         'trends': trends,
     }
@@ -391,6 +401,30 @@ def _asset_payload(d, member):
         # 분류를 바꿀 때 옛 납입액이 다른 자산에 붙어 남지 않게 명시 초기화한다.
         monthly_flow_amount = 0
         flow_provided = True
+    evidence_provided = 'evidence_base64' in d
+    evidence_image = evidence_mime = None
+    if evidence_provided:
+        encoded = d.get('evidence_base64')
+        if not isinstance(encoded, str) or not encoded:
+            raise ValueError('증빙 캡처 데이터 오류')
+        # 2MB binary의 base64 상한(ceil(n/3)*4)보다 큰 입력은 디코딩 전에 거절한다.
+        # 그렇지 않으면 공격자가 불필요한 대형 bytes allocation을 만들 수 있다.
+        if len(encoded) > ((MAX_EVIDENCE_BYTES + 2) // 3) * 4:
+            raise ValueError('증빙 캡처는 2MB 이하 이미지여야 함')
+        try:
+            evidence_image = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError('증빙 캡처 데이터 오류')
+        if not 1_000 <= len(evidence_image) <= MAX_EVIDENCE_BYTES:
+            raise ValueError('증빙 캡처는 2MB 이하 이미지여야 함')
+        if evidence_image.startswith(b'\xff\xd8\xff'):
+            evidence_mime = 'image/jpeg'
+        elif evidence_image.startswith(b'\x89PNG\r\n\x1a\n'):
+            evidence_mime = 'image/png'
+        else:
+            raise ValueError('증빙 캡처는 JPEG 또는 PNG만 가능')
+        if kind not in EVIDENCE_KINDS:
+            raise ValueError('이 분류는 증빙 캡처 자동입력 대상이 아님')
     return {
         'kind': kind,
         'name': _clean_text(d.get('name'), '이름', required=True, limit=80),
@@ -402,6 +436,9 @@ def _asset_payload(d, member):
         'note': _clean_text(d.get('note'), '메모', limit=300),
         'monthly_flow_amount': monthly_flow_amount,
         'monthly_flow_provided': flow_provided,
+        'evidence_provided': evidence_provided,
+        'evidence_image': evidence_image,
+        'evidence_mime': evidence_mime,
     }
 
 
@@ -422,14 +459,18 @@ def family_asset_create():
         p = _asset_payload(request.get_json(silent=True) or {}, member)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+    if p['kind'] in EVIDENCE_KINDS and not p['evidence_provided']:
+        return jsonify({'error': 'screenshot_required'}), 400
     db = get_db()
     cur = db.execute(
         "INSERT INTO family_asset_entry(household_id,kind,name,amount,owner_mode,owner_user_id,"
-        "joint_share,institution,note,monthly_flow_amount,monthly_flow_month,created_by,updated_by) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m','now','+9 hours'),?,?)",
+        "joint_share,institution,note,monthly_flow_amount,monthly_flow_month,evidence_image,evidence_mime,"
+        "evidence_captured_at,created_by,updated_by) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m','now','+9 hours'),?,?,"
+        "CASE WHEN ? IS NOT NULL THEN datetime('now','+9 hours') END,?,?)",
         (member['household_id'], p['kind'], p['name'], p['amount'], p['owner_mode'],
          p['owner_user_id'], p['joint_share'], p['institution'], p['note'],
-         p['monthly_flow_amount'] or 0,
+         p['monthly_flow_amount'] or 0, p['evidence_image'], p['evidence_mime'], p['evidence_image'],
          session['user_id'], session['user_id']))
     p['monthly_flow_amount'] = p['monthly_flow_amount'] or 0
     _record_change(db, member, 'create', cur.lastrowid, None, p)
@@ -446,8 +487,9 @@ def family_asset_update(asset_id):
         return jsonify({'error': 'household_required'}), 409
     existing = query(
         "SELECT id,kind,name,amount,CASE WHEN monthly_flow_month=strftime('%Y-%m','now','+9 hours') "
-        "THEN monthly_flow_amount ELSE 0 END monthly_flow_amount,revision FROM family_asset_entry "
-        "WHERE id=? AND household_id=?",
+        "THEN monthly_flow_amount ELSE 0 END monthly_flow_amount,revision,"
+        "CASE WHEN evidence_image IS NOT NULL THEN 1 ELSE 0 END evidence_available "
+        "FROM family_asset_entry WHERE id=? AND household_id=?",
         (asset_id, member['household_id']), one=True)
     if not existing:
         return jsonify({'error': 'not_found'}), 404
@@ -457,17 +499,29 @@ def family_asset_update(asset_id):
         expected_revision = _expected_revision(body)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+    evidence_needed = (p['kind'] in EVIDENCE_KINDS and
+                       (p['kind'] != existing['kind'] or p['amount'] != existing['amount']))
+    if evidence_needed and not p['evidence_provided']:
+        return jsonify({'error': 'screenshot_required'}), 400
     db = get_db()
     cur = db.execute(
         "UPDATE family_asset_entry SET kind=?,name=?,amount=?,owner_mode=?,owner_user_id=?,"
         "joint_share=?,institution=?,note=?,"
         "monthly_flow_amount=CASE WHEN ? THEN ? ELSE monthly_flow_amount END,"
         "monthly_flow_month=CASE WHEN ? THEN strftime('%Y-%m','now','+9 hours') ELSE monthly_flow_month END,"
+        "evidence_image=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE evidence_image END,"
+        "evidence_mime=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE evidence_mime END,"
+        "evidence_captured_at=CASE WHEN ? THEN datetime('now','+9 hours') "
+        "WHEN ? THEN NULL ELSE evidence_captured_at END,"
         "updated_by=?,revision=revision+1,"
         "updated_at=datetime('now','localtime') WHERE id=? AND household_id=? AND revision=?",
         (p['kind'], p['name'], p['amount'], p['owner_mode'], p['owner_user_id'],
          p['joint_share'], p['institution'], p['note'], p['monthly_flow_provided'],
-         p['monthly_flow_amount'] or 0, p['monthly_flow_provided'], session['user_id'], asset_id,
+         p['monthly_flow_amount'] or 0, p['monthly_flow_provided'],
+         p['evidence_provided'], p['evidence_image'], p['kind'] not in EVIDENCE_KINDS,
+         p['evidence_provided'], p['evidence_mime'], p['kind'] not in EVIDENCE_KINDS,
+         p['evidence_provided'], p['kind'] not in EVIDENCE_KINDS,
+         session['user_id'], asset_id,
          member['household_id'], expected_revision))
     if not cur.rowcount:
         db.rollback()
@@ -478,6 +532,22 @@ def family_asset_update(asset_id):
     _upsert_monthly_snapshot(db, member['household_id'])
     db.commit()
     return jsonify({'ok': True})
+
+
+@bp.get('/api/family-assets/assets/<int:asset_id>/evidence')
+@login_required
+def family_asset_evidence(asset_id):
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    row = get_db().execute(
+        "SELECT evidence_image,evidence_mime FROM family_asset_entry "
+        "WHERE id=? AND household_id=?", (asset_id, member['household_id'])).fetchone()
+    if not row or row['evidence_image'] is None:
+        return jsonify({'error': 'not_found'}), 404
+    return Response(row['evidence_image'], mimetype=row['evidence_mime'] or 'image/jpeg',
+                    headers={'Cache-Control': 'private, no-store',
+                             'X-Content-Type-Options': 'nosniff'})
 
 
 @bp.delete('/api/family-assets/assets/<int:asset_id>')

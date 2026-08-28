@@ -84,6 +84,15 @@ def _family_asset_entry_columns(conn):
                 "ALTER TABLE family_asset_entry ADD COLUMN monthly_flow_month TEXT"
             )
             print("[auto_migrate] family_asset_entry.monthly_flow_month 추가됨")
+        if columns and "evidence_image" not in columns:
+            conn.execute("ALTER TABLE family_asset_entry ADD COLUMN evidence_image BLOB")
+            print("[auto_migrate] family_asset_entry.evidence_image 추가됨")
+        if columns and "evidence_mime" not in columns:
+            conn.execute("ALTER TABLE family_asset_entry ADD COLUMN evidence_mime TEXT")
+            print("[auto_migrate] family_asset_entry.evidence_mime 추가됨")
+        if columns and "evidence_captured_at" not in columns:
+            conn.execute("ALTER TABLE family_asset_entry ADD COLUMN evidence_captured_at TEXT")
+            print("[auto_migrate] family_asset_entry.evidence_captured_at 추가됨")
     except Exception as exc:
         print(f"[auto_migrate] family_asset_entry 컬럼 점검 건너뜀: {exc}")
 

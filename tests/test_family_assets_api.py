@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """우리자산 API: 2인 가입, 가구 격리, 소유자 검증, CRUD 계약."""
-import os, sys, sqlite3, tempfile
+import os, sys, sqlite3, tempfile, base64
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -177,15 +177,20 @@ assert c1.post('/api/family-assets/partner-account/password',
                json={'password': 'cannot-reset-business'}).status_code == 409
 assert c3.post('/api/family-assets/join', json={'invite_code': code}).status_code == 409
 
+evidence = base64.b64encode(b'\xff\xd8\xff' + b'x' * 1200).decode()
 payload = {'kind': 'saving', 'name': '목돈 통장', 'amount': 12000000,
            'owner_mode': 'member', 'owner_user_id': u2, 'institution': '은행', 'note': '',
-           'monthly_flow_amount': 500000}
+           'monthly_flow_amount': 500000, 'evidence_base64': evidence}
+assert c1.post('/api/family-assets/assets',
+               json={k: v for k, v in payload.items() if k != 'evidence_base64'}).status_code == 400
 r = c1.post('/api/family-assets/assets', json=payload)
 assert r.status_code == 201, r.get_data(as_text=True)
 asset_id = r.json['id']
 snap = c2.get('/api/family-assets').json
 assert snap['assets'][0]['amount'] == 12000000 and snap['assets'][0]['owner_user_id'] == u2
 assert snap['assets'][0]['monthly_flow_amount'] == 500000
+assert snap['assets'][0]['evidence_available'] is True
+assert c2.get(f'/api/family-assets/assets/{asset_id}/evidence').data.startswith(b'\xff\xd8\xff')
 try:
     db = A.get_db()
     db.execute('UPDATE family_asset_entry SET monthly_flow_amount=-1 WHERE id=?', (asset_id,))
@@ -206,8 +211,10 @@ other_code = c3.get('/api/family-assets').json['household']['invite_code']
 assert c4.post('/api/family-assets/join', json={'invite_code': other_code, 'display_name': '밖2'}).status_code == 201
 assert c3.patch(f'/api/family-assets/assets/{asset_id}', json=payload).status_code == 404
 assert c4.delete(f'/api/family-assets/assets/{asset_id}').status_code == 404
+assert c3.get(f'/api/family-assets/assets/{asset_id}/evidence').status_code == 404
 
-joint = {**payload, 'kind': 'property', 'name': '우리집', 'amount': 700000000,
+joint = {**{k: v for k, v in payload.items() if k != 'evidence_base64'},
+         'kind': 'property', 'name': '우리집', 'amount': 700000000,
          'owner_mode': 'joint', 'owner_user_id': None, 'joint_share': 60,
          'monthly_flow_amount': 0}
 assert c1.patch(f'/api/family-assets/assets/{asset_id}', json=joint).status_code == 400
@@ -279,12 +286,52 @@ assert [h['action'] for h in race_history] == ['update', 'create']
 assert c1.delete(f'/api/family-assets/assets/{race_id}',
                  json={'expected_revision': race_asset['revision']}).status_code == 200
 
+# 캡처 강제의 핵심 PATCH 경계: 메타만 수정은 허용, 금액/보호분류 변경은 새 캡처 없이는 거절.
+gate_created = c1.post('/api/family-assets/assets', json=payload)
+gate_id = gate_created.json['id']
+gate_row = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == gate_id)
+without_evidence = {k: v for k, v in payload.items() if k != 'evidence_base64'}
+metadata_only = {**without_evidence, 'note': '메타만 변경',
+                 'expected_revision': gate_row['revision']}
+assert c1.patch(f'/api/family-assets/assets/{gate_id}', json=metadata_only).status_code == 200
+gate_row = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == gate_id)
+assert c1.patch(f'/api/family-assets/assets/{gate_id}',
+                json={**without_evidence, 'amount': 12000001,
+                      'expected_revision': gate_row['revision']}).status_code == 400
+assert c1.patch(f'/api/family-assets/assets/{gate_id}',
+                json={**without_evidence, 'kind': 'stock',
+                      'expected_revision': gate_row['revision']}).status_code == 400
+assert c1.patch(f'/api/family-assets/assets/{gate_id}',
+                json={**payload, 'amount': 12000001,
+                      'expected_revision': gate_row['revision']}).status_code == 200
+gate_row = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == gate_id)
+to_cash = {**without_evidence, 'kind': 'cash', 'monthly_flow_amount': 0,
+           'expected_revision': gate_row['revision']}
+assert c1.patch(f'/api/family-assets/assets/{gate_id}', json=to_cash).status_code == 200
+assert db.execute('SELECT evidence_image FROM family_asset_entry WHERE id=?',
+                  (gate_id,)).fetchone()[0] is None
+gate_row = next(a for a in c1.get('/api/family-assets').json['assets'] if a['id'] == gate_id)
+assert c1.patch(f'/api/family-assets/assets/{gate_id}',
+                json={**without_evidence, 'expected_revision': gate_row['revision']}).status_code == 400
+assert c1.delete(f'/api/family-assets/assets/{gate_id}',
+                 json={'expected_revision': gate_row['revision']}).status_code == 200
+
 bad = {**payload, 'owner_user_id': outsider}
 assert c1.post('/api/family-assets/assets', json=bad).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**payload, 'amount': 12.9}).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**payload, 'monthly_flow_amount': True}).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**joint, 'monthly_flow_amount': 1}).status_code == 400
 assert c1.post('/api/family-assets/assets', json={**joint, 'joint_share': 101}).status_code == 400
+assert c1.post('/api/family-assets/assets',
+               json={**payload, 'evidence_base64': 'not-base64'}).status_code == 400
+assert c1.post('/api/family-assets/assets',
+               json={**payload, 'evidence_base64': base64.b64encode(b'x' * 1200).decode()}).status_code == 400
+assert c1.post('/api/family-assets/assets',
+               json={**payload, 'evidence_base64': base64.b64encode(b'\xff\xd8\xff' + b'x' * 10).decode()}).status_code == 400
+assert c1.post('/api/family-assets/assets',
+               json={**payload, 'evidence_base64': 'A' * (((2_000_000 + 2) // 3) * 4 + 1)}).status_code == 400
+assert c1.post('/api/family-assets/assets',
+               json={**joint, 'kind': 'cash', 'evidence_base64': evidence}).status_code == 400
 
 # build 306 이하 앱은 신규 필드를 모르므로 생성은 0, 수정은 현재 달 값을 보존한다.
 legacy_payload = {k: v for k, v in payload.items() if k != 'monthly_flow_amount'}
@@ -373,7 +420,8 @@ db.execute('ALTER TABLE family_asset_history DROP COLUMN monthly_flow_after'); d
 A._auto_migrate()
 entry_cols = {r[1] for r in db.execute('PRAGMA table_info(family_asset_entry)')}
 history_cols = {r[1] for r in db.execute('PRAGMA table_info(family_asset_history)')}
-assert {'revision', 'monthly_flow_amount', 'monthly_flow_month'} <= entry_cols
+assert {'revision', 'monthly_flow_amount', 'monthly_flow_month', 'evidence_image',
+        'evidence_mime', 'evidence_captured_at'} <= entry_cols
 assert {'monthly_flow_before', 'monthly_flow_after'} <= history_cols
 assert db.execute('SELECT revision FROM family_asset_entry WHERE id=?',
                   (migration_asset,)).fetchone()[0] == 1

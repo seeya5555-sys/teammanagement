@@ -43,12 +43,14 @@ class FamilyAssetMigrationTests(unittest.TestCase):
         try:
             migration_steps.run_family_asset_migrations(conn)
             migration_steps.run_family_asset_migrations(conn)
-            self.assertTrue({"revision", "monthly_flow_amount", "monthly_flow_month"}
+            self.assertTrue({"revision", "monthly_flow_amount", "monthly_flow_month",
+                             "evidence_image", "evidence_mime", "evidence_captured_at"}
                             <= _columns(conn, "family_asset_entry"))
             self.assertTrue({"monthly_flow_before", "monthly_flow_after"}
                             <= _columns(conn, "family_asset_history"))
-            self.assertEqual((1, 500, 1, 0, None), conn.execute(
-                "SELECT id,amount,revision,monthly_flow_amount,monthly_flow_month "
+            self.assertEqual((1, 500, 1, 0, None, None, None, None), conn.execute(
+                "SELECT id,amount,revision,monthly_flow_amount,monthly_flow_month,"
+                "evidence_image,evidence_mime,evidence_captured_at "
                 "FROM family_asset_entry").fetchone())
             self.assertEqual((2, 100, 500, None, None), conn.execute(
                 "SELECT id,amount_before,amount_after,monthly_flow_before,monthly_flow_after "
