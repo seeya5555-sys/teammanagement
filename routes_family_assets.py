@@ -114,9 +114,12 @@ def _cashflow_snapshot(household_id, members, assets, month):
         "SELECT e.id,e.category,e.name,e.amount,e.spent_on,e.created_by,"
         "COALESCE(u.display_name,u.username,'구성원') created_by_name "
         "FROM family_cash_expense e LEFT JOIN users u ON u.id=e.created_by "
-        "WHERE e.household_id=? AND substr(e.spent_on,1,7)=? "
-        "ORDER BY e.spent_on DESC,e.id DESC", (household_id, month))
-    ordinary_total = sum(int(row['amount']) for row in expenses)
+        "WHERE e.household_id=? AND e.created_by=? AND substr(e.spent_on,1,7)=? "
+        "ORDER BY e.spent_on DESC,e.id DESC", (household_id, session['user_id'], month))
+    ordinary_total = int(query(
+        "SELECT COALESCE(SUM(amount),0) total FROM family_cash_expense "
+        "WHERE household_id=? AND substr(spent_on,1,7)=?",
+        (household_id, month), one=True)['total'])
     allowance_items = []
     allowance_total = 0
     for member in members:
@@ -129,20 +132,24 @@ def _cashflow_snapshot(household_id, members, assets, month):
         if budget:
             budget_id = budget['id']; allocated = int(budget['allocated_amount'])
             revision = int(budget['revision'])
-            spent_items = [dict(row) for row in query(
-                "SELECT e.id,e.name,e.amount,e.spent_on,e.created_by,"
-                "COALESCE(u.display_name,u.username,'구성원') created_by_name "
-                "FROM family_allowance_expense e LEFT JOIN users u ON u.id=e.created_by "
-                "WHERE e.budget_id=? AND e.household_id=? ORDER BY e.spent_on DESC,e.id DESC",
-                (budget_id, household_id))]
-        spent = sum(int(row['amount']) for row in spent_items)
+            if member['id'] == session['user_id']:
+                spent_items = [dict(row) for row in query(
+                    "SELECT e.id,e.name,e.amount,e.spent_on,e.created_by,"
+                    "COALESCE(u.display_name,u.username,'구성원') created_by_name "
+                    "FROM family_allowance_expense e LEFT JOIN users u ON u.id=e.created_by "
+                    "WHERE e.budget_id=? AND e.household_id=? ORDER BY e.spent_on DESC,e.id DESC",
+                    (budget_id, household_id))]
+        spent = int(query(
+            "SELECT COALESCE(SUM(amount),0) total FROM family_allowance_expense "
+            "WHERE budget_id=? AND household_id=?", (budget_id, household_id), one=True)['total']) \
+            if budget_id else 0
         allowance_total += allocated
         allowance_items.append({
             'id': budget_id, 'member_user_id': member['id'],
             'member_name': member['display_name'], 'month': month,
             'allocated_amount': allocated, 'spent_amount': spent,
             'remaining_amount': allocated - spent, 'revision': revision,
-            'expenses': spent_items,
+            'expenses': spent_items, 'details_private': member['id'] != session['user_id'],
         })
     salary = sum(int(row['amount']) for row in assets if row['kind'] == 'income')
     expense_total = ordinary_total + allowance_total
@@ -150,6 +157,8 @@ def _cashflow_snapshot(household_id, members, assets, month):
         'month': month,
         'salary_income': salary,
         'ordinary_expenses': ordinary_total,
+        'my_ordinary_expenses': sum(int(row['amount']) for row in expenses),
+        'expense_details_private': True,
         'allowance_allocated': allowance_total,
         'expense_total': expense_total,
         'available_after_expenses': salary - expense_total,
@@ -701,14 +710,15 @@ def family_cash_expense_delete(expense_id):
     db = get_db(); db.execute('BEGIN IMMEDIATE')
     try:
         row = db.execute(
-            "SELECT source_type FROM family_cash_expense WHERE id=? AND household_id=?",
-            (expense_id, member['household_id'])).fetchone()
+            "SELECT source_type FROM family_cash_expense "
+            "WHERE id=? AND household_id=? AND created_by=?",
+            (expense_id, member['household_id'], session['user_id'])).fetchone()
         if not row:
             db.rollback(); return jsonify({'error': 'not_found'}), 404
         if row['source_type']:
             db.rollback(); return jsonify({'error': 'linked_expense_cannot_delete'}), 409
-        db.execute("DELETE FROM family_cash_expense WHERE id=? AND household_id=?",
-                   (expense_id, member['household_id']))
+        db.execute("DELETE FROM family_cash_expense WHERE id=? AND household_id=? AND created_by=?",
+                   (expense_id, member['household_id'], session['user_id']))
         db.commit()
     except Exception:
         db.rollback(); raise
@@ -768,6 +778,8 @@ def family_allowance_expense_create(member_user_id):
     member = _member()
     if not member:
         return jsonify({'error': 'household_required'}), 409
+    if member_user_id != session['user_id']:
+        return jsonify({'error': 'private_expense_owner_required'}), 403
     d = request.get_json(silent=True) or {}
     try:
         name = _clean_text(d.get('name'), '사용처', required=True, limit=80)
@@ -808,8 +820,9 @@ def family_allowance_expense_delete(expense_id):
     db = get_db(); db.execute('BEGIN IMMEDIATE')
     try:
         cur = db.execute(
-            "DELETE FROM family_allowance_expense WHERE id=? AND household_id=?",
-            (expense_id, member['household_id']))
+            "DELETE FROM family_allowance_expense WHERE id=? AND household_id=? AND budget_id IN "
+            "(SELECT id FROM family_allowance_budget WHERE household_id=? AND member_user_id=?)",
+            (expense_id, member['household_id'], member['household_id'], session['user_id']))
         if not cur.rowcount:
             db.rollback(); return jsonify({'error': 'not_found'}), 404
         db.commit()

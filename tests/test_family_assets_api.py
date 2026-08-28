@@ -382,6 +382,13 @@ expense_created = c1.post('/api/family-assets/cash-expenses', json={
 })
 assert expense_created.status_code == 201
 expense_id = expense_created.json['cash_flow']['expenses'][0]['id']
+owner_flow = c1.get('/api/family-assets').json['cash_flow']
+partner_flow = c2.get('/api/family-assets').json['cash_flow']
+assert owner_flow['ordinary_expenses'] == partner_flow['ordinary_expenses'] == 300_000
+assert owner_flow['expense_details_private'] is partner_flow['expense_details_private'] is True
+assert owner_flow['my_ordinary_expenses'] == 300_000 and len(owner_flow['expenses']) == 1
+assert partner_flow['my_ordinary_expenses'] == 0 and partner_flow['expenses'] == []
+assert c2.delete(f'/api/family-assets/cash-expenses/{expense_id}').status_code == 404
 assert c1.put(f'/api/family-assets/allowances/{u1}',
               json={'allocated_amount': 500_000}).status_code == 200
 allowance_snap = c1.put(f'/api/family-assets/allowances/{u2}',
@@ -399,14 +406,24 @@ def race_allowance_spend(client_):
         'name': '동시사용', 'amount': 300_000, 'spent_on': today,
     }).status_code
 with ThreadPoolExecutor(max_workers=2) as pool:
-    allowance_f1 = pool.submit(race_allowance_spend, c1)
-    allowance_f2 = pool.submit(race_allowance_spend, c2)
+    allowance_f1 = pool.submit(race_allowance_spend, client(u2, 'wife'))
+    allowance_f2 = pool.submit(race_allowance_spend, client(u2, 'wife'))
     assert sorted((allowance_f1.result(), allowance_f2.result())) == [201, 400]
-u2_budget = next(x for x in c1.get('/api/family-assets').json['cash_flow']['allowances']
+u2_private = next(x for x in c1.get('/api/family-assets').json['cash_flow']['allowances']
                  if x['member_user_id'] == u2)
-assert u2_budget['spent_amount'] == 300_000 and len(u2_budget['expenses']) == 1
-assert c1.delete(f"/api/family-assets/allowance-expenses/{u2_budget['expenses'][0]['id']}").status_code == 200
-spend_created = c2.post(f'/api/family-assets/allowances/{u1}/expenses', json={
+u2_owner = next(x for x in c2.get('/api/family-assets').json['cash_flow']['allowances']
+                if x['member_user_id'] == u2)
+assert u2_private['spent_amount'] == 300_000 and u2_private['expenses'] == []
+assert u2_private['details_private'] is True
+assert u2_owner['spent_amount'] == 300_000 and len(u2_owner['expenses']) == 1
+assert u2_owner['details_private'] is False
+u2_expense_id = u2_owner['expenses'][0]['id']
+assert c1.delete(f'/api/family-assets/allowance-expenses/{u2_expense_id}').status_code == 404
+assert c2.delete(f'/api/family-assets/allowance-expenses/{u2_expense_id}').status_code == 200
+assert c2.post(f'/api/family-assets/allowances/{u1}/expenses', json={
+    'name': '점심', 'amount': 100_000, 'spent_on': today,
+}).status_code == 403
+spend_created = c1.post(f'/api/family-assets/allowances/{u1}/expenses', json={
     'name': '점심', 'amount': 100_000, 'spent_on': today,
 })
 assert spend_created.status_code == 201
@@ -415,6 +432,10 @@ mine = next(x for x in spend_flow['allowances'] if x['member_user_id'] == u1)
 assert mine['spent_amount'] == 100_000 and mine['remaining_amount'] == 400_000
 assert spend_flow['expense_total'] == 1_200_000  # 용돈 내부 사용은 가계 지출로 이중차감하지 않음.
 spend_id = mine['expenses'][0]['id']
+partner_u1 = next(x for x in c2.get('/api/family-assets').json['cash_flow']['allowances']
+                  if x['member_user_id'] == u1)
+assert partner_u1['spent_amount'] == 100_000 and partner_u1['remaining_amount'] == 400_000
+assert partner_u1['expenses'] == [] and partner_u1['details_private'] is True
 assert c1.post(f'/api/family-assets/allowances/{u1}/expenses', json={
     'name': '초과', 'amount': 400_001, 'spent_on': today,
 }).status_code == 400
@@ -422,7 +443,8 @@ assert c1.put(f'/api/family-assets/allowances/{u1}',
               json={'allocated_amount': 99_999}).status_code == 400
 assert c3.delete(f'/api/family-assets/cash-expenses/{expense_id}').status_code == 404
 assert c3.delete(f'/api/family-assets/allowance-expenses/{spend_id}').status_code == 404
-assert c2.delete(f'/api/family-assets/allowance-expenses/{spend_id}').status_code == 200
+assert c2.delete(f'/api/family-assets/allowance-expenses/{spend_id}').status_code == 404
+assert c1.delete(f'/api/family-assets/allowance-expenses/{spend_id}').status_code == 200
 assert c1.put(f'/api/family-assets/allowances/{u1}', json={'allocated_amount': 0}).status_code == 200
 assert c1.put(f'/api/family-assets/allowances/{u2}', json={'allocated_amount': 0}).status_code == 200
 assert c1.delete(f'/api/family-assets/cash-expenses/{expense_id}').status_code == 200
