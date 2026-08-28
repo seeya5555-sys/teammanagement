@@ -3227,6 +3227,26 @@
     "defaults": {}
   },
   {
+    "rule": "/api/family-assets/partner-account",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_assets_create_partner_account",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/partner-account/password",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_assets_reset_partner_password",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/fleet-map/data",
     "methods": [
       "GET",

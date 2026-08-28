@@ -4,8 +4,11 @@
 가입하고, 그 가구의 구성원만 자산 원장을 읽고 쓸 수 있다.
 """
 import secrets
+import sqlite3
+import re
 
 from flask import Blueprint, jsonify, request, session
+from werkzeug.security import generate_password_hash
 
 from app_core import get_db, query
 from helpers_shared import login_required
@@ -15,6 +18,7 @@ bp = Blueprint("routes_family_assets", __name__)
 KINDS = {'income', 'cash', 'saving', 'stock', 'property', 'loan', 'other'}
 OWNER_MODES = {'member', 'joint'}
 CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+USERNAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{3,39}$')
 
 
 def _clean_text(value, field, *, required=False, limit=120):
@@ -47,8 +51,10 @@ def _snapshot(member):
                 'history': [], 'trends': []}
     hid = member['household_id']
     members = query(
-        "SELECT m.user_id id,m.display_name,m.role,m.joined_at "
-        "FROM family_asset_member m WHERE m.household_id=? ORDER BY m.joined_at,m.user_id", (hid,))
+        "SELECT m.user_id id,m.display_name,m.role,m.joined_at,"
+        "CASE WHEN u.app_scope='family' THEN u.username END login_username "
+        "FROM family_asset_member m JOIN users u ON u.id=m.user_id "
+        "WHERE m.household_id=? ORDER BY m.joined_at,m.user_id", (hid,))
     assets = query(
         "SELECT a.id,a.kind,a.name,a.amount,a.owner_mode,a.owner_user_id,a.joint_share,"
         "a.institution,a.note,a.revision,a.updated_at,a.updated_by,u.display_name updated_by_name "
@@ -179,6 +185,96 @@ def family_assets_join():
     except Exception:
         db.rollback(); raise
     return jsonify(_snapshot(_member())), 201
+
+
+@bp.post('/api/family-assets/partner-account')
+@login_required
+def family_assets_create_partner_account():
+    """가구 owner가 배우자용 family 계정과 membership을 한 transaction으로 만든다."""
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    if member['role'] != 'owner':
+        return jsonify({'error': 'owner_required'}), 403
+    d = request.get_json(silent=True) or {}
+    try:
+        username = _clean_text(d.get('username'), '로그인 ID', required=True, limit=40).lower()
+        display = _clean_text(d.get('display_name'), '표시 이름', required=True, limit=30)
+        password = d.get('password')
+        if not USERNAME_RE.fullmatch(username):
+            raise ValueError('로그인 ID는 영문 소문자·숫자·._- 조합 4~40자')
+        if not isinstance(password, str) or not 8 <= len(password) <= 128:
+            raise ValueError('비밀번호는 8~128자')
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    # 느린 password KDF는 SQLite write lock을 잡기 전에 끝낸다.
+    password_hash = generate_password_hash(password)
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        owner = db.execute(
+            "SELECT household_id FROM family_asset_member "
+            "WHERE user_id=? AND household_id=? AND role='owner'",
+            (session['user_id'], member['household_id'])).fetchone()
+        if not owner:
+            db.rollback(); return jsonify({'error': 'owner_required'}), 403
+        count = db.execute(
+            'SELECT COUNT(*) FROM family_asset_member WHERE household_id=?',
+            (member['household_id'],)).fetchone()[0]
+        if count >= 2:
+            db.rollback(); return jsonify({'error': 'household_full'}), 409
+        if db.execute('SELECT 1 FROM users WHERE lower(username)=?', (username,)).fetchone():
+            db.rollback(); return jsonify({'error': 'username_taken'}), 409
+        uid = db.execute(
+            "INSERT INTO users(username,password_hash,display_name,role,app_scope,supervisor_id,active) "
+            "VALUES(?,?,?,'member','family',NULL,1)",
+            (username, password_hash, display)).lastrowid
+        db.execute(
+            "INSERT INTO family_asset_member(household_id,user_id,display_name,role) "
+            "VALUES(?,?,?,'member')", (member['household_id'], uid, display))
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        return jsonify({'error': 'username_taken'}), 409
+    except Exception:
+        db.rollback(); raise
+    # 비밀번호는 response/log/history 어디에도 되돌려주지 않는다.
+    return jsonify(_snapshot(_member())), 201
+
+
+@bp.post('/api/family-assets/partner-account/password')
+@login_required
+def family_assets_reset_partner_password():
+    """owner가 이 가구에 자동 생성한 family 배우자 계정의 비밀번호만 재발급한다."""
+    member = _member()
+    if not member:
+        return jsonify({'error': 'household_required'}), 409
+    if member['role'] != 'owner':
+        return jsonify({'error': 'owner_required'}), 403
+    password = (request.get_json(silent=True) or {}).get('password')
+    if not isinstance(password, str) or not 8 <= len(password) <= 128:
+        return jsonify({'error': '비밀번호는 8~128자'}), 400
+    password_hash = generate_password_hash(password)
+    db = get_db(); db.execute('BEGIN IMMEDIATE')
+    try:
+        owner = db.execute(
+            "SELECT household_id FROM family_asset_member "
+            "WHERE user_id=? AND household_id=? AND role='owner'",
+            (session['user_id'], member['household_id'])).fetchone()
+        if not owner:
+            db.rollback(); return jsonify({'error': 'owner_required'}), 403
+        partner = db.execute(
+            "SELECT u.id,u.username FROM family_asset_member m JOIN users u ON u.id=m.user_id "
+            "WHERE m.household_id=? AND m.user_id<>? AND m.role='member' "
+            "AND u.app_scope='family' AND u.role='member' AND u.active=1",
+            (member['household_id'], session['user_id'])).fetchone()
+        if not partner:
+            db.rollback(); return jsonify({'error': 'partner_not_managed'}), 409
+        db.execute('UPDATE users SET password_hash=? WHERE id=?', (password_hash, partner['id']))
+        db.commit()
+    except Exception:
+        db.rollback(); raise
+    return jsonify(_snapshot(_member()))
 
 
 def _asset_payload(d, member):

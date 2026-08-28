@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_issues_supervisor  ON issues(supervisor_id);
 CREATE INDEX IF NOT EXISTS idx_issues_vessel      ON issues(vessel_id);
 CREATE INDEX IF NOT EXISTS idx_issues_date        ON issues(issue_date DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_nocase ON users(username COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_issues_due_date    ON issues(due_date);
 CREATE INDEX IF NOT EXISTS idx_issues_status      ON issues(status);
 CREATE INDEX IF NOT EXISTS idx_issues_priority    ON issues(priority);

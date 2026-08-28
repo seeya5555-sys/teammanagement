@@ -3,7 +3,7 @@
 import os, sys, sqlite3, tempfile
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.getcwd())
@@ -41,6 +41,88 @@ def client(uid, name, role='member', app_scope='business'):
 
 c1, c2 = client(u1, 'husband'), client(u2, 'wife')
 c3, c4 = client(outsider, 'outside'), client(outsider2, 'outside2')
+
+# owner가 배우자 family 계정 생성+우리집 가입을 한 번에 끝낸다.
+provision_owner_id = add_user('provision-owner')
+provision_owner = client(provision_owner_id, 'provision-owner')
+assert provision_owner.post('/api/family-assets/households',
+                            json={'name': '온보딩집', 'display_name': '소유자'}).status_code == 201
+assert provision_owner.post('/api/family-assets/partner-account',
+                            json={'username': 'bad space', 'password': 'secret123',
+                                  'display_name': '배우자'}).status_code == 400
+assert provision_owner.post('/api/family-assets/partner-account',
+                            json={'username': 'partner.login', 'password': 'short',
+                                  'display_name': '배우자'}).status_code == 400
+created_partner = provision_owner.post('/api/family-assets/partner-account',
+    json={'username': 'Partner.Login', 'password': 'secret123', 'display_name': '배우자'})
+assert created_partner.status_code == 201 and len(created_partner.json['members']) == 2
+assert 'secret123' not in created_partner.get_data(as_text=True)
+partner_row = A.query('SELECT id,username,password_hash,role,app_scope,supervisor_id FROM users '
+                      'WHERE username=?', ('partner.login',), one=True)
+assert partner_row['role'] == 'member' and partner_row['app_scope'] == 'family'
+assert partner_row['supervisor_id'] is None and check_password_hash(partner_row['password_hash'], 'secret123')
+try:
+    A.get_db().execute("INSERT INTO users(username,password_hash,display_name,role,app_scope,active) "
+                       "VALUES('PARTNER.LOGIN','x','dup','member','family',1)")
+    raise AssertionError('NOCASE unique index did not reject duplicate username')
+except sqlite3.IntegrityError:
+    A.get_db().rollback()
+assert A.query('SELECT role FROM family_asset_member WHERE user_id=?',
+               (partner_row['id'],), one=True)['role'] == 'member'
+partner_login = A.app.test_client().post('/api/auth/token',
+    json={'username': 'partner.login', 'password': 'secret123'})
+assert partner_login.status_code == 200 and partner_login.json['app_scope'] == 'family'
+partner_headers = {'Authorization': f"Bearer {partner_login.json['token']}"}
+assert A.app.test_client().post('/api/family-assets/partner-account',
+    json={'username': 'anonymous-user', 'password': 'secret123',
+          'display_name': '익명'}).status_code == 401
+assert c1.post('/api/family-assets/partner-account',
+    json={'username': 'no-house-user', 'password': 'secret123',
+          'display_name': '무가구'}).status_code == 409
+assert A.app.test_client().post('/api/family-assets/partner-account', headers=partner_headers,
+    json={'username': 'forbidden-user', 'password': 'secret123',
+          'display_name': '금지'}).status_code == 403
+reset = provision_owner.post('/api/family-assets/partner-account/password',
+                             json={'password': 'new-secret-456'})
+assert reset.status_code == 200 and 'new-secret-456' not in reset.get_data(as_text=True)
+assert A.app.test_client().get('/api/family-assets', headers=partner_headers).status_code == 401
+assert A.app.test_client().post('/api/auth/token',
+    json={'username': 'partner.login', 'password': 'secret123'}).status_code == 401
+partner_relogin = A.app.test_client().post('/api/auth/token',
+    json={'username': 'partner.login', 'password': 'new-secret-456'})
+assert partner_relogin.status_code == 200
+assert A.app.test_client().post('/api/family-assets/partner-account/password',
+    headers={'Authorization': f"Bearer {partner_relogin.json['token']}"},
+    json={'password': 'member-cannot-reset'}).status_code == 403
+assert provision_owner.post('/api/family-assets/partner-account',
+    json={'username': 'never-created', 'password': 'secret123',
+          'display_name': '초과'}).status_code == 409
+assert A.query('SELECT id FROM users WHERE username=?', ('never-created',), one=True) is None
+
+# username 대소문자 중복과 동시 두 번 생성도 원자적으로 한 계정만 남긴다.
+race_owner_id = add_user('race-owner')
+race_owner1, race_owner2 = client(race_owner_id, 'race-owner'), client(race_owner_id, 'race-owner')
+assert race_owner1.post('/api/family-assets/households',
+                       json={'name': '경합집', 'display_name': '경합소유자'}).status_code == 201
+assert race_owner1.post('/api/family-assets/partner-account',
+    json={'username': 'PARTNER.LOGIN', 'password': 'secret123',
+          'display_name': '중복'}).status_code == 409
+partner_barrier = Barrier(2)
+def race_partner(client_, username_):
+    partner_barrier.wait()
+    return client_.post('/api/family-assets/partner-account',
+        json={'username': username_, 'password': 'secret123', 'display_name': username_}).status_code
+with ThreadPoolExecutor(max_workers=2) as pool:
+    partner_f1 = pool.submit(race_partner, race_owner1, 'race-partner-a')
+    partner_f2 = pool.submit(race_partner, race_owner2, 'race-partner-b')
+    partner_statuses = sorted((partner_f1.result(), partner_f2.result()))
+assert partner_statuses == [201, 409], partner_statuses
+race_hid = A.query('SELECT household_id FROM family_asset_member WHERE user_id=?',
+                   (race_owner_id,), one=True)['household_id']
+assert A.query('SELECT COUNT(*) n FROM family_asset_member WHERE household_id=?',
+               (race_hid,), one=True)['n'] == 2
+assert A.query("SELECT COUNT(*) n FROM users WHERE username IN ('race-partner-a','race-partner-b')",
+               one=True)['n'] == 1
 
 # 자산 전용 계정은 같은 Bearer 인증을 쓰더라도 업무 API 표면이 전부 닫힌다.
 family_uid = add_family_user('family-only')
@@ -91,6 +173,8 @@ assert len(code) == 8 and r.json['members'][0]['id'] == u1
 
 r = c2.post('/api/family-assets/join', json={'invite_code': code.lower(), 'display_name': '혜진'})
 assert r.status_code == 201 and len(r.json['members']) == 2, r.get_data(as_text=True)
+assert c1.post('/api/family-assets/partner-account/password',
+               json={'password': 'cannot-reset-business'}).status_code == 409
 assert c3.post('/api/family-assets/join', json={'invite_code': code}).status_code == 409
 
 payload = {'kind': 'saving', 'name': '목돈 통장', 'amount': 12000000,
