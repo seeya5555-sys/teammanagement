@@ -339,7 +339,8 @@ class FleetNextPortOverrideTests(unittest.TestCase):
         appmod.execute(
             "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, "
             "password_hash TEXT, display_name TEXT, supervisor_id INTEGER, "
-            "role TEXT DEFAULT 'member', active INTEGER NOT NULL DEFAULT 1)")
+            "role TEXT DEFAULT 'member', app_scope TEXT DEFAULT 'business', "
+            "active INTEGER NOT NULL DEFAULT 1)")
         appmod.execute(
             "INSERT OR IGNORE INTO users (id,username,password_hash,role,active) "
             "VALUES (99,'unassigned','x','member',1)")

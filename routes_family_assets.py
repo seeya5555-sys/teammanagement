@@ -71,6 +71,34 @@ def _close_salary_items(close_id):
         "WHERE close_id=? ORDER BY member_user_id", (close_id,))]
 
 
+def _group_rows(rows, key):
+    grouped = {}
+    for row in rows:
+        item = dict(row)
+        grouped.setdefault(item.pop(key), []).append(item)
+    return grouped
+
+
+def _input_salary_items_by_month(household_id, first_month, last_month):
+    return _group_rows(query(
+        "SELECT s.month,s.member_user_id,"
+        "COALESCE(m.display_name,u.display_name,u.username,'구성원') member_name,s.amount "
+        "FROM family_cashflow_monthly_salary s "
+        "LEFT JOIN family_asset_member m ON m.household_id=s.household_id "
+        "AND m.user_id=s.member_user_id LEFT JOIN users u ON u.id=s.member_user_id "
+        "WHERE s.household_id=? AND s.month BETWEEN ? AND ? "
+        "ORDER BY s.month,s.member_user_id", (household_id, first_month, last_month)), 'month')
+
+
+def _close_salary_items_by_id(household_id, first_month, last_month):
+    return _group_rows(query(
+        "SELECT s.close_id,s.member_user_id,s.member_name,s.amount "
+        "FROM family_cashflow_monthly_close_salary s "
+        "JOIN family_cashflow_monthly_close c ON c.id=s.close_id "
+        "WHERE c.household_id=? AND c.month BETWEEN ? AND ? "
+        "ORDER BY s.close_id,s.member_user_id", (household_id, first_month, last_month)), 'close_id')
+
+
 def _salary_projection(total, items):
     assigned = sum(int(item['amount']) for item in items)
     return items, int(total) - assigned
@@ -84,9 +112,20 @@ def _reconciliation_items(reconciliation_id):
         "ORDER BY kind,asset_name,asset_id", (reconciliation_id,))]
 
 
-def _reconciliation_projection(row):
+def _reconciliation_items_by_id(household_id, first_month, last_month):
+    return _group_rows(query(
+        "SELECT i.reconciliation_id,i.asset_id,i.asset_name,i.kind,i.book_amount,i.actual_amount,"
+        "i.actual_amount-i.book_amount difference,i.asset_revision,i.note "
+        "FROM family_asset_reconciliation_item i "
+        "JOIN family_asset_reconciliation r ON r.id=i.reconciliation_id "
+        "WHERE r.household_id=? AND r.month BETWEEN ? AND ? "
+        "ORDER BY i.reconciliation_id,i.kind,i.asset_name,i.asset_id",
+        (household_id, first_month, last_month)), 'reconciliation_id')
+
+
+def _reconciliation_projection(row, items=None):
     item = dict(row)
-    items = _reconciliation_items(item['id'])
+    items = _reconciliation_items(item['id']) if items is None else items
     book_assets = sum(int(x['book_amount']) for x in items if x['kind'] != 'loan')
     actual_assets = sum(int(x['actual_amount']) for x in items if x['kind'] != 'loan')
     book_debt = sum(int(x['book_amount']) for x in items if x['kind'] == 'loan')
@@ -142,6 +181,9 @@ def _snapshot(member):
         "FROM family_asset_monthly_snapshot WHERE household_id=? AND month<? "
         "ORDER BY month DESC LIMIT 1", (hid, first_month), one=True)
     trends = _continuous_trends(stored_trends, opening_trend, month, current)
+    input_salary_by_month = _input_salary_items_by_month(hid, first_month, month)
+    close_salary_by_id = _close_salary_items_by_id(hid, first_month, month)
+    reconciliation_items_by_id = _reconciliation_items_by_id(hid, first_month, month)
     asset_items = []
     for row in assets:
         item = dict(row)
@@ -158,7 +200,7 @@ def _snapshot(member):
             "ORDER BY c.month DESC,c.revision DESC", (hid, first_month, month)):
         item = dict(row)
         item['salary_by_member'], item['salary_unassigned'] = _salary_projection(
-            item['salary_income'], _close_salary_items(item['id']))
+            item['salary_income'], close_salary_by_id.get(item['id'], []))
         close_items.append(item)
     input_items = []
     for row in query(
@@ -168,9 +210,10 @@ def _snapshot(member):
             (hid, first_month, month)):
         item = dict(row)
         item['salary_by_member'], item['salary_unassigned'] = _salary_projection(
-            item['salary_income'], _input_salary_items(hid, item['month']))
+            item['salary_income'], input_salary_by_month.get(item['month'], []))
         input_items.append(item)
-    reconciliations = [_reconciliation_projection(row) for row in query(
+    reconciliations = [_reconciliation_projection(
+        row, reconciliation_items_by_id.get(row['id'], [])) for row in query(
         "SELECT r.id,r.month,r.revision,r.reconciled_by,"
         "COALESCE(u.display_name,u.username,'구성원') reconciled_by_name,r.reconciled_at "
         "FROM family_asset_reconciliation r LEFT JOIN users u ON u.id=r.reconciled_by "
@@ -184,14 +227,18 @@ def _snapshot(member):
         'assets': asset_items,
         'history': [dict(x) for x in history],
         'trends': trends,
-        'cash_flow': _cashflow_snapshot(hid, members, assets, month),
+        'cash_flow': _cashflow_snapshot(
+            hid, members, assets, month,
+            input_salary_by_month=input_salary_by_month,
+            close_salary_by_id=close_salary_by_id),
         'cash_flow_history': close_items,
         'cash_flow_inputs': input_items,
         'reconciliations': reconciliations,
     }
 
 
-def _cashflow_snapshot(household_id, members, assets, month):
+def _cashflow_snapshot(household_id, members, assets, month, *,
+                       input_salary_by_month=None, close_salary_by_id=None):
     expenses = query(
         "SELECT e.id,e.category,e.name,e.amount,e.spent_on,e.created_by,"
         "COALESCE(u.display_name,u.username,'구성원') created_by_name "
@@ -202,29 +249,36 @@ def _cashflow_snapshot(household_id, members, assets, month):
         "SELECT COALESCE(SUM(amount),0) total FROM family_cash_expense "
         "WHERE household_id=? AND substr(spent_on,1,7)=?",
         (household_id, month), one=True)['total'])
+    budgets = {row['member_user_id']: row for row in query(
+        "SELECT b.id,b.member_user_id,b.allocated_amount,b.revision,"
+        "COALESCE(SUM(e.amount),0) spent_amount "
+        "FROM family_allowance_budget b LEFT JOIN family_allowance_expense e "
+        "ON e.budget_id=b.id AND e.household_id=b.household_id "
+        "WHERE b.household_id=? AND b.month=? "
+        "GROUP BY b.id,b.member_user_id,b.allocated_amount,b.revision",
+        (household_id, month))}
+    my_allowance_expenses = [dict(row) for row in query(
+        "SELECT e.budget_id,e.id,e.name,e.amount,e.spent_on,e.created_by,"
+        "COALESCE(u.display_name,u.username,'구성원') created_by_name "
+        "FROM family_allowance_expense e "
+        "JOIN family_allowance_budget b ON b.id=e.budget_id "
+        "LEFT JOIN users u ON u.id=e.created_by "
+        "WHERE b.household_id=? AND b.month=? AND b.member_user_id=? "
+        "ORDER BY e.spent_on DESC,e.id DESC",
+        (household_id, month, session['user_id']))]
+    my_allowance_expenses_by_budget = _group_rows(my_allowance_expenses, 'budget_id')
     allowance_items = []
     allowance_total = 0
     for member in members:
-        budget = query(
-            "SELECT id,allocated_amount,revision FROM family_allowance_budget "
-            "WHERE household_id=? AND member_user_id=? AND month=?",
-            (household_id, member['id'], month), one=True)
+        budget = budgets.get(member['id'])
         spent_items = []
         allocated = revision = budget_id = 0
         if budget:
             budget_id = budget['id']; allocated = int(budget['allocated_amount'])
             revision = int(budget['revision'])
             if member['id'] == session['user_id']:
-                spent_items = [dict(row) for row in query(
-                    "SELECT e.id,e.name,e.amount,e.spent_on,e.created_by,"
-                    "COALESCE(u.display_name,u.username,'구성원') created_by_name "
-                    "FROM family_allowance_expense e LEFT JOIN users u ON u.id=e.created_by "
-                    "WHERE e.budget_id=? AND e.household_id=? ORDER BY e.spent_on DESC,e.id DESC",
-                    (budget_id, household_id))]
-        spent = int(query(
-            "SELECT COALESCE(SUM(amount),0) total FROM family_allowance_expense "
-            "WHERE budget_id=? AND household_id=?", (budget_id, household_id), one=True)['total']) \
-            if budget_id else 0
+                spent_items = my_allowance_expenses_by_budget.get(budget_id, [])
+        spent = int(budget['spent_amount']) if budget else 0
         allowance_total += allocated
         allowance_items.append({
             'id': budget_id, 'member_user_id': member['id'],
@@ -239,8 +293,11 @@ def _cashflow_snapshot(household_id, members, assets, month):
         "WHERE household_id=? AND month=?", (household_id, month), one=True)
     if monthly_input:
         salary = int(monthly_input['salary_income'])
-        salary_by_member, salary_unassigned = _salary_projection(
-            salary, _input_salary_items(household_id, month))
+        if input_salary_by_month is None:
+            input_salary_items = _input_salary_items(household_id, month)
+        else:
+            input_salary_items = input_salary_by_month.get(month, [])
+        salary_by_member, salary_unassigned = _salary_projection(salary, input_salary_items)
         saving_transfers = int(monthly_input['saving_transfers'])
         investment_transfers = int(monthly_input['investment_transfers'])
         loan_payments = int(monthly_input['loan_principal_payments'])
@@ -283,9 +340,15 @@ def _cashflow_snapshot(household_id, members, assets, month):
         'unallocated_income')) if latest_close else None
     current_salary_values = tuple(
         (int(item['member_user_id']), int(item['amount'])) for item in salary_by_member)
+    latest_close_salary = None
+    if latest_close:
+        if close_salary_by_id is None:
+            latest_close_salary = _close_salary_items(latest_close['id'])
+        else:
+            latest_close_salary = close_salary_by_id.get(latest_close['id'], [])
     closed_salary_values = tuple(
         (int(item['member_user_id']), int(item['amount']))
-        for item in _close_salary_items(latest_close['id'])) if latest_close else None
+        for item in latest_close_salary) if latest_close else None
     return {
         'month': month,
         'allocation_model_version': 2,

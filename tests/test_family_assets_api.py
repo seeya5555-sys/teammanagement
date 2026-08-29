@@ -3,6 +3,7 @@
 import os, sys, sqlite3, tempfile, base64
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from unittest.mock import patch
 from werkzeug.security import check_password_hash, generate_password_hash
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -257,6 +258,17 @@ assert after_delete['history'][0]['action'] == 'delete'
 assert after_delete['history'][0]['amount_before'] == 700000000
 assert after_delete['trends'][-1]['net_worth'] == 0
 assert c3.get('/api/family-assets').json['history'] == []  # 가구간 이력 격리
+
+# snapshot read path는 12개월 행마다 단건 SELECT로 되돌아가면 안 된다. 배치 결과가
+# 단건 helper를 전혀 부르지 않으면서 같은 payload를 만드는지 계약으로 잠근다.
+import routes_family_assets as family_routes
+snapshot_before_batch_guard = c1.get('/api/family-assets').json
+with patch.object(family_routes, '_input_salary_items', side_effect=AssertionError('input N+1')), \
+     patch.object(family_routes, '_close_salary_items', side_effect=AssertionError('close N+1')), \
+     patch.object(family_routes, '_reconciliation_items', side_effect=AssertionError('reconcile N+1')):
+    snapshot_after_batch_guard = c1.get('/api/family-assets')
+assert snapshot_after_batch_guard.status_code == 200
+assert snapshot_after_batch_guard.json == snapshot_before_batch_guard
 
 # 진짜 병렬 요청도 같은 revision에서 정확히 하나만 성공한다.
 race_create = c1.post('/api/family-assets/assets', json=payload)

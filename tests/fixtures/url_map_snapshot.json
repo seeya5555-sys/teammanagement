@@ -3177,6 +3177,36 @@
     "defaults": {}
   },
   {
+    "rule": "/api/family-assets/allowance-expenses/<int:expense_id>",
+    "methods": [
+      "DELETE",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_family_assets.family_allowance_expense_delete",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/allowances/<int:member_user_id>",
+    "methods": [
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_family_assets.family_allowance_set",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/allowances/<int:member_user_id>/expenses",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_allowance_expense_create",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/family-assets/assets",
     "methods": [
       "OPTIONS",
@@ -3203,6 +3233,57 @@
       "PATCH"
     ],
     "endpoint": "routes_family_assets.family_asset_update",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/assets/<int:asset_id>/evidence",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_family_assets.family_asset_evidence",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/cash-expenses",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_cash_expense_create",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/cash-expenses/<int:expense_id>",
+    "methods": [
+      "DELETE",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_family_assets.family_cash_expense_delete",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/cash-flow/close",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_cashflow_close",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/cash-flow/monthly-input",
+    "methods": [
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_family_assets.family_cashflow_monthly_input_set",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -3243,6 +3324,16 @@
       "POST"
     ],
     "endpoint": "routes_family_assets.family_assets_reset_partner_password",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/family-assets/reconciliations",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_family_assets.family_asset_reconciliation_create",
     "strict_slashes": true,
     "defaults": {}
   },
