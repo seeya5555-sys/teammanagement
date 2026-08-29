@@ -1044,21 +1044,44 @@ def _automation_health_summary():
 # category → SVMS OW_COMP_ID. 돈 분기(Slip 출금상신·검증강도)의 근거라
 # 코드 상수로 격리 — DB·UI 어디서도 편집 불가.
 SOA_CATEGORY_OWNER = {'silver': '037', 'skrt': '001'}
-def _soa_groups_load(active_only=True):
-    """soa_group + membership → dict 리스트. vessels 는 항상 sorted."""
-    where = 'WHERE active=1' if active_only else ''
-    rows = query(f'SELECT id,key,label,category,mode,sort_order,active FROM soa_group '
-                 f'{where} ORDER BY sort_order, key')
+def _soa_groups_load(active_only=True, db=None):
+    """soa_group + membership → dict 리스트. 그룹 수와 무관하게 SQL 한 번."""
+    # 실행 경계의 첫 인자를 완전한 literal로 둔다. 값 injection 위험뿐 아니라 동적 SQL
+    # site 자체를 늘리지 않는 게 repository SQL-construction 계약이다.
+    if db is not None:
+        if active_only:
+            rows = db.execute(
+                'SELECT g.id,g.key,g.label,g.category,g.mode,g.sort_order,g.active,v.vsl_cd '
+                'FROM soa_group g LEFT JOIN soa_group_vessel v ON v.group_id=g.id '
+                'WHERE g.active=1 ORDER BY g.sort_order,g.key,v.vsl_cd').fetchall()
+        else:
+            rows = db.execute(
+                'SELECT g.id,g.key,g.label,g.category,g.mode,g.sort_order,g.active,v.vsl_cd '
+                'FROM soa_group g LEFT JOIN soa_group_vessel v ON v.group_id=g.id '
+                'ORDER BY g.sort_order,g.key,v.vsl_cd').fetchall()
+    elif active_only:
+        rows = query('SELECT g.id,g.key,g.label,g.category,g.mode,g.sort_order,g.active,v.vsl_cd '
+                     'FROM soa_group g LEFT JOIN soa_group_vessel v ON v.group_id=g.id '
+                     'WHERE g.active=1 ORDER BY g.sort_order,g.key,v.vsl_cd')
+    else:
+        rows = query('SELECT g.id,g.key,g.label,g.category,g.mode,g.sort_order,g.active,v.vsl_cd '
+                     'FROM soa_group g LEFT JOIN soa_group_vessel v ON v.group_id=g.id '
+                     'ORDER BY g.sort_order,g.key,v.vsl_cd')
     out = []
+    by_id = {}
     for r in rows:
-        vs = [x['vsl_cd'] for x in query(
-            'SELECT vsl_cd FROM soa_group_vessel WHERE group_id=? ORDER BY vsl_cd', (r['id'],))]
-        out.append({
-            'key': r['key'], 'label': r['label'], 'category': r['category'],
-            'owner_comp_id': SOA_CATEGORY_OWNER.get(r['category']),
-            'mode': r['mode'], 'sort_order': r['sort_order'], 'active': r['active'],
-            'vessels': sorted(vs),
-        })
+        group = by_id.get(r['id'])
+        if group is None:
+            group = {
+                'key': r['key'], 'label': r['label'], 'category': r['category'],
+                'owner_comp_id': SOA_CATEGORY_OWNER.get(r['category']),
+                'mode': r['mode'], 'sort_order': r['sort_order'], 'active': r['active'],
+                'vessels': [],
+            }
+            by_id[r['id']] = group
+            out.append(group)
+        if r['vsl_cd'] is not None:
+            group['vessels'].append(r['vsl_cd'])
     return out
 def _soa_owner_map():
     """SVMS My Vessel owner 스냅샷(러너가 push). 표시 전용 — 실행 대상 판정 근거 아님."""

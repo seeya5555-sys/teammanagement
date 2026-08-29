@@ -48,6 +48,16 @@ chk(all(k not in (j.get('reserved_keys') or []) for k in ('G1', 'SKRT')),
     'reserved_keys 에 실제 그룹 key 는 없음', j.get('reserved_keys'))
 chk(isinstance(j.get('owners'), dict), 'owners 맵 내려줌')
 
+# 공통 loader는 그룹 수가 늘어도 membership을 행마다 다시 읽지 않는다.
+trace = []
+db_trace = A.get_db()
+db_trace.set_trace_callback(trace.append)
+loaded = shared_ns._soa_groups_load(active_only=False)
+db_trace.set_trace_callback(None)
+soa_selects = [sql for sql in trace if sql.lstrip().upper().startswith('SELECT')
+               and 'SOA_GROUP' in sql.upper()]
+chk(len(loaded) == 4 and len(soa_selects) == 1, '그룹 loader SQL 1회 고정', soa_selects)
+
 # 2) task 목록이 그룹에서 파생되는지
 tasks = shared_ns.automation_tasks()
 chk(list(tasks)[:4] == ['soa_g1', 'soa_g2', 'soa_g3', 'soa_skrt'], 'task 파생', list(tasks)[:4])

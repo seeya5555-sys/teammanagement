@@ -126,8 +126,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # literal `sv.supervisor_id=?` and can only append literal `AND v.id=?`; both
 # values stay parameter-bound and no request value can become SQL syntax.
 # This calendar change itself adds zero dynamic SQL sites.
-EXPECTED_COUNT = 168
-EXPECTED_SHA256 = "9ded9256652a9766b7a41a180d1ce93689252777faa13ddf13591600f7a3c704"
+# 2026-08-29 SOA group loader batch — count 168 -> 167. The prior loader built
+# its fixed active/all SELECT with an f-string, then executed one membership
+# SELECT per group. The replacement uses four complete SQL literals (active/all
+# x request/transaction connection), each LEFT JOINing membership in one query.
+# No request/config/DB value reaches SQL syntax; this removes one dynamic site.
+EXPECTED_COUNT = 167
+EXPECTED_SHA256 = "186a1a65e6a954606c9fb23bf6ae3fadbfc1940b5d6b310bb08e1c6f6b21d55e"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

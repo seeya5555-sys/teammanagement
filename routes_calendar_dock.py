@@ -3653,15 +3653,8 @@ def _soa_bump_version(db):
 
 
 def _soa_assert_active_invariants(db):
-    rows = db.execute('SELECT id,key,label,category,mode,sort_order,active FROM soa_group '
-                      'WHERE active=1 ORDER BY sort_order,key').fetchall()
-    groups = []
-    for r in rows:
-        groups.append({'key': r['key'], 'label': r['label'], 'category': r['category'],
-                       'mode': r['mode'], 'sort_order': r['sort_order'], 'active': r['active'],
-                       'vessels': [x['vsl_cd'] for x in db.execute(
-                           'SELECT vsl_cd FROM soa_group_vessel WHERE group_id=? ORDER BY vsl_cd',
-                           (r['id'],)).fetchall()]})
+    # 쓰기 트랜잭션과 같은 connection/snapshot에서 membership까지 한 번에 읽는다.
+    groups = _soa_groups_load(active_only=True, db=db)
     bad = _soa_groups_invariants(groups)
     if bad:
         raise ValueError(' / '.join(bad[:5]))
@@ -3771,12 +3764,9 @@ def api_automation_soa_group_delete(group_key):
             om = {r['vsl_cd']: r['owner_comp_id']
                   for r in db.execute('SELECT vsl_cd, owner_comp_id FROM soa_vessel_owner').fetchall()}
             survivors = set()
-            for g in db.execute('SELECT id,category,mode FROM soa_group WHERE active=1 AND category=?',
-                                (row['category'],)).fetchall():
-                gv = [x['vsl_cd'] for x in db.execute(
-                    'SELECT vsl_cd FROM soa_group_vessel WHERE group_id=?', (g['id'],)).fetchall()]
-                survivors.update(_soa_group_members(
-                    {'category': g['category'], 'mode': g['mode'], 'vessels': sorted(gv)}, om))
+            for g in _soa_groups_load(active_only=True, db=db):
+                if g['category'] == row['category']:
+                    survivors.update(_soa_group_members(g, om))
             gone = {'category': row['category'], 'mode': row['mode'], 'vessels': vessels}
             orphans = sorted(set(_soa_group_members(gone, om)) - survivors)
         vrow = db.execute("SELECT v FROM api_settings WHERE k='soa_groups_version'").fetchone()
