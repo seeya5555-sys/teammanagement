@@ -530,6 +530,39 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_draft_status ON invoice_draft(status)")
 
+        # 통합 송금요청 후보 큐 — Fund Request(관리사) + Invoice(벤더 직불).
+        # 기존 fundreq_draft/invoice_draft는 각각 SVMS 상신·컨펌 파이프라인 소유라 섞지 않는다.
+        # 이 큐의 1차 단계는 SVMS 읽기+사람 선택까지만 담당한다(외부 송금요청 POST 0).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS remittance_draft (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type   TEXT NOT NULL,                       -- fundreq|invoice
+                source_key    TEXT NOT NULL,                       -- OPEX_CD|INV_CD
+                vsl_cd        TEXT,
+                vsl_nm        TEXT,
+                payer_type    TEXT NOT NULL,                       -- management|vendor
+                vendor_nm     TEXT,
+                amount        REAL,
+                cur_cd        TEXT,
+                inv_no        TEXT,
+                inv_dt        TEXT,
+                pay_dt        TEXT,
+                source_status TEXT,
+                payment_state TEXT NOT NULL DEFAULT 'unknown',    -- unpaid|paid|unknown
+                auto_checked  INTEGER NOT NULL DEFAULT 0,
+                selected      INTEGER NOT NULL DEFAULT 0,
+                urgent        INTEGER NOT NULL DEFAULT 0,
+                raw_row       TEXT,
+                last_synced_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                status        TEXT NOT NULL DEFAULT 'pending',     -- pending/submitting/submitted/failed
+                result        TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                UNIQUE(source_type, source_key)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_remittance_draft_status ON remittance_draft(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_remittance_draft_paydt ON remittance_draft(pay_dt)")
+
         # 기국 인보이스 신규등록(Case 2) 큐 — /liscr 탭에 PDF 업로드 → 맥 러너가 파싱/생성.
         #   TRMT 서버는 SVMS 자격증명을 갖지 않는다(시크릿은 맥 로컬에만 둔다는 방침).
         #   따라서 서버는 큐·화면만 맡고 SVMS 쓰기는 전부 맥 러너가 한다. 기존 인보이스

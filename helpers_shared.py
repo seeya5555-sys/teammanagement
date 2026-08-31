@@ -1354,6 +1354,7 @@ AUTOMATION_TASKS_BASE = {
     'jeonja':   '전자결재 자동상신',
     'fundreq':  '비용청구(Fund Request) 자동상신 — 장금·Technical·Submitted',
     'invoice_confirm': '인보이스 자동컨펌 — PIC/SUP/Remit 교정 + SVMS 컨펌 (승인 건만 처리)',
+    'remittance_sync': '송금요청 후보 동기화 — SVMS Fund Request + Invoice 읽기전용',
     'soa_resend': '리젝 통보메일 재발송 (실패분)',
     'aor_prep':   'AOR(Technical) prep — Submitted AOR 카드화 (/aor 큐 적재)',
     'aor_submit': 'AOR 상신 — 승인된 건 SVMS 제출 (approve 시 자동큐)',

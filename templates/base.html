@@ -88,7 +88,7 @@
       {% set drydock_eps = ['routes_core.dry_dock_page','routes_core.dry_dock_edit_page'] %}
       {% set boarding_eps = ['routes_core.boarding_page','routes_core.boarding_edit_page'] %}
       {% set report_eps = drydock_eps + boarding_eps %}
-      {% set auto_eps = ['routes_dock_submit.automation_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_liscr.liscr_page','routes_calendar_dock.health_page'] %}
+      {% set auto_eps = ['routes_dock_submit.automation_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_calendar_dock.remittance_page','routes_liscr.liscr_page','routes_calendar_dock.health_page'] %}
       {% set dockprep_eps = ['routes_repair_request.repair_request_page','routes_calendar_dock.reqgen_page','routes_dock_submit.dock_procure_page','routes_dock_daily.dock_daily_page'] %}
       {% set expense_eps = ['routes_calendar_dock.expenses_page','routes_calendar_dock.expense_detail_page'] %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
@@ -108,6 +108,7 @@
             {{ nlink('routes_calendar_dock.aor_page', 'AOR') }}
             {{ nlink('routes_calendar_dock.fundreq_page', '비용청구') }}
             {{ nlink('routes_calendar_dock.invoice_page', '인보이스') }}
+            {{ nlink('routes_calendar_dock.remittance_page', '송금요청 후보') }}
             {{ nlink('routes_liscr.liscr_page', '인보이스 등록') }}
             {% endif %}
           </div>
@@ -230,6 +231,7 @@
           {{ nlink('routes_calendar_dock.aor_page', 'AOR') }}
           {{ nlink('routes_calendar_dock.fundreq_page', '비용청구') }}
           {{ nlink('routes_calendar_dock.invoice_page', '인보이스') }}
+          {{ nlink('routes_calendar_dock.remittance_page', '송금요청 후보') }}
           {{ nlink('routes_liscr.liscr_page', '인보이스 등록') }}
         </div>
         {% endif %}

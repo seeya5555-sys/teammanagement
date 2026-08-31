@@ -6371,6 +6371,87 @@ def invoice_page():
     return render_template('invoice.html')
 
 
+# ===== 통합 송금요청 후보(관리사 Fund Request + 벤더 Invoice) =====
+@bp.route('/remittance')
+@admin_required
+def remittance_page():
+    return render_template('remittance.html')
+
+
+def _remittance_today():
+    return datetime.now().strftime('%Y%m%d')
+
+
+def _remittance_overdue(pay_dt, today=None):
+    value = re.sub(r'[^0-9]', '', str(pay_dt or ''))
+    return bool(re.fullmatch(r'\d{8}', value) and value < (today or _remittance_today()))
+
+
+@bp.route('/api/remittance/drafts')
+@admin_required
+def api_remittance_list():
+    rows = [dict(r) for r in query(
+        "SELECT * FROM remittance_draft WHERE status='pending' "
+        "ORDER BY CASE WHEN payment_state='unpaid' AND pay_dt < ? THEN 0 "
+        "WHEN payment_state='unknown' THEN 2 ELSE 1 END, pay_dt, id DESC",
+        (_remittance_today(),))]
+    today = _remittance_today()
+    for row in rows:
+        row['overdue'] = _remittance_overdue(row.get('pay_dt'), today)
+        row['source_label'] = '관리사' if row.get('payer_type') == 'management' else '벤더'
+        # 자동체크는 지급여부가 확정된 Fund Request 미지급 건에만 허용한다.
+        row['auto_checked'] = bool(row.get('payment_state') == 'unpaid' and row['overdue'])
+        row['safe_to_select'] = row.get('payment_state') == 'unpaid'
+    counts = {
+        'total': len(rows),
+        'unpaid': sum(r.get('payment_state') == 'unpaid' for r in rows),
+        'overdue': sum(r['auto_checked'] for r in rows),
+        'unknown': sum(r.get('payment_state') == 'unknown' for r in rows),
+        'management': sum(r.get('payer_type') == 'management' for r in rows),
+        'vendor': sum(r.get('payer_type') == 'vendor' for r in rows),
+    }
+    return jsonify({'drafts': rows, 'counts': counts, 'today': today})
+
+
+@bp.route('/api/ext/remittance/drafts', methods=['POST'])
+@api_key_required
+def api_ext_remittance_create():
+    """맥 러너가 SVMS 두 원천의 후보를 적재하는 읽기전용 동기화 결과 수신.
+    외부 SVMS/송금요청 사이트에는 쓰지 않는다. source_type+source_key 멱등 upsert."""
+    d = request.get_json(silent=True) or {}
+    source_type = str(d.get('source_type') or '').strip().lower()
+    source_key = str(d.get('source_key') or '').strip()
+    if source_type not in ('fundreq', 'invoice') or not source_key:
+        return jsonify({'error': 'source_type(fundreq|invoice) and source_key required'}), 400
+    payer_type = 'management' if source_type == 'fundreq' else 'vendor'
+    payment_state = str(d.get('payment_state') or 'unknown').strip().lower()
+    if payment_state not in ('unpaid', 'paid', 'unknown'):
+        return jsonify({'error': 'invalid payment_state'}), 400
+    raw = d.get('raw_row')
+    raw_json = json.dumps(raw, ensure_ascii=False) if raw is not None else None
+    cols = {
+        'vsl_cd': d.get('vsl_cd'), 'vsl_nm': d.get('vsl_nm'), 'payer_type': payer_type,
+        'vendor_nm': d.get('vendor_nm'), 'amount': d.get('amount'), 'cur_cd': d.get('cur_cd'),
+        'inv_no': d.get('inv_no'), 'inv_dt': d.get('inv_dt'), 'pay_dt': d.get('pay_dt'),
+        'source_status': d.get('source_status'), 'payment_state': payment_state,
+        'raw_row': raw_json,
+    }
+    ex = query("SELECT id, status FROM remittance_draft WHERE source_type=? AND source_key=?",
+               (source_type, source_key), one=True)
+    if ex and ex['status'] != 'pending':
+        return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
+    if ex:
+        sets = ', '.join(f'{k}=?' for k in cols)
+        execute(f"UPDATE remittance_draft SET {sets}, last_synced_at=datetime('now','localtime') WHERE id=?",
+                (*cols.values(), ex['id']))
+        return jsonify({'id': ex['id'], 'updated': True}), 200
+    did = execute(
+        "INSERT INTO remittance_draft (source_type,source_key,vsl_cd,vsl_nm,payer_type,vendor_nm,amount,cur_cd,"
+        "inv_no,inv_dt,pay_dt,source_status,payment_state,raw_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (source_type, source_key, *cols.values()))
+    return jsonify({'id': did, 'status': 'pending'}), 201
+
+
 def _invoice_pdf_path(did):
     """미리보기 PDF 파일 경로(draft id 기준). 파일명=id.pdf 라 경로주입 불가."""
     return os.path.join(INVOICE_PDF_DIR, '%d.pdf' % int(did))
