@@ -423,11 +423,12 @@
   // minZoom=3: 최대 축소뷰를 줌3으로 고정(손유석 2026-07-18, 기존 줌2에서 한 스케일 확대). maxZoom=10. 줌은 스크롤로만.
   const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:3,maxZoom:10,
     maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],3);
-  // Fleet Map B — API key 없는 OSM HOT basemap(공개 타일; 내부 저트래픽 사용)
+  // Fleet Map B — API key 없는 Esri World Street Map(영문 지명 우선; 내부 저트래픽 사용)
   // 사용자 화면에 필요한 타일만 브라우저가 직접 요청하고 Leaflet의 HTTP 캐시를 따름(사전수집 없음).
-  // CARTO 익명 타일은 현재 타일 자체에 'API KEY REQUIRED' 워터마크를 삽입하므로 사용하지 않는다.
-  L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-    {attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · Tiles style by <a href="https://www.hotosm.org/" target="_blank" rel="noopener">HOT</a>',subdomains:'abc',maxZoom:19}).addTo(map);
+  // CARTO 익명 타일은 현재 타일 자체에 'API KEY REQUIRED' 워터마크를 삽입하고,
+  // OSM HOT는 현지어 지명을 우선하므로 영문 표기가 필요한 Fleet Map에는 사용하지 않는다.
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    {attribution:'Tiles © <a href="https://www.esri.com/" target="_blank" rel="noopener">Esri</a> — Sources: Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, and the GIS User Community',maxZoom:19}).addTo(map);
   // 위경도 그리드(graticule) — 해도 느낌. 상호작용 없음(마커 클릭 방해 X).
   const gratLayer=L.layerGroup().addTo(map);
   (function drawGraticule(){
