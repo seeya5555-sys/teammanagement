@@ -860,7 +860,7 @@
     if(v.prev_port&&v.prev_port.xy){portDot(v.prev_port.xy,(v.prev_port.name||'In Port')+' · 출항');all.push(v.prev_port.xy);}
     if(v.next_port&&v.next_port.xy){const ed=etaDisp(v);portDot(v.next_port.xy,(v.next_port.name||'Next Port')+(ed?' · ETA '+ed:' · 도착예정'));all.push(v.next_port.xy);}
     const legs=(v.route_legs&&v.route_legs.length)?v.route_legs:[];
-    if(legs.length){routeLayer=L.polyline(legs,{color:'#ffd400',weight:3,opacity:.95,dashArray:'2 9'}).addTo(map);
+    if(legs.length){routeLayer=L.polyline(legs,{color:'#dc2626',weight:3,opacity:.95,dashArray:'2 9'}).addTo(map);
       let off=0;window._fmA=setInterval(()=>{off=(off-2)%22;routeLayer.setStyle({dashOffset:String(off)});},60);}
     // 클릭 시 자동 줌/이동 없음 — 줌은 스크롤로만 (손유석 요청)
   }
