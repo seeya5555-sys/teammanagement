@@ -5,7 +5,7 @@
 
 ## 1. 확인된 외부 시스템 및 조회 기준
 
-- 관리사 지급 원천은 SVMS 비용청구(Fund Request) 탭 `VmsFundRequest`의 `PKG_CO_OPEX.SP_GET_OPEX`다. `RMT_YN != "Y"`를 미지급으로 확정한다.
+- 관리사 지급 원천은 SVMS 비용청구(Fund Request) 탭 `VmsFundRequest`의 `PKG_CO_OPEX.SP_GET_OPEX` 중 상태가 **`HQ Transferred to financial`**인 행만 대상이다. 그 안에서 `RMT_YN != "Y"`를 미지급으로 확정한다.
 - 벤더 직불 원천은 SVMS 비용/인보이스 탭 `VmsInvoice`의 `PKG_CO_INV.SP_GET_INV`다. SVMS Invoice 응답에는 지급여부 필드가 없어 `PAY_DT`는 가져오되 지급상태는 확인필요로 둔다.
 - 두 조회 모두 My Vessel 범위 `VSL_CD:"M"`을 사용한다. 이는 로그인 사용자의 SVMS 홈>개인정보에 설정된 My Vessel을 서버가 적용하는 매직값이다.
 - Invoice의 지급여부는 외부 Vendor 송금요청 이력과 `INV_NO` 대조 후 확정한다. 대조 전에는 자동 체크하지 않는다.
@@ -52,7 +52,8 @@ TRMT 통합 송금요청 큐 (관리사/벤더 구분 + 기한초과 자동체�
 
 | TRMT | 외부 요청 | 규칙 |
 |---|---|---|
-| Fund Request `INV_NO` 또는 Invoice `INV_NO` | `items[].invoice_no` | 원문 보존, trim만 적용 |
+| Fund Request `OPEX_CD` (SVMS Fund No) | `items[].invoice_no` | 관리사 건은 Fund No를 외부 Invoice No로 사용 |
+| Invoice `INV_NO` | `items[].invoice_no` | 직접지급 건은 후속 적용 범위 |
 | 사용자가 확인한 지급요청일 | `items[].payment_request_date` | 기본 오늘, 건별 수정 가능 |
 | 사유 템플릿 + 사용자 보정 | `items[].reason` | 빈 사유는 등록 차단 또는 확인 체크 |
 | TRMT 로그인 사용자/담당 감독 | `supervisor` | 외부 권한 사용자명으로 별도 매핑 |

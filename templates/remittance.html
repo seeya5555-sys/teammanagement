@@ -13,7 +13,7 @@
 {% endblock %}
 {% block content %}
 <header class="rm-head ops-page-header"><div><p class="ops-page-kicker">Payment request queue</p><h2 class="page-title"><svg class="ic-svg"><use href="#i-wallet"/></svg> 통합 송금요청 후보</h2></div><span class="rm-count" id="rm-count"></span><button class="rm-btn rm-light" id="rm-reload">SVMS 목록 새로고침</button></header>
-<div class="rm-source"><b>조회 원천</b> Fund Request(관리사) `PKG_CO_OPEX.SP_GET_OPEX` + Invoice(벤더 직불) `PKG_CO_INV.SP_GET_INV` · My Vessel `VSL_CD=M`</div>
+<div class="rm-source"><b>조회 원천</b> Fund Request(관리사) `PKG_CO_OPEX.SP_GET_OPEX` · <b>HQ Transferred to financial만</b> + Invoice(벤더 직불) `PKG_CO_INV.SP_GET_INV` · My Vessel `VSL_CD=M`</div>
 <div class="rm-note"><b>자동 체크 기준:</b> 지급여부가 SVMS에서 확정된 미지급 건 중 <b>PAY_DT가 오늘보다 지난 건</b>만 자동 체크. Invoice는 SVMS에 지급여부 필드가 없어 Vendor 송금요청 이력 대조 전까지 확인필요로 두며, 긴급 건은 형이 직접 체크할 수 있음. 이 1차 버전은 외부 등록 POST를 실행하지 않음.</div>
 <section class="rm-stats"><div class="rm-stat"><small>전체 후보</small><b id="rm-total">-</b></div><div class="rm-stat"><small>미지급 확정</small><b id="rm-unpaid">-</b></div><div class="rm-stat"><small>기한초과 자동체크</small><b id="rm-overdue" style="color:var(--red)">-</b></div><div class="rm-stat"><small>관리사 / 벤더</small><b><span id="rm-mgmt">-</span> / <span id="rm-vendor">-</span></b></div><div class="rm-stat"><small>확인필요</small><b id="rm-unknown" style="color:var(--amber)">-</b></div></section>
 <table class="rm-table"><thead><tr><th>선택</th><th>구분</th><th>선박 · 업체</th><th>Invoice / 문서번호</th><th>금액</th><th>지급기한</th><th>원천 상태</th><th>지급 상태</th></tr></thead><tbody id="rm-body"><tr><td colspan="8" class="rm-muted">불러오는 중…</td></tr></tbody></table>
