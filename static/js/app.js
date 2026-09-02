@@ -715,9 +715,20 @@ function renderTable() {
   if (!g) { if (S.inlineAdd) tbody.append(inlineAddRow()); return; }
   const noMap = chronoNoMap(g.issues);
   const rows = displayIssues(g.issues);
+  const byDate = new Map();
   for (const i of rows) {
-    tbody.append(rowEl(i, noMap.get(i.id)));
-    if (S.expandedRows.has(i.id)) tbody.append(expandedRowEl(i));   // 펼침 카드 행
+    const date = i.issue_date || '(미정)';
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date).push(i);
+  }
+  for (const [date, dateRows] of byDate) {
+    const collapsed = S.collapsedDates.has(date);
+    tbody.append(dateBarRow(date, collapsed, dateRows.length));
+    if (collapsed) continue;
+    for (const i of dateRows) {
+      tbody.append(rowEl(i, noMap.get(i.id)));
+      if (S.expandedRows.has(i.id)) tbody.append(expandedRowEl(i));   // 펼침 카드 행
+    }
   }
   if (!rows.length) {
     tbody.append(el('tr', {}, el('td', { colspan: '5', style: 'padding:22px;text-align:center;color:var(--text-tertiary)' },
@@ -890,17 +901,17 @@ function dateBarRow(date, collapsed, count) {
     el('span', { class: 'gb-count' }, `${count} item${count>1?'s':''}`));
 
   // + Add Issue 트리거
-  const addBtn = el('span', {
+  const addBtn = el('button', {
     class: 'inline-add-trigger',
     title: `Add issue for ${date}`,
     onclick: (e) => {
       e.stopPropagation();
       openInlineAdd(date);
     },
-  }, '+ Add Issue');
+  }, '+ Add Log');
   inner.append(addBtn);
 
-  const td = el('td', { colspan: '8' }, inner);
+  const td = el('td', { colspan: '5' }, inner);
   tr.append(td);
   // 셀 전체 클릭 → 접기. 단, 트리거 버튼 클릭은 stopPropagation 덕에 무시
   tr.addEventListener('click', (e) => {
@@ -1389,13 +1400,16 @@ function cardEl(i, no) {
   head.append(statBadge(i.status));
   card.append(head);
 
-  card.append(el('div', { class: 'issue-card-body' },
-    el('div', { class: 'issue-card-title' }, i.item_topic)));
+  const title = el('div', { class: 'issue-card-title cell-edit', title: '클릭하여 제목 편집' }, i.item_topic);
+  title.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(title, i, 'item_topic', 'text'); });
+  card.append(el('div', { class: 'issue-card-body' }, title));
 
   if (expanded) {
     const det = el('div', { class: 'issue-card-det' });
     det.append(el('div', { class: 'exp-label' }, '상세 내용'));
-    det.append(el('div', { class: 'exp-desc' }, i.description || '—'));
+    const desc = el('div', { class: 'exp-desc cell-edit', title: '클릭하여 상세 편집' }, i.description || '—');
+    desc.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(desc, i, 'description', 'textarea'); });
+    det.append(desc);
     det.append(el('div', { class: 'exp-label' }, '진행사항 (조치 이력)'));
     det.append(el('div', { class: 'exp-acts-wrap' }, renderActionCell(i)));
     const acts = el('div', { class: 'exp-btns' });
@@ -3043,8 +3057,8 @@ function wireEvents() {
     loadIssues().then(render);
   });
 
-  // 선박별 보기(rev.4)에선 날짜 그룹 접기 버튼 불필요 → 숨김
-  { const bta = $('#btn-toggle-all'); if (bta) bta.style.display = 'none'; }
+  // 날짜 그룹 전체 펼치기/접기 버튼은 page-actions로 이동해 항상 노출
+  { const bta = $('#btn-toggle-all'), pa = document.querySelector('.page-actions'); if (bta && pa) pa.prepend(bta); }
 
   // 툴바 슬림화: 엑셀추출 / 영문엑셀추출 / 업무요약 만 상단 우측(page-actions)으로 옮기고
   // 나머지(Today·검색·필터·업무요약추출·items)는 안 쓰므로 툴바째 숨김. (필터 요소는 DOM 유지 → JS 정상)
