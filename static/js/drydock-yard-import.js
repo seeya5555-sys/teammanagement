@@ -217,6 +217,35 @@
     return originalCsvUpload(input);
   };
 
+  async function downloadJobProgress(button) {
+    if (!VID) { toast('선박을 먼저 선택하세요', true); return; }
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = '엑셀 생성 중…';
+    try {
+      const response = await fetch(`${API}/vessels/${encodeURIComponent(VID)}/jobs/progress.xlsx`);
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || 'Job Progress 엑셀 생성 실패');
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const plain = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = encoded ? decodeURIComponent(encoded[1]) : (plain ? plain[1] : 'DD_JOB_PROGRESS.xlsx');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast('✓ Job Progress 엑셀 다운로드 완료');
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('csv-upload-input');
     if (!input) return;
@@ -232,6 +261,13 @@
       svmsButton.title = 'SVMS 입거수리의 Dock Paint, Spare/Store, Shore Repair를 가져옵니다';
       svmsButton.onclick = () => importSvmsDraft(svmsButton);
       button.parentElement.insertBefore(svmsButton, button);
+      const exportButton = document.createElement('button');
+      exportButton.type = 'button';
+      exportButton.className = 'btn-sec';
+      exportButton.textContent = '⬇ Job Progress Excel';
+      exportButton.title = '현재 선박의 Job Progress를 지정 엑셀 템플릿에 자동 입력해 다운로드합니다';
+      exportButton.onclick = () => downloadJobProgress(exportButton);
+      button.parentElement.insertBefore(exportButton, input.nextElementSibling);
     }
   });
 })();

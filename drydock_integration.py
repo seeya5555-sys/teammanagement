@@ -11,7 +11,8 @@ PoC(poc_merged.py 11/11 PASS)에서 검증된 로직을 프로덕션 모듈로 �
     dd_app = ddi.apply(dd_module, trmt_app)   # 반환: 통합·잠금 완료된 drydock WSGI app
 """
 from contextlib import contextmanager
-from datetime import date as _date, datetime as _datetime, timezone as _timezone
+from copy import copy as _copy
+from datetime import date as _date, datetime as _datetime, timedelta as _timedelta, timezone as _timezone
 import hashlib
 import io
 import json
@@ -64,6 +65,13 @@ _SVMS_JOB_BARE_TAG = re.compile(
 )
 _SVMS_JOB_CANONICAL_NUMBER = re.compile(r"^(?:ST|S|P|R)\d+(?:-[A-Z0-9]+)?$", re.I)
 _SVMS_IMPORT_TTL_SECONDS = 15 * 60
+_JOB_PROGRESS_TEMPLATE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "static", "dock_templates", "job_progress.xlsx"
+)
+_JOB_PROGRESS_FIRST_ROW = 7
+_JOB_PROGRESS_LAST_ROW = 370
+_JOB_PROGRESS_TIMELINE_FIRST_COL = 16  # P
+_JOB_PROGRESS_TIMELINE_LAST_COL = 53   # BA
 
 
 def _text(value):
@@ -77,6 +85,164 @@ def _bool(value):
     if isinstance(value, bool):
         return value
     return _text(value).lower() in {"1", "true", "yes", "y", "on", "urgent", "critical"}
+
+
+def _job_progress_date(value):
+    raw = _business_date(value)
+    return _datetime.strptime(raw, "%Y-%m-%d") if raw else None
+
+
+def _job_progress_remarks(value):
+    if not value:
+        return ""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return value.strip()
+    if not isinstance(value, list):
+        return _text(value)
+    lines = []
+    for item in value:
+        if not isinstance(item, dict):
+            text = _text(item)
+            if text:
+                lines.append(text)
+            continue
+        text = _text(item.get("progress") or item.get("remark") or item.get("text"))
+        if not text:
+            continue
+        prefix = _text(item.get("date"))
+        if item.get("important"):
+            prefix = (prefix + " !").strip()
+        lines.append((prefix + " " + text).strip())
+    return "\n".join(lines)
+
+
+def _job_progress_number(value):
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
+def _job_progress_download_name(value):
+    name = re.sub(r'[\x00-\x1f\x7f/\\]+', "_", _text(value)).strip(" ._")
+    return "%s_DD_JOB_PROGRESS.xlsx" % ((name or "vessel")[:120])
+
+
+def _job_progress_month_headers(sheet, dates):
+    first = _JOB_PROGRESS_TIMELINE_FIRST_COL
+    last = _JOB_PROGRESS_TIMELINE_LAST_COL
+    month_style = _copy(sheet.cell(5, first)._style)
+    month_alignment = _copy(sheet.cell(5, first).alignment)
+    for merged in list(sheet.merged_cells.ranges):
+        if (merged.min_row == 5 and merged.max_row == 5
+                and merged.max_col >= first and merged.min_col <= last):
+            sheet.unmerge_cells(str(merged))
+    for col in range(first, last + 1):
+        sheet.cell(5, col).value = None
+        sheet.cell(5, col)._style = _copy(month_style)
+        sheet.cell(5, col).alignment = _copy(month_alignment)
+    start = first
+    while start <= last:
+        key = (dates[start - first].year, dates[start - first].month)
+        end = start
+        while end < last:
+            next_date = dates[end + 1 - first]
+            if (next_date.year, next_date.month) != key:
+                break
+            end += 1
+        if end > start:
+            sheet.merge_cells(start_row=5, start_column=start, end_row=5, end_column=end)
+        sheet.cell(5, start).value = dates[start - first].strftime("%b")
+        start = end + 1
+
+
+def _build_job_progress_workbook(vessel, jobs, template_path=_JOB_PROGRESS_TEMPLATE):
+    """Fill the owner's Job Progress template without carrying its sample data."""
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise RuntimeError("openpyxl is required for Job Progress export") from exc
+
+    if len(jobs) > _JOB_PROGRESS_LAST_ROW - _JOB_PROGRESS_FIRST_ROW + 1:
+        raise ValueError("Job Progress 템플릿 최대 364개 Job을 초과했습니다")
+    workbook = load_workbook(template_path)
+    sheet = workbook["Job progress"]
+    for merged in list(sheet.merged_cells.ranges):
+        if (merged.min_row >= _JOB_PROGRESS_FIRST_ROW
+                and merged.max_row <= _JOB_PROGRESS_LAST_ROW
+                and merged.min_col >= 2 and merged.max_col <= 15):
+            source = sheet.cell(merged.min_row, merged.min_col)
+            targets = [(row, col) for row in range(merged.min_row, merged.max_row + 1)
+                       for col in range(merged.min_col, merged.max_col + 1)]
+            sheet.unmerge_cells(str(merged))
+            for row, col in targets:
+                target = sheet.cell(row, col)
+                target._style = _copy(source._style)
+                target.alignment = _copy(source.alignment)
+    sheet["B2"] = "%s DD JOB PROGRESS" % _text(vessel["name"])
+
+    commence = _job_progress_date(vessel["dock_in"])
+    starts = [_job_progress_date(job["start_date"]) for job in jobs]
+    starts = [value for value in starts if value is not None]
+    timeline_anchor = commence or (min(starts) if starts else _datetime.combine(_date.today(), _datetime.min.time()))
+    sheet["M4"] = commence
+    sheet["N4"] = '=IF(M4="","",DATEDIF(M4,L4,"d")+1)'
+    timeline_dates = [timeline_anchor - _timedelta(days=10) + _timedelta(days=offset)
+                      for offset in range(_JOB_PROGRESS_TIMELINE_LAST_COL - _JOB_PROGRESS_TIMELINE_FIRST_COL + 1)]
+    _job_progress_month_headers(sheet, timeline_dates)
+    for col, value in enumerate(timeline_dates, _JOB_PROGRESS_TIMELINE_FIRST_COL):
+        sheet.cell(6, col).value = value
+
+    for row in range(_JOB_PROGRESS_FIRST_ROW, _JOB_PROGRESS_LAST_ROW + 1):
+        for col in (2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15):
+            sheet.cell(row, col).value = None
+        sheet.cell(row, 10).value = "=H%d-I%d" % (row, row)
+        sheet.cell(row, 13).value = '=IF(OR(K%d="",L%d=""),"",DATEDIF(K%d,L%d,"d"))' % (row, row, row, row)
+        sheet.cell(row, 14).value = '=IF(OR(K%d="",L%d=""),"",MAX(0,MIN(DATEDIF(K%d,$L$4,"d"),M%d)))' % (
+            row, row, row, row)
+
+    for offset, job in enumerate(jobs):
+        row = _JOB_PROGRESS_FIRST_ROW + offset
+        completion = max(0.0, min(100.0, _job_progress_number(job["completion"]))) / 100.0
+        values = {
+            2: _text(job["number"]),
+            3: _text(job["category"]),
+            4: _text(job["description"]),
+            5: _text(job["vendor"]),
+            6: _job_progress_remarks(job["remarks"]),
+            8: _job_progress_number(job["budget"]),
+            9: _job_progress_number(job["consumption"]),
+            11: _job_progress_date(job["start_date"]),
+            12: _job_progress_date(job["end_date"]),
+            15: completion,
+        }
+        for col, value in values.items():
+            sheet.cell(row, col).value = value
+
+    for row in (3, 4):
+        sheet.cell(row, 8).value = '=SUMIF(C%d:C%d,G%d,H%d:H%d)' % (
+            _JOB_PROGRESS_FIRST_ROW, _JOB_PROGRESS_LAST_ROW, row,
+            _JOB_PROGRESS_FIRST_ROW, _JOB_PROGRESS_LAST_ROW)
+        sheet.cell(row, 9).value = '=SUMIF(C%d:C%d,G%d,I%d:I%d)' % (
+            _JOB_PROGRESS_FIRST_ROW, _JOB_PROGRESS_LAST_ROW, row,
+            _JOB_PROGRESS_FIRST_ROW, _JOB_PROGRESS_LAST_ROW)
+        sheet.cell(row, 10).value = "=H%d-I%d" % (row, row)
+
+    class_sheet = workbook["Class item"]
+    for row in range(4, class_sheet.max_row + 1):
+        for col in range(2, 9):
+            class_sheet.cell(row, col).value = None
+    workbook.calculation.calcMode = "auto"
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output
 
 
 def _business_date(value):
@@ -1006,6 +1172,43 @@ def _install_yard_job_import(dd, dd_app):
     dd_app._trmt_yard_import_installed = True
 
 
+def _install_job_progress_export(dd, dd_app):
+    if getattr(dd_app, "_trmt_job_progress_export_installed", False):
+        return
+    from flask import jsonify, send_file
+
+    @dd_app.route("/api/vessels/<vid>/jobs/progress.xlsx", methods=["GET"])
+    def _trmt_job_progress_export(vid):
+        if not dd.is_admin():
+            return jsonify({"error": "Unauthorized (admin only)"}), 401
+        db = dd.get_db()
+        vessel = db.execute(
+            "SELECT id,name,dock_in FROM vessels WHERE id=?", (vid,)
+        ).fetchone()
+        if not vessel:
+            return jsonify({"error": "선박을 찾을 수 없습니다"}), 404
+        jobs = db.execute(
+            "SELECT number,category,description,vendor,budget,consumption,start_date,end_date,"
+            "completion,remarks FROM jobs WHERE vessel_id=? ORDER BY id", (vid,)
+        ).fetchall()
+        try:
+            output = _build_job_progress_workbook(vessel, jobs)
+        except ValueError as exc:
+            dd_app.logger.warning("job progress export failed vessel=%s: %s", vid, exc)
+            return jsonify({"error": str(exc)}), 409
+        except (OSError, RuntimeError) as exc:
+            dd_app.logger.warning("job progress export failed vessel=%s: %s", vid, exc)
+            return jsonify({"error": "Job Progress 엑셀 생성에 실패했습니다"}), 500
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=_job_progress_download_name(vessel["name"]),
+        )
+
+    dd_app._trmt_job_progress_export_installed = True
+
+
 def _pending_svms_import_request(db, vessel_id):
     return db.execute(
         "SELECT token,status FROM trmt_svms_job_import WHERE vessel_id=? "
@@ -1237,6 +1440,7 @@ def apply(dd, trmt_app):
     _install_daily_events_endpoint(dd, trmt_app, dd_app)
     _install_roster_vessels_endpoints(dd, trmt_app, dd_app)
     _install_yard_job_import(dd, dd_app)
+    _install_job_progress_export(dd, dd_app)
     _install_svms_job_import(dd, trmt_app, dd_app)
     # is_viewer/can_access_vessel도 세션 유저 기준으로 동작(원본이 get_current_user 참조)
 
