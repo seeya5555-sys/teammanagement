@@ -19,6 +19,9 @@ def workbook_bytes():
     quote.append([None, None, "Connect", 1, 100])
     quote.append(["2.1.1", None, "Supply", 2, 25])
     quote.append([2.2, None, "Ballast Water", 1, 10])
+    quote.append(["2.2.1", None, "Please provide quotation for temporary staging", None, 0])
+    quote.append(["2.2.2", None, "Following tank cleaning to be quoted.", None, 0])
+    quote.append(["2.2.3", None, "For quotation only", None, 0])
     quote.append([3, None, "DOCKING", None, 0])
     quote.append([24, None, "Fire Wire Reel", 1, 8])
     quote.append([None, None, "Normal Total Price/USD", None, 143])
@@ -87,6 +90,51 @@ class DockYardImportTests(unittest.TestCase):
         self.assertEqual("GENERAL", jobs["2.1"]["section"])
         self.assertEqual("DECK", jobs["24"]["section"])
         self.assertEqual([], parsed["warnings"])
+        self.assertNotIn("2.2.1", jobs)
+        self.assertNotIn("2.2.2", jobs)
+        self.assertNotIn("2.2.3", jobs)
+
+    def test_quote_request_filter_is_narrow(self):
+        self.assertTrue(integration._yard_is_quote_request(
+            "Please provide quotation for removal of staging"))
+        self.assertTrue(integration._yard_is_quote_request(
+            "Following tank cleaning to be quoted."))
+        self.assertFalse(integration._yard_is_quote_request(
+            "Cargo and Slop Tank Cleaning (Bottom Plate and Bulkhead)"))
+        self.assertFalse(integration._yard_is_quote_request(
+            "Prepare quotation comparison and report"))
+        self.assertFalse(integration._yard_is_quote_request(
+            "Work to be quoted after inspection and then completed"))
+
+    def test_priced_request_wording_is_not_silently_dropped(self):
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(workbook_bytes()))
+        ws = wb["Quotation"]
+        ws.insert_rows(9)
+        ws.cell(9, 1).value = "2.3"
+        ws.cell(9, 3).value = "Please provide quotation for confirmed repair"
+        ws.cell(9, 5).value = 33
+        out = io.BytesIO(); wb.save(out)
+        parsed = integration._parse_yard_job_workbook(out.getvalue())
+        jobs = {item["number"]: item for item in parsed["jobs"]}
+        self.assertIn("2.3", jobs)
+        self.assertEqual(33, jobs["2.3"]["budget"])
+
+    def test_real_child_survives_filtered_quote_request_parent(self):
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(workbook_bytes()))
+        ws = wb["Quotation"]
+        ws.insert_rows(9, 2)
+        ws.cell(9, 1).value = "2.3"
+        ws.cell(9, 3).value = "Please provide quotation for optional work"
+        ws.cell(10, 1).value = "2.3.1"
+        ws.cell(10, 3).value = "Confirmed steel repair"
+        ws.cell(10, 5).value = 44
+        out = io.BytesIO(); wb.save(out)
+        parsed = integration._parse_yard_job_workbook(out.getvalue())
+        jobs = {item["number"]: item for item in parsed["jobs"]}
+        self.assertNotIn("2.3", jobs)
+        self.assertEqual(44, jobs["2.3.1"]["budget"])
 
     def test_apply_preserves_live_progress_and_manual_classification(self):
         db = make_db()

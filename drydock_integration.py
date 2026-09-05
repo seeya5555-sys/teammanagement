@@ -56,6 +56,11 @@ _YARD_TOTAL_ROW = re.compile(
     r"total price|final discount|after di(?:s)?count|normal total|sub\s*total|소계|합계",
     re.I,
 )
+_YARD_QUOTE_REQUEST_ROW = re.compile(
+    r"^\s*please\s+provide\s+(?:a\s+)?quotation\b|"
+    r"\bto\s+be\s+quoted\b[.\s]*$|\bfor\s+quotation\s+only\b[.\s]*$",
+    re.I,
+)
 _YARD_ITEM_NO = re.compile(r"^\d+(?:\.\d+)*$")
 _YARD_IMPORT_TTL = 30 * 60
 _YARD_IMPORT_MAX = 8
@@ -90,7 +95,7 @@ def _bool(value):
 
 def _job_progress_date(value):
     raw = _business_date(value)
-    return _datetime.strptime(raw, "%Y-%m-%d") if raw else None
+    return _datetime.strptime(raw, "%Y-%m-%d").date() if raw else None
 
 
 def _job_progress_remarks(value):
@@ -155,6 +160,11 @@ def _job_progress_number(value):
     except (TypeError, ValueError):
         return 0.0
     return number if math.isfinite(number) else 0.0
+
+
+def _yard_is_quote_request(description):
+    """Identify quotation-request instructions that are not executable Jobs."""
+    return bool(_YARD_QUOTE_REQUEST_ROW.search(_text(description)))
 
 
 def _job_progress_download_name(value):
@@ -238,7 +248,7 @@ def _build_job_progress_workbook(vessel, jobs, template_path=_JOB_PROGRESS_TEMPL
     commence = _job_progress_date(vessel["dock_in"])
     starts = [_job_progress_date(job["start_date"]) for job in jobs]
     starts = [value for value in starts if value is not None]
-    timeline_anchor = commence or (min(starts) if starts else _datetime.combine(_date.today(), _datetime.min.time()))
+    timeline_anchor = commence or (min(starts) if starts else _date.today())
     sheet["M4"] = commence
     sheet["N4"] = '=IF(M4="","",DATEDIF(M4,L4,"d")+1)'
     timeline_dates = [timeline_anchor - _timedelta(days=10) + _timedelta(days=offset)
@@ -254,6 +264,8 @@ def _build_job_progress_workbook(vessel, jobs, template_path=_JOB_PROGRESS_TEMPL
         sheet.cell(row, 13).value = '=IF(OR(K%d="",L%d=""),"",DATEDIF(K%d,L%d,"d"))' % (row, row, row, row)
         sheet.cell(row, 14).value = '=IF(OR(K%d="",L%d=""),"",MAX(0,MIN(DATEDIF(K%d,$L$4,"d"),M%d)))' % (
             row, row, row, row)
+        sheet.cell(row, 11).number_format = "yyyy-mm-dd"
+        sheet.cell(row, 12).number_format = "yyyy-mm-dd"
 
     for offset, job in enumerate(jobs):
         row = _JOB_PROGRESS_FIRST_ROW + offset
@@ -1039,10 +1051,21 @@ def _parse_yard_job_workbook(raw_bytes):
         description = _yard_cell_text(
             row[columns["description"]] if columns["description"] < len(row) else None
         )
+        net_value = row[columns["net_total"]] if columns["net_total"] < len(row) else None
         if number:
             if number in jobs_by_number:
                 raise ValueError("중복 Job 번호가 있습니다: %s" % number)
             root = number.split(".", 1)[0]
+            has_direct_price = (isinstance(net_value, (int, float))
+                                and not isinstance(net_value, bool) and bool(net_value))
+            if _yard_is_quote_request(description) and not has_direct_price:
+                # A third-level quotation instruction belongs to its visible
+                # second-level repair item but must not become a Job itself.
+                # Preserve that parent as the budget owner for following
+                # unnumbered price rows.
+                if number.count(".") < 2:
+                    budget_owner = None
+                continue
             section = YARD_JOB_SECTION_MAP.get(root, "ADD")
             if section == "ADD" and root not in {"1"}:
                 warnings.append("미지정 섹션 %s → ADD로 분류" % root)
@@ -1060,10 +1083,13 @@ def _parse_yard_job_workbook(raw_bytes):
                 budget_owner = None if root in roots_with_children else job
             elif depth == 2:
                 budget_owner = job
+            elif number.rsplit(".", 1)[0] not in jobs_by_number:
+                # If a filtered quotation-only row was the second-level
+                # parent, retain a real priced child as its own budget owner.
+                budget_owner = job
             # Third-level headings stay visible but their money belongs to the
             # second-level repair item, as in Kuwait Prosperity.
 
-        net_value = row[columns["net_total"]] if columns["net_total"] < len(row) else None
         row_text = " ".join(_yard_cell_text(value) for value in row if isinstance(value, str))
         if (budget_owner is not None and isinstance(net_value, (int, float))
                 and not isinstance(net_value, bool) and net_value

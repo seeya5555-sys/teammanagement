@@ -53,6 +53,10 @@ class JobProgressExportTests(unittest.TestCase):
         self.assertEqual("=H7-I7", sheet["J7"].value)
         self.assertEqual(0.25, sheet["O7"].value)
         self.assertEqual("0%", sheet["O7"].number_format)
+        self.assertEqual("yyyy-mm-dd", sheet["K7"].number_format)
+        self.assertEqual("yyyy-mm-dd", sheet["L7"].number_format)
+        self.assertEqual("yyyy-mm-dd", sheet["K370"].number_format)
+        self.assertEqual("yyyy-mm-dd", sheet["L370"].number_format)
         self.assertTrue(all(sheet.cell(row, col).value is None
                             for row in range(8, integration._JOB_PROGRESS_LAST_ROW + 1)
                             for col in (2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15)))
