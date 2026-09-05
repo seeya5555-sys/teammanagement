@@ -35,6 +35,7 @@ class JobProgressExportTests(unittest.TestCase):
         self.assertEqual(["Job progress", "Class item"], workbook.sheetnames)
         sheet = workbook["Job progress"]
         self.assertEqual("BELGIUM B DD JOB PROGRESS", sheet["B2"].value)
+        self.assertEqual("F7", sheet.freeze_panes)
         self.assertEqual(datetime.datetime(2026, 9, 13), sheet["M4"].value)
         self.assertEqual(datetime.datetime(2026, 9, 3), sheet["P6"].value)
         self.assertEqual(datetime.datetime(2026, 10, 10), sheet["BA6"].value)
@@ -57,6 +58,18 @@ class JobProgressExportTests(unittest.TestCase):
                             for col in (2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15)))
         self.assertEqual("=H8-I8", sheet["J8"].value)
         self.assertEqual("=SUMIF(C7:C370,G3,H7:H370)", sheet["H3"].value)
+        self.assertTrue(all(sheet.cell(row, col).fill.fgColor.rgb == "FFFFFFFF"
+                            for row in (7, 8, 370) for col in range(2, 54)))
+        gantt_formulas = {
+            formula
+            for conditional_range in sheet.conditional_formatting
+            if "P7" in str(conditional_range)
+            for rule in sheet.conditional_formatting[conditional_range]
+            for formula in (rule.formula or [])
+        }
+        self.assertIn('AND($K7<>"",$L7<>"",P$6>$K7,P$6<$L7)', gantt_formulas)
+        self.assertIn('AND($L7<>"",P$6=$L7)', gantt_formulas)
+        self.assertIn('AND($K7<>"",P$6=$K7)', gantt_formulas)
 
         class_sheet = workbook["Class item"]
         self.assertEqual("Class item", class_sheet["B2"].value)
@@ -87,6 +100,30 @@ class JobProgressExportTests(unittest.TestCase):
         )
         sheet = load_workbook(output, data_only=False)["Job progress"]
         self.assertEqual((0, 0, 0), (sheet["H7"].value, sheet["I7"].value, sheet["O7"].value))
+
+    def test_translates_korean_progress_remarks_and_preserves_dates(self):
+        calls = []
+
+        def translate(values):
+            calls.append(values)
+            return ["2026-09-12 Attendance scheduled"]
+
+        output = integration._build_job_progress_workbook(
+            {"name": "BELGIUM B", "dock_in": "2026-09-13"},
+            [job(remarks='[{"date":"2026-09-12","progress":"입회 예정"}]')],
+            translator=translate,
+        )
+        sheet = load_workbook(output, data_only=False)["Job progress"]
+        self.assertEqual([["2026-09-12 입회 예정"]], calls)
+        self.assertEqual("2026-09-12 Attendance scheduled", sheet["F7"].value)
+
+    def test_rejects_incomplete_korean_translation(self):
+        with self.assertRaisesRegex(RuntimeError, "영문 번역"):
+            integration._build_job_progress_workbook(
+                {"name": "BELGIUM B", "dock_in": "2026-09-13"},
+                [job(remarks='[{"date":"2026-09-12","progress":"입회 예정"}]')],
+                translator=lambda values: values,
+            )
 
     def test_endpoint_requires_admin_and_returns_xlsx_with_unicode_filename(self):
         db = sqlite3.connect(":memory:")

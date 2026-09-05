@@ -72,6 +72,7 @@ _JOB_PROGRESS_FIRST_ROW = 7
 _JOB_PROGRESS_LAST_ROW = 370
 _JOB_PROGRESS_TIMELINE_FIRST_COL = 16  # P
 _JOB_PROGRESS_TIMELINE_LAST_COL = 53   # BA
+_JOB_PROGRESS_HANGUL = re.compile(r"[\uac00-\ud7a3]")
 
 
 def _text(value):
@@ -119,6 +120,35 @@ def _job_progress_remarks(value):
     return "\n".join(lines)
 
 
+def _job_progress_remarks_en(jobs, translator=None):
+    """Return copied job rows with Korean progress remarks translated to English.
+
+    Export must never silently retain Korean when translation is unavailable or
+    incomplete; the user can retry without receiving a partly translated report.
+    """
+    copied = [dict(job) for job in jobs]
+    remarks = [_job_progress_remarks(job.get("remarks")) for job in copied]
+    targets = [index for index, value in enumerate(remarks) if _JOB_PROGRESS_HANGUL.search(value)]
+    if targets:
+        try:
+            if translator is None:
+                from helpers_shared import _translate_texts_en
+                translator = _translate_texts_en
+            translated = translator([remarks[index] for index in targets])
+        except Exception as exc:
+            raise RuntimeError("Job Progress 영문 번역에 실패했습니다") from exc
+        if not isinstance(translated, (list, tuple)) or len(translated) != len(targets):
+            raise RuntimeError("Job Progress 영문 번역에 실패했습니다")
+        for index, value in zip(targets, translated):
+            value = _text(value)
+            if not value or _JOB_PROGRESS_HANGUL.search(value):
+                raise RuntimeError("Job Progress 영문 번역에 실패했습니다")
+            remarks[index] = value
+    for job, value in zip(copied, remarks):
+        job["remarks"] = value
+    return copied
+
+
 def _job_progress_number(value):
     try:
         number = float(value or 0)
@@ -160,10 +190,12 @@ def _job_progress_month_headers(sheet, dates):
         start = end + 1
 
 
-def _build_job_progress_workbook(vessel, jobs, template_path=_JOB_PROGRESS_TEMPLATE):
+def _build_job_progress_workbook(vessel, jobs, template_path=_JOB_PROGRESS_TEMPLATE,
+                                 translator=None):
     """Fill the owner's Job Progress template without carrying its sample data."""
     try:
         from openpyxl import load_workbook
+        from openpyxl.styles import PatternFill
     except ImportError as exc:
         raise RuntimeError("openpyxl is required for Job Progress export") from exc
 
@@ -171,6 +203,7 @@ def _build_job_progress_workbook(vessel, jobs, template_path=_JOB_PROGRESS_TEMPL
         raise ValueError("Job Progress 템플릿 최대 364개 Job을 초과했습니다")
     workbook = load_workbook(template_path)
     sheet = workbook["Job progress"]
+    jobs = _job_progress_remarks_en(jobs, translator=translator)
     for merged in list(sheet.merged_cells.ranges):
         if (merged.min_row >= _JOB_PROGRESS_FIRST_ROW
                 and merged.max_row <= _JOB_PROGRESS_LAST_ROW
@@ -184,6 +217,23 @@ def _build_job_progress_workbook(vessel, jobs, template_path=_JOB_PROGRESS_TEMPL
                 target._style = _copy(source._style)
                 target.alignment = _copy(source.alignment)
     sheet["B2"] = "%s DD JOB PROGRESS" % _text(vessel["name"])
+    sheet.freeze_panes = "F7"  # Keep Job No. through Vendor visible while scrolling.
+
+    white_fill = PatternFill(fill_type="solid", fgColor="FFFFFFFF")
+    for row in range(_JOB_PROGRESS_FIRST_ROW, _JOB_PROGRESS_LAST_ROW + 1):
+        for col in range(2, _JOB_PROGRESS_TIMELINE_LAST_COL + 1):
+            sheet.cell(row, col).fill = _copy(white_fill)
+    for conditional_range in sheet.conditional_formatting:
+        if "P7" not in str(conditional_range):
+            continue
+        for rule in sheet.conditional_formatting[conditional_range]:
+            if not rule.formula:
+                continue
+            rule.formula = [{
+                'AND(P$6>$K7,P$6<$L7)': 'AND($K7<>"",$L7<>"",P$6>$K7,P$6<$L7)',
+                'AND(P$6=$L7)': 'AND($L7<>"",P$6=$L7)',
+                'AND(P$6=$K7)': 'AND($K7<>"",P$6=$K7)',
+            }.get(formula, formula) for formula in rule.formula]
 
     commence = _job_progress_date(vessel["dock_in"])
     starts = [_job_progress_date(job["start_date"]) for job in jobs]
