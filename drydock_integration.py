@@ -1163,7 +1163,7 @@ def _install_yard_job_import(dd, dd_app):
         if (request.method == "GET" and request.path == "/" and response.status_code == 200
                 and response.mimetype == "text/html" and not response.headers.get("Content-Encoding")):
             body = response.get_data(as_text=True)
-            asset = '<script src="/static/js/drydock-yard-import.js?v=20260825-2"></script>'
+            asset = '<script src="/static/js/drydock-yard-import.js?v=20260906-1"></script>'
             if asset not in body and "</body>" in body:
                 response.set_data(body.replace("</body>", asset + "</body>"))
                 response.headers["Content-Length"] = len(response.get_data())
