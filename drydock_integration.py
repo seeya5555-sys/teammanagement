@@ -1501,6 +1501,32 @@ def apply(dd, trmt_app):
         raise RuntimeError("TRMT secret_key 미설정 — SSO 불가, 기동 거부")
     dd_app.secret_key = trmt_app.secret_key
 
+    def _live_trmt_admin():
+        """Resolve Dock Manager authorization from the TRMT DB, not stale cookie role."""
+        username = session.get("username")
+        if not username:
+            return False
+        database = trmt_app.config.get('DATABASE')
+        # Minimal integration test doubles do not own a TRMT database. Production
+        # always does; preserve the old gate only for those isolated harnesses.
+        try:
+            if not database:
+                return bool(trmt_app.config.get('TESTING') and session.get('role') == 'admin')
+            db = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+            db.row_factory = sqlite3.Row
+            account = db.execute(
+                "SELECT role, active, app_scope FROM users WHERE username=?", (username,)
+            ).fetchone()
+        except (OSError, sqlite3.Error):
+            return False
+        finally:
+            if 'db' in locals(): db.close()
+        if not account or account['active'] != 1 or account['role'] != 'admin':
+            return False
+        if session.get('role') != account['role']:
+            session['role'] = account['role']
+        return account['app_scope'] != 'family'
+
     # ── 2. get_current_user: 세션 신뢰로 패치 (결정2-b, C1 해소) ─────────
     #    drydock users 테이블 조회 X. TRMT 세션(username/role)만 신뢰.
     def _session_user():
@@ -1546,7 +1572,7 @@ def apply(dd, trmt_app):
         if low == "/static" or low.startswith("/static/"):
             return None
         # 3-d. admin만 통과 (username+role=admin 동시 요구)
-        if session.get("username") and session.get("role") == "admin":
+        if _live_trmt_admin():
             # login_required 호환 shim — 이미 있으면 재대입 안 함(Set-Cookie 반복 방지, 올마이트)
             if not session.get("logged_in"):
                 session["logged_in"] = True

@@ -146,6 +146,16 @@ def mobile_app():
     return render_template('mobile.html', **_dashboard_ctx())
 
 
+@bp.route('/dock-manager')
+@admin_required
+def dock_manager_shell():
+    """Keep TRMT navigation visible while the separately-owned drydock app runs."""
+    response = make_response(render_template('dock_manager.html'))
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['Content-Security-Policy'] = "frame-src 'self'; frame-ancestors 'self'"
+    return response
+
+
 
 
 @bp.route('/api/dashboard/cockpit')

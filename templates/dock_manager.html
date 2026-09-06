@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Dock Manager · TRMT{% endblock %}
+{% block content %}
+<style>
+  .page-wrap:has(.dock-manager-frame){max-width:none;padding:0 12px 12px}
+  .dock-manager-frame{width:100%;height:calc(100vh - 86px);min-height:680px;border:1px solid var(--line,#ddd);border-radius:10px;background:#fff}
+  @media(max-width:700px){.page-wrap:has(.dock-manager-frame){padding:0}.dock-manager-frame{height:calc(100vh - 58px);min-height:600px;border:0;border-radius:0}}
+</style>
+<iframe class="dock-manager-frame" src="/drydock/?embedded=1" title="Dock Manager"></iframe>
+{% endblock %}

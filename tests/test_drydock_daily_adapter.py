@@ -105,6 +105,13 @@ class DockDailyAdapterTests(unittest.TestCase):
             return {"legacy": True}, 201
         self.trmt_app = Flask("fake_trmt")
         self.trmt_app.secret_key = "trmt-secret"
+        self.trmt_db_path = os.path.join(self.temp.name, "trmt.db")
+        trmt_db = sqlite3.connect(self.trmt_db_path)
+        trmt_db.execute("CREATE TABLE users(username TEXT PRIMARY KEY, role TEXT, active INTEGER, app_scope TEXT)")
+        trmt_db.execute("INSERT INTO users VALUES('admin','admin',1,'business')")
+        trmt_db.execute("INSERT INTO users VALUES('viewer','viewer',1,'business')")
+        trmt_db.commit(); trmt_db.close()
+        self.trmt_app.config['DATABASE'] = self.trmt_db_path
         with patch("helpers_shared._check_api_key", return_value=True):
             integration.apply(self.dd, self.trmt_app)
         self.client = self.dd_app.test_client()
