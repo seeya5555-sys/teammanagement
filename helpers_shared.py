@@ -74,6 +74,12 @@ def login_required(f):
             if request.path.startswith('/api/'):
                 return jsonify({'error': 'unauthorized'}), 401
             return redirect(url_for('routes_core.login', next=request.path))
+        # DB is the authority for live authorization.  Keep the cookie's role in
+        # sync so non-admin-decorated views cannot retain admin visibility after
+        # an account is downgraded while the browser session is still open.
+        acct = _session_account()
+        if session.get('role') != acct['role']:
+            session['role'] = acct['role']
         return f(*args, **kwargs)
     return wrapped
 def admin_required(f):

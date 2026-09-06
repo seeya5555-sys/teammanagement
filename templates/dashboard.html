@@ -489,8 +489,15 @@
     return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">'+tri+sire+pos+'</div>'});
   }
 
+  let fleetLoad=null, fleetReloadQueued=false, fleetLoadGen=0;
   function loadFleet(){
-  return fetch('{{ url_for("routes_tail.api_fleet_map_data") }}').then(r=>r.json()).then(d=>{
+  if(fleetLoad){fleetReloadQueued=true;return fleetLoad;}
+  const gen=++fleetLoadGen;
+  fleetLoad=fetch('{{ url_for("routes_tail.api_fleet_map_data") }}').then(r=>{
+    if(!r.ok) throw new Error('fleet '+r.status);
+    return r.json();
+  }).then(d=>{
+    if(gen!==fleetLoadGen)return;
     // 서버는 upstream(33.5MB)을 요청 경로에서 기다리지 않고 10분 TTL 캐시본을 즉시 준다
     // (stale-while-revalidate). upstream 자체가 정시 단위 배치라 30초 polling 은 그대로 둔다.
     markers.forEach(o=>{map.removeLayer(o.m);map.removeLayer(o.tt);}); markers=[];
@@ -530,7 +537,9 @@
       si.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ const vis=applyFilters();
         if(vis.length){ map.panTo([vis[0].v.lat,vis[0].v.lng]); openV(vis[0].v); } } });
     }
-  }).catch(()=>{document.getElementById('fmUpdated').textContent='데이터 로드 실패';});
+  }).catch(()=>{document.getElementById('fmUpdated').textContent='데이터 로드 실패';})
+    .finally(()=>{fleetLoad=null;if(fleetReloadQueued){fleetReloadQueued=false;loadFleet();}});
+  return fleetLoad;
   }
   loadFleet();
   window.setInterval(loadFleet,30000);

@@ -524,6 +524,10 @@ def api_issue_list():
             conds.append(f'{col} = ?')
             params.append(val)
 
+    if request.args.get('exclude_status'):
+        conds.append('(i.status IS NULL OR i.status != ?)')
+        params.append(request.args['exclude_status'])
+
     q = request.args.get('q')
     if q:
         like = f'%{q}%'
