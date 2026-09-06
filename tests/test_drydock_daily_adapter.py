@@ -103,6 +103,9 @@ class DockDailyAdapterTests(unittest.TestCase):
         @self.dd_app.route("/api/vessels", methods=["POST"])
         def legacy_create_vessel():
             return {"legacy": True}, 201
+        @self.dd_app.route("/api/test-write", methods=["POST"])
+        def test_write():
+            return {"ok": True}, 200
         self.trmt_app = Flask("fake_trmt")
         self.trmt_app.secret_key = "trmt-secret"
         self.trmt_db_path = os.path.join(self.temp.name, "trmt.db")
@@ -187,6 +190,22 @@ class DockDailyAdapterTests(unittest.TestCase):
             sess.update({"username": "admin", "role": "admin", "supervisor_id": 7})
         legacy = self.client.post("/api/vessels", json={"name": "FREEFORM"})
         self.assertEqual(410, legacy.status_code)
+        same_origin = self.client.post("/api/vessels", json={"name": "FREEFORM"},
+                                       headers={"Origin": "https://vslmanager.duckdns.org"})
+        self.assertEqual(410, same_origin.status_code)
+        self.assertEqual(200, self.client.post('/api/test-write', json={}).status_code)
+        self.assertEqual(200, self.client.post('/api/test-write', json={},
+                         headers={'Origin': 'https://vslmanager.duckdns.org'}).status_code)
+        self.assertEqual(403, self.client.post('/api/test-write', json={},
+                         headers={'Origin': 'https://attacker.invalid'}).status_code)
+        cross = self.client.post("/api/vessels", json={"name": "FREEFORM"},
+                                 headers={"Origin": "https://attacker.invalid"})
+        self.assertEqual(403, cross.status_code)
+        for bad in ('null', 'https://vslmanager.duckdns.org.attacker.invalid',
+                    'http://vslmanager.duckdns.org', 'https://user@vslmanager.duckdns.org'):
+            response = self.client.post("/api/vessels", json={"name": "FREEFORM"},
+                                        headers={"Origin": bad})
+            self.assertEqual(403, response.status_code, bad)
 
         with self.client.session_transaction() as sess:
             sess.update({"username": "viewer", "role": "viewer", "supervisor_id": 7})

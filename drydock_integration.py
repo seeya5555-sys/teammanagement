@@ -23,6 +23,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from urllib.parse import urlsplit
 
 
 DAILY_EVENTS_PATH = "/api/integration/daily-events"
@@ -1573,6 +1574,25 @@ def apply(dd, trmt_app):
             return None
         # 3-d. admin만 통과 (username+role=admin 동시 요구)
         if _live_trmt_admin():
+            # Transition gate: reject an explicit foreign/malformed Origin while
+            # temporarily allowing a missing header for installed pre-migration iOS.
+            if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+                claimed = request.headers.get("Origin")
+                public_origin = trmt_app.config.get(
+                    'PUBLIC_ORIGIN', os.environ.get('TRMT_PUBLIC_ORIGIN', 'https://vslmanager.duckdns.org'))
+                def origin_key(value):
+                    try:
+                        parsed = urlsplit(value)
+                        if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+                                or parsed.username or parsed.password or parsed.path
+                                or parsed.query or parsed.fragment):
+                            return None
+                        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+                        return (parsed.scheme, parsed.hostname.lower(), port)
+                    except (TypeError, ValueError):
+                        return None
+                if claimed and (origin_key(claimed) is None or origin_key(claimed) != origin_key(public_origin)):
+                    return jsonify({"error": "cross-origin write blocked"}), 403
             # login_required 호환 shim — 이미 있으면 재대입 안 함(Set-Cookie 반복 방지, 올마이트)
             if not session.get("logged_in"):
                 session["logged_in"] = True
