@@ -1591,7 +1591,7 @@ def apply(dd, trmt_app):
                         return (parsed.scheme, parsed.hostname.lower(), port)
                     except (TypeError, ValueError):
                         return None
-                if claimed and (origin_key(claimed) is None or origin_key(claimed) != origin_key(public_origin)):
+                if not claimed or origin_key(claimed) is None or origin_key(claimed) != origin_key(public_origin):
                     return jsonify({"error": "cross-origin write blocked"}), 403
             # login_required 호환 shim — 이미 있으면 재대입 안 함(Set-Cookie 반복 방지, 올마이트)
             if not session.get("logged_in"):

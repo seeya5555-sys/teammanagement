@@ -189,11 +189,11 @@ class DockDailyAdapterTests(unittest.TestCase):
         with self.client.session_transaction() as sess:
             sess.update({"username": "admin", "role": "admin", "supervisor_id": 7})
         legacy = self.client.post("/api/vessels", json={"name": "FREEFORM"})
-        self.assertEqual(410, legacy.status_code)
+        self.assertEqual(403, legacy.status_code)
         same_origin = self.client.post("/api/vessels", json={"name": "FREEFORM"},
                                        headers={"Origin": "https://vslmanager.duckdns.org"})
         self.assertEqual(410, same_origin.status_code)
-        self.assertEqual(200, self.client.post('/api/test-write', json={}).status_code)
+        self.assertEqual(403, self.client.post('/api/test-write', json={}).status_code)
         self.assertEqual(200, self.client.post('/api/test-write', json={},
                          headers={'Origin': 'https://vslmanager.duckdns.org'}).status_code)
         self.assertEqual(403, self.client.post('/api/test-write', json={},
