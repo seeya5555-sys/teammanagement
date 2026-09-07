@@ -1,6 +1,10 @@
 {% extends 'base.html' %}
 {% block title %}Daily 업무관리 · TRMT3{% endblock %}
 {% block bodyclass %}page-daily{% endblock %}
+{% block page_dependencies %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="{{ url_for('static', filename='js/daily_vessel_scope.js') }}"></script>
+{% endblock %}
 
 {% block content %}
 <div class="page-header ops-page-header">
