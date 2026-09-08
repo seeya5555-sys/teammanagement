@@ -50,12 +50,20 @@ def _session_account():
     uid = session.get('user_id')
     if not uid:
         return None
-    if not hasattr(g, '_sess_account'):
+    # Tests may keep an application context open while switching the session
+    # user between requests.  Production `g` is request-scoped, but keying the
+    # cache by uid makes the invariant explicit and prevents stale-account
+    # authorization if a context is ever reused by an adapter.
+    if (not hasattr(g, '_sess_account')
+            or getattr(g, '_sess_account_uid', None) != uid):
         try:
             g._sess_account = query(
                 'SELECT id, role, active FROM users WHERE id=?', (uid,), one=True)
+            g._sess_account_uid = uid
         except Exception:
             # DB 조회 자체가 실패하면 인증을 통과시키지 않는다(fail-closed).
+            g._sess_account = None
+            g._sess_account_uid = uid
             app.logger.exception('session account 재확인 실패 uid=%s', uid)
             g._sess_account = None
     return g._sess_account

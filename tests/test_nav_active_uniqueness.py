@@ -106,6 +106,8 @@ def nav_endpoints():
     eps = set(re.findall(r"""nlink\(\s*['"]([a-z_]+\.[a-z_0-9]+)['"]""", src))
     for body in re.findall(r"\{%\s*set\s+\w*_eps\s*=\s*\[(.*?)\]\s*%\}", src, re.S):
         eps.update(re.findall(r"""['"]([a-z_]+\.[a-z_0-9]+)['"]""", body))
+    # Dock Manager is admin-only and uses url_for directly rather than nlink.
+    eps.update(re.findall(r'''url_for\(\s*['"]([a-z_]+\.[a-z_0-9]+)['"]''', src))
     return sorted(eps)
 
 

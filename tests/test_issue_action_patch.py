@@ -47,6 +47,9 @@ with c.session_transaction() as s:
 
 SUP = A.execute("INSERT INTO supervisors(name) VALUES('TEST SUP')")
 VSL = A.execute("INSERT INTO vessels(name) VALUES('TEST VESSEL')")
+A.execute("INSERT INTO users(username,password_hash,display_name,supervisor_id,role,active) "
+          "VALUES('action-member','x','action-member',?,?,1)", (SUP, 'member'))
+ACTION_MEMBER = A.query("SELECT id FROM users WHERE username='action-member'", one=True)['id']
 
 BASE = [
     {'date': '2026-08-01', 'progress': '첫 진행', 'important': False},
@@ -194,14 +197,15 @@ chk(acts_of(iid) == before, '타입 가드에 걸린 요청은 DB 무변경')
 
 print('⑪ 권한 — 남의 담당 현안은 못 고친다 / 비로그인 차단')
 OTHER = A.execute("INSERT INTO supervisors(name) VALUES('OTHER SUP')")
+A.execute("UPDATE users SET supervisor_id=? WHERE id=?", (OTHER, ACTION_MEMBER))
 iid = mkissue()
 with c.session_transaction() as s:
-    s['role'] = 'member'; s['supervisor_id'] = OTHER
+    s['user_id'] = ACTION_MEMBER; s['role'] = 'member'; s['supervisor_id'] = OTHER
 r = patch(iid, 0, {'progress': '남의 현안 수정', 'prev': P0})
 chk(r.status_code == 403, '다른 감독 현안 = 403', f'got {r.status_code}')
 chk(acts_of(iid)[0]['progress'] == '첫 진행', '남의 현안은 DB 무변경')
 with c.session_transaction() as s:
-    s['role'] = 'member'; s['supervisor_id'] = SUP
+    s['user_id'] = ACTION_MEMBER; s['role'] = 'member'; s['supervisor_id'] = SUP
 r = patch(iid, 0, {'progress': '내 현안 수정', 'prev': P0})
 chk(r.status_code == 200 and acts_of(iid)[0]['progress'] == '내 현안 수정',
     '본인 담당 현안은 수정 가능', f'{r.status_code}')
