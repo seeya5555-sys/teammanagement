@@ -746,8 +746,22 @@ function detailRow(vt) {
       onclick: () => editOverallRemark(vt),
     }, ' 편집'),
   ));
-  remarkSec.append(el('div', { class: 'cs-overall-body' },
-    vt.overall_remark || el('span', { class: 'placeholder' }, '(작성된 메모 없음)')));
+  remarkSec.append(el('div', {
+    class: 'cs-overall-body summary-edit-button', role: 'button', tabindex: '0',
+    title: '클릭하여 메모 편집',
+    onclick: (event) => {
+      const selection = window.getSelection();
+      if (event.detail > 1 || (event.detail && selection?.type === 'Range' && event.currentTarget.contains(selection.anchorNode))) return;
+      editOverallRemark(vt);
+    },
+    onkeydown: (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        editOverallRemark(vt);
+      }
+    },
+  }, vt.overall_remark || '메모 추가',
+    el('span', { class: 'summary-edit-hint', 'aria-hidden': 'true' }, '편집')));
   td.append(remarkSec);
 
   const observations = vt.findings || [];

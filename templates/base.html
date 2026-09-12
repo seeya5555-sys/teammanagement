@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#26241E">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -93,7 +93,7 @@
       {% set expense_eps = ['routes_calendar_dock.expenses_page','routes_calendar_dock.expense_detail_page'] %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
       {% macro nlink(ep, label, eps=None, icon=None) -%}
-        <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}">{% if icon %}<svg class="nav-ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}{{ label }}</a>
+        <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}"{% if request.endpoint == ep or (eps and request.endpoint in eps) %} aria-current="page"{% endif %}>{% if icon %}<svg class="nav-ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}{{ label }}</a>
       {%- endmacro %}
       <nav class="main-nav">
         {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
@@ -853,16 +853,46 @@
     const groups = Array.from(document.querySelectorAll('.nav-group'));
     if (!groups.length) return;
     function closeAll(except) {
-      groups.forEach(g => { if (g !== except) g.classList.remove('open'); });
+      groups.forEach(g => {
+        if (g === except) return;
+        g.classList.remove('open');
+        g.querySelector('.nav-trigger')?.setAttribute('aria-expanded', 'false');
+      });
     }
-    groups.forEach(g => {
+    groups.forEach((g, index) => {
       const trig = g.querySelector('.nav-trigger');
-      if (!trig) return;
+      const submenu = g.querySelector('.nav-submenu');
+      if (!trig || !submenu) return;
+      submenu.id = submenu.id || `nav-submenu-${index}`;
+      trig.setAttribute('aria-controls', submenu.id);
+      trig.setAttribute('aria-expanded', 'false');
+      function openGroup() {
+        closeAll(g);
+        g.classList.add('open');
+        trig.setAttribute('aria-expanded', 'true');
+      }
       trig.addEventListener('click', (e) => {
         e.stopPropagation();
         const willOpen = !g.classList.contains('open');
-        closeAll(g);
-        g.classList.toggle('open', willOpen);
+        if (willOpen) openGroup(); else closeAll(null);
+      });
+      trig.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowDown') return;
+        e.preventDefault();
+        openGroup();
+        submenu.querySelector('a')?.focus();
+      });
+      g.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || !g.classList.contains('open')) return;
+        e.preventDefault();
+        closeAll(null);
+        trig.focus();
+      });
+      g.addEventListener('focusout', (e) => {
+        if (!g.contains(e.relatedTarget)) {
+          g.classList.remove('open');
+          trig.setAttribute('aria-expanded', 'false');
+        }
       });
     });
     document.addEventListener('click', () => closeAll(null));

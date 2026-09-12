@@ -142,7 +142,7 @@ function renderCard(r) {
     headRight.append(el('button', {
       class: 'dd-card-edit', type: 'button', title: '보고서 정보 편집',
       onclick: (ev) => { ev.stopPropagation(); openEdit(r.id); },
-    }, '⋮'));
+    }, '편집'));
   }
 
   card.append(

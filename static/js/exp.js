@@ -107,7 +107,7 @@ function renderCard(t) {
     headRight.append(el('button', {
       class: 'dd-card-edit', type: 'button', title: '출장 정보 편집',
       onclick: (ev) => { ev.stopPropagation(); openEdit(t.id); },
-    }, '⋮'));
+    }, '편집'));
   }
 
   card.append(

@@ -299,7 +299,7 @@ function vesselBlock(item) {
     tbody.append(quarterRow(v.id, q, survey, v.name));
     // 펼친 상태면 세부 행 추가
     if (survey && S.expandedSurveys.has(survey.id)) {
-      tbody.append(detailRow(survey, v.name));
+      tbody.append(detailRow(survey, v.name, v.id));
     }
   }
   table.append(tbody);
@@ -672,7 +672,7 @@ function toggleExpand(surveyId) {
   render();
 }
 
-function detailRow(survey, vesselName) {
+function detailRow(survey, vesselName, vesselId) {
   const tr = el('tr', { class: 'cs-detail-row' });
   const td = el('td', { colspan: 10, class: 'cs-detail-cell' });
 
@@ -689,13 +689,28 @@ function detailRow(survey, vesselName) {
   const observations = (survey.findings || []).filter(f => f.category === 'Observation');
 
   // 1) Overall Remark — 맨 위, Defect/Observation 섹션과 같은 스타일
-  if (survey.overall_remark) {
+  {
     const sec = el('div', { class: 'cs-finding-section' });
     sec.append(el('div', { class: 'cs-finding-header cs-cat-overall' },
       el('span', { class: 'cs-cat-dot' }),
       el('strong', {}, 'Overall Remark'),
     ));
-    sec.append(el('div', { class: 'cs-overall-body' }, survey.overall_remark));
+    sec.append(el('div', {
+      class: 'cs-overall-body summary-edit-button', role: 'button', tabindex: '0',
+      title: '클릭하여 수검 정보 편집',
+      onclick: (event) => {
+        const selection = window.getSelection();
+        if (event.detail > 1 || (event.detail && selection?.type === 'Range' && event.currentTarget.contains(selection.anchorNode))) return;
+        openSurveyModal(vesselId, survey.quarter, survey);
+      },
+      onkeydown: (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openSurveyModal(vesselId, survey.quarter, survey);
+        }
+      },
+    }, survey.overall_remark || '메모 추가',
+      el('span', { class: 'summary-edit-hint', 'aria-hidden': 'true' }, '편집')));
     td.append(sec);
   }
 

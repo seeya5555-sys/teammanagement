@@ -5,8 +5,8 @@
   .dp-wrap{max-width:1320px}
   .dp-vcards{display:flex;gap:10px;overflow-x:auto;padding:2px 1px 8px;margin-bottom:12px}
   .dp-vcard{flex:0 0 auto;min-width:190px;max-width:230px;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:11px 13px;cursor:pointer;transition:.13s;box-shadow:0 1px 2px rgba(0,0,0,.03)}
-  .dp-vcard:hover{border-color:var(--border-strong);transform:translateY(-1px)}
-  .dp-vcard.active{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-border) inset,0 2px 6px rgba(24,95,165,.12);background:#fff}
+  .dp-vcard:hover{border-color:var(--border-strong);background:var(--surface-2)}
+  .dp-vcard.active{border-color:var(--accent);box-shadow:inset 3px 0 var(--accent);background:var(--accent-tint)}
   .dp-vcard .vn{font-size:13.5px;font-weight:750;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .dp-vcard .vt{font-size:10.5px;color:var(--text-tertiary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .dp-vcard .vrow{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11px}
@@ -30,8 +30,8 @@
   .dp-dot{width:9px;height:9px;border-radius:50%;display:inline-block}
   .dp-bar{height:5px;border-radius:3px;background:var(--surface-3);margin-top:7px;overflow:hidden}
   .dp-bar>i{display:block;height:100%;border-radius:3px;background:var(--green)}
-  .dp-card.total{background:linear-gradient(135deg,#1E293B,#2c3e54);color:#fff;border:none}
-  .dp-card.total .ct,.dp-card.total .cb{color:rgba(255,255,255,.7)}
+  .dp-card.total{background:var(--surface-2);color:var(--text-primary);border-color:var(--border)}
+  .dp-card.total .ct,.dp-card.total .cb{color:var(--text-secondary)}
   .dp-up{display:flex;flex-direction:column;gap:10px;align-items:stretch;background:var(--blue-bg);border:1px dashed var(--blue-border);border-radius:10px;padding:12px 14px;margin-bottom:12px;transition:.15s}
   .dp-up.drag{background:var(--green-bg);border-color:var(--green);border-style:solid;box-shadow:0 0 0 2px var(--green-border) inset}
   .dp-up.drag .hint{color:var(--green)}
