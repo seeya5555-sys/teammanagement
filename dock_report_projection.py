@@ -75,7 +75,7 @@ def _attach_sections(report, report_id, on_decode_error=None):
     return report
 
 
-def get_report(report_id, on_decode_error=None):
+def get_report(report_id, on_decode_error=None, *, metadata_only=False):
     row = query("""
         SELECT d.*,
                v.name       AS vessel_name,
@@ -88,6 +88,8 @@ def get_report(report_id, on_decode_error=None):
     """, (report_id,), one=True)
     if not row:
         return None
+    if metadata_only:
+        return dict(row)
     return _attach_sections(dict(row), report_id, on_decode_error)
 
 

@@ -218,7 +218,7 @@ function openNew() {
 
 async function openEdit(id) {
   try {
-    const r = await api(`/api/boarding-reports/${id}`);
+    const r = await api(`/api/boarding-reports/${id}?metadata_only=1`);
     B.editingId = id;
     $('#brep-modal-title').textContent = '보고서 정보 편집';
     $('#brep-btn-delete').hidden = false;

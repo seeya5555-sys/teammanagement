@@ -78,6 +78,13 @@ class DockReportProjectionTests(unittest.TestCase):
             self.assertEqual([], result["sections"])
             self.assertEqual(2, query_mock.call_count)
 
+    def test_metadata_skips_child_queries(self):
+        with patch.object(projection, "query", return_value={"id": 7, "title": "Dock"}) as read:
+            self.assertEqual({"id": 7, "title": "Dock"}, projection.get_report(7, metadata_only=True))
+            self.assertEqual(1, read.call_count)
+        with patch.object(projection, "query", return_value=None):
+            self.assertIsNone(projection.get_report(404, metadata_only=True))
+
     def test_invalid_content_falls_back_to_empty_object_and_reports_error(self):
         errors = []
 
@@ -156,6 +163,31 @@ class DockReportProjectionAPITests(unittest.TestCase):
                  if rule.rule == "/api/dock-reports/<int:rid>" and "GET" in rule.methods),
         )
         self.assertEqual(404, self.client.get("/api/dock-reports/999999").status_code)
+
+    def test_metadata_preserves_fields_permissions_404_and_auth_for_both_kinds(self):
+        with appmod.app.app_context():
+            vessel_id = appmod.query('SELECT vessel_id FROM dock_reports WHERE id=?',
+                                     (self.report_id,), one=True)['vessel_id']
+            boarding_id = appmod.execute(
+                'INSERT INTO boarding_reports (vessel_id, title, created_by) VALUES (?, ?, ?)',
+                (vessel_id, 'Boarding metadata', 'admin'))
+        for kind, report_id in [('dock', self.report_id), ('boarding', boarding_id)]:
+            path = f'/api/{kind}-reports/{report_id}'
+            for role in ['admin', 'viewer']:
+                with self.client.session_transaction() as session:
+                    session['role'] = role
+                full = self.client.get(path)
+                meta = self.client.get(path + '?metadata_only=1')
+                self.assertEqual(200, full.status_code)
+                self.assertEqual(200, meta.status_code)
+                expected = full.get_json()
+                expected.pop('sections')
+                self.assertEqual(expected, meta.get_json())
+                self.assertLess(len(meta.data), len(full.data))
+                self.assertEqual(404, self.client.get(f'/api/{kind}-reports/999999?metadata_only=1').status_code)
+            anon = appmod.app.test_client()
+            self.assertEqual(anon.get(path).status_code, anon.get(path + '?metadata_only=1').status_code)
+            self.assertNotEqual(200, anon.get(path + '?metadata_only=1').status_code)
 
 
 if __name__ == "__main__":

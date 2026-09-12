@@ -178,6 +178,9 @@ function onlySupId() {
 async function loadVessels(supId) {
   const url = supId && supId !== 'all' ? `/api/vessels?supervisor_id=${supId}` : '/api/vessels';
   S.vessels = await api(url);
+  // These are the same current roster options used by the issue editor.
+  // Reuse the completed scoped read instead of another GET when opening a modal.
+  if (supId && supId !== 'all') _vesselCache.set(String(supId), S.vessels);
 }
 // Daily 사이드바 커스텀 선박순서(유저별, 서버저장). [] = 기본정렬(디펙트순).
 async function loadVesselOrder() {
@@ -1604,10 +1607,12 @@ function inlineAddRow() {
 const _vesselCache = new Map();
 async function loadVesselsForSupervisor(supId) {
   if (!supId) return [];
-  if (_vesselCache.has(supId)) return _vesselCache.get(supId);
+  const key = String(supId);
+  if (_vesselCache.has(key)) return _vesselCache.get(key).slice();
   const vs = await api(`/api/vessels?supervisor_id=${supId}`);
-  _vesselCache.set(supId, vs);
-  return vs;
+  _vesselCache.set(key, vs);
+  // Callers may sort/filter modal options; never let them mutate page state or cache.
+  return vs.slice();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3022,12 +3027,15 @@ async function reloadAll() {
   if (!document.getElementById('btn-new-issue')) return;  // Daily 페이지 아니면 no-op
   await loadSupervisors();
   if (S.activeTab === 'all') S.activeTab = onlySupId();  // 손유석 단독 — 'all' 잔상 방지
+  _vesselCache.clear();
+  // Both reads depend on the resolved scope, not on each other's response.
+  await Promise.all([
+    loadVessels(S.activeTab === 'all' ? null : S.activeTab),
+    loadIssues(),
+  ]);
   renderTabs();
-  await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
   renderVesselFilter();
   renderTabContext();
-  await loadIssues();
-  _vesselCache.clear();
   render();
 }
 
@@ -3516,16 +3524,20 @@ function wireCommon() {
 wireCommon();  // 유저메뉴/관리/비번 — 모든 페이지 공통
 if (document.getElementById('btn-new-issue')) (async function init() {
   try {
-    await loadSupervisors();
-    try { S.summaryCounts = await api('/api/issues/summary-counts') || {}; } catch (_) {}
+    await Promise.all([
+      loadSupervisors(),
+      api('/api/issues/summary-counts').then(v => { S.summaryCounts = v || {}; }).catch(() => {}),
+      loadVesselOrder(),
+    ]);
     // 손유석 단독 운영 — 항상 손유석 탭으로 고정 (소분류는 저장된 값 유지)
     S.activeTab = onlySupId();
-    await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
-    await loadVesselOrder();
+    await Promise.all([
+      loadVessels(S.activeTab === 'all' ? null : S.activeTab),
+      loadIssues(),
+    ]);
     renderTabs();
     renderVesselFilter();
     renderTabContext();
-    await loadIssues();
     fillFormSelects();
     render();
     wireEvents();

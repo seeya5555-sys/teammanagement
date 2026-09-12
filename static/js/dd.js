@@ -241,7 +241,7 @@ function openNew() {
 
 async function openEdit(id) {
   try {
-    const r = await api(`/api/dock-reports/${id}`);
+    const r = await api(`/api/dock-reports/${id}?metadata_only=1`);
     DD.editingId = id;
     $('#dd-modal-title').textContent = '보고서 정보 편집';
     $('#dd-btn-delete').hidden = false;

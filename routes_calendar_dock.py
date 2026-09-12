@@ -315,6 +315,7 @@ def api_dock_get(rid):
     """보고서 상세 — 메타 + 섹션 트리 + 블록 모두 포함"""
     out = dock_report_projection.get_report(
         rid, lambda exc: app.logger.warning('dock-get: %s', exc),
+        metadata_only=request.args.get('metadata_only') == '1',
     )
     if not out:
         abort(404)
@@ -1089,6 +1090,11 @@ def api_brep_get(rid):
 
     out = _brep_to_dict(r)
     out['can_edit'] = _can_edit_boarding_report(r)
+
+    # The metadata editor does not use the potentially large section/block tree.
+    # Keep the same row lookup, 404 and edit-permission calculation as full GET.
+    if request.args.get('metadata_only') == '1':
+        return jsonify(out)
 
     secs = query('''
         SELECT * FROM boarding_report_sections
