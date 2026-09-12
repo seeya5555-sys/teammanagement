@@ -2785,6 +2785,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/remittance/drafts",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_remittance_create",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/repair-requests/<int:rid>/result",
     "methods": [
       "OPTIONS",
@@ -3981,6 +3991,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/remittance/drafts",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_remittance_list",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/repair-requests",
     "methods": [
       "OPTIONS",
@@ -4795,6 +4816,17 @@
     "defaults": {}
   },
   {
+    "rule": "/dock-manager",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_core.dock_manager_shell",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/dock_procure",
     "methods": [
       "GET",
@@ -5011,6 +5043,17 @@
       "OPTIONS"
     ],
     "endpoint": "routes_calendar_dock.msg_preview_page",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/remittance",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.remittance_page",
     "strict_slashes": true,
     "defaults": {}
   },

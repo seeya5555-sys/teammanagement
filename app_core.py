@@ -203,9 +203,13 @@ def close_db(e=None):
 
 def query(sql, params=(), one=False):
     cur = get_db().execute(sql, params)
-    rows = cur.fetchall()
-    cur.close()
-    return (rows[0] if rows else None) if one else rows
+    try:
+        # A single-row lookup must not materialize all matching rows. Keep the
+        # historical Row/None vs list return contract and always release the
+        # statement, including when decoding a row raises.
+        return cur.fetchone() if one else cur.fetchall()
+    finally:
+        cur.close()
 
 def execute(sql, params=()):
     db = get_db()

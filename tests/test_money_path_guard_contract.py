@@ -42,7 +42,7 @@ POLICY_FIXTURE = ROOT / "tests" / "fixtures" / "money_route_policy.json"
 # `liscr` = 기국 인보이스 신규등록(Case 2). URL 에 "invoice" 문자열이 없지만 승인 한 번이
 # SVMS 에 인보이스를 만들어내므로 돈경로다 — 토큰이 URL 문자열 기반이라 이름만 보고
 # 빠뜨리기 쉬운 자리다.
-MONEY_TOKENS = ("fundreq", "invoice", "jeonja", "liscr")
+MONEY_TOKENS = ("fundreq", "invoice", "jeonja", "liscr", "remittance")
 
 # 가드는 접두어로 갈린다:
 #   /api/ext/*  = 맥 러너(워커)용 X-API-Key 경로  → api_key_required (401)

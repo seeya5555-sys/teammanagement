@@ -129,6 +129,11 @@
     "guard": "admin_required",
     "non_admin": 403
   },
+  "GET /api/remittance/drafts": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
   "GET /fundreq": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -140,6 +145,11 @@
     "non_admin": 403
   },
   "GET /liscr": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "GET /remittance": {
     "anonymous": 401,
     "guard": "admin_required",
     "non_admin": 403
@@ -230,6 +240,11 @@
     "non_admin": 401
   },
   "POST /api/ext/liscr/master": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/remittance/drafts": {
     "anonymous": 401,
     "guard": "api_key_required",
     "non_admin": 401
