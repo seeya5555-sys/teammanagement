@@ -1943,16 +1943,12 @@ class DockDailyTests(unittest.TestCase):
                       preview['html'])
         self.assertIn('%s<p style="margin:0 0 6px">%s' % (spacer, run % '<b>1. &nbsp;Shipyard</b>'),
                       preview['html'])
-        # Outlook paste drops paragraph margin-left, so a real 24px spacer cell indents items.
-        self.assertIn('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-                      'width="100%"', preview['html'])
-        self.assertIn('<td width="24" style="width:24px;vertical-align:top;%s">'
-                      '<p style="margin:0;%s">%s</p></td>' % (font, font, run % '&nbsp;'),
+        # Outlook iOS shrinks text inside pasted presentation-table cells. Items use
+        # ordinary 11pt paragraphs with NBSP indentation so every line stays the same size.
+        self.assertNotIn('role="presentation"', preview['html'])
+        self.assertIn(run % '&nbsp;&nbsp;&nbsp;&nbsp;2)&nbsp;&nbsp;Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;',
                       preview['html'])
-        self.assertIn('<td width="28" style="width:28px;vertical-align:top;white-space:nowrap;%s">'
-                      '<p style="margin:0;%s">%s</p></td>' % (font, font, run % '2)'),
-                      preview['html'])
-        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</span></p></td></tr></table>%s'
+        self.assertIn('Crane test &lt;Hull &amp; Valve&gt; &quot;ongoing&quot;</span></p>%s'
                       '<p style="margin:0 0 6px">%s' % (spacer, run % '<b>2. &nbsp;EGCS Retrofit</b>'),
                       preview['html'])
         self.assertNotIn('<Hull & Valve>', preview['html'])
@@ -1989,19 +1985,12 @@ class DockDailyTests(unittest.TestCase):
         root = _Tree.parse(preview['html'])
         def node_text(node):
             return node['text'] + ''.join(node_text(kid) for kid in node['kids'])
-        item_tables = [table for table in _Tree.find(root, 'table')
-                       if table['attrs'].get('role') == 'presentation'
-                       and any(marker in node_text(table)
-                               for marker in ('FF Lifeboat', 'Sand Blasting',
-                                              'Paint touch-up', 'FWD winch'))]
-        self.assertEqual(4, len(item_tables))
-        child_cells = [kid for kid in _Tree.find(item_tables[1], 'tr')[0]['kids']
-                       if kid['tag'] == 'td']
-        self.assertEqual(['40', '12', None],
-                         [cell['attrs'].get('width') for cell in child_cells])
-        self.assertIn('>-</span>', preview['html'])
-        self.assertIn('>Sand Blasting &lt;Hull &amp; Valve&gt; 50%</span>', preview['html'])
-        self.assertIn('>Paint touch-up</span>', preview['html'])
+        self.assertFalse([table for table in _Tree.find(root, 'table')
+                          if table['attrs'].get('role') == 'presentation'])
+        self.assertIn('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;&nbsp;'
+                      'Sand Blasting &lt;Hull &amp; Valve&gt; 50%</span>', preview['html'])
+        self.assertIn('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;&nbsp;'
+                      'Paint touch-up</span>', preview['html'])
 
         # 본문 선두 하이픈/음수는 하위항목으로 오인하면 안 된다.
         self.assertFalse(routes_dock_daily.CHILD_BULLET_RE.match('1) -20도 시험'))
@@ -2033,19 +2022,7 @@ class DockDailyTests(unittest.TestCase):
         itinerary = [table for table in tables if table['attrs'].get('role') != 'presentation']
         items = [table for table in tables if table['attrs'].get('role') == 'presentation']
         self.assertEqual(1, len(itinerary))
-        self.assertTrue(items)
-        for table in items:
-            rows = _Tree.find(table, 'tr')
-            self.assertEqual(1, len(rows), table)
-            cells = [k for k in rows[0]['kids'] if k['tag'] == 'td']
-            self.assertEqual(3, len(cells), rows[0])
-            self.assertEqual(cells, rows[0]['kids'], 'only cells may sit in an item row')
-            self.assertEqual('24', cells[0]['attrs'].get('width'))
-            self.assertEqual('28', cells[1]['attrs'].get('width'))
-            for td in cells:
-                self.assertEqual(['p'], [k['tag'] for k in td['kids']], td)
-                self.assertEqual('', td['text'].strip(), 'text sits directly in the <td>')
-                self.assertIn('font-size:11pt', td['kids'][0]['attrs'].get('style', ''))
+        self.assertFalse(items, '작업항목을 표에 넣으면 Outlook iOS가 글자를 축소한다')
         rows = _Tree.find(itinerary[0], 'tr')
         self.assertEqual(4, len(rows), 'itinerary is BERTHING/IN/OUT/DEPARTURE')
         for row in rows:
@@ -2122,11 +2099,9 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('7)', preview['text'])
         self.assertNotIn('1) 1)', preview['html'])
         item_run = ('<span style="font-family:Arial,Helvetica,sans-serif;font-size:11pt">'
-                    '%s</span></p></td>')
-        self.assertIn(item_run % '1)', preview['html'])
-        self.assertIn(item_run % 'Tank cleaning', preview['html'])
-        self.assertIn(item_run % '3)', preview['html'])
-        self.assertIn(item_run % 'Anode renewal', preview['html'])
+                    '&nbsp;&nbsp;&nbsp;&nbsp;%s)&nbsp;&nbsp;%s</span></p>')
+        self.assertIn(item_run % ('1', 'Tank cleaning'), preview['html'])
+        self.assertIn(item_run % ('3', 'Anode renewal'), preview['html'])
         svms = self.client.get(f"/api/dock-daily/reports/{r['id']}/svms-preview").get_json()
         self.assertEqual('1) Tank cleaning\n2) Hull blasting\n3) Anode renewal',
                          svms['fields']['RMK_SYD'])
@@ -2663,6 +2638,8 @@ class DockDailyTests(unittest.TestCase):
         for caption in ('사진 1', '사진 2', '사진 3'):
             self.assertIn(caption, html_body)
             self.assertIn(caption, mail['text'])
+        sizes = set(re.findall(r'font-size:([^;\"]+)', html_body))
+        self.assertEqual({'11pt'}, sizes, '메일 본문·항목·표·사진 캡션의 글자 크기는 전부 11pt')
 
     def test_mail_photo_bytes_shrink_with_the_column_count(self):
         """4열에서 작게 보이는 사진에 1열짜리 바이트를 싣는 건 낭비다."""
@@ -2723,8 +2700,8 @@ class DockDailyTests(unittest.TestCase):
         self.assertNotIn('4)', mail['text'])
         # html 도 같다. 표는 `1)` 줄 **뒤에** 번호 없이 오고, 그 다음 글이 `2)` 를 받는다.
         html = mail['html']
-        first = html.index('>1)</span></p>')
-        second = html.index('>2)</span></p>')
+        first = html.index('1)&nbsp;&nbsp;첫 작업</span></p>')
+        second = html.index('2)&nbsp;&nbsp;둘째 작업</span></p>')
         grid = html.index('<table style="border-collapse:collapse;margin:0 0 8px 52px">')
         self.assertLess(first, grid)
         self.assertLess(grid, second)

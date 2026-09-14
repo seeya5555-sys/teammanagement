@@ -2995,33 +2995,23 @@ def _email(rid):
     chunks.append('</table>')
     chunks.append(spacer)
     def item(no, inner):
-        """번호가 붙은 작업 항목 한 줄. inner 는 이미 escape 된 markup."""
-        p = '<p style="margin:0;%s">%%s</p>' % cell_font
-        return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-                'width="100%%" style="width:100%%;border-collapse:collapse;'
-                'margin:0 0 3px 0;%s"><tr>'
-                '<td width="24" style="width:24px;vertical-align:top;%s">%s</td>'
-                '<td width="28" style="width:28px;vertical-align:top;white-space:nowrap;%s">%s</td>'
-                '<td style="vertical-align:top;%s">%s</td></tr></table>'
-                % (cell_font, cell_font, p % run('&nbsp;'),
-                   cell_font, p % run('%d)' % no), cell_font, p % run(inner)))
+        """번호가 붙은 작업 항목 한 줄. inner 는 이미 escape 된 markup.
+
+        Outlook iOS 는 클립보드로 붙인 presentation table 의 셀 글자를 11pt 선언과
+        무관하게 축소한다(2026-09-14 실기기 캡처). 번호 들여쓰기는 NBSP run 으로
+        표현해 글자가 일반 문단과 같은 렌더링 경로를 타게 한다.
+        """
+        return '<p style="margin:0 0 3px;%s">%s</p>' % (
+            cell_font, run('&nbsp;&nbsp;&nbsp;&nbsp;%d)&nbsp;&nbsp;%s' % (no, inner)))
 
     def child_item(inner):
         """상위번호를 소비하지 않는 `  - ` 하위항목.
 
-        Outlook iOS가 paragraph margin을 버리므로 item()과 같은 presentation table을 쓴다.
-        40px spacer + 12px dash로 dash만 번호보다 안쪽에 두고, 본문 시작선은 부모와 같은
-        52px에 맞춘다. 긴 줄도 부모처럼 본문 셀 안에서 줄바꿈한다.
+        Outlook iOS가 paragraph margin을 버리므로 NBSP run 으로 들여쓴다. 표를 쓰면
+        셀 글자만 축소되는 실측 회귀가 있어 일반 문단 경로를 유지해야 한다.
         """
-        p = '<p style="margin:0;%s">%%s</p>' % cell_font
-        return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-                'width="100%%" style="width:100%%;border-collapse:collapse;'
-                'margin:0 0 3px 0;%s"><tr>'
-                '<td width="40" style="width:40px;vertical-align:top;%s">%s</td>'
-                '<td width="12" style="width:12px;vertical-align:top;white-space:nowrap;%s">%s</td>'
-                '<td style="vertical-align:top;%s">%s</td></tr></table>'
-                % (cell_font, cell_font, p % run('&nbsp;'),
-                   cell_font, p % run('-'), cell_font, p % run(inner)))
+        return '<p style="margin:0 0 3px;%s">%s</p>' % (
+            cell_font, run('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;&nbsp;%s' % inner))
 
     def table(entry, indent_px=52):
         """카드의 표를 메일 표로. 셀 텍스트는 `cell()` 계약대로 `<td>` 안 `<p>` 에 넣는다.
@@ -3042,7 +3032,7 @@ def _email(rid):
 
     # 캡션은 도크 리포트 `.dde-img-caption-inp` 계약대로 **가운데 정렬 이탤릭**이다
     # (형 지시 2026-08-21).
-    caption_font = ('font-family:Arial,Helvetica,sans-serif;font-size:9pt;'
+    caption_font = ('font-family:Arial,Helvetica,sans-serif;font-size:11pt;'
                     'color:#4B5563;font-style:italic;text-align:center')
 
     def photo_grid(entry, budget, count):
