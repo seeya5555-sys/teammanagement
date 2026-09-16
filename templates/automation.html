@@ -332,9 +332,9 @@
     document.querySelectorAll('.au-b[data-task],.au-b[data-all]').forEach(btn=>btn.onclick=onRun);
   }
   function jAmt(it){
-    const dn=it.dn?esc(it.dn):'', cost=(it.cost!==null&&it.cost!==undefined)?esc(it.cost):'';
+    const dn=it.dn?esc(it.dn):'', cost=(it.cost!==null&&it.cost!==undefined)?esc(it.cost):'', cur=it.cost_cur?(' '+esc(it.cost_cur)):'';
     if(!dn&&!cost) return '';
-    return `<span class="jl-amt">${dn}${(dn&&cost)?' / Cost ':(cost?'Cost ':'')}${cost}</span>`;
+    return `<span class="jl-amt">${dn}${(dn&&cost)?' / 상신비용 총합 ':(cost?'상신비용 총합 ':'')}${cost}${cur}</span>`;
   }
   function jrow(it){
     if(it.bucket==='already'){   // 이미결재 — 상신 불필요, 읽기전용

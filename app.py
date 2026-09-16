@@ -674,6 +674,7 @@ def init_db(drop=False):
                 subj        TEXT,
                 fund        TEXT,                                 -- Fund 구분(AOR/Pre-del/OPEX 등)
                 cost        REAL,                                 -- SVMS Cost
+                cost_cur    TEXT,                                 -- Cost/CostSlip total currency
                 dn          TEXT,                                 -- 첨부 DN/인보이스 판독(금액+통화)
                 bucket      TEXT NOT NULL,                        -- pass/costslip/mismatch/escalate/flag/already
                 why         TEXT,                                 -- 비-pass 사유
@@ -682,6 +683,8 @@ def init_db(drop=False):
                 reviewed_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
             )
         """)
+        if 'cost_cur' not in [r[1] for r in conn.execute('PRAGMA table_info(jeonja_review_item)').fetchall()]:
+            conn.execute('ALTER TABLE jeonja_review_item ADD COLUMN cost_cur TEXT')
 
         # reqgen: 입거 requisition 엑셀 → SVMS 구매청구(PKG_PC_REQ.SP_SET_REQ_INFO) DRAFT 자동작성 큐
         #   사람이 /reqgen 탭서 엑셀 업로드 → 시트별 카드 적재(파싱) → Voyage/Port/Date 입력+승인 →

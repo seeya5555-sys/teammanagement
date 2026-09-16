@@ -3059,9 +3059,9 @@ def api_ext_jeonja_review():
                 continue
             excl = 1 if (not safe_ref or ref in prev_excluded or bucket in DEFAULT_HOLD) else 0
             db.execute("INSERT OR REPLACE INTO jeonja_review_item "
-                       "(ref,vsl_cd,subj,fund,cost,dn,bucket,why,excluded,run_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       "(ref,vsl_cd,subj,fund,cost,cost_cur,dn,bucket,why,excluded,run_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        (ref, it.get('vsl_cd'), it.get('subj'), it.get('fund'), it.get('cost'),
-                        it.get('dn'), bucket, why, excl, run_id))
+                        it.get('cost_cur'), it.get('dn'), bucket, why, excl, run_id))
             current_refs.add(ref)
             if bucket == 'already': completed_refs.add(ref)
             n += 1
@@ -3079,7 +3079,7 @@ def api_ext_jeonja_review():
 @admin_required
 def api_automation_jeonja_items():
     """Review checklist plus read-only preview availability."""
-    rows = query("SELECT ref,vsl_cd,subj,fund,cost,dn,bucket,why,excluded,reviewed_at "
+    rows = query("SELECT ref,vsl_cd,subj,fund,cost,cost_cur,dn,bucket,why,excluded,reviewed_at "
                  "FROM jeonja_review_item ORDER BY CASE bucket "
                  "WHEN 'pass' THEN 0 WHEN 'costslip' THEN 1 WHEN 'mismatch' THEN 2 "
                  "WHEN 'escalate' THEN 3 WHEN 'flag' THEN 4 WHEN 'already' THEN 5 ELSE 6 END, ref") or []
@@ -3225,4 +3225,3 @@ def api_shipwiki_delete(cid):
 def api_shipwiki_clear_applied():
     n = execute_rc("DELETE FROM shipwiki_card WHERE card_status='applied'")
     return jsonify({'deleted': n})
-
