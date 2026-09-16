@@ -123,7 +123,7 @@
         <div class="fr-meta">${esc(d.opex_cd)}</div></div>
         <div class="fr-badges"><span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
       </div>
-      <div class="fr-body"><div class="fr-kv">${kv}</div>${attBox(d)}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}</div>
+      <div class="fr-body"><div class="fr-kv">${kv}</div>${attBox(d)}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}${d.upstream_reject_remark?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}</div>
       <div class="fr-acts">${acts}</div>
     </div>`;
   }

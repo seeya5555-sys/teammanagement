@@ -54,6 +54,39 @@ from helpers_shared import (
 
 bp = Blueprint("routes_calendar_dock", __name__)
 
+_REJECTION_TARGETS = {'aor': ('aor_draft', 'aor_cd'), 'fundreq': ('fundreq_draft', 'opex_cd'), 'invoice': ('invoice_draft', 'inv_cd')}
+
+@bp.route('/api/ext/approval-rejections/sync', methods=['POST'])
+@api_key_required
+def api_ext_approval_rejections_sync():
+    """Annotate existing cards with read-only SVMS rejection facts; never resubmit."""
+    items = (request.get_json(silent=True) or {}).get('items')
+    if not isinstance(items, list) or len(items) > 500:
+        return jsonify({'error': 'items must be a list (max 500)'}), 400
+    updated = missing = invalid = 0
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    for item in items:
+        if not isinstance(item, dict) or item.get('kind') not in _REJECTION_TARGETS:
+            invalid += 1; continue
+        table, keycol = _REJECTION_TARGETS[item['kind']]
+        ref = str(item.get('ref_no') or '').strip().upper()
+        remark = str(item.get('remark') or '').strip()
+        status = str(item.get('upstream_status') or '').strip().upper()
+        action = str(item.get('corrective_action') or '').strip()
+        if not ref or not remark or status not in ('R', 'S'):
+            invalid += 1; continue
+        row = query(f"SELECT id, upstream_status, upstream_reject_remark, corrective_action FROM {table} "
+                    f"WHERE upper(trim({keycol}))=? ORDER BY id DESC LIMIT 1", (ref,), one=True)
+        if not row:
+            missing += 1; continue
+        bounded_remark, bounded_action = remark[:4000], action[:1000]
+        # Idempotent: a repeated scheduler snapshot does not rewrite observed time.
+        if (row['upstream_status'], row['upstream_reject_remark'], row['corrective_action']) != (status, bounded_remark, bounded_action):
+            execute(f"UPDATE {table} SET upstream_status=?, upstream_reject_remark=?, corrective_action=?, upstream_rejected_at=? WHERE id=?",
+                    (status, bounded_remark, bounded_action, now, row['id']))
+        updated += 1
+    return jsonify({'ok': True, 'updated': updated, 'missing': missing, 'invalid': invalid})
+
 
 
 @bp.route('/api/cal/events', methods=['GET'])

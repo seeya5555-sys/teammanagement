@@ -210,7 +210,7 @@
         <div class="fr-meta">${esc(d.inv_cd)} · ${esc(d.vsl_nm||d.vsl_cd||'')} · <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></div></div>
         <div class="fr-badges">${e15Badge}${gateBadge}${stbadge}</div>
       </div>
-      <div class="fr-body"><div class="fr-kv">${kv}</div>${matchLine}${corr}${line}${flagLine}</div>
+      <div class="fr-body"><div class="fr-kv">${kv}</div>${matchLine}${corr}${d.upstream_reject_remark?`<div class="fr-sect" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}${line}${flagLine}</div>
       <div class="fr-acts">${acts}</div>
     </div>`;
   }

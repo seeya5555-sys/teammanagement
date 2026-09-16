@@ -391,6 +391,9 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_aor_draft_status ON aor_draft(status)")
+        for _col in ("upstream_status", "upstream_reject_remark", "corrective_action", "upstream_rejected_at"):
+            if _col not in [r[1] for r in conn.execute('PRAGMA table_info(aor_draft)').fetchall()]:
+                conn.execute(f'ALTER TABLE aor_draft ADD COLUMN {_col} TEXT')
         # aor_cd is the SVMS document identity. Older deployments only performed a
         # SELECT-before-INSERT check, so overlapping prep runs could both insert an
         # active row. Normalize legacy keys, keep the most advanced active row, and
@@ -484,6 +487,9 @@ def init_db(drop=False):
         _fr_cols = [r[1] for r in conn.execute('PRAGMA table_info(fundreq_draft)').fetchall()]
         if 'attach_files' not in _fr_cols:
             conn.execute('ALTER TABLE fundreq_draft ADD COLUMN attach_files TEXT')
+        for _col in ("upstream_status", "upstream_reject_remark", "corrective_action", "upstream_rejected_at"):
+            if _col not in [r[1] for r in conn.execute('PRAGMA table_info(fundreq_draft)').fetchall()]:
+                conn.execute(f'ALTER TABLE fundreq_draft ADD COLUMN {_col} TEXT')
 
         # 인보이스 자동컨펌(SVMS Invoice Confirm) 2단게이트 draft 큐 (prep 엔진 ingest → 사람이 /invoice 탭서 opt-out 승인/리젝 결정 → 맥 invoice_confirm 러너가 SVMS 교정·컨펌)
         conn.execute("""
@@ -529,6 +535,9 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_draft_status ON invoice_draft(status)")
+        for _col in ("upstream_status", "upstream_reject_remark", "corrective_action", "upstream_rejected_at"):
+            if _col not in [r[1] for r in conn.execute('PRAGMA table_info(invoice_draft)').fetchall()]:
+                conn.execute(f'ALTER TABLE invoice_draft ADD COLUMN {_col} TEXT')
 
         # 통합 송금요청 후보 큐 — Fund Request(관리사) + Invoice(벤더 직불).
         # 기존 fundreq_draft/invoice_draft는 각각 SVMS 상신·컨펌 파이프라인 소유라 섞지 않는다.
