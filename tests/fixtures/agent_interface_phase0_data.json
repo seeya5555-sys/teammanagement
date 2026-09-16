@@ -1,0 +1,45 @@
+{
+  "benchmark_issue_id": 102,
+  "benchmark_vessel": "TEST HORIZON",
+  "issues": [
+    {
+      "id": 101,
+      "vessel": "TEST HORIZON",
+      "item_topic": "M/E",
+      "description": "Synthetic fixture: investigate temperature trend.",
+      "priority": "Urgent",
+      "status": "Open",
+      "issue_date": "2026-09-01",
+      "due_date": "2026-09-20",
+      "actions": [{"date": "2026-09-02", "text": "Synthetic action only."}],
+      "attachments": []
+    },
+    {
+      "id": 102,
+      "vessel": "TEST HORIZON",
+      "item_topic": "BWTS",
+      "description": "Synthetic fixture: verify service report.",
+      "priority": "Normal",
+      "status": "InProgress",
+      "issue_date": "2026-09-03",
+      "due_date": "2026-09-25",
+      "actions": [
+        {"date": "2026-09-04", "text": "Synthetic report received."},
+        {"date": "2026-09-05", "text": "Synthetic review pending."}
+      ],
+      "attachments": [{"id": 1, "filename": "synthetic.pdf", "size": 12345}]
+    },
+    {
+      "id": 103,
+      "vessel": "TEST MERIDIAN",
+      "item_topic": "Class",
+      "description": "Synthetic fixture: close completed item.",
+      "priority": "COC & Flag",
+      "status": "Closed",
+      "issue_date": "2026-08-15",
+      "due_date": null,
+      "actions": [],
+      "attachments": []
+    }
+  ]
+}
