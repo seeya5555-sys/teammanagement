@@ -6495,6 +6495,25 @@ def _invoice_pdf_path(did):
     """미리보기 PDF 파일 경로(draft id 기준). 파일명=id.pdf 라 경로주입 불가."""
     return os.path.join(INVOICE_PDF_DIR, '%d.pdf' % int(did))
 
+def _invoice_attachment_path(did, idx):
+    return os.path.join(INVOICE_PDF_DIR, '%d_%d.pdf' % (int(did), int(idx)))
+
+def _invoice_attachment_indices(did):
+    prefix = '%d_' % int(did)
+    out=[]
+    try:
+        for name in os.listdir(INVOICE_PDF_DIR):
+            if name.startswith(prefix) and name.endswith('.pdf'):
+                tail=name[len(prefix):-4]
+                if tail.isdigit(): out.append(int(tail))
+    except OSError: pass
+    return sorted(set(out))
+
+def _invoice_attachment_delete_all(did):
+    for idx in _invoice_attachment_indices(did):
+        try: os.remove(_invoice_attachment_path(did,idx))
+        except OSError: pass
+
 
 def _invoice_pdf_delete(did):
     """미리보기 PDF 삭제 — best-effort(실패해도 호출측 흐름 안 막음)."""
@@ -6502,6 +6521,7 @@ def _invoice_pdf_delete(did):
         p = _invoice_pdf_path(did)
         if os.path.exists(p):
             os.remove(p)
+        _invoice_attachment_delete_all(did)
     except Exception:
         app.logger.exception('invoice-pdf-delete')
 
@@ -6571,8 +6591,12 @@ def api_invoice_list():
                      "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
     pending = query("SELECT COUNT(*) c FROM invoice_draft WHERE status='pending'", one=True)
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
-    for dd in drafts:   # 미리보기 PDF 존재 여부(프론트 링크 표시용)
+    for dd in drafts:   # 대표 PDF(legacy) + 전체 attachment index
         dd['has_pdf'] = os.path.exists(_invoice_pdf_path(dd['id']))
+        try: names=json.loads(dd.get('attachments') or '[]')
+        except Exception: names=[]
+        dd['attachment_preview_indices'] = [i for i in _invoice_attachment_indices(dd['id'])
+            if 0 <= i < len(names) and str(names[i] or '').lower().endswith('.pdf')]
     return jsonify({'drafts': drafts, 'pending': pending['c'],
                     'enabled': _automation_enabled()})
 
@@ -6587,6 +6611,21 @@ def api_invoice_pdf(did):
     return send_file(p, mimetype='application/pdf', as_attachment=False,
                      download_name='invoice_%d.pdf' % did, conditional=True)
 
+@bp.route('/api/invoice/drafts/<int:did>/attachments/<int:idx>')
+@admin_required
+def api_invoice_attachment(did, idx):
+    row=query('SELECT attachments FROM invoice_draft WHERE id=?',(did,),one=True)
+    if not row: abort(404)
+    try: names=json.loads(row['attachments'] or '[]')
+    except Exception: names=[]
+    if idx < 0 or idx >= len(names): abort(404)
+    p=_invoice_attachment_path(did,idx)
+    if not os.path.exists(p): abort(404)
+    resp=send_file(p,mimetype='application/pdf',as_attachment=False,
+                   download_name=secure_filename(str(names[idx] or ('attachment_%d.pdf'%idx))),conditional=True)
+    resp.headers['X-Content-Type-Options']='nosniff'
+    return resp
+
 
 @bp.route('/api/ext/invoice/drafts', methods=['POST'])
 @api_key_required
@@ -6598,7 +6637,7 @@ def api_ext_invoice_create():
         return jsonify({'error': 'inv_cd required'}), 400
     # 러너가 실측한 SVMS 라이브 STATUS(없으면 구버전 러너 = 판정 안 함).
     svms_status = (d.get('svms_status') or '').strip().upper()
-    ex = query("SELECT id, status, raw_card, gate FROM invoice_draft WHERE inv_cd=? "
+    ex = query("SELECT id, status, raw_card, gate, attachments FROM invoice_draft WHERE inv_cd=? "
                "AND status IN ('pending','approved','submitting','submitted',"
                "'rejecting','reject_submitting','rejected') "
                "ORDER BY id DESC LIMIT 1", (inv_cd,), one=True)
@@ -6621,6 +6660,8 @@ def api_ext_invoice_create():
     )
     if ex and ex['status'] == 'pending':
         cols = _invoice_merge_pending_manual_inv_dt(ex, cols)
+        if (ex['attachments'] or 'null') != (cols.get('attachments') or 'null'):
+            _invoice_attachment_delete_all(ex['id'])
         sets = ', '.join(f"{k}=?" for k in cols)
         execute(f"UPDATE invoice_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
         return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
@@ -6705,6 +6746,31 @@ def api_ext_invoice_pdf_upload(did):
         fh.write(data)
     os.replace(tmp, final)
     return jsonify({'id': did, 'stored': True, 'bytes': len(data)})
+
+@bp.route('/api/ext/invoice/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
+@api_key_required
+def api_ext_invoice_attachment_upload(did, idx):
+    MAX=25*1024*1024
+    row=query('SELECT status,attachments FROM invoice_draft WHERE id=?',(did,),one=True)
+    if not row: return jsonify({'error':'not found'}),404
+    if row['status'] not in ('pending','approved','rejecting'):
+        return jsonify({'error':'not accepting','status':row['status']}),409
+    try: names=json.loads(row['attachments'] or '[]')
+    except Exception: names=[]
+    if idx < 0 or idx >= len(names): return jsonify({'error':'attachment index out of range'}),409
+    if not str(names[idx] or '').lower().endswith('.pdf'):
+        return jsonify({'error':'attachment is not pdf'}),400
+    expected_fp=hashlib.sha256(json.dumps(names,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+    if request.args.get('name','') != str(names[idx] or '') or request.args.get('fp','') != expected_fp:
+        return jsonify({'error':'stale attachment identity'}),409
+    if request.content_length and request.content_length > MAX: return jsonify({'error':'too large'}),413
+    data=request.get_data()
+    if not data or data[:5] != b'%PDF-': return jsonify({'error':'not pdf'}),400
+    if len(data)>MAX: return jsonify({'error':'too large'}),413
+    final=_invoice_attachment_path(did,idx); tmp=final+'.tmp'
+    with open(tmp,'wb') as fh: fh.write(data)
+    os.replace(tmp,final)
+    return jsonify({'id':did,'index':idx,'stored':True,'bytes':len(data)})
 
 
 @bp.route('/api/invoice/drafts/<int:did>/approve', methods=['POST'])

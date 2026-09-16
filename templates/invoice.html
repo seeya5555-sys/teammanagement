@@ -155,9 +155,16 @@
     const _atts=jparse(d.attachments)||[];
     const _a0=Array.isArray(_atts)?_atts[0]:null;   // 첨부는 FILE_NM 문자열 배열 — object면 무시
     const pdfNm=d.match_src||_rc.preview_src||(typeof _a0==='string'?_a0:null)||'원본 PDF';
-    const pdfEl=d.has_pdf
-      ? ` · <a class="pdf-lnk" data-pdf="${d.id}" data-nm="${esc(pdfNm)}"><svg class="ic-svg" viewBox="0 0 24 24" style="width:13px;height:13px;vertical-align:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg> ${esc(pdfNm)}</a>${d.match_src?'':` <span class="mun">(대조 미일치 원본)</span>`}`
-      : (d.match_src?` <span class="mun">· ${esc(d.match_src)}</span>`:'');
+    const _idx=new Set(d.attachment_preview_indices||[]);
+    const _matchIdx=Number.isInteger(_rc.match_attachment_index)?_rc.match_attachment_index:-1;
+    const matchedEl=_matchIdx>=0&&_idx.has(_matchIdx)
+      ? `<a href="/api/invoice/drafts/${d.id}/attachments/${_matchIdx}" target="_blank" rel="noopener"><b>✓ 매칭 인보이스:</b> ${esc(_atts[_matchIdx])}</a>`
+      : (d.has_pdf?`<a class="pdf-lnk" data-pdf="${d.id}" data-nm="${esc(pdfNm)}"><b>✓ 매칭/대표 인보이스:</b> ${esc(pdfNm)}</a>`:`<span class="mun">매칭 인보이스 미리보기 없음</span>`);
+    const refs=Array.isArray(_atts)?_atts.map((nm,i)=>({nm,i})).filter(x=>x.i!==_matchIdx):[];
+    const refEl=refs.length
+      ? refs.map(x=>_idx.has(x.i)?`<a href="/api/invoice/drafts/${d.id}/attachments/${x.i}" target="_blank" rel="noopener">${esc(x.nm)}</a>`:`<span class="mun">${esc(x.nm)} (미리보기 없음)</span>`).join(' · ')
+      : `<span class="mun">Reference 첨부 없음</span>`;
+    const pdfEl=`<div style="margin-top:4px">${matchedEl}</div><div style="margin-top:4px"><b>Reference attachments:</b> ${refEl}</div>`;
     const matchLine=`<div class="fr-sect"><div class="fr-sect-t">PDF 대조</div>`
       +`${mark(d.inv_no_match,'INV_NO')} &nbsp; ${mark(d.amt_match,'금액')} &nbsp; ${mark(d.date_match,'날짜')}`
       +`${pdfEl}</div>`;
