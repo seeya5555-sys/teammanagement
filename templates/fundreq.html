@@ -98,6 +98,8 @@
   function card(d){
     const dec=['approved','rejecting','reject_submitting','submitting','submitted','rejected','failed','reject_failed'].includes(d.status);
     const isAor=(d.tp==='A'||d.tp==='P');
+    const ev=d.evidence_checklist||{items:[],gap_count:0};
+    const evBox=`<div class="fr-att ${ev.gap_count?'none':''}"><b>증빙 체크 · ${ev.gap_count?'누락/확인불가 '+ev.gap_count+'건':'완결'}</b><br>${(ev.items||[]).map(x=>`${x.state==='present'?'✓':x.state==='unknown'?'?':'⚠'} ${esc(x.label)}${x.detail?' ('+esc(x.detail)+')':''}`).join('<br>')}</div>`;
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd)}</b> ${vesselChip(d)}</span><span>Cost <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></span>`;
     if(isAor) kv+=`<span>AOR <b>${esc(d.ref_no||'-')}</b> (${esc(d.ref_amt)})</span><span>차액 <b>${esc(d.diff)}</b></span>`;
     if(d.dn) kv+=`<span>첨부판독 <b>${esc(d.dn)}</b></span>`;
@@ -123,7 +125,7 @@
         <div class="fr-meta">${esc(d.opex_cd)}</div></div>
         <div class="fr-badges"><span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
       </div>
-      <div class="fr-body"><div class="fr-kv">${kv}</div>${attBox(d)}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}${d.upstream_reject_remark?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}</div>
+      <div class="fr-body"><div class="fr-kv">${kv}</div>${attBox(d)}${evBox}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}${d.upstream_reject_remark?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}</div>
       <div class="fr-acts">${acts}</div>
     </div>`;
   }

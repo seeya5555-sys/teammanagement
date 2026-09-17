@@ -68,6 +68,47 @@ def _aor_reconcile_alert(local_status, upstream_status):
         return f'TRMT는 리젝완료지만 SVMS STATUS={upstream} — 처리 결과 확인 필요'
     return ''
 
+def _json_list(value):
+    if isinstance(value, list): return value
+    try:
+        parsed = json.loads(value or '[]')
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+def _evidence_checklist(kind, draft, preview_indices=None):
+    """Deterministic document-presence checks only; never infer approval safety."""
+    preview = set(preview_indices or [])
+    items = []
+    def add(code, label, value, detail='', unknown=False):
+        state = 'unknown' if unknown else ('present' if bool(value) else 'missing')
+        items.append({'code': code, 'label': label, 'state': state,
+                      'present': state == 'present', 'detail': str(detail or '')[:300]})
+    if kind == 'aor':
+        files = _json_list(draft.get('attach_files'))
+        add('attachment', 'SVMS 견적/증빙 첨부', files, f'{len(files)}개', draft.get('attach_files') is None)
+        try: conf = int(round(float(str(draft.get('match_conf') or '0').rstrip('%'))))
+        except (TypeError, ValueError): conf = 0
+        subj = str(draft.get('email_subj') or '')
+        mail_ok = conf >= 80 and subj and '미확정' not in subj and '실패' not in subj
+        add('outlook', 'Outlook 근거 스레드', mail_ok, f'매칭 {conf}%')
+        add('comment', '결재 Comment 초안', str(draft.get('proposed_comment') or '').strip())
+    elif kind == 'fundreq':
+        files = _json_list(draft.get('attach_files'))
+        add('attachment', 'SVMS 인보이스/증빙 첨부', files, f'{len(files)}개', draft.get('attach_files') is None)
+        add('dn', 'DN/인보이스 판독 근거', str(draft.get('dn') or '').strip())
+        if str(draft.get('tp') or '') != 'O':
+            add('aor_ref', '연동 AOR 번호', str(draft.get('ref_no') or '').strip())
+            add('aor_amount', '연동 AOR 금액', draft.get('ref_amt') not in (None, ''))
+    elif kind == 'invoice':
+        files = _json_list(draft.get('attachments'))
+        add('attachment', 'SVMS 인보이스 첨부', files, f'{len(files)}개', draft.get('attachments') is None)
+        add('matched_pdf', '번호·금액·일자 매칭 PDF', str(draft.get('match_src') or '').strip())
+        add('preview', 'PDF 미리보기', bool(preview or draft.get('has_pdf')))
+    gaps = [x for x in items if x['state'] != 'present']
+    return {'items': items, 'gap_count': len(gaps),
+            'evidence_complete': not gaps}
+
 @bp.route('/api/ext/aor/status-sync', methods=['POST'])
 @api_key_required
 def api_ext_aor_status_sync():
@@ -5714,9 +5755,13 @@ def api_aor_list():
         draft['attachment_preview_indices'] = _aor_pdf_indices(draft['id'])
         draft['reconcile_alert'] = _aor_reconcile_alert(
             draft.get('status'), draft.get('upstream_status'))
+        draft['evidence_checklist'] = _evidence_checklist(
+            'aor', draft, draft['attachment_preview_indices'])
+    evidence_gaps = sum(d['evidence_checklist']['gap_count'] for d in drafts if d.get('status') == 'pending')
     return jsonify({'count': len(rows), 'pending': pending['c'],
                     'crew_submitted': (int(crew['v']) if crew and str(crew['v']).isdigit() else None),
-                    'crew_at': (at['v'] if at else None), 'drafts': drafts})
+                    'crew_at': (at['v'] if at else None), 'drafts': drafts,
+                    'evidence_gaps': evidence_gaps})
 
 
 @bp.route('/api/ext/aor/drafts', methods=['POST'])
@@ -6510,8 +6555,11 @@ def api_fundreq_list():
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
     for draft in drafts:
         draft['attachment_preview_indices'] = _fundreq_att_indices(draft['id'])
+        draft['evidence_checklist'] = _evidence_checklist(
+            'fundreq', draft, draft['attachment_preview_indices'])
+    evidence_gaps = sum(d['evidence_checklist']['gap_count'] for d in drafts if d.get('status') == 'pending')
     return jsonify({'drafts': drafts, 'pending': pending['c'],
-                    'enabled': _automation_enabled()})
+                    'enabled': _automation_enabled(), 'evidence_gaps': evidence_gaps})
 
 
 @bp.route('/api/ext/fundreq/drafts/pending-attachments')
@@ -6976,8 +7024,11 @@ def api_invoice_list():
         except Exception: names=[]
         dd['attachment_preview_indices'] = [i for i in _invoice_attachment_indices(dd['id'])
             if 0 <= i < len(names) and str(names[i] or '').lower().endswith('.pdf')]
+        dd['evidence_checklist'] = _evidence_checklist(
+            'invoice', dd, dd['attachment_preview_indices'])
+    evidence_gaps = sum(d['evidence_checklist']['gap_count'] for d in drafts if d.get('status') == 'pending')
     return jsonify({'drafts': drafts, 'pending': pending['c'],
-                    'enabled': _automation_enabled()})
+                    'enabled': _automation_enabled(), 'evidence_gaps': evidence_gaps})
 
 
 @bp.route('/api/invoice/drafts/<int:did>/pdf')

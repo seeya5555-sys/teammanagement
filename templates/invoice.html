@@ -194,6 +194,8 @@
     // 플래그
     const flags=jparse(d.flags);
     const flagLine=(Array.isArray(flags)&&flags.length)?`<div class="fr-sect">${flags.map(f=>`<span class="fr-flag">${esc(f)}</span>`).join('')}</div>`:'';
+    const ev=d.evidence_checklist||{items:[],gap_count:0};
+    const evBox=`<div class="fr-sect" style="border-left:4px solid ${ev.gap_count?'#D97706':'#15803D'}"><b>증빙 체크 · ${ev.gap_count?'누락/확인불가 '+ev.gap_count+'건':'완결'}</b><br>${(ev.items||[]).map(x=>`${x.state==='present'?'✓':x.state==='unknown'?'?':'⚠'} ${esc(x.label)}${x.detail?' ('+esc(x.detail)+')':''}`).join('<br>')}</div>`;
     let acts;
     if(d.status==='pending'){
       const checked=gate==='PASS'?'checked':'';
@@ -217,7 +219,7 @@
         <div class="fr-meta">${esc(d.inv_cd)} · ${esc(d.vsl_nm||d.vsl_cd||'')} · <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></div></div>
         <div class="fr-badges">${e15Badge}${gateBadge}${stbadge}</div>
       </div>
-      <div class="fr-body"><div class="fr-kv">${kv}</div>${matchLine}${corr}${d.upstream_reject_remark?`<div class="fr-sect" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}${line}${flagLine}</div>
+      <div class="fr-body"><div class="fr-kv">${kv}</div>${matchLine}${evBox}${corr}${d.upstream_reject_remark?`<div class="fr-sect" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}${line}${flagLine}</div>
       <div class="fr-acts">${acts}</div>
     </div>`;
   }
