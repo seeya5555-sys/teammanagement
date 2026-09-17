@@ -38,7 +38,7 @@ from app_core import (
 )
 from helpers_shared import (
     AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, RETIRED_RUNNER_KEYS,
-    SOA_CATEGORY_OWNER, _AOR_ACTIVE_STATUSES, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
+    SOA_CATEGORY_OWNER, FLEET_MAP_FILE, _AOR_ACTIVE_STATUSES, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
     _FUNDREQ_ATT_MIME, _HEALTH_ORDER, _annotate_drafts_with_vessel,
     _aor_absorbing_trigger_sql, _aor_status_list_sql, _automation_enabled,
     _automation_health_summary, _cls_handle_files, _dock_sync_flag_bump,
@@ -3473,7 +3473,9 @@ def api_agent_status():
         'sha': sha,
         'tools': ['status', 'list_issues', 'get_issue', 'vessel_overview',
                   'calendar_context', 'class_overview', 'vetting_overview',
-                  'dock_overview', 'report_context'],
+                  'dock_overview', 'report_context', 'fleet_context',
+                  'condition_survey_overview', 'repair_request_overview',
+                  'meeting_overview', 'automation_health_overview'],
     })
 
 
@@ -3677,6 +3679,67 @@ def api_agent_report_context():
                          ORDER BY r.updated_at DESC, r.id DESC LIMIT 10''' % clause, params)
     return jsonify({'dock_reports': [dict(r) for r in dock],
                     'boarding_reports': [dict(r) for r in boarding], 'limit_each': 10})
+
+
+@bp.route('/api/agent/fleet/context')
+@agent_read_required
+def api_agent_fleet_context():
+    try:
+        with open(FLEET_MAP_FILE, encoding='utf-8') as handle:
+            fleet = (json.load(handle).get('fleet') or [])
+    except (OSError, ValueError, AttributeError):
+        fleet = []
+    keys = ('name', 'imo', 'speed', 'position_source', 'position_ts')
+    clean = [item for item in fleet if isinstance(item, dict)][:50]
+    return jsonify({'items': [{k: item.get(k) for k in keys} for item in clean], 'limit': 50})
+
+
+@bp.route('/api/agent/condition-surveys/overview')
+@agent_read_required
+def api_agent_condition_surveys():
+    rows = query('''SELECT s.id, v.name AS vessel, s.year, s.quarter, s.vendor,
+                           s.inspection_date,
+                           SUM(CASE WHEN lower(f.status)='open' THEN 1 ELSE 0 END) AS open_findings,
+                           COUNT(f.id) AS total_findings
+                      FROM cs_surveys s JOIN vessels v ON v.id=s.vessel_id
+                      LEFT JOIN cs_findings f ON f.survey_id=s.id
+                     WHERE v.active=1 GROUP BY s.id
+                     ORDER BY s.year DESC, s.quarter DESC, s.id DESC LIMIT 20''')
+    return jsonify({'items': [dict(r) for r in rows], 'limit': 20})
+
+
+@bp.route('/api/agent/repair-requests/overview')
+@agent_read_required
+def api_agent_repair_requests():
+    rows = query('''SELECT r.id, v.name AS vessel, substr(r.subject,1,300) AS subject,
+                           r.category, r.equipment, r.dock_yn, r.urgent_yn,
+                           r.critical_yn, r.status, r.created_at, r.updated_at
+                      FROM repair_request r JOIN vessels v ON v.id=r.vessel_id
+                     WHERE v.active=1 ORDER BY r.updated_at DESC, r.id DESC LIMIT 20''')
+    return jsonify({'items': [dict(r) for r in rows], 'limit': 20})
+
+
+@bp.route('/api/agent/meetings/overview')
+@agent_read_required
+def api_agent_meetings():
+    rows = query('''SELECT id, status,
+                           duration_sec, lang, audio_deleted, attempts, created_at, updated_at
+                      FROM stt_job ORDER BY id DESC LIMIT 20''')
+    return jsonify({'items': [dict(r) for r in rows], 'limit': 20})
+
+
+@bp.route('/api/agent/automation-health/overview')
+@agent_read_required
+def api_agent_automation_health():
+    rows = query('''SELECT h.runner_key, h.status,
+                           h.ran_at, h.next_run, h.reported_at
+                      FROM automation_health h
+                     WHERE h.id=(SELECT h2.id FROM automation_health h2
+                                  WHERE h2.runner_key=h.runner_key
+                                  ORDER BY h2.reported_at DESC, h2.id DESC LIMIT 1)
+                     ORDER BY h.runner_key LIMIT 50''')
+    return jsonify({'items': [dict(r) for r in rows if r['runner_key'] not in RETIRED_RUNNER_KEYS],
+                    'limit': 50})
 
 
 @bp.route('/api/ext/summary-generate', methods=['POST'])
