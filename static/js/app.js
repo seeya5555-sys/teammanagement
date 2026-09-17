@@ -736,16 +736,11 @@ function registerDailyWebMcp() {
   if (!window.isSecureContext || typeof window.TRMTDailyWebMCP?.getModelContext !== 'function') return;
   const modelContext = window.TRMTDailyWebMCP.getModelContext(window);
   if (!modelContext) return;
-  const registration = window.TRMTDailyWebMCP.register(modelContext, {
+  window.TRMTDailyWebMCP.register(modelContext, {
     getPageContext: webMcpPageContext,
     setIssueFilters: webMcpSetIssueFilters,
     openIssue: webMcpOpenIssue,
   });
-  if (new URLSearchParams(location.search).has('__webmcp_e2e')) {
-    // Test-only handle for an authenticated, query-gated browser E2E run.
-    // The exposed tools are the same read/UI-only closures registered natively.
-    window.__TRMT_WEBMCP_E2E__ = registration?.tools;
-  }
 }
 
 // ═══════════════ 선박별 보기 (rev.4) ═══════════════

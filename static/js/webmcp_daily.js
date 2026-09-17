@@ -71,7 +71,7 @@
     ];
 
     for (const tool of tools) modelContext.registerTool(tool);
-    return { supported: true, registered: tools.map(tool => tool.name), tools: Object.freeze(tools) };
+    return { supported: true, registered: tools.map(tool => tool.name) };
   }
 
   return { register, getModelContext, STATUS, PRIORITY };
