@@ -724,6 +724,7 @@ async function webMcpOpenIssue(issueId) {
   $('#filter-status').value = '';
   $('#filter-priority').value = '';
   await loadIssues();
+  if (found.vessel_id != null) S.selectedVessel = String(found.vessel_id);
   S.expandedRows.add(issueId);
   renderTabs();
   render();
