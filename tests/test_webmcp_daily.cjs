@@ -1,8 +1,15 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { register } = require('../static/js/webmcp_daily.js');
+const { register, getModelContext } = require('../static/js/webmcp_daily.js');
 
 async function main() {
+  const docApi = { registerTool() {} };
+  const navApi = { registerTool() {} };
+  assert.equal(getModelContext({ document: { modelContext: docApi }, navigator: { modelContext: navApi } }), docApi);
+  assert.equal(getModelContext({ document: {}, navigator: { modelContext: navApi } }), navApi);
+  assert.equal(getModelContext({ document: { modelContext: {} }, navigator: { modelContext: navApi } }), navApi);
+  assert.equal(getModelContext({ document: {}, navigator: {} }), null);
+  assert.equal(getModelContext(null), null);
   assert.deepEqual(register(null, {}), { supported: false, registered: [] });
   assert.throws(() => register({ registerTool() {} }, {}), /incomplete/);
 

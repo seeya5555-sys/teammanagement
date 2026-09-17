@@ -732,8 +732,10 @@ async function webMcpOpenIssue(issueId) {
 }
 
 function registerDailyWebMcp() {
-  if (!window.isSecureContext || !navigator.modelContext || !window.TRMTDailyWebMCP) return;
-  window.TRMTDailyWebMCP.register(navigator.modelContext, {
+  if (!window.isSecureContext || typeof window.TRMTDailyWebMCP?.getModelContext !== 'function') return;
+  const modelContext = window.TRMTDailyWebMCP.getModelContext(window);
+  if (!modelContext) return;
+  window.TRMTDailyWebMCP.register(modelContext, {
     getPageContext: webMcpPageContext,
     setIssueFilters: webMcpSetIssueFilters,
     openIssue: webMcpOpenIssue,

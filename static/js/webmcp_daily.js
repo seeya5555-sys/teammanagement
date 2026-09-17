@@ -10,6 +10,16 @@
   const STATUS = ['', 'Open', 'InProgress', 'Closed'];
   const PRIORITY = ['', 'Normal', 'Urgent', 'Next DD', 'COC & Flag'];
 
+  function getModelContext(scope) {
+    if (!scope) return null;
+    // Current Chrome exposes WebMCP on document; retain navigator fallback for
+    // earlier origin-trial builds during the standards transition.
+    const current = scope.document?.modelContext;
+    if (typeof current?.registerTool === 'function') return current;
+    const legacy = scope.navigator?.modelContext;
+    return typeof legacy?.registerTool === 'function' ? legacy : null;
+  }
+
   function register(modelContext, handlers) {
     if (!modelContext || typeof modelContext.registerTool !== 'function') {
       return { supported: false, registered: [] };
@@ -64,5 +74,5 @@
     return { supported: true, registered: tools.map(tool => tool.name) };
   }
 
-  return { register, STATUS, PRIORITY };
+  return { register, getModelContext, STATUS, PRIORITY };
 });
