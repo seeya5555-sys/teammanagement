@@ -288,13 +288,20 @@ function itemRow(it) {
     saveItem(it.id, { importance: val });
   });
 
+  const evState=it.evidence_state||'';
+  const evLabel=evState==='candidate'?'◉ Outlook 증빙후보(확인필요)':evState==='not_found'?'⚠ Outlook 미확인':evState==='unsearchable'?'? 검색키 부족':evState==='error'?'? 검색오류':'? 미점검';
+  let evAtt=[]; try{evAtt=JSON.parse(it.evidence_attachments||'[]')||[];}catch(e){}
+  const ev=el('div',{class:'cls-evidence',title:(it.evidence_subject||'')+(evAtt.length?'\n'+evAtt.join('\n'):'')},evLabel);
+  const actCell=editCell(it.action_taken, 'action_taken', it.id, 'c-act');
+  actCell.append(ev);
+
   return el('tr', { class: it.importance === 'Urgent' ? 'cls-urgent-row' : '' },
     el('td', { class: 'c-no' }, it.no),
     editCell(it.issued_date, 'issued_date', it.id, 'c-date'),
     editCell(it.description, 'description', it.id, 'c-desc'),
     editCell(it.due_date, 'due_date', it.id, 'c-date'),
     editCell(it.remark, 'remark', it.id, 'c-rmk'),
-    editCell(it.action_taken, 'action_taken', it.id, 'c-act'),
+    actCell,
     el('td', { class: 'c-imp cls-urgent-cell' }, chk));
 }
 

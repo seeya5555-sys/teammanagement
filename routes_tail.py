@@ -12,6 +12,7 @@ no sibling boundary imports.
 from flask import Blueprint
 
 import base64
+import hashlib
 import http.client
 import json
 import math
@@ -39,6 +40,45 @@ from helpers_shared import (
 )
 
 bp = Blueprint("routes_tail", __name__)
+
+def _class_evidence_fingerprint(row):
+    raw='|'.join(str(row.get(k) or '').strip() for k in ('vessel_name','category','description','due_date'))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+@bp.route('/api/ext/class-followup/candidates')
+@api_key_required
+def api_ext_class_followup_candidates():
+    rows=query('''SELECT i.*,v.name vessel_name FROM class_status_items i
+                  JOIN class_status c ON c.id=i.cs_id JOIN vessels v ON v.id=c.vessel_id
+                  WHERE trim(COALESCE(i.due_date,''))<>'' AND trim(COALESCE(i.action_taken,''))=''
+                  ORDER BY CASE WHEN i.evidence_checked_at IS NULL THEN 0 ELSE 1 END,
+                           i.evidence_checked_at,i.due_date,i.id LIMIT 20''')
+    out=[]
+    for rr in rows:
+        d=dict(rr); d['fingerprint']=_class_evidence_fingerprint(d)
+        out.append({k:d.get(k) for k in ('id','vessel_name','category','description','remark','due_date','fingerprint')})
+    return jsonify({'items':out,'count':len(out),'limit':20})
+
+@bp.route('/api/ext/class-followup/<int:iid>',methods=['POST'])
+@api_key_required
+def api_ext_class_followup_result(iid):
+    d=request.get_json(silent=True) or {}
+    row=query('''SELECT i.*,v.name vessel_name FROM class_status_items i
+                 JOIN class_status c ON c.id=i.cs_id JOIN vessels v ON v.id=c.vessel_id
+                 WHERE i.id=?''',(iid,),one=True)
+    if not row:return jsonify({'error':'not found'}),404
+    if str(d.get('fingerprint') or '')!=_class_evidence_fingerprint(dict(row)):
+        return jsonify({'error':'stale candidate'}),409
+    state=str(d.get('state') or '')
+    if state not in ('candidate','not_found','unsearchable','error'):
+        return jsonify({'error':'invalid state'}),400
+    subject=str(d.get('subject') or '')[:500]
+    atts=d.get('attachments') if isinstance(d.get('attachments'),list) else []
+    atts=[str(x)[:300] for x in atts[:20]]
+    execute('''UPDATE class_status_items SET evidence_state=?,evidence_subject=?,evidence_attachments=?,
+               evidence_checked_at=datetime('now','localtime'),evidence_fingerprint=? WHERE id=?''',
+            (state,subject,json.dumps(atts,ensure_ascii=False),d['fingerprint'],iid))
+    return jsonify({'ok':True,'id':iid,'state':state,'attachments':len(atts)})
 
 
 # ---- ext (맥 push_cards.py / apply_decisions.py) ----
@@ -1632,6 +1672,9 @@ def api_class_status_item_update(iid):
             if col == 'importance' and val not in ('', 'Urgent'):
                 val = 'Urgent' if val else ''
             fields.append(f'{col}=?'); params.append(val)
+    if any(col in d for col in ('description','remark','due_date')):
+        fields.extend(['evidence_state=NULL','evidence_subject=NULL','evidence_attachments=NULL',
+                       'evidence_checked_at=NULL','evidence_fingerprint=NULL'])
     if not fields:
         return jsonify({'ok': True})
     fields.append("updated_at=datetime('now','localtime')")

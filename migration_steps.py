@@ -310,6 +310,16 @@ def _class_status_action_taken(conn):
     except Exception as exc:
         print(f"[auto_migrate] class_status_items.action_taken 점검 건너뜀: {exc}")
 
+def _class_followup_evidence(conn):
+    try:
+        columns = {row[1] for row in conn.execute('PRAGMA table_info(class_status_items)').fetchall()}
+        for name in ('evidence_state','evidence_subject','evidence_attachments','evidence_checked_at','evidence_fingerprint'):
+            if columns and name not in columns:
+                conn.execute(f'ALTER TABLE class_status_items ADD COLUMN {name} TEXT')
+                print(f'[auto_migrate] class_status_items.{name} 추가됨')
+    except Exception as exc:
+        print(f'[auto_migrate] class followup evidence 점검 건너뜀: {exc}')
+
 
 def _vessel_management_columns(conn):
     try:
@@ -379,6 +389,7 @@ def _mail_card_columns(conn):
 MANAGEMENT_METADATA_MIGRATIONS = (
     ("class_status.source_path", _class_status_source_path),
     ("class_status_items.action_taken", _class_status_action_taken),
+    ("class_status_items.followup_evidence", _class_followup_evidence),
     ("vessels.management", _vessel_management_columns),
     ("mail_card.columns", _mail_card_columns),
 )
