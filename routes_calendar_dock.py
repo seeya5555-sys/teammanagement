@@ -3468,10 +3468,12 @@ def api_agent_status():
         pass
     return jsonify({
         'ok': True,
-        'schema_version': 1,
+        'schema_version': 2,
         'capability_version': 'trmt-agent-read-v1',
         'sha': sha,
-        'tools': ['status', 'list_issues', 'get_issue', 'vessel_overview'],
+        'tools': ['status', 'list_issues', 'get_issue', 'vessel_overview',
+                  'calendar_context', 'class_overview', 'vetting_overview',
+                  'dock_overview', 'report_context'],
     })
 
 
@@ -3578,6 +3580,103 @@ def api_agent_vessel_overview(vessel):
         'upcoming_events': [dict(r) for r in events],
         'class_due': [dict(r) for r in class_due],
     })
+
+
+def _agent_vessel_filter():
+    name = (request.args.get('vessel') or '').strip()
+    if len(name) > 120:
+        return None, None, 'invalid vessel'
+    if not name:
+        return '', [], None
+    vessel = query('SELECT id, name FROM vessels WHERE active=1 AND lower(name)=lower(?)',
+                   (name,), one=True)
+    if not vessel:
+        return None, None, 'not found'
+    return ' AND v.id=?', [vessel['id']], None
+
+
+@bp.route('/api/agent/calendar/context')
+@agent_read_required
+def api_agent_calendar_context():
+    clause, params, error = _agent_vessel_filter()
+    if error:
+        return jsonify({'error': error}), 404 if error == 'not found' else 400
+    rows = query('''SELECT ce.id, ce.title, ce.start_date, ce.end_date, ce.category,
+                           ce.completed, v.name AS vessel
+                      FROM calendar_events ce LEFT JOIN vessels v ON v.id=ce.vessel_id
+                     WHERE (ce.vessel_id IS NULL OR v.active=1)
+                       AND ce.start_date GLOB '????-??-??'
+                       AND COALESCE(NULLIF(ce.end_date,''),ce.start_date)>=date('now','localtime')
+                           %s ORDER BY ce.start_date, ce.id LIMIT 20''' % clause, params)
+    return jsonify({'items': [dict(r) for r in rows], 'limit': 20})
+
+
+@bp.route('/api/agent/class/overview')
+@agent_read_required
+def api_agent_class_overview():
+    clause, params, error = _agent_vessel_filter()
+    if error:
+        return jsonify({'error': error}), 404 if error == 'not found' else 400
+    rows = query('''SELECT i.id, v.name AS vessel, cs.class_society, i.category,
+                           substr(COALESCE(i.description,''),1,500) AS description,
+                           i.due_date, i.importance
+                      FROM class_status_items i JOIN class_status cs ON cs.id=i.cs_id
+                      JOIN vessels v ON v.id=cs.vessel_id WHERE v.active=1 %s
+                     ORDER BY CASE WHEN i.due_date GLOB '????-??-??' THEN i.due_date ELSE '9999-12-31' END,
+                              i.id LIMIT 20''' % clause, params)
+    return jsonify({'items': [dict(r) for r in rows], 'limit': 20})
+
+
+@bp.route('/api/agent/vetting/overview')
+@agent_read_required
+def api_agent_vetting_overview():
+    clause, params, error = _agent_vessel_filter()
+    if error:
+        return jsonify({'error': error}), 404 if error == 'not found' else 400
+    rows = query('''SELECT vt.id, v.name AS vessel, vt.report_number, vt.inspection_date,
+                           vt.inspection_company, vt.port, vt.valid,
+                           SUM(CASE WHEN lower(f.status)='open' THEN 1 ELSE 0 END) AS open_findings,
+                           COUNT(f.id) AS total_findings
+                      FROM vettings vt JOIN vessels v ON v.id=vt.vessel_id
+                      LEFT JOIN vt_findings f ON f.vetting_id=vt.id
+                     WHERE v.active=1 %s GROUP BY vt.id
+                     ORDER BY COALESCE(vt.inspection_date,'') DESC, vt.id DESC LIMIT 20''' % clause, params)
+    return jsonify({'items': [dict(r) for r in rows], 'limit': 20})
+
+
+@bp.route('/api/agent/dock/overview')
+@agent_read_required
+def api_agent_dock_overview():
+    clause, params, error = _agent_vessel_filter()
+    if error:
+        return jsonify({'error': error}), 404 if error == 'not found' else 400
+    rows = query('''SELECT p.id, p.vsl_nm AS vessel, p.req_no, p.category, p.equipment,
+                           substr(COALESCE(p.subject,''),1,300) AS subject,
+                           p.svms_status, p.stg_quote, p.stg_vendor, p.stg_confirm,
+                           p.updated_at FROM dock_procure p JOIN vessels v ON lower(v.name)=lower(p.vsl_nm)
+                     WHERE v.active=1 %s
+                     ORDER BY p.updated_at DESC, p.id DESC LIMIT 20''' % clause, params)
+    return jsonify({'items': [dict(r) for r in rows], 'limit': 20})
+
+
+@bp.route('/api/agent/reports/context')
+@agent_read_required
+def api_agent_report_context():
+    clause, params, error = _agent_vessel_filter()
+    if error:
+        return jsonify({'error': error}), 404 if error == 'not found' else 400
+    dock = query('''SELECT r.id, v.name AS vessel, r.title, r.dock_no, r.shipyard,
+                           r.period_start, r.period_end, r.status, r.updated_at
+                      FROM dock_reports r JOIN vessels v ON v.id=r.vessel_id
+                     WHERE r.is_template=0 AND v.active=1 %s
+                     ORDER BY r.updated_at DESC, r.id DESC LIMIT 10''' % clause, params)
+    boarding = query('''SELECT r.id, v.name AS vessel, r.title, r.port,
+                               r.boarding_start, r.boarding_end, r.status, r.updated_at
+                          FROM boarding_reports r JOIN vessels v ON v.id=r.vessel_id
+                         WHERE r.is_template=0 AND v.active=1 %s
+                         ORDER BY r.updated_at DESC, r.id DESC LIMIT 10''' % clause, params)
+    return jsonify({'dock_reports': [dict(r) for r in dock],
+                    'boarding_reports': [dict(r) for r in boarding], 'limit_each': 10})
 
 
 @bp.route('/api/ext/summary-generate', methods=['POST'])
