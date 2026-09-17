@@ -152,6 +152,7 @@
     // 원본 PDF 링크는 has_pdf(서버에 실제 파일 있음) 기준 — match_src 기준이면 대조 실패건에서
     // 첨부가 있어도 링크가 안 떠서, 정작 사람이 봐야 할 HOLD 건을 못 열었다(2026-07-28 수정).
     const _rc=jparse(d.raw_card)||{};
+    const shellACS=_rc.shell_acs_override===true;
     const _atts=jparse(d.attachments)||[];
     const _a0=Array.isArray(_atts)?_atts[0]:null;   // 첨부는 FILE_NM 문자열 배열 — object면 무시
     const pdfNm=d.match_src||_rc.preview_src||(typeof _a0==='string'?_a0:null)||'원본 PDF';
@@ -167,6 +168,7 @@
     const pdfEl=`<div style="margin-top:4px">${matchedEl}</div><div style="margin-top:4px"><b>Reference attachments:</b> ${refEl}</div>`;
     const matchLine=`<div class="fr-sect"><div class="fr-sect-t">PDF 대조</div>`
       +`${mark(d.inv_no_match,'INV_NO')} &nbsp; ${mark(d.amt_match,'금액')} &nbsp; ${mark(d.date_match,'날짜')}`
+      +(shellACS?`<div style="margin-top:6px;color:#B45309;font-weight:700">⚠ SHELL ACS 총액일치 예외 — 단가/라인합 차이 ${esc(_rc.line_sum_diff??'-')} 허용</div>`:'')
       +`${pdfEl}</div>`;
     // 교정내역
     const corr=`<div class="fr-sect"><div class="fr-sect-t">교정내역</div><div class="fr-corr">`
