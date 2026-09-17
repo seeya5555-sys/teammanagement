@@ -56,6 +56,51 @@ bp = Blueprint("routes_calendar_dock", __name__)
 
 _REJECTION_TARGETS = {'aor': ('aor_draft', 'aor_cd'), 'fundreq': ('fundreq_draft', 'opex_cd'), 'invoice': ('invoice_draft', 'inv_cd')}
 
+def _aor_reconcile_alert(local_status, upstream_status):
+    """Return a read-only lifecycle mismatch; never infer equipment completion."""
+    local = str(local_status or '').strip().lower()
+    upstream = str(upstream_status or '').strip().upper()
+    if local in ('pending', 'hold') and upstream and upstream != 'S':
+        return f'TRMT는 검토대기지만 SVMS STATUS={upstream} — 카드 상태 확인 필요'
+    if local == 'submitted' and upstream == 'S':
+        return 'TRMT는 상신완료지만 SVMS가 다시 STATUS=S — 재상신 여부 확인 필요'
+    if local == 'rejected' and upstream and upstream != 'R':
+        return f'TRMT는 리젝완료지만 SVMS STATUS={upstream} — 처리 결과 확인 필요'
+    return ''
+
+@bp.route('/api/ext/aor/status-sync', methods=['POST'])
+@api_key_required
+def api_ext_aor_status_sync():
+    """Sync a 30-document read-only AOR canary and flag lifecycle mismatches."""
+    items = (request.get_json(silent=True) or {}).get('items')
+    if not isinstance(items, list) or len(items) > 30:
+        return jsonify({'error': 'items must be a list (max 30)'}), 400
+    checked = missing = invalid = alerts = 0
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    alert_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            invalid += 1; continue
+        ref = str(item.get('aor_cd') or '').strip().upper()
+        upstream = str(item.get('status') or '').strip().upper()
+        if not ref or upstream not in ('C', 'D', 'R', 'S', 'P', 'U', 'Z', 'E'):
+            invalid += 1; continue
+        row = query("SELECT id, status FROM aor_draft WHERE upper(trim(aor_cd))=? "
+                    "ORDER BY id DESC LIMIT 1", (ref,), one=True)
+        if not row:
+            missing += 1; continue
+        alert = _aor_reconcile_alert(row['status'], upstream)
+        execute("UPDATE aor_draft SET upstream_status=?, upstream_checked_at=? WHERE id=?",
+                (upstream, now, row['id']))
+        checked += 1
+        if alert:
+            alerts += 1
+            alert_items.append({'id': row['id'], 'aor_cd': ref,
+                                'local_status': row['status'], 'upstream_status': upstream,
+                                'alert': alert})
+    return jsonify({'ok': True, 'checked': checked, 'missing': missing,
+                    'invalid': invalid, 'alerts': alerts, 'items': alert_items})
+
 @bp.route('/api/ext/approval-rejections/sync', methods=['POST'])
 @api_key_required
 def api_ext_approval_rejections_sync():
@@ -5647,6 +5692,8 @@ def api_aor_list():
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])
     for draft in drafts:
         draft['attachment_preview_indices'] = _aor_pdf_indices(draft['id'])
+        draft['reconcile_alert'] = _aor_reconcile_alert(
+            draft.get('status'), draft.get('upstream_status'))
     return jsonify({'count': len(rows), 'pending': pending['c'],
                     'crew_submitted': (int(crew['v']) if crew and str(crew['v']).isdigit() else None),
                     'crew_at': (at['v'] if at else None), 'drafts': drafts})

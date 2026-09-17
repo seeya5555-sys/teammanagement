@@ -226,6 +226,7 @@
         ${fileBox}
         ${rmk ? `<details><summary style="font-size:12px;color:#5F5E5A;cursor:pointer">관리사 RMK 보기</summary><div class="aor-rmk">${esc(rmk)}</div></details>` : ''}
         ${d.upstream_reject_remark ? `<div class="aor-rmk" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>↩ 상위결재 반려 이력</b><br>${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>` : ''}
+        ${d.reconcile_alert ? `<div class="aor-rmk" style="border-left:4px solid #D97706;background:#FFF7ED"><b>⚠ SVMS–TRMT 상태 불일치</b><br>${esc(d.reconcile_alert)}<br><small>SVMS 확인 ${esc(d.upstream_checked_at || '')} · 자동 변경 없음</small></div>` : ''}
         <div class="aor-field">
           <label>Comment (RMK_APP — 결재 상신 코멘트, 비우면 공란)</label>
           <textarea class="f-cmt"${editable ? '' : ' readonly'}>${esc(d.proposed_comment || '')}</textarea>
