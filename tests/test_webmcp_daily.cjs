@@ -25,6 +25,9 @@ async function main() {
     'trmt_get_page_context', 'trmt_set_issue_filters', 'trmt_open_issue',
   ]);
   assert.equal(tools.length, 3);
+  assert.equal(result.tools.length, 3);
+  assert.equal(Object.isFrozen(result.tools), true);
+  assert.deepEqual(result.tools, tools);
   assert.equal(tools[0].inputSchema.additionalProperties, false);
   assert.equal(tools[1].inputSchema.properties.query.maxLength, 120);
   assert.deepEqual(tools[1].inputSchema.properties.status.enum, ['', 'Open', 'InProgress', 'Closed']);
