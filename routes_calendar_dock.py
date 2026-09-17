@@ -48,7 +48,7 @@ from helpers_shared import (
     _reqgen_build_subj, _reqgen_vsl_prefix, _run_summary_generate, _safe_filename,
     _soa_group_members, _soa_groups_load, _soa_owner_map, _soa_review_attachment_path,
     _soa_review_case_unlock, _vetting_pick, _vetting_summary_counts, _vkey,
-    admin_required, api_key_required,
+    admin_required, agent_read_required, api_key_required,
     login_required, soa_task_key,
 )
 
@@ -3432,6 +3432,152 @@ def _ext_vetting_digests():
 @api_key_required
 def api_ext_issues():
     return jsonify(_ext_issues())
+
+
+# ── Agent interface (read-only, compact, separate capability) ───────────────
+_AGENT_ISSUE_FIELDS = (
+    'id', 'vessel', 'item_topic', 'priority', 'status', 'issue_date', 'due_date',
+)
+
+
+def _agent_issue_summary(row):
+    return {key: row[key] for key in _AGENT_ISSUE_FIELDS}
+
+
+def _agent_int_arg(name, default, minimum, maximum):
+    raw = request.args.get(name)
+    if raw is None:
+        return default, None
+    if not re.fullmatch(r'\d+', raw):
+        return None, f'{name} must be an integer'
+    value = int(raw)
+    if value < minimum or value > maximum:
+        return None, f'{name} must be between {minimum} and {maximum}'
+    return value, None
+
+
+@bp.route('/api/agent/status')
+@agent_read_required
+def api_agent_status():
+    """Small capability/version probe; never exposes configuration or keys."""
+    sha = ''
+    try:
+        with open(os.path.join(os.path.dirname(__file__), '.deployed_sha')) as f:
+            sha = f.read().strip()[:40]
+    except OSError:
+        pass
+    return jsonify({
+        'ok': True,
+        'schema_version': 1,
+        'capability_version': 'trmt-agent-read-v1',
+        'sha': sha,
+        'tools': ['status', 'list_issues', 'get_issue', 'vessel_overview'],
+    })
+
+
+@bp.route('/api/agent/issues')
+@agent_read_required
+def api_agent_issues():
+    """Cursor-based issue summaries with bounded output and server filtering."""
+    limit, error = _agent_int_arg('limit', 25, 1, 100)
+    if error:
+        return jsonify({'error': error}), 400
+    after_id, error = _agent_int_arg('after_id', 0, 0, 2147483647)
+    if error:
+        return jsonify({'error': error}), 400
+    vessel = (request.args.get('vessel') or '').strip()
+    status = (request.args.get('status') or '').strip()
+    if status and status not in ('Open', 'InProgress', 'Closed'):
+        return jsonify({'error': 'invalid status'}), 400
+    where, params = ['i.id > ?', 'v.active=1'], [after_id]
+    if vessel:
+        where.append('lower(v.name) = lower(?)')
+        params.append(vessel)
+    if status:
+        where.append('i.status = ?')
+        params.append(status)
+    rows = query(f'''SELECT i.id, v.name AS vessel, i.item_topic, i.priority,
+                            i.status, i.issue_date, i.due_date
+                       FROM issues i JOIN vessels v ON v.id=i.vessel_id
+                      WHERE {' AND '.join(where)}
+                      ORDER BY i.id ASC LIMIT ?''', (*params, limit + 1))
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    return jsonify({
+        'items': [_agent_issue_summary(r) for r in page],
+        'next_cursor': page[-1]['id'] if has_more and page else None,
+    })
+
+
+@bp.route('/api/agent/issues/<int:iid>')
+@agent_read_required
+def api_agent_issue(iid):
+    """One issue only; avoids fetching the full issue collection to filter it."""
+    row = query('''SELECT i.id, v.name AS vessel, i.item_topic, i.description,
+                          i.priority, i.status, i.issue_date, i.due_date, i.actions
+                     FROM issues i JOIN vessels v ON v.id=i.vessel_id
+                    WHERE i.id=?''', (iid,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    item = dict(row)
+    try:
+        actions = json.loads(item.get('actions') or '[]')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        actions = []
+    if not isinstance(actions, list):
+        actions = []
+    clean_actions = []
+    for action in actions[-50:]:
+        if not isinstance(action, dict):
+            continue
+        clean_actions.append({
+            'date': str(action.get('date') or '')[:10],
+            'progress': str(action.get('progress') or '')[:2000],
+            'important': bool(action.get('important', False)),
+        })
+    item['actions'] = clean_actions
+    return jsonify(item)
+
+
+@bp.route('/api/agent/vessels/<path:vessel>/overview')
+@agent_read_required
+def api_agent_vessel_overview(vessel):
+    """Bounded issue/calendar/class facts for exactly one active vessel."""
+    name = (vessel or '').strip()
+    if not name or len(name) > 120:
+        return jsonify({'error': 'invalid vessel'}), 400
+    v = query('SELECT id, name FROM vessels WHERE active=1 AND lower(name)=lower(?)',
+              (name,), one=True)
+    if not v:
+        return jsonify({'error': 'not found'}), 404
+    issue = query('''SELECT
+                       SUM(CASE WHEN status != 'Closed' THEN 1 ELSE 0 END) AS open,
+                       SUM(CASE WHEN status != 'Closed' AND priority='Urgent' THEN 1 ELSE 0 END) AS urgent,
+                       MIN(CASE WHEN status != 'Closed'
+                                 AND due_date GLOB '????-??-??' THEN due_date END) AS next_due
+                      FROM issues WHERE vessel_id=?''', (v['id'],), one=True)
+    events = query('''SELECT title, start_date, category
+                        FROM calendar_events
+                       WHERE vessel_id=? AND completed=0
+                         AND start_date GLOB '????-??-??'
+                         AND start_date >= date('now','localtime')
+                       ORDER BY start_date, id LIMIT 5''', (v['id'],))
+    class_due = query('''SELECT i.description, i.due_date, i.category
+                           FROM class_status_items i
+                           JOIN class_status cs ON cs.id=i.cs_id
+                          WHERE cs.vessel_id=? AND i.due_date GLOB '????-??-??'
+                            AND i.due_date >= date('now','localtime')
+                          ORDER BY i.due_date, i.id LIMIT 5''', (v['id'],))
+    return jsonify({
+        'vessel': v['name'],
+        'issues': {
+            'open': int(issue['open'] or 0),
+            'urgent': int(issue['urgent'] or 0),
+            'next_due': issue['next_due'],
+        },
+        'upcoming_events': [dict(r) for r in events],
+        'class_due': [dict(r) for r in class_due],
+    })
 
 
 @bp.route('/api/ext/summary-generate', methods=['POST'])

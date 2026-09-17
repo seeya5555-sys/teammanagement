@@ -14,6 +14,8 @@ the DB helpers), which is what removed the ``app.py`` ↔ helpers cycle that
 forced the old ``exec`` loading.
 """
 
+import hashlib
+import hmac
 import json
 import math
 import os
@@ -991,6 +993,38 @@ def api_key_required(fn):
         if not _check_api_key():
             return jsonify({'error': 'unauthorized',
                             'message': 'valid API key required (X-API-Key header or ?key=)'}), 401
+        return fn(*a, **k)
+    return wrapper
+
+
+_AGENT_READ_LABEL = b'trmt-agent-read-v1'
+
+
+def _agent_read_key():
+    """Derive a read-only network capability without storing a second secret.
+
+    The master API key is never accepted by agent endpoints.  Rotation of the
+    master automatically rotates this capability, while a captured derived
+    value cannot authenticate to any existing ``api_key_required`` write path.
+    """
+    master = _get_api_key(create=False)
+    if not master:
+        return None
+    return hmac.new(master.encode('utf-8'), _AGENT_READ_LABEL,
+                    hashlib.sha256).hexdigest()
+
+
+def agent_read_required(fn):
+    @wraps(fn)
+    def wrapper(*a, **k):
+        provided = (request.headers.get('X-TRMT-Agent-Key') or '').strip()
+        expected = _agent_read_key()
+        # Reject malformed/non-ASCII values before compare_digest: comparing a
+        # non-ASCII str raises TypeError and must not turn bad auth into HTTP 500.
+        if (not re.fullmatch(r'[0-9a-f]{64}', provided)
+                or not expected
+                or not hmac.compare_digest(provided.encode('ascii'), expected.encode('ascii'))):
+            return jsonify({'error': 'unauthorized'}), 401
         return fn(*a, **k)
     return wrapper
 # ═════════════════════════════════════════════════════════════════
