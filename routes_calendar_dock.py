@@ -101,6 +101,26 @@ def api_ext_aor_status_sync():
     return jsonify({'ok': True, 'checked': checked, 'missing': missing,
                     'invalid': invalid, 'alerts': alerts, 'items': alert_items})
 
+_OUTLOOK_MATCH_KEYS = {'vessel', 'reference', 'subject', 'attachment-subject'}
+
+def _sanitize_outlook_evidence(raw_evidence, raw_keys, match_conf):
+    """Bound evidence at the single AOR ingest path; omit sender PII."""
+    if not isinstance(raw_evidence, list) or not isinstance(raw_keys, list):
+        return [], []
+    keys = sorted(set(str(k) for k in raw_keys if str(k) in _OUTLOOK_MATCH_KEYS))
+    try: conf = int(match_conf or 0)
+    except (TypeError, ValueError): conf = 0
+    if conf < 80 or len(keys) < 2:
+        return [], []
+    evidence = []
+    for item in raw_evidence[:10]:
+        if not isinstance(item, dict): continue
+        clean = {k: str(item.get(k) or '')[:500] for k in ('date','subject','fact')}
+        if clean['fact'] or clean['subject']: evidence.append(clean)
+    if len(evidence) < 2:
+        return [], []
+    return evidence, keys
+
 @bp.route('/api/ext/approval-rejections/sync', methods=['POST'])
 @api_key_required
 def api_ext_approval_rejections_sync():
@@ -5719,12 +5739,16 @@ def api_ext_aor_create():
                f"AND status IN ({_aor_status_list_sql(_AOR_ACTIVE_STATUSES)}) "
                "ORDER BY id DESC LIMIT 1", (aor_cd,), one=True)
     cm = d.get('cost_match')
+    outlook_evidence, outlook_match_keys = _sanitize_outlook_evidence(
+        d.get('outlook_evidence'), d.get('outlook_match_keys'), d.get('match_conf'))
     cols = dict(
         vsl_cd=d.get('vsl_cd'), vsl_nm=d.get('vsl_nm'), subj=d.get('subj'),
         amt=d.get('amt'), cur_cd=d.get('cur_cd'), req_user_nm=d.get('req_user_nm'),
         cost_proposed=d.get('cost_proposed'),
         cost_match=(1 if cm is True else 0 if cm is False else None),
         match_conf=d.get('match_conf'), email_subj=d.get('email_subj'),
+        outlook_evidence=json.dumps(outlook_evidence, ensure_ascii=False),
+        outlook_match_keys=json.dumps(outlook_match_keys, ensure_ascii=False),
         proposed_comment=d.get('proposed_comment'), approval_app_no=d.get('approval_app_no'),
         approval_line=(json.dumps(d.get('approval_line'), ensure_ascii=False)
                        if d.get('approval_line') is not None else None),
@@ -5743,9 +5767,9 @@ def api_ext_aor_create():
     try:
         did = execute(
             "INSERT INTO aor_draft (aor_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, req_user_nm, "
-            "cost_proposed, cost_match, match_conf, email_subj, proposed_comment, "
+            "cost_proposed, cost_match, match_conf, email_subj, outlook_evidence, outlook_match_keys, proposed_comment, "
             "approval_app_no, approval_line, attach_files, raw_row) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (aor_cd, *cols.values()))
         return jsonify({'id': did, 'status': 'pending'}), 201
     except sqlite3.IntegrityError as exc:

@@ -208,6 +208,14 @@
     const rmk = d.raw_row ? (function () {
       try { const r = JSON.parse(d.raw_row); return r.RMK || ''; } catch (e) { return ''; }
     })() : '';
+    let outlookEvidence = [], outlookKeys = [];
+    try { outlookEvidence = JSON.parse(d.outlook_evidence || '[]') || []; } catch (e) {}
+    try { outlookKeys = JSON.parse(d.outlook_match_keys || '[]') || []; } catch (e) {}
+    const outlookBox = d.reconcile_alert ? `<div class="aor-emailref">
+      <b>Outlook 근거</b> · ${confBadge(d.match_conf)} ${esc(d.email_subj || '관련 스레드 미확정')}
+      ${outlookKeys.length ? `<br><small>매칭키: ${outlookKeys.map(esc).join(', ')}</small>` : ''}
+      ${outlookEvidence.length ? `<ol style="margin:6px 0 0 18px">${outlookEvidence.map(e=>`<li>${esc(e.date || '')} ${esc(e.subject || '')} — ${esc(e.fact || '')}</li>`).join('')}</ol>` : '<br><small>저장된 Outlook 근거 없음 — 원문 확인 필요</small>'}
+    </div>` : '';
 
     el.innerHTML = `
       <div class="aor-card-top">
@@ -227,6 +235,7 @@
         ${rmk ? `<details><summary style="font-size:12px;color:#5F5E5A;cursor:pointer">관리사 RMK 보기</summary><div class="aor-rmk">${esc(rmk)}</div></details>` : ''}
         ${d.upstream_reject_remark ? `<div class="aor-rmk" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>↩ 상위결재 반려 이력</b><br>${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>` : ''}
         ${d.reconcile_alert ? `<div class="aor-rmk" style="border-left:4px solid #D97706;background:#FFF7ED"><b>⚠ SVMS–TRMT 상태 불일치</b><br>${esc(d.reconcile_alert)}<br><small>SVMS 확인 ${esc(d.upstream_checked_at || '')} · 자동 변경 없음</small></div>` : ''}
+        ${outlookBox}
         <div class="aor-field">
           <label>Comment (RMK_APP — 결재 상신 코멘트, 비우면 공란)</label>
           <textarea class="f-cmt"${editable ? '' : ' readonly'}>${esc(d.proposed_comment || '')}</textarea>

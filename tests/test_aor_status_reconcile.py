@@ -62,6 +62,23 @@ class AorStatusReconcileEndpointTest(unittest.TestCase):
         second=self.client.get('/api/aor/drafts').get_json()['drafts'][0]
         self.assertEqual('',second['reconcile_alert'])
 
+    def test_outlook_evidence_single_ingest_is_bounded_and_pii_minimized(self):
+        body={'aor_cd':'TESTCA1','match_conf':99,
+              'outlook_evidence':[{'date':'x'*900,'sender':'private@example.com','subject':'S','fact':'F'}]*12,
+              'outlook_match_keys':['vessel','subject','evil']}
+        self.assertEqual(200,self.client.post('/api/ext/aor/drafts',json=body,headers={'X-API-Key':'secret'}).status_code)
+        with appmod.app.app_context(): row=appmod.query('SELECT outlook_evidence,outlook_match_keys FROM aor_draft WHERE id=1',one=True)
+        saved=__import__('json').loads(row['outlook_evidence']); keys=__import__('json').loads(row['outlook_match_keys'])
+        self.assertEqual(10,len(saved)); self.assertEqual(500,len(saved[0]['date']))
+        self.assertNotIn('sender',saved[0]); self.assertEqual(['subject','vessel'],keys)
+
+    def test_outlook_evidence_requires_high_confidence_and_two_keys(self):
+        ev=[{'subject':'S','fact':'F'},{'subject':'S2','fact':'F2'}]
+        got=r._sanitize_outlook_evidence(ev,['vessel'],99)
+        self.assertEqual(([],[]),got)
+        got=r._sanitize_outlook_evidence(ev,['vessel','subject'],79)
+        self.assertEqual(([],[]),got)
+
 
 if __name__ == '__main__':
     unittest.main()
