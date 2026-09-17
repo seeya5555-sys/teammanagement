@@ -630,6 +630,116 @@ function flashIssue(id) {
   }, 140);
 }
 
+// ───────────── WebMCP Daily canary (read/UI-only) ─────────────
+// Registered only when the browser exposes the experimental secure-context API.
+// Tool handlers reuse the same page state and API calls as human UI actions.
+function webMcpPageContext() {
+  const visible = S.issues.slice(0, 20).map(i => ({
+    id: i.id,
+    vessel_name: i.vessel_name || '',
+    item_topic: String(i.item_topic || '').slice(0, 160),
+    status: i.status || '',
+    priority: i.priority || '',
+    due_date: i.due_date || null,
+  }));
+  return {
+    page: 'daily_issues',
+    filters: {
+      query: String(S.filters.q || '').slice(0, 120),
+      vessel_id: S.filters.vessel_id || '',
+      vessel_type: S.filters.vessel_type || '',
+      status: S.filters.status || '',
+      priority: S.filters.priority || '',
+    },
+    active_subtab: S.activeSubTab,
+    visible_count: S.issues.length,
+    issues: visible,
+    truncated: S.issues.length > visible.length,
+  };
+}
+
+async function webMcpSetIssueFilters(input) {
+  const allowed = new Set(['query', 'vessel_name', 'status', 'priority']);
+  if (Object.keys(input).some(key => !allowed.has(key))) throw new TypeError('unsupported filter');
+  if (typeof input.query === 'string' && input.query.length > 120) throw new TypeError('query exceeds 120 characters');
+  const query = String(input.query || '').trim();
+  const vesselName = String(input.vessel_name || '').trim();
+  const status = String(input.status || '');
+  const priority = String(input.priority || '');
+  const statuses = window.TRMTDailyWebMCP.STATUS;
+  const priorities = window.TRMTDailyWebMCP.PRIORITY;
+  if (!statuses.includes(status)) throw new TypeError('invalid status');
+  if (!priorities.includes(priority)) throw new TypeError('invalid priority');
+  const vessel = vesselName
+    ? S.vessels.find(v => String(v.name || '').trim().toLowerCase() === vesselName.toLowerCase())
+    : null;
+  if (vesselName && !vessel) throw new TypeError('vessel_name must match an assigned vessel');
+
+  S.filters.q = query;
+  S.filters.item_topic = '';
+  S.filters.vessel_id = vessel ? String(vessel.id) : '';
+  S.filters.status = status;
+  S.filters.priority = priority;
+  $('#filter-search').value = query;
+  $('#filter-vessel').value = S.filters.vessel_id;
+  $('#filter-status').value = status;
+  $('#filter-priority').value = priority;
+  await loadIssues();
+  render();
+  return webMcpPageContext();
+}
+
+async function webMcpOpenIssue(issueId) {
+  if (!Number.isInteger(issueId) || issueId < 1) throw new TypeError('issue_id must be a positive integer');
+  const previous = { activeSubTab: S.activeSubTab, filters: { ...S.filters } };
+  let found = S.issues.find(i => Number(i.id) === issueId);
+  try {
+    if (!found) {
+      // Discover only through the already user-scoped list endpoint. Never call
+      // the single-item endpoint before scope is established.
+      S.activeSubTab = 'all';
+      S.filters = { q: '', vessel_id: '', vessel_type: '', status: '', priority: '', item_topic: '' };
+      await loadIssues();
+      found = S.issues.find(i => Number(i.id) === issueId);
+      if (!found) throw new Error('issue not found in the current user scope');
+    }
+  } catch (err) {
+    S.activeSubTab = previous.activeSubTab;
+    S.filters = previous.filters;
+    $('#filter-search').value = previous.filters.q || '';
+    $('#filter-vessel').value = previous.filters.vessel_id || '';
+    $('#filter-status').value = previous.filters.status || '';
+    $('#filter-priority').value = previous.filters.priority || '';
+    await loadIssues().catch(() => {});
+    renderTabs();
+    render();
+    throw err;
+  }
+  // Success intentionally leaves the unfiltered all-status view visible so the
+  // highlighted issue cannot disappear behind the previous filter.
+  S.activeSubTab = 'all';
+  S.filters = { q: '', vessel_id: '', vessel_type: '', status: '', priority: '', item_topic: '' };
+  $('#filter-search').value = '';
+  $('#filter-vessel').value = '';
+  $('#filter-status').value = '';
+  $('#filter-priority').value = '';
+  await loadIssues();
+  S.expandedRows.add(issueId);
+  renderTabs();
+  render();
+  flashIssue(issueId);
+  return { opened: true, issue_id: issueId, mode: 'read_only_detail' };
+}
+
+function registerDailyWebMcp() {
+  if (!window.isSecureContext || !navigator.modelContext || !window.TRMTDailyWebMCP) return;
+  window.TRMTDailyWebMCP.register(navigator.modelContext, {
+    getPageContext: webMcpPageContext,
+    setIssueFilters: webMcpSetIssueFilters,
+    openIssue: webMcpOpenIssue,
+  });
+}
+
 // ═══════════════ 선박별 보기 (rev.4) ═══════════════
 const VTYPE_ORDER = ['VLCC', 'LR', 'AFRAMAX', 'MR', 'CNTR'];
 const RISK_PRI = new Set(['COC & Flag', 'Urgent']);
@@ -3541,6 +3651,7 @@ if (document.getElementById('btn-new-issue')) (async function init() {
     fillFormSelects();
     render();
     wireEvents();
+    registerDailyWebMcp();
   } catch (err) {
     console.error(err);
     alert('초기 로드 실패: ' + err.message);
