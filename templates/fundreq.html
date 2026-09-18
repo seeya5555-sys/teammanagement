@@ -126,7 +126,7 @@
         <div class="fr-badges"><span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
       </div>
       <div class="fr-body"><div class="fr-kv">${kv}</div>${attBox(d)}${evBox}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}${d.upstream_reject_remark?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}</div>
-      <div class="fr-acts">${acts}</div>
+      <div class="fr-acts">${acts}</div>{% if session.role == 'admin' %}<div class="fr-acts"><button type="button" class="btn btn-outline btn-sm" data-followup-kind="fundreq" data-followup-id="${d.id}">협의 변경점 확인</button></div>{% endif %}
     </div>`;
   }
   async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}

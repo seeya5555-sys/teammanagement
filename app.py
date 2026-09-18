@@ -1658,6 +1658,8 @@ import routes_liscr
 app.register_blueprint(routes_liscr.bp)
 import routes_tail
 app.register_blueprint(routes_tail.bp)
+import routes_followup
+app.register_blueprint(routes_followup.bp)
 # Static contract marker: dock sync notifications keep the historical deep link.
 # The executable call remains in routes_dock_submit.py.
 # link='trmt://dock'

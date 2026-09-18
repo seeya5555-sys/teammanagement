@@ -284,6 +284,7 @@
     const chk = el.querySelector('.aor-check');
     if (chk) chk.addEventListener('change', updateBulkBar);
     el.querySelectorAll('[data-apdf]').forEach(b=>b.addEventListener('click',()=>openAorPdf(d.id,Number(b.dataset.apdf),b.dataset.name)));
+    if (window.Followup) el.append(Followup.button('aor', d.id));
     return el;
   }
 

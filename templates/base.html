@@ -955,6 +955,7 @@
   }, true);
   </script>
   {% block page_dependencies %}{% endblock %}
+  {% if session.role == 'admin' %}<script src="{{ url_for('static', filename='js/followup.js') }}"></script>{% endif %}
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>

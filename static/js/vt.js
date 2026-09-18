@@ -867,6 +867,7 @@ function findingRow(vt, f) {
   rm.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2">
     <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
     <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
+  if (window.Followup) acts.append(Followup.button('vt', f.id));
   acts.append(rm);
   tr.append(acts);
 

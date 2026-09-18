@@ -1155,6 +1155,7 @@ function renderActionCell(issue) {
   const showAll = list.length <= 1 || expanded;
 
   const wrap = el('div', { class: 'act-cell-wrap' });
+  if (window.Followup) wrap.append(Followup.button('daily', issue.id));
   const entries = el('div', {
     class: 'act-entries' + (showAll ? '' : ' collapsed'),
   });

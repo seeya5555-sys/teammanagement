@@ -1160,3 +1160,20 @@ CREATE TABLE IF NOT EXISTS repair_request (
     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_repair_request_status ON repair_request(status, id);
+
+-- Auxiliary Outlook evidence only. No approval or business status linkage.
+CREATE TABLE IF NOT EXISTS followup_job (
+    job_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('daily','cs','vt','aor','fundreq','invoice')),
+    target_id INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    context_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','candidate','unsearchable','error')),
+    result TEXT NOT NULL DEFAULT '{}',
+    requested_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    checked_at TEXT,
+    reviewed_at TEXT,
+    reviewed_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_followup_target ON followup_job(kind,target_id,created_at);
