@@ -2875,6 +2875,13 @@ def api_ext_automation_claim():
     running = query("SELECT 1 FROM automation_run WHERE status='running' LIMIT 1", one=True)
     if running:
         return jsonify({'run': None, 'busy': True})
+    # Auxiliary polling must not block unrelated operational queues on failure.
+    try:
+        from routes_followup import enqueue_tracked
+        enqueue_tracked()
+    except Exception:
+        from flask import current_app
+        current_app.logger.exception('followup tracking enqueue failed')
     row = query("SELECT id,run_id,task,mode,params FROM automation_run WHERE status='queued' ORDER BY id ASC LIMIT 1",
                 one=True)
     if not row:

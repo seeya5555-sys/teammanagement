@@ -2,7 +2,9 @@
 import hashlib
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+from werkzeug.exceptions import HTTPException
 from flask import Blueprint, abort, jsonify, request, session
 from app_core import get_db, query
 from helpers_shared import admin_required, api_key_required, _automation_enabled
@@ -61,6 +63,9 @@ def public_job(row, ctx):
         d['state'] = 'stale'
         d['result'] = {}  # Never display a prior target revision as current evidence.
     d['context_subject'] = json.loads(d['context_json']).get('search_subject','')
+    if not d['stale'] and d['state'] == 'candidate':
+        decorate_evidence(d)
+
     d.pop('context_json', None)
     return d
 
@@ -71,7 +76,9 @@ def get_followup(kind, target_id):
     business_admin()
     ctx = context(kind, target_id)
     row = query('SELECT * FROM followup_job WHERE kind=? AND target_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1', (kind,target_id), one=True)
-    return jsonify(context=ctx, job=public_job(row,ctx) if row else None)
+    tracking = query('SELECT enabled,next_check,reason,fingerprint,search_subject FROM followup_tracking WHERE kind=? AND target_id=?', (kind,target_id), one=True)
+    return jsonify(context=ctx, job=public_job(row,ctx) if row else None,
+                   tracking=dict(tracking) if tracking else None)
 
 
 @bp.post('/api/followup/<kind>/<int:target_id>/scan')
@@ -107,6 +114,7 @@ def scan(kind, target_id):
             return jsonify(error='조회 대기 10건입니다. 완료 후 다시 시도하세요'), 429
         jid = uuid.uuid4().hex
         ctx['search_subject'] = subject.strip()
+        set_comparison_baseline(db,kind,target_id,ctx)
         db.execute('INSERT INTO followup_job(job_id,kind,target_id,fingerprint,context_json,requested_by) VALUES(?,?,?,?,?,?)',
                    (jid,kind,target_id,ctx['fingerprint'],json.dumps(ctx,ensure_ascii=False),str(session['user_id'])))
         db.execute("INSERT INTO automation_run(run_id,task,mode,status,requested_by,params) VALUES(?,'followup_scan','verify','queued',?,?)", (jid,str(session['user_id']),json.dumps({'job_id':jid})))
@@ -153,7 +161,13 @@ def clean_result(raw):
             clean[key]=v
         if not clean['quote'].strip():
             raise ValueError('quote required')
-        out['items'].append(clean)
+        clean['item_id'] = evidence_id(clean['quote'])
+        # Optional trusted runner metadata; never parsed from quote/model text here.
+        meta = item.get('source', {})
+        if meta:
+            clean['source'] = clean_source(meta)
+        if not any(x['item_id'] == clean['item_id'] for x in out['items']):
+            out['items'].append(clean)
     for key in ('attachments','match_keys'):
         vals=raw.get(key,[])
         if not isinstance(vals,list) or len(vals)>20 or any(not isinstance(v,str) or len(v)>300 for v in vals):
@@ -232,3 +246,231 @@ def cancel_queued(kind,target_id):
     except Exception:
         db.rollback();raise
     return jsonify(ok=True)
+
+
+def evidence_id(quote):
+    return hashlib.sha256(' '.join(quote.casefold().split()).encode()).hexdigest()
+
+
+def subject_key(value):
+    return ' '.join(value.casefold().split())
+
+
+def clean_source(meta):
+    if not isinstance(meta, dict):
+        raise ValueError('invalid source')
+    out = {}
+    for k, limit in (('message_id', 600), ('received_at', 80), ('timestamp_source', 80)):
+        v = meta.get(k, '')
+        if not isinstance(v, str) or len(v) > limit:
+            raise ValueError('invalid source ' + k)
+        out[k] = v
+    if out['received_at']:
+        stamp = datetime.fromisoformat(out['received_at'].replace('Z', '+00:00'))
+        if stamp.tzinfo is None or stamp > datetime.now(timezone.utc):
+            raise ValueError('invalid received timestamp')
+        if not out['message_id'] or out['timestamp_source'] != 'outlook-message-header':
+            raise ValueError('unverified timestamp source')
+    return out
+
+
+def previous_evidence(db, kind, target_id, subject, before=None):
+    # Bound history reads; ignore a different user-selected conversation.
+    rows = db.execute("SELECT rowid,* FROM followup_job WHERE kind=? AND target_id=? AND state='candidate' ORDER BY rowid DESC LIMIT 100", (kind,target_id)).fetchall()
+    for row in rows:
+        if before is not None and row['rowid'] >= before:
+            continue
+        ctx = json.loads(row['context_json'])
+        if subject_key(ctx.get('search_subject','')) == subject_key(subject):
+            yield row
+
+
+def set_comparison_baseline(db, kind, target_id, ctx):
+    history = list(previous_evidence(db,kind,target_id,ctx['search_subject']))
+    previous = next((p for p in history if p['reviewed_at']), history[0] if history else None)
+    ctx['comparison_baseline'] = (previous['reviewed_at'] or previous['checked_at']) if previous else ''
+    ctx['comparison_baseline_kind'] = ('review' if previous['reviewed_at'] else 'scan') if previous else ''
+
+
+def decorate_evidence(job):
+    db = get_db()
+    rowid = db.execute('SELECT rowid FROM followup_job WHERE job_id=?', (job['job_id'],)).fetchone()[0]
+    ctx = json.loads(db.execute('SELECT context_json FROM followup_job WHERE job_id=?', (job['job_id'],)).fetchone()[0])
+    previous = list(previous_evidence(db,job['kind'],job['target_id'],job['context_subject'],rowid))
+    seen = set()
+    old_attachments = set()
+    for p in previous:
+        result = json.loads(p['result'])
+        seen.update(evidence_id(x['quote']) for x in result.get('items',[]))
+        old_attachments.update(result.get('attachments',[]))
+    decisions = {r['item_id']:dict(r) for r in db.execute('SELECT item_id,decision,reviewed_at FROM followup_item_review WHERE job_id=?', (job['job_id'],))}
+    # Carry human decisions over a re-scan of the same target revision and subject.
+    for p in previous:
+        if p['fingerprint'] != job['fingerprint']:
+            continue
+        for r in db.execute('SELECT item_id,decision,reviewed_at FROM followup_item_review WHERE job_id=?',(p['job_id'],)):
+            decisions.setdefault(r['item_id'],dict(r))
+        if p['reviewed_at']:
+            for i in json.loads(p['result']).get('items',[]):
+                decisions.setdefault(evidence_id(i['quote']),{'decision':'confirmed','reviewed_at':p['reviewed_at']})
+    if job['reviewed_at']:
+        for i in job['result'].get('items',[]):
+            decisions.setdefault(evidence_id(i['quote']),{'decision':'confirmed','reviewed_at':job['reviewed_at']})
+    baseline = ctx.get('comparison_baseline','')
+    job['comparison_baseline'] = baseline
+    job['comparison_baseline_kind'] = ctx.get('comparison_baseline_kind','')
+    counts = {'first':0,'new':0,'repeat':0,'received_after':0}
+    for item in job['result'].get('items',[]):
+        iid = evidence_id(item['quote'])
+        item['item_id'] = iid
+        item['change'] = 'repeat' if iid in seen else 'new' if previous else 'first'
+        item['review'] = decisions.get(iid)
+        item['received_after_baseline'] = None
+        meta = item.get('source',{})
+        if baseline and meta.get('received_at') and meta.get('timestamp_source') == 'outlook-message-header' and meta.get('message_id'):
+            try:
+                base = datetime.fromisoformat(baseline)
+                if base.tzinfo is None:
+                    base = base.replace(tzinfo=ZoneInfo('Asia/Seoul'))
+                item['received_after_baseline'] = datetime.fromisoformat(meta['received_at'].replace('Z','+00:00')) > base
+            except (ValueError, TypeError):
+                pass
+        counts[item['change']] += 1
+        counts['received_after'] += item['received_after_baseline'] is True
+    job['changes'] = counts
+    job['new_attachment_names'] = [a for a in job['result'].get('attachments',[]) if a not in old_attachments] if previous else []
+
+
+@bp.post('/api/followup/<kind>/<int:target_id>/items/review')
+@admin_required
+def review_item(kind, target_id):
+    business_admin()
+    data = request.get_json(silent=True)
+    if not isinstance(data,dict) or data.get('decision') not in ('confirmed','excluded','applied'):
+        return jsonify(error='invalid decision'),400
+    if data['decision']=='applied' and kind!='daily':
+        return jsonify(error='Daily 진행이력만 반영할 수 있습니다'),400
+    db=get_db();db.execute('BEGIN IMMEDIATE')
+    try:
+        ctx=context(kind,target_id)
+        row=db.execute("SELECT * FROM followup_job WHERE job_id=? AND kind=? AND target_id=? AND state='candidate'", (data.get('job_id'),kind,target_id)).fetchone()
+        if not row or row['fingerprint']!=ctx['fingerprint']:
+            db.rollback();return jsonify(error='원본 또는 근거가 변경되었습니다. 재조회하세요'),409
+        item=next((x for x in json.loads(row['result']).get('items',[]) if evidence_id(x['quote'])==data.get('item_id')),None)
+        if not item:
+            db.rollback();return jsonify(error='근거 항목이 없습니다'),404
+        old=db.execute('SELECT decision FROM followup_item_review WHERE job_id=? AND item_id=?',(row['job_id'],data['item_id'])).fetchone()
+        if old and old['decision']=='applied':
+            db.rollback();return jsonify(ok=True,already_applied=True)
+        if data['decision']=='applied':
+            # Preview text is generated from the saved quote; never trusts client-supplied history.
+            from helpers_shared import _issue_write_scope
+            _issue_write_scope(target_id)
+            # Dedupe the durable write ledger, not the bounded display history.
+            applied=db.execute("SELECT 1 FROM followup_item_review r JOIN followup_job j ON j.job_id=r.job_id WHERE j.kind=? AND j.target_id=? AND r.item_id=? AND r.decision='applied' LIMIT 1",(kind,target_id,data['item_id'])).fetchone()
+            if applied:
+                db.rollback();return jsonify(ok=True,already_applied=True)
+            issue=db.execute('SELECT actions FROM issues WHERE id=?',(target_id,)).fetchone()
+            try:
+                actions=json.loads(issue['actions'] or '[]')
+                if not isinstance(actions,list):
+                    raise ValueError()
+            except (ValueError,TypeError):
+                db.rollback();return jsonify(error='기존 진행이력 형식을 확인해야 합니다'),409
+            actions.append({'date':datetime.now().date().isoformat(),
+                            'progress': '[메일 근거 · 감독 선택 반영 / 완료 미확정]\n'+item['quote']+'\n출처: '+json.loads(row['context_json'])['search_subject'],
+                            'important':False,'followup_job':row['job_id'],'followup_item':data['item_id']})
+            db.execute("UPDATE issues SET actions=?,updated_at=datetime('now','localtime') WHERE id=?",(json.dumps(actions,ensure_ascii=False),target_id))
+            # Target fingerprint changes after append. Preserve reviewed artifact but do not silently rebind.
+        db.execute("INSERT INTO followup_item_review(job_id,item_id,decision,reviewed_by) VALUES(?,?,?,?) ON CONFLICT(job_id,item_id) DO UPDATE SET decision=excluded.decision,reviewed_by=excluded.reviewed_by,reviewed_at=datetime('now','localtime')", (row['job_id'],data['item_id'],data['decision'],str(session['user_id'])))
+        db.commit()
+    except Exception:
+        db.rollback();raise
+    return jsonify(ok=True)
+
+
+@bp.post('/api/followup/<kind>/<int:target_id>/tracking')
+@admin_required
+def tracking(kind,target_id):
+    business_admin()
+    data=request.get_json(silent=True)
+    if not isinstance(data,dict) or type(data.get('enabled')) is not bool:
+        return jsonify(error='invalid tracking'),400
+    subject=data.get('search_subject','')
+    if not isinstance(subject,str) or not 8<=len(subject.strip())<=300 or any(ord(c)<32 for c in subject):
+        return jsonify(error='관련 메일 제목을 8~300자로 입력하세요'),400
+    db=get_db();db.execute('BEGIN IMMEDIATE')
+    try:
+        ctx=context(kind,target_id)
+        if data.get('fingerprint')!=ctx['fingerprint']:
+            db.rollback();return jsonify(error='원본 변경: 다시 열어 확인하세요'),409
+        if data['enabled'] and not ctx['vessel_name']:
+            db.rollback();return jsonify(error='선박 연결이 없습니다'),409
+        count=db.execute('SELECT COUNT(*) FROM followup_tracking WHERE enabled=1 AND NOT(kind=? AND target_id=?)',(kind,target_id)).fetchone()[0]
+        if data['enabled'] and count>=10:
+            db.rollback();return jsonify(error='선택 추적은 최대 10건입니다'),429
+        db.execute("INSERT INTO followup_tracking(kind,target_id,enabled,search_subject,fingerprint,requested_by) VALUES(?,?,?,?,?,?) ON CONFLICT(kind,target_id) DO UPDATE SET enabled=excluded.enabled,search_subject=excluded.search_subject,fingerprint=excluded.fingerprint,requested_by=excluded.requested_by,next_check=datetime('now','localtime'),reason=''", (kind,target_id,int(data['enabled']),subject.strip(),ctx['fingerprint'],str(session['user_id'])))
+        db.commit()
+    except Exception:
+        db.rollback();raise
+    return jsonify(ok=True)
+
+
+def enqueue_tracked():
+    """Existing authenticated autorun poll only; no new scheduler, max one per poll.
+
+    Opt-in six-hour checks; content edits/revoked user permissions pause, never auto-rebind.
+    """
+    if not _automation_enabled():
+        return
+    db=get_db();db.execute('BEGIN IMMEDIATE')
+    try:
+        if db.execute("SELECT COUNT(*) FROM automation_run WHERE task='followup_scan' AND status IN ('queued','running')").fetchone()[0]>=10:
+            db.rollback();return
+        rows=db.execute("SELECT * FROM followup_tracking WHERE enabled=1 AND next_check<=datetime('now','localtime') ORDER BY next_check LIMIT 10").fetchall()
+        for t in rows:
+            owner=db.execute("SELECT 1 FROM users WHERE id=? AND active=1 AND role='admin' AND app_scope='business'", (t['requested_by'],)).fetchone()
+            try:
+                ctx=context(t['kind'],t['target_id']) if owner else None
+            except HTTPException as exc:
+                if exc.code!=404:
+                    raise
+                ctx=None
+            if not ctx or ctx['fingerprint']!=t['fingerprint']:
+                db.execute("UPDATE followup_tracking SET enabled=0,reason='원본 변경 또는 접근권한 변경 · 다시 확인 후 켜세요' WHERE kind=? AND target_id=?",(t['kind'],t['target_id']))
+                continue
+            busy=db.execute("SELECT 1 FROM followup_job j JOIN automation_run a ON a.run_id=j.job_id WHERE j.kind=? AND j.target_id=? AND a.status IN ('queued','running')",(t['kind'],t['target_id'])).fetchone()
+            if busy:
+                continue
+            ctx['search_subject']=t['search_subject']
+            set_comparison_baseline(db,t['kind'],t['target_id'],ctx)
+            jid=uuid.uuid4().hex
+            db.execute('INSERT INTO followup_job(job_id,kind,target_id,fingerprint,context_json,requested_by) VALUES(?,?,?,?,?,?)',(jid,t['kind'],t['target_id'],ctx['fingerprint'],json.dumps(ctx,ensure_ascii=False),t['requested_by']))
+            db.execute("INSERT INTO automation_run(run_id,task,mode,status,requested_by,params) VALUES(?,'followup_scan','verify','queued',?,?)",(jid,t['requested_by'],json.dumps({'job_id':jid})))
+            db.execute("UPDATE followup_tracking SET next_check=datetime('now','localtime','+6 hours'),reason='' WHERE kind=? AND target_id=?",(t['kind'],t['target_id']))
+            break
+        db.commit()
+    except Exception:
+        db.rollback();raise
+
+
+@bp.get('/api/followup/indicators')
+@admin_required
+def indicators():
+    business_admin()
+    rows=query("SELECT j.* FROM followup_job j WHERE j.rowid=(SELECT MAX(k.rowid) FROM followup_job k WHERE k.kind=j.kind AND k.target_id=j.target_id) ORDER BY j.rowid DESC LIMIT 100")
+    out=[]
+    for row in rows:
+        try:
+            ctx=context(row['kind'],row['target_id'])
+        except HTTPException as exc:
+            if exc.code==404:
+                continue
+            raise
+        job=public_job(row,ctx)
+        if job['state']!='candidate' or job['reviewed_at']:
+            continue
+        count=sum(1 for i in job['result'].get('items',[]) if not i['review'])
+        if count:
+            out.append({'kind':row['kind'],'target_id':row['target_id'],'count':count})
+    return jsonify(items=out)

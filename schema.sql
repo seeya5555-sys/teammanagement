@@ -1177,3 +1177,24 @@ CREATE TABLE IF NOT EXISTS followup_job (
     reviewed_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_followup_target ON followup_job(kind,target_id,created_at);
+
+-- Explicit item review and opt-in polling, isolated from approvals.
+CREATE TABLE IF NOT EXISTS followup_item_review (
+    job_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('confirmed','excluded','applied')),
+    reviewed_by TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY(job_id,item_id)
+);
+CREATE TABLE IF NOT EXISTS followup_tracking (
+    kind TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    search_subject TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    next_check TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    reason TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(kind,target_id)
+);

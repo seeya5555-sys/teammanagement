@@ -137,4 +137,149 @@ class FollowupTest(unittest.TestCase):
         with patch.object(F,'_automation_enabled',return_value=False):
             self.assertEqual(409,self.c.post(base+'/scan',headers=self.ch,json={}).status_code)
 
+    def complete(self,kind='aor',quote='Will inspect on Monday'):
+        base,jid,fp=self.create(kind)
+        p=self.payload(fp);p['result']['items'][0]['quote']=quote
+        self.assertEqual(200,self.c.post('/api/ext/followup/jobs/'+jid,headers=self.h,json=p).status_code)
+        with A.app.app_context():A.execute("UPDATE automation_run SET status='done' WHERE run_id=?",(jid,))
+        return base,jid,fp
+    def test_new_repeat_and_subject_isolation(self):
+        base,jid,fp=self.complete()
+        self.assertEqual(1,self.c.get(base).get_json()['job']['changes']['first'])
+        self.c.post(base+'/reviewed',headers=self.ch,json={'job_id':jid})
+        _,jid,_=self.complete()
+        j=self.c.get(base).get_json()['job']
+        self.assertEqual(1,j['changes']['repeat']);self.assertIsNone(j['result']['items'][0]['received_after_baseline'])
+        self.assertEqual('review',j['comparison_baseline_kind'])
+        self.complete(quote='New quotation excludes travel')
+        self.assertEqual(1,self.c.get(base).get_json()['job']['changes']['new'])
+        response=self.c.post(base+'/scan',headers=self.ch,json={'fingerprint':fp,'search_subject':'TEST SHIP other scope'})
+        jid=response.get_json()['job_id']
+        self.c.post('/api/ext/followup/jobs/'+jid,headers=self.h,json=self.payload(fp))
+        self.assertEqual(1,self.c.get(base).get_json()['job']['changes']['first'])
+    def test_item_reviews_and_daily_append_fail_closed(self):
+        base,jid,fp=self.complete('daily')
+        iid=self.c.get(base).get_json()['job']['result']['items'][0]['item_id']
+        data={'job_id':jid,'item_id':iid,'decision':'confirmed'}
+        self.assertEqual(403,self.c.post(base+'/items/review',json=data).status_code)
+        self.assertEqual(200,self.c.post(base+'/items/review',headers=self.ch,json=data).status_code)
+        data['decision']='excluded'
+        self.assertEqual(200,self.c.post(base+'/items/review',headers=self.ch,json=data).status_code)
+        data['decision']='applied'
+        self.assertEqual(200,self.c.post(base+'/items/review',headers=self.ch,json=data).status_code)
+        self.assertEqual(409,self.c.post(base+'/items/review',headers=self.ch,json=data).status_code)
+        with A.app.app_context():
+            row=A.query('SELECT actions,status FROM issues WHERE id=?',(self.iid,),one=True)
+            self.assertEqual(1,len(json.loads(row['actions'])));self.assertEqual('Open',row['status'])
+        base,jid,fp=self.complete('cs');data['job_id']=jid
+        self.assertEqual(400,self.c.post(base+'/items/review',headers=self.ch,json=data).status_code)
+    def test_item_review_wrong_job_or_item(self):
+        base,jid,fp=self.complete()
+        data={'job_id':jid,'item_id':'wrong','decision':'confirmed'}
+        self.assertEqual(404,self.c.post(base+'/items/review',headers=self.ch,json=data).status_code)
+        self.assertEqual(409,self.c.post('/api/followup/vt/'+str(self.vtid)+'/items/review',headers=self.ch,json=data).status_code)
+    def test_metadata_requires_timezone_and_provenance(self):
+        base,jid,fp=self.create()
+        p=self.payload(fp)
+        for meta in ({'received_at':'2026-01-01'}, {'received_at':'2026-01-01T00:00:00Z','message_id':'x'}, {'received_at':'2999-01-01T00:00:00Z','message_id':'x','timestamp_source':'outlook-message-header'}):
+            p['result']['items'][0]['source']=meta
+            self.assertEqual(400,self.c.post('/api/ext/followup/jobs/'+jid,headers=self.h,json=p).status_code)
+    def enable(self,kind='aor'):
+        base=f'/api/followup/{kind}/{self.ids[kind]}'
+        fp=self.c.get(base).get_json()['context']['fingerprint']
+        data={'fingerprint':fp,'enabled':True,'search_subject':'TEST SHIP pump seal'}
+        self.assertEqual(200,self.c.post(base+'/tracking',headers=self.ch,json=data).status_code)
+        return base,data
+    def test_tracking_optin_cadence_and_stale_pause(self):
+        with A.app.app_context():
+            F.enqueue_tracked();self.assertEqual(0,A.query('SELECT COUNT(*) n FROM followup_job',one=True)['n'])
+        base,data=self.enable()
+        with A.app.app_context():
+            F.enqueue_tracked();F.enqueue_tracked()
+            self.assertEqual(1,A.query('SELECT COUNT(*) n FROM followup_job',one=True)['n'])
+            A.execute("UPDATE automation_run SET status='done'")
+            A.execute("UPDATE followup_tracking SET next_check='2000-01-01'")
+            A.execute("UPDATE aor_draft SET amt=123 WHERE id=?",(self.ids['aor'],))
+            F.enqueue_tracked()
+        self.assertEqual(0,self.c.get(base).get_json()['tracking']['enabled'])
+    def test_tracking_revoked_owner_and_disable(self):
+        base,data=self.enable();data['enabled']=False
+        self.assertEqual(200,self.c.post(base+'/tracking',headers=self.ch,json=data).status_code)
+        with A.app.app_context():
+            F.enqueue_tracked();self.assertEqual(0,A.query('SELECT COUNT(*) n FROM followup_job',one=True)['n'])
+        self.enable()
+        with A.app.app_context():
+            A.execute('UPDATE users SET active=0 WHERE id=?',(self.uid,))
+            F.enqueue_tracked();self.assertEqual(0,A.query('SELECT enabled FROM followup_tracking',one=True)['enabled'])
+    def test_tracking_killswitch_and_queue_cap(self):
+        self.enable()
+        with A.app.app_context(),patch.object(F,'_automation_enabled',return_value=False):
+            F.enqueue_tracked();self.assertEqual(0,A.query('SELECT COUNT(*) n FROM followup_job',one=True)['n'])
+        with A.app.app_context():
+            for i in range(10):A.execute("INSERT INTO automation_run(run_id,task,mode,status) VALUES(?,'followup_scan','verify','queued')",(str(i),))
+            F.enqueue_tracked();self.assertEqual(0,A.query('SELECT COUNT(*) n FROM followup_job',one=True)['n'])
+
+    def test_verified_timestamp_compared_not_quote_date(self):
+        base,jid,fp=self.complete()
+        with A.app.app_context():
+            A.execute("UPDATE followup_job SET reviewed_at='2026-01-01 09:00:00' WHERE job_id=?",(jid,))
+        _,jid,fp=self.create('aor')
+        p=self.payload(fp)
+        p['result']['items'][0]['source']={'received_at':'2026-01-02T00:00:00Z','message_id':'test-message','timestamp_source':'outlook-message-header'}
+        self.assertEqual(200,self.c.post('/api/ext/followup/jobs/'+jid,headers=self.h,json=p).status_code)
+        j=self.c.get(base).get_json()['job']
+        self.assertTrue(j['result']['items'][0]['received_after_baseline'])
+        self.assertEqual(1,j['changes']['received_after'])
+    def test_indicators_and_claim_hook(self):
+        base,jid,fp=self.complete()
+        d=self.c.get('/api/followup/indicators').get_json()
+        self.assertEqual(1,d['items'][0]['count'])
+        iid=self.c.get(base).get_json()['job']['result']['items'][0]['item_id']
+        self.c.post(base+'/items/review',headers=self.ch,json={'job_id':jid,'item_id':iid,'decision':'excluded'})
+        self.assertEqual([],self.c.get('/api/followup/indicators').get_json()['items'])
+        self.enable('daily')
+        with patch('routes_dock_submit._automation_enabled',return_value=True):
+            response=self.c.post('/api/ext/automation/claim',headers=self.h,json={})
+        self.assertEqual(200,response.status_code)
+        self.assertEqual('followup_scan',response.get_json()['run']['task'])
+
+    def test_unreviewed_repeat_stays_visible_and_decisions_persist(self):
+        base,jid,fp=self.complete()
+        self.complete()
+        self.assertEqual(1,self.c.get('/api/followup/indicators').get_json()['items'][0]['count'])
+        j=self.c.get(base).get_json()['job'];iid=j['result']['items'][0]['item_id']
+        self.c.post(base+'/items/review',headers=self.ch,json={'job_id':j['job_id'],'item_id':iid,'decision':'excluded'})
+        self.complete()
+        self.assertEqual('excluded',self.c.get(base).get_json()['job']['result']['items'][0]['review']['decision'])
+        self.assertEqual([],self.c.get('/api/followup/indicators').get_json()['items'])
+    def test_applied_citation_cannot_duplicate_after_rescan(self):
+        base,jid,fp=self.complete('daily')
+        iid=self.c.get(base).get_json()['job']['result']['items'][0]['item_id']
+        self.c.post(base+'/items/review',headers=self.ch,json={'job_id':jid,'item_id':iid,'decision':'applied'})
+        _,new,_=self.complete('daily')
+        response=self.c.post(base+'/items/review',headers=self.ch,json={'job_id':new,'item_id':iid,'decision':'applied'})
+        self.assertTrue(response.get_json()['already_applied'])
+        with A.app.app_context():self.assertEqual(1,len(json.loads(A.query('SELECT actions FROM issues WHERE id=?',(self.iid,),one=True)['actions'])))
+
+    def test_applied_dedup_survives_more_than_100_scans(self):
+        base,jid,fp=self.complete('daily')
+        iid=self.c.get(base).get_json()['job']['result']['items'][0]['item_id']
+        self.c.post(base+'/items/review',headers=self.ch,json={'job_id':jid,'item_id':iid,'decision':'applied'})
+        with A.app.app_context():
+            for i in range(101):
+                A.execute("INSERT INTO followup_job(job_id,kind,target_id,fingerprint,context_json,requested_by,state,result) SELECT ?,kind,target_id,fingerprint,context_json,requested_by,state,result FROM followup_job WHERE job_id=?",('history-'+str(i),jid))
+        _,new,_=self.complete('daily')
+        r=self.c.post(base+'/items/review',headers=self.ch,json={'job_id':new,'item_id':iid,'decision':'applied'})
+        self.assertTrue(r.get_json()['already_applied'])
+        with A.app.app_context():self.assertEqual(1,len(json.loads(A.query('SELECT actions FROM issues WHERE id=?',(self.iid,),one=True)['actions'])))
+    def test_tracking_and_reviewed_csrf_required(self):
+        base,jid,fp=self.complete()
+        self.assertEqual(403,self.c.post(base+'/tracking',json={'enabled':True,'fingerprint':fp,'search_subject':'TEST SHIP pump seal'}).status_code)
+        self.assertEqual(403,self.c.post(base+'/reviewed',json={'job_id':jid}).status_code)
+    def test_runner_item_id_is_accepted_and_recomputed(self):
+        base,jid,fp=self.create()
+        p=self.payload(fp);p['result']['items'][0]['item_id']='untrusted-id'
+        self.assertEqual(200,self.c.post('/api/ext/followup/jobs/'+jid,headers=self.h,json=p).status_code)
+        self.assertEqual(F.evidence_id(p['result']['items'][0]['quote']),self.c.get(base).get_json()['job']['result']['items'][0]['item_id'])
+
 if __name__=='__main__':unittest.main()
