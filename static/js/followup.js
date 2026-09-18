@@ -21,11 +21,14 @@
       function render(d){tracking=d.tracking;track.textContent=tracking?.enabled?'선택 추적 끄기':'이 항목만 6시간마다 재조회';trackStatus.textContent=tracking?.enabled?('선택 추적 중 · 다음 확인 '+tracking.next_check):tracking?.reason||'선택 추적은 최대 10건. 원본 수정 시 중지됩니다.';result.replaceChildren();const j=d.job;const pending=j&&['queued','running'].includes(j.state);scan.disabled=!!pending;status.textContent=j?`${states[j.state]||j.state}${j.checked_at?' · 확인 '+j.checked_at:''}`:'아직 조회하지 않음';if(!j)return;
         if(j.stale){result.append(el('p','기존 결과는 원본 수정으로 숨겼습니다. 재조회하세요.'));return;}
         const r=j.result||{};if(r.source_subject)result.append(el('p','선택 메일: '+r.source_subject));if(r.coverage)result.append(el('p',r.coverage));if(r.summary)result.append(el('p',r.summary));
-        if(j.changes){result.append(el('p',`새 근거 ${j.changes.new} · 기존 근거 ${j.changes.repeat} · 최초 확인 ${j.changes.first}`));result.append(el('p','새 근거는 이전 조회에 없던 인용입니다. 새로 수신된 메일이라는 뜻은 아닙니다.'));}
+        if(j.changes){result.append(el('p',`새 근거 ${j.changes.new} · 기존 근거 ${j.changes.repeat} · 최초 확인 ${j.changes.first}`));result.append(el('p',`기준 이후 새 포착 ${j.changes.observed_after||0} · 기준 이전 포착 ${j.changes.observed_before||0}`));result.append(el('p','포착시각 = TRMT에 해당 인용이 처음 저장된 시각(한국시간). 실제 메일 수신시각과는 다릅니다. 오래된 메일도 처음 추출되면 새 포착입니다.'));}
         if(j.comparison_baseline)result.append(el('p',(j.comparison_baseline_kind==='review'?'검토 기준시각: ':'이전 조회 기준시각: ')+j.comparison_baseline+' (한국시간)'));
         const repeated=el('details');repeated.append(el('summary','이전 조회와 같은 근거 펼치기'));
         for(const item of r.items||[]){const section=el('section');section.style.cssText='border-left:3px solid #d99b26;padding:8px 12px;margin:12px 0';section.append(el('strong',item.label+(item.change==='repeat'?' · 기존 근거':'')));section.append(el('p',item.interpretation));const q=el('blockquote',item.quote);q.style.cssText='white-space:pre-wrap;font-size:12px;margin:8px 0';section.append(q);
-          section.append(el('p',item.received_after_baseline===true?'기준시각 이후 수신 확인':item.received_after_baseline===false?'기준시각 이전 수신':'수신시각 미입증'));
+          if(item.first_seen_at)section.append(el('p','최초 포착: '+item.first_seen_at.replace('T',' ').replace('+09:00',' KST')));
+          const observed={after:'기준 이후 새로 포착',before:'기준 이전부터 확인된 근거',initial:'첫 조회 · 다음 비교의 기준',unknown:'포착시각 비교 기준 없음'};
+          section.append(el('p',observed[item.observation_status]||observed.unknown));
+          if(item.received_after_baseline!==null&&item.received_after_baseline!==undefined)section.append(el('p',item.received_after_baseline?'별도 확인: 기준 이후 메일 수신':'별도 확인: 기준 이전 메일 수신'));
           if(item.source?.received_at)section.append(el('p','메일 수신: '+item.source.received_at));
           const decisions={confirmed:'확인함 · 완료판정 아님',excluded:'제외함',applied:'Daily 진행이력 반영함'};
           if(item.review)section.append(el('p',decisions[item.review.decision]+' · '+item.review.reviewed_at));

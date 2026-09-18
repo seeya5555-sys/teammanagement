@@ -282,4 +282,84 @@ class FollowupTest(unittest.TestCase):
         self.assertEqual(200,self.c.post('/api/ext/followup/jobs/'+jid,headers=self.h,json=p).status_code)
         self.assertEqual(F.evidence_id(p['result']['items'][0]['quote']),self.c.get(base).get_json()['job']['result']['items'][0]['item_id'])
 
+    def test_first_observation_and_repeat_keep_original_time(self):
+        base,jid,fp=self.complete()
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 09:00:00' WHERE job_id=?",(jid,))
+        initial=self.c.get(base).get_json()['job']['result']['items'][0]
+        self.assertEqual('2026-09-18T09:00:00+09:00',initial['first_seen_at'])
+        self.assertEqual('initial',initial['observation_status'])
+        _,second,_=self.complete()
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 10:00:00' WHERE job_id=?",(second,))
+        repeat=self.c.get(base).get_json()['job']['result']['items'][0]
+        self.assertEqual(initial['first_seen_at'],repeat['first_seen_at'])
+        self.assertFalse(repeat['observed_after_baseline'])
+        self.assertIsNone(repeat['received_after_baseline'])
+        self.assertEqual('before',repeat['observation_status'])
+    def test_newly_extracted_old_mail_is_observation_not_receipt(self):
+        base,jid,fp=self.complete()
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 09:00:00' WHERE job_id=?",(jid,))
+        _,second,_=self.complete(quote='Old mail dated 2020: revised quotation available')
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 10:00:00' WHERE job_id=?",(second,))
+        job=self.c.get(base).get_json()['job'];item=job['result']['items'][0]
+        self.assertEqual('trmt_first_saved',job['time_basis'])
+        self.assertEqual('2026-09-18T10:00:00+09:00',item['first_seen_at'])
+        self.assertTrue(item['observed_after_baseline']);self.assertIsNone(item['received_after_baseline'])
+        self.assertEqual(1,job['changes']['observed_after']);self.assertEqual(0,job['changes']['received_after'])
+    def test_first_observation_not_lost_after_100_results(self):
+        base,jid,fp=self.complete()
+        with A.app.app_context():
+            A.execute("UPDATE followup_job SET checked_at='2026-09-18 09:00:00' WHERE job_id=?",(jid,))
+            other=self.payload(fp)['result'];other['items'][0]['quote']='Different evidence only in intervening scans'
+            for i in range(101):
+                A.execute("INSERT INTO followup_job(job_id,kind,target_id,fingerprint,context_json,requested_by,state,result,checked_at) SELECT ?,kind,target_id,fingerprint,context_json,requested_by,state,?,'2026-09-18 10:00:00' FROM followup_job WHERE job_id=?",('observed-history-'+str(i),json.dumps(other),jid))
+        self.complete()
+        item=self.c.get(base).get_json()['job']['result']['items'][0]
+        self.assertEqual('repeat',item['change'])
+        self.assertEqual('2026-09-18T09:00:00+09:00',item['first_seen_at'])
+        self.assertFalse(item['observed_after_baseline'])
+    def test_observation_subject_isolation_and_model_timestamp_ignored(self):
+        base,jid,fp=self.complete()
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 09:00:00' WHERE job_id=?",(jid,))
+        r=self.c.post(base+'/scan',headers=self.ch,json={'fingerprint':fp,'search_subject':'TEST SHIP different thread'})
+        jid=r.get_json()['job_id'];p=self.payload(fp)
+        p['result']['items'][0]['first_seen_at']='2001-01-01T00:00:00Z'
+        p['result']['items'][0]['observed_after_baseline']=True
+        self.c.post('/api/ext/followup/jobs/'+jid,headers=self.h,json=p)
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 11:00:00' WHERE job_id=?",(jid,))
+        item=self.c.get(base).get_json()['job']['result']['items'][0]
+        self.assertEqual('2026-09-18T11:00:00+09:00',item['first_seen_at']);self.assertEqual('initial',item['observation_status'])
+    def test_missing_old_timestamp_not_replaced_with_current_time(self):
+        base,jid,fp=self.complete()
+        with A.app.app_context():A.execute('UPDATE followup_job SET checked_at=NULL WHERE job_id=?',(jid,))
+        self.complete()
+        item=self.c.get(base).get_json()['job']['result']['items'][0]
+        self.assertIsNone(item['first_seen_at']);self.assertIsNone(item['observed_after_baseline'])
+        self.assertEqual('unknown',item['observation_status'])
+    def test_observation_timezone_equal_and_after_boundary(self):
+        self.assertEqual(F.observation_time('2026-09-18T00:00:00Z'),F.observation_time('2026-09-18 09:00:00'))
+        self.assertGreater(F.observation_time('2026-09-18T00:00:01Z'),F.observation_time('2026-09-18 09:00:00'))
+
+    def test_later_missing_timestamp_does_not_erase_valid_first(self):
+        base,jid,fp=self.complete()
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 09:00:00' WHERE job_id=?",(jid,))
+        _,second,_=self.complete()
+        with A.app.app_context():A.execute('UPDATE followup_job SET checked_at=NULL WHERE job_id=?',(second,))
+        item=self.c.get(base).get_json()['job']['result']['items'][0]
+        self.assertEqual('2026-09-18T09:00:00+09:00',item['first_seen_at'])
+        self.assertFalse(item['observed_after_baseline'])
+    def test_review_baseline_and_target_edit_do_not_retime_old_quote(self):
+        base,jid,fp=self.complete()
+        with A.app.app_context():
+            A.execute("UPDATE followup_job SET checked_at='2026-09-18 09:00:00',reviewed_at='2026-09-18 09:30:00' WHERE job_id=?",(jid,))
+            A.execute('UPDATE aor_draft SET amt=101 WHERE id=?',(self.ids['aor'],))
+        _,second,_=self.complete()
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 10:00:00' WHERE job_id=?",(second,))
+        job=self.c.get(base).get_json()['job'];item=job['result']['items'][0]
+        self.assertEqual('review',job['comparison_baseline_kind'])
+        self.assertEqual('repeat',item['change']);self.assertFalse(item['observed_after_baseline'])
+        self.assertEqual('2026-09-18T09:00:00+09:00',item['first_seen_at'])
+        _,third,_=self.complete(quote='New quote after review in the same thread')
+        with A.app.app_context():A.execute("UPDATE followup_job SET checked_at='2026-09-18 10:30:00' WHERE job_id=?",(third,))
+        self.assertTrue(self.c.get(base).get_json()['job']['result']['items'][0]['observed_after_baseline'])
+
 if __name__=='__main__':unittest.main()

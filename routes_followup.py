@@ -292,16 +292,57 @@ def set_comparison_baseline(db, kind, target_id, ctx):
     ctx['comparison_baseline_kind'] = ('review' if previous['reviewed_at'] else 'scan') if previous else ''
 
 
+def observation_time(value):
+    """Persisted server result times only; never mail/model dates. Legacy DB is KST."""
+    try:
+        stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=ZoneInfo('Asia/Seoul'))
+        return stamp.astimezone(ZoneInfo('Asia/Seoul'))
+    except (AttributeError, ValueError, TypeError):
+        return None
+
+
+def first_observations(db, job, rowid):
+    """Read the append-only result history, without the display's 100-row cutoff.
+
+    Identity is (target, user-selected subject, normalized citation). Older mail
+    newly extracted later is new *evidence observed*, never new mail received.
+    Invalid historical timestamps fail closed instead of borrowing today's date.
+    """
+    wanted = {evidence_id(i['quote']) for i in job['result'].get('items', [])}
+    first = {}
+    prior_ids = set()
+    prior_subject = False
+    rows = db.execute("SELECT rowid,context_json,result,checked_at FROM followup_job WHERE kind=? AND target_id=? AND state='candidate' AND rowid<=? ORDER BY rowid", (job['kind'],job['target_id'],rowid))
+    for row in rows:
+        ctx = json.loads(row['context_json'])
+        if subject_key(ctx.get('search_subject','')) != subject_key(job['context_subject']):
+            continue
+        prior_subject = prior_subject or row['rowid'] < rowid
+        stamp = observation_time(row['checked_at'])
+        for old in json.loads(row['result']).get('items', []):
+            iid = evidence_id(old['quote'])
+            if iid not in wanted:
+                continue
+            if row['rowid'] < rowid:
+                prior_ids.add(iid)
+            if iid not in first:
+                first[iid] = stamp
+            elif first[iid] is not None and stamp is not None:
+                first[iid] = min(first[iid],stamp)
+    return first, prior_ids, prior_subject
+
+
 def decorate_evidence(job):
     db = get_db()
     rowid = db.execute('SELECT rowid FROM followup_job WHERE job_id=?', (job['job_id'],)).fetchone()[0]
     ctx = json.loads(db.execute('SELECT context_json FROM followup_job WHERE job_id=?', (job['job_id'],)).fetchone()[0])
     previous = list(previous_evidence(db,job['kind'],job['target_id'],job['context_subject'],rowid))
-    seen = set()
+    first_seen, seen, has_previous = first_observations(db,job,rowid)
     old_attachments = set()
     for p in previous:
         result = json.loads(p['result'])
-        seen.update(evidence_id(x['quote']) for x in result.get('items',[]))
         old_attachments.update(result.get('attachments',[]))
     decisions = {r['item_id']:dict(r) for r in db.execute('SELECT item_id,decision,reviewed_at FROM followup_item_review WHERE job_id=?', (job['job_id'],))}
     # Carry human decisions over a re-scan of the same target revision and subject.
@@ -319,11 +360,24 @@ def decorate_evidence(job):
     baseline = ctx.get('comparison_baseline','')
     job['comparison_baseline'] = baseline
     job['comparison_baseline_kind'] = ctx.get('comparison_baseline_kind','')
-    counts = {'first':0,'new':0,'repeat':0,'received_after':0}
+    job['time_basis'] = 'trmt_first_saved'
+    job['observation_policy'] = '동일 항목·지정 제목·인용의 TRMT 최초 결과 저장시각'
+    base_time = observation_time(baseline)
+    counts = {'first':0,'new':0,'repeat':0,'received_after':0,'observed_after':0,'observed_before':0,'observation_unknown':0}
     for item in job['result'].get('items',[]):
         iid = evidence_id(item['quote'])
         item['item_id'] = iid
-        item['change'] = 'repeat' if iid in seen else 'new' if previous else 'first'
+        item['change'] = 'repeat' if iid in seen else 'new' if has_previous else 'first'
+        first_time = first_seen.get(iid)
+        item['first_seen_at'] = first_time.isoformat() if first_time else None
+        item['observed_after_baseline'] = first_time > base_time if first_time and base_time else None
+        item['observation_status'] = ('after' if item['observed_after_baseline'] else 'before') if item['observed_after_baseline'] is not None else ('initial' if not has_previous and not baseline else 'unknown')
+        if item['observed_after_baseline'] is True:
+            counts['observed_after'] += 1
+        elif item['observed_after_baseline'] is False:
+            counts['observed_before'] += 1
+        else:
+            counts['observation_unknown'] += 1
         item['review'] = decisions.get(iid)
         item['received_after_baseline'] = None
         meta = item.get('source',{})
