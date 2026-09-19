@@ -103,7 +103,7 @@
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd)}</b> ${vesselChip(d)}</span><span>Cost <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></span>`;
     if(isAor) kv+=`<span>AOR <b>${esc(d.ref_no||'-')}</b> (${esc(d.ref_amt)})</span><span>차액 <b>${esc(d.diff)}</b></span>`;
     if(d.dn) kv+=`<span>첨부판독 <b>${esc(d.dn)}</b></span>`;
-    const vbadge=d.verdict?`<span class="fr-badge b-${esc(d.verdict)}">${({pass:'검토통과',escalate:'AOR차액≥$1k',mismatch:'DN≠Cost',flag:'확인필요'})[d.verdict]||esc(d.verdict)}</span>`:'';
+    const vbadge=d.verdict?`<span class="fr-badge b-${esc(d.verdict)}">${({pass:'검토통과',escalate:'AOR차액≥$1k',mismatch:'금액 불일치',flag:'확인필요'})[d.verdict]||esc(d.verdict)}</span>`:'';
     const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
     let acts;
     if(d.status==='pending'){
