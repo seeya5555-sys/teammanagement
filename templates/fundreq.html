@@ -22,6 +22,12 @@
   .b-escalate{background:var(--amber-bg);color:var(--amber)}
   .b-mismatch{background:var(--red-bg);color:var(--red)}
   .b-flag{background:var(--red-bg);color:var(--red)}
+  /* 계약 대조 배지 — 한눈에 일치/불일치 (tech_opex_contract 구조화 결과, why 문장과 별개) */
+  .fr-contract{font-size:12px;font-weight:800;padding:3px 10px;border-radius:8px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;border:1px solid transparent}
+  .fr-contract.pass{background:var(--green-bg);color:var(--green);border-color:var(--green)}
+  .fr-contract.mismatch{background:var(--red-bg);color:var(--red);border-color:var(--red)}
+  .fr-contract.flag{background:var(--amber-bg);color:var(--amber);border-color:var(--amber)}
+  .fr-contract-kv{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-bottom:6px;font-size:12px}
   .st-approved{background:var(--blue-bg);color:var(--blue)}
   .st-submitting{background:var(--amber-bg);color:var(--amber)}
   .st-submitted{background:var(--green-bg);color:var(--green)}
@@ -103,6 +109,11 @@
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd)}</b> ${vesselChip(d)}</span><span>Cost <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></span>`;
     if(isAor) kv+=`<span>AOR <b>${esc(d.ref_no||'-')}</b> (${esc(d.ref_amt)})</span><span>차액 <b>${esc(d.diff)}</b></span>`;
     if(d.dn) kv+=`<span>첨부판독 <b>${esc(d.dn)}</b></span>`;
+    const cc=d.contract_check&&['pass','mismatch','flag'].includes(d.contract_check.status)?d.contract_check:null;
+    const CC={pass:['✓','계약 일치'],mismatch:['✕','계약 불일치'],flag:['?','계약 확인필요']};
+    const fmt=v=>(typeof v==='number'&&isFinite(v))?v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
+    const cbadge=cc?`<span class="fr-contract ${cc.status}" title="TECH OPEX 계약(단가×일수/월정액) 대조 — DN·첨부 대조(검토결과 배지)와 별개. 계약 일치 ≠ 전체 검토통과">${CC[cc.status][0]} ${CC[cc.status][1]}</span>`:'';
+    const ckv=cc?`<div class="fr-contract-kv">${cbadge}<span>계약기준 <b>USD ${fmt(cc.expected)}</b>${cc.month?` (${esc(cc.month)}${cc.basis==='DAILY'?' 일할':cc.basis==='MONTHLY'?' 월정액':''})`:''}</span><span>차액 <b>USD ${fmt(cc.diff)}</b></span></div>`:'';
     const vbadge=d.verdict?`<span class="fr-badge b-${esc(d.verdict)}">${({pass:'검토통과',escalate:'AOR차액≥$1k',mismatch:'금액 불일치',flag:'확인필요'})[d.verdict]||esc(d.verdict)}</span>`:'';
     const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
     let acts;
@@ -123,9 +134,9 @@
       <div class="fr-top">
         <div><div class="fr-subj">${esc(d.subj||d.opex_cd)}</div>
         <div class="fr-meta">${esc(d.opex_cd)}</div></div>
-        <div class="fr-badges"><span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
+        <div class="fr-badges">${cbadge}<span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
       </div>
-      <div class="fr-body"><div class="fr-kv">${kv}</div>${attBox(d)}${evBox}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}${d.upstream_reject_remark?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}</div>
+      <div class="fr-body">${ckv}<div class="fr-kv">${kv}</div>${attBox(d)}${evBox}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}${d.upstream_reject_remark?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}</div>
       <div class="fr-acts">${acts}</div>{% if session.role == 'admin' %}<div class="fr-acts"><button type="button" class="btn btn-outline btn-sm" data-followup-kind="fundreq" data-followup-id="${d.id}">협의 변경점 확인</button></div>{% endif %}
     </div>`;
   }

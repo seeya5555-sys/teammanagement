@@ -6554,12 +6554,57 @@ def api_fundreq_list():
     pending = query("SELECT COUNT(*) c FROM fundreq_draft WHERE status='pending'", one=True)
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
     for draft in drafts:
+        draft['contract_check'] = _fundreq_contract_check(draft.get('contract_check'))
         draft['attachment_preview_indices'] = _fundreq_att_indices(draft['id'])
         draft['evidence_checklist'] = _evidence_checklist(
             'fundreq', draft, draft['attachment_preview_indices'])
     evidence_gaps = sum(d['evidence_checklist']['gap_count'] for d in drafts if d.get('status') == 'pending')
     return jsonify({'drafts': drafts, 'pending': pending['c'],
                     'enabled': _automation_enabled(), 'evidence_gaps': evidence_gaps})
+
+
+_FUNDREQ_CONTRACT_STATUS = ('pass', 'mismatch', 'flag')
+
+
+_FUNDREQ_CONTRACT_TOL = 0.01   # tech_opex_contract.compare 의 pass 허용오차와 동일
+
+
+def _fundreq_contract_money(v):
+    """유한한 실수만 통과(bool·문자열·NaN/Inf·거대 int 는 None). 정규화만, 판정 재계산 아님."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    try:
+        f = float(v)
+    except (OverflowError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _fundreq_contract_check(raw):
+    """contract_check 컬럼(JSON) → 표시용 dict. 대상 밖/미상 구조는 None(배지 없음).
+    러너(tech_opex_contract.apply)가 만든 구조만 신뢰하고 why 문장은 파싱하지 않는다.
+    표시 fail-closed: pass/mismatch 인데 금액이 비정상이거나 status 와 차액이 모순이면 flag 로 강등한다
+    (일치 배지를 잘못 보여주는 쪽이 더 위험 — 올마이트 지적 반영)."""
+    if raw is None:
+        return None
+    try:
+        obj = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(obj, dict) or obj.get('status') not in _FUNDREQ_CONTRACT_STATUS:
+        return None
+    out = {'status': obj['status'], 'month': obj.get('month') if isinstance(obj.get('month'), str) else None,
+           'basis': obj.get('basis') if isinstance(obj.get('basis'), str) else None,
+           'expected': _fundreq_contract_money(obj.get('expected')),
+           'diff': _fundreq_contract_money(obj.get('diff'))}
+    if out['status'] in ('pass', 'mismatch'):
+        if out['expected'] is None or out['diff'] is None:
+            out['status'] = 'flag'
+        elif out['status'] == 'pass' and abs(out['diff']) > _FUNDREQ_CONTRACT_TOL:
+            out['status'] = 'flag'
+        elif out['status'] == 'mismatch' and abs(out['diff']) <= _FUNDREQ_CONTRACT_TOL:
+            out['status'] = 'flag'
+    return out
 
 
 @bp.route('/api/ext/fundreq/drafts/pending-attachments')
@@ -6622,6 +6667,8 @@ def api_ext_fundreq_create():
         amt=d.get('amt'), cur_cd=d.get('cur_cd'), tp=d.get('tp'),
         ref_no=d.get('ref_no'), ref_amt=d.get('ref_amt'), dn=d.get('dn'),
         diff=d.get('diff'), verdict=d.get('verdict'), why=d.get('why'),
+        contract_check=(json.dumps(_fundreq_contract_check(d.get('contract')), ensure_ascii=False)
+                        if _fundreq_contract_check(d.get('contract')) else None),
         attach_files=(json.dumps(_fundreq_att_names(d.get('attach_files')), ensure_ascii=False)
                       if d.get('attach_files') is not None else None),
         raw_row=(json.dumps(d.get('raw_row'), ensure_ascii=False) if d.get('raw_row') is not None else None),
@@ -6636,7 +6683,8 @@ def api_ext_fundreq_create():
         return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
     did = execute(
         "INSERT INTO fundreq_draft (opex_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, tp, ref_no, "
-        "ref_amt, dn, diff, verdict, why, attach_files, raw_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "ref_amt, dn, diff, verdict, why, contract_check, attach_files, raw_row) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (opex_cd, *cols.values()))
     return jsonify({'id': did, 'status': 'pending'}), 201
 

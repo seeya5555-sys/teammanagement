@@ -488,7 +488,9 @@ def init_db(drop=False):
         _fr_cols = [r[1] for r in conn.execute('PRAGMA table_info(fundreq_draft)').fetchall()]
         if 'attach_files' not in _fr_cols:
             conn.execute('ALTER TABLE fundreq_draft ADD COLUMN attach_files TEXT')
-        for _col in ("upstream_status", "upstream_reject_remark", "corrective_action", "upstream_rejected_at"):
+        # contract_check = TECH OPEX 계약 대조 구조화 결과 JSON {status,expected,diff,month,basis} (카드 배지용)
+        for _col in ("upstream_status", "upstream_reject_remark", "corrective_action", "upstream_rejected_at",
+                     "contract_check"):
             if _col not in [r[1] for r in conn.execute('PRAGMA table_info(fundreq_draft)').fetchall()]:
                 conn.execute(f'ALTER TABLE fundreq_draft ADD COLUMN {_col} TEXT')
 
