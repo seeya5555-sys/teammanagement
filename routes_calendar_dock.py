@@ -6607,6 +6607,42 @@ def _fundreq_contract_check(raw):
     return out
 
 
+@bp.route('/api/ext/fundreq/drafts/pending')
+@api_key_required
+def api_ext_fundreq_pending_list():
+    """러너 stale 정리용 읽기전용 목록: pending 카드의 id/opex_cd 만. 상태 변경 없음."""
+    rows = query("SELECT id, opex_cd, vsl_cd FROM fundreq_draft WHERE status='pending' ORDER BY id")
+    return jsonify({'drafts': [{'id': r['id'], 'opex_cd': r['opex_cd'], 'vsl_cd': r['vsl_cd']} for r in rows],
+                    'count': len(rows)})
+
+
+_FUNDREQ_EXTERNAL_STATUS = {'U': 'submitted', 'R': 'rejected'}   # SVMS STATUS → 카드 종결 상태
+
+
+@bp.route('/api/ext/fundreq/drafts/<int:did>/external-status', methods=['POST'])
+@api_key_required
+def api_ext_fundreq_external_status(did):
+    """SVMS 에서 TRMT 밖으로 이미 처리된(STATUS≠S) stale pending 카드를 승인큐에서 종결한다.
+    · pending 만 CAS 로 닫는다. approved/rejecting/submitting 등 사람 결정·진행중 건은 절대 건드리지 않음(applied=0).
+    · 새 카드를 만들거나 SVMS 에 쓰지 않는다. 러너(fundreq_review.close_externally_processed) 전용."""
+    d = request.get_json(silent=True) or {}
+    svms_status = str(d.get('svms_status') or '').strip().upper()
+    target = _FUNDREQ_EXTERNAL_STATUS.get(svms_status)
+    if not target or svms_status == 'S':
+        return jsonify({'error': 'svms_status must be one of %s' % sorted(_FUNDREQ_EXTERNAL_STATUS)}), 400
+    if d.get('status') and d.get('status') != target:
+        return jsonify({'error': 'status does not match svms_status mapping', 'expected': target}), 400
+    row = query('SELECT id, status FROM fundreq_draft WHERE id=?', (did,), one=True)
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    result = (d.get('result') or f'SVMS에서 이미 처리됨(STATUS={svms_status})')[:2000]
+    rc = execute_rc("UPDATE fundreq_draft SET status=?, done_at=datetime('now','localtime'), "
+                    "decided_by='svms-external', result=? WHERE id=? AND status='pending'",
+                    (target, result, did))
+    cur = query('SELECT status FROM fundreq_draft WHERE id=?', (did,), one=True)
+    return jsonify({'id': did, 'applied': bool(rc), 'status': cur['status'] if cur else None})
+
+
 @bp.route('/api/ext/fundreq/drafts/pending-attachments')
 @api_key_required
 def api_ext_fundreq_pending_attachments():
