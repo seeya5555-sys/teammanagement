@@ -1,11 +1,5 @@
-"""영수증 자동인식 — provider 선택(Claude 우선·Gemini 폴백)과 응답 타입 정규화 계약 (2026-09-23).
-
-형 스크린샷: iOS 가 `fields.amount` 를 Double 로 디코드하는데 모델이 "1,078,000" 문자열을 돌려주자
-DecodingError 로 자동인식 전체가 죽었다. 여기서 못박는 것:
-  · /extract 응답의 fields.amount 는 **항상 숫자 또는 null**(문자열 금지), occur_date 는 YYYY-MM-DD 또는 null.
-  · ANTHROPIC_API_KEY 있으면 Claude(Haiku) 먼저, 실패하면 Gemini 폴백, 둘 다 없으면 no_api_key.
-  · RECEIPT_PROVIDER=gemini 강제 시 Claude 를 호출하지 않는다.
-  · 외부 HTTP 는 절대 나가지 않는다(두 provider 함수를 몽키패치).
+"""영수증 Haiku 전용 계약: Gemini 폴백 없음, 정규화 유지, 장애 메시지/외부호출 횟수 검증.
+모든 HTTP는 mock. 실제 키/영수증 데이터 없음.
 """
 import json
 import os
@@ -38,8 +32,8 @@ class ReceiptExtractProviderTests(unittest.TestCase):
         self.client = appmod.app.test_client()
         with self.client.session_transaction() as s:
             s.update(user_id=1, username='admin', display_name='A', role='admin', supervisor_id=None)
-        self.saved = {k: getattr(rcd, k) for k in ('_claude_vision_extract', '_gemini_vision_extract',
-                                                   'ANTHROPIC_API_KEY')}
+        self.saved = {k: getattr(rcd, k) for k in ('_claude_vision_extract', 'ANTHROPIC_API_KEY')}
+        rcd.ANTHROPIC_API_KEY = 'sk-test'
         self.old_provider = os.environ.pop('RECEIPT_PROVIDER', None)
         self.calls = []
 
@@ -107,96 +101,59 @@ class ReceiptExtractProviderTests(unittest.TestCase):
         self.assertEqual('2026-05-14', j['fields']['occur_date'])
         self.assertNotIn('amount', j['missing'])   # 0 은 값이 있는 것(사람이 판단), 문자열/None 만 missing
 
-    # ---- provider 선택 ----
-    def test_claude_preferred_when_key_present_and_gemini_not_called(self):
-        rcd.ANTHROPIC_API_KEY = 'k'
-        self._stub('_claude_vision_extract', {'readable': True, 'confidence': 'high', 'issues': [],
-                                              'vendor': 'V', 'date': '2026-01-02', 'currency': 'USD', 'amount': 12.5})
-        self._stub('_gemini_vision_extract', {'vendor': 'G', 'amount': 1})
+    # ---- Haiku 전용: 구 env/키 없음/실패 모두 Gemini 사용 금지 ----
+    def test_claude_is_only_provider_even_with_stale_gemini_env(self):
+        os.environ['RECEIPT_PROVIDER'] = 'gemini'
+        self._stub('_claude_vision_extract', {'vendor': 'V', 'date': '2026-01-02',
+                                            'currency': 'USD', 'amount': 12.5})
+        j = self._extract()
+        self.assertEqual('claude', rcd._receipt_provider())
+        self.assertFalse(hasattr(rcd, '_gemini_vision_extract'))
+        self.assertEqual(['_claude_vision_extract'], self.calls)
+        self.assertEqual('claude', j['provider'])
+        self.assertEqual(12.5, j['fields']['amount'])
+
+    def test_claude_failure_is_returned_without_fallback(self):
+        self._stub('_claude_vision_extract', {'error': 'AI_BUSY', 'detail': 'private'})
         j = self._extract()
         self.assertEqual(['_claude_vision_extract'], self.calls)
-        self.assertEqual('V', j['fields']['vendor'])
+        self.assertFalse(j['ok'])
+        self.assertEqual('AI_BUSY', j['reason'])
+        self.assertNotIn('detail', j)
 
-    def test_claude_failure_falls_back_to_gemini(self):
-        rcd.ANTHROPIC_API_KEY = 'k'
-        self._stub('_claude_vision_extract', {'error': 'API_CALL_FAILED', 'detail': '529'})
-        self._stub('_gemini_vision_extract', {'readable': True, 'confidence': 'high', 'issues': [],
-                                              'vendor': 'G', 'date': '2026-01-02', 'currency': 'KRW', 'amount': '3,000'})
-        j = self._extract()
-        self.assertEqual(['_claude_vision_extract', '_gemini_vision_extract'], self.calls)
-        self.assertTrue(j['ok'])
-        self.assertEqual('gemini', j['provider'])
-        self.assertEqual(3000.0, j['fields']['amount'])
-
-    def test_no_claude_key_uses_gemini_directly(self):
+    def test_missing_claude_key_never_calls_any_provider(self):
+        from unittest.mock import patch
         rcd.ANTHROPIC_API_KEY = ''
-        self._stub('_claude_vision_extract', {'vendor': 'C', 'amount': 1})
-        self._stub('_gemini_vision_extract', {'readable': True, 'confidence': 'high', 'issues': [],
-                                              'vendor': 'G', 'date': None, 'currency': 'KRW', 'amount': 5})
-        j = self._extract()
-        self.assertEqual(['_gemini_vision_extract'], self.calls)
-        self.assertEqual('gemini', j['provider'])
-
-    def test_forced_gemini_provider_skips_claude_even_with_key(self):
-        rcd.ANTHROPIC_API_KEY = 'k'
-        os.environ['RECEIPT_PROVIDER'] = 'gemini'
-        self._stub('_claude_vision_extract', {'vendor': 'C', 'amount': 1})
-        self._stub('_gemini_vision_extract', {'readable': True, 'confidence': 'high', 'issues': [],
-                                              'vendor': 'G', 'date': None, 'currency': 'KRW', 'amount': 5})
-        self._extract()
-        self.assertEqual(['_gemini_vision_extract'], self.calls)
-
-    def test_both_missing_reports_no_api_key(self):
-        rcd.ANTHROPIC_API_KEY = ''
-        self._stub('_gemini_vision_extract', {'error': 'NO_API_KEY'})
-        j = self._extract()
+        with patch('urllib.request.urlopen', side_effect=AssertionError('no HTTP allowed')) as http:
+            j = self._extract()
+        http.assert_not_called()
         self.assertFalse(j['ok'])
         self.assertEqual('no_api_key', j['reason'])
+        self.assertIn('Haiku', j['message'])
 
-    def test_claude_failure_and_gemini_absent_surfaces_claude_error(self):
-        rcd.ANTHROPIC_API_KEY = 'k'
-        self._stub('_claude_vision_extract', {'error': 'PARSE_FAILED', 'raw': 'garbage'})
-        self._stub('_gemini_vision_extract', {'error': 'NO_API_KEY'})
+    def test_non_object_provider_result_is_parse_error_not_500(self):
+        for result in (None, [], 7):
+            with self.subTest(result=result):
+                self._stub('_claude_vision_extract', result)
+                response = self.client.post(f'/api/biz-trips/{self.tid}/extract', json={'filename': 'r.jpg'})
+                self.assertEqual(200, response.status_code)
+                self.assertEqual('PARSE_FAILED', response.get_json()['reason'])
+
+    def test_reported_model_is_actual_claude_model(self):
+        self._stub('_claude_vision_extract', {'vendor': 'V', 'amount': 5, '_model': 'claude-haiku-test'})
         j = self._extract()
-        self.assertFalse(j['ok'])
-        self.assertEqual('PARSE_FAILED', j['reason'])
-
-    # ---- 올마이트 지적: 비객체 JSON·실제 model 표기·deadline ----
-    def test_non_dict_provider_result_falls_back_instead_of_crashing(self):
-        rcd.ANTHROPIC_API_KEY = 'k'
-        self._stub('_claude_vision_extract', [])           # `[]` 같은 비객체
-        self._stub('_gemini_vision_extract', {'readable': True, 'confidence': 'high', 'issues': [],
-                                              'vendor': 'G', 'date': None, 'currency': 'KRW', 'amount': 5})
-        j = self._extract()
-        self.assertTrue(j['ok'])
-        self.assertEqual('gemini', j['provider'])
-
-    def test_non_dict_from_both_is_parse_failed_200_not_500(self):
-        rcd.ANTHROPIC_API_KEY = ''
-        self._stub('_gemini_vision_extract', None)
-        r = self.client.post(f'/api/biz-trips/{self.tid}/extract', json={'filename': 'r.jpg'})
-        self.assertEqual(200, r.status_code)
-        self.assertEqual('PARSE_FAILED', r.get_json()['reason'])
-
-    def test_reported_model_is_the_one_actually_used_after_retry(self):
-        rcd.ANTHROPIC_API_KEY = ''
-        self._stub('_gemini_vision_extract', {'readable': True, 'confidence': 'high', 'issues': [],
-                                              'vendor': 'G', 'date': None, 'currency': 'KRW', 'amount': 5,
-                                              '_model': 'gemini-fallback-model'})
-        j = self._extract()
-        self.assertEqual('gemini-fallback-model', j['model'])
+        self.assertEqual('claude-haiku-test', j['model'])
         self.assertNotIn('_model', j['raw'])
 
-    def test_claude_receives_timeout_within_deadline(self):
-        rcd.ANTHROPIC_API_KEY = 'k'
+    def test_claude_receives_bounded_timeout(self):
         seen = {}
-        def fn(path, *a, **k):
-            seen.update(k); return {'readable': True, 'confidence': 'high', 'issues': [],
-                                    'vendor': 'V', 'date': None, 'currency': 'KRW', 'amount': 1}
+        def fn(path, **kwargs):
+            seen.update(kwargs)
+            return {'vendor': 'V', 'amount': 1}
         rcd._claude_vision_extract = fn
         self._extract()
-        self.assertLessEqual(seen.get('timeout', 999), 25)
-        self.assertGreaterEqual(seen.get('timeout', 0), 5)
+        self.assertGreater(seen['timeout'], 0)
+        self.assertLessEqual(seen['timeout'], 25)
 
     def test_amount_guesses_are_not_promoted(self):
         rcd.ANTHROPIC_API_KEY = 'k'
@@ -213,7 +170,7 @@ class ReceiptExtractProviderTests(unittest.TestCase):
                                                   'vendor': 'X', 'date': '2026-01-01', 'currency': 'KRW', 'amount': good})
             self.assertEqual(want, self._extract()['fields']['amount'], good)
 
-    # ---- 실제 HTTP 계층(urlopen 모킹): 503 재시도 경로가 NameError 로 죽었던 실버그(2026-09-23 라이브 probe) ----
+    # ---- 실제 HTTP 계층 mock: Haiku 전용 요청·오류 계약 ----
     def _mock_urlopen(self, script):
         """script: URL 부분문자열 → ('ok', body_dict) | ('http', code, body_text). 호출 순서를 self.http 에 기록."""
         import urllib.request, urllib.error, io
@@ -235,88 +192,58 @@ class ReceiptExtractProviderTests(unittest.TestCase):
         urllib.request.urlopen = fake
         self.addCleanup(lambda: setattr(urllib.request, 'urlopen', self._old_urlopen))
 
-    def _gemini_ok(self, obj):
-        return ('ok', {'candidates': [{'content': {'parts': [{'text': json.dumps(obj)}]}}]})
-
-    def test_gemini_503_on_receipt_model_retries_default_model_and_reports_it(self):
-        rcd.ANTHROPIC_API_KEY = ''
-        old_key, rcd.GEMINI_API_KEY = rcd.GEMINI_API_KEY, 'g'
-        self.addCleanup(lambda: setattr(rcd, 'GEMINI_API_KEY', old_key))
-        os.environ['MODEL_RECEIPT'] = 'gemini-primary-test'
-        self.addCleanup(lambda: os.environ.pop('MODEL_RECEIPT', None))
-        self._mock_urlopen([
-            ('gemini-primary-test:generateContent', ('http', 503, '{"error":{"code":503}}')),
-            (rcd.GEMINI_MODEL + ':generateContent', self._gemini_ok(
-                {'readable': True, 'confidence': 'high', 'issues': [], 'vendor': 'V', 'date': '2026-05-14',
-                 'currency': 'KRW', 'amount': '1,078,000'})),
-        ])
-        j = self._extract()
-        self.assertTrue(j['ok'], j)
-        self.assertEqual(2, len(self.http))
-        self.assertIn('gemini-primary-test', self.http[0][0])
-        self.assertIn(rcd.GEMINI_MODEL, self.http[1][0])
-        self.assertEqual(rcd.GEMINI_MODEL, j['model'])          # 실제 사용 모델
-        self.assertEqual(1078000.0, j['fields']['amount'])
-        self.assertTrue(all(t is not None and 5 <= t <= 40 for _, t, _ in self.http))
-
-    def test_gemini_400_is_not_retried(self):
-        rcd.ANTHROPIC_API_KEY = ''
-        old_key, rcd.GEMINI_API_KEY = rcd.GEMINI_API_KEY, 'g'
-        self.addCleanup(lambda: setattr(rcd, 'GEMINI_API_KEY', old_key))
-        os.environ['MODEL_RECEIPT'] = 'gemini-primary-test'
-        self.addCleanup(lambda: os.environ.pop('MODEL_RECEIPT', None))
-        self._mock_urlopen([('gemini-primary-test:generateContent', ('http', 400, 'bad'))])
-        j = self._extract()
-        self.assertFalse(j['ok'])
-        self.assertEqual('API_CALL_FAILED', j['reason'])
-        self.assertEqual(1, len(self.http))
-
-    def test_both_gemini_models_busy_surface_service_failure_without_raw_details(self):
+    def test_claude_http_failures_are_classified_and_never_call_gemini(self):
+        cases = ((429, 'AI_BUSY', True), (503, 'AI_BUSY', True), (529, 'AI_BUSY', True),
+                 (504, 'AI_TIMEOUT', True), (401, 'AI_AUTH_FAILED', False),
+                 (403, 'AI_AUTH_FAILED', False), (400, 'API_CALL_FAILED', False))
+        # One mocked transport, mutable response. Every case must issue exactly one Anthropic call.
+        import io, urllib.error
         from unittest.mock import patch
-        with patch.object(rcd, 'ANTHROPIC_API_KEY', ''), patch.object(rcd, 'GEMINI_API_KEY', 'g'), \
-                patch.dict(os.environ, {'MODEL_RECEIPT': 'gemini-primary-test'}):
-            self._mock_urlopen([(':generateContent', ('http', 503, 'private upstream detail'))])
-            j = self._extract()
-        self.assertFalse(j['ok'])
-        self.assertEqual('AI_BUSY', j['reason'])
-        self.assertTrue(j['retryable'])
-        self.assertIn('혼잡', j['message'])
-        self.assertNotIn('detail', j)
-        self.assertNotIn('private upstream', json.dumps(j))
-        self.assertEqual(2, len(self.http))
+        for code, reason, retryable in cases:
+            with self.subTest(code=code):
+                seen = []
+                def fail(req, **kwargs):
+                    seen.append(req.full_url)
+                    raise urllib.error.HTTPError(req.full_url, code, 'error', {}, io.BytesIO(b'private detail'))
+                with patch('urllib.request.urlopen', side_effect=fail):
+                    j = self._extract()
+                self.assertFalse(j['ok'])
+                self.assertEqual(reason, j['reason'])
+                self.assertEqual(retryable, j['retryable'])
+                self.assertNotIn('detail', j)
+                self.assertNotIn('private', json.dumps(j))
+                self.assertEqual(['https://api.anthropic.com/v1/messages'], seen)
 
-    def test_gemini_timeout_is_distinguished_from_unreadable_photo(self):
+    def test_claude_network_failures_are_sanitized(self):
         from unittest.mock import patch
         import urllib.error
-        for exc in (TimeoutError('private socket'), urllib.error.URLError(TimeoutError('socket'))):
-            with patch.object(rcd, 'ANTHROPIC_API_KEY', ''), patch.object(rcd, 'GEMINI_API_KEY', 'g'), \
-                    patch('urllib.request.urlopen', side_effect=exc):
-                j = self._extract()
-            self.assertEqual('AI_TIMEOUT', j['reason'])
-            self.assertTrue(j['retryable'])
-            self.assertNotIn('detail', j)
+        for exc, reason in ((TimeoutError('private socket'), 'AI_TIMEOUT'),
+                            (urllib.error.URLError(TimeoutError('socket')), 'AI_TIMEOUT'),
+                            (urllib.error.URLError('private connection'), 'API_CALL_FAILED')):
+            with self.subTest(reason=reason):
+                with patch('urllib.request.urlopen', side_effect=exc) as http:
+                    j = self._extract()
+                self.assertEqual(reason, j['reason'])
+                self.assertEqual(1, http.call_count)
+                self.assertNotIn('detail', j)
 
-    def test_claude_request_shape_and_non_object_json_falls_back(self):
-        """Anthropic Messages 요청 형식(헤더·image block·model) 확인 + `[]` 응답이면 gemini 폴백."""
-        rcd.ANTHROPIC_API_KEY = 'sk-test'
-        old_key, rcd.GEMINI_API_KEY = rcd.GEMINI_API_KEY, 'g'
-        self.addCleanup(lambda: setattr(rcd, 'GEMINI_API_KEY', old_key))
+    def test_claude_request_shape_and_non_object_json_does_not_fallback(self):
         self._mock_urlopen([
             ('api.anthropic.com/v1/messages', ('ok', {'stop_reason': 'end_turn',
-                                                      'content': [{'type': 'text', 'text': '[]'}]})),
-            (':generateContent', self._gemini_ok({'readable': True, 'confidence': 'medium', 'issues': [],
-                                                  'vendor': 'G', 'date': None, 'currency': 'KRW', 'amount': 5})),
+               'content': [{'type': 'text', 'text': '[]'}]})),
         ])
         j = self._extract()
-        self.assertTrue(j['ok'])
-        self.assertEqual('gemini', j['provider'])
+        self.assertFalse(j['ok'])
+        self.assertEqual('PARSE_FAILED', j['reason'])
+        self.assertNotIn('raw', j)
+        self.assertEqual(1, len(self.http))
         url, timeout, body = self.http[0]
         self.assertEqual(rcd.RECEIPT_CLAUDE_MODEL, body['model'])
         self.assertEqual(512, body['max_tokens'])
         content = body['messages'][0]['content']
         self.assertEqual('image', content[0]['type'])
         self.assertEqual('base64', content[0]['source']['type'])
-        self.assertEqual('image/jpeg', content[0]['source']['media_type'])   # 매직바이트 \xff\xd8\xff
+        self.assertEqual('image/jpeg', content[0]['source']['media_type'])
         self.assertEqual('text', content[1]['type'])
 
     def test_claude_success_end_to_end_via_http_layer(self):

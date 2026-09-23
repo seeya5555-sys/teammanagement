@@ -37,7 +37,7 @@ from app_core import (
     ensure_heif_opener, execute, execute_rc, get_db, query,
 )
 from helpers_shared import (
-    AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, GEMINI_MODEL, RETIRED_RUNNER_KEYS,
+    AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, RETIRED_RUNNER_KEYS,
     SOA_CATEGORY_OWNER, FLEET_MAP_FILE, _AOR_ACTIVE_STATUSES, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
     _FUNDREQ_ATT_MIME, _HEALTH_ORDER, _annotate_drafts_with_vessel,
     _aor_absorbing_trigger_sql, _aor_status_list_sql, _automation_enabled,
@@ -2247,20 +2247,16 @@ def api_receipt_create_with_file(tid):
     return jsonify({'ok': True, 'receipt': dict(r)}), 201
 
 
-# ─── 영수증 비전 추출 (Claude Haiku 우선 · Gemini 폴백) ────────────────
-# 2026-09-23 형 지시: Gemini(3.1 flash-lite) 인식률이 낮아 Claude(Haiku급)로.
-#   · provider = RECEIPT_PROVIDER env(auto|claude|gemini). auto = ANTHROPIC_API_KEY 있으면 claude, 없으면 gemini.
-#   · claude 실패(키 없음·API 오류·비JSON) → gemini 로 폴백(fail-open, 기존 동작 유지).
-#   · 어느 provider 든 결과는 `_normalize_receipt_result` 로 정규화 — amount 는 항상 숫자(or null),
-#     date 는 YYYY-MM-DD, currency 는 대문자 ISO. (iOS 는 amount 를 Double 로 디코드해 문자열이 오면
-#     "DecodingError typeMismatch fields.amount" 로 자동인식 전체가 실패했음 — 형 스크린샷 2026-09-23.)
+# ─── 영수증 비전 추출 (Claude Haiku 전용) ────────────────────
+# 2026-09-24 사용자 승인: 영수증 Gemini 폐기(폴백 포함). 키 없음/실패도 Gemini 호출 금지.
+# 다른 기능의 Gemini 설정은 그대로 유지한다. amount/date 응답 정규화는 유지.
 RECEIPT_CLAUDE_MODEL = os.environ.get('RECEIPT_CLAUDE_MODEL', 'claude-haiku-4-5')
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 
 _RECEIPT_PROMPT = (
-    "이 이미지는 선박 기술감독의 출장 경비 영수증(한국 카드전표·현금영수증·간이영수증·해외 receipt·인보이스)이다. "
+    "이 이미지는 선박 기술감독의 출장 경비 영수증(한국 카드전표·현금영수증·간이영수증·해외 receipt·인보이스·결제 앱의 거래내역 화면)이다. "
     "아래 항목만 추출해 지정한 JSON 형식으로만 답하라. 설명·코드펜스 금지.\n"
-    "- vendor: 상호/가맹점명(영수증 상단 상호. 사업자번호·주소·전화는 제외. 없으면 null)\n"
+    "- vendor: 상호/가맹점명(원문 상호를 번역·교정하지 말고 그대로. 화면에 반복된 상호가 있으면 서로 대조하여 한 글자씩 확인. 사업자번호·주소·전화는 제외. 불명확하면 null)\n"
     "- date: 거래(결제/승인) 일자 YYYY-MM-DD. '거래일시·승인일시·판매일·Date' 등에서. "
     "인쇄일·유효기간·바코드 숫자로 추측하지 말고 명시된 날짜가 없으면 null\n"
     "- currency: ISO 4217 코드. ₩/원→KRW, ¥/元/RMB→CNY, ￥(일본)→JPY, $→USD(문맥상 SGD·HKD 등이면 그 코드), €→EUR. "
@@ -2424,7 +2420,7 @@ def _strip_json_fence(text):
     return text
 
 
-RECEIPT_EXTRACT_DEADLINE_S = 60   # provider 폴백 체인 전체 상한(claude→gemini→gemini기본 최대 3회 요청)
+RECEIPT_EXTRACT_TIMEOUT_S = 25   # Haiku 한 번만 호출. 실패/키 없음에도 타 provider 전환 없음.
 
 
 def _read_image_for_llm(image_path):
@@ -2486,15 +2482,18 @@ def _claude_vision_extract(image_path, model=None, timeout=25):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode('utf-8'))
     except urllib.error.HTTPError as he:
-        try:
-            detail = he.read().decode('utf-8')[:300]
-        except Exception:
-            detail = str(he)
-        app.logger.warning('claude-vision-extract HTTP %s: %s', he.code, detail)
-        return {'error': 'API_CALL_FAILED', 'detail': detail}
+        # 원문에는 입력/계정 정보가 섞일 수 있으므로 상태코드만 기록·전달.
+        reason = ('AI_BUSY' if he.code in (429, 503, 529) else
+                  'AI_TIMEOUT' if he.code == 504 else
+                  'AI_AUTH_FAILED' if he.code in (401, 403) else 'API_CALL_FAILED')
+        app.logger.warning('claude-vision-extract failed model=%s status=%s', mdl, he.code)
+        return {'error': reason, 'http_status': he.code}
     except Exception as e:
-        app.logger.exception('claude-vision-extract')
-        return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+        import socket
+        is_timeout = isinstance(e, (TimeoutError, socket.timeout)) or (
+            isinstance(e, urllib.error.URLError) and isinstance(e.reason, (TimeoutError, socket.timeout)))
+        app.logger.warning('claude-vision-extract failed model=%s kind=%s', mdl, type(e).__name__)
+        return {'error': 'AI_TIMEOUT' if is_timeout else 'API_CALL_FAILED'}
     try:
         if not isinstance(data, dict):
             return {'error': 'PARSE_FAILED', 'raw': str(data)[:300]}
@@ -2519,128 +2518,28 @@ def _claude_vision_extract(image_path, model=None, timeout=25):
             except Exception:
                 parsed = None
     if not isinstance(parsed, dict):   # `[]`/`null`/숫자 등 비객체 JSON 도 실패로(올마이트)
-        app.logger.warning('claude-vision-extract PARSE_FAILED: %s', text[:200])
+        app.logger.warning('claude-vision-extract PARSE_FAILED')
         return {'error': 'PARSE_FAILED', 'raw': text[:300]}
     parsed['_model'] = mdl
     return parsed
 
 
 def _receipt_provider():
-    p = (os.environ.get('RECEIPT_PROVIDER') or 'auto').strip().lower()
-    if p == 'auto':
-        return 'claude' if ANTHROPIC_API_KEY else 'gemini'
-    return p if p in ('claude', 'gemini') else 'gemini'
+    # 기존 RECEIPT_PROVIDER=gemini/auto가 남아 있어도 영수증 경로는 Haiku 전용.
+    return 'claude'
 
 
 def _as_result_dict(r):
-    """provider 반환값 방어: dict 아니면 PARSE_FAILED 로 취급(정규화 전 .get() 크래시 차단)."""
-    return r if isinstance(r, dict) else {'error': 'PARSE_FAILED', 'raw': str(r)[:300]}
+    """provider 반환값 방어: 비객체 응답을 PARSE_FAILED로 처리."""
+    return r if isinstance(r, dict) else {'error': 'PARSE_FAILED'}
 
 
 def _receipt_vision_extract(image_path):
-    """provider 선택 → 추출 → 정규화. claude 실패 시 gemini 폴백(둘 다 실패면 마지막 오류 반환).
-    전체 체인은 RECEIPT_EXTRACT_DEADLINE_S 안에서 끝낸다(각 호출 timeout = 남은 시간, 최소 5s)."""
-    import time as _t
-    deadline = _t.monotonic() + RECEIPT_EXTRACT_DEADLINE_S
-
-    def _left(cap):
-        return max(5, min(cap, int(deadline - _t.monotonic())))
-
-    provider = _receipt_provider()
-    if provider == 'claude':
-        r = _as_result_dict(_claude_vision_extract(image_path, timeout=_left(25)))
-        if not r.get('error'):
-            return _normalize_receipt_result(r, 'claude', RECEIPT_CLAUDE_MODEL)
-        app.logger.warning('receipt extract: claude 실패(%s) → gemini 폴백', r.get('error'))
-        g = _as_result_dict(_gemini_vision_extract(image_path, timeout=_left(25), _deadline=deadline))
-        if g.get('error') == 'NO_API_KEY':
-            return r          # gemini 도 없으면 claude 의 실제 오류를 보여준다
-        return _normalize_receipt_result(g, 'gemini') if not g.get('error') else g
-    g = _as_result_dict(_gemini_vision_extract(image_path, timeout=_left(30), _deadline=deadline))
-    return _normalize_receipt_result(g, 'gemini') if not g.get('error') else g
-
-
-def _gemini_vision_extract(image_path, model=None, _retry=True, timeout=40, _deadline=None):
-    """저장된 영수증 이미지를 Gemini 로 추출 (vendor/date/currency/amount + 품질 판정).
-    MODEL_RECEIPT 가 503/429 로 튕기면 기본 GEMINI_MODEL 로 1회 재시도(모델 수요 스파이크 실측 2026-09-23).
-    성공 시 dict 에 `_model`(실제 사용 모델) 포함."""
-    if not GEMINI_API_KEY:
-        return {'error': 'NO_API_KEY'}
-    import base64, urllib.request, urllib.error
-    mdl = model or _model_for('receipt')
-    img, err = _read_image_for_llm(image_path)
-    if err:
-        return err
-    raw, media = img
-    b64 = base64.standard_b64encode(raw).decode()
-    prompt = _RECEIPT_PROMPT
-    body = {
-        'contents': [{
-            'parts': [
-                {'inline_data': {'mime_type': media, 'data': b64}},
-                {'text': prompt},
-            ],
-        }],
-        'generationConfig': {'response_mime_type': 'application/json'},
-    }
-    url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-           f'{mdl}:generateContent')
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode('utf-8'),
-        headers={
-            'content-type': 'application/json',
-            'x-goog-api-key': GEMINI_API_KEY,
-        }, method='POST')
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as he:
-        try:
-            detail = he.read().decode('utf-8')[:300]
-        except Exception:
-            app.logger.exception('gemini-vision-extract')
-            detail = str(he)
-        if _retry and he.code in (429, 503) and mdl != GEMINI_MODEL:
-            import time as _t
-            left = int(_deadline - _t.monotonic()) if _deadline else timeout
-            if left >= 5:
-                app.logger.warning('gemini-vision-extract %s on %s → %s 재시도(%ss)', he.code, mdl, GEMINI_MODEL, left)
-                return _gemini_vision_extract(image_path, model=GEMINI_MODEL, _retry=False,
-                                              timeout=min(timeout, left), _deadline=_deadline)
-        app.logger.warning('gemini-vision-extract failed model=%s status=%s', mdl, he.code)
-        return {'error': 'AI_BUSY' if he.code in (429, 503) else 'API_CALL_FAILED',
-                'http_status': he.code}
-    except Exception as e:
-        import socket
-        is_timeout = isinstance(e, (TimeoutError, socket.timeout)) or (
-            isinstance(e, urllib.error.URLError) and isinstance(e.reason, (TimeoutError, socket.timeout)))
-        app.logger.warning('gemini-vision-extract failed model=%s kind=%s', mdl, type(e).__name__)
-        return {'error': 'AI_TIMEOUT' if is_timeout else 'API_CALL_FAILED'}
-
-    # candidates[0].content.parts[*].text 취합
-    text = ''
-    try:
-        cands = data.get('candidates') or []
-        if not cands:
-            return {'error': 'API_CALL_FAILED', 'detail': json.dumps(data)[:300]}
-        for part in (cands[0].get('content', {}).get('parts') or []):
-            if isinstance(part.get('text'), str):
-                text += part['text']
-    except Exception as e:
-        app.logger.exception('gemini-vision-extract')
-        return {'error': 'PARSE_FAILED', 'raw': str(e)}
-
-    text = _strip_json_fence(text)
-    try:
-        parsed = json.loads(text)
-    except Exception:
-        app.logger.exception('gemini-vision-extract')
-        return {'error': 'PARSE_FAILED', 'raw': text[:300]}
-    if not isinstance(parsed, dict):   # `[]`/`null` 등 비객체 JSON
-        return {'error': 'PARSE_FAILED', 'raw': text[:300]}
-    parsed['_model'] = mdl
-    return parsed
+    """Haiku 전용. 실패/키 미설정 시 정직한 오류 반환, 다른 AI 호출 없음."""
+    r = _as_result_dict(_claude_vision_extract(image_path, timeout=RECEIPT_EXTRACT_TIMEOUT_S))
+    if r.get('error'):
+        return r
+    return _normalize_receipt_result(r, 'claude', RECEIPT_CLAUDE_MODEL)
 
 
 @bp.route('/api/biz-trips/<int:tid>/extract', methods=['POST'])
@@ -2659,10 +2558,11 @@ def api_receipt_extract(tid):
     result = _receipt_vision_extract(path)   # 정규화 완료: amount=float|None, date=YYYY-MM-DD|None
     if result.get('error') == 'NO_API_KEY':
         return jsonify({'ok': False, 'reason': 'no_api_key',
-                        'message': 'AI 자동추출이 설정되지 않았습니다. 직접 입력해 주세요.'}), 200
+                        'message': 'Haiku 자동추출 키가 설정되지 않았습니다. 관리자에게 확인해 주세요.'}), 200
     if result.get('error'):
         reason = result['error']
         messages = {
+            'AI_AUTH_FAILED': 'Haiku 인증에 실패했습니다. 관리자에게 API 키 상태 확인을 요청해 주세요.',
             'AI_BUSY': 'AI 서비스 혼잡 또는 요청 한도 초과로 응답하지 못했습니다. 사진 인식 불량이 아닙니다. 잠시 후 다시 시도해 주세요.',
             'AI_TIMEOUT': 'AI 서비스 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.',
             'PARSE_FAILED': 'AI 응답 형식에 오류가 발생했습니다. 다시 시도해 주세요.',
