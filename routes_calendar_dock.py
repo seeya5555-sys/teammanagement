@@ -2247,28 +2247,333 @@ def api_receipt_create_with_file(tid):
     return jsonify({'ok': True, 'receipt': dict(r)}), 201
 
 
-# ─── Gemini 비전 추출 (Gemini 3.1 Flash Lite) ────────────────
-def _gemini_vision_extract(image_path):
-    """저장된 영수증 이미지를 Gemini 3.1 Flash Lite로 추출 (vendor/date/currency/amount + 품질 판정)."""
+# ─── 영수증 비전 추출 (Claude Haiku 우선 · Gemini 폴백) ────────────────
+# 2026-09-23 형 지시: Gemini(3.1 flash-lite) 인식률이 낮아 Claude(Haiku급)로.
+#   · provider = RECEIPT_PROVIDER env(auto|claude|gemini). auto = ANTHROPIC_API_KEY 있으면 claude, 없으면 gemini.
+#   · claude 실패(키 없음·API 오류·비JSON) → gemini 로 폴백(fail-open, 기존 동작 유지).
+#   · 어느 provider 든 결과는 `_normalize_receipt_result` 로 정규화 — amount 는 항상 숫자(or null),
+#     date 는 YYYY-MM-DD, currency 는 대문자 ISO. (iOS 는 amount 를 Double 로 디코드해 문자열이 오면
+#     "DecodingError typeMismatch fields.amount" 로 자동인식 전체가 실패했음 — 형 스크린샷 2026-09-23.)
+RECEIPT_CLAUDE_MODEL = os.environ.get('RECEIPT_CLAUDE_MODEL', 'claude-haiku-4-5')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+
+_RECEIPT_PROMPT = (
+    "이 이미지는 선박 기술감독의 출장 경비 영수증(한국 카드전표·현금영수증·간이영수증·해외 receipt·인보이스)이다. "
+    "아래 항목만 추출해 지정한 JSON 형식으로만 답하라. 설명·코드펜스 금지.\n"
+    "- vendor: 상호/가맹점명(영수증 상단 상호. 사업자번호·주소·전화는 제외. 없으면 null)\n"
+    "- date: 거래(결제/승인) 일자 YYYY-MM-DD. '거래일시·승인일시·판매일·Date' 등에서. "
+    "인쇄일·유효기간·바코드 숫자로 추측하지 말고 명시된 날짜가 없으면 null\n"
+    "- currency: ISO 4217 코드. ₩/원→KRW, ¥/元/RMB→CNY, ￥(일본)→JPY, $→USD(문맥상 SGD·HKD 등이면 그 코드), €→EUR. "
+    "표기 없고 한국 영수증이면 KRW. 불명확하면 null\n"
+    "- amount: 실제 결제 총액 숫자만(콤마·통화기호 제거, 소수 허용). 우선순위 = '결제금액/승인금액/총액/합계/Total/Grand Total' > "
+    "'공급가액+부가세'. 공급가액·부가세·할인전 금액·잔액·품목 단가는 총액이 아니다. 여러 총액이 있으면 실제 카드/현금 결제된 금액. 불명확하면 null\n"
+    "글자가 흐리거나 잘려 확신할 수 없으면 해당 필드는 null로 두고, "
+    "readable(true/false), confidence(high/medium/low), "
+    "issues(배열: blurry/glare/cropped/dark/unclear_amount/multiple_totals/not_receipt 등)를 채워라.\n"
+    '형식: {"readable":true,"confidence":"high","issues":[],'
+    '"vendor":null,"date":null,"currency":null,"amount":null}'
+)
+
+_CURRENCY_SYMBOL = {'₩': 'KRW', '원': 'KRW', 'WON': 'KRW', '¥': 'CNY', '元': 'CNY', 'RMB': 'CNY', '￥': 'JPY',
+                    '$': 'USD', 'US$': 'USD', '€': 'EUR', '£': 'GBP', 'S$': 'SGD', 'HK$': 'HKD'}
+
+
+_RECEIPT_ISO_CURRENCIES = {'KRW', 'USD', 'CNY', 'JPY', 'EUR', 'GBP', 'SGD', 'HKD', 'TWD', 'THB', 'VND', 'MYR',
+                           'IDR', 'PHP', 'INR', 'AED', 'SAR', 'QAR', 'OMR', 'TRY', 'EGP', 'ZAR', 'AUD', 'NZD',
+                           'CAD', 'MXN', 'BRL', 'CHF', 'NOK', 'SEK', 'DKK', 'PLN', 'CZK', 'RUB', 'BDT', 'LKR',
+                           'PKR', 'MAD', 'NGN', 'KES', 'PAB', 'CLP', 'ARS', 'PEN', 'COP', 'TTD', 'BHD', 'KWD'}
+_RECEIPT_DATE_PATTERNS = (   # 허용 형식만 fullmatch(올마이트: re.search 는 전화번호·바코드 일부를 날짜로 오채택)
+    re.compile(r'(?P<y>\d{4})[.\-/](?P<m>\d{1,2})[.\-/](?P<d>\d{1,2})'),
+    re.compile(r'(?P<y>\d{4})년\s*(?P<m>\d{1,2})월\s*(?P<d>\d{1,2})일?'),
+    re.compile(r'(?P<y>\d{4})(?P<m>\d{2})(?P<d>\d{2})'),
+    re.compile(r'(?P<y>\d{2})[.\-/](?P<m>\d{1,2})[.\-/](?P<d>\d{1,2})'),
+)
+
+
+def _normalize_receipt_date(v):
+    """'2026-05-14' / '2026.05.14' / '2026/5/14' / '20260514' / '26.05.14' / '2026년 5월 14일' (+뒤 시각 허용)
+    → 'YYYY-MM-DD'. 허용 형식 fullmatch 만 인정, 그 외·불가능 날짜는 None."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    # 공백 제거 후 앞부분이 허용 날짜 형식이고, 뒤에는 시각/요일 꼬리('13:20:11', '(목)13:20', 'T09:00')만 허용.
+    # 바코드('20260514R738…')·사업자번호('1208184429'→'12081844'+'29')는 꼬리가 시각 형식이 아니라 거부.
+    compact = re.sub(r'\s+', '', s)
+    for pat in _RECEIPT_DATE_PATTERNS:
+        m = pat.match(compact)
+        if not m:
+            continue
+        tail = compact[m.end():].lstrip('.')
+        if tail and not re.fullmatch(r'(\([^)]*\))?(T|,)?(\d{1,2}:\d{2}(:\d{2})?)?(\([^)]*\))?', tail):
+            continue
+        y = m.group('y')
+        if len(y) == 2:
+            y = '20' + y
+        try:
+            return datetime(int(y), int(m.group('m')), int(m.group('d'))).strftime('%Y-%m-%d')
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_receipt_currency(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    up = s.upper()
+    if up in _CURRENCY_SYMBOL:
+        return _CURRENCY_SYMBOL[up]
+    if s in _CURRENCY_SYMBOL:
+        return _CURRENCY_SYMBOL[s]
+    return up if up in _RECEIPT_ISO_CURRENCIES else None
+
+
+def _normalize_receipt_amount(v):
+    """모델 amount → float|None. 숫자면 유한값만, 문자열이면 통화기호·문자·공백·천단위 콤마를 뗀 뒤
+    **숫자 하나로 fullmatch** 할 때만 인정('2 items Total 12.50' → None, '(12.50)' → None, '12,50' → None).
+    `_parse_amount`(폼 입력용, 첫 숫자토큰 관대)와 의도적으로 다르다 — 모델 추측을 값으로 승격하지 않는다."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        f = float(v)
+        return f if f == f and abs(f) != float('inf') else None
+    s = str(v).strip()
+    if not s:
+        return None
+    num = r'-?\d{1,3}(,\d{3})*(\.\d+)?|-?\d+(\.\d+)?'
+    if re.fullmatch(num, s):
+        return float(s.replace(',', ''))
+    # 통화 표기 동반('₩1,078,000', 'USD 12.50', '1,078,000원'): 공백 토큰별로 앞뒤 통화기호/문자를 떼고
+    # 숫자 토큰이 정확히 1개, 나머지는 순수 문자(통화명)여야 한다. 토큰을 이어붙이지 않는다('2 items Total 12.50' → None).
+    sym = r'[A-Za-z₩¥￥$€£원元]+'
+    numeric = []
+    for tok in s.split():
+        core = re.sub(r'^%s|%s$' % (sym, sym), '', tok)
+        if core == '':
+            # 통화 토큰만 허용('USD', '원', '₩', 'RMB'). 'approx'·'items' 같은 일반 단어 → 추측으로 보고 거부
+            word = tok.strip('₩¥￥$€£')
+            if word and word.upper() not in _RECEIPT_ISO_CURRENCIES and word not in _CURRENCY_SYMBOL \
+                    and word.upper() not in _CURRENCY_SYMBOL:
+                return None
+            continue
+        if not re.fullmatch(num, core):
+            return None                    # 'items', '(12.50)', '12,50' 등
+        for w in re.findall(r'[A-Za-z]+', tok):   # 'USD12.50'·'approx3000' 처럼 붙은 문자도 통화명만
+            if w.upper() not in _RECEIPT_ISO_CURRENCIES and w.upper() not in _CURRENCY_SYMBOL:
+                return None
+        numeric.append(core)
+    if len(numeric) != 1:
+        return None
+    return float(numeric[0].replace(',', ''))
+
+
+def _normalize_receipt_result(result, provider=None, model=None):
+    """모델 원응답(dict) → 클라이언트 계약 형태. 타입을 여기서 못박아 웹/iOS 디코딩이 절대 안 깨지게 한다."""
+    if not isinstance(result, dict):
+        return {'error': 'PARSE_FAILED', 'raw': str(result)[:300]}
+    if result.get('error'):
+        return result
+    model = result.pop('_model', None) or model   # provider 가 실제 사용한 모델(폴백 재시도 반영)
+    readable = result.get('readable')
+    if isinstance(readable, str):
+        readable = readable.strip().lower() in ('true', 'yes', 'y', '1')
+    elif readable is not None:
+        readable = bool(readable)
+    conf = result.get('confidence')
+    conf = str(conf).strip().lower() if conf is not None else None
+    if conf not in ('high', 'medium', 'low'):
+        conf = None
+    issues = result.get('issues')
+    if isinstance(issues, str):
+        issues = [issues] if issues.strip() else []
+    elif not isinstance(issues, list):
+        issues = []
+    issues = [str(i) for i in issues if i is not None][:10]
+    vendor = result.get('vendor')
+    vendor = (str(vendor).strip()[:120] or None) if isinstance(vendor, (str, int, float)) else None
+    amount = _normalize_receipt_amount(result.get('amount'))
+    if result.get('amount') not in (None, '') and amount is None and 'unclear_amount' not in issues:
+        issues.append('unclear_amount')   # 모델은 값을 냈지만 단일 숫자로 못 읽음 → 사람 확인 유도
+    out = {
+        'readable': readable if readable is not None else True,
+        'confidence': conf,
+        'issues': issues,
+        'vendor': vendor,
+        'date': _normalize_receipt_date(result.get('date')),
+        'currency': _normalize_receipt_currency(result.get('currency')),
+        'amount': amount,
+    }
+    if provider:
+        out['provider'] = provider
+    if model:
+        out['model'] = model
+    return out
+
+
+def _strip_json_fence(text):
+    text = (text or '').strip()
+    if text.startswith('```'):
+        text = text.strip('`')
+        if text[:4].lower() == 'json':
+            text = text[4:]
+        text = text.strip()
+    return text
+
+
+RECEIPT_EXTRACT_DEADLINE_S = 60   # provider 폴백 체인 전체 상한(claude→gemini→gemini기본 최대 3회 요청)
+
+
+def _read_image_for_llm(image_path):
+    """(bytes, media_type) 또는 (None, error dict). 파일 읽기 실패도 예외 대신 오류 dict."""
+    import mimetypes
+    try:
+        with open(image_path, 'rb') as fp:
+            raw = fp.read()
+    except OSError as e:
+        return None, {'error': 'API_CALL_FAILED', 'detail': 'image read: %s' % e}
+    if not raw:
+        return None, {'error': 'API_CALL_FAILED', 'detail': 'empty image'}
+    # 확장자보다 매직바이트 우선(업로드 단계가 JPEG 재인코딩하지만 방어)
+    if raw[:3] == b'\xff\xd8\xff':
+        media = 'image/jpeg'
+    elif raw[:8] == b'\x89PNG\r\n\x1a\n':
+        media = 'image/png'
+    elif raw[:4] == b'RIFF' and raw[8:12] == b'WEBP':
+        media = 'image/webp'
+    elif raw[:6] in (b'GIF87a', b'GIF89a'):
+        media = 'image/gif'
+    else:
+        media = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
+        if media not in ('image/jpeg', 'image/png', 'image/gif', 'image/webp'):
+            media = 'image/jpeg'
+    return (raw, media), None
+
+
+def _claude_vision_extract(image_path, model=None, timeout=25):
+    """Anthropic Messages API(raw HTTP — 서버 venv 에 SDK 없음, 기존 Gemini 경로와 동일 스타일) 로 영수증 추출.
+    비스트리밍·max_tokens 512(JSON 한 덩어리), temperature 0. 실패는 {'error':...} 로 반환(예외 안 던짐).
+    성공 시 dict 에 `_model`(실제 모델) 포함 → 정규화 단계가 응답 model 로 쓴다."""
+    if not ANTHROPIC_API_KEY:
+        return {'error': 'NO_API_KEY'}
+    import base64, urllib.request, urllib.error
+    mdl = model or RECEIPT_CLAUDE_MODEL
+    img, err = _read_image_for_llm(image_path)
+    if err:
+        return err
+    raw, media = img
+    body = {
+        'model': mdl,
+        'max_tokens': 512,
+        'temperature': 0,
+        'system': '너는 출장 경비 영수증에서 필드를 추출하는 도구다. 반드시 지정된 JSON 객체 하나만 출력한다.',
+        'messages': [{'role': 'user', 'content': [
+            {'type': 'image', 'source': {'type': 'base64', 'media_type': media,
+                                         'data': base64.standard_b64encode(raw).decode()}},
+            {'type': 'text', 'text': _RECEIPT_PROMPT},
+        ]}],
+    }
+    req = urllib.request.Request(
+        'https://api.anthropic.com/v1/messages',
+        data=json.dumps(body).encode('utf-8'),
+        headers={'content-type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
+                 'anthropic-version': '2023-06-01'},
+        method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as he:
+        try:
+            detail = he.read().decode('utf-8')[:300]
+        except Exception:
+            detail = str(he)
+        app.logger.warning('claude-vision-extract HTTP %s: %s', he.code, detail)
+        return {'error': 'API_CALL_FAILED', 'detail': detail}
+    except Exception as e:
+        app.logger.exception('claude-vision-extract')
+        return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+    try:
+        if not isinstance(data, dict):
+            return {'error': 'PARSE_FAILED', 'raw': str(data)[:300]}
+        if data.get('stop_reason') == 'refusal':
+            return {'error': 'API_CALL_FAILED', 'detail': 'refusal'}
+        if data.get('stop_reason') == 'max_tokens':
+            app.logger.warning('claude-vision-extract truncated (max_tokens)')
+        blocks = data.get('content') or []
+        text = ''.join(b.get('text', '') for b in blocks if isinstance(b, dict) and b.get('type') == 'text')
+    except Exception as e:   # 응답 구조가 예상 밖이어도 500 대신 오류 dict
+        app.logger.exception('claude-vision-extract response shape')
+        return {'error': 'PARSE_FAILED', 'raw': str(e)[:300]}
+    text = _strip_json_fence(text)
+    parsed = None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        m = re.search(r'\{.*\}', text, re.S)   # 앞뒤 잡문 방어: 첫 { … 마지막 } 만 취함
+        if m:
+            try:
+                parsed = json.loads(m.group(0))
+            except Exception:
+                parsed = None
+    if not isinstance(parsed, dict):   # `[]`/`null`/숫자 등 비객체 JSON 도 실패로(올마이트)
+        app.logger.warning('claude-vision-extract PARSE_FAILED: %s', text[:200])
+        return {'error': 'PARSE_FAILED', 'raw': text[:300]}
+    parsed['_model'] = mdl
+    return parsed
+
+
+def _receipt_provider():
+    p = (os.environ.get('RECEIPT_PROVIDER') or 'auto').strip().lower()
+    if p == 'auto':
+        return 'claude' if ANTHROPIC_API_KEY else 'gemini'
+    return p if p in ('claude', 'gemini') else 'gemini'
+
+
+def _as_result_dict(r):
+    """provider 반환값 방어: dict 아니면 PARSE_FAILED 로 취급(정규화 전 .get() 크래시 차단)."""
+    return r if isinstance(r, dict) else {'error': 'PARSE_FAILED', 'raw': str(r)[:300]}
+
+
+def _receipt_vision_extract(image_path):
+    """provider 선택 → 추출 → 정규화. claude 실패 시 gemini 폴백(둘 다 실패면 마지막 오류 반환).
+    전체 체인은 RECEIPT_EXTRACT_DEADLINE_S 안에서 끝낸다(각 호출 timeout = 남은 시간, 최소 5s)."""
+    import time as _t
+    deadline = _t.monotonic() + RECEIPT_EXTRACT_DEADLINE_S
+
+    def _left(cap):
+        return max(5, min(cap, int(deadline - _t.monotonic())))
+
+    provider = _receipt_provider()
+    if provider == 'claude':
+        r = _as_result_dict(_claude_vision_extract(image_path, timeout=_left(25)))
+        if not r.get('error'):
+            return _normalize_receipt_result(r, 'claude', RECEIPT_CLAUDE_MODEL)
+        app.logger.warning('receipt extract: claude 실패(%s) → gemini 폴백', r.get('error'))
+        g = _as_result_dict(_gemini_vision_extract(image_path, timeout=_left(25), _deadline=deadline))
+        if g.get('error') == 'NO_API_KEY':
+            return r          # gemini 도 없으면 claude 의 실제 오류를 보여준다
+        return _normalize_receipt_result(g, 'gemini') if not g.get('error') else g
+    g = _as_result_dict(_gemini_vision_extract(image_path, timeout=_left(30), _deadline=deadline))
+    return _normalize_receipt_result(g, 'gemini') if not g.get('error') else g
+
+
+def _gemini_vision_extract(image_path, model=None, _retry=True, timeout=40, _deadline=None):
+    """저장된 영수증 이미지를 Gemini 로 추출 (vendor/date/currency/amount + 품질 판정).
+    MODEL_RECEIPT 가 503/429 로 튕기면 기본 GEMINI_MODEL 로 1회 재시도(모델 수요 스파이크 실측 2026-09-23).
+    성공 시 dict 에 `_model`(실제 사용 모델) 포함."""
     if not GEMINI_API_KEY:
         return {'error': 'NO_API_KEY'}
-    import base64, mimetypes, urllib.request, urllib.error
-    with open(image_path, 'rb') as fp:
-        raw = fp.read()
-    media = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
+    import base64, urllib.request, urllib.error
+    mdl = model or _model_for('receipt')
+    img, err = _read_image_for_llm(image_path)
+    if err:
+        return err
+    raw, media = img
     b64 = base64.standard_b64encode(raw).decode()
-    prompt = (
-        "이 이미지는 출장 경비 영수증/인보이스다. 아래 항목만 추출해 지정한 JSON 형식으로만 답하라.\n"
-        "- vendor: 상호/가맹점명 (없으면 null)\n"
-        "- date: 거래 일자 YYYY-MM-DD (확실치 않으면 null)\n"
-        "- currency: 통화 ISO 코드 (KRW/CNY/USD/JPY/EUR 등, 기호는 코드로 변환, 불명확하면 null)\n"
-        "- amount: 총 결제 금액 숫자만 (콤마/통화기호 제거, 소수 허용, 불명확하면 null)\n"
-        "글자가 흐리거나 잘려 확신할 수 없으면 해당 필드는 null로 두고, "
-        "readable(true/false), confidence(high/medium/low), "
-        "issues(배열: blurry/glare/cropped/dark/unclear_amount 등)를 채워라.\n"
-        '형식: {"readable":true,"confidence":"high","issues":[],'
-        '"vendor":null,"date":null,"currency":null,"amount":null}'
-    )
+    prompt = _RECEIPT_PROMPT
     body = {
         'contents': [{
             'parts': [
@@ -2279,7 +2584,7 @@ def _gemini_vision_extract(image_path):
         'generationConfig': {'response_mime_type': 'application/json'},
     }
     url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-           f'{_model_for("receipt")}:generateContent')
+           f'{mdl}:generateContent')
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode('utf-8'),
@@ -2288,7 +2593,7 @@ def _gemini_vision_extract(image_path):
             'x-goog-api-key': GEMINI_API_KEY,
         }, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=40) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode('utf-8'))
     except urllib.error.HTTPError as he:
         try:
@@ -2296,6 +2601,13 @@ def _gemini_vision_extract(image_path):
         except Exception:
             app.logger.exception('gemini-vision-extract')
             detail = str(he)
+        if _retry and he.code in (429, 503) and mdl != GEMINI_MODEL:
+            import time as _t
+            left = int(_deadline - _t.monotonic()) if _deadline else timeout
+            if left >= 5:
+                app.logger.warning('gemini-vision-extract %s on %s → %s 재시도(%ss)', he.code, mdl, GEMINI_MODEL, left)
+                return _gemini_vision_extract(image_path, model=GEMINI_MODEL, _retry=False,
+                                              timeout=min(timeout, left), _deadline=_deadline)
         return {'error': 'API_CALL_FAILED', 'detail': detail}
     except Exception as e:
         app.logger.exception('gemini-vision-extract')
@@ -2314,17 +2626,16 @@ def _gemini_vision_extract(image_path):
         app.logger.exception('gemini-vision-extract')
         return {'error': 'PARSE_FAILED', 'raw': str(e)}
 
-    text = text.strip()
-    if text.startswith('```'):
-        text = text.strip('`')
-        if text[:4].lower() == 'json':
-            text = text[4:]
-        text = text.strip()
+    text = _strip_json_fence(text)
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except Exception:
         app.logger.exception('gemini-vision-extract')
-        return {'error': 'PARSE_FAILED', 'raw': text}
+        return {'error': 'PARSE_FAILED', 'raw': text[:300]}
+    if not isinstance(parsed, dict):   # `[]`/`null` 등 비객체 JSON
+        return {'error': 'PARSE_FAILED', 'raw': text[:300]}
+    parsed['_model'] = mdl
+    return parsed
 
 
 @bp.route('/api/biz-trips/<int:tid>/extract', methods=['POST'])
@@ -2340,21 +2651,21 @@ def api_receipt_extract(tid):
     path = os.path.join(app.config['UPLOAD_FOLDER'], 'receipt', fname)
     if not os.path.exists(path):
         return jsonify({'error': '파일을 찾을 수 없습니다.'}), 404
-    result = _gemini_vision_extract(path)
+    result = _receipt_vision_extract(path)   # 정규화 완료: amount=float|None, date=YYYY-MM-DD|None
     if result.get('error') == 'NO_API_KEY':
         return jsonify({'ok': False, 'reason': 'no_api_key',
                         'message': 'AI 자동추출이 설정되지 않았습니다. 직접 입력해 주세요.'}), 200
     if result.get('error'):
         return jsonify({'ok': False, 'reason': result['error'],
                         'message': '자동 추출에 실패했습니다. 다시 시도하거나 직접 입력해 주세요.',
-                        'detail': result.get('detail') or result.get('raw')}), 200
+                        'detail': (result.get('detail') or result.get('raw') or '')[:300]}), 200
     fields = {
         'vendor':     result.get('vendor'),
         'occur_date': result.get('date'),
         'currency':   result.get('currency'),
         'amount':     result.get('amount'),
     }
-    missing = [k for k in ('occur_date', 'currency', 'amount') if not fields.get(k)]
+    missing = [k for k in ('occur_date', 'currency', 'amount') if fields.get(k) in (None, '')]
     need_retake = (result.get('readable') is False) or bool(missing) or (result.get('confidence') == 'low')
     return jsonify({
         'ok': True,
@@ -2364,6 +2675,8 @@ def api_receipt_extract(tid):
         'issues': result.get('issues') or [],
         'missing': missing,
         'need_retake': need_retake,
+        'provider': result.get('provider'),
+        'model': result.get('model'),
         'raw': json.dumps(result, ensure_ascii=False),
     })
 
