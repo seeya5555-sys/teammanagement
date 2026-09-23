@@ -7,6 +7,7 @@ DecodingError 로 자동인식 전체가 죽었다. 여기서 못박는 것:
   · RECEIPT_PROVIDER=gemini 강제 시 Claude 를 호출하지 않는다.
   · 외부 HTTP 는 절대 나가지 않는다(두 provider 함수를 몽키패치).
 """
+import json
 import os
 import tempfile
 import unittest
@@ -211,6 +212,102 @@ class ReceiptExtractProviderTests(unittest.TestCase):
             self._stub('_claude_vision_extract', {'readable': True, 'confidence': 'high', 'issues': [],
                                                   'vendor': 'X', 'date': '2026-01-01', 'currency': 'KRW', 'amount': good})
             self.assertEqual(want, self._extract()['fields']['amount'], good)
+
+    # ---- 실제 HTTP 계층(urlopen 모킹): 503 재시도 경로가 NameError 로 죽었던 실버그(2026-09-23 라이브 probe) ----
+    def _mock_urlopen(self, script):
+        """script: URL 부분문자열 → ('ok', body_dict) | ('http', code, body_text). 호출 순서를 self.http 에 기록."""
+        import urllib.request, urllib.error, io
+        self.http = []
+        def fake(req, timeout=None):
+            url = req.full_url
+            self.http.append((url, timeout, json.loads(req.data.decode('utf-8'))))
+            for key, resp in script:
+                if key in url:
+                    if resp[0] == 'http':
+                        raise urllib.error.HTTPError(url, resp[1], 'err', {}, io.BytesIO(resp[2].encode()))
+                    class R:
+                        def __enter__(s): return s
+                        def __exit__(s, *a): return False
+                        def read(s): return json.dumps(resp[1]).encode()
+                    return R()
+            raise AssertionError('unexpected url ' + url)
+        self._old_urlopen = urllib.request.urlopen
+        urllib.request.urlopen = fake
+        self.addCleanup(lambda: setattr(urllib.request, 'urlopen', self._old_urlopen))
+
+    def _gemini_ok(self, obj):
+        return ('ok', {'candidates': [{'content': {'parts': [{'text': json.dumps(obj)}]}}]})
+
+    def test_gemini_503_on_receipt_model_retries_default_model_and_reports_it(self):
+        rcd.ANTHROPIC_API_KEY = ''
+        old_key, rcd.GEMINI_API_KEY = rcd.GEMINI_API_KEY, 'g'
+        self.addCleanup(lambda: setattr(rcd, 'GEMINI_API_KEY', old_key))
+        os.environ['MODEL_RECEIPT'] = 'gemini-primary-test'
+        self.addCleanup(lambda: os.environ.pop('MODEL_RECEIPT', None))
+        self._mock_urlopen([
+            ('gemini-primary-test:generateContent', ('http', 503, '{"error":{"code":503}}')),
+            (rcd.GEMINI_MODEL + ':generateContent', self._gemini_ok(
+                {'readable': True, 'confidence': 'high', 'issues': [], 'vendor': 'V', 'date': '2026-05-14',
+                 'currency': 'KRW', 'amount': '1,078,000'})),
+        ])
+        j = self._extract()
+        self.assertTrue(j['ok'], j)
+        self.assertEqual(2, len(self.http))
+        self.assertIn('gemini-primary-test', self.http[0][0])
+        self.assertIn(rcd.GEMINI_MODEL, self.http[1][0])
+        self.assertEqual(rcd.GEMINI_MODEL, j['model'])          # 실제 사용 모델
+        self.assertEqual(1078000.0, j['fields']['amount'])
+        self.assertTrue(all(t is not None and 5 <= t <= 40 for _, t, _ in self.http))
+
+    def test_gemini_400_is_not_retried(self):
+        rcd.ANTHROPIC_API_KEY = ''
+        old_key, rcd.GEMINI_API_KEY = rcd.GEMINI_API_KEY, 'g'
+        self.addCleanup(lambda: setattr(rcd, 'GEMINI_API_KEY', old_key))
+        os.environ['MODEL_RECEIPT'] = 'gemini-primary-test'
+        self.addCleanup(lambda: os.environ.pop('MODEL_RECEIPT', None))
+        self._mock_urlopen([('gemini-primary-test:generateContent', ('http', 400, 'bad'))])
+        j = self._extract()
+        self.assertFalse(j['ok'])
+        self.assertEqual('API_CALL_FAILED', j['reason'])
+        self.assertEqual(1, len(self.http))
+
+    def test_claude_request_shape_and_non_object_json_falls_back(self):
+        """Anthropic Messages 요청 형식(헤더·image block·model) 확인 + `[]` 응답이면 gemini 폴백."""
+        rcd.ANTHROPIC_API_KEY = 'sk-test'
+        old_key, rcd.GEMINI_API_KEY = rcd.GEMINI_API_KEY, 'g'
+        self.addCleanup(lambda: setattr(rcd, 'GEMINI_API_KEY', old_key))
+        self._mock_urlopen([
+            ('api.anthropic.com/v1/messages', ('ok', {'stop_reason': 'end_turn',
+                                                      'content': [{'type': 'text', 'text': '[]'}]})),
+            (':generateContent', self._gemini_ok({'readable': True, 'confidence': 'medium', 'issues': [],
+                                                  'vendor': 'G', 'date': None, 'currency': 'KRW', 'amount': 5})),
+        ])
+        j = self._extract()
+        self.assertTrue(j['ok'])
+        self.assertEqual('gemini', j['provider'])
+        url, timeout, body = self.http[0]
+        self.assertEqual(rcd.RECEIPT_CLAUDE_MODEL, body['model'])
+        self.assertEqual(512, body['max_tokens'])
+        content = body['messages'][0]['content']
+        self.assertEqual('image', content[0]['type'])
+        self.assertEqual('base64', content[0]['source']['type'])
+        self.assertEqual('image/jpeg', content[0]['source']['media_type'])   # 매직바이트 \xff\xd8\xff
+        self.assertEqual('text', content[1]['type'])
+
+    def test_claude_success_end_to_end_via_http_layer(self):
+        rcd.ANTHROPIC_API_KEY = 'sk-test'
+        self._mock_urlopen([
+            ('api.anthropic.com/v1/messages', ('ok', {'stop_reason': 'end_turn', 'content': [
+                {'type': 'text', 'text': '```json\n{"readable":true,"confidence":"high","issues":[],'
+                                         '"vendor":"Apple 명동","date":"2026.05.14","currency":"₩","amount":"1,078,000"}\n```'}]})),
+        ])
+        j = self._extract()
+        self.assertTrue(j['ok'], j)
+        self.assertEqual('claude', j['provider'])
+        self.assertEqual(rcd.RECEIPT_CLAUDE_MODEL, j['model'])
+        self.assertEqual(1078000.0, j['fields']['amount'])
+        self.assertEqual('2026-05-14', j['fields']['occur_date'])
+        self.assertEqual(1, len(self.http))
 
     # ---- 순수 정규화 함수 ----
     def test_date_normalizer_variants(self):

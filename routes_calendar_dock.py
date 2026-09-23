@@ -37,7 +37,7 @@ from app_core import (
     ensure_heif_opener, execute, execute_rc, get_db, query,
 )
 from helpers_shared import (
-    AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, RETIRED_RUNNER_KEYS,
+    AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, GEMINI_MODEL, RETIRED_RUNNER_KEYS,
     SOA_CATEGORY_OWNER, FLEET_MAP_FILE, _AOR_ACTIVE_STATUSES, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
     _FUNDREQ_ATT_MIME, _HEALTH_ORDER, _annotate_drafts_with_vessel,
     _aor_absorbing_trigger_sql, _aor_status_list_sql, _automation_enabled,
