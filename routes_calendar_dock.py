@@ -20,7 +20,7 @@ import secrets
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
-from flask import abort, g, jsonify, make_response, render_template, request, send_from_directory, session, url_for
+from flask import abort, current_app, g, jsonify, make_response, render_template, request, send_from_directory, session, url_for
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 import mimetypes
@@ -7111,8 +7111,15 @@ def api_invoice_list():
         dd['evidence_checklist'] = _evidence_checklist(
             'invoice', dd, dd['attachment_preview_indices'])
     evidence_gaps = sum(d['evidence_checklist']['gap_count'] for d in drafts if d.get('status') == 'pending')
+    # 자기치유: rejecting(리젝 접수·미실행) 카드가 있는데 실행 run 이 없으면 여기서 재큐잉.
+    # (reject 라우트의 큐 적재 실패, killswitch 해제 뒤, 러너 사망 6h 회수분 커버) — 조회 라우트에 write 가
+    # 생기지만 automation_run 한 행뿐이고 invoice_draft 는 안 건드린다. status 필터 조회는 제외(전체 목록만).
+    reject_run = None
+    if not status and any(d.get('status') == 'rejecting' for d in drafts):
+        reject_run = _invoice_reject_ensure_queued(session.get('username') or 'web')
     return jsonify({'drafts': drafts, 'pending': pending['c'],
-                    'enabled': _automation_enabled(), 'evidence_gaps': evidence_gaps})
+                    'enabled': _automation_enabled(), 'evidence_gaps': evidence_gaps,
+                    'reject_run': reject_run})
 
 
 @bp.route('/api/invoice/drafts/<int:did>/pdf')
@@ -7433,7 +7440,10 @@ def api_invoice_edit(did):
 @bp.route('/api/invoice/drafts/<int:did>/reject', methods=['POST'])
 @admin_required
 def api_invoice_reject(did):
-    """리젝 마킹(사유 필수) — status='rejecting'. 실제 보류는 [자동상신] 버튼이 맥 러너로 실행."""
+    """리젝(사유 필수) — status='rejecting' + `invoice_reject` run 자동큐(AOR reject 패턴).
+    맥 러너가 곧 SVMS STATUS=R + 벤더 통보메일 실행(웹/iOS 어디서 눌러도 동일, 웹 [일괄승인+컨펌] 불필요).
+    리젝 전용 run 이라 approved(승인 대기) 카드는 건드리지 않는다.
+    killswitch ON 이면 마킹만 남기고 run 은 안 만든다(응답 reject_run=None 으로 명시)."""
     row = query('SELECT * FROM invoice_draft WHERE id=?', (did,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
@@ -7443,14 +7453,31 @@ def api_invoice_reject(did):
     reason = (d.get('reason') or '').strip()
     if not reason:
         return jsonify({'error': '리젝 사유(reason) 필수', 'field': 'reason'}), 400
+    user = session.get('username') or 'web'
     rc = execute_rc("UPDATE invoice_draft SET status='rejecting', reject_reason=?, "
                     "decided_at=datetime('now','localtime'), decided_by=? "
                     "WHERE id=? AND status IN ('pending','approved')",
-                    (reason, session.get('username') or 'web', did))
+                    (reason, user, did))
     if not rc:
         cur = query('SELECT status FROM invoice_draft WHERE id=?', (did,), one=True)
         return jsonify({'error': 'already decided', 'status': cur['status'] if cur else '?'}), 409
-    return jsonify({'id': did, 'status': 'rejecting'})
+    rid = _invoice_reject_ensure_queued(user)
+    msg = ('리젝 접수 — 맥 러너가 다음 폴링에 SVMS 리젝+벤더 통보메일 실행(보통 수 분 내, 카드 상태로 완료 확인)' if rid
+           else '리젝 접수만 됨 — 자동화 killswitch ON 또는 큐 적재 실패. 스위치를 켜면 카드 목록 조회 시 자동 재큐잉됨')
+    return jsonify({'id': did, 'status': 'rejecting', 'reject_run': rid, 'message': msg})
+
+
+def _invoice_reject_ensure_queued(user):
+    """rejecting 카드 실행 run(`invoice_reject`) 보장 — 성공 시 run_id, 못 만들면 None(예외 삼킴).
+    · running run 은 시작 시 rejecting 을 이미 claim 했으므로 재사용하면 새 카드가 안 실린다 → fresh_if_running.
+      queued 가 하나 있으면 재사용하므로 폴링마다 불려도 run 은 running 1 + queued 1 을 넘지 않는다.
+    · reject 라우트(마킹 직후)와 카드 목록 조회(자기치유: 마킹 뒤 큐 적재 실패·killswitch 해제·6h stale 회수분)에서 호출.
+      마킹과 큐잉이 한 트랜잭션이 아니어도 rejecting 이 남아 있는 한 다음 목록 조회가 다시 큐잉한다."""
+    try:
+        return _queue_aor('invoice_reject', user, fresh_if_running=True)
+    except Exception:
+        current_app.logger.exception('invoice_reject 큐 적재 실패 — rejecting 마킹은 유지, 목록 조회 시 재시도')
+        return None
 
 
 @bp.route('/api/invoice/drafts/<int:did>/reset', methods=['POST'])

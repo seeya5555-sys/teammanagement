@@ -90,7 +90,7 @@
 <div class="fr-note">
   <b>[카드적재]</b> 누르면 SVMS 컨펌대기 인보이스가 PDF 대조·교정안과 함께 카드로 적재됨(~1~2분).
   <b>opt-out</b>: <span class="b-pass" style="padding:1px 6px;border-radius:999px">PASS</span> 카드는 디폴트 <b>승인</b>(체크), <span class="b-hold" style="padding:1px 6px;border-radius:999px">HOLD</span> 카드는 디폴트 해제 →
-  <b>[체크한 것 일괄승인+컨펌]</b> 누르면 <b>체크된 카드 전부 한 번에 승인</b>+PIC/SUP/Remit 교정+SVMS 컨펌. 미체크·HOLD·리젝은 제외. 카드별로 체크 해제·개별 리젝도 가능.
+  <b>[체크한 것 일괄승인+컨펌]</b> 누르면 <b>체크된 카드 전부 한 번에 승인</b>+PIC/SUP/Remit 교정+SVMS 컨펌. 미체크·HOLD·리젝은 제외. 카드별로 체크 해제·개별 리젝도 가능. <b>[리젝]</b>은 누르는 즉시 맥 러너가 SVMS 리젝(STATUS=R)+벤더 통보메일까지 실행(웹·앱 동일).
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
 <datalist id="expcodes"></datalist>
@@ -203,11 +203,11 @@
       const checked=gate==='PASS'?'checked':'';
       acts=`<label class="fr-optout"><input type="checkbox" data-optout ${checked}> 승인(컨펌)</label>
             <button class="fr-b ap" data-act="approve"><svg class="ic-svg"><use href="#i-check-circle"/></svg>승인</button>
-            <input class="fr-rsn" placeholder="리젝(보류) 사유 입력 후 리젝 →" />
+            <input class="fr-rsn" placeholder="리젝 사유 입력 후 리젝 → (즉시 SVMS 리젝+벤더 통보메일)" />
             <button class="fr-b rj" data-act="reject"><svg class="ic-svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg>리젝</button>
             <button class="fr-b del" data-act="delete">삭제</button>`;
     } else if(d.status==='approved'||d.status==='rejecting'){
-      const lbl=d.status==='approved'?'승인 대기':'리젝(보류) 대기';
+      const lbl=d.status==='approved'?'승인 대기':'리젝 접수 — 맥 러너 실행 대기(완료되면 rejected 로 바뀜)';
       acts=`<span class="fr-decided">${lbl}${d.reject_reason?(' — 사유: '+esc(d.reject_reason)):''} (${esc(d.decided_by||'')})</span>
             <button class="fr-b rs" data-act="reset">결정 취소</button>`;
     } else {
@@ -301,12 +301,15 @@
       url+='/approve';
     }
     else if(a==='reject'){const rsn=el.querySelector('.fr-rsn').value.trim();
-      if(!rsn){alert('리젝 사유를 입력하세요.');return;} body={reason:rsn};url+='/reject';}
+      if(!rsn){alert('리젝 사유를 입력하세요.');return;}
+      if(!confirm(`이 인보이스를 SVMS 에서 리젝(STATUS=R)하고 벤더에 통보메일을 보낼까요?\n· 사유: ${rsn}\n· 맥 러너가 다음 폴링에 실행(보통 수 분 내), 실행되면 되돌릴 수 없음`))return;
+      body={reason:rsn};url+='/reject';}
     else if(a==='reset'){url+='/reset';}
     else if(a==='delete'){if(!confirm('이 카드를 삭제할까요?'))return;method='DELETE';}
     el.classList.add('is-busy');
     const {ok,j}=await api(method,url,body);
     if(!ok){alert('실패: '+(j.error||'')); el.classList.remove('is-busy');}
+    else if(a==='reject'&&j.message){alert(j.message);}
     load();
   }
   $('#fr-verify').onclick=async()=>{
