@@ -2263,11 +2263,17 @@ _RECEIPT_PROMPT = (
     "표기 없고 한국 영수증이면 KRW. 불명확하면 null\n"
     "- amount: 실제 결제 총액 숫자만(콤마·통화기호 제거, 소수 허용). 우선순위 = '결제금액/승인금액/총액/합계/Total/Grand Total' > "
     "'공급가액+부가세'. 공급가액·부가세·할인전 금액·잔액·품목 단가는 총액이 아니다. 여러 총액이 있으면 실제 카드/현금 결제된 금액. 불명확하면 null\n"
+    "- transaction_status: 화면 상단의 최종 결제/환불 결과 문구를 원문 그대로 복사. "
+    "한국어·중국어·영어를 번역하거나 의미로 바꾸지 말 것. 과거 처리단계·환불안내·광고는 제외. "
+    "예: '환불 성공', '退款成功', 'Payment successful'. 상태 문구가 없으면 null.\n"
+    "- transaction_description: 상품 안내/Products/거래내역의 원문을 그대로 복사. 특히 退款-로 시작하는 환불 거래명은 그대로 보존. 없으면 null.\n"
+    "- 환불 화면의 amount는 원거래 총액이 아니라 이번 실제 환불액만 읽는다. "
+    "별도 수수료를 임의로 더하거나 빼지 말 것. 금액 부호는 화면 그대로 읽으며 비용 부호는 서버가 결정한다.\n"
     "글자가 흐리거나 잘려 확신할 수 없으면 해당 필드는 null로 두고, "
     "readable(true/false), confidence(high/medium/low), "
     "issues(배열: blurry/glare/cropped/dark/unclear_amount/multiple_totals/not_receipt 등)를 채워라.\n"
     '형식: {"readable":true,"confidence":"high","issues":[],'
-    '"vendor":null,"date":null,"currency":null,"amount":null}'
+    '"vendor":null,"date":null,"currency":null,"amount":null,"transaction_status":null,"transaction_description":null}'
 )
 
 _CURRENCY_SYMBOL = {'₩': 'KRW', '원': 'KRW', 'WON': 'KRW', '¥': 'CNY', '元': 'CNY', 'RMB': 'CNY', '￥': 'JPY',
@@ -2367,6 +2373,34 @@ def _normalize_receipt_amount(v):
     return float(numeric[0].replace(',', ''))
 
 
+def _receipt_transaction_type(status, description=None):
+    """모델의 유형 추측 대신 화면 원문 상태의 명시적 완료/미완료 어휘로 비용 방향 결정."""
+    is_refund_item = isinstance(description, str) and re.match(r'^\s*退款(?:[-:：\s]|$)', description)
+    if not isinstance(status, str) or not status.strip():
+        return 'refund_unconfirmed' if is_refund_item else 'unknown'
+    text = re.sub(r'[\s·:_\-.!。]', '', status).casefold()
+    if text in {'환불성공', '환불완료', '환불처리완료', '환불이완료되었습니다',
+                '승인취소완료', '결제취소완료', '취소완료', '退款成功', '退款完成', '已退款',
+                '已退回', 'refundsuccessful', 'refundcompleted', 'refundsuccess', 'refunded'}:
+        return 'refund'
+    if text in {'결제성공', '결제완료', '지불성공', '승인완료', '支付成功', '付款成功',
+                '交易成功', 'paymentsuccessful', 'paymentcompleted', 'paymentsuccess', 'paid'}:
+        return 'refund_unconfirmed' if is_refund_item else 'expense'
+    if text in {'환불대기', '환불실패', '환불처리중', '환불진행중', '환불신청', '환불요청',
+                '退款中', '退款处理中', '退款失败', '退款申请', '等待退款', 'refundpending',
+                'refundfailed', 'refundprocessing', 'refundrequested', 'refundinprogress'}:
+        return 'refund_unconfirmed'
+    # 번역 UI의 한글이 OCR에서 일부 깨진 경우에도, 실제 상품명이 '退款-…'이고
+    # 상태가 명시적인 중국어 成功(성공)이면 두 근거를 교차해 환불 완료로 판단한다.
+    # 광고/환불정책 단어 검색은 하지 않으며 미성공·실패는 제외한다.
+    if is_refund_item:
+        incomplete = re.search(r'申请|提交|受理|请求|审核|登记|处理|失败|失敗|取消|撤销|撤回|[未不没無无否待中]', text)
+        if not incomplete and re.fullmatch(r'[\u4e00-\u9fff]{0,6}成功', text):
+            return 'refund'
+        return 'refund_unconfirmed'
+    return 'unknown'
+
+
 def _normalize_receipt_result(result, provider=None, model=None):
     """모델 원응답(dict) → 클라이언트 계약 형태. 타입을 여기서 못박아 웹/iOS 디코딩이 절대 안 깨지게 한다."""
     if not isinstance(result, dict):
@@ -2394,7 +2428,24 @@ def _normalize_receipt_result(result, provider=None, model=None):
     amount = _normalize_receipt_amount(result.get('amount'))
     if result.get('amount') not in (None, '') and amount is None and 'unclear_amount' not in issues:
         issues.append('unclear_amount')   # 모델은 값을 냈지만 단일 숫자로 못 읽음 → 사람 확인 유도
+    status_text = result.get('transaction_status')
+    status_text = status_text.strip()[:120] if isinstance(status_text, str) else None
+    description = result.get('transaction_description')
+    description = description.strip()[:200] if isinstance(description, str) else None
+    transaction_type = _receipt_transaction_type(status_text, description)
+    if transaction_type == 'refund_unconfirmed':
+        amount = None  # 대기/실패는 완료된 차감 비용으로 자동 채우지 않는다.
+        if 'refund_not_completed' not in issues:
+            issues.append('refund_not_completed')
+    elif amount is not None:
+        if transaction_type == 'refund':
+            amount = -abs(amount)  # 모델이 양수로 읽어도 완료 환불은 차감; 이중 부호 반전 방지.
+        elif transaction_type == 'expense':
+            amount = abs(amount)   # 결제 앱의 -출금 표시는 비용 관점에서는 +지출.
     out = {
+        'transaction_status': status_text,
+        'transaction_description': description,
+        'transaction_type': transaction_type,
         'readable': readable if readable is not None else True,
         'confidence': conf,
         'issues': issues,
@@ -2587,6 +2638,8 @@ def api_receipt_extract(tid):
         'issues': result.get('issues') or [],
         'missing': missing,
         'need_retake': need_retake,
+        'transaction_status': result.get('transaction_status'),
+        'transaction_type': result.get('transaction_type'),
         'provider': result.get('provider'),
         'model': result.get('model'),
         'raw': json.dumps(result, ensure_ascii=False),

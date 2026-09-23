@@ -101,6 +101,81 @@ class ReceiptExtractProviderTests(unittest.TestCase):
         self.assertEqual('2026-05-14', j['fields']['occur_date'])
         self.assertNotIn('amount', j['missing'])   # 0 은 값이 있는 것(사람이 판단), 문자열/None 만 missing
 
+    # ---- 비용 관점 부호: 완료환불 -, 일반결제 +, 미완료환불은 자동 반영 안 함 ----
+    def test_completed_refund_is_negative_for_positive_or_negative_model_amount(self):
+        for amount in (12.5, -12.5, '12.50', '-12.50'):
+            with self.subTest(amount=amount):
+                self._stub('_claude_vision_extract', {'vendor': 'Test', 'date': '2026-01-02',
+                    'currency': 'USD', 'amount': amount, 'transaction_type': 'expense', 'transaction_status': '환불 성공'})
+                j = self._extract()
+                self.assertTrue(j['ok'])
+                self.assertEqual('refund', j['transaction_type'])
+                self.assertEqual(-12.5, j['fields']['amount'])
+                self.assertFalse(j['need_retake'])
+
+    def test_payment_app_debit_minus_is_positive_expense(self):
+        self._stub('_claude_vision_extract', {'amount': -100, 'transaction_type': 'refund', 'transaction_status': 'Payment successful'})
+        j = self._extract()
+        self.assertEqual(100.0, j['fields']['amount'])
+        self.assertEqual('expense', j['transaction_type'])
+
+    def test_uncompleted_refund_does_not_populate_cost(self):
+        self._stub('_claude_vision_extract', {'amount': 12.5, 'transaction_type': 'refund', 'transaction_status': '환불 처리 중'})
+        j = self._extract()
+        self.assertIsNone(j['fields']['amount'])
+        self.assertTrue(j['need_retake'])
+        self.assertIn('refund_not_completed', j['issues'])
+
+    def test_unknown_type_does_not_invent_refund_and_null_remains_null(self):
+        for kind in ('unknown', None, 'refund eligible', 'refund maybe', {}):
+            with self.subTest(kind=kind):
+                self._stub('_claude_vision_extract', {'amount': 12.5, 'transaction_status': kind})
+                j = self._extract()
+                self.assertEqual('unknown', j['transaction_type'])
+                self.assertEqual(12.5, j['fields']['amount'])
+        self._stub('_claude_vision_extract', {'amount': None, 'transaction_type': 'expense', 'transaction_status': '환불 성공'})
+        self.assertIsNone(self._extract()['fields']['amount'])
+
+    def test_only_explicit_final_status_sets_direction(self):
+        for status in ('환불 성공', '退款成功', 'Refund completed', '환불 처리 완료'):
+            self.assertEqual('refund', rcd._receipt_transaction_type(status), status)
+        for status in ('결제 완료', '支付成功', 'Payment successful'):
+            self.assertEqual('expense', rcd._receipt_transaction_type(status), status)
+        for status in ('환불 실패', '退款处理中', 'Refund pending'):
+            self.assertEqual('refund_unconfirmed', rcd._receipt_transaction_type(status), status)
+        for status in ('환불 성공 아님', '환불 가능', 'Refund successful? No', 'unknown', None):
+            self.assertEqual('unknown', rcd._receipt_transaction_type(status), status)
+
+    def test_refund_item_and_success_evidence_are_both_required(self):
+        self.assertEqual('refund', rcd._receipt_transaction_type('成功', '退款-Test service'))
+        for status, description in [('成功', '普通商品'), ('不成功', '退款-Test'),
+                                    ('退款处理中', '退款-Test'), ('申请成功', '退款-Test'),
+                                    ('提交成功', '退款-Test'), ('取消成功', '退款-Test'),
+                                    ('退款失败成功', '退款-Test'), (None, '退款-Test'),
+                                    ('Payment successful', '退款-Test'), ('成功', '如何退款-Test')]:
+            self.assertNotEqual('refund', rcd._receipt_transaction_type(status, description))
+
+    def test_refund_extraction_save_edit_and_totals_preserve_negative_cost(self):
+        self._stub('_claude_vision_extract', {'vendor': 'Test', 'date': '2026-01-02',
+            'currency': 'USD', 'amount': 12.5, 'transaction_type': 'expense', 'transaction_status': '환불 성공'})
+        fields = self._extract()['fields']
+        original = self.client.post(f'/api/biz-trips/{self.tid}/receipts',
+                                    json={'amount': 100, 'currency': 'USD'})
+        self.assertEqual(201, original.status_code)
+        refund = self.client.post(f'/api/biz-trips/{self.tid}/receipts', json=fields)
+        self.assertEqual(201, refund.status_code)
+        receipt = refund.get_json()['receipt']
+        self.assertEqual(-12.5, receipt['amount'])
+        detail = self.client.get(f'/api/biz-trips/{self.tid}').get_json()
+        self.assertEqual(87.5, detail['totals']['USD'])
+        listing = self.client.get('/api/biz-trips').get_json()
+        self.assertEqual(87.5, next(t for t in listing if t['id']==self.tid)['totals']['USD'])
+        edit = self.client.put(f"/api/biz-receipts/{receipt['id']}", json={'amount': '-10.00'})
+        self.assertEqual(200, edit.status_code)
+        detail = self.client.get(f'/api/biz-trips/{self.tid}').get_json()
+        self.assertEqual(90.0, detail['totals']['USD'])
+        self.assertEqual(-10.0, next(r for r in detail['receipts'] if r['id']==receipt['id'])['amount'])
+
     # ---- Haiku 전용: 구 env/키 없음/실패 모두 Gemini 사용 금지 ----
     def test_claude_is_only_provider_even_with_stale_gemini_env(self):
         os.environ['RECEIPT_PROVIDER'] = 'gemini'
