@@ -271,6 +271,31 @@ class ReceiptExtractProviderTests(unittest.TestCase):
         self.assertEqual('API_CALL_FAILED', j['reason'])
         self.assertEqual(1, len(self.http))
 
+    def test_both_gemini_models_busy_surface_service_failure_without_raw_details(self):
+        from unittest.mock import patch
+        with patch.object(rcd, 'ANTHROPIC_API_KEY', ''), patch.object(rcd, 'GEMINI_API_KEY', 'g'), \
+                patch.dict(os.environ, {'MODEL_RECEIPT': 'gemini-primary-test'}):
+            self._mock_urlopen([(':generateContent', ('http', 503, 'private upstream detail'))])
+            j = self._extract()
+        self.assertFalse(j['ok'])
+        self.assertEqual('AI_BUSY', j['reason'])
+        self.assertTrue(j['retryable'])
+        self.assertIn('혼잡', j['message'])
+        self.assertNotIn('detail', j)
+        self.assertNotIn('private upstream', json.dumps(j))
+        self.assertEqual(2, len(self.http))
+
+    def test_gemini_timeout_is_distinguished_from_unreadable_photo(self):
+        from unittest.mock import patch
+        import urllib.error
+        for exc in (TimeoutError('private socket'), urllib.error.URLError(TimeoutError('socket'))):
+            with patch.object(rcd, 'ANTHROPIC_API_KEY', ''), patch.object(rcd, 'GEMINI_API_KEY', 'g'), \
+                    patch('urllib.request.urlopen', side_effect=exc):
+                j = self._extract()
+            self.assertEqual('AI_TIMEOUT', j['reason'])
+            self.assertTrue(j['retryable'])
+            self.assertNotIn('detail', j)
+
     def test_claude_request_shape_and_non_object_json_falls_back(self):
         """Anthropic Messages 요청 형식(헤더·image block·model) 확인 + `[]` 응답이면 gemini 폴백."""
         rcd.ANTHROPIC_API_KEY = 'sk-test'

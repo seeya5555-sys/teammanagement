@@ -2608,10 +2608,15 @@ def _gemini_vision_extract(image_path, model=None, _retry=True, timeout=40, _dea
                 app.logger.warning('gemini-vision-extract %s on %s → %s 재시도(%ss)', he.code, mdl, GEMINI_MODEL, left)
                 return _gemini_vision_extract(image_path, model=GEMINI_MODEL, _retry=False,
                                               timeout=min(timeout, left), _deadline=_deadline)
-        return {'error': 'API_CALL_FAILED', 'detail': detail}
+        app.logger.warning('gemini-vision-extract failed model=%s status=%s', mdl, he.code)
+        return {'error': 'AI_BUSY' if he.code in (429, 503) else 'API_CALL_FAILED',
+                'http_status': he.code}
     except Exception as e:
-        app.logger.exception('gemini-vision-extract')
-        return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+        import socket
+        is_timeout = isinstance(e, (TimeoutError, socket.timeout)) or (
+            isinstance(e, urllib.error.URLError) and isinstance(e.reason, (TimeoutError, socket.timeout)))
+        app.logger.warning('gemini-vision-extract failed model=%s kind=%s', mdl, type(e).__name__)
+        return {'error': 'AI_TIMEOUT' if is_timeout else 'API_CALL_FAILED'}
 
     # candidates[0].content.parts[*].text 취합
     text = ''
@@ -2656,9 +2661,16 @@ def api_receipt_extract(tid):
         return jsonify({'ok': False, 'reason': 'no_api_key',
                         'message': 'AI 자동추출이 설정되지 않았습니다. 직접 입력해 주세요.'}), 200
     if result.get('error'):
-        return jsonify({'ok': False, 'reason': result['error'],
-                        'message': '자동 추출에 실패했습니다. 다시 시도하거나 직접 입력해 주세요.',
-                        'detail': (result.get('detail') or result.get('raw') or '')[:300]}), 200
+        reason = result['error']
+        messages = {
+            'AI_BUSY': 'AI 서비스 혼잡 또는 요청 한도 초과로 응답하지 못했습니다. 사진 인식 불량이 아닙니다. 잠시 후 다시 시도해 주세요.',
+            'AI_TIMEOUT': 'AI 서비스 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.',
+            'PARSE_FAILED': 'AI 응답 형식에 오류가 발생했습니다. 다시 시도해 주세요.',
+        }
+        app.logger.warning('receipt extract failed reason=%s', reason)
+        return jsonify({'ok': False, 'reason': reason,
+                        'retryable': reason in ('AI_BUSY', 'AI_TIMEOUT'),
+                        'message': messages.get(reason, 'AI 서비스 호출에 실패했습니다. 다시 시도해 주세요.')}), 200
     fields = {
         'vendor':     result.get('vendor'),
         'occur_date': result.get('date'),
