@@ -101,6 +101,67 @@ class ReceiptExtractProviderTests(unittest.TestCase):
         self.assertEqual('2026-05-14', j['fields']['occur_date'])
         self.assertNotIn('amount', j['missing'])   # 0 은 값이 있는 것(사람이 판단), 문자열/None 만 missing
 
+    # ---- 수수료 포함: 총액 우선, 별도 수수료 중복·혼합통화 합산 금지 ----
+    def test_explicit_total_wins_without_double_adding_fee(self):
+        self._stub('_claude_vision_extract', {'amount': 100, 'settled_total': -103,
+            'base_amount': 100, 'base_currency': 'USD', 'fee_amount': 3, 'fee_currency': 'USD',
+            'fee_is_additional': True, 'currency': 'USD', 'transaction_status': 'Payment successful'})
+        j = self._extract()
+        self.assertEqual(103.0, j['fields']['amount'])
+        self.assertEqual('settled_total', json.loads(j['raw'])['amount_source'])
+
+    def test_explicit_zero_and_currency_total_override_order_breakdown(self):
+        for total, want in ((0, 0.0), ('0', 0.0), ('1,030원', 1030.0)):
+            self._stub('_claude_vision_extract', {'amount': 1, 'settled_total': total,
+                'currency': 'KRW', 'base_amount': 1, 'base_currency': 'USD',
+                'fee_amount': 0.1, 'fee_currency': 'USD', 'fee_is_additional': True,
+                'transaction_status': 'Payment successful'})
+            j = self._extract()
+            self.assertEqual(want, j['fields']['amount'])
+            self.assertEqual('KRW', j['fields']['currency'])
+
+    def test_separate_fee_without_total_is_added_once_in_same_currency(self):
+        self._stub('_claude_vision_extract', {'amount': 103, 'settled_total': None,
+            'base_amount': '100.10', 'base_currency': 'USD', 'fee_amount': '3.20', 'fee_currency': 'USD',
+            'fee_is_additional': True, 'currency': 'USD', 'transaction_status': 'Payment successful'})
+        j = self._extract()
+        self.assertEqual(103.3, j['fields']['amount'])
+        self.assertEqual('base_plus_fee', json.loads(j['raw'])['amount_source'])
+
+    def test_uncertain_additional_fee_is_not_silently_omitted_or_mixed(self):
+        for changes in ({'fee_currency': 'CNY'}, {'base_currency': None}, {'transaction_status': None}, {'fee_amount': '3%'},
+                        {'fee_amount': -3}, {'base_amount': None}, {'fee_amount': True}):
+            with self.subTest(changes=changes):
+                model = {'amount': 100, 'base_amount': 100, 'base_currency': 'USD',
+                    'fee_amount': 3, 'fee_currency': 'USD', 'fee_is_additional': True,
+                    'currency': 'USD', 'transaction_status': 'Payment successful'}
+                model.update(changes)
+                self._stub('_claude_vision_extract', model)
+                j = self._extract()
+                self.assertIsNone(j['fields']['amount'])
+                self.assertIn('unclear_fee_total', j['issues'])
+                self.assertTrue(j['need_retake'])
+
+    def test_included_or_waived_fee_is_not_added(self):
+        for flag in (False, None, 'true'):
+            self._stub('_claude_vision_extract', {'amount': 100, 'base_amount': 100,
+                'fee_amount': 3, 'fee_is_additional': flag, 'transaction_status': 'Payment successful'})
+            self.assertEqual(100.0, self._extract()['fields']['amount'])
+
+    def test_refund_total_stays_negative_and_fee_is_not_invented(self):
+        for total, want in ((None, -12.5), (13, -13.0)):
+            self._stub('_claude_vision_extract', {'amount': 12.5, 'settled_total': total,
+                'base_amount': 12.5, 'fee_amount': 0.5, 'fee_is_additional': True,
+                'transaction_status': '환불 성공'})
+            self.assertEqual(want, self._extract()['fields']['amount'])
+
+    def test_bad_or_nonfinite_total_never_falls_back_to_lower_principal(self):
+        for total in ('unreadable', True, float('inf'), '9'*400):
+            self._stub('_claude_vision_extract', {'amount': 100, 'settled_total': total})
+            j = self._extract()
+            self.assertIsNone(j['fields']['amount'])
+            self.assertIn('unclear_amount', j['issues'])
+
     # ---- 비용 관점 부호: 완료환불 -, 일반결제 +, 미완료환불은 자동 반영 안 함 ----
     def test_completed_refund_is_negative_for_positive_or_negative_model_amount(self):
         for amount in (12.5, -12.5, '12.50', '-12.50'):

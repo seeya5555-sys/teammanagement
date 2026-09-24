@@ -2259,10 +2259,18 @@ _RECEIPT_PROMPT = (
     "- vendor: 상호/가맹점명(원문 상호를 번역·교정하지 말고 그대로. 화면에 반복된 상호가 있으면 서로 대조하여 한 글자씩 확인. 사업자번호·주소·전화는 제외. 불명확하면 null)\n"
     "- date: 거래(결제/승인) 일자 YYYY-MM-DD. '거래일시·승인일시·판매일·Date' 등에서. "
     "인쇄일·유효기간·바코드 숫자로 추측하지 말고 명시된 날짜가 없으면 null\n"
-    "- currency: ISO 4217 코드. ₩/원→KRW, ¥/元/RMB→CNY, ￥(일본)→JPY, $→USD(문맥상 SGD·HKD 등이면 그 코드), €→EUR. "
+    "- currency: 최종 실제 결제/환불 총액(settled_total)의 통화를 ISO 4217 코드로. 주문통화와 출금통화가 다르면 최종 출금통화이며 주문통화는 base_currency에 별도 기재. ₩/원→KRW, ¥/元/RMB→CNY, ￥(일본)→JPY, $→USD(문맥상 SGD·HKD 등이면 그 코드), €→EUR. "
     "표기 없고 한국 영수증이면 KRW. 불명확하면 null\n"
     "- amount: 실제 결제 총액 숫자만(콤마·통화기호 제거, 소수 허용). 우선순위 = '결제금액/승인금액/총액/합계/Total/Grand Total' > "
     "'공급가액+부가세'. 공급가액·부가세·할인전 금액·잔액·품목 단가는 총액이 아니다. 여러 총액이 있으면 실제 카드/현금 결제된 금액. 불명확하면 null\n"
+    "- settled_total: 화면에 명시된 최종 출금/결제 총액(수수료 포함)을 그대로 읽는다. 결제 앱 상단의 큰 금액이 최종 총액이면 "
+    "订单金额(주문금액)보다 우선한다. 환불 화면에서는 이번 실제 환불 총액만. 원거래금액·잔액은 제외. 없으면 null.\n"
+    "- base_amount/base_currency: 별도로 표시된 주문/상품금액과 그 통화. "
+    "fee_amount/fee_currency: 국제카드수수료(国际卡手续费)/결제수수료 금액과 통화. "
+    "없거나 통화 불명확하면 null. fee_is_additional은 수수료가 base_amount에 별도 가산됨이 명확할 때만 true, "
+    "포함된 수수료·면제·불명확한 경우 false. 수수료 금액을 퍼센트로 추측하지 마라.\n"
+    "비용은 수수료까지 포함한 실제 결제금액이다. 이미 수수료가 포함된 최종 총액에는 수수료를 다시 더하지 마라. "
+    "amount에도 최종 총액을 쓰고, 최종 총액이 없다면 표시된 원금만 읽어라(합산은 서버에서 수행).\n"
     "- transaction_status: 화면 상단의 최종 결제/환불 결과 문구를 원문 그대로 복사. "
     "한국어·중국어·영어를 번역하거나 의미로 바꾸지 말 것. 과거 처리단계·환불안내·광고는 제외. "
     "예: '환불 성공', '退款成功', 'Payment successful'. 상태 문구가 없으면 null.\n"
@@ -2273,7 +2281,7 @@ _RECEIPT_PROMPT = (
     "readable(true/false), confidence(high/medium/low), "
     "issues(배열: blurry/glare/cropped/dark/unclear_amount/multiple_totals/not_receipt 등)를 채워라.\n"
     '형식: {"readable":true,"confidence":"high","issues":[],'
-    '"vendor":null,"date":null,"currency":null,"amount":null,"transaction_status":null,"transaction_description":null}'
+    '"vendor":null,"date":null,"currency":null,"amount":null,"settled_total":null,"base_amount":null,"base_currency":null,"fee_amount":null,"fee_currency":null,"fee_is_additional":false,"transaction_status":null,"transaction_description":null}'
 )
 
 _CURRENCY_SYMBOL = {'₩': 'KRW', '원': 'KRW', 'WON': 'KRW', '¥': 'CNY', '元': 'CNY', 'RMB': 'CNY', '￥': 'JPY',
@@ -2401,6 +2409,38 @@ def _receipt_transaction_type(status, description=None):
     return 'unknown'
 
 
+def _receipt_cost_amount(result, transaction_type):
+    """명시적 최종 총액 우선. 총액이 없을 때만 같은 통화의 원금+별도 수수료를 한 번 합산."""
+    import math
+    from decimal import Decimal
+
+    def number(value):
+        try:
+            value = _normalize_receipt_amount(value)
+        except (ValueError, TypeError, OverflowError):
+            return None
+        return value if value is not None and math.isfinite(value) else None
+
+    # 명시된 총액은 이미 수수료를 포함한다. base/fee가 함께 있어도 재합산 금지.
+    if result.get('settled_total') not in (None, ''):
+        total = number(result['settled_total'])
+        return total, 'settled_total', ([] if total is not None else ['unclear_amount'])
+    if result.get('fee_is_additional') is True and transaction_type == 'unknown':
+        return None, 'unresolved_fee', ['unclear_fee_total']
+    if result.get('fee_is_additional') is True and transaction_type == 'expense':
+        base, fee = number(result.get('base_amount')), number(result.get('fee_amount'))
+        currency = _normalize_receipt_currency(result.get('currency'))
+        base_currency = _normalize_receipt_currency(result.get('base_currency'))
+        fee_currency = _normalize_receipt_currency(result.get('fee_currency'))
+        if (base is None or fee is None or base < 0 or fee < 0 or not currency
+                or currency != base_currency or currency != fee_currency):
+            return None, 'unresolved_fee', ['unclear_fee_total']
+        total = float(Decimal(str(base)) + Decimal(str(fee)))
+        return (total, 'base_plus_fee', []) if math.isfinite(total) else (None, 'unresolved_fee', ['unclear_fee_total'])
+    # 환불 수수료는 실제 반환 여부가 불명확할 수 있으므로 임의 합산하지 않는다.
+    return number(result.get('amount')), 'model_amount', []
+
+
 def _normalize_receipt_result(result, provider=None, model=None):
     """모델 원응답(dict) → 클라이언트 계약 형태. 타입을 여기서 못박아 웹/iOS 디코딩이 절대 안 깨지게 한다."""
     if not isinstance(result, dict):
@@ -2425,14 +2465,17 @@ def _normalize_receipt_result(result, provider=None, model=None):
     issues = [str(i) for i in issues if i is not None][:10]
     vendor = result.get('vendor')
     vendor = (str(vendor).strip()[:120] or None) if isinstance(vendor, (str, int, float)) else None
-    amount = _normalize_receipt_amount(result.get('amount'))
-    if result.get('amount') not in (None, '') and amount is None and 'unclear_amount' not in issues:
-        issues.append('unclear_amount')   # 모델은 값을 냈지만 단일 숫자로 못 읽음 → 사람 확인 유도
     status_text = result.get('transaction_status')
     status_text = status_text.strip()[:120] if isinstance(status_text, str) else None
     description = result.get('transaction_description')
     description = description.strip()[:200] if isinstance(description, str) else None
     transaction_type = _receipt_transaction_type(status_text, description)
+    amount, amount_source, amount_issues = _receipt_cost_amount(result, transaction_type)
+    if amount is None and result.get('amount') not in (None, '') and not amount_issues:
+        amount_issues.append('unclear_amount')
+    for issue in amount_issues:
+        if issue not in issues:
+            issues.append(issue)
     if transaction_type == 'refund_unconfirmed':
         amount = None  # 대기/실패는 완료된 차감 비용으로 자동 채우지 않는다.
         if 'refund_not_completed' not in issues:
@@ -2443,6 +2486,7 @@ def _normalize_receipt_result(result, provider=None, model=None):
         elif transaction_type == 'expense':
             amount = abs(amount)   # 결제 앱의 -출금 표시는 비용 관점에서는 +지출.
     out = {
+        'amount_source': amount_source,
         'transaction_status': status_text,
         'transaction_description': description,
         'transaction_type': transaction_type,
