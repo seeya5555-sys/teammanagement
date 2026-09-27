@@ -173,6 +173,115 @@ def _yard_is_quote_request(description):
     return bool(_YARD_QUOTE_REQUEST_ROW.search(_text(description)))
 
 
+_WEB_JOB_CATEGORY_ORDER = ("Shipyard", "Shore Repair", "Crew", "Spare", "Store", "Paint")
+
+
+def _web_job_pnum(number):
+    """Port of Dock Manager app.js pNum(): prefixed numbers first, plain numbers after."""
+    text = _text(number)
+    prefix_match = re.match(r"^([A-Za-z]+)", text)
+    prefix = prefix_match.group(1).upper() if prefix_match else ""
+    rest = text[len(prefix):].replace("-", ".", 1)
+    value = 0
+    multiplier = 1000000
+    for part in rest.split(".")[:3]:
+        digits = re.match(r"^(\d*)", part).group(1)
+        suffix = re.search(r"([A-Za-z]+)$", part)
+        part_suffix = (ord(suffix.group(1).upper()[0]) - 64) if suffix else 0
+        value += ((int(digits) if digits else 0) * 100 + part_suffix) * multiplier
+        multiplier //= 10000
+    if prefix:
+        return (ord(prefix[0]) - 64) * 100000000000 + value
+    return 10000000000000 + value
+
+
+def _web_job_parent_number(number):
+    """Port of app.js getParentNumber()."""
+    text = _text(number)
+    if not text:
+        return None
+    prefix_match = re.match(r"^([A-Za-z]+)", text)
+    prefix = prefix_match.group(1) if prefix_match else ""
+    rest = text[len(prefix):]
+    if not rest:
+        return None
+    alpha = re.match(r"^([\d.]+)([A-Za-z]+)$", rest)
+    if alpha:
+        return prefix + alpha.group(1)
+    dotted = re.match(r"^(.+)\.\d+[A-Za-z]*$", rest)
+    if dotted:
+        return prefix + dotted.group(1)
+    if re.fullmatch(r"\d+", rest):
+        return prefix or None
+    return None
+
+
+def _web_job_tree(jobs):
+    """Port of app.js sortJobTree(): roots by pNum, each followed by its descendants.
+
+    Unlike the web renderer, duplicate or blank numbers are never dropped from the
+    export; any row the tree walk did not place keeps its original relative order.
+    """
+    numbers = {_text(job["number"]) for job in jobs if _text(job["number"])}
+
+    def nearest(number):
+        parent = _web_job_parent_number(number)
+        while parent:
+            if parent in numbers:
+                return parent
+            parent = _web_job_parent_number(parent)
+        return None
+
+    children = {}
+    roots = []
+    for job in jobs:
+        number = _text(job["number"])
+        parent = nearest(number) if number else None
+        if parent and parent != number:
+            children.setdefault(parent, []).append(job)
+        else:
+            roots.append(job)
+    roots.sort(key=lambda job: (not _text(job["number"]), _web_job_pnum(job["number"])))
+    result = []
+    placed = set()
+    visited_numbers = set()
+
+    def insert(job):
+        number = _text(job["number"])
+        if id(job) in placed or (number and number in visited_numbers):
+            return
+        placed.add(id(job))
+        if number:
+            visited_numbers.add(number)
+        result.append(job)
+        for child in sorted(children.get(number, []) if number else [],
+                            key=lambda item: _web_job_pnum(item["number"])):
+            insert(child)
+
+    for root in roots:
+        insert(root)
+    result.extend(job for job in jobs if id(job) not in placed)
+    return result
+
+
+def _web_job_order(jobs):
+    """Order export rows exactly like the Dock Manager Job Progress tree view:
+    category (Shipyard first), then section groups in tree order with CANCEL last,
+    then the job hierarchy inside each section."""
+    groups = {category: [] for category in _WEB_JOB_CATEGORY_ORDER}
+    for job in _web_job_tree(list(jobs)):
+        groups.setdefault(_text(job["category"]) or "Uncategorized", []).append(job)
+    ordered = []
+    for category_jobs in groups.values():
+        sections = {}
+        for job in _web_job_tree(category_jobs):
+            sections.setdefault(_text(job["section"]) or "GENERAL", []).append(job)
+        names = sorted(sections, key=lambda name: name == "CANCEL")
+        for name in names:
+            ordered.extend(sections[name])
+    return ordered
+
+
 def _job_progress_download_name(value):
     name = re.sub(r'[\x00-\x1f\x7f/\\]+', "_", _text(value)).strip(" ._")
     return "%s_DD_JOB_PROGRESS.xlsx" % ((name or "vessel")[:120])
@@ -1391,9 +1500,10 @@ def _install_job_progress_export(dd, dd_app):
         if not vessel:
             return jsonify({"error": "선박을 찾을 수 없습니다"}), 404
         jobs = db.execute(
-            "SELECT number,category,description,vendor,budget,consumption,start_date,end_date,"
+            "SELECT number,section,category,description,vendor,budget,consumption,start_date,end_date,"
             "completion,remarks FROM jobs WHERE vessel_id=? ORDER BY id", (vid,)
         ).fetchall()
+        jobs = _web_job_order(jobs)
         try:
             output = _build_job_progress_workbook(vessel, jobs)
         except ValueError as exc:

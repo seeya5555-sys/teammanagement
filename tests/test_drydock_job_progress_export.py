@@ -27,6 +27,46 @@ def job(**overrides):
 
 
 class JobProgressExportTests(unittest.TestCase):
+    def test_export_order_matches_web_tree(self):
+        rows = [
+            {"number": "P1", "section": "PAINT", "category": "Paint"},
+            {"number": "S10", "section": "SPARE", "category": "Spare"},
+            {"number": "S2", "section": "SPARE", "category": "Spare"},
+            {"number": "R1", "section": "SHORE REPAIR", "category": "Shore Repair"},
+            {"number": "4.1", "section": "DECK", "category": "Shipyard"},
+            {"number": "1.10", "section": "GENERAL", "category": "Shipyard"},
+            {"number": "1.2", "section": "GENERAL", "category": "Shipyard"},
+            {"number": "1.2.1", "section": "GENERAL", "category": "Shipyard"},
+            {"number": "2.1", "section": "CANCEL", "category": "Shipyard"},
+            {"number": "3.1", "section": "STEEL", "category": "Shipyard"},
+            {"number": "X1", "section": "", "category": "Other"},
+            {"number": "", "section": "SPARE", "category": "Spare"},
+            {"number": "S2", "section": "SPARE", "category": "Spare"},
+        ]
+        ordered = integration._web_job_order(rows)
+        self.assertEqual(
+            ["1.2", "1.2.1", "1.10", "3.1", "4.1", "2.1",
+             "R1", "S2", "S10", "", "S2", "P1", "X1"],
+            [row["number"] for row in ordered])
+        # Rows the web tree hides (blank/duplicate numbers) are never lost from the export.
+        self.assertEqual(len(rows), len(ordered))
+
+    def test_web_pnum_and_parent_match_app_js_rules(self):
+        self.assertLess(integration._web_job_pnum("R9"), integration._web_job_pnum("R10"))
+        self.assertLess(integration._web_job_pnum("ST3"), integration._web_job_pnum("1.1"))
+        self.assertLess(integration._web_job_pnum("1.9"), integration._web_job_pnum("1.10"))
+        self.assertEqual("S1.1", integration._web_job_parent_number("S1.1B"))
+        self.assertEqual("R", integration._web_job_parent_number("R1"))
+        self.assertIsNone(integration._web_job_parent_number("22"))
+        self.assertEqual("22.6", integration._web_job_parent_number("22.6.1"))
+        # app.js pNum ignores the 3rd level (multiplier floors to 0): the web keeps
+        # insertion order there, and the export must show the same order.
+        self.assertEqual(integration._web_job_pnum("1.2.10"), integration._web_job_pnum("1.2.2"))
+        rows = [{"number": n, "section": "GENERAL", "category": "Shipyard"}
+                for n in ("1.2", "1.2.10", "1.2.2")]
+        self.assertEqual(["1.2", "1.2.10", "1.2.2"],
+                         [row["number"] for row in integration._web_job_order(rows)])
+
     def test_fills_selected_vessel_and_preserves_template_layout(self):
         output = integration._build_job_progress_workbook(
             {"name": "BELGIUM B", "dock_in": "2026-09-13"}, [job()]
@@ -135,11 +175,14 @@ class JobProgressExportTests(unittest.TestCase):
         db.executescript("""
             CREATE TABLE vessels (id TEXT PRIMARY KEY, name TEXT, dock_in TEXT);
             CREATE TABLE jobs (
-                id INTEGER PRIMARY KEY, vessel_id TEXT, number TEXT, category TEXT,
+                id INTEGER PRIMARY KEY, vessel_id TEXT, number TEXT, section TEXT, category TEXT,
                 description TEXT, vendor TEXT, budget REAL, consumption REAL,
                 start_date TEXT, end_date TEXT, completion REAL, remarks TEXT
             );
             INSERT INTO vessels VALUES('v1','대한민국/호','2026-09-13');
+            INSERT INTO jobs(vessel_id,number,section,category,description,budget,consumption,completion,remarks)
+                VALUES('v1','P1','PAINT','Paint','Dock paint',0,0,0,'[]'),
+                      ('v1','1.1','GENERAL','Shipyard','Gangway',0,0,0,'[]');
         """)
 
         class FakeDD:
@@ -166,6 +209,10 @@ class JobProgressExportTests(unittest.TestCase):
             response.mimetype,
         )
         self.assertIn("대한민국_호_DD_JOB_PROGRESS.xlsx", unquote(response.headers["Content-Disposition"]))
+        # Shipyard was inserted last but is listed first, like the web tree.
+        import io
+        sheet = load_workbook(io.BytesIO(response.data))["Job progress"]
+        self.assertEqual(["1.1", "P1"], [sheet["B7"].value, sheet["B8"].value])
 
 
 if __name__ == "__main__":
