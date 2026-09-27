@@ -737,15 +737,6 @@ function detailRow(survey, vesselName, vesselId) {
   return tr;
 }
 
-function emptySection(survey) {
-  const wrap = el('div', { class: 'cs-finding-empty' });
-  wrap.append(el('div', { style: 'color:var(--text-tertiary); font-size:12px; margin-bottom:8px' },
-    '아직 등록된 항목이 없습니다. Defect 또는 Observation을 추가하세요.'));
-  wrap.append(addOnlyBtn(survey, 'Defect'));
-  wrap.append(addOnlyBtn(survey, 'Observation'));
-  return wrap;
-}
-
 function addOnlyBtn(survey, category) {
   const btn = el('button', {
     class: 'btn btn-outline btn-sm',
@@ -1541,8 +1532,9 @@ async function loadSupervisors() {
     const fi = $('#cs-attach-file-input');
     dz.addEventListener('click', () => fi.click());
     fi.addEventListener('change', () => {
-      uploadCsFiles(fi.files);
+      const files = [...(fi.files || [])];
       fi.value = '';
+      uploadCsFiles(files);
     });
     // 드래그 앤 드롭
     dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
@@ -1550,7 +1542,7 @@ async function loadSupervisors() {
     dz.addEventListener('drop', (e) => {
       e.preventDefault();
       dz.classList.remove('dragover');
-      uploadCsFiles(e.dataTransfer.files);
+      uploadCsFiles([...(e.dataTransfer.files || [])]);
     });
 
     document.addEventListener('keydown', (ev) => {

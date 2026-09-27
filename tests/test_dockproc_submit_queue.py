@@ -105,9 +105,16 @@ chk(create(rid).status_code in (302, 401, 403), '비로그인 생성 차단')
 r = c.post('/api/dock_submit/drafts', headers=HDR, json={'rid': rid, 'vndr_cd': 'A1J43', 'app_no': '0002'})
 chk(r.status_code not in (200, 201), 'api_key 단독 생성 차단', r.status_code)
 chk(A.query("SELECT COUNT(*) n FROM dock_submit_draft", one=True)['n'] == 0, '차단된 시도는 행을 남기지 않음')
+A.execute("DELETE FROM users WHERE username='create_member'")
+A.execute("INSERT INTO users(username, password_hash, display_name, role, active) "
+          "VALUES('create_member','x','create_member','member',1)")
 with c.session_transaction() as s:
-    s.update(saved); s['role'] = 'user'
+    s.update(saved)
+    s['user_id'] = A.query("SELECT id FROM users WHERE username='create_member'", one=True)['id']
+    s['username'] = 'create_member'; s['role'] = 'member'
 chk(create(rid).status_code in (302, 401, 403), '일반 user 생성 차단')
+with c.session_transaction() as s:
+    s.update(saved)
 with c.session_transaction() as s:
     s['role'] = 'admin'
 
@@ -403,9 +410,17 @@ chk('최종 DC후' in html and 'gross_amt' in html and 'dc_rate' in html and 'fi
     '웹 컨펌 모달에 견적/D-C요율/P_RS_ODR 최종금액 병기')
 chk('isPurchase?' in html and ':`${amt}${usd}`' in html,
     '서비스/구버전 후보는 기존 견적+USD 표시로 폴백')
+# 쿠키 role 만 바꾸면 login_required 가 DB role(admin) 로 되돌린다(52ea9b7) → 실제 member 계정으로 렌더
+A.execute("DELETE FROM users WHERE username='modal_member'")
+A.execute("INSERT INTO users(username, password_hash, display_name, role, active) "
+          "VALUES('modal_member','x','modal_member','member',1)")
+_mm = A.query("SELECT id FROM users WHERE username='modal_member'", one=True)['id']
 with c.session_transaction() as s:
-    s['role'] = 'user'
+    _saved_modal = dict(s)
+    s['user_id'] = _mm; s['username'] = 'modal_member'; s['role'] = 'member'
 html_u = c.get('/dock_procure').get_data(as_text=True)
+with c.session_transaction() as s:
+    s.clear(); s.update(_saved_modal)
 chk('id="sb-ov"' not in html_u and 'const IS_ADMIN = false;' in html_u,
     '🔴 일반 user 에겐 모달 자체가 없음')
 with c.session_transaction() as s:

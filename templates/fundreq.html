@@ -75,7 +75,7 @@
 <script>
 (function(){
   const $=s=>document.querySelector(s);
-  const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // P4 표시전용: 서버 matched_vessel → 선박 soft매칭 칩(read-only)
   const vesselChip=d=>{
     const m=d&&d.matched_vessel;
@@ -142,12 +142,20 @@
   }
   async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
   async function _load(){
+    // 자동 새로고침(8s) 때 리젝 사유 입력값이 날아가지 않게 카드별 스냅샷 후 복원
+    const snap={};
+    document.querySelectorAll('.fr-card').forEach(el=>{
+      const rs=el.querySelector('.fr-rsn');
+      if(rs) snap[el.dataset.id]=rs.value;
+    });
     const {ok,j}=await api('GET','/api/fundreq/drafts');
     if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
     const ds=j.drafts||[];
     $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · 킬스위치 ON');
     $('#fr-list').innerHTML=ds.length?ds.map(card).join(''):'<div class="fr-empty">카드 없음 — 허브에서 [검증] 실행</div>';
     document.querySelectorAll('.fr-card').forEach(el=>{
+      const rs=el.querySelector('.fr-rsn');
+      if(rs && snap[el.dataset.id]!=null) rs.value=snap[el.dataset.id];
       el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
     });
   }

@@ -128,7 +128,6 @@ async function api(url, options = {}) {
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function ymd(d)  { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
-function isSameDay(d, ymdStr) { return ymd(d) === ymdStr; }
 
 // 현재 월의 캘린더 그리드용 6주(42칸) 날짜 배열 생성
 function buildMonthMatrix(cursor) {
@@ -363,6 +362,10 @@ function renderSideList() {
     return;
   }
 
+  // 선박 조회용 Map(렌더당 1회) — 항목마다 S.vessels.find 하던 것과 동일(중복 id면 첫 항목 우선)
+  const vesselById = new Map();
+  for (const x of (S.vessels || [])) if (!vesselById.has(x.id)) vesselById.set(x.id, x);
+
   for (const ev of evs) {
     const item = el('div', {
       class: 'cal-side-item' + (ev.completed ? ' is-completed' : ''),
@@ -405,7 +408,7 @@ function renderSideList() {
 
     // 선박명 (있으면)
     if (ev.vessel_id) {
-      const v = S.vessels.find(x => x.id === ev.vessel_id);
+      const v = vesselById.get(ev.vessel_id);
       if (v) meta.append(el('span', { class: 'cal-side-vessel' }, ' ' + v.name));
     }
     body.append(meta);

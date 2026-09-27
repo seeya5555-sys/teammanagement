@@ -109,8 +109,13 @@ print()
 print('# 3-1) 로그인만 있으면 되고 admin 게이트는 없다 (웹과 같은 조건 — 감독도 담당을 바꾼다)')
 #   담당 표기는 돈경로가 아니라 화면 분류값이다. 여기에 admin 게이트가 생기면 형이 폰에서 못 바꾼다.
 lid = mkrow('T31', 'S', 'OWNER')
+# user_id=2 는 존재하지 않는 계정이라 89201bb(계정캐시 uid 키) 이후 401 — 실제 member 계정으로 검증
+A.execute("DELETE FROM users WHERE username='super'")
+A.execute("INSERT INTO users(username, password_hash, display_name, role, active) "
+          "VALUES('super','x','super','member',1)")
+_sup = A.query("SELECT id FROM users WHERE username='super'", one=True)['id']
 with c.session_transaction() as s:
-    s['user_id'] = 2; s['username'] = 'super'; s['role'] = 'user'
+    s['user_id'] = _sup; s['username'] = 'super'; s['role'] = 'member'
 chk(c.post(f'/api/dock_procure/{lid}/prep').status_code == 200, '비-admin 도 토글 200')
 anon = A.app.test_client()
 chk(anon.post(f'/api/dock_procure/{lid}/prep').status_code in (302, 401, 403),

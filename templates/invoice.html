@@ -238,8 +238,8 @@
     // 자동 새로고침(8s) 때 사용자 입력 날아가는 버그 방지 — 체크/편집 상태 스냅샷 후 복원
     const snap={};
     document.querySelectorAll('.fr-card').forEach(el=>{
-      const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in'), dt=el.querySelector('.fr-date-in');
-      snap[el.dataset.id]={chk:cb?cb.checked:null, sj:sj?sj.value:null, ex:ex?ex.value:null, dt:dt?dt.value:null, coll:el.classList.contains('collapsed')};
+      const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in'), dt=el.querySelector('.fr-date-in'), rs=el.querySelector('.fr-rsn');
+      snap[el.dataset.id]={chk:cb?cb.checked:null, sj:sj?sj.value:null, ex:ex?ex.value:null, dt:dt?dt.value:null, rs:rs?rs.value:null, coll:el.classList.contains('collapsed')};
     });
     const {ok,j}=await api('GET','/api/invoice/drafts');
     if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
@@ -249,11 +249,12 @@
     document.querySelectorAll('.fr-card').forEach(el=>{
       const s=snap[el.dataset.id];
       if(s){
-        const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in'), dt=el.querySelector('.fr-date-in');
+        const cb=el.querySelector('[data-optout]'), sj=el.querySelector('.fr-subj-in'), ex=el.querySelector('.fr-exp-in'), dt=el.querySelector('.fr-date-in'), rs=el.querySelector('.fr-rsn');
         if(cb&&s.chk!=null)cb.checked=s.chk;
         if(sj&&s.sj!=null)sj.value=s.sj;
         if(ex&&s.ex!=null)ex.value=s.ex;
         if(dt&&s.dt!=null)dt.value=s.dt;
+        if(rs&&s.rs!=null)rs.value=s.rs;   // 리젝 사유 입력값 유지(8s 새로고침 대비)
         el.classList.toggle('collapsed', !!s.coll);   // 접힘 상태 유지(8s 새로고침 대비)
       }
       el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
@@ -351,7 +352,7 @@
   $('#fr-reload').onclick=load;
   $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌/보류/실패) 카드를 비울까요?'))return;
     await api('DELETE','/api/invoice/drafts/decided');load();};
-  loadExp(); load(); setInterval(()=>load(true),8000);
+  loadExp(); load(); setInterval(()=>{ if(document.hidden || (window.InlineEdit && InlineEdit.busy())) return; load(true); },8000);  // 숨김 탭·입력 중이면 건너뜀
 })();
 </script>
 {% endblock %}

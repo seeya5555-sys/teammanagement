@@ -131,8 +131,11 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # SELECT per group. The replacement uses four complete SQL literals (active/all
 # x request/transaction connection), each LEFT JOINing membership in one query.
 # No request/config/DB value reaches SQL syntax; this removes one dynamic site.
-EXPECTED_COUNT = 167
-EXPECTED_SHA256 = "186a1a65e6a954606c9fb23bf6ae3fadbfc1940b5d6b310bb08e1c6f6b21d55e"
+# 2026-09-27 재검토 후 갱신(167 → 187). 08-31~09-19 에 쌓인 16곳 + 이번 리팩터링 4곳, 전부
+# 보간값이 리터럴 튜플/모듈 dict/allowlist(KINDS)/`?` 자리표시자 반복/정적 SQL dict 조회뿐이고
+# 요청값이 SQL 문법에 닿는 경로 없음(요청값은 전부 bound parameter). 새 사이트는 다시 검토 후에만 갱신.
+EXPECTED_COUNT = 187
+EXPECTED_SHA256 = "39700195ef576c0ca435430bb920acbba6aff9439dc662f1115bd63eaf900d00"
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

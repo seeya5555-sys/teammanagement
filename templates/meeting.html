@@ -152,7 +152,7 @@ let editingId = null;              // 제목 수정중 job id
 let loadGen = 0;                   // loadJobs 세대토큰(늦은 응답이 최신 덮는 race 방지)
 const cardEls = {};                // id -> 카드 DOM 노드(재사용 → 구조변경시 노드이동, 아니면 제자리 갱신)
 
-function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmtDur(sec){ sec=Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return m?`${m}분 ${s}초`:`${s}초`; }
 function badgeHtml(s){
   return s==='done'?'<span class="mt-badge b-done">완료</span>'

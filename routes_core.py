@@ -2102,18 +2102,12 @@ def api_user_reset_password(uid):
 #  API — Condition Survey
 # ═════════════════════════════════════════════════════════════════
 
-def _cs_survey_with_counts(s):
-    """단일 survey에 카운트 컬럼들 포함시켜 반환 (dict).
-    manual_*_count 가 NULL이 아니면 수동 입력값을 우선."""
-    sid = s['id']
-    rows = query("""
-        SELECT category, status, COUNT(*) AS n
-          FROM cs_findings
-         WHERE survey_id = ?
-         GROUP BY category, status
-    """, (sid,))
+def _cs_survey_counts_projection(s, count_rows, attach_n):
+    """survey 행 + (category, status, n) 집계 + 첨부 수 → 응답 dict (순수 함수, DB 무접근).
+    manual_*_count 가 NULL이 아니면 수동 입력값을 우선.
+    단건(_cs_survey_with_counts)과 목록(api_cs_surveys_list 일괄 집계)이 같은 계산을 공유한다."""
     def_open = def_closed = obs_open = obs_closed = 0
-    for r in rows:
+    for r in count_rows:
         if r['category'] == 'Defect':
             if r['status'] == 'Closed': def_closed = r['n']
             else: def_open = r['n']
@@ -2137,10 +2131,42 @@ def _cs_survey_with_counts(s):
     d['observation_manual'] = s['manual_observation_count'] is not None
     d['close_manual']       = s['manual_close_count']       is not None
     # 첨부 카운트
+    d['attach_count'] = attach_n
+    return d
+
+
+def _cs_survey_with_counts(s):
+    """단일 survey에 카운트 컬럼들 포함시켜 반환 (dict)."""
+    sid = s['id']
+    rows = query("""
+        SELECT category, status, COUNT(*) AS n
+          FROM cs_findings
+         WHERE survey_id = ?
+         GROUP BY category, status
+    """, (sid,))
     ar = query('SELECT COUNT(*) AS n FROM cs_attachments WHERE survey_id=?',
                (sid,), one=True)
-    d['attach_count'] = ar['n'] if ar else 0
-    return d
+    return _cs_survey_counts_projection(s, rows, ar['n'] if ar else 0)
+
+
+def _cs_surveys_with_counts_bulk(surveys):
+    """목록용: survey 수와 무관하게 집계 쿼리 2개로 동일 결과(예전엔 survey 당 2쿼리 N+1)."""
+    sids = [s['id'] for s in surveys]
+    counts, attach = {}, {}
+    if sids:
+        ph = ','.join('?' * len(sids))
+        for r in query(f"""
+            SELECT survey_id, category, status, COUNT(*) AS n
+              FROM cs_findings
+             WHERE survey_id IN ({ph})
+             GROUP BY survey_id, category, status
+        """, tuple(sids)):
+            counts.setdefault(r['survey_id'], []).append(r)
+        for r in query(f'SELECT survey_id, COUNT(*) AS n FROM cs_attachments '
+                       f'WHERE survey_id IN ({ph}) GROUP BY survey_id', tuple(sids)):
+            attach[r['survey_id']] = r['n']
+    return {s['id']: _cs_survey_counts_projection(s, counts.get(s['id'], []), attach.get(s['id'], 0))
+            for s in surveys}
 
 
 @bp.route('/api/cs/surveys')
@@ -2181,8 +2207,9 @@ def api_cs_surveys_list():
             findings_by_sid[f['survey_id']].append(dict(f))
 
     by_vessel = {}
+    counted = _cs_surveys_with_counts_bulk(surveys)
     for s in surveys:
-        d = _cs_survey_with_counts(s)
+        d = counted[s['id']]
         d['findings'] = findings_by_sid.get(s['id'], [])
         by_vessel.setdefault(s['vessel_id'], {})[s['quarter']] = d
 

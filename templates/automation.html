@@ -208,7 +208,7 @@
   const JBKT={pass:'통과',costslip:'CostSlip',mismatch:'DN≠Cost',escalate:'차액≥$1k',flag:'사람확인',already:'이미결재'};
   const escA=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
   const $=s=>document.querySelector(s);
-  const esc=s=>String(s).replace(/</g,'&lt;');
+  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function renderSoaReview(){
     const el=$('#soa-review'); if(!el)return;
     // needs_review = 서버 판정(열린 예외·미검증·초안·잠금·승인가능·액션실패). 리젝 결론 후 SVMS 반영까지 끝난 건은 제외.
@@ -280,7 +280,7 @@
   function statusChip(task){
     const r=RUNS.find(x=>x.task===task&&(x.status==='queued'||x.status==='running'));
     if(!r) return '';
-    return `<span class="au-status st-${r.status}">${r.status==='queued'?'대기중':'실행중…'}</span>`;
+    return `<span class="au-status st-${escA(r.status)}">${r.status==='queued'?'대기중':'실행중…'}</span>`;
   }
   function busy(task){ return !!RUNS.find(x=>x.task===task&&(x.status==='queued'||x.status==='running')); }
   function row(task,opts){
@@ -302,18 +302,18 @@
             <button class="au-b rjt2" data-task="${task}" data-mode="reject_submit" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 리젝제출+메일</button>
             <button class="au-b verify" data-task="${task}" data-mode="remark_cleanup" ${dis}>리마크정리</button>`;
     }
-    return `<div class="au-row"><div class="au-name">${name}${statusChip(task)}</div><div class="au-btns">${btns}</div></div>`;
+    return `<div class="au-row"><div class="au-name">${esc(name)}${statusChip(task)}</div><div class="au-btns">${btns}</div></div>`;
   }
   function fmt(r){
     const t=r.finished_at||r.started_at||r.requested_at||'';
     const modeL={live:'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리'}[r.mode]||'검증';
     return `<div class="au-logrow" data-run-id="${escA(r.run_id||'')}">
       <div class="au-logmeta">
-        <span class="au-status st-${r.status}">${r.status}</span>
-        <b>${TASKS[r.task]||r.task}</b><span>· ${modeL}</span><span>· ${t}</span>
+        <span class="au-status st-${escA(r.status)}">${esc(r.status)}</span>
+        <b>${esc(TASKS[r.task]||r.task)}</b><span>· ${modeL}</span><span>· ${esc(t)}</span>
       </div>
-      ${(r.status==='running'&&r.progress)?`<div class="au-logprog">진행: ${(r.progress).replace(/</g,'&lt;')}</div>`:''}
-      ${r.summary?`<div class="au-logsum">${(r.summary).replace(/</g,'&lt;')}</div>`:''}
+      ${(r.status==='running'&&r.progress)?`<div class="au-logprog">진행: ${esc(r.progress)}</div>`:''}
+      ${r.summary?`<div class="au-logsum">${esc(r.summary)}</div>`:''}
     </div>`;
   }
   function render(){const _sy=window.scrollY;try{return _render();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}

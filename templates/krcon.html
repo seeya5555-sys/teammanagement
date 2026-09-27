@@ -63,7 +63,7 @@
 (function(){
   const $ = s => document.querySelector(s);
   const qEl = $('#kc-q'), out = $('#kc-out');
-  const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   let lastQuery = '';
 
   function setBusy(b){ $('#kc-go').disabled=b; $('#kc-ai').disabled=b; }

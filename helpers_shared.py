@@ -1437,6 +1437,23 @@ def automation_tasks():
         pass          # DB 미초기화 등 → 정적 task 만. 그룹 버튼은 안 뜨고, 실행도 거부(fail-closed)
     out.update(AUTOMATION_TASKS_BASE)
     return out
+def _xlsx_cell(ws, coord):
+    """openpyxl 셀 값: None/빈 문자열 → None, 문자열은 strip. (reqgen·dock 발주 INDEX 파서 공용)"""
+    v = ws[coord].value
+    if v is None:
+        return None
+    if isinstance(v, str):
+        v = v.strip()
+        return v or None
+    return v
+
+
+# 자동화 러너 claim 직전에 실행할 보조 훅(2026-09-27). Blueprint 끼리 직접 import 하지 않도록
+# (routes_dock_submit → routes_followup 은 계층 위반) 소유 모듈이 import 시점에 여기 등록한다.
+# 훅 실패는 claim 을 막지 않는다 — 호출부가 개별로 잡아 로그만 남긴다.
+AUTOMATION_CLAIM_HOOKS = []
+
+
 def _automation_enabled():
     row = query("SELECT v FROM api_settings WHERE k='automation_enabled'", one=True)
     return (row['v'] if row else '1') != '0'

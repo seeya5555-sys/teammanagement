@@ -134,8 +134,14 @@
       grid.innerHTML='<div class="hb-empty">불러오기 실패: '+esc(e.message)+'</div>';
     }
   }
-  load();
-  setInterval(load, 60000);
+  let _loadingAt=0;   // 진행 중 요청 시작시각 — 30초 넘게 안 끝나면 멈춘 요청으로 보고 다음 틱 허용   // 진행 중 요청이 있으면 다음 틱은 건너뜀(겹침 방지)
+  async function tick(force){
+    if(!force && (document.hidden || (_loadingAt && Date.now()-_loadingAt<30000))) return;   // 첫 로드는 숨김 탭이어도 그대로 실행
+    _loadingAt=Date.now();
+    try{ await load(); }finally{ _loadingAt=0; }
+  }
+  tick(true);
+  setInterval(()=>tick(), 60000);
 })();
 </script>
 {% endblock %}

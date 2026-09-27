@@ -778,8 +778,15 @@
     // filters (분류/상태 — 토글, '전체' 칩 없음. 칩 다시 누르면 해제=전체)
     const matchS = l => !SFILTER || statusOf(l)[0]===SFILTER;
     const matchC = l => !FILTER  || l.cat_code===FILTER;
+    // 칩 카운트는 라인 1회 순회로 집계(분류칩=상태필터 적용, 상태칩=분류필터 적용 — 기존 filter 식과 동일)
+    const catN=new Map(), stN=new Map();
+    DATA.lines.forEach(l=>{
+      const st=statusOf(l)[0];
+      if(!SFILTER || st===SFILTER) catN.set(l.cat_code,(catN.get(l.cat_code)||0)+1);
+      if(matchC(l)) stN.set(st,(stN.get(st)||0)+1);
+    });
     let chips = '';
-    CATS.forEach(c=>{ const n=DATA.lines.filter(l=>l.cat_code===c.code && matchS(l)).length;
+    CATS.forEach(c=>{ const n=catN.get(c.code)||0;
       chips += `<span class="dp-chip ${FILTER===c.code?'active':''}" data-f="${c.code}"><span class="dp-dot" style="background:${c.color}"></span>${c.nm} <span class="n">${n}</span></span>`;});
     $('#dp-filters').innerHTML = chips;
     $('#dp-filters').querySelectorAll('.dp-chip').forEach(ch=>ch.onclick=()=>{
@@ -787,7 +794,7 @@
       loadYardIfVisible();                        // SY 로 바뀐 순간 조선소표를 채운다(빈 표 방지)
     });
     let schips = '';
-    STATUSES.forEach(s=>{ const n=DATA.lines.filter(l=>statusOf(l)[0]===s.code && matchC(l)).length;
+    STATUSES.forEach(s=>{ const n=stN.get(s.code)||0;
       schips += `<span class="dp-chip ${SFILTER===s.code?'active':''}" data-s="${s.code}"><span class="dp-sdot" style="background:${s.color}"></span>${s.nm} <span class="n">${n}</span></span>`;});
     $('#dp-sfilters').innerHTML = schips;
     $('#dp-sfilters').querySelectorAll('.dp-chip').forEach(ch=>ch.onclick=()=>{SFILTER = (SFILTER===ch.dataset.s?'':ch.dataset.s); render();});
@@ -1659,13 +1666,15 @@
 
   function bindSyncBtn(){
     const btn=$('#dp-syncbtn'), stat=$('#dp-syncstat'); if(!btn) return;
-    let poll=null;
+    let poll=null, inflightAt=0;   // 진행중 tick 시작시각(0=없음). 30초 넘게 안 끝나면 멈춘 요청으로 보고 새 tick 허용
     async function refreshStatus(){
       // 탭이 백그라운드면 **주기 tick 만** 건너뛴다 — 5초 폴링 2개(sync·push)가 보이지도 않는 화면
       // 때문에 계속 돌면 폰에서 배터리·데이터만 먹는다. 돌아오면 다음 tick(≤5초)에 따라잡는다.
       // 🔴 `poll` 조건이 필요하다: 최초 1회 호출(bind 시점)까지 건너뛰면 pending 인데 폴링이
       //    아예 안 걸려 버튼 상태가 영원히 안 맞는다.
       if(document.hidden && poll) return;
+      if(inflightAt && Date.now()-inflightAt<30000) return;   // 이전 tick 응답 대기 중이면 겹치지 않게 건너뜀
+      inflightAt=Date.now();
       try{ const r=await fetch('/api/dock_procure/sync/status'); const j=await r.json();
         if(j.pending){
           // 견적요청 성공도 flag를 세우므로(자동 반영) 안 눌러도 pending이 뜬다.
@@ -1680,6 +1689,7 @@
           if(poll){ clearInterval(poll); poll=null; await load(DATA.current); }   // 완료 → 라인 새로고침
         }
       }catch(e){}
+      finally{ inflightAt=0; }
     }
     btn.onclick=async()=>{
       btn.disabled=true; stat.textContent='요청 보냄…';
@@ -1702,9 +1712,11 @@
 
   function bindPushBtn(){
     const btn=$('#dp-pushbtn'), stat=$('#dp-pushstat'); if(!btn) return;
-    let poll=null;
+    let poll=null, inflightAt=0;   // 진행중 tick 시작시각(0=없음). 30초 넘게 안 끝나면 멈춘 요청으로 보고 새 tick 허용
     async function refreshStatus(){
       if(document.hidden && poll) return;         // 위 sync 폴러와 같은 이유(백그라운드 폴링 낭비)
+      if(inflightAt && Date.now()-inflightAt<30000) return;    // 이전 tick 응답 대기 중이면 겹치지 않게 건너뜀
+      inflightAt=Date.now();
       try{ const r=await fetch('/api/dock_procure/push/status'); const j=await r.json();
         if(j.pending){ btn.disabled=true; stat.textContent='SVMS 푸싱 중…'; if(!poll) poll=setInterval(refreshStatus,5000); }
         else{ btn.disabled=false;
@@ -1712,6 +1724,7 @@
           if(poll){ clearInterval(poll); poll=null; await load(DATA.current); }
         }
       }catch(e){}
+      finally{ inflightAt=0; }
     }
     btn.onclick=async()=>{
       if(!DATA.current){ toast('선박 먼저 선택'); return; }

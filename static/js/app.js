@@ -79,7 +79,7 @@ function escHtml(s) {
 
 function todayISO() {
   const t = new Date();
-  return t.toISOString().slice(0, 10);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
 }
 
 function dDay(due) {
@@ -120,21 +120,6 @@ function statBadge(s) {
 }
 
 function monthKey(s) { return s ? s.slice(0, 7) : '(미정)'; }
-
-function groupByMonthAndDate(issues) {
-  const months = new Map();
-  for (const i of issues) {
-    const mk = monthKey(i.issue_date);
-    const dk = i.issue_date || '(미정)';
-    if (!months.has(mk)) months.set(mk, new Map());
-    const dayMap = months.get(mk);
-    (dayMap.get(dk) || dayMap.set(dk, []).get(dk)).push(i);
-  }
-  return [...months.entries()].map(([month, dayMap]) => ({
-    month,
-    items: [...dayMap.entries()].map(([date, issues]) => ({ date, issues })),
-  }));
-}
 
 function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
@@ -986,58 +971,6 @@ function renderVmainHead() {
   h.append(el('div', { class: 'vmh-tools' }, qf, sortBtn));
 }
 
-function monthBarRow(month, collapsed, count) {
-  const tr = el('tr', { class: 'month-bar' });
-  const td = el('td', { colspan: '8' },
-    el('div', { class: 'group-bar-inner' },
-      el('span', { class: 'gb-caret' }, collapsed ? '▸' : '▾'),
-      el('span', { class: 'gb-date' }, month),
-      el('span', { class: 'gb-count' }, `${count} items`)));
-  tr.append(td);
-  tr.addEventListener('click', () => toggleMonth(month));
-  return tr;
-}
-
-function dateBarRow(date, collapsed, count) {
-  const tr = el('tr', { class: 'group-bar nested' });
-  const inner = el('div', { class: 'group-bar-inner' },
-    el('span', { class: 'gb-caret' }, collapsed ? '▸' : '▾'),
-    el('span', { class: 'gb-date' }, date),
-    el('span', { class: 'gb-count' }, `${count} item${count>1?'s':''}`));
-
-  // + Add Issue 트리거
-  const addBtn = el('span', {
-    class: 'inline-add-trigger',
-    title: `Add issue for ${date}`,
-    onclick: (e) => {
-      e.stopPropagation();
-      openInlineAdd(date);
-    },
-  }, '+ Add Issue');
-  inner.append(addBtn);
-
-  const td = el('td', { colspan: '8' }, inner);
-  tr.append(td);
-  // 셀 전체 클릭 → 접기. 단, 트리거 버튼 클릭은 stopPropagation 덕에 무시
-  tr.addEventListener('click', (e) => {
-    if (e.target.closest('.inline-add-trigger')) return;
-    toggleDate(date);
-  });
-  return tr;
-}
-
-function toggleMonth(m) {
-  if (S.collapsedMonths.has(m)) S.collapsedMonths.delete(m);
-  else S.collapsedMonths.add(m);
-  renderTable(); renderCards();
-}
-function toggleDate(d) {
-  if (S.collapsedDates.has(d)) S.collapsedDates.delete(d);
-  else S.collapsedDates.add(d);
-  S.userToggledDates.add(d);   // 사용자가 직접 토글했음 — 자동 접기에서 제외
-  renderTable(); renderCards();
-}
-
 // ───────────── Row 렌더 (셀별 인라인 편집) ─────────────
 // 컴팩트 행: No | 발생일 | 현안업무(클릭=펼침) | Priority(인라인) | Status(인라인)
 function rowEl(i, no) {
@@ -1129,31 +1062,6 @@ function mkTextBtn(label, kind, onclick) {
     class: 'exp-btn' + (kind === 'pri' ? ' pri' : kind === 'danger' ? ' danger' : ''),
     onclick: (ev) => { ev.stopPropagation(); onclick(); },
   }, label);
-}
-
-function mkIconBtn(kind, title, onclick) {
-  const svg = {
-    edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
-    attach: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>`,
-    delete: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`,
-    calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-      <line x1="16" y1="2" x2="16" y2="6"/>
-      <line x1="8" y1="2" x2="8" y2="6"/>
-      <line x1="3" y1="10" x2="21" y2="10"/></svg>`,
-  };
-  const b = el('button', {
-    class: 'icon-btn' + (kind === 'delete' ? ' danger' : kind === 'attach' ? ' attach' : ''),
-    title,
-    onclick: (ev) => { ev.stopPropagation(); onclick(); },
-  });
-  b.innerHTML = svg[kind];
-  return b;
 }
 
 // ───────────── Action cell (entries + 인라인 편집) ─────────────
@@ -1364,16 +1272,6 @@ async function startEditSelect(cellEl, issue, field, options) {
   });
 }
 
-/** 선박 select — 감독 담당 선박만 */
-async function startEditVessel(cellEl, issue) {
-  if (S._editing) return;
-  try {
-    const vs = await api(`/api/vessels?supervisor_id=${issue.supervisor_id}`);
-    const opts = vs.map(v => [v.id, v.short_name || v.name]);
-    await startEditSelect(cellEl, issue, 'vessel_id', opts);
-  } catch (err) { alert('선박 목록 로드 실패: ' + err.message); }
-}
-
 // ───────────── Action entry 인라인 편집 ─────────────
 function startEditActionEntry(entryEl, issue, idx) {
   if (S._editing) return;
@@ -1496,12 +1394,6 @@ function renderCards() {
     return;
   }
   for (const i of rows) list.append(cardEl(i, noMap.get(i.id)));
-}
-
-function inlineAddCardHint() {
-  return el('div', {
-    style: 'background:var(--blue-bg); border:1px solid var(--blue-border); padding:10px 12px; border-radius:8px; font-size:12px; color:var(--blue-text); margin-bottom:10px',
-  }, '데스크톱에서 상단 인라인 입력 폼을 이용해 새 이슈를 추가하세요.');
 }
 
 function cardEl(i, no) {

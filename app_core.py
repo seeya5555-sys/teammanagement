@@ -211,13 +211,20 @@ def query(sql, params=(), one=False):
     finally:
         cur.close()
 
+def _in_explicit_transaction():
+    """호출부가 여러 쓰기를 하나의 transaction 으로 묶는 중인지.
+    선박 purge / reqgen 결과 반영이 이 플래그를 켠다. execute·execute_rc 가 같은 판정을 써야
+    묶음 도중 execute_rc 한 번이 중간 commit 을 내지 않는다(2026-09-27 정합화)."""
+    return bool(getattr(g, '_vessel_purge_transaction', False)
+                or getattr(g, '_reqgen_result_transaction', False))
+
+
 def execute(sql, params=()):
     db = get_db()
     cur = db.execute(sql, params)
     # 선박 purge는 여러 DELETE를 하나의 명시 transaction으로 묶는다.
     # 그 밖의 기존 호출은 기존처럼 즉시 commit한다.
-    if not (getattr(g, '_vessel_purge_transaction', False)
-            or getattr(g, '_reqgen_result_transaction', False)):
+    if not _in_explicit_transaction():
         db.commit()
     last_id = cur.lastrowid
     cur.close()
@@ -228,7 +235,7 @@ def execute_rc(sql, params=()):
     """UPDATE/DELETE 영향 행수 반환 — 조건부(낙관적 락) 갱신 race 판정용."""
     db = get_db()
     cur = db.execute(sql, params)
-    if not getattr(g, '_reqgen_result_transaction', False):
+    if not _in_explicit_transaction():
         db.commit()
     rc = cur.rowcount
     cur.close()

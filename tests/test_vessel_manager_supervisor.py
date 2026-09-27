@@ -93,9 +93,15 @@ class VesselManagerSupervisorTests(unittest.TestCase):
 
         # Non-admin scope is server-owned; a query parameter must not expose a
         # different supervisor's feed.
+        # 쿠키 role 만 바꾸면 login_required 가 DB role(admin)로 되돌린다(52ea9b7) → 실제 member 계정
         with appmod.app.app_context():
             own_sid = appmod.execute("INSERT INTO supervisors(name) VALUES(?)", ('Own Supervisor',))
+            member_uid = appmod.execute(
+                "INSERT INTO users(username, password_hash, display_name, supervisor_id, role, active) "
+                "VALUES('scope-member', 'x', 'scope-member', ?, 'member', 1)", (own_sid,))
         with self.client.session_transaction() as session:
+            session['user_id'] = member_uid
+            session['username'] = 'scope-member'
             session['role'] = 'member'
             session['supervisor_id'] = own_sid
         scoped = self.client.get(f'/api/widget/issues?supervisor_id={sid}')

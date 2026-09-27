@@ -28,7 +28,7 @@ from app_core import (
     JEONJA_PDF_DIR, app, execute, execute_rc, get_db, query,
 )
 from helpers_shared import (
-    AUTOMATION_MODES, GEMINI_API_KEY, _DOCKPROC_ATT_MAX, _DOCKPROC_CAT_NM,
+    AUTOMATION_CLAIM_HOOKS, AUTOMATION_MODES, _xlsx_cell, GEMINI_API_KEY, _DOCKPROC_ATT_MAX, _DOCKPROC_CAT_NM,
     _DOCKPROC_PRE_INQUIRY, _DOCK_INQ_DOC, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
     _FUNDREQ_ATT_MIME, _automation_enabled, _dock_sync_flag_bump, _dockatt_cached_idx,
     _dockatt_disk_map, _dockatt_find, _dockatt_fp, _dockatt_gc, _dockatt_path,
@@ -94,14 +94,7 @@ def _dockproc_orphans_of(vsl_cd, have=()):
     return out
 
 
-def _dockproc_cell(ws, coord):
-    v = ws[coord].value
-    if v is None:
-        return None
-    if isinstance(v, str):
-        v = v.strip()
-        return v or None
-    return v
+_dockproc_cell = _xlsx_cell   # helpers_shared 공용
 
 
 def _dockproc_parse_index(stream):
@@ -2876,12 +2869,12 @@ def api_ext_automation_claim():
     if running:
         return jsonify({'run': None, 'busy': True})
     # Auxiliary polling must not block unrelated operational queues on failure.
-    try:
-        from routes_followup import enqueue_tracked
-        enqueue_tracked()
-    except Exception:
-        from flask import current_app
-        current_app.logger.exception('followup tracking enqueue failed')
+    for _hook in list(AUTOMATION_CLAIM_HOOKS):   # routes_followup.enqueue_tracked 등(소유 모듈이 등록)
+        try:
+            _hook()
+        except Exception:
+            from flask import current_app
+            current_app.logger.exception('followup tracking enqueue failed')
     row = query("SELECT id,run_id,task,mode,params FROM automation_run WHERE status='queued' ORDER BY id ASC LIMIT 1",
                 one=True)
     if not row:

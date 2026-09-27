@@ -28,12 +28,6 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 
-function escHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[c]));
-}
-
 async function api(url, opts = {}) {
   const r = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },

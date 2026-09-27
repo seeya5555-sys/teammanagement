@@ -151,7 +151,23 @@ def _drydock_id_list(value, field='drydock vessel ids'):
     return out
 
 
-def _project_response(row):
+def _project_responses(rows):
+    """목록용 _project_response — 섹션을 프로젝트마다 따로 읽던 N+1(1+P 쿼리)을 1쿼리로.
+    섹션 정렬(sort_order, id)·필드는 _sections() 와 동일."""
+    rows = list(rows)
+    ids = [r['id'] for r in rows if r and r['id']]
+    by_pid = {}
+    if ids:
+        ph = ','.join('?' * len(ids))
+        for r in query('SELECT id, project_id, section_key, label, sort_order, kind, enabled, scope '
+                       f'FROM dock_daily_section_def WHERE project_id IN ({ph}) '
+                       'ORDER BY project_id, sort_order, id', tuple(ids)):
+            by_pid.setdefault(r['project_id'], []).append(dict(r))
+    return [_project_response(r, sections=by_pid.get(r['id'], []) if r and r['id'] else None)
+            for r in rows]
+
+
+def _project_response(row, sections=None):
     out = _dict(row)
     if not out:
         return out
@@ -164,7 +180,7 @@ def _project_response(row):
         ids.insert(0, primary)
     out['dock_manager_project_ids'] = ids
     if out.get('id'):
-        out['sections'] = _sections(out['id'])
+        out['sections'] = sections if sections is not None else _sections(out['id'])
     return out
 
 
@@ -414,7 +430,7 @@ def projects_get():
                            (SELECT COUNT(*) FROM dock_daily_report r WHERE r.project_id=p.id) report_count
                     FROM dock_daily_project p JOIN vessels v ON v.id=p.vessel_id
                     ORDER BY p.active_from DESC, p.id DESC''')
-    return jsonify([_project_response(x) for x in rows])
+    return jsonify(_project_responses(rows))
 
 
 @bp.route('/api/dock-daily/projects', methods=['POST'])
@@ -3836,7 +3852,7 @@ def ext_projects_get():
     rows = query('''SELECT p.*, v.name vessel_name
                     FROM dock_daily_project p JOIN vessels v ON v.id=p.vessel_id
                     WHERE p.auto_generate=1 ORDER BY p.active_from, p.id''')
-    return jsonify({'projects': [_project_response(row) for row in rows]})
+    return jsonify({'projects': _project_responses(rows)})
 
 
 @bp.route('/api/ext/dock-daily/reports/<int:rid>/merge', methods=['POST'])

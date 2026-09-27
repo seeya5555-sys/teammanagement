@@ -1372,7 +1372,8 @@ async function createIssueFromFinding(vt, f) {
     (f.remark ? `\n\n비고: ${f.remark}` : '');
 
   // 오늘 날짜 (issue_date 필수)
-  const today = new Date().toISOString().slice(0, 10);
+  const _now = new Date();
+  const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
 
   if (!confirm(
       `다음 내용으로 Daily 업무관리 이슈를 생성합니다.\n\n` +
@@ -1585,12 +1586,12 @@ async function init() {
     const dz = $('#vt-attach-dropzone');
     const fi = $('#vt-attach-file-input');
     dz.addEventListener('click', () => fi.click());
-    fi.addEventListener('change', () => { uploadVtFiles(fi.files); fi.value = ''; });
+    fi.addEventListener('change', () => { const files = [...(fi.files || [])]; fi.value = ''; uploadVtFiles(files); });
     dz.addEventListener('dragover',  (e) => { e.preventDefault(); dz.classList.add('dragover'); });
     dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
     dz.addEventListener('drop', (e) => {
       e.preventDefault(); dz.classList.remove('dragover');
-      uploadVtFiles(e.dataTransfer.files);
+      uploadVtFiles([...(e.dataTransfer.files || [])]);
     });
 
     // Overall Remark 모달

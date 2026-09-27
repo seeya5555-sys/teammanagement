@@ -37,6 +37,7 @@ from app_core import (
     ensure_heif_opener, execute, execute_rc, get_db, query,
 )
 from helpers_shared import (
+    _xlsx_cell,
     AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, RETIRED_RUNNER_KEYS,
     SOA_CATEGORY_OWNER, FLEET_MAP_FILE, _AOR_ACTIVE_STATUSES, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
     _FUNDREQ_ATT_MIME, _HEALTH_ORDER, _annotate_drafts_with_vessel,
@@ -312,7 +313,15 @@ def api_cal_leave_summary():
 #   · Step 1: 보고서 자체의 생성/조회/수정/삭제만
 #   · 섹션·블록 편집 / 추출은 Step 2~3에서 추가
 # ═════════════════════════════════════════════════════════════════
-def _can_edit_dock_report(report_row_or_id):
+# 보고서 편집권한 판정 — dock/boarding 이 테이블명만 다른 복제본이었음(2026-09-27 통합).
+# SQL 은 테이블별 정적 문자열(동적 SQL 금지 계약 유지).
+_REPORT_SUPERVISOR_SQL = {
+    'dock_reports': 'SELECT supervisor_id FROM dock_reports WHERE id=?',
+    'boarding_reports': 'SELECT supervisor_id FROM boarding_reports WHERE id=?',
+}
+
+
+def _can_edit_report(table, report_row_or_id):
     """
     현재 세션 사용자가 이 보고서를 편집할 권한이 있는가?
       · admin: 항상 True
@@ -327,8 +336,7 @@ def _can_edit_dock_report(report_row_or_id):
         return False
 
     if isinstance(report_row_or_id, int):
-        r = query('SELECT supervisor_id FROM dock_reports WHERE id=?',
-                  (report_row_or_id,), one=True)
+        r = query(_REPORT_SUPERVISOR_SQL[table], (report_row_or_id,), one=True)
         if not r:
             return False
         report_sv = r['supervisor_id']
@@ -338,6 +346,21 @@ def _can_edit_dock_report(report_row_or_id):
                     else report_row_or_id['supervisor_id']
 
     return report_sv is not None and report_sv == my_sv
+
+
+def _apply_template_flag(d, sets, params):
+    """보고서 메타 PUT 공용: 편집 모달이 보내는 is_template 을 0/1 로 반영, 해제 시 template_name 비움
+    (예전엔 조용히 무시 → 목록에서 이름만 남은 유령 템플릿 방지). dock/boarding 공통."""
+    if 'is_template' in d:
+        is_tmpl = 1 if d.get('is_template') else 0
+        sets.append('is_template = ?')
+        params.append(is_tmpl)
+        if not is_tmpl and 'template_name' not in d:
+            sets.append('template_name = NULL')
+
+
+def _can_edit_dock_report(report_row_or_id):
+    return _can_edit_report('dock_reports', report_row_or_id)
 
 
 def _require_dock_edit(rid):
@@ -487,14 +510,7 @@ def api_dock_update(rid):
             sets.append(f'{k} = ?')
             v = d.get(k)
             params.append(v if (v not in ('',)) else None)
-    # 편집 모달이 보내는 템플릿 체크를 조용히 버리던 문제(2026-09-27) — 0/1 로 정규화해 반영,
-    # 해제 시 template_name 도 비운다(목록에서 이름만 남은 유령 템플릿 방지).
-    if 'is_template' in d:
-        is_tmpl = 1 if d.get('is_template') else 0
-        sets.append('is_template = ?')
-        params.append(is_tmpl)
-        if not is_tmpl and 'template_name' not in d:
-            sets.append('template_name = NULL')
+    _apply_template_flag(d, sets, params)
 
     if not sets:
         return jsonify({'ok': True, 'updated': 0})
@@ -1035,21 +1051,7 @@ def api_dock_export_pdf(rid):
 #   · 메타 필드만 다름 (port / boarding_start_end / master / chief_eng 등)
 # ═════════════════════════════════════════════════════════════════
 def _can_edit_boarding_report(report_row_or_id):
-    if session.get('role') == 'admin':
-        return True
-    my_sv = session.get('supervisor_id')
-    if not my_sv:
-        return False
-    if isinstance(report_row_or_id, int):
-        r = query('SELECT supervisor_id FROM boarding_reports WHERE id=?',
-                  (report_row_or_id,), one=True)
-        if not r:
-            return False
-        report_sv = r['supervisor_id']
-    else:
-        report_sv = report_row_or_id.get('supervisor_id') if hasattr(report_row_or_id, 'get') \
-                    else report_row_or_id['supervisor_id']
-    return report_sv is not None and report_sv == my_sv
+    return _can_edit_report('boarding_reports', report_row_or_id)
 
 
 def _require_brep_edit(rid):
@@ -1301,14 +1303,7 @@ def api_brep_update(rid):
             sets.append(f'{k} = ?')
             v = d.get(k)
             params.append(v if (v not in ('',)) else None)
-    # 편집 모달이 보내는 템플릿 체크를 조용히 버리던 문제(2026-09-27) — 0/1 로 정규화해 반영,
-    # 해제 시 template_name 도 비운다(목록에서 이름만 남은 유령 템플릿 방지).
-    if 'is_template' in d:
-        is_tmpl = 1 if d.get('is_template') else 0
-        sets.append('is_template = ?')
-        params.append(is_tmpl)
-        if not is_tmpl and 'template_name' not in d:
-            sets.append('template_name = NULL')
+    _apply_template_flag(d, sets, params)
 
     if not sets:
         return jsonify({'ok': True, 'updated': 0})
@@ -5269,29 +5264,43 @@ def api_ext_issue_match():
 @api_key_required
 def api_ext_issue_add_action(iid):
     from datetime import date as _date
-    row = query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)
-    if not row:
+    if not query('SELECT 1 FROM issues WHERE id=?', (iid,), one=True):
         return jsonify({'error': 'not found'}), 404
     d = request.get_json(silent=True) or {}
     progress = (d.get('progress') or '').strip()
     if not progress:
         return jsonify({'error': 'progress required'}), 400
-    try:
-        actions = json.loads(row['actions']) if row['actions'] else []
-        if not isinstance(actions, list):
-            actions = []
-    except Exception:
-        app.logger.exception('ext-issue-add-action')
-        actions = []
-    actions.append({
+    entry = {
         'date': (d.get('date') or '').strip() or _date.today().isoformat(),
         'progress': progress,
         'important': bool(d.get('important')),
-    })
-    execute('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
-            'WHERE id=?', (json.dumps(actions, ensure_ascii=False), iid))
-    return jsonify({'id': iid, 'ref': _ref('issue', iid),
-                    'actions_count': len(actions)})
+    }
+    # 읽은 원문을 조건으로 건 CAS — 러너가 읽고 쓰는 사이 웹/iOS 에서 한 줄 삭제·수정하면
+    # 예전엔 옛 배열로 덮어써 삭제한 줄이 되살아났음(2026-09-27). 밀리면 최신 원문으로 재시도.
+    for _ in range(3):
+        row = query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)
+        if not row:
+            return jsonify({'error': 'not found'}), 404
+        raw = row['actions']
+        try:
+            actions = json.loads(raw) if raw else []
+            if not isinstance(actions, list):
+                actions = []
+        except Exception:
+            app.logger.exception('ext-issue-add-action')
+            actions = []
+        actions.append(entry)
+        new_raw = json.dumps(actions, ensure_ascii=False)
+        if raw is None:
+            rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
+                            'WHERE id=? AND actions IS NULL', (new_raw, iid))
+        else:
+            rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
+                            'WHERE id=? AND actions=?', (new_raw, iid, raw))
+        if rc:
+            return jsonify({'id': iid, 'ref': _ref('issue', iid),
+                            'actions_count': len(actions)})
+    return jsonify({'error': 'concurrent update, retry'}), 409
  
  
 @bp.route('/api/ext/issues/<int:iid>/email-key', methods=['POST'])
@@ -8064,14 +8073,7 @@ def _reqgen_infer_exp(part_tp, equipment, subject):
     return '090305'                           # 기타(애매)
 
 
-def _reqgen_cell(ws, coord):
-    v = ws[coord].value
-    if v is None:
-        return None
-    if isinstance(v, str):
-        v = v.strip()
-        return v or None
-    return v
+_reqgen_cell = _xlsx_cell   # helpers_shared 공용(도크발주 _dockproc_cell 과 동일 구현이었음)
 
 
 

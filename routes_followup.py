@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from werkzeug.exceptions import HTTPException
 from flask import Blueprint, abort, jsonify, request, session
 from app_core import get_db, query
-from helpers_shared import admin_required, api_key_required, _automation_enabled
+from helpers_shared import AUTOMATION_CLAIM_HOOKS, admin_required, api_key_required, _automation_enabled
 
 bp = Blueprint('routes_followup', __name__)
 KINDS = {'daily', 'cs', 'vt', 'aor', 'fundreq', 'invoice'}
@@ -528,3 +528,8 @@ def indicators():
         if count:
             out.append({'kind':row['kind'],'target_id':row['target_id'],'count':count})
     return jsonify(items=out)
+
+
+# 러너 claim 경로(routes_dock_submit)가 이 모듈을 직접 import 하지 않도록 훅으로 등록
+if enqueue_tracked not in AUTOMATION_CLAIM_HOOKS:
+    AUTOMATION_CLAIM_HOOKS.append(enqueue_tracked)

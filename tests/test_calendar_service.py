@@ -161,8 +161,14 @@ class CalendarServiceTests(unittest.TestCase):
 
     def test_leave_summary_http_contract_and_scope(self):
         client = appmod.app.test_client()
+        # login_required 가 DB 의 role 로 세션을 동기화한다(52ea9b7) → 쿠키만 role=user 로 바꾸면
+        # admin(user 1) 으로 되돌아가 scope 403 분기를 검증하지 못한다. 실제 일반 사용자로 로그인.
+        with appmod.app.app_context():
+            uid = appmod.execute(
+                "INSERT INTO users(username, password_hash, display_name, role, active) "
+                "VALUES('sup2-scope', 'x', 'sup2', 'member', 1)")
         with client.session_transaction() as sess:
-            sess.update(user_id=1, username="sup2", role="user", supervisor_id=2)
+            sess.update(user_id=uid, username="sup2-scope", role="member", supervisor_id=2)
         token = client.get("/api/csrf-token").get_json()["token"]
         saved = client.put("/api/cal/leave-summary", json={
             "year": 2026, "supervisor_id": 2, "days": 12.25,

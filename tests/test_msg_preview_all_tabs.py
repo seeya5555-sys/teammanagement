@@ -156,8 +156,13 @@ class MsgPreviewAllTabsTests(unittest.TestCase):
             f"/api/msg-preview/dock_daily/{self.ids['dock_daily']}").status_code)
 
     def test_issue_preview_keeps_supervisor_scope(self):
+        # 쿠키 role 만 바꾸면 login_required 가 DB role(admin)로 되돌린다(52ea9b7) → 실제 비관리자 계정
+        with appmod.app.app_context():
+            uid = appmod.execute(
+                "INSERT INTO users(username, password_hash, display_name, role, active) "
+                "VALUES('preview-scope', 'x', 'preview-scope', 'member', 1)")
         with self.client.session_transaction() as session:
-            session.update(role="supervisor", supervisor_id=999)
+            session.update(user_id=uid, username="preview-scope", role="member", supervisor_id=999)
         self.assertEqual(403, self.client.get(
             f"/api/msg-preview/issue/{self.ids['issue']}").status_code)
 

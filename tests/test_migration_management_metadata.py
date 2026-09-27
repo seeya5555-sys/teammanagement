@@ -36,6 +36,7 @@ class ManagementMetadataMigrationTests(unittest.TestCase):
             (
                 "class_status.source_path",
                 "class_status_items.action_taken",
+                "class_status_items.followup_evidence",   # 29e8806 (2026-09-17)
                 "vessels.management",
                 "mail_card.columns",
             ),

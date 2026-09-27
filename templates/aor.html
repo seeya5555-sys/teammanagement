@@ -111,7 +111,7 @@
   const esc = s => (s == null ? '' : String(s).replace(/[&<>"]/g,
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
   const fmtAmt = (a, c) => (a == null || a === '') ? '—'
-    : Number(a).toLocaleString('en-US', {maximumFractionDigits: 2}) + ' ' + (c || '');
+    : Number(a).toLocaleString('en-US', {maximumFractionDigits: 2}) + ' ' + esc(c || '');
   // P4 표시전용: 서버가 부가한 matched_vessel → 선박 soft매칭 칩(read-only)
   const vesselChip = d => {
     const m = d && d.matched_vessel;
@@ -189,7 +189,7 @@
   function confBadge(c) {
     if (c == null) return '';
     const cls = c >= 70 ? 'conf-hi' : c >= 40 ? 'conf-mid' : 'conf-lo';
-    return `<span class="aor-badge ${cls}">매칭 ${c}%</span>`;
+    return `<span class="aor-badge ${cls}">매칭 ${esc(c)}%</span>`;
   }
 
   function card(d) {

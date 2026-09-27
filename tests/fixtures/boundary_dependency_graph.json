@@ -75,6 +75,7 @@
     "routes_dock_daily.py": [],
     "routes_dock_submit.py": [],
     "routes_family_assets.py": [],
+    "routes_followup.py": [],
     "routes_liscr.py": [],
     "routes_repair_request.py": [],
     "routes_tail.py": [],
@@ -186,6 +187,7 @@
     "helpers_shared.py": [
       "AUTOMATION_TASKS_BASE",
       "CAL_VALID_COLORS",
+      "FLEET_MAP_FILE",
       "GEMINI_API_KEY",
       "RETIRED_RUNNER_KEYS",
       "SOA_CATEGORY_OWNER",
@@ -225,7 +227,9 @@
       "_vetting_pick",
       "_vetting_summary_counts",
       "_vkey",
+      "_xlsx_cell",
       "admin_required",
+      "agent_read_required",
       "api_key_required",
       "login_required",
       "soa_task_key"
@@ -299,6 +303,7 @@
       "query"
     ],
     "helpers_shared.py": [
+      "AUTOMATION_CLAIM_HOOKS",
       "AUTOMATION_MODES",
       "GEMINI_API_KEY",
       "_DOCKPROC_ATT_MAX",
@@ -343,6 +348,7 @@
       "_soa_review_case_unlock",
       "_soa_vessel_codes_from_params",
       "_soa_vessel_params",
+      "_xlsx_cell",
       "admin_required",
       "api_key_required",
       "automation_tasks",
@@ -356,6 +362,19 @@
     ],
     "helpers_shared.py": [
       "login_required"
+    ]
+  },
+  "routes_followup.py": {
+    "app_core.py": [
+      "get_db",
+      "query"
+    ],
+    "helpers_shared.py": [
+      "AUTOMATION_CLAIM_HOOKS",
+      "_automation_enabled",
+      "_issue_write_scope",
+      "admin_required",
+      "api_key_required"
     ]
   },
   "routes_liscr.py": {

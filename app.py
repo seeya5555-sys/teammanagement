@@ -330,6 +330,9 @@ def init_db(drop=False):
                 conn.execute("ALTER TABLE automation_run ADD COLUMN progress TEXT")
         except Exception:
             app.logger.debug('automation_run params/progress 마이그 skip', exc_info=True)
+        # 러너 claim(매 폴링) 이 status 로 3~4회, followup/결과 조회가 run_id 로 매번 전체 스캔하던 것 → 인덱스(가산적, 2026-09-27)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_automation_run_status ON automation_run(status, id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_automation_run_run_id ON automation_run(run_id)")
 
         # Daily 사이드바 선박 커스텀 순서 (유저별, 드래그앤드롭 저장)
         conn.execute("""

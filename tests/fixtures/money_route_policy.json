@@ -39,6 +39,11 @@
     "guard": "api_key_required",
     "non_admin": 401
   },
+  "GET /api/ext/fundreq/drafts/pending": {
+    "guard": "api_key_required",
+    "anonymous": 401,
+    "non_admin": 401
+  },
   "GET /api/ext/fundreq/drafts/pending-attachments": {
     "anonymous": 401,
     "guard": "api_key_required",
@@ -102,6 +107,11 @@
   "GET /api/invoice/drafts": {
     "anonymous": 401,
     "guard": "admin_required",
+    "non_admin": 403
+  },
+  "GET /api/invoice/drafts/<int:did>/attachments/<int:idx>": {
+    "guard": "admin_required",
+    "anonymous": 401,
     "non_admin": 403
   },
   "GET /api/invoice/drafts/<int:did>/pdf": {
@@ -169,6 +179,11 @@
     "guard": "api_key_required",
     "non_admin": 401
   },
+  "POST /api/ext/fundreq/drafts/<int:did>/external-status": {
+    "guard": "api_key_required",
+    "anonymous": 401,
+    "non_admin": 401
+  },
   "POST /api/ext/fundreq/drafts/<int:did>/reject-result": {
     "anonymous": 401,
     "guard": "api_key_required",
@@ -182,6 +197,11 @@
   "POST /api/ext/invoice/drafts": {
     "anonymous": 401,
     "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/invoice/drafts/<int:did>/attachments/<int:idx>": {
+    "guard": "api_key_required",
+    "anonymous": 401,
     "non_admin": 401
   },
   "POST /api/ext/invoice/drafts/<int:did>/pdf": {

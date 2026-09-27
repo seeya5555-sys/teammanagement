@@ -30,7 +30,8 @@ class AgentReadAPITests(unittest.TestCase):
             f"/api/agent/status?key={DERIVED}").status_code)
         result = self.client.get("/api/agent/status", headers=self.headers)
         self.assertEqual(200, result.status_code)
-        self.assertEqual(1, result.get_json()["schema_version"])
+        # b28a34c(2026-09-17)가 read-only context 5종 추가와 함께 의도적으로 v2 로 올림
+        self.assertEqual(2, result.get_json()["schema_version"])
         self.assertEqual(401, self.client.get(
             "/api/agent/status", headers={"X-TRMT-Agent-Key": "é"}).status_code)
         with patch("helpers_shared._get_api_key", return_value="master-only"):

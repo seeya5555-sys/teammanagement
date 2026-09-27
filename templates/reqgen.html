@@ -234,7 +234,9 @@
     </div>`;
   }
 
-  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  let _loading=0;   // 진행 중인 load() 수 — 자동 새로고침 틱이 겹치지 않게
+  let _loadStartedAt=0;   // 30초 넘게 안 끝난 load 는 멈춘 것으로 보고 틱을 막지 않는다
+  async function load(){const _sy=window.scrollY;_loading++;_loadStartedAt=Date.now();try{return await _load();}finally{_loading--;requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
   async function _load(){
     try{
       const j=await api('GET','/api/reqgen/drafts');
@@ -359,7 +361,7 @@
   });
 
   load();
-  setInterval(()=>{ if(document.querySelector('.st-saving,.st-approved')) load(); }, 8000);
+  setInterval(()=>{ if(document.hidden || (_loading && Date.now()-_loadStartedAt<30000)) return; if(document.querySelector('.st-saving,.st-approved')) load(); }, 8000);  // 숨김 탭·요청 진행 중이면 건너뜀
 })();
 </script>
 {% endblock %}

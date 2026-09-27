@@ -792,13 +792,13 @@
   function openV(v){
     trackVessel=v.name;
     document.getElementById('fmName').textContent=v.name;
-    document.getElementById('fmSubt').textContent=esc(v.cls||v.type||'')+' · '+toDDM(v.lat,true)+' '+toDDM(v.lng,false);
+    document.getElementById('fmSubt').textContent=(v.cls||v.type||'')+' · '+toDDM(v.lat,true)+' '+toDDM(v.lng,false);
     const bl=v.bl==='L'?'lade':(v.bl==='B'?'ball':'gray');
     const blTxt=v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'B/L —');
     document.getElementById('fmBadges').innerHTML='<span class="pill '+bl+'">'+blTxt+'</span>'+
-      '<span class="pill '+(v.color==='green'?'green':v.color)+'">'+(v.color==='green'?'이슈없음':(v.coc?'COC/Flag':(v.urgent?'Urgent':'이슈')))+'</span>'+
+      '<span class="pill '+(v.color==='green'?'green':esc(v.color))+'">'+(v.color==='green'?'이슈없음':(v.coc?'COC/Flag':(v.urgent?'Urgent':'이슈')))+'</span>'+
       (v.status?'<span class="pill gray">'+esc(v.status)+'</span>':'');
-    const vet=(v.vetting_open!=null)?'<span class="pill '+(v.vetting_open>2?'red':(v.vetting_open?'amber':'green'))+'">Open '+v.vetting_open+'</span>':'<span class="fm-note">미연동</span>';
+    const vet=(v.vetting_open!=null)?'<span class="pill '+(v.vetting_open>2?'red':(v.vetting_open?'amber':'green'))+'">Open '+esc(v.vetting_open)+'</span>':'<span class="fm-note">미연동</span>';
     const cargo=v.cargo_op_applicable?('<div class="fm-sec">Cargo Operation (VLCC/LR · SVMS noon)</div><div class="fm-line"><span class="lk">상태</span><span class="lv">'+(v.cargo_op?esc(v.cargo_op):'<span class="fm-note">—</span>')+'</span></div>'):'';
     const ev=encodeURIComponent(v.name);
     // 4번째 카드: VLCC/LR=SIRE(Vetting), 그외=Condition Survey 총 open
@@ -806,7 +806,7 @@
     const f4=isSire
       ? {href:'/vetting-status?vessel='+ev, k:'SIRE', val:(v.sire_open!=null?v.sire_open:'—'), unit:(v.sire_obs_overdue?' open · 3주↑':(v.sire_open!=null?' open':'')), cls:(v.sire_obs_overdue?'red':(v.sire_open?'amber':'green'))}
       : {href:'/condition-survey?vessel='+ev, k:'Cond.Survey', val:(v.cs_open!=null?v.cs_open:'—'), unit:' open', cls:(v.cs_open?'blue':'green')};
-    const card=(href,cls,k,val,unit)=>'<a class="fm-card '+cls+'" href="'+href+'"><div class="k">'+k+'</div><div class="v">'+val+'<small>'+unit+'</small></div></a>';
+    const card=(href,cls,k,val,unit)=>'<a class="fm-card '+cls+'" href="'+href+'"><div class="k">'+k+'</div><div class="v">'+esc(val)+'<small>'+unit+'</small></div></a>';
     const reportDate=(raw)=>{
       const m=String(raw||'').trim().match(/^(\d{4})(\d{2})(\d{2})/);
       if(!m)return '';
@@ -824,8 +824,8 @@
     };
     // Class/Flag 만기 경고 배너(overdue/임박)
     const dueLine = v.cls_due_state ? (
-      '<a class="fm-duewarn '+v.cls_due_state+'" href="/class-status?vessel='+ev+'">Class/Flag 만기 '+
-      (v.cls_due_state==='overdue' ? ('<b>'+Math.abs(v.cls_due_days)+'일 초과</b>') : ('<b>D-'+v.cls_due_days+'</b>'))+
+      '<a class="fm-duewarn '+esc(v.cls_due_state)+'" href="/class-status?vessel='+ev+'">Class/Flag 만기 '+
+      (v.cls_due_state==='overdue' ? ('<b>'+Math.abs(v.cls_due_days)+'일 초과</b>') : ('<b>D-'+esc(v.cls_due_days)+'</b>'))+
       ' · '+esc(v.cls_due_date||'')+' ›</a>') : '';
     document.getElementById('fmBody').innerHTML=
       '<div class="fm-grid">'+
@@ -839,7 +839,7 @@
       trackToggle(v)+
       posSourceControl(v)+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
-      '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?v.course:'—')+'° · '+(v.speed!=null?v.speed:'—')+' kn</span></div>'+
+      '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?esc(v.course):'—')+'° · '+(v.speed!=null?esc(v.speed):'—')+' kn</span></div>'+
       fuelBlock('ROB · 최신 운항보고'+(reportDate(v.rpt_dt)?' · '+reportDate(v.rpt_dt):''),v.fuel_rob)+
       fuelBlock('Total Daily Consumption'+(reportDate(v.rpt_dt)?' · '+reportDate(v.rpt_dt):''),v.fuel_daily_consumption)+
       cargo+

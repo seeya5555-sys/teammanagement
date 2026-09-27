@@ -36,20 +36,6 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 
-// 이모지 대체용 인라인 SVG 라인 아이콘 (Lucide 스타일 24×24, .ic-svg가 stroke 처리)
-const IC_PATHS = {
-  x:      '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
-  trash:  '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>',
-  image:  '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
-  camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
-};
-function icSvg(name, extraAttrs = '') {
-  const tpl = document.createElement('template');
-  tpl.innerHTML = '<svg class="ic-svg" viewBox="0 0 24 24"' +
-    (extraAttrs ? ' ' + extraAttrs : '') + '>' + (IC_PATHS[name] || '') + '</svg>';
-  return tpl.content.firstChild;
-}
-
 async function api(url, opts = {}) {
   const headers = opts.body instanceof FormData
     ? (opts.headers || {})
@@ -816,17 +802,6 @@ function parseTsv(text) {
 }
 
 /**
- * HTML 안의 <table>을 2D 배열로 파싱.
- * Excel 클립보드는 HTML도 함께 넣어주므로, 그게 있으면 더 정확.
- */
-function parseHtmlTable(html) {
-  // 기존 호환 함수: rich 파서로 가서 cells의 text만 추출
-  const rich = parseHtmlTableRich(html);
-  if (!rich) return null;
-  return rich.cells.map(row => row.map(c => c ? c.text : ''));
-}
-
-/**
  * HTML 안의 <table>을 cells 2D 배열 + 헤더 행 수와 함께 반환.
  *   {
  *     cells: [[ {text, rowspan, colspan} | null, ... ], ...],
@@ -1184,24 +1159,6 @@ function normalizeTableContent(c) {
     cells,
     col_widths: Array.isArray(c?.col_widths) ? c.col_widths.slice() : [],
   };
-}
-
-function tableContentToOld(content) {
-  // 다른 시스템 호환성을 위해 (예: Word 출력) 기존 헤더/행 형식으로도 변환 제공
-  // 단, 병합 정보가 있으면 그대로 cells 사용 권장
-  const { cells, header_row_count, col_widths } = content;
-  const nCols = cells[0]?.length || 0;
-  const headers = [];
-  // 첫 헤더 행을 단순 평탄화 (병합된 부분은 첫 셀 text로)
-  if (cells[0]) {
-    for (let ci = 0; ci < nCols; ci++) {
-      const c = cells[0][ci];
-      headers.push(c ? c.text : '');
-    }
-  }
-  const rows = cells.slice(header_row_count).map(row =>
-    row.map(c => c ? c.text : ''));
-  return { headers, rows, col_widths };
 }
 
 // cells에서 (ri, ci) 위치를 차지하는 마스터 셀 좌표를 반환

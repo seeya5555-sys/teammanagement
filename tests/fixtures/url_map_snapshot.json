@@ -33,6 +33,160 @@
     "defaults": {}
   },
   {
+    "rule": "/api/agent/automation-health/overview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_automation_health",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/calendar/context",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_calendar_context",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/class/overview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_class_overview",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/condition-surveys/overview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_condition_surveys",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/dock/overview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_dock_overview",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/fleet/context",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_fleet_context",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/issues",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_issues",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/issues/<int:iid>",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_issue",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/meetings/overview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_meetings",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/repair-requests/overview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_repair_requests",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/reports/context",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_report_context",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/status",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_status",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/vessels/<path:vessel>/overview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_vessel_overview",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/agent/vetting/overview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_agent_vetting_overview",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/aor/drafts",
     "methods": [
       "GET",
@@ -1951,6 +2105,26 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/aor/status-sync",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_aor_status_sync",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/approval-rejections/sync",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_approval_rejections_sync",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/automation/<run_id>/done",
     "methods": [
       "OPTIONS",
@@ -2019,6 +2193,27 @@
       "OPTIONS"
     ],
     "endpoint": "routes_calendar_dock.api_ext_calendar",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-followup/<int:iid>",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_tail.api_ext_class_followup_result",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-followup/candidates",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_tail.api_ext_class_followup_candidates",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -2391,6 +2586,27 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/followup/jobs/<job_id>",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_followup.runner_job",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/followup/jobs/<job_id>",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_followup.runner_result",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/fundreq/approved",
     "methods": [
       "GET",
@@ -2422,6 +2638,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/fundreq/drafts/<int:did>/external-status",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_fundreq_external_status",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/fundreq/drafts/<int:did>/reject-result",
     "methods": [
       "OPTIONS",
@@ -2438,6 +2664,17 @@
       "POST"
     ],
     "endpoint": "routes_calendar_dock.api_ext_fundreq_result",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/fundreq/drafts/pending",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_fundreq_pending_list",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -2481,6 +2718,16 @@
       "POST"
     ],
     "endpoint": "routes_calendar_dock.api_ext_invoice_create",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/invoice/drafts/<int:did>/attachments/<int:idx>",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_invoice_attachment_upload",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -3441,6 +3688,78 @@
     "defaults": {}
   },
   {
+    "rule": "/api/followup/<kind>/<int:target_id>",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_followup.get_followup",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/followup/<kind>/<int:target_id>/cancel",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_followup.cancel_queued",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/followup/<kind>/<int:target_id>/items/review",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_followup.review_item",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/followup/<kind>/<int:target_id>/reviewed",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_followup.reviewed",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/followup/<kind>/<int:target_id>/scan",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_followup.scan",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/followup/<kind>/<int:target_id>/tracking",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_followup.tracking",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/followup/indicators",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_followup.indicators",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/fundreq/drafts",
     "methods": [
       "GET",
@@ -3550,6 +3869,17 @@
       "POST"
     ],
     "endpoint": "routes_calendar_dock.api_invoice_approve",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/invoice/drafts/<int:did>/attachments/<int:idx>",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_invoice_attachment",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -3756,6 +4086,16 @@
       "POST"
     ],
     "endpoint": "routes_core.api_issue_action_append",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/issues/<int:iid>/actions/<int:idx>",
+    "methods": [
+      "DELETE",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_core.api_issue_action_delete",
     "strict_slashes": true,
     "defaults": {}
   },
