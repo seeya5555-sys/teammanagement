@@ -175,10 +175,22 @@ function renderCard(r) {
 
   // 메타 정보 (조선소 / 기간 / 회차)
   const meta = el('div', { class: 'dd-card-meta' });
-  if (r.dock_no)   meta.append(el('span', { class: 'dd-meta-chip' }, r.dock_no));
-  if (r.shipyard)  meta.append(el('span', { class: 'dd-meta-text' }, ' ' + r.shipyard));
+  // 회차·조선소는 카드에서 바로 수정(편집권한), 나머지 메타는 [편집] 모달
+  const metaField = (field, cls, placeholder) => {
+    const v = r[field];
+    if (!v && !canEdit) return;
+    const node = el('span', { class: cls + (v ? '' : ' dd-meta-empty') }, v || placeholder);
+    if (canEdit && window.InlineEdit) InlineEdit.bind(node, {
+      kind: 'text', value: v || '', placeholder,
+      save: (nv) => api(`/api/dock-reports/${r.id}`, { method: 'PUT', body: JSON.stringify({ [field]: nv.trim() }) }),
+      onDone: (nv) => { r[field] = nv.trim() || null; },
+    });
+    meta.append(node);
+  };
+  metaField('dock_no', 'dd-meta-chip', '+ 회차');
+  metaField('shipyard', 'dd-meta-text', '+ 조선소');
   const period = fmtPeriod(r);
-  if (period)      meta.append(el('span', { class: 'dd-meta-text' }, ' ' + period));
+  if (period)      meta.append(el('span', { class: 'dd-meta-text' }, period));
   card.append(meta);
 
   // 푸터 — 작성자, 업데이트 시각

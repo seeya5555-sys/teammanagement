@@ -5,15 +5,15 @@
   .fr-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   .fr-count{color:var(--text-secondary);font-size:13px}
   .fr-list{display:flex;flex-direction:column;gap:12px;max-width:920px}
-  .fr-card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .fr-card{border:1px solid var(--border);border-radius:6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
   .fr-card.is-busy{opacity:.55;pointer-events:none}
   .fr-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
   .fr-subj{font-weight:600;color:var(--text-primary);line-height:1.35}
   .fr-meta{font-size:12px;color:var(--text-secondary);margin-top:3px}
   .fr-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
-  .fr-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .fr-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:nowrap}
   /* P4 표시전용: 선박 soft매칭 칩(read-only) */
-  .ves-chip{font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;white-space:nowrap;display:inline-block}
+  .ves-chip{font-size:11px;font-weight:600;padding:1px 7px;border-radius:4px;white-space:nowrap;display:inline-block}
   .ves-chip.ok{background:var(--green-bg);color:var(--green)}
   .ves-chip.other{background:var(--surface-3);color:var(--text-secondary)}
   .ves-chip.none{background:var(--surface-2);color:var(--text-secondary)}
@@ -192,7 +192,7 @@
   $('#fr-reload').onclick=load;
   $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(상신/리젝/실패) 카드를 비울까요?'))return;
     await api('DELETE','/api/fundreq/drafts/decided');load();};
-  load(); setInterval(load,8000);
+  load(); setInterval(()=>{ if(document.hidden || (window.InlineEdit && InlineEdit.busy())) return; load(); },8000);  // 입력 중이면 건너뜀
 })();
 </script>
 {% endblock %}

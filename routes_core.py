@@ -1391,6 +1391,11 @@ def api_issue_action_patch(iid, idx):
     if 'important' in prev and bool(prev.get('important')) != bool(tgt.get('important')):
         return jsonify({'error': '다른 곳에서 이미 변경됐습니다. 새로고침 후 다시 시도하세요.',
                         'actions': actions}), 409
+    # prev.count(선택) = 클라이언트가 본 진행 개수. 같은 내용의 줄이 연속일 때 다른 곳에서 한 줄이
+    # 지워지면 date/progress 대조만으론 **옆 줄**을 대상으로 착각한다 → 개수가 다르면 409(2026-09-27 올마이트).
+    if 'count' in prev and prev.get('count') != len(actions):
+        return jsonify({'error': '다른 곳에서 이미 변경됐습니다. 새로고침 후 다시 시도하세요.',
+                        'actions': actions}), 409
 
     for k, t in (('progress', str), ('date', str), ('important', bool)):
         if k in d and not isinstance(d[k], t):
@@ -1429,6 +1434,55 @@ def api_issue_action_patch(iid, idx):
         return jsonify({'error': '다른 곳에서 이미 변경됐습니다. 새로고침 후 다시 시도하세요.',
                         'actions': live if isinstance(live, list) else []}), 409
     return jsonify({'id': iid, 'actions': actions})
+
+
+@bp.route('/api/issues/<int:iid>/actions/<int:idx>', methods=['DELETE'])
+@login_required
+def api_issue_action_delete(iid, idx):
+    """진행 경과 1건만 삭제 — 웹 인라인 편집용(2026-09-27).
+
+    PATCH 와 같은 이유로 배열 통째 PUT 을 쓰지 않는다: 그 사이 다른 곳에서 추가된 진행이
+    사라지거나 **엉뚱한 줄**이 지워진다. `prev`(date/progress[/important]) 대조 + CAS 로 fail-closed.
+    """
+    _issue_write_scope(iid)
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'error': '요청 형식이 올바르지 않습니다.'}), 400
+    prev = d.get('prev')
+    if not isinstance(prev, dict) or 'date' not in prev or 'progress' not in prev:
+        return jsonify({'error': 'prev(date/progress)가 필요합니다.'}), 400
+    row = query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)
+    if not row:
+        abort(404)
+    raw = row['actions']
+    try:
+        actions = json.loads(raw) if raw else []
+    except Exception as e:
+        app.logger.warning('issue-action-delete: %s', e)
+        actions = []
+    if not isinstance(actions, list):
+        actions = []
+    conflict = {'error': '다른 곳에서 이미 변경됐습니다. 새로고침 후 다시 시도하세요.', 'actions': actions}
+    if not (0 <= idx < len(actions)) or not isinstance(actions[idx], dict):
+        return jsonify(conflict), 409
+
+    def _txt(v):
+        return '' if v is None else str(v)
+
+    tgt = actions[idx]
+    if any(_txt(prev.get(k)) != _txt(tgt.get(k)) for k in ('date', 'progress')):
+        return jsonify(conflict), 409
+    if 'important' in prev and bool(prev.get('important')) != bool(tgt.get('important')):
+        return jsonify(conflict), 409
+    # 같은 내용 줄이 연속일 때 위치가 밀린 stale 삭제가 옆 줄을 지우지 않게 개수까지 대조
+    if 'count' in prev and prev.get('count') != len(actions):
+        return jsonify(conflict), 409
+    merged = actions[:idx] + actions[idx + 1:]
+    rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '
+                    'WHERE id=? AND actions=?', (json.dumps(merged, ensure_ascii=False), iid, raw))
+    if not rc:
+        return jsonify({'error': conflict['error']}), 409
+    return jsonify({'id': iid, 'actions': merged})
 
 
 @bp.route('/api/issues/<int:iid>', methods=['DELETE'])

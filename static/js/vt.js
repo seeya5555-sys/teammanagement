@@ -718,16 +718,16 @@ function detailRow(vt) {
   // 보고서 → 지적 항목 자동 생성 (Gemini) + 엑셀 추출
   td.append(el('div', { class: 'csx-bar' },
     el('button', { class: 'btn btn-outline btn-sm', onclick: () => openVtExtract(vt) },
-      ' 보고서에서 자동 생성'),
+      '보고서에서 자동 생성'),
     el('button', {
       class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
       onclick: (ev) => pickVtFullReport(vt, ev.currentTarget),
       title: 'SIRE Full report의 Operator Comments를 기존 Observation Remark와 Open/Closed에 자동 반영',
-    }, ' SIRE Full report 반영'),
+    }, 'SIRE Full report 반영'),
     el('button', {
       class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
       onclick: () => { window.location = `/api/vettings/${vt.id}/export`; },
-    }, ' 엑셀 추출')));
+    }, '엑셀 추출')));
 
   // Overall Remark
   const remarkSec = el('div', { class: 'cs-finding-section' });
@@ -739,29 +739,29 @@ function detailRow(vt) {
       style: 'margin-left:auto',
       onclick: () => generateObsSummary(vt),
       title: 'Priority 체크 + 현재 Open Status 기준으로 지적 상세 요약을 Overall Remark에 자동 작성',
-    }, ' 지적 상세'),
+    }, '지적 상세'),
     el('button', {
       class: 'btn btn-outline btn-sm',
       style: 'margin-left:6px',
       onclick: () => editOverallRemark(vt),
-    }, ' 편집'),
+    }, '편집'),
   ));
-  remarkSec.append(el('div', {
-    class: 'cs-overall-body summary-edit-button', role: 'button', tabindex: '0',
-    title: '클릭하여 메모 편집',
-    onclick: (event) => {
-      const selection = window.getSelection();
-      if (event.detail > 1 || (event.detail && selection?.type === 'Range' && event.currentTarget.contains(selection.anchorNode))) return;
-      editOverallRemark(vt);
-    },
-    onkeydown: (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        editOverallRemark(vt);
-      }
-    },
-  }, vt.overall_remark || '메모 추가',
-    el('span', { class: 'summary-edit-hint', 'aria-hidden': 'true' }, '편집')));
+  // 본문 클릭 = 그 자리에서 수정, [편집] = 기존 큰 모달 (2026-09-27)
+  const remarkBody = el('div', { class: 'cs-overall-body' + (vt.overall_remark ? '' : ' is-empty') },
+    vt.overall_remark || '메모 추가');
+  if (window.InlineEdit) {
+    InlineEdit.bind(remarkBody, {
+      kind: 'textarea', value: vt.overall_remark || '',
+      save: async (v) => {
+        await api(`/api/vettings/${vt.id}`, { method: 'PUT', body: JSON.stringify({ overall_remark: v }) });
+        vt.overall_remark = v;
+      },
+      onDone: () => reloadData(),
+    });
+  } else {
+    remarkBody.addEventListener('click', () => editOverallRemark(vt));
+  }
+  remarkSec.append(remarkBody);
   td.append(remarkSec);
 
   const observations = vt.findings || [];
@@ -819,7 +819,7 @@ function findingsSection(vt, findings) {
     btnRow.append(el('button', {
       class: 'btn btn-primary btn-sm',
       onclick: () => saveAllInlineRows(vt),
-    }, ' 전체 저장'));
+    }, '전체 저장'));
     btnRow.append(el('button', {
       class: 'btn btn-outline btn-sm',
       onclick: () => { vt._inlineAdd = null; render(); },
@@ -1301,6 +1301,12 @@ function openRemarkModal(vt) {
   }, 50);
 }
 
+// 편집한 내용이 있으면 닫기 전에 확인(Esc 한 번에 긴 메모가 날아가던 문제)
+function requestCloseRemark() {
+  const cur = (_vtRemarkVetting && _vtRemarkVetting.overall_remark) || '';
+  if ($('#vt-remark-textarea').value !== cur && !confirm('저장하지 않은 메모가 있습니다. 닫을까요?')) return;
+  closeRemarkModal();
+}
 function closeRemarkModal() {
   $('#vt-remark-modal').hidden = true;
   document.body.style.overflow = '';
@@ -1589,7 +1595,7 @@ async function init() {
 
     // Overall Remark 모달
     $('#vt-remark-modal').addEventListener('click', (ev) => {
-      if (ev.target.dataset.closeVtr === '1') closeRemarkModal();
+      if (ev.target.dataset.closeVtr === '1') requestCloseRemark();
     });
     $('#vt-remark-save').addEventListener('click', saveRemarkModal);
     const remarkTa = $('#vt-remark-textarea');
@@ -1603,13 +1609,14 @@ async function init() {
       // ESC 로 닫기 (textarea 안에서도 작동)
       if (ev.key === 'Escape') {
         ev.preventDefault();
-        closeRemarkModal();
+        ev.stopPropagation();
+        requestCloseRemark();
       }
     });
 
     document.addEventListener('keydown', (ev) => {
       if (ev.key === 'Escape') {
-        if (!$('#vt-remark-modal').hidden) closeRemarkModal();
+        if (!$('#vt-remark-modal').hidden) requestCloseRemark();
         else if (!$('#vt-attach-modal').hidden) closeVtAttachModal();
       }
     });

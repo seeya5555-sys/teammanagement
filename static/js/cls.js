@@ -292,8 +292,10 @@ function itemRow(it) {
   const evLabel=evState==='candidate'?'◉ Outlook 증빙후보(확인필요)':evState==='not_found'?'⚠ Outlook 미확인':evState==='unsearchable'?'? 검색키 부족':evState==='error'?'? 검색오류':'? 미점검';
   let evAtt=[]; try{evAtt=JSON.parse(it.evidence_attachments||'[]')||[];}catch(e){}
   const ev=el('div',{class:'cls-evidence',title:(it.evidence_subject||'')+(evAtt.length?'\n'+evAtt.join('\n'):'')},evLabel);
-  const actCell=editCell(it.action_taken, 'action_taken', it.id, 'c-act');
-  actCell.append(ev);
+  // 증빙 라벨은 편집영역 밖에 둔다 — 같은 contenteditable 안에 있으면 "? 미점검" 이 조치사항 본문으로 저장됐음
+  const actEdit=el('div', { class: 'cls-edit cls-edit-inner', contenteditable: 'true',
+    'data-id': it.id, 'data-field': 'action_taken', spellcheck: 'false' }, esc(it.action_taken));
+  const actCell=el('td', { class: 'c-act' }, actEdit, ev);
 
   return el('tr', { class: it.importance === 'Urgent' ? 'cls-urgent-row' : '' },
     el('td', { class: 'c-no' }, it.no),
@@ -316,14 +318,37 @@ document.addEventListener('blur', (e) => {
   td._orig = val;
   saveItem(id, { [field]: val });
 }, true);
+// Enter=확정(Shift+Enter 줄바꿈) · Esc=되돌리기
+document.addEventListener('keydown', (e) => {
+  const td = e.target.closest && e.target.closest('.cls-edit');
+  if (!td || e.isComposing || e.keyCode === 229) return;
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); td.blur(); }
+  else if (e.key === 'Escape' && td._orig !== undefined) { e.preventDefault(); td.textContent = td._orig; td.blur(); }
+}, true);
 document.addEventListener('focus', (e) => {
   const td = e.target.closest && e.target.closest('.cls-edit');
   if (td) td._orig = td.textContent.trim();
 }, true);
 
+function findItem(id) {
+  const snaps = [...((S.data && S.data.vessels) || []).map(g => g.snapshot), ...((S.data && S.data.unmatched) || [])];
+  for (const sn of snaps) {
+    if (!sn) continue;
+    for (const it of [...(sn.coc || []), ...(sn.statutory || []), ...(sn.items || [])]) {
+      if (String(it.id) === String(id)) return it;
+    }
+  }
+  return null;
+}
 async function saveItem(id, patch) {
-  try { await api(`/api/class-status/items/${id}`, { method: 'PUT', body: JSON.stringify(patch) }); }
-  catch (e) { alert('저장 실패: ' + e.message); }
+  try {
+    await api(`/api/class-status/items/${id}`, { method: 'PUT', body: JSON.stringify(patch) });
+    const it = findItem(id);
+    if (it) Object.assign(it, patch);   // 접었다 펴도 방금 고친 값이 보이게 로컬 정본 갱신
+    if (window.InlineEdit) InlineEdit.toast('저장됨');
+  } catch (e) {
+    if (window.InlineEdit) InlineEdit.toast('저장 실패: ' + e.message, 'error'); else alert('저장 실패: ' + e.message);
+  }
 }
 
 async function deleteSnap(csId, name) {
@@ -429,9 +454,9 @@ async function openMgrExport() {
   const ov = document.createElement('div');
   ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+  box.style.cssText = 'background:#fff;border-radius:6px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 12px 32px rgba(38,36,30,.14)';
   box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:4px"><svg class="ic-svg"><use href="#i-file-text"/></svg> 관리사별 Class Status 추출 + 메일 드래프트'
-    + (supName ? ` <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${escHtml(supName)} 담당</span>` : '') + '</div>'
+    + (supName ? ` <span style="font-weight:500;font-size:12px;color:var(--accent)">· ${escHtml(supName)} 담당</span>` : '') + '</div>'
     + '<div style="font-size:12px;color:#888;margin-bottom:12px">관리사 선택 → 엑셀(영문) 다운로드 + 오른쪽 메일 드래프트 복사해서 발송. 지적 없는 선박 자동 제외.</div>';
   const sel = document.createElement('select');
   sel.style.cssText = 'width:100%;height:38px;padding:0 10px;border:1px solid #d3d1c7;border-radius:8px;font-size:14px;margin-bottom:12px';

@@ -3,7 +3,7 @@
 {% block head %}
 <style>
   .au-wrap{max-width:920px}
-  .au-master{display:flex;align-items:center;gap:12px;padding:12px 15px;border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:16px}
+  .au-master{display:flex;align-items:center;gap:12px;padding:12px 15px;border:1px solid var(--border);border-radius:6px;background:#fff;margin-bottom:16px}
   .au-master.off{background:var(--red-bg);border-color:var(--red-border)}
   .au-master b{font-size:14px}
   .au-master .au-sub{color:var(--text-secondary);font-size:12.5px}
@@ -22,7 +22,7 @@
   .au-b.rjt{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-border)}
   .au-b.rjt2{background:var(--red);color:#fff}
   .au-b:disabled{opacity:.45;cursor:not-allowed}
-  .au-status{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px}
+  .au-status{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:4px}
   .st-queued{background:var(--amber-bg);color:var(--amber)}.st-running{background:var(--blue-bg);color:var(--blue)}
   .st-done{background:var(--green-bg);color:var(--green)}.st-failed{background:var(--red-bg);color:var(--red)}
   .au-log{margin-top:22px}
@@ -38,7 +38,7 @@
   .au-log-cleared{font-size:11px;color:var(--text-tertiary);margin-top:6px;padding-left:4px}
   .au-logrow{border:1px solid var(--border-subtle);border-radius:9px;padding:9px 12px;margin-bottom:7px;background:#fff;font-size:12.5px}
   .au-logmeta{color:var(--text-secondary);font-size:11.5px;margin-bottom:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .au-logprog{font-size:11.5px;color:var(--accent,#2563eb);font-weight:600;margin:2px 0}
+  .au-logprog{font-size:11.5px;color:var(--accent);font-weight:600;margin:2px 0}
   .au-logsum{white-space:pre-wrap;color:var(--text-primary);font-family:ui-monospace,Menlo,monospace;font-size:11.5px;max-height:170px;overflow:auto}
   .au-note{font-size:12px;color:var(--text-secondary);margin:4px 0 16px;line-height:1.5}
   /* 전자결재 검증 인라인 체크리스트 */
@@ -62,14 +62,14 @@
   .jl-sub{color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:60px;flex:1}
   .jl-amt{color:var(--text-tertiary);font-size:11.5px;white-space:nowrap}
   .jl-why{color:var(--amber);font-size:11.5px}
-  .jl-bkt{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface-3);color:var(--text-secondary);white-space:nowrap}
-  .jl-hold{font-size:10.5px;font-weight:700;color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-border);padding:1px 7px;border-radius:999px;white-space:nowrap}
+  .jl-bkt{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:4px;background:var(--surface-3);color:var(--text-secondary);white-space:nowrap}
+  .jl-hold{font-size:10.5px;font-weight:700;color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-border);padding:1px 7px;border-radius:4px;white-space:nowrap}
   .jl-chk{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11.5px;color:var(--text-secondary);white-space:nowrap;cursor:pointer;user-select:none}
   .jl-chk input{width:15px;height:15px;cursor:pointer;accent-color:var(--amber)}
   .jl-empty{font-size:12px;color:var(--text-tertiary);padding:6px 2px}
   .jl-pdf{border:1px solid var(--blue-border);background:var(--blue-bg);color:var(--blue);border-radius:7px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
   .jpdf-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9000;align-items:center;justify-content:center;padding:24px}
-  .jpdf-modal.open{display:flex}.jpdf-box{background:#fff;border-radius:12px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden}
+  .jpdf-modal.open{display:flex}.jpdf-box{background:#fff;border-radius:6px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden}
   .jpdf-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
   .jpdf-bar b{flex:1}.jpdf-bar a,.jpdf-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:8px;padding:5px 10px;text-decoration:none;cursor:pointer}
   .jpdf-frame{flex:1;border:0;width:100%}
@@ -78,7 +78,7 @@
   /* 그룹 편집 모달 — prompt() 연쇄 대신 한 화면에서 전부 편집 */
   .sgm{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9100;align-items:center;justify-content:center;padding:20px}
   .sgm.open{display:flex}
-  .sgm-box{background:#fff;border-radius:12px;width:min(680px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden}
+  .sgm-box{background:#fff;border-radius:6px;width:min(680px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden}
   .sgm-bar{display:flex;align-items:center;gap:10px;padding:11px 15px;border-bottom:1px solid var(--border);background:var(--surface-2)}
   .sgm-bar b{flex:1;font-size:14px}
   .sgm-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:8px;padding:5px 10px;cursor:pointer}
@@ -94,7 +94,7 @@
   .sgm-radio input{margin-top:2px}
   .sgm-radio i{display:block;font-style:normal;color:var(--text-tertiary);font-size:11px;margin-top:2px}
   .sgm-chips{display:flex;flex-wrap:wrap;gap:6px;border:1px solid var(--border);border-radius:9px;padding:9px;max-height:190px;overflow:auto;background:var(--surface-2)}
-  .sgm-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:#fff;border-radius:20px;padding:4px 10px;font-size:12px;cursor:pointer;user-select:none}
+  .sgm-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:#fff;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;user-select:none}
   .sgm-chip.on{border-color:var(--blue);background:var(--blue-bg);color:var(--blue);font-weight:700}
   .sgm-chip.taken{opacity:.55}
   .sgm-chip.off-pool{border-style:dashed;border-color:var(--red);color:var(--red)}
@@ -106,7 +106,7 @@
   .sgm-save{border:1px solid var(--blue);background:var(--blue);color:#fff;border-radius:8px;padding:7px 16px;font-size:12.5px;font-weight:700;cursor:pointer}
   .sgm-save:disabled{opacity:.5;cursor:default}
   /* SOA 비용 수동 검토함 — 기존 자동화 카드/모달 토큰 그대로 */
-  .sr{max-width:920px;margin:8px 0 18px}.sr-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 12px;border:1px solid var(--amber-border);border-radius:10px;background:var(--amber-bg);font-size:13px;font-weight:700;color:var(--amber)}.sr-headmeta{margin-left:auto;font-size:11.5px;font-weight:500;color:var(--text-secondary)}.sr-body{margin-top:7px}.sr-case{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border-subtle);border-radius:9px;background:#fff;margin-bottom:6px;cursor:pointer;font-size:12.5px;flex-wrap:wrap}.sr-case:hover{background:var(--surface-2)}.sr-case b{white-space:nowrap}.sr-sub{flex:1;min-width:120px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sr-badge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px}.sr-red{background:var(--red-bg);color:var(--red)}.sr-amber{background:var(--amber-bg);color:var(--amber)}.sr-green{background:var(--green-bg);color:var(--green)}.sr-blue{background:var(--blue-bg);color:var(--blue)}.sr-empty{padding:9px 2px;color:var(--text-tertiary);font-size:12px}.srm{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9200;align-items:center;justify-content:center;padding:18px}.srm.open{display:flex}.srm-box{width:min(860px,97vw);max-height:94vh;background:#fff;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}.srm-bar{display:flex;align-items:center;gap:8px;padding:11px 15px;border-bottom:1px solid var(--border);background:var(--surface-2)}.srm-bar b{flex:1}.srm-bar button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:5px 9px;cursor:pointer}.srm-body{padding:13px 15px;overflow:auto}.srm-gate{padding:8px 10px;border-radius:8px;background:var(--amber-bg);color:var(--amber);font-size:11.5px;margin-bottom:9px}.srm-gate.ok{background:var(--green-bg);color:var(--green)}.srm-line{border:1px solid var(--border-subtle);border-radius:9px;padding:10px 11px;margin-bottom:8px}.srm-lh{display:flex;gap:8px;align-items:flex-start}.srm-lh b{font-size:12.5px}.srm-amt{margin-left:auto;font-weight:700;white-space:nowrap}.srm-reason{margin:7px 0;padding:6px 8px;border-radius:7px;background:var(--amber-bg);color:var(--amber);font-size:11.5px}.srm-facts{font-size:11.5px;color:var(--text-secondary);margin:6px 0}.srm-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.srm-btn{border:1px solid var(--border);background:#fff;border-radius:7px;padding:5px 8px;font-size:11.5px;font-weight:700;cursor:pointer}.srm-btn.on-confirm{background:var(--green);color:#fff;border-color:var(--green)}.srm-btn.on-reject{background:var(--red);color:#fff;border-color:var(--red)}.srm-rmk{flex:1;min-width:190px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:11.5px}.srm-foot{display:flex;align-items:center;gap:7px;padding:10px 15px;border-top:1px solid var(--border);background:var(--surface-2)}.srm-msg{flex:1;font-size:11.5px;color:var(--red)}.srm-foot button{border-radius:8px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer}.srm-save{border:1px solid var(--blue);background:var(--blue);color:#fff}.srm-push{border:1px solid var(--amber);background:var(--amber);color:#fff}.srm-approve{border:1px solid var(--green);background:var(--green);color:#fff}.srm-foot button:disabled{opacity:.4;cursor:not-allowed}@media(max-width:680px){.srm{padding:6px}.srm-box{max-height:98vh}.srm-lh{display:block}.srm-amt{display:block;margin:4px 0}.srm-rmk{flex-basis:100%}.srm-foot{flex-wrap:wrap}.srm-msg{flex-basis:100%}}
+  .sr{max-width:920px;margin:8px 0 18px}.sr-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 12px;border:1px solid var(--amber-border);border-radius:10px;background:var(--amber-bg);font-size:13px;font-weight:700;color:var(--amber)}.sr-headmeta{margin-left:auto;font-size:11.5px;font-weight:500;color:var(--text-secondary)}.sr-body{margin-top:7px}.sr-case{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border-subtle);border-radius:9px;background:#fff;margin-bottom:6px;cursor:pointer;font-size:12.5px;flex-wrap:wrap}.sr-case:hover{background:var(--surface-2)}.sr-case b{white-space:nowrap}.sr-sub{flex:1;min-width:120px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sr-badge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:4px}.sr-red{background:var(--red-bg);color:var(--red)}.sr-amber{background:var(--amber-bg);color:var(--amber)}.sr-green{background:var(--green-bg);color:var(--green)}.sr-blue{background:var(--blue-bg);color:var(--blue)}.sr-empty{padding:9px 2px;color:var(--text-tertiary);font-size:12px}.srm{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9200;align-items:center;justify-content:center;padding:18px}.srm.open{display:flex}.srm-box{width:min(860px,97vw);max-height:94vh;background:#fff;border-radius:6px;overflow:hidden;display:flex;flex-direction:column}.srm-bar{display:flex;align-items:center;gap:8px;padding:11px 15px;border-bottom:1px solid var(--border);background:var(--surface-2)}.srm-bar b{flex:1}.srm-bar button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:5px 9px;cursor:pointer}.srm-body{padding:13px 15px;overflow:auto}.srm-gate{padding:8px 10px;border-radius:8px;background:var(--amber-bg);color:var(--amber);font-size:11.5px;margin-bottom:9px}.srm-gate.ok{background:var(--green-bg);color:var(--green)}.srm-line{border:1px solid var(--border-subtle);border-radius:9px;padding:10px 11px;margin-bottom:8px}.srm-lh{display:flex;gap:8px;align-items:flex-start}.srm-lh b{font-size:12.5px}.srm-amt{margin-left:auto;font-weight:700;white-space:nowrap}.srm-reason{margin:7px 0;padding:6px 8px;border-radius:7px;background:var(--amber-bg);color:var(--amber);font-size:11.5px}.srm-facts{font-size:11.5px;color:var(--text-secondary);margin:6px 0}.srm-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.srm-btn{border:1px solid var(--border);background:#fff;border-radius:7px;padding:5px 8px;font-size:11.5px;font-weight:700;cursor:pointer}.srm-btn.on-confirm{background:var(--green);color:#fff;border-color:var(--green)}.srm-btn.on-reject{background:var(--red);color:#fff;border-color:var(--red)}.srm-rmk{flex:1;min-width:190px;border:1px solid var(--border);border-radius:7px;padding:5px 7px;font-size:11.5px}.srm-foot{display:flex;align-items:center;gap:7px;padding:10px 15px;border-top:1px solid var(--border);background:var(--surface-2)}.srm-msg{flex:1;font-size:11.5px;color:var(--red)}.srm-foot button{border-radius:8px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer}.srm-save{border:1px solid var(--blue);background:var(--blue);color:#fff}.srm-push{border:1px solid var(--amber);background:var(--amber);color:#fff}.srm-approve{border:1px solid var(--green);background:var(--green);color:#fff}.srm-foot button:disabled{opacity:.4;cursor:not-allowed}@media(max-width:680px){.srm{padding:6px}.srm-box{max-height:98vh}.srm-lh{display:block}.srm-amt{display:block;margin:4px 0}.srm-rmk{flex-basis:100%}.srm-foot{flex-wrap:wrap}.srm-msg{flex-basis:100%}}
 </style>
 {% endblock %}
 {% block content %}
@@ -143,7 +143,7 @@
         <option value="claude-haiku-4-5">Haiku</option>
         <option value="openai/gpt-5.4-mini">GPT 5.4 mini (추가확인)</option>
       </select>
-      <button class="au-b live" id="sv-live" type="button"> 검증 실기입</button>
+      <button class="au-b live" id="sv-live" type="button">검증 실기입</button>
       <button class="au-b verify" id="sv-remark" type="button" title="컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)">리마크정리</button>
     </div>
   </div>
@@ -153,12 +153,12 @@
   <div id="au-jeonja-list" class="jl"></div>
 
   <div class="jpdf-modal" id="jpdf-modal">
-    <div class="jpdf-box"><div class="jpdf-bar"><b id="jpdf-title">검토 인보이스</b><a id="jpdf-open" target="_blank" rel="noopener">새 탭</a><button id="jpdf-close" type="button">닫기 ✕</button></div><iframe class="jpdf-frame" id="jpdf-frame" title="전자결재 검토 인보이스 미리보기"></iframe></div>
+    <div class="jpdf-box"><div class="jpdf-bar"><b id="jpdf-title">검토 인보이스</b><a id="jpdf-open" target="_blank" rel="noopener">새 탭</a><button id="jpdf-close" type="button">닫기</button></div><iframe class="jpdf-frame" id="jpdf-frame" title="전자결재 검토 인보이스 미리보기"></iframe></div>
   </div>
 
   <div class="srm" id="sr-modal">
     <div class="srm-box">
-      <div class="srm-bar"><b id="sr-title">SOA 비용 검토</b><span id="sr-state"></span><button id="sr-close" type="button">닫기 ✕</button></div>
+      <div class="srm-bar"><b id="sr-title">SOA 비용 검토</b><span id="sr-state"></span><button id="sr-close" type="button">닫기</button></div>
       <div class="srm-body" id="sr-detail"></div>
       <div class="srm-foot"><span class="srm-msg" id="sr-msg"></span><button id="sr-refresh" type="button">최신 SVMS 조회</button><button class="srm-save" id="sr-save" type="button">초안 저장</button><button class="srm-push" id="sr-push" type="button">SVMS 반영</button><button class="srm-approve" id="sr-approve" type="button">SOA 승인</button></div>
     </div>
@@ -166,7 +166,7 @@
 
   <div class="sgm" id="sg-modal">
     <div class="sgm-box">
-      <div class="sgm-bar"><b id="sg-title">그룹 편집</b><button id="sg-close" type="button">닫기 ✕</button></div>
+      <div class="sgm-bar"><b id="sg-title">그룹 편집</b><button id="sg-close" type="button">닫기</button></div>
       <div class="sgm-body" id="sg-body"></div>
       <div class="sgm-foot"><span class="sgm-err" id="sg-err"></span><button class="sgm-save" id="sg-save" type="button">저장</button></div>
     </div>
@@ -256,11 +256,11 @@
     if(action==='refresh'&&SRC.draft_dirty&&!confirm('저장된 초안을 버리고 최신 SVMS 상태로 새로고침할까요?'))return;
     if(action==='push'){
       if(!confirm(`[${SRC.sx_cd}] 저장한 Confirm/Reject/Remark를 SVMS에 반영할까요?`))return;
-      if(!confirm('⚠️ 금전 검토 상태를 실제 SVMS에 씁니다. 원본 변경 시 자동 중단됩니다. 정말 반영할까요?'))return;
+      if(!confirm('금전 검토 상태를 실제 SVMS에 씁니다. 원본 변경 시 자동 중단됩니다. 정말 반영할까요?'))return;
     }
     if(action==='approve'){
       if(!confirm(`[${SRC.sx_cd}] 전 라인이 Confirm입니다. SOA 승인을 진행할까요?`))return;
-      if(!confirm('⚠️ 승인 후 Status C로 잠기며 장금은 출금 Slip 상신까지 이어집니다. 정말 실행할까요?'))return;
+      if(!confirm('승인 후 Status C로 잠기며 장금은 출금 Slip 상신까지 이어집니다. 정말 실행할까요?'))return;
     }
     const body={action,snapshot_version:SRC.snapshot_id,draft_version:SRC.draft_version};if(action==='refresh'&&SRC.draft_dirty)body.discard_draft=true;
     const {ok,j}=await api('POST',`/api/automation/soa/reviews/${encodeURIComponent(SRC.sx_cd)}/action`,body);
@@ -292,12 +292,12 @@
       btns=`<button class="au-b live" data-task="${task}" data-mode="verify" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> 재발송</button>`;
     } else if(opts.money){   // 전자결재
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증</button>
-            <button class="au-b live money" data-task="${task}" data-mode="live" ${dis}> 자동상신</button>`;
+            <button class="au-b live money" data-task="${task}" data-mode="live" ${dis}>자동상신</button>`;
     } else if(opts.prep){    // AOR prep — Submitted AOR 카드화(/aor 큐 적재). 상신 아님(읽기+적재)
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}> AOR prep 실행 (/aor 큐 적재)</button>`;
     } else {                 // SOA 그룹: 승인 + 리젝 워크플로우
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증</button>
-            <button class="au-b live" data-task="${task}" data-mode="live" ${dis}> 자동승인</button>
+            <button class="au-b live" data-task="${task}" data-mode="live" ${dis}>자동승인</button>
             <button class="au-b rjt" data-task="${task}" data-mode="reject_mark" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg> 리젝체크</button>
             <button class="au-b rjt2" data-task="${task}" data-mode="reject_submit" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 리젝제출+메일</button>
             <button class="au-b verify" data-task="${task}" data-mode="remark_cleanup" ${dis}>리마크정리</button>`;
@@ -312,7 +312,7 @@
         <span class="au-status st-${r.status}">${r.status}</span>
         <b>${TASKS[r.task]||r.task}</b><span>· ${modeL}</span><span>· ${t}</span>
       </div>
-      ${(r.status==='running'&&r.progress)?`<div class="au-logprog">⏳ ${(r.progress).replace(/</g,'&lt;')}</div>`:''}
+      ${(r.status==='running'&&r.progress)?`<div class="au-logprog">진행: ${(r.progress).replace(/</g,'&lt;')}</div>`:''}
       ${r.summary?`<div class="au-logsum">${(r.summary).replace(/</g,'&lt;')}</div>`:''}
     </div>`;
   }
@@ -538,7 +538,7 @@
     const msg=`[${g.key}] ${g.label||''} 그룹을 삭제합니다.\n`+
       `• 현재 선박 ${mem.length}척: ${mem.length?mem.join(' · '):'없음'}\n`+
       (!g.active?'• 비활성 그룹이라 지금도 실행 대상 아님 — 커버 손실 없음\n'
-        :orph.length?`• ⚠️ 삭제 후 어느 그룹에도 안 들어감(검토에서 빠짐): ${orph.join(' · ')}\n`
+        :orph.length?`• 주의: 삭제 후 어느 그룹에도 안 들어감(검토에서 빠짐): ${orph.join(' · ')}\n`
         :'• 다른 활성 그룹이 이 선박들을 이미 커버함\n')+
       `• 그룹 설정은 복구 불가(실행 이력은 남음)\n진행할까요?`;
     if(!confirm(msg))return;
@@ -559,7 +559,7 @@
     const active=GROUPS.filter(g=>g.active), inactive=GROUPS.filter(g=>!g.active);
     const card=g=>{const auto=g.mode==='dynamic_owner'; const members=auto?(g.current_members||[]):(g.vessels||[]);
       const mismatch=(g.owner_mismatch||[]);
-      return `<div class="soa-group-card"><div style="display:flex;align-items:center;gap:7px"><b>${esc(g.label)}</b><span class="au-status ${g.active?'st-done':'st-failed'}">${g.active?'활성':'비활성'}</span><button class="soa-edit" data-sg="${escA(g.key)}">편집</button><button class="soa-edit soa-del" data-sgdel="${escA(g.key)}">삭제</button></div>`+
+      return `<div class="soa-group-card"><div style="display:flex;align-items:center;gap:7px"><b class="sg-label" data-sglabel="${escA(g.key)}">${esc(g.label)}</b><span class="au-status ${g.active?'st-done':'st-failed'}">${g.active?'활성':'비활성'}</span><button class="soa-edit" data-sg="${escA(g.key)}">편집</button><button class="soa-edit soa-del" data-sgdel="${escA(g.key)}">삭제</button></div>`+
         `<div class="soa-group-meta"><span>key ${esc(g.key)} (고정)</span><span>${g.category==='skrt'?'장금마리타임 · owner 001':'실버마리타임 · owner 037'}</span><span>${auto?'신규선 자동편입':'명시 배정'}</span><span>순서 ${esc(g.sort_order)}</span>${g.updated_by?`<span>최종 편집 ${esc(g.updated_by)} · ${esc(g.updated_at||'')}</span>`:''}</div>`+
         `<div class="soa-group-members"><b>${auto?'현재 자동편입 선박':'배정 선박'}:</b> ${members.length?members.map(esc).join(' · '):'없음'}</div>`+
         `${auto?'<div class="soa-group-note">SVMS My Vessel owner 스냅샷 기준 표시. 실제 실행은 매 run의 SVMS 조회 기준.</div>':''}`+
@@ -568,6 +568,25 @@
       `<div ${GOPEN?'':'hidden'}><div class="au-note">카테고리 owner 매핑은 고정됨. 자동편입 그룹은 해당 category의 신규 My Vessel을 모두 포함. 비활성 = 임시 중지(설정 보존), 삭제 = 설정 영구 제거.</div>${active.map(card).join('')||'<div class="jl-empty">활성 그룹 없음</div>'}`+
       `${inactive.length?`<div class="jl-grp">비활성 그룹</div>${inactive.map(card).join('')}`:''}</div>`;
     $('#soa-groups-head').onclick=e=>{if(e.target.closest('#soa-group-new'))return;GOPEN=!GOPEN;renderGroups();};
+    // 그룹 이름은 카드에서 바로 수정 — 서버 PUT 은 부분수정이 안 되므로 현재 그룹 값을 통째로 보낸다
+    if(window.InlineEdit) el.querySelectorAll('[data-sglabel]').forEach(b=>{
+      const g=GROUPS.find(x=>x.key===b.dataset.sglabel); if(!g) return;
+      InlineEdit.bind(b,{kind:'text',value:g.label||'',allowEmpty:false,
+        save:async(v)=>{
+          // 저장 직전 서버 최신값을 다시 읽어 그 값 위에 이름만 바꾼다 — 7초 폴링 사이 다른 곳 변경(선박·활성)을 덮지 않게.
+          // 화면에 보이던 값과 다르면 멈춘다(모르는 변경 위에 쓰지 않음).
+          const fr=await api('GET','/api/automation/soa/groups');
+          const f=fr.ok&&(fr.j.groups||[]).find(x=>x.key===g.key);
+          if(!f) throw new Error('그룹 최신값 확인 실패');
+          const sig=x=>JSON.stringify([x.label,x.mode,x.vessels||[],x.sort_order,!!x.active]);
+          if(sig(f)!==sig(g)) throw new Error('다른 곳에서 이 그룹이 바뀌었습니다. 새로고침 후 다시');
+          const p={label:v.trim(),mode:f.mode,vessels:f.mode==='dynamic_owner'?[]:[...(f.vessels||[])],sort_order:f.sort_order,active:f.active};
+          const r=await api('PUT',`/api/automation/soa/groups/${encodeURIComponent(g.key)}`,p);
+          if(!r.ok) throw new Error((r.j&&r.j.error)||'저장 실패');
+          g.label=v.trim();
+        },
+        onDone:()=>load()});
+    });
     $('#soa-group-new').onclick=()=>openSg(null);
     el.querySelectorAll('[data-sg]').forEach(b=>b.onclick=e=>{e.stopPropagation();const g=GROUPS.find(x=>x.key===b.dataset.sg);if(g)openSg(g);});
     el.querySelectorAll('[data-sgdel]').forEach(b=>b.onclick=e=>{e.stopPropagation();deleteSg(b.dataset.sgdel);});
@@ -578,10 +597,10 @@
     const anyBusy=SOA.some(busy);
     const dEn=(!ENABLED)?'disabled':'';                 // 검증은 ENABLED만 보면 됨
     const dAll=(!ENABLED||anyBusy)?'disabled':'';        // 실행계열은 진행중이면도 막음
-    const allRow=`<div class="au-row au-allrow"><div class="au-name"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> SOA 전체 한방에<span class="au-desc">${soaScope()} 일괄 적재 → 러너가 순차 실행</span></div>`+
+    const allRow=`<div class="au-row au-allrow"><div class="au-name">SOA 전체 일괄 실행<span class="au-desc">${soaScope()} 일괄 적재 → 러너가 순차 실행</span></div>`+
       `<div class="au-btns">`+
       `<button class="au-b verify" data-all="verify" ${dEn}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증 전체</button>`+
-      `<button class="au-b live" data-all="live" ${dAll}> 자동승인 전체</button>`+
+      `<button class="au-b live" data-all="live" ${dAll}>자동승인 전체</button>`+
       `<button class="au-b rjt" data-all="reject_mark" ${dAll}><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg> 리젝체크 전체</button>`+
       `<button class="au-b rjt2" data-all="reject_submit" ${dAll}><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 리젝제출+메일 전체</button>`+
       `</div></div>`;
@@ -748,7 +767,7 @@
   $('#au-log-head').onclick=(e)=>{ if(e.target.closest('#au-log-clear'))return; LOG_OPEN=!LOG_OPEN; renderLog(); };
   $('#au-log-clear').onclick=(e)=>{ e.stopPropagation(); clearLog(); };
   load();
-  setInterval(load,7000);  // 상태/로그 자동 갱신
+  setInterval(()=>{ if(document.hidden || (window.InlineEdit && InlineEdit.busy())) return; load(); },7000);  // 상태/로그 자동 갱신 — 입력 중·백그라운드 탭이면 건너뜀
 })();
 </script>
 {% endblock %}

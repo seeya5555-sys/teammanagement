@@ -33,18 +33,18 @@
     modal.id = 'yard-xlsx-preview';
     modal.innerHTML = `
       <style>
-        #yard-xlsx-preview{position:fixed;inset:0;z-index:10000;background:#0f172acc;display:flex;align-items:center;justify-content:center;padding:24px}
-        #yard-xlsx-preview .yx-card{background:#fff;color:#172033;width:min(920px,96vw);max-height:88vh;overflow:auto;border-radius:14px;box-shadow:0 24px 70px #0008;padding:24px}
+        #yard-xlsx-preview{position:fixed;inset:0;z-index:10000;background:rgba(38,36,30,.72);display:flex;align-items:center;justify-content:center;padding:24px}
+        #yard-xlsx-preview .yx-card{background:#fff;color:#1F1F1D;width:min(920px,96vw);max-height:88vh;overflow:auto;border-radius:6px;box-shadow:0 24px 70px #0008;padding:24px}
         #yard-xlsx-preview .yx-head{display:flex;justify-content:space-between;gap:16px;align-items:start}
-        #yard-xlsx-preview h3{margin:0 0 5px;font-size:20px} #yard-xlsx-preview p{margin:4px 0;color:#64748b;font-size:13px}
+        #yard-xlsx-preview h3{margin:0 0 5px;font-size:20px} #yard-xlsx-preview p{margin:4px 0;color:#5F5E5A;font-size:13px}
         #yard-xlsx-preview .yx-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:18px 0}
-        #yard-xlsx-preview .yx-stat{border:1px solid #e2e8f0;border-radius:9px;padding:10px;background:#f8fafc}
+        #yard-xlsx-preview .yx-stat{border:1px solid #E5E4DD;border-radius:4px;padding:10px;background:#F4F3EE}
         #yard-xlsx-preview .yx-stat b{display:block;font-size:16px;margin-top:4px}
-        #yard-xlsx-preview table{width:100%;border-collapse:collapse;font-size:12px} #yard-xlsx-preview th,#yard-xlsx-preview td{padding:7px;border-bottom:1px solid #e2e8f0;text-align:left}
-        #yard-xlsx-preview .yx-warn{color:#9a6700;background:#fff7d6;border-radius:8px;padding:8px 12px;font-size:12px}
+        #yard-xlsx-preview table{width:100%;border-collapse:collapse;font-size:12px} #yard-xlsx-preview th,#yard-xlsx-preview td{padding:7px;border-bottom:1px solid #E5E4DD;text-align:left}
+        #yard-xlsx-preview .yx-warn{color:#9a6700;background:#fff7d6;border-radius:4px;padding:8px 12px;font-size:12px}
         #yard-xlsx-preview .yx-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-        #yard-xlsx-preview button{border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:700}
-        #yard-xlsx-preview .yx-apply{background:#17233a;color:#fff;border-color:#17233a}
+        #yard-xlsx-preview button{border:1px solid #D3D1C7;background:#fff;border-radius:4px;padding:9px 16px;cursor:pointer;font-weight:700}
+        #yard-xlsx-preview .yx-apply{background:#26241E;color:#fff;border-color:#26241E}
         @media(max-width:680px){#yard-xlsx-preview .yx-stats{grid-template-columns:1fr 1fr}}
       </style>
       <div class="yx-card" role="dialog" aria-modal="true" aria-labelledby="yx-title">
@@ -82,18 +82,18 @@
     modal.id = 'yard-xlsx-preview';
     modal.innerHTML = `
       <style>
-        #yard-xlsx-preview{position:fixed;inset:0;z-index:10000;background:#0f172acc;display:flex;align-items:center;justify-content:center;padding:24px}
-        #yard-xlsx-preview .yx-card{background:#fff;color:#172033;width:min(980px,96vw);max-height:88vh;overflow:auto;border-radius:14px;box-shadow:0 24px 70px #0005;padding:22px}
+        #yard-xlsx-preview{position:fixed;inset:0;z-index:10000;background:rgba(38,36,30,.72);display:flex;align-items:center;justify-content:center;padding:24px}
+        #yard-xlsx-preview .yx-card{background:#fff;color:#1F1F1D;width:min(980px,96vw);max-height:88vh;overflow:auto;border-radius:6px;box-shadow:0 24px 70px #0005;padding:22px}
         #yard-xlsx-preview .yx-head{display:flex;justify-content:space-between;gap:20px;align-items:start}
-        #yard-xlsx-preview h3{margin:0 0 5px;font-size:20px} #yard-xlsx-preview p{margin:4px 0;color:#64748b;font-size:13px}
+        #yard-xlsx-preview h3{margin:0 0 5px;font-size:20px} #yard-xlsx-preview p{margin:4px 0;color:#5F5E5A;font-size:13px}
         #yard-xlsx-preview .yx-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:18px 0}
-        #yard-xlsx-preview .yx-stat{border:1px solid #e2e8f0;border-radius:9px;padding:10px;background:#f8fafc;font-size:12px}
+        #yard-xlsx-preview .yx-stat{border:1px solid #E5E4DD;border-radius:4px;padding:10px;background:#F4F3EE;font-size:12px}
         #yard-xlsx-preview .yx-stat b{display:block;font-size:16px;margin-top:4px}
-        #yard-xlsx-preview table{width:100%;border-collapse:collapse;font-size:12px} #yard-xlsx-preview th,#yard-xlsx-preview td{padding:7px;border-bottom:1px solid #e2e8f0;text-align:left}
-        #yard-xlsx-preview .yx-warn{color:#9a6700;background:#fff7d6;border-radius:8px;padding:8px 12px;font-size:12px}
+        #yard-xlsx-preview table{width:100%;border-collapse:collapse;font-size:12px} #yard-xlsx-preview th,#yard-xlsx-preview td{padding:7px;border-bottom:1px solid #E5E4DD;text-align:left}
+        #yard-xlsx-preview .yx-warn{color:#9a6700;background:#fff7d6;border-radius:4px;padding:8px 12px;font-size:12px}
         #yard-xlsx-preview .yx-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-        #yard-xlsx-preview button{border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:700}
-        #yard-xlsx-preview .yx-apply{background:#17233a;color:#fff;border-color:#17233a}
+        #yard-xlsx-preview button{border:1px solid #D3D1C7;background:#fff;border-radius:4px;padding:9px 16px;cursor:pointer;font-weight:700}
+        #yard-xlsx-preview .yx-apply{background:#26241E;color:#fff;border-color:#26241E}
         @media(max-width:680px){#yard-xlsx-preview .yx-stats{grid-template-columns:1fr 1fr}}
       </style>
       <div class="yx-card" role="dialog" aria-modal="true" aria-labelledby="yx-title">
@@ -252,7 +252,7 @@
     input.accept = '.csv,.xlsx,.xlsm';
     const button = input.previousElementSibling;
     if (button && button.tagName === 'BUTTON') {
-      button.textContent = '📂 견적서 / CSV 업로드';
+      button.textContent = '견적서 / CSV 업로드';
       button.title = '조선소 견적서 Excel 자동 파싱 또는 Job CSV 업로드';
       const svmsButton = document.createElement('button');
       svmsButton.type = 'button';
@@ -264,7 +264,7 @@
       const exportButton = document.createElement('button');
       exportButton.type = 'button';
       exportButton.className = 'btn-sec';
-      exportButton.textContent = '⬇ Job Progress Excel';
+      exportButton.textContent = 'Job Progress Excel 받기';
       exportButton.title = '현재 선박의 Job Progress를 지정 엑셀 템플릿에 자동 입력해 다운로드합니다';
       exportButton.onclick = () => downloadJobProgress(exportButton);
       button.parentElement.insertBefore(exportButton, input.nextElementSibling);

@@ -5,15 +5,15 @@
   .fr-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   .fr-count{color:var(--text-secondary);font-size:13px}
   .fr-list{display:flex;flex-direction:column;gap:12px;max-width:920px}
-  .fr-card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .fr-card{border:1px solid var(--border);border-radius:6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
   .fr-card.is-busy{opacity:.55;pointer-events:none}
   .fr-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
   .fr-subj{font-weight:600;color:var(--text-primary);line-height:1.35}
   .fr-meta{font-size:12px;color:var(--text-secondary);margin-top:3px}
   .fr-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
-  .fr-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .fr-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:nowrap}
   /* P4 표시전용: 선박 soft매칭 칩(read-only) */
-  .ves-chip{font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;white-space:nowrap;display:inline-block}
+  .ves-chip{font-size:11px;font-weight:600;padding:1px 7px;border-radius:4px;white-space:nowrap;display:inline-block}
   .ves-chip.ok{background:var(--green-bg);color:var(--green)}
   .ves-chip.other{background:var(--surface-3);color:var(--text-secondary)}
   .ves-chip.none{background:var(--surface-2);color:var(--text-secondary)}
@@ -37,7 +37,7 @@
   .mun{color:var(--text-tertiary)}
   .fr-corr{color:var(--text-primary)}
   .fr-corr i{color:var(--text-tertiary);font-style:normal}
-  .fr-flag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--red-bg);color:var(--red);margin:2px 4px 0 0}
+  .fr-flag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;background:var(--red-bg);color:var(--red);margin:2px 4px 0 0}
   .fr-why{color:var(--red);font-size:12px}
   .fr-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;align-items:center}
   .fr-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
@@ -68,7 +68,7 @@
   .pdf-lnk:hover{text-decoration:underline}
   .pdf-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9000;align-items:center;justify-content:center;padding:24px}
   .pdf-modal.open{display:flex}
-  .pdf-box{background:#fff;border-radius:12px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.3)}
+  .pdf-box{background:#fff;border-radius:6px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}
   .pdf-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
   .pdf-bar .pdf-ttl{font-weight:700;font-size:13px;color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pdf-bar a,.pdf-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:8px;padding:5px 10px;cursor:pointer;text-decoration:none}
@@ -89,7 +89,7 @@
 </header>
 <div class="fr-note">
   <b>[카드적재]</b> 누르면 SVMS 컨펌대기 인보이스가 PDF 대조·교정안과 함께 카드로 적재됨(~1~2분).
-  <b>opt-out</b>: <span class="b-pass" style="padding:1px 6px;border-radius:999px">PASS</span> 카드는 디폴트 <b>승인</b>(체크), <span class="b-hold" style="padding:1px 6px;border-radius:999px">HOLD</span> 카드는 디폴트 해제 →
+  <b>opt-out</b>: <span class="b-pass" style="padding:1px 6px;border-radius:4px">PASS</span> 카드는 디폴트 <b>승인</b>(체크), <span class="b-hold" style="padding:1px 6px;border-radius:999px">HOLD</span> 카드는 디폴트 해제 →
   <b>[체크한 것 일괄승인+컨펌]</b> 누르면 <b>체크된 카드 전부 한 번에 승인</b>+PIC/SUP/Remit 교정+SVMS 컨펌. 미체크·HOLD·리젝은 제외. 카드별로 체크 해제·개별 리젝도 가능. <b>[리젝]</b>은 누르는 즉시 맥 러너가 SVMS 리젝(STATUS=R)+벤더 통보메일까지 실행(웹·앱 동일).
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
@@ -99,7 +99,7 @@
     <div class="pdf-bar">
       <span class="pdf-ttl" id="pdf-ttl">PDF</span>
       <a id="pdf-open" href="#" target="_blank" rel="noopener">새 탭</a>
-      <button id="pdf-close" type="button">닫기 ✕</button>
+      <button id="pdf-close" type="button">닫기</button>
     </div>
     <iframe class="pdf-frame" id="pdf-frame" title="인보이스 PDF 미리보기"></iframe>
   </div>
@@ -168,7 +168,7 @@
     const pdfEl=`<div style="margin-top:4px">${matchedEl}</div><div style="margin-top:4px"><b>Reference attachments:</b> ${refEl}</div>`;
     const matchLine=`<div class="fr-sect"><div class="fr-sect-t">PDF 대조</div>`
       +`${mark(d.inv_no_match,'INV_NO')} &nbsp; ${mark(d.amt_match,'금액')} &nbsp; ${mark(d.date_match,'날짜')}`
-      +(shellACS?`<div style="margin-top:6px;color:#B45309;font-weight:700">⚠ SHELL ACS 총액일치 예외 — 단가/라인합 차이 ${esc(_rc.line_sum_diff??'-')} 허용</div>`:'')
+      +(shellACS?`<div style="margin-top:6px;color:var(--amber);font-weight:700">⚠ SHELL ACS 총액일치 예외 — 단가/라인합 차이 ${esc(_rc.line_sum_diff??'-')} 허용</div>`:'')
       +`${pdfEl}</div>`;
     // 교정내역
     const corr=`<div class="fr-sect"><div class="fr-sect-t">교정내역</div><div class="fr-corr">`
@@ -197,7 +197,7 @@
     const flags=jparse(d.flags);
     const flagLine=(Array.isArray(flags)&&flags.length)?`<div class="fr-sect">${flags.map(f=>`<span class="fr-flag">${esc(f)}</span>`).join('')}</div>`:'';
     const ev=d.evidence_checklist||{items:[],gap_count:0};
-    const evBox=`<div class="fr-sect" style="border-left:4px solid ${ev.gap_count?'#D97706':'#15803D'}"><b>증빙 체크 · ${ev.gap_count?'누락/확인불가 '+ev.gap_count+'건':'완결'}</b><br>${(ev.items||[]).map(x=>`${x.state==='present'?'✓':x.state==='unknown'?'?':'⚠'} ${esc(x.label)}${x.detail?' ('+esc(x.detail)+')':''}`).join('<br>')}</div>`;
+    const evBox=`<div class="fr-sect" style="border-left:4px solid ${ev.gap_count?'var(--amber-dot)':'var(--green)'}"><b>증빙 체크 · ${ev.gap_count?'누락/확인불가 '+ev.gap_count+'건':'완결'}</b><br>${(ev.items||[]).map(x=>`${x.state==='present'?'✓':x.state==='unknown'?'?':'⚠'} ${esc(x.label)}${x.detail?' ('+esc(x.detail)+')':''}`).join('<br>')}</div>`;
     let acts;
     if(d.status==='pending'){
       const checked=gate==='PASS'?'checked':'';
@@ -281,13 +281,21 @@
   async function act(el,a){
     const id=el.dataset.id;
     if(a==='edit'){   // 적요·EXP·INV_DT 교정 저장 (입력값=`코드 명칭` → 코드만 파싱)
-      const sj=el.querySelector('.fr-subj-in').value.trim();
-      const exRaw=el.querySelector('.fr-exp-in').value.trim();
+      const subjIn=el.querySelector('.fr-subj-in'), expIn=el.querySelector('.fr-exp-in');
+      const sj=subjIn.value.trim();
+      const exRaw=expIn.value.trim();
       const invDt=dtCompact(el.querySelector('.fr-date-in').value);   // 캘린더 값(YYYY-MM-DD) → 서버 저장형(YYYYMMDD)
       const exp_cd=exRaw.split(/\s+/)[0].replace(/[^0-9A-Za-z]/g,'');
-      const body={subject:sj,exp_cd:exp_cd};
+      // 바뀐 칸만 보낸다 — 예전엔 적요·EXP 를 항상 같이 보내 EXP 칸이 비어 있으면 저장된 코드가 지워졌음
+      const body={};
+      if(sj!==subjIn.defaultValue.trim()) body.subject=sj;
+      if(exRaw!==expIn.defaultValue.trim()){
+        if(!exp_cd){alert('EXP 코드를 비워 둘 수는 없습니다. 목록에서 코드를 고르세요.');return;}
+        body.exp_cd=exp_cd;
+      }
       const curInvDt=(el.dataset.invDt||'').trim();
       if(invDt && invDt!==curInvDt) body.inv_dt=invDt;
+      if(!Object.keys(body).length){ if(window.InlineEdit) InlineEdit.toast('바뀐 내용이 없습니다'); return; }
       el.classList.add('is-busy');
       const {ok,j}=await api('POST',`/api/invoice/drafts/${id}/edit`,body);
       el.classList.remove('is-busy');

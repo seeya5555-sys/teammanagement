@@ -896,7 +896,7 @@
     /* 🔴 종료된 입거도 고를 수는 있게 두되(SVMS 상태가 늦게 닫히는 일이 있다) 경고는 반드시
        띄운다. 앱과 같은 문구다 -- 조용히 붙이면 남의 끝난 dock 에 daily report 가 쌓인다. */
     const warn=opt.dataset.open==='0'
-      ? '\n\n⚠️ 이 입거는 SVMS에서 이미 종료(출거·완료)된 것으로 보입니다.'
+      ? '\n\n주의: 이 입거는 SVMS에서 이미 종료(출거·완료)된 것으로 보입니다.'
       : '';
     if(!confirm(`이 프로젝트의 SVMS 입거를 다음으로 연결할까요?\n\n${label}${warn}\n\n이후 이 프로젝트의 Daily Report는 이 Dock에 저장됩니다.`))return;
     btn.disabled=true;st.textContent='연결 중…';

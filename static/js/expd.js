@@ -78,6 +78,12 @@ async function load() {
 
 function renderHeader() {
   $('#expd-title').textContent = E.trip.title || '출장';
+  // 출장명 클릭 → 그 자리 수정(기간·카드 등은 목록의 편집 모달)
+  if (E.trip.can_edit && window.InlineEdit) InlineEdit.bind($('#expd-title'), {
+    kind: 'text', value: E.trip.title || '', allowEmpty: false,
+    save: (v) => api(`/api/biz-trips/${E.trip.id}`, { method: 'PUT', body: JSON.stringify({ title: v.trim() }) }),
+    onDone: (v) => { E.trip.title = v.trim(); renderHeader(); },
+  });
   const period = (E.trip.trip_start || E.trip.trip_end)
     ? `${fmtDate(E.trip.trip_start)} ~ ${fmtDate(E.trip.trip_end)}` : '';
   const cards = (E.trip.corp_cards || []).join(', ');
@@ -710,3 +716,8 @@ function bindCropEvents() {
   });
   window.addEventListener('resize', () => { if (!$('#expd-crop').hidden) renderQuad(); });
 }
+
+// 저장 대기 중(0.5초 debounce) 이탈 보호 — 마지막 입력 유실 방지
+window.addEventListener('beforeunload', (e) => {
+  if (Object.keys(_pendingPatches).length) { e.preventDefault(); e.returnValue = ''; }
+});

@@ -14,7 +14,7 @@
   .dp-vcard .vdue{color:var(--red);font-weight:650}
   .dp-vcard .vbar{height:5px;border-radius:3px;background:var(--surface-3);margin-top:6px;overflow:hidden}
   .dp-vcard .vbar>i{display:block;height:100%;border-radius:3px;background:var(--green)}
-  .dp-vhead{background:var(--surface);border:1px solid var(--border-subtle);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:22px;flex-wrap:wrap;box-shadow:0 1px 2px rgba(0,0,0,.03);margin-bottom:14px}
+  .dp-vhead{background:var(--surface);border:1px solid var(--border-subtle);border-radius:6px;padding:14px 18px;display:flex;align-items:center;gap:22px;flex-wrap:wrap;box-shadow:0 1px 2px rgba(0,0,0,.03);margin-bottom:14px}
   .dp-vname{font-size:18px;font-weight:750;letter-spacing:.2px}
   .dp-vsub{font-size:12px;color:var(--text-secondary);margin-top:2px}
   .dp-vmeta{display:flex;gap:20px;margin-left:auto;flex-wrap:wrap}
@@ -43,7 +43,7 @@
   .dp-up .new{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700}
   .dp-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
   .dp-filters{display:flex;gap:6px;flex-wrap:wrap}
-  .dp-chip{padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:600;color:var(--text-secondary);display:flex;align-items:center;gap:6px;cursor:pointer}
+  .dp-chip{padding:6px 12px;border-radius:4px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:600;color:var(--text-secondary);display:flex;align-items:center;gap:6px;cursor:pointer}
   .dp-chip.active{background:var(--nav-bg);color:#fff;border-color:var(--nav-bg)}
   .dp-chip .n{font-size:11px;opacity:.7}
   .dp-flabel{font-size:11px;font-weight:700;color:var(--text-tertiary);min-width:30px;text-transform:uppercase;letter-spacing:.4px}
@@ -52,8 +52,8 @@
   .dp-btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
   /* 열 고정폭 합이 960px 이 넘는다 — 폰 화면에선 표가 잘리고(table 의 overflow:hidden) 오른쪽
      작업 버튼 열에 손이 닿지 않는다. 래퍼가 가로 스크롤을 받고, 표에는 최소폭을 줘 열이 안 뭉개지게. */
-  .dp-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:12px}
-  table.dp{width:100%;min-width:960px;border-collapse:separate;border-spacing:0;background:var(--surface);border:1px solid var(--border-subtle);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .dp-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:6px}
+  table.dp{width:100%;min-width:960px;border-collapse:separate;border-spacing:0;background:var(--surface);border:1px solid var(--border-subtle);border-radius:6px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
   table.dp thead th{background:var(--surface-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-tertiary);font-weight:700;text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)}
   table.dp thead th.c{text-align:center}
   table.dp tbody td{padding:9px 12px;border-bottom:1px solid var(--border-subtle);font-size:13px;vertical-align:middle}
@@ -83,9 +83,9 @@
   /* 분할발주(한 청구를 업체 2곳으로 나눠 발주) 업체별 줄 — `발주금액` 칸 하나로는 한쪽이 사라진다 */
   .dp-ords{margin-top:2px;display:flex;flex-direction:column;gap:1px}
   .dp-ordv{display:flex;gap:3px;justify-content:space-between;align-items:baseline;font-size:8px;
-    line-height:1.45;padding:0 3px;border-radius:3px;background:var(--bg-subtle,#f3f4f6);
+    line-height:1.45;padding:0 3px;border-radius:3px;background:var(--bg-subtle);
     color:var(--text-secondary);cursor:help}
-  .dp-ordv.on{background:#e7f3ec;color:var(--green,#186A3B);font-weight:800}  /* 실제 발주 나간 업체 */
+  .dp-ordv.on{background:#e7f3ec;color:var(--green);font-weight:800}  /* 실제 발주 나간 업체 */
   .dp-ordv .ov-nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:72px;text-align:left}
   /* 라인 태그(S1-A / S1-B) — 발주서 접미사라 형이 SVMS·기안에서 그대로 대조할 수 있다 */
   .dp-ordv .ov-tag{flex:0 0 auto;font-weight:800;opacity:.9;font-variant-numeric:tabular-nums}
@@ -100,7 +100,7 @@
           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dp-att:not(.off):hover{border-color:var(--blue-dot);color:var(--blue-dot)}
   .dp-att.off{opacity:.45;cursor:help}
-  .dp-status{font-size:11px;font-weight:700;padding:3px 10px;border-radius:14px;white-space:nowrap}
+  .dp-status{font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;white-space:nowrap}
   .st-wait{background:var(--surface-3);color:var(--text-secondary)} .st-quote{background:var(--blue-bg);color:var(--blue-text)}
   .st-sent{background:var(--amber-bg);color:var(--amber)} .st-done{background:var(--green-bg);color:var(--green)}
   .dp-rmk{font-size:11.5px;color:var(--text-secondary);border:1px solid transparent;border-radius:6px;padding:2px 4px;min-width:90px;background:transparent}
@@ -119,15 +119,15 @@
   .dp-code.unset{color:var(--blue);font-family:inherit;font-weight:650;border-bottom:none}
   .dp-code:hover{color:var(--blue)}
   .dp-empty{text-align:center;color:var(--text-tertiary);padding:40px;font-size:13px}
-  .dp-orphan{border:1px solid var(--amber-border,#e6cf9a);background:var(--amber-bg,#fdf6e6);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+  .dp-orphan{border:1px solid var(--amber-border);background:var(--amber-bg);border-radius:10px;padding:10px 12px;margin-bottom:12px}
   .dp-orphan .oh{font-size:12px;font-weight:700;color:var(--text-secondary);margin-bottom:8px;display:flex;align-items:center;gap:6px}
-  .dp-orphan .or{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;border-top:1px dashed var(--amber-border,#e6cf9a);font-size:12px}
+  .dp-orphan .or{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;border-top:1px dashed var(--amber-border);font-size:12px}
   .dp-orphan .or .rq{font-family:ui-monospace,Menlo,monospace;font-weight:700;min-width:52px}
   .dp-orphan .or .sj{flex:1;min-width:160px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dp-orphan .or .st{color:var(--text-tertiary);font-size:11px}
   .dp-orphan .or button{padding:3px 10px;font-size:11px}
   .dp-foot{margin-top:12px;font-size:11px;color:var(--text-tertiary);display:flex;gap:16px;flex-wrap:wrap}
-  .dy-card{margin-top:22px;border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--surface-2,#fff)}
+  .dy-card{margin-top:22px;border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--surface-2)}
   .dy-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
   .dy-head h3{font-size:15px;font-weight:700;margin:0}
   .dy-up{display:flex;gap:8px;align-items:center}
@@ -135,7 +135,7 @@
   /* 조선소 벤더 45곳+ → select 스크롤로는 못 찾아서 검색 필터를 앞에 둠 */
   .dy-up input#dy-syq{font-size:12px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;background:#fff;width:140px}
   .dy-syn{font-size:11px;color:var(--text-secondary);white-space:nowrap}
-  .dy-btn{font-size:12px;padding:5px 10px;background:var(--blue-bg,#eaf1fb);color:var(--blue-text,#2a5a9a);border-radius:6px;cursor:pointer;font-weight:600}
+  .dy-btn{font-size:12px;padding:5px 10px;background:var(--blue-bg);color:var(--blue-text);border-radius:6px;cursor:pointer;font-weight:600}
   .dy-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
   .dy-tbl th{text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font-size:11px;color:var(--text-secondary)}
   .dy-tbl td{padding:5px 8px;border-bottom:1px solid var(--border)}
@@ -148,33 +148,33 @@
   .dy-rmk:focus{border-color:var(--border);background:#fff;outline:none}
   .dy-foot{margin-top:8px;font-size:11px;color:var(--text-tertiary)}
   .dy-lock{cursor:pointer;font-size:11px}
-  .dp-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--nav-bg);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:2000;box-shadow:0 4px 16px rgba(0,0,0,.2);display:none}
+  .dp-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--nav-bg);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:2000;box-shadow:var(--shadow-lg);display:none}
   /* ── 견적 상신 컨펌 모달 (Phase ③) ──
      이건 돈 나가는 버튼이다. window.confirm 으로 처리하지 않는 이유 = 무엇이 SVMS 로 나가는지
      (업체·금액·결재라인) 눌리기 전에 눈으로 다 보여야 하기 때문. */
   .dp-sbm{cursor:pointer;font-size:13px;border:none;background:none;margin-right:2px;opacity:.75;color:var(--blue)}
   .dp-sbm:hover{opacity:1}
-  .dp-sbm.queued{color:var(--amber,#b8860b)}
+  .dp-sbm.queued{color:var(--amber)}
   /* 상신이 끝나면 진행중 큐에서 빠진다 — 아무 표시도 안 남기면 "내가 상신했나?" 를 화면으로 확인할 수 없다. */
   .dp-sbm.done{color:var(--green);opacity:1}
   .dp-sbm.failed{color:var(--red);opacity:1}
-  .dp-sbm.rej{color:var(--amber,#b8860b);opacity:1}
+  .dp-sbm.rej{color:var(--amber);opacity:1}
   .dp-sbmtag{font-size:9px;font-weight:700;margin-top:2px;white-space:nowrap}
   .dp-sbmtag.ok{color:var(--green)}
   .dp-sbmtag.bad{color:var(--red)}
   /* 반려 = 실패(빨강)도 완료(초록)도 아닌 '되돌아와서 다시 해야 함' — 대기와 같은 amber 계열로 묶는다. */
-  .dp-sbmtag.rej{color:var(--amber,#b8860b)}
+  .dp-sbmtag.rej{color:var(--amber)}
   /* ── 견적요청 컨펌 (수리 Confirm → Vendor Submit) — Phase ③ 와 다른 단계, dp-sbmtag 색은 공유 ── */
   .dp-inq{cursor:pointer;font-size:13px;border:none;background:none;margin-right:2px;opacity:.75;color:var(--blue)}
   .dp-inq:hover{opacity:1}
-  .dp-inq.queued{color:var(--amber,#b8860b)}
+  .dp-inq.queued{color:var(--amber)}
   .dp-inq.done{color:var(--green);opacity:1}
   .dp-inq.failed{color:var(--red);opacity:1}
   .dp-inq.blocked,.dp-inq:disabled{color:#9aa0a6;opacity:.4;cursor:not-allowed}
   .dp-inq:disabled:hover{opacity:.4}
-  .dp-ov{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:2400;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+  .dp-ov{position:fixed;inset:0;background:rgba(38,36,30,.42);z-index:2400;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
   .dp-ov.on{display:flex}
-  .dp-mod{background:#fff;border-radius:14px;width:100%;max-width:560px;box-shadow:0 18px 48px rgba(0,0,0,.24);overflow:hidden}
+  .dp-mod{background:#fff;border-radius:6px;width:100%;max-width:560px;box-shadow:var(--shadow-lg);overflow:hidden}
   .dp-mod h3{margin:0;font-size:15px;font-weight:750;display:flex;align-items:center;gap:7px}
   .dp-mh{padding:15px 18px;border-bottom:1px solid var(--border-subtle);background:var(--surface-2)}
   .dp-mh .sub{font-size:11.5px;color:var(--text-secondary);margin-top:4px}
@@ -190,11 +190,11 @@
   .dp-vopt .mt{font-size:11px;color:var(--text-secondary);margin-top:2px}
   .dp-vopt .amt{margin-left:auto;text-align:right;font-family:ui-monospace,Menlo,monospace;font-weight:700;white-space:nowrap}
   .dp-mod select{width:100%;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#fff}
-  .dp-warn{background:var(--red-bg,#fdecec);border:1px solid var(--red-border,#f4c7c7);border-radius:9px;padding:10px 12px;font-size:12px;color:var(--red,#b3261e);margin-top:14px;line-height:1.55}
+  .dp-warn{background:var(--red-bg);border:1px solid var(--red-border);border-radius:9px;padding:10px 12px;font-size:12px;color:var(--red);margin-top:14px;line-height:1.55}
   .dp-warn b{font-weight:750}
   .dp-ack{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin-top:12px;cursor:pointer;line-height:1.5}
   .dp-blk{background:var(--surface-3);border:1px solid var(--border);border-radius:9px;padding:11px 13px;font-size:12.5px;color:var(--text-secondary)}
-  .dp-qst{font-size:11.5px;padding:2px 8px;border-radius:20px;font-weight:700;border:1px solid var(--border)}
+  .dp-qst{font-size:11.5px;padding:2px 8px;border-radius:4px;font-weight:700;border:1px solid var(--border)}
   .repair-procure .dp-vcards,.repair-procure .dp-up,.repair-procure .dp-toolbar,
   .repair-procure .dy-card,.repair-procure #dp-orphans,.repair-procure #dp-vmeta{display:none!important}
   .repair-procure .dp-vhead{padding:12px 16px}
@@ -311,7 +311,7 @@
     <div class="dp-mf">
       <button class="dp-btn" id="sb-close">닫기</button>
       <div style="margin-left:auto;display:flex;gap:8px">
-        <button class="dp-btn" id="sb-cancel" style="display:none;color:var(--red);border-color:var(--red-border,#f4c7c7)">상신 취소</button>
+        <button class="dp-btn" id="sb-cancel" style="display:none;color:var(--red);border-color:var(--red-border)">상신 취소</button>
         <button class="dp-btn primary" id="sb-push" style="display:none">지금 전송</button>
         <button class="dp-btn primary" id="sb-go" disabled>상신 큐에 올리기</button>
       </div>
@@ -332,7 +332,7 @@
     <div class="dp-mf">
       <button class="dp-btn" id="iq-close">닫기</button>
       <div style="margin-left:auto;display:flex;gap:8px">
-        <button class="dp-btn" id="iq-cancel" style="display:none;color:var(--red);border-color:var(--red-border,#f4c7c7)">요청 취소</button>
+        <button class="dp-btn" id="iq-cancel" style="display:none;color:var(--red);border-color:var(--red-border)">요청 취소</button>
         <button class="dp-btn primary" id="iq-push" style="display:none">지금 전송</button>
         <button class="dp-btn primary" id="iq-go" disabled>견적요청 큐에 올리기</button>
       </div>
@@ -530,7 +530,7 @@
     render();
     const row=document.querySelector(`#dp-body tr[data-id="${ENTRY_RID}"]`);
     if(!row) return;
-    row.style.outline='3px solid var(--accent,#2f6fed)';
+    row.style.outline='3px solid var(--accent)';
     row.style.outlineOffset='-3px';
     row.scrollIntoView({behavior:'smooth',block:'center'});
   }
@@ -619,7 +619,7 @@
       inp.onfocus=()=>{ inp.value=inp.value.replace(/,/g,''); };
       inp.onblur=async()=>{ const id=inp.dataset.id; if(!id)return; const v=inp.value.trim();
         const r=await fetch('/api/dock_yard/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:v})});
-        if(!r.ok){ inp.style.borderColor='var(--red-dot,#d33)'; return; } inp.style.borderColor=''; await loadYard(DATA.current); };
+        if(!r.ok){ inp.style.borderColor='var(--red-dot)'; return; } inp.style.borderColor=''; await loadYard(DATA.current); };
     });
     // 🔴 r.ok 를 안 보면 저장 실패가 화면에 남지 않는다. 특히 잠금해제는 실패해도
     //    '잠금 해제' 토스트가 떠서 **실패가 성공으로 보였다** — 다음 견적 업로드 때
@@ -731,14 +731,22 @@
       (ves.shipyard?`<div><div class="lbl">Shipyard</div><div class="val">${esc(ves.shipyard)}</div></div>`:'')+
       (ves.due_date?`<div><div class="lbl">Due Date</div><div class="val dp-due">${esc(ves.due_date)}</div></div>`:'')+
       `<div><div class="lbl">총 항목</div><div class="val">${DATA.lines.length}</div></div>`+
-      `<div style="align-self:center"><button class="dp-btn" id="dp-delvbtn" title="이 입거선박 삭제(라인·조선소 데이터 포함, 되돌릴 수 없음)" style="color:var(--red,#c0392b);border-color:var(--red-border,#e8b4b4)"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>선박 삭제</button></div>`;
-    $('#dp-vcode').onclick=async()=>{
-      const cur=ves.vsl_cd||'';
-      const v=prompt('SVMS 선박코드 입력 (예: SAPS) — 정규 제목 생성·역추적 매칭용',cur);
-      if(v===null)return;
-      const r=await fetch('/api/dock_procure/vessel_code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vsl_nm:ves.vsl_nm,vsl_cd:v.trim()})});
-      if(!r.ok){toast('실패');return;} toast('SVMS코드 저장: '+(v.trim().toUpperCase()||'(해제)')); await load(ves.vsl_nm);
+      `<div style="align-self:center"><button class="dp-btn" id="dp-delvbtn" title="이 입거선박 삭제(라인·조선소 데이터 포함, 되돌릴 수 없음)" style="color:var(--red);border-color:var(--red-border)"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>선박 삭제</button></div>`;
+    // SVMS 선박코드: prompt 팝업 대신 그 자리에서 입력(Enter 저장·Esc 취소, 비우면 해제)
+    const saveVcode=async(v)=>{
+      const r=await fetch('/api/dock_procure/vessel_code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vsl_nm:ves.vsl_nm,vsl_cd:(v||'').trim()})});
+      if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error||('HTTP '+r.status)); }
     };
+    if(window.InlineEdit){
+      InlineEdit.bind($('#dp-vcode'),{kind:'text',value:ves.vsl_cd||'',placeholder:'예: SAPS',save:saveVcode,
+        onDone:async(v)=>{ toast('SVMS코드 저장: '+((v||'').trim().toUpperCase()||'(해제)')); await load(ves.vsl_nm); }});
+    } else {
+      $('#dp-vcode').onclick=async()=>{
+        const v=prompt('SVMS 선박코드 입력 (예: SAPS) — 정규 제목 생성·역추적 매칭용',ves.vsl_cd||'');
+        if(v===null)return;
+        try{ await saveVcode(v); toast('SVMS코드 저장: '+(v.trim().toUpperCase()||'(해제)')); await load(ves.vsl_nm); }catch(e){ toast('실패: '+e.message); }
+      };
+    }
     $('#dp-delvbtn').onclick=async()=>{
       const n=DATA.lines.length;
       if(!confirm(`"${ves.vsl_nm}" 선박을 삭제할까요?\n라인 ${n}건 + 조선소 견적까지 함께 삭제됩니다. 되돌릴 수 없습니다.`)) return;
@@ -1036,7 +1044,7 @@
       : '';
     const done = rejBlk + (!m ? '' : (m.ok
       ? `<div class="dp-blk" style="margin-top:10px">
-           ${rejd ? `<b style="color:var(--amber,#b8860b)">↩ 직전 상신 (반려됨)</b>`
+           ${rejd ? `<b style="color:var(--amber)">↩ 직전 상신 (반려됨)</b>`
                   : `<b style="color:var(--green)">✓ 상신완료</b>`}${m.when?` · ${esc(m.when)}`:''}${m.note?' (SVMS 헤더 기준)':''} (#${f.id})
            ${m.note?`<div class="dp-qst" style="margin-top:6px">${esc(m.note)} — 아래는 우리 큐의 <b>시도</b> 기록이라 실제 상신 내용과 다를 수 있음</div>`:''}
            <div style="margin-top:7px">업체 <b>${esc(f.vndr_nm||f.vndr_cd)}</b><br>
@@ -1051,7 +1059,7 @@
       : `<div class="dp-warn" style="margin-top:10px">직전 상신 실패 (${esc(m.when)}) — ${esc(f.result||'사유 미기재')}
            <div style="margin-top:8px">
              <button class="dp-btn dp-sbmdel" data-id="${f.id}" data-force="${f.dismissable?'0':'1'}"
-               title="${f.dismissable?'SVMS 는 안 바뀐 실패 — 이 기록만 지움':'⚠️ SVMS 로 write 가 이미 나간 뒤의 실패 — 기록을 지워도 SVMS 상태는 그대로다'}">
+               title="${f.dismissable?'SVMS 는 안 바뀐 실패 — 이 기록만 지움':'주의: SVMS 로 write 가 이미 나간 뒤의 실패 — 기록을 지워도 SVMS 상태는 그대로다'}">
                이전 실패기록 삭제${f.dismissable?'':' (SVMS write 이미 나간 건)'}</button>
            </div></div>`));
     if(pv.blocked){
@@ -1300,7 +1308,7 @@
     return INQ_ROWS.map(v=>`<label class="dp-vopt" data-cd="${esc(v.cd)}">
       <input type="checkbox" ${INQ_PICK.includes(v.cd)?'checked':''} style="margin-top:2px">
       <div><div class="nm">${esc(v.nm||v.cd)}</div>
-        <div class="mt">${esc(v.cd)}${v.has_mail?'':' · <span style="color:var(--amber,#b8860b)">등록 메일 없음</span>'}</div></div>
+        <div class="mt">${esc(v.cd)}${v.has_mail?'':' · <span style="color:var(--amber)">등록 메일 없음</span>'}</div></div>
       <div class="amt"></div></label>`).join('');
   }
   function iqBindVnd(){
@@ -1531,14 +1539,14 @@
     root.querySelectorAll('.dp-rmk').forEach(inp=>inp.onblur=()=>guarded(`${inp.dataset.id}:rmk`, async()=>{
       const id=inp.dataset.id, v=inp.value;
       const j=await writeJson(`/api/dock_procure/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({remark:v})},'비고 저장 실패');
-      if(!j){ inp.style.borderColor='var(--red-dot,#d33)'; return; }
+      if(!j){ inp.style.borderColor='var(--red-dot)'; return; }
       inp.style.borderColor='';
       const l=DATA.lines.find(x=>x.id==id); if(l)l.remark=v;
     }));
     root.querySelectorAll('.dp-vnd').forEach(inp=>inp.onblur=()=>guarded(`${inp.dataset.id}:vnd`, async()=>{   // 페인트(P) 업체 수동입력
       const id=inp.dataset.id;
       const j=await writeJson(`/api/dock_procure/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({vendor:inp.value})},'업체 저장 실패');
-      if(!j){ inp.style.borderColor='var(--red-dot,#d33)'; return; }
+      if(!j){ inp.style.borderColor='var(--red-dot)'; return; }
       inp.style.borderColor='';
       const v=inp.value.trim().slice(0,200); inp.value=v;                    // 서버 canonical(trim+200자)과 일치
       const l=DATA.lines.find(x=>x.id==id); if(l)l.vendor=v||null;
@@ -1554,7 +1562,7 @@
       inp.onblur=()=>guarded(`${inp.dataset.id}:quote`, async()=>{
         const id=inp.dataset.id, v=inp.value.trim();
         const j=await writeJson(`/api/dock_procure/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({quote_amt:v})},'발주금액 저장 실패');
-        if(!j){inp.style.borderColor='var(--red-dot,#d33)';return;}
+        if(!j){inp.style.borderColor='var(--red-dot)';return;}
         inp.style.borderColor='';
         const n=(v===''?null:parseFloat(v.replace(/,/g,'')));
         const l=DATA.lines.find(x=>x.id==id); if(l)l.quote_amt=n;

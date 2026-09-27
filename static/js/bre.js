@@ -83,6 +83,12 @@ async function loadReport() {
   E.canEdit = !!r.can_edit;
 
   $('#bre-title').textContent = r.title || '제목 없음';
+  // 보고서 제목 클릭 → 그 자리 수정(편집권한 있을 때만). 나머지 메타는 목록의 [편집] 모달.
+  if (r.can_edit && window.InlineEdit) InlineEdit.bind($('#bre-title'), {
+    kind: 'text', value: r.title || '', allowEmpty: false,
+    save: (v) => api(`/api/boarding-reports/${E.reportId}`, { method: 'PUT', body: JSON.stringify({ title: v.trim() }) }),
+    onDone: (v) => { E.report.title = v.trim(); document.title = v.trim() + ' — TRMT'; },
+  });
   const subs = [];
   if (r.vessel_name) subs.push(r.vessel_name);
   if (r.port)        subs.push(r.port);
@@ -205,9 +211,9 @@ function showTocCtxMenu(ev, sid) {
   addItem('↑ 위로', () => moveSection(sid, 'up'));
   addItem('↓ 아래로', () => moveSection(sid, 'down'));
   addSep();
-  addItem(' 다른 섹션으로 이동…', () => openReparentModal(sid));
+  addItem('다른 섹션으로 이동…', () => openReparentModal(sid));
   if (info && info.depth > 0) {
-    addItem(' 최상위로 이동', () => reparentSection(sid, null));
+    addItem('최상위로 이동', () => reparentSection(sid, null));
   }
   addSep();
   addItem('이름 변경', () => renameSection(sid));
@@ -1703,3 +1709,8 @@ function bindEvents() {
 }
 
 init();
+
+// 저장 대기(0.5초 debounce) 중에 페이지를 떠나면 마지막 입력이 사라짐 → 브라우저 확인창으로 보호
+window.addEventListener('beforeunload', (e) => {
+  if (E.saveTimers && E.saveTimers.size) { e.preventDefault(); e.returnValue = ''; }
+});

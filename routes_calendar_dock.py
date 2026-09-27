@@ -487,6 +487,14 @@ def api_dock_update(rid):
             sets.append(f'{k} = ?')
             v = d.get(k)
             params.append(v if (v not in ('',)) else None)
+    # 편집 모달이 보내는 템플릿 체크를 조용히 버리던 문제(2026-09-27) — 0/1 로 정규화해 반영,
+    # 해제 시 template_name 도 비운다(목록에서 이름만 남은 유령 템플릿 방지).
+    if 'is_template' in d:
+        is_tmpl = 1 if d.get('is_template') else 0
+        sets.append('is_template = ?')
+        params.append(is_tmpl)
+        if not is_tmpl and 'template_name' not in d:
+            sets.append('template_name = NULL')
 
     if not sets:
         return jsonify({'ok': True, 'updated': 0})
@@ -1293,6 +1301,14 @@ def api_brep_update(rid):
             sets.append(f'{k} = ?')
             v = d.get(k)
             params.append(v if (v not in ('',)) else None)
+    # 편집 모달이 보내는 템플릿 체크를 조용히 버리던 문제(2026-09-27) — 0/1 로 정규화해 반영,
+    # 해제 시 template_name 도 비운다(목록에서 이름만 남은 유령 템플릿 방지).
+    if 'is_template' in d:
+        is_tmpl = 1 if d.get('is_template') else 0
+        sets.append('is_template = ?')
+        params.append(is_tmpl)
+        if not is_tmpl and 'template_name' not in d:
+            sets.append('template_name = NULL')
 
     if not sets:
         return jsonify({'ok': True, 'updated': 0})

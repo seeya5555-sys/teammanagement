@@ -208,6 +208,21 @@ function renderLeaveSummary() {
   }
   box.hidden = false;
   $('#cal-leave-allowance').textContent = fmtDays(s.allowance);
+  // 부여일수 숫자 클릭 → 그 자리에서 수정(수동 사용일수는 기존값 유지). 모달(설정)은 그대로.
+  if (window.InlineEdit) InlineEdit.bind($('#cal-leave-allowance'), {
+    kind: 'number', value: s.allowance, step: 0.25, min: 0, max: 365, allowEmpty: false,
+    save: async (days) => {
+      if (!Number.isFinite(days) || days < 0 || days > 365 || Math.round(days * 4) !== days * 4)
+        throw new Error('0~365, 0.25일 단위');
+      S.leaveSummary = await api('/api/cal/leave-summary', {
+        method: 'PUT', body: JSON.stringify({
+          year: s.year, days, manual_used: s.manual_used || 0,
+          supervisor_id: S.activeTab === 'all' ? S.user.supervisor_id : S.activeTab,
+        }),
+      });
+    },
+    onDone: () => renderLeaveSummary(),
+  });
   $('#cal-leave-used').textContent = fmtDays(s.used);
   $('#cal-leave-remaining').textContent = fmtDays(s.remaining);
   $('#cal-leave-breakdown').textContent = `연차 ${s.counts.annual}회 · 반차 ${s.counts.half}회 · 반반차 ${s.counts.quarter}회 · 수동 ${fmtDays(s.manual_used)}일`;
@@ -267,7 +282,7 @@ function renderGrid() {
       }, evLabel(ev)));
     }
     if (evs.length > maxShow) {
-      evList.append(el('div', { class: 'cal-evt more' }, `+${evs.length - maxShow} more`));
+      evList.append(el('div', { class: 'cal-evt more', title: '이 날 일정 전체 보기' }, `+${evs.length - maxShow}건 더`));
     }
     cell.append(evList);
 
@@ -296,6 +311,19 @@ function evTooltip(ev) {
   return lines.join('\n');
 }
 
+/* 사이드 목록 값 클릭 → 그 자리 수정(모달은 [편집]/행 클릭으로 그대로) */
+function inlineCal(node, ev, field, kind, extra = {}) {
+  if (!window.InlineEdit) return;
+  InlineEdit.bind(node, Object.assign({
+    kind, value: ev[field] || '',
+    save: async (v) => {
+      await api(`/api/cal/events/${ev.id}`, { method: 'PUT', body: JSON.stringify({ [field]: kind === 'text' || kind === 'textarea' ? (v || '').trim() : v }) });
+      ev[field] = v;
+    },
+    onDone: () => reloadEvents(),
+  }, extra));
+}
+
 function renderSideList() {
   const list = $('#cal-side-list');
   const head = $('#cal-side-date');
@@ -316,7 +344,7 @@ function renderSideList() {
   head.innerHTML = '';
   head.append(`${S.selectedDate} (${DOW[d.getDay()]})`);
   if (holiday) {
-    const tag = el('span', { class: 'cal-side-holiday' }, '🇰🇷 ' + holiday);
+    const tag = el('span', { class: 'cal-side-holiday' }, holiday);
     head.append(tag);
   }
   addBtn.hidden = false;
@@ -350,7 +378,9 @@ function renderSideList() {
     item.append(el('span', { class: `cal-side-color dot-${ev.color || 'blue'}` }));
     const body = el('div', { class: 'cal-side-body' });
     const titleRow = el('div', { class: 'cal-side-title-row' });
-    titleRow.append(el('div', { class: 'cal-side-title' }, ev.title));
+    const titleEl = el('div', { class: 'cal-side-title' }, ev.title);
+    inlineCal(titleEl, ev, 'title', 'text', { allowEmpty: false });
+    titleRow.append(titleEl);
     // 출처 뱃지 (다른 모듈에서 등록된 일정)
     if (ev.source_type && ev.source_type !== 'manual') {
       const srcLabel = { issue: '업무관리', cs: 'Condition Survey', vetting: 'Vetting' }[ev.source_type] || ev.source_type;
@@ -368,7 +398,10 @@ function renderSideList() {
       meta.append(el('span', { class: 'cal-side-time' }, tlbl));
     }
     if (ev.category) meta.append(el('span', { class: 'cal-side-cat' }, ev.category));
-    if (ev.location) meta.append(el('span', { class: 'cal-side-loc' }, ' ' + ev.location));
+    const locEl = el('span', { class: 'cal-side-loc' }, ev.location || '+ 장소');
+    if (!ev.location) locEl.classList.add('is-placeholder');
+    inlineCal(locEl, ev, 'location', 'text', { placeholder: '장소' });
+    meta.append(locEl);
 
     // 선박명 (있으면)
     if (ev.vessel_id) {
@@ -376,8 +409,14 @@ function renderSideList() {
       if (v) meta.append(el('span', { class: 'cal-side-vessel' }, ' ' + v.name));
     }
     body.append(meta);
-    if (ev.notes) body.append(el('div', { class: 'cal-side-notes' }, ev.notes));
+    const notesEl = el('div', { class: 'cal-side-notes' + (ev.notes ? '' : ' is-placeholder') }, ev.notes || '+ 메모');
+    inlineCal(notesEl, ev, 'notes', 'textarea', { placeholder: '메모' });
+    body.append(notesEl);
     item.append(body);
+    item.append(el('button', {
+      class: 'cal-side-edit', type: 'button', title: '전체 편집',
+      onclick: (e) => { e.stopPropagation(); openEditModal(ev); },
+    }, '편집'));
     list.append(item);
   }
 }
@@ -690,6 +729,7 @@ async function init() {
     // ESC 닫기
     document.addEventListener('keydown', (ev) => {
       if (ev.key === 'Escape' && !$('#cal-modal').hidden) closeModal();
+      else if (ev.key === 'Escape' && !$('#cal-leave-modal').hidden) closeLeaveSettings();
     });
 
   } catch (err) {

@@ -154,9 +154,18 @@ function renderCard(r) {
   );
 
   const meta = el('div', { class: 'dd-card-meta' });
-  if (r.port)     meta.append(el('span', { class: 'dd-meta-text' }, ' ' + r.port));
+  // 항구는 카드에서 바로 수정(편집권한), 나머지 메타는 [편집] 모달
+  if (r.port || canEdit) {
+    const portEl = el('span', { class: 'dd-meta-text' + (r.port ? '' : ' dd-meta-empty') }, r.port || '+ 항구');
+    if (canEdit && window.InlineEdit) InlineEdit.bind(portEl, {
+      kind: 'text', value: r.port || '', placeholder: '항구',
+      save: (nv) => api(`/api/boarding-reports/${r.id}`, { method: 'PUT', body: JSON.stringify({ port: nv.trim() }) }),
+      onDone: (nv) => { r.port = nv.trim() || null; },
+    });
+    meta.append(portEl);
+  }
   const period = fmtPeriod(r);
-  if (period)     meta.append(el('span', { class: 'dd-meta-text' }, ' ' + period));
+  if (period)     meta.append(el('span', { class: 'dd-meta-text' }, period));
   card.append(meta);
 
   card.append(

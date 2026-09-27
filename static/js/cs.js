@@ -345,8 +345,8 @@ function openCsExportMail(survey, vesselName) {
   const ov = document.createElement('div');
   ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:600px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
-  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px"> ${q}Q 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:#1d4ed8">· ${escHtml(vn)}</span></div>`
+  box.style.cssText = 'background:#fff;border-radius:6px;padding:20px;width:600px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 12px 32px rgba(38,36,30,.14)';
+  box.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:4px"> ${q}Q 엑셀 추출 + 메일 드래프트 <span style="font-weight:500;font-size:12px;color:var(--accent)">· ${escHtml(vn)}</span></div>`
     + `<div style="font-size:12px;color:#888;margin-bottom:12px">엑셀은 자동 다운로드됨. 아래 메일 드래프트 복사 → Outlook에 붙여넣고 엑셀 첨부해 발송. defect/observation·분기·수신인 자동.</div>`;
   const dl = document.createElement('button');
   dl.textContent = ' 엑셀 다시 다운로드';
@@ -679,11 +679,11 @@ function detailRow(survey, vesselName, vesselId) {
   // 보고서 → 항목 자동 생성 (Gemini) + 엑셀 추출(+메일 드래프트 모달)
   td.append(el('div', { class: 'csx-bar' },
     el('button', { class: 'btn btn-outline btn-sm', onclick: () => openCsExtract(survey) },
-      ' 보고서에서 자동 생성'),
+      '보고서에서 자동 생성'),
     el('button', {
       class: 'btn btn-outline btn-sm', style: 'margin-left:6px',
       onclick: () => openCsExportMail(survey, vesselName),
-    }, ' 엑셀 추출')));
+    }, '엑셀 추출')));
 
   const defects      = (survey.findings || []).filter(f => f.category === 'Defect');
   const observations = (survey.findings || []).filter(f => f.category === 'Observation');
@@ -694,23 +694,28 @@ function detailRow(survey, vesselName, vesselId) {
     sec.append(el('div', { class: 'cs-finding-header cs-cat-overall' },
       el('span', { class: 'cs-cat-dot' }),
       el('strong', {}, 'Overall Remark'),
+      el('button', {
+        class: 'btn btn-outline btn-sm', style: 'margin-left:auto',
+        title: '업체·관리·수검일·메모 한 번에 편집',
+        onclick: () => openSurveyModal(vesselId, survey.quarter, survey),
+      }, '수검 정보 편집'),
     ));
-    sec.append(el('div', {
-      class: 'cs-overall-body summary-edit-button', role: 'button', tabindex: '0',
-      title: '클릭하여 수검 정보 편집',
-      onclick: (event) => {
-        const selection = window.getSelection();
-        if (event.detail > 1 || (event.detail && selection?.type === 'Range' && event.currentTarget.contains(selection.anchorNode))) return;
-        openSurveyModal(vesselId, survey.quarter, survey);
-      },
-      onkeydown: (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          openSurveyModal(vesselId, survey.quarter, survey);
-        }
-      },
-    }, survey.overall_remark || '메모 추가',
-      el('span', { class: 'summary-edit-hint', 'aria-hidden': 'true' }, '편집')));
+    // 본문 클릭 = 그 자리에서 메모 수정 (2026-09-27)
+    const body = el('div', { class: 'cs-overall-body' + (survey.overall_remark ? '' : ' is-empty') },
+      survey.overall_remark || '메모 추가');
+    if (window.InlineEdit && survey.id) {
+      InlineEdit.bind(body, {
+        kind: 'textarea', value: survey.overall_remark || '',
+        save: async (v) => {
+          await api(`/api/cs/surveys/${survey.id}`, { method: 'PUT', body: JSON.stringify({ overall_remark: v.trim() || null }) });
+          survey.overall_remark = v.trim() || null;
+        },
+        onDone: () => reloadData(),
+      });
+    } else {
+      body.addEventListener('click', () => openSurveyModal(vesselId, survey.quarter, survey));
+    }
+    sec.append(body);
     td.append(sec);
   }
 

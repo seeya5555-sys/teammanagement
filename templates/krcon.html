@@ -8,26 +8,26 @@
   .kc-hero .sub{color:var(--text-secondary);font-size:13px}
   .kc-hero .sub b{color:var(--blue)}
   .kc-searchbar{display:flex;gap:8px;margin:16px 0 6px}
-  .kc-input{flex:1;border:1px solid var(--border-strong);border-radius:999px;padding:13px 20px;font-size:15px;background:#fff;outline:none;box-shadow:0 1px 3px rgba(0,0,0,.05)}
-  .kc-input:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-border)}
-  .kc-btn{border:0;border-radius:999px;padding:0 20px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
+  .kc-input{flex:1;border:1px solid var(--border-strong);border-radius:4px;padding:11px 14px;font-size:14px;background:#fff;outline:none}
+  .kc-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-tint)}
+  .kc-btn{border:0;border-radius:4px;padding:0 20px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
   .kc-btn.go{background:var(--blue);color:#fff}
   .kc-btn.go:hover{background:var(--blue-hover)}
-  .kc-btn.ai{background:var(--purple-bg);color:var(--purple);border:1px solid var(--purple-border,#c7c2f0)}
-  .kc-btn.ai:hover{background:#e4e1fb}
+  .kc-btn.ai{background:var(--surface);color:var(--text-primary);border:1px solid var(--border-strong)}
+  .kc-btn.ai:hover{background:var(--surface-2)}
   .kc-btn:disabled{opacity:.5;cursor:default}
   .kc-tip{color:var(--text-tertiary);font-size:12px;margin:2px 2px 0}
   .kc-cats{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0}
-  .kc-chip{font-size:12px;font-weight:600;padding:4px 11px;border-radius:999px;border:1px solid var(--border);background:#fff;color:var(--text-secondary)}
+  .kc-chip{font-size:12px;font-weight:600;padding:4px 11px;border-radius:4px;border:1px solid var(--border);background:#fff;color:var(--text-secondary)}
   .kc-chip .n{color:var(--blue);font-weight:800;margin-left:4px}
   .kc-total{color:var(--text-secondary);font-size:13px;margin:8px 2px}
-  .kc-ai{border:1px solid var(--purple-border,#c7c2f0);background:var(--purple-bg);border-radius:12px;padding:14px 16px;margin:12px 0}
-  .kc-ai h3{margin:0 0 8px;font-size:13px;font-weight:800;color:var(--purple-text)}
+  .kc-ai{border:1px solid var(--border);border-left:3px solid var(--accent);background:var(--surface);border-radius:4px;padding:14px 16px;margin:12px 0}
+  .kc-ai h3{margin:0 0 8px;font-size:13px;font-weight:700;color:var(--text-primary)}
   .kc-ai .ans{white-space:pre-wrap;line-height:1.6;color:var(--text-primary);font-size:14px}
   .kc-ai .src{margin-top:10px;font-size:12px;color:var(--text-secondary)}
   .kc-ai .src a{color:var(--blue);text-decoration:none}
   .kc-list{display:flex;flex-direction:column;gap:10px;margin-top:6px}
-  .kc-card{border:1px solid var(--border);border-radius:10px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);padding:12px 14px}
+  .kc-card{border:1px solid var(--border);border-radius:6px;background:#fff;padding:12px 14px}
   .kc-title{font-weight:700;color:var(--blue-text);line-height:1.4;font-size:14px;cursor:pointer}
   .kc-title:hover{text-decoration:underline}
   .kc-snip{color:var(--text-secondary);font-size:12.5px;margin-top:5px;line-height:1.5}
@@ -52,9 +52,9 @@
   <div class="kc-searchbar">
     <input id="kc-q" class="kc-input" type="text" placeholder="자연어로 검색  예) Ballast water 배출 규정, 구명정 검사 주기, enclosed space entry" autocomplete="off">
     <button id="kc-go" class="kc-btn go">검색</button>
-    <button id="kc-ai" class="kc-btn ai" title="검색 상위 문서를 Gemini가 읽고 답변 합성"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg> AI 요약</button>
+    <button id="kc-ai" class="kc-btn ai" title="검색 상위 문서를 읽고 핵심만 정리">근거 요약</button>
   </div>
-  <div class="kc-tip">영문 용어면 그대로(무료), 자연어/한글 질문이면 AI가 알아서 키워드로 바꿔 검색합니다. 답을 정리해서 보려면 <b>AI 요약</b>.</div>
+  <div class="kc-tip">영문 용어면 그대로(무료), 자연어/한글 질문은 키워드로 바꿔 검색합니다. 조항 요지를 한 번에 보려면 <b>근거 요약</b>.</div>
 
   <div id="kc-out"></div>
 </div>
@@ -133,7 +133,7 @@
     const q = qEl.value.trim();
     if(!q) return;
     lastQuery = q;
-    out.innerHTML = '<div class="kc-ai"><h3><svg class="ic-svg" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg> AI 요약</h3><div class="ans"><span class="kc-spin"></span> Gemini가 룰 본문을 읽고 정리 중… (몇 초 걸립니다)</div></div>';
+    out.innerHTML = '<div class="kc-ai"><h3>근거 요약</h3><div class="ans"><span class="kc-spin"></span> 룰 본문 정리 중… (몇 초 걸립니다)</div></div>';
     setBusy(true);
     try{
       // 이미 뜬 검색결과가 있으면 그 문서 id를 재사용(키워드가 이미 좋음).
@@ -143,15 +143,15 @@
         body: JSON.stringify(ids.length ? {q, ids} : {q})});
       const d = await r.json();
       if(d.error){
-        const msg = d.error==='NO_API_KEY' ? 'Gemini API 키 미설정' :
+        const msg = d.error==='NO_API_KEY' ? '요약 기능 키 미설정' :
                     d.error==='NO_DOCS' ? '요약할 문서를 찾지 못함' :
-                    d.error==='AI_FAILED' ? ('AI 호출 실패: '+esc(d.detail||'')) : d.error;
+                    d.error==='AI_FAILED' ? ('요약 실패: '+esc(d.detail||'')) : d.error;
         out.innerHTML = '<div class="kc-err">'+esc(msg)+'</div>'; setBusy(false); return;
       }
       let src = (d.sources||[]).map(s =>
         '<a href="'+(s.pdf?esc(s.pdf):'#')+'" '+(s.pdf?'target="_blank" rel="noopener"':'')+'>['+s.id+'] '+
         esc(s.title||('문서 '+s.id))+'</a>'+(s.eff?' ('+esc(s.eff)+')':'')).join('<br>');
-      out.innerHTML = '<div class="kc-ai"><h3><svg class="ic-svg" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg> AI 요약 <span style="font-weight:600;color:var(--text-tertiary)">· KR-CON 발췌 기반</span></h3>'+
+      out.innerHTML = '<div class="kc-ai"><h3>근거 요약 <span style="font-weight:600;color:var(--text-tertiary)">· KR-CON 발췌 기반</span></h3>'+
         '<div class="ans">'+esc(d.answer||'(응답 없음)')+'</div>'+
         (src?'<div class="src"><b>근거 문서</b><br>'+src+'</div>':'')+
         '<div class="src" style="margin-top:8px;color:var(--text-tertiary)">※ 원문 확인 후 사용하세요. 아래 "검색" 버튼으로 전체 결과를 볼 수 있습니다.</div></div>';

@@ -6,19 +6,19 @@
   .lz-count{color:var(--text-secondary);font-size:13px}
   .lz-wrap{max-width:920px}
   .lz-note{background:var(--surface-2);border:1px solid var(--border-subtle);color:var(--text-secondary);border-radius:8px;padding:9px 12px;font-size:12px;margin-bottom:12px;line-height:1.55}
-  .lz-drop{border:2px dashed var(--border-strong);border-radius:12px;background:#fff;padding:26px 18px;text-align:center;cursor:pointer;transition:.12s;margin-bottom:16px}
+  .lz-drop{border:2px dashed var(--border-strong);border-radius:6px;background:#fff;padding:26px 18px;text-align:center;cursor:pointer;transition:.12s;margin-bottom:16px}
   .lz-drop.over{border-color:var(--blue);background:var(--blue-bg)}
   .lz-drop.busy{opacity:.55;pointer-events:none}
   .lz-drop h3{margin:0 0 4px;font-size:15px;color:var(--text-primary)}
   .lz-drop p{margin:0;font-size:12px;color:var(--text-tertiary)}
   .lz-list{display:flex;flex-direction:column;gap:12px}
-  .lz-card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .lz-card{border:1px solid var(--border);border-radius:6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
   .lz-card.is-busy{opacity:.55;pointer-events:none}
   .lz-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
   .lz-fn{font-weight:600;color:var(--text-primary);line-height:1.35;word-break:break-all}
   .lz-meta{font-size:12px;color:var(--text-secondary);margin-top:3px}
   .lz-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
-  .lz-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .lz-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:nowrap}
   .b-ready{background:var(--green-bg);color:var(--green)}
   .b-hold{background:var(--amber-bg);color:var(--amber)}
   .b-fix{background:var(--blue-bg);color:var(--blue)}
@@ -86,7 +86,7 @@
   .pdf-lnk{color:var(--blue);cursor:pointer;text-decoration:underline}
   .pdf-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900;align-items:center;justify-content:center}
   .pdf-modal.on{display:flex}
-  .pdf-box{background:#fff;border-radius:12px;width:min(1000px,94vw);height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden}
+  .pdf-box{background:#fff;border-radius:6px;width:min(1000px,94vw);height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden}
   .pdf-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);font-size:13px}
   .pdf-ttl{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pdf-frame{flex:1;border:0;width:100%}
@@ -132,7 +132,7 @@
     <div class="pdf-bar">
       <span class="pdf-ttl" id="pdf-ttl">PDF</span>
       <a id="pdf-open" href="#" target="_blank" rel="noopener">새 탭</a>
-      <button id="pdf-close" type="button">닫기 ✕</button>
+      <button id="pdf-close" type="button">닫기</button>
     </div>
     <iframe class="pdf-frame" id="pdf-frame" title="기국 인보이스 PDF 미리보기"></iframe>
   </div>

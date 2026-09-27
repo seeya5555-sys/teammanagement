@@ -930,7 +930,7 @@ function renderVmainHead() {
   const lf = S.linkFilter || S.filters.q || S.filters.item_topic;
   if (lf) {
     const chip = el('div', { class: 'vmh-linkfilter' },
-      el('span', { class: 'vmh-lf-lbl' }, ' 링크 필터'),
+      el('span', { class: 'vmh-lf-lbl' }, '링크 필터'),
       el('b', { class: 'vmh-lf-q' }, lf),
       el('button', { class: 'vmh-lf-x', title: '필터 해제 — 전체 보기로' }, '✕ 해제'));
     chip.querySelector('.vmh-lf-x').addEventListener('click', clearLinkFilter);
@@ -970,7 +970,7 @@ function renderVmainHead() {
       el('span', { class: 'k-dim' }, ' · 완료 '), el('b', { class: 'k-dim' }, String(done)),
       el('span', { class: 'k-dim' }, ' · 전체 '), el('b', { class: 'k-dim' }, String(g.issues.length))),
     newBtn));
-  const QF = [['all', '전체'], ['recent', '최근 발생'], ['stale', '장기 미종결'], ['risk', ' COC·Urgent']];
+  const QF = [['all', '전체'], ['recent', '최근 발생'], ['stale', '장기 미종결'], ['risk', 'COC·Urgent']];
   const qf = el('div', { class: 'vmh-qf' });
   for (const [k, label] of QF) {
     const c = el('span', { class: 'qchip' + (S.quickFilter === k ? ' on' : '') + (k === 'risk' ? ' risk' : '') }, label);
@@ -1045,7 +1045,9 @@ function rowEl(i, no) {
   const tr = el('tr', { class: 'data-row' + (expanded ? ' is-expanded' : ''), 'data-id': i.id });
 
   tr.append(el('td', { class: 'no-cell' }, String(no)));
-  tr.append(el('td', { class: 'date-cell' }, i.issue_date || '-'));
+  const dateTd = el('td', { class: 'date-cell cell-edit', title: '클릭하여 발생일 편집' }, i.issue_date || '-');
+  dateTd.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(dateTd, i, 'issue_date', 'date'); });
+  tr.append(dateTd);
 
   // 현안업무 — 클릭 시 행 펼치기(상세/진행사항)
   const topicTd = el('td', { class: 'topic-cell topic-expand', title: '클릭하여 상세·진행사항 펼치기' });
@@ -1092,6 +1094,12 @@ function toggleRow(id) {
 function expandedRowEl(i) {
   const tr = el('tr', { class: 'exp-row', 'data-exp-id': i.id });
   const box = el('div', { class: 'exp-box' });
+
+  // 현안 제목 (클릭 인라인 편집) — 행의 제목 칸은 펼침 토글이라 여기서 고친다
+  box.append(el('div', { class: 'exp-label' }, '현안 제목'));
+  const topic = el('div', { class: 'exp-topic cell-edit', title: '클릭하여 제목 편집' }, i.item_topic || '—');
+  topic.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(topic, i, 'item_topic', 'text'); });
+  box.append(topic);
 
   // 상세 내용 (클릭 인라인 편집)
   box.append(el('div', { class: 'exp-label' }, '상세 내용'));
@@ -1251,6 +1259,10 @@ async function startEditInline(cellEl, issue, field, kind) {
     S._editing = null;
     if (save) {
       const newVal = (kind === 'date' ? (input.value || null) : input.value);
+      if ((field === 'item_topic' || field === 'issue_date') && !String(newVal || '').trim()) {
+        cellEl.innerHTML = prevHTML;   // 필수값은 비워서 저장하지 않음
+        return;
+      }
       if (newVal !== orig && !(newVal === null && !orig)) {
         try {
           await api('/api/issues/' + issue.id, {
@@ -1395,39 +1407,47 @@ function startEditActionEntry(entryEl, issue, idx) {
   setTimeout(() => { progIn.focus(); progIn.select(); }, 10);
 
   let done = false;
+  // 🔴 배열 통째 PUT 금지 — 그 사이 다른 곳(iOS·다른 탭)에서 추가된 진행이 조용히 사라진다.
+  //    새 줄=POST(append) · 기존 줄=PATCH/DELETE(+prev 대조, 서버 CAS). 409면 서버 정본으로 되돌림.
+  const isNew = !!a._new;
+  const prev = { date: a.date ?? null, progress: a.progress ?? '', important: !!a.important,
+                 count: (issue.actions || []).filter(x => !x._new).length };
   const finish = async (mode) => {
     if (done) return; done = true;
     S._editing = null;
 
-    if (mode === 'save') {
-      const progVal = progIn.value.trim();
-      if (!progVal) {       // 내용 비어있으면 삭제로 처리
-        mode = 'remove';
-      } else {
-        issue.actions[idx] = {
-          date: dateIn.value || null,
-          progress: progVal,
-          important: imp,
-        };
-      }
+    const progVal = progIn.value.trim();
+    if (mode === 'save' && !progVal) mode = isNew ? 'cancel' : 'remove';
+    if (mode === 'remove' && !isNew && !confirm('이 진행 경과를 삭제할까요?')) mode = 'cancel';
+    if (mode === 'cancel' || (mode === 'remove' && isNew)) {
+      if (isNew) issue.actions.splice(idx, 1);
+      renderTable(); renderCards();
+      return;
     }
-    if (mode === 'remove') {
-      issue.actions.splice(idx, 1);
-    }
-
-    if (mode === 'cancel') {
+    if (mode === 'save' && !isNew && progVal === orig.progress && (dateIn.value || '') === orig.date && imp === orig.important) {
       renderTable(); renderCards();
       return;
     }
 
     try {
-      await api('/api/issues/' + issue.id, {
-        method: 'PUT',
-        body: JSON.stringify({ actions: issue.actions }),
-      });
+      let res;
+      if (mode === 'remove') {
+        res = await api(`/api/issues/${issue.id}/actions/${idx}`, { method: 'DELETE', body: JSON.stringify({ prev }) });
+      } else if (isNew) {
+        res = await api(`/api/issues/${issue.id}/actions`, {
+          method: 'POST', body: JSON.stringify({ date: dateIn.value || '', progress: progVal, important: imp }),
+        });
+      } else {
+        const body = { prev, progress: progVal, important: imp };
+        if (dateIn.value) body.date = dateIn.value;
+        res = await api(`/api/issues/${issue.id}/actions/${idx}`, { method: 'PATCH', body: JSON.stringify(body) });
+      }
+      if (res && Array.isArray(res.actions)) issue.actions = res.actions;
       renderTable(); renderCards();
+      if (window.InlineEdit) InlineEdit.toast(mode === 'remove' ? '삭제됨' : '저장됨');
     } catch (err) {
-      alert('저장 실패: ' + err.message);
+      if (window.InlineEdit) InlineEdit.toast('저장 실패: ' + err.message, 'error');
+      else alert('저장 실패: ' + err.message);
       await reloadAll();
     }
   };
@@ -1447,7 +1467,7 @@ async function addActionInline(issue) {
   if (S._editing) return;
   if (!Array.isArray(issue.actions)) issue.actions = [];
   // 임시 빈 entry 추가 후 그 entry 편집 진입
-  issue.actions.push({ date: todayISO(), progress: '', important: false });
+  issue.actions.push({ date: todayISO(), progress: '', important: false, _new: true });
   if (!S.expandedActions.has(issue.id)) S.expandedActions.add(issue.id);
   renderTable(); renderCards();
 
@@ -1481,7 +1501,7 @@ function renderCards() {
 function inlineAddCardHint() {
   return el('div', {
     style: 'background:var(--blue-bg); border:1px solid var(--blue-border); padding:10px 12px; border-radius:8px; font-size:12px; color:var(--blue-text); margin-bottom:10px',
-  }, ' 데스크톱에서 상단 인라인 입력 폼을 이용해 새 이슈를 추가하세요.');
+  }, '데스크톱에서 상단 인라인 입력 폼을 이용해 새 이슈를 추가하세요.');
 }
 
 function cardEl(i, no) {
@@ -1491,14 +1511,19 @@ function cardEl(i, no) {
   card.addEventListener('click', (ev) => {
     if (ev.target.closest('.icon-btn') || ev.target.closest('.act-arrow') ||
         ev.target.closest('.exp-btn') || ev.target.closest('.act-add-inline') ||
-        ev.target.closest('.act-entry')) return;
+        ev.target.closest('.act-entry') || ev.target.closest('.cell-edit') ||
+        ev.target.closest('.inline-edit-wrap') || ev.target.closest('input,select,textarea')) return;
     toggleRow(i.id);
   });
 
   const head = el('div', { class: 'issue-card-head' });
   if (no != null) head.append(el('span', { class: 'issue-card-no' }, 'No.' + no));
   head.append(el('span', { class: 'card-caret' }, expanded ? '▾' : '▸'));
-  if (i.issue_date) head.append(el('span', { class: 'card-date' }, i.issue_date));
+  if (i.issue_date) {
+    const cDate = el('span', { class: 'card-date cell-edit', title: '발생일 수정' }, i.issue_date);
+    cDate.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(cDate, i, 'issue_date', 'date'); });
+    head.append(cDate);
+  }
 
   head.append(priBadge(i.priority));
   const dd = dDayBadge(i.due_date);
@@ -1511,8 +1536,24 @@ function cardEl(i, no) {
 
   if (expanded) {
     const det = el('div', { class: 'issue-card-det' });
+    det.append(el('div', { class: 'exp-label' }, '현안 제목'));
+    const cTopic = el('div', { class: 'exp-topic cell-edit' }, i.item_topic || '—');
+    cTopic.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(cTopic, i, 'item_topic', 'text'); });
+    det.append(cTopic);
+    det.append(el('div', { class: 'exp-label' }, '우선순위 · 상태 · 마감'));
+    const cMeta = el('div', { class: 'card-meta-edit' });
+    const cPri = el('span', { class: 'cell-edit' }, priBadge(i.priority));
+    cPri.addEventListener('click', (ev) => { ev.stopPropagation(); startEditSelect(cPri, i, 'priority', [['Normal', 'Normal'], ['Urgent', 'Urgent'], ['Next DD', 'Next DD'], ['COC & Flag', 'COC & Flag']]); });
+    const cStat = el('span', { class: 'cell-edit' }, statBadge(i.status));
+    cStat.addEventListener('click', (ev) => { ev.stopPropagation(); startEditSelect(cStat, i, 'status', [['Open', 'Open'], ['InProgress', '진행중'], ['Closed', 'Closed']]); });
+    const cDue = el('span', { class: 'cell-edit card-due' }, i.due_date || '+ 마감일');
+    cDue.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(cDue, i, 'due_date', 'date'); });
+    cMeta.append(cPri, cStat, cDue);
+    det.append(cMeta);
     det.append(el('div', { class: 'exp-label' }, '상세 내용'));
-    det.append(el('div', { class: 'exp-desc' }, i.description || '—'));
+    const cDesc = el('div', { class: 'exp-desc cell-edit' }, i.description || '—');
+    cDesc.addEventListener('click', (ev) => { ev.stopPropagation(); startEditInline(cDesc, i, 'description', 'textarea'); });
+    det.append(cDesc);
     det.append(el('div', { class: 'exp-label' }, '진행사항 (조치 이력)'));
     det.append(el('div', { class: 'exp-acts-wrap' }, renderActionCell(i)));
     const acts = el('div', { class: 'exp-btns' });
@@ -1866,8 +1907,28 @@ async function openEdit(iid) {
   }
 }
 
-function showModal() { $('#issue-modal').hidden = false; document.body.style.overflow = 'hidden'; }
+// 편집 모달 스냅샷 — Esc/X 로 닫을 때 바뀐 게 있으면 확인, 저장 시 actions 가 안 바뀌었으면 보내지 않는다
+function issueFormSnapshot() {
+  return JSON.stringify([
+    $('#f-supervisor').value, $('#f-vessel').value, $('#f-issue-date').value, $('#f-due-date').value,
+    $('#f-priority').value, $('#f-status').value, $('#f-topic').value, $('#f-desc').value,
+  ]);
+}
+function actionsSnapshot(list) {
+  return JSON.stringify((list || []).filter(a => (a.progress || '').trim() !== '')
+    .map(a => [(a.date || '').trim() || null, (a.progress || '').trim(), !!a.important]));
+}
+function showModal() {
+  $('#issue-modal').hidden = false; document.body.style.overflow = 'hidden';
+  S._modalSnap = issueFormSnapshot();
+  S._modalActSnap = actionsSnapshot(S.editingActions);
+}
 function closeModal() { $('#issue-modal').hidden = true; document.body.style.overflow = ''; }
+function requestCloseModal() {
+  const dirty = S._modalSnap !== issueFormSnapshot() || S._modalActSnap !== actionsSnapshot(S.editingActions);
+  if (dirty && !confirm('저장하지 않은 변경이 있습니다. 닫을까요?')) return;
+  closeModal();
+}
 
 async function saveIssue(ev) {
   ev.preventDefault();
@@ -1893,8 +1954,21 @@ async function saveIssue(ev) {
     priority:      $('#f-priority').value,
     status:        $('#f-status').value,
   };
+  // 진행 경과를 손대지 않았으면 배열을 보내지 않는다 — 모달이 열려 있는 동안 다른 곳에서 추가된 진행 보존
+  if (S.editingId && actionsSnapshot(S.editingActions) === S._modalActSnap) delete payload.actions;
   if (!payload.item_topic) { if (btn) btn.disabled = false; alert('제목을 입력하세요.'); return; }
   if (!payload.vessel_id)  { if (btn) btn.disabled = false; alert('선박을 선택하세요.'); return; }
+  // 진행 경과를 고쳐 배열 통째로 보내야 하는 경우: 모달을 연 뒤 서버 쪽 진행이 바뀌었으면 덮어쓰지 않는다
+  if (S.editingId && payload.actions) {
+    try {
+      const live = await api('/api/issues/' + S.editingId);
+      if (actionsSnapshot(live.actions) !== S._modalActSnap) {
+        if (btn) btn.disabled = false;
+        alert('모달을 연 뒤 다른 곳에서 진행 경과가 바뀌었습니다.\n덮어쓰지 않도록 저장을 멈췄습니다. 닫고 다시 열어 주세요.');
+        return;
+      }
+    } catch (err) { if (btn) btn.disabled = false; alert('저장 전 확인 실패: ' + err.message); return; }
+  }
 
   try {
     if (S.editingId) {
@@ -2829,8 +2903,17 @@ async function renderMyVesList() {
   for (const v of vs) {
     const item = el('div', { class: 'admin-list-item' });
     item.append(el('span', { class: 'item-tag type' }, v.vessel_type || '?'));
+    const canEdit = S.user.role === 'admin' || (S.user.supervisor_id && S.user.supervisor_id === S.myVesSupId);
+    const nameEl = el('strong', {}, v.name);
+    if (canEdit && window.InlineEdit) {
+      InlineEdit.bind(nameEl, {
+        kind: 'text', value: v.name, allowEmpty: false,
+        save: (nv) => api('/api/vessels/' + v.id, { method: 'PUT', body: JSON.stringify({ name: nv.trim() }) }),
+        onDone: async () => { await renderMyVesList(); await reloadAll(); },
+      });
+    }
     item.append(el('div', { class: 'item-main' },
-      el('strong', {}, v.name),
+      nameEl,
       el('div', { class: 'item-sub' },
         [
           v.short_name && `${v.short_name}`,
@@ -3329,7 +3412,7 @@ function wireEvents() {
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center';
     const box = document.createElement('div');
-    box.style.cssText = 'background:#fff;border-radius:12px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+    box.style.cssText = 'background:#fff;border-radius:6px;padding:20px;width:560px;max-width:94%;max-height:90vh;overflow:auto;box-shadow:0 12px 32px rgba(38,36,30,.14)';
     box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:10px"> 영문 엑셀 추출 + 메일 드래프트</div>';
 
     // 모드 토글
@@ -3482,7 +3565,7 @@ function wireEvents() {
 
   // Edit Modal
   $('#issue-modal').addEventListener('click', (ev) => {
-    if (ev.target.dataset.close === '1') closeModal();
+    if (ev.target.dataset.close === '1') requestCloseModal();
   });
   $('#issue-form').addEventListener('submit', saveIssue);
   $('#btn-delete').addEventListener('click', () => {
@@ -3516,7 +3599,7 @@ function wireEvents() {
   // Daily 페이지 전용 ESC (공용 관리/편집 모달은 wireCommon에서 처리)
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
-    if (!$('#issue-modal').hidden) closeModal();
+    if (!$('#issue-modal').hidden) requestCloseModal();
     else if (!$('#attach-modal').hidden) closeAttach();
     else if (!$('#myves-modal').hidden) closeMyVessels();
     else if (S.inlineAdd) cancelInlineAdd();

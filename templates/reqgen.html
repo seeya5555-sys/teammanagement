@@ -5,7 +5,7 @@
   .rg-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   .rg-count{color:var(--text-secondary);font-size:13px}
   .rg-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px;max-width:960px}
-  .rg-up{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:12px;max-width:960px}
+  .rg-up{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:12px;max-width:960px}
   .rg-drop{flex:1;min-width:240px;display:flex;align-items:center;justify-content:center;gap:8px;
     border:2px dashed var(--border-strong);border-radius:10px;padding:14px 16px;background:#fff;color:var(--text-secondary);
     font-size:13px;cursor:pointer;transition:.15s;text-align:center}
@@ -16,7 +16,7 @@
   .rg-up input[type=text]{border:1px solid var(--border-strong);border-radius:8px;padding:7px 10px;font-size:13px;width:120px}
   /* 공통 Approval 바 */
   .rg-bar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;background:var(--blue-bg);border:1px solid var(--blue-border);
-    border-radius:12px;padding:12px 14px;margin-bottom:16px;max-width:960px}
+    border-radius:6px;padding:12px 14px;margin-bottom:16px;max-width:960px}
   .rg-bar label{font-size:11px;color:var(--text-secondary);display:flex;flex-direction:column;gap:3px;font-weight:600}
   .rg-bar input{border:1px solid var(--border-strong);border-radius:8px;padding:7px 10px;font-size:13px}
   .rg-bar .v{width:110px}.rg-bar .p{width:110px}.rg-bar .d{width:130px}
@@ -24,13 +24,13 @@
   .rg-pushall{background:var(--green);color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:700;font-size:14px;cursor:pointer}
   .rg-pushall:disabled{opacity:.5;cursor:not-allowed}
   .rg-list{display:flex;flex-direction:column;gap:12px;max-width:960px}
-  .rg-card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .rg-card{border:1px solid var(--border);border-radius:6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
   .rg-card.is-busy{opacity:.6;pointer-events:none}
   .rg-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
   .rg-subj{font-weight:600;color:var(--text-primary);line-height:1.35}
   .rg-meta{font-size:12px;color:var(--text-secondary);margin-top:3px}
   .rg-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
-  .rg-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .rg-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:nowrap}
   .b-spare{background:var(--purple-bg);color:var(--purple)}
   .b-store{background:var(--teal-bg);color:var(--teal)}
   .st-pending{background:var(--surface-3);color:var(--text-secondary)}
@@ -58,7 +58,7 @@
   /* 업로드 템플릿 다운로드 모달 */
   .rg-modal{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:2100;display:none;align-items:center;justify-content:center;padding:20px}
   .rg-modal.on{display:flex}
-  .rg-modal-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;max-width:460px;width:100%;padding:22px 22px 20px;box-shadow:0 12px 40px rgba(0,0,0,.22)}
+  .rg-modal-box{background:var(--surface);border:1px solid var(--border);border-radius:6px;max-width:460px;width:100%;padding:22px 22px 20px;box-shadow:var(--shadow-lg)}
   .rg-modal-box h3{margin:0 0 4px;font-size:16px;font-weight:700;color:var(--text-primary)}
   .rg-modal-box .sub{font-size:12px;color:var(--text-tertiary);margin-bottom:16px}
   .rg-tmpl-opts{display:flex;flex-direction:column;gap:10px}
@@ -254,6 +254,7 @@
   $('#rg-tmplbtn').addEventListener('click',()=>tmplModal.classList.add('on'));
   $('#rg-tmpl-close').addEventListener('click',()=>tmplModal.classList.remove('on'));
   tmplModal.addEventListener('click',e=>{ if(e.target===tmplModal) tmplModal.classList.remove('on'); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') tmplModal.classList.remove('on'); });
 
   // 드래그앤드롭 + 클릭선택
   const drop=$('#rg-drop'), fileInput=$('#rg-file'), dropMsg=$('#rg-dropmsg');

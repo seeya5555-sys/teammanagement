@@ -8,7 +8,7 @@
   .aor-filter { display:flex; gap:6px; }
   .aor-count { color:var(--text-secondary); font-size:13px; }
   .aor-list { display:flex; flex-direction:column; gap:14px; max-width:920px; }
-  .aor-card { border:1px solid var(--border); border-radius:12px; background:#fff;
+  .aor-card { border:1px solid var(--border); border-radius:6px; background:#fff;
               box-shadow:0 1px 2px rgba(0,0,0,.04); overflow:hidden; }
   .aor-card.is-busy { opacity:.55; pointer-events:none; }
   .aor-card-top { display:flex; align-items:flex-start; gap:10px; padding:12px 14px;
@@ -16,7 +16,7 @@
   .aor-subj { font-weight:600; color:var(--text-primary); line-height:1.35; }
   .aor-meta { font-size:12px; color:var(--text-secondary); margin-top:3px; }
   .aor-badges { margin-left:auto; display:flex; gap:6px; flex-shrink:0; align-items:center; }
-  .aor-badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+  .aor-badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:4px; white-space:nowrap; }
   .aor-badge.conf-hi { background:var(--green-bg); color:var(--green); }
   .aor-badge.conf-mid { background:var(--amber-bg); color:var(--amber); }
   .aor-badge.conf-lo { background:var(--red-bg); color:var(--red); }
@@ -29,7 +29,7 @@
   .aor-badge.st-rejected { background:var(--surface-3); color:var(--text-secondary); }
   .aor-badge.st-hold { background:var(--purple-bg); color:var(--purple); }
   /* P4 표시전용: 선박 soft매칭 칩 (read-only, 돈흐름 무관) */
-  .ves-chip { font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px;
+  .ves-chip { font-size:11px; font-weight:600; padding:2px 8px; border-radius:4px;
               white-space:nowrap; display:inline-block; margin-top:3px; }
   .ves-chip.ok { background:var(--green-bg); color:var(--green); }
   .ves-chip.other { background:var(--surface-3); color:var(--text-secondary); }
@@ -65,7 +65,7 @@
   .aor-selall { display:flex; align-items:center; gap:5px; font-size:12px; color:var(--text-secondary); cursor:pointer; }
   .aor-pdf{border:0;background:none;color:var(--blue);font:inherit;font-weight:700;padding:0;cursor:pointer;text-decoration:underline}
   .aor-pdf-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9000;align-items:center;justify-content:center;padding:24px}.aor-pdf-modal.open{display:flex}
-  .aor-pdf-box{background:#fff;border-radius:12px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden}.aor-pdf-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+  .aor-pdf-box{background:#fff;border-radius:6px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden}.aor-pdf-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
   .aor-pdf-bar b{flex:1}.aor-pdf-bar a,.aor-pdf-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:8px;padding:5px 10px;text-decoration:none;cursor:pointer}.aor-pdf-frame{flex:1;border:0;width:100%}
 </style>
 {% endblock %}
@@ -98,7 +98,7 @@
 </div>
 
 <div class="aor-list" id="aor-list"></div>
-<div class="aor-pdf-modal" id="aor-pdf-modal"><div class="aor-pdf-box"><div class="aor-pdf-bar"><b id="aor-pdf-title">첨부 견적서</b><a id="aor-pdf-open" target="_blank" rel="noopener">새 탭</a><button id="aor-pdf-close" type="button">닫기 ✕</button></div><iframe class="aor-pdf-frame" id="aor-pdf-frame" title="AOR 첨부 견적서 미리보기"></iframe></div></div>
+<div class="aor-pdf-modal" id="aor-pdf-modal"><div class="aor-pdf-box"><div class="aor-pdf-bar"><b id="aor-pdf-title">첨부 견적서</b><a id="aor-pdf-open" target="_blank" rel="noopener">새 탭</a><button id="aor-pdf-close" type="button">닫기</button></div><iframe class="aor-pdf-frame" id="aor-pdf-frame" title="AOR 첨부 견적서 미리보기"></iframe></div></div>
 {% endblock %}
 
 {% block scripts %}
@@ -129,7 +129,29 @@
     return {recommend: o.recommend || '', lines: o.lines || []};
   }
 
-  async function load(){const _sy=window.scrollY;try{return await _load();}finally{requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
+  // 다른 카드 승인/리젝 후 목록을 다시 그려도 입력 중이던 코멘트·결재선이 사라지지 않게 보존(2026-09-27)
+  function snapDirty(){
+    const out={};
+    listEl.querySelectorAll('.aor-card[data-id]').forEach(c=>{
+      const cmt=c.querySelector('.f-cmt'), app=c.querySelector('.f-app'), v={};
+      if(cmt && !cmt.readOnly && cmt.value!==cmt.defaultValue) v.cmt=cmt.value;
+      if(app && !app.disabled){
+        const orig = app.tagName==='SELECT' ? ([...app.options].find(o=>o.defaultSelected)||app.options[0]||{}).value : app.defaultValue;
+        if(app.value!==orig) v.app=app.value;
+      }
+      if(Object.keys(v).length) out[c.dataset.id]=v;
+    });
+    return out;
+  }
+  function restoreDirty(saved){
+    for(const [id,v] of Object.entries(saved)){
+      const c=listEl.querySelector(`.aor-card[data-id="${id}"]`); if(!c) continue;
+      const cmt=c.querySelector('.f-cmt'), app=c.querySelector('.f-app');
+      if(v.cmt!=null && cmt && !cmt.readOnly) cmt.value=v.cmt;
+      if(v.app!=null && app && !app.disabled && (app.tagName!=='SELECT' || [...app.options].some(o=>o.value===v.app))) app.value=v.app;
+    }
+  }
+  async function load(){const _sy=window.scrollY;const _d=snapDirty();try{return await _load();}finally{restoreDirty(_d);requestAnimationFrame(()=>window.scrollTo(0,_sy));}}
   async function _load() {
     listEl.innerHTML = '<div class="aor-empty">불러오는 중…</div>';
     let data;
@@ -178,7 +200,7 @@
     const ln = parseLines(d.approval_line);
     const curApp = d.approval_app_no || ln.recommend || '';
     const ev=d.evidence_checklist||{items:[],gap_count:0};
-    const evBox=`<div class="aor-emailref" style="border-left:4px solid ${ev.gap_count?'#D97706':'#15803D'}"><b>증빙 체크 · ${ev.gap_count?'누락/확인불가 '+ev.gap_count+'건':'완결'}</b><br>${(ev.items||[]).map(x=>`${x.state==='present'?'✓':x.state==='unknown'?'?':'⚠'} ${esc(x.label)}${x.detail?' ('+esc(x.detail)+')':''}`).join('<br>')}</div>`;
+    const evBox=`<div class="aor-emailref" style="border-left:4px solid ${ev.gap_count?'var(--amber-dot)':'var(--green)'}"><b>증빙 체크 · ${ev.gap_count?'누락/확인불가 '+ev.gap_count+'건':'완결'}</b><br>${(ev.items||[]).map(x=>`${x.state==='present'?'✓':x.state==='unknown'?'?':'⚠'} ${esc(x.label)}${x.detail?' ('+esc(x.detail)+')':''}`).join('<br>')}</div>`;
 
     // 청구액 + 첨부 견적서 (cost 자동판정 없음 — 사람이 견적서·RMK 보고 판단)
     let files = [];
@@ -237,7 +259,7 @@
         ${evBox}
         ${rmk ? `<details><summary style="font-size:12px;color:#5F5E5A;cursor:pointer">관리사 RMK 보기</summary><div class="aor-rmk">${esc(rmk)}</div></details>` : ''}
         ${d.upstream_reject_remark ? `<div class="aor-rmk" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>↩ 상위결재 반려 이력</b><br>${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>` : ''}
-        ${d.reconcile_alert ? `<div class="aor-rmk" style="border-left:4px solid #D97706;background:#FFF7ED"><b>⚠ SVMS–TRMT 상태 불일치</b><br>${esc(d.reconcile_alert)}<br><small>SVMS 확인 ${esc(d.upstream_checked_at || '')} · 자동 변경 없음</small></div>` : ''}
+        ${d.reconcile_alert ? `<div class="aor-rmk" style="border-left:4px solid var(--amber-dot);background:var(--amber-bg)"><b>⚠ SVMS–TRMT 상태 불일치</b><br>${esc(d.reconcile_alert)}<br><small>SVMS 확인 ${esc(d.upstream_checked_at || '')} · 자동 변경 없음</small></div>` : ''}
         ${outlookBox}
         <div class="aor-field">
           <label>Comment (RMK_APP — 결재 상신 코멘트, 비우면 공란)</label>
