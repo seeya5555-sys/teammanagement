@@ -63,6 +63,11 @@ _YARD_QUOTE_REQUEST_ROW = re.compile(
     re.I,
 )
 _YARD_ITEM_NO = re.compile(r"^\d+(?:\.\d+)*$")
+# Owner Dock Specification (JOB LIST sheet): "1. GENERAL" chapter rows own the section.
+_YARD_SPEC_CHAPTER = re.compile(r"^\s*(\d+)\s*\.\s*([A-Za-z].*)$")
+_YARD_SPEC_SECTIONS = ("GENERAL", "PAINT", "STEEL", "DECK", "ENGINE", "ELECTRIC")
+# Substring tokens: "Amount (USD)", "Unit Price", "Sub Total" etc. all disqualify a spec.
+_YARD_SPEC_MONEY_TOKENS = ("amount", "price", "cost", "budget", "usd", "total")
 _YARD_IMPORT_TTL = 30 * 60
 _YARD_IMPORT_MAX = 8
 _SVMS_JOB_TAG = re.compile(r"^\s*\[([^\]]+)\]\s*(.*)$")
@@ -1017,6 +1022,113 @@ def _yard_scan_quote_totals(workbook, quote_sheet):
     return discount, gross, net
 
 
+def _yard_find_spec_sheet(workbook):
+    """Locate an owner Dock Specification job list: Job No. + DESCRIPTION, no money column."""
+    number_names = {"jobno", "jobnumber", "itemno", "itemnumber"}
+    description_names = {"description", "workdescription"}
+
+    def header_rows(sheet, first, count):
+        rows = sheet.iter_rows(min_row=first, max_row=min(first + count - 1, sheet.max_row), values_only=True)
+        return [[re.sub(r"[^a-z]", "", _yard_cell_text(value).lower()) for value in row] for row in rows]
+
+    def has_money(rows):
+        return any(token in value for row in rows for value in row for token in _YARD_SPEC_MONEY_TOKENS)
+
+    # Fail closed: any money-looking header (possibly multi-row) on any sheet means
+    # this is a priced document, never a specification that would insert 0 budgets.
+    if any(has_money(header_rows(sheet, 1, 3)) for sheet in workbook.worksheets):
+        return None
+    preferred = sorted(workbook.worksheets, key=lambda ws: ws.title.strip().lower() != "job list")
+    for sheet in preferred:
+        for row_no, normalized in enumerate(header_rows(sheet, 1, 30), 1):
+            number_col = next((idx for idx, value in enumerate(normalized) if value in number_names), None)
+            description_col = next((idx for idx, value in enumerate(normalized) if value in description_names), None)
+            if number_col is None or description_col is None:
+                continue
+            if has_money([normalized]) or has_money(header_rows(sheet, row_no + 1, 2)):
+                return None
+            return sheet, row_no, number_col, description_col
+    return None
+
+
+def _yard_spec_section(chapter_title, chapter_no, warnings):
+    words = re.findall(r"[A-Z]+", chapter_title.upper())
+    for section in _YARD_SPEC_SECTIONS:
+        if section in words:
+            return section
+    warnings.append("미지정 챕터 %s. %s → ADD로 분류" % (chapter_no, chapter_title))
+    return "ADD"
+
+
+def _parse_yard_spec_sheet(sheet, header_row, number_col, description_col):
+    """Owner Dock Specification JOB LIST -> Shipyard jobs without money.
+
+    The chapter row ("4. DECK") decides the section, never a numbering table, because
+    each specification numbers its chapters differently. Numbered placeholder rows with
+    no description are skipped. Budget is always 0 until the yard quotation arrives.
+    """
+    jobs = []
+    seen = set()
+    warnings = []
+    skipped_blank = 0
+    section = None
+    chapter_no = None
+    for row in sheet.iter_rows(min_row=header_row + 1, values_only=True):
+        raw_number = row[number_col] if number_col < len(row) else None
+        description = _yard_cell_text(row[description_col] if description_col < len(row) else None)
+        if isinstance(raw_number, float) and not raw_number.is_integer():
+            raise ValueError("Job No. %s 가 숫자 형식이라 1.1/1.10 구분이 불가합니다. "
+                             "Job No. 열을 텍스트로 저장해 다시 올려주세요" % _yard_cell_text(raw_number))
+        number = _yard_number(raw_number)
+        if not number:
+            chapter = _YARD_SPEC_CHAPTER.match(description) if not _yard_cell_text(raw_number) else None
+            if chapter:
+                chapter_no = chapter.group(1)
+                section = _yard_spec_section(_text(chapter.group(2)), chapter_no, warnings)
+            continue
+        if not description:
+            skipped_blank += 1
+            continue
+        if number in seen:
+            raise ValueError("중복 Job 번호가 있습니다: %s" % number)
+        seen.add(number)
+        job_section = section
+        if job_section is None:
+            job_section = "ADD"
+            warnings.append("챕터 행 앞의 Job %s → ADD로 분류" % number)
+        elif number.split(".", 1)[0] != chapter_no:
+            warnings.append("Job %s 번호가 챕터 %s 와 다릅니다 (챕터 기준 %s)" % (number, chapter_no, job_section))
+        jobs.append({
+            "number": number,
+            "section": job_section,
+            "category": "Shipyard",
+            "description": description,
+            "budget": 0.0,
+        })
+    if chapter_no is None:
+        raise ValueError("챕터 행(예: 1. GENERAL)이 없어 Dock Specification으로 판정할 수 없습니다")
+    if not jobs:
+        raise ValueError("Dock Specification에서 파싱 가능한 Job이 없습니다")
+    counts = {}
+    for job in jobs:
+        counts[job["section"]] = counts.get(job["section"], 0) + 1
+    return {
+        "mode": "spec",
+        "sheet": sheet.title,
+        "jobs": jobs,
+        "job_count": len(jobs),
+        "priced_count": 0,
+        "section_counts": counts,
+        "skipped_blank": skipped_blank,
+        "gross_total": 0.0,
+        "discount_rate": None,
+        "after_discount": 0.0,
+        "quoted_gross": None,
+        "quoted_net": None,
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
 def _parse_yard_job_workbook(raw_bytes):
     """YiuLian-style quotation workbook -> Dock Manager Job Progress preview.
 
@@ -1030,7 +1142,14 @@ def _parse_yard_job_workbook(raw_bytes):
     except Exception as exc:
         raise ValueError("엑셀 파일을 읽지 못했습니다") from exc
 
-    sheet, header_row, columns = _yard_find_sheet_and_columns(workbook)
+    try:
+        sheet, header_row, columns = _yard_find_sheet_and_columns(workbook)
+    except ValueError:
+        spec = _yard_find_spec_sheet(workbook)
+        if spec is None:
+            raise ValueError("견적서(Item No. / Work Description / Net Total) 또는 "
+                             "Dock Specification(Job No. / DESCRIPTION) 헤더를 찾지 못했습니다")
+        return _parse_yard_spec_sheet(*spec)
     source_rows = list(sheet.iter_rows(min_row=header_row + 1, values_only=True))
     numbered = []
     roots_with_children = set()
@@ -1135,8 +1254,14 @@ def _apply_yard_job_import(db, vessel_id, parsed):
         if number and number not in existing:
             existing[number] = row
     inserted = updated = preserved_manual = unchanged = 0
+    spec_mode = parsed.get("mode") == "spec"
     for job in parsed["jobs"]:
         current = existing.get(job["number"])
+        if spec_mode and current is not None:
+            # A specification carries no money: re-uploading it must never zero a
+            # quoted budget or touch any live field of an existing Job.
+            unchanged += 1
+            continue
         if current is None:
             db.execute(
                 "INSERT INTO jobs(vessel_id,number,section,category,description,vendor,budget,"
@@ -1160,9 +1285,10 @@ def _apply_yard_job_import(db, vessel_id, parsed):
         db.execute("UPDATE jobs SET description=?,budget=?,updated_at=datetime('now') WHERE id=?",
                    (description, job["budget"], current["id"] if isinstance(current, sqlite3.Row) else current[0]))
         updated += 1
-    if parsed.get("discount_rate") is not None:
+    if not spec_mode and parsed.get("discount_rate") is not None:
         db.execute("UPDATE vessels SET dc_rate=? WHERE id=?", (parsed["discount_rate"], vessel_id))
     return {
+        "mode": "spec" if spec_mode else "quote",
         "inserted": inserted,
         "updated": updated,
         "preserved_manual": preserved_manual,
@@ -1240,7 +1366,7 @@ def _install_yard_job_import(dd, dd_app):
         if (request.method == "GET" and request.path == "/" and response.status_code == 200
                 and response.mimetype == "text/html" and not response.headers.get("Content-Encoding")):
             body = response.get_data(as_text=True)
-            asset = '<script src="/static/js/drydock-yard-import.js?v=20260906-1"></script>'
+            asset = '<script src="/static/js/drydock-yard-import.js?v=20260927-1"></script>'
             if asset not in body and "</body>" in body:
                 response.set_data(body.replace("</body>", asset + "</body>"))
                 response.headers["Content-Length"] = len(response.get_data())

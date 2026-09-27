@@ -286,6 +286,116 @@ class DockYardImportTests(unittest.TestCase):
                          (parsed["jobs"][3]["number"], parsed["jobs"][3]["category"], parsed["jobs"][3]["description"]))
         self.assertIn("Job No. 없음", parsed["warnings"][0])
 
+    def test_spec_job_list_uses_chapter_sections_and_skips_blank_numbers(self):
+        parsed = integration._parse_yard_job_workbook(spec_workbook_bytes())
+        self.assertEqual("spec", parsed["mode"])
+        self.assertEqual("JOB LIST", parsed["sheet"])
+        by_number = {job["number"]: job for job in parsed["jobs"]}
+        self.assertEqual(["1.1", "1.10", "4.1", "6.1"], list(by_number))
+        self.assertEqual("GENERAL", by_number["1.10"]["section"])
+        # Kuwait's number table would call 4.x PAINT and 6.x STEEL; the chapter wins.
+        self.assertEqual("DECK", by_number["4.1"]["section"])
+        self.assertEqual("ELECTRIC", by_number["6.1"]["section"])
+        self.assertTrue(all(job["budget"] == 0 and job["category"] == "Shipyard"
+                            for job in parsed["jobs"]))
+        self.assertEqual(2, parsed["skipped_blank"])
+        self.assertEqual({"GENERAL": 2, "DECK": 1, "ELECTRIC": 1}, parsed["section_counts"])
+
+    def test_spec_unknown_chapter_goes_to_add_with_warning(self):
+        parsed = integration._parse_yard_job_workbook(spec_workbook_bytes(
+            extra=[[None, "7. HULL OUTFITTING"], ["7.1", "Bilge keel"]]))
+        job = next(job for job in parsed["jobs"] if job["number"] == "7.1")
+        self.assertEqual("ADD", job["section"])
+        self.assertTrue(any("7. HULL OUTFITTING" in warning for warning in parsed["warnings"]))
+
+    def test_spec_numeric_job_number_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "숫자 형식"):
+            integration._parse_yard_job_workbook(spec_workbook_bytes(extra=[[1.2, "Numeric"]]))
+
+    def test_sheet_with_money_column_is_not_treated_as_spec(self):
+        layouts = [
+            [["Job No.", "DESCRIPTION", "Amount (USD)"]],
+            [["Job No.", "DESCRIPTION", None], [None, None, "Unit Price"]],
+        ]
+        for rows in layouts:
+            wb = Workbook()
+            ws = wb.active
+            for row in rows + [[None, "1. GENERAL", None], ["1.1", "Something", 100]]:
+                ws.append(row)
+            out = io.BytesIO()
+            wb.save(out)
+            with self.assertRaisesRegex(ValueError, "헤더를 찾지 못했습니다"):
+                integration._parse_yard_job_workbook(out.getvalue())
+
+    def test_money_header_on_another_sheet_blocks_spec(self):
+        raw = spec_workbook_bytes(extra_sheet=["NO", "DESCRIPTION", "Sub Total"])
+        with self.assertRaisesRegex(ValueError, "헤더를 찾지 못했습니다"):
+            integration._parse_yard_job_workbook(raw)
+
+    def test_spec_without_chapter_rows_fails_closed(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Job No.", "DESCRIPTION"])
+        ws.append(["1.1", "Something"])
+        out = io.BytesIO()
+        wb.save(out)
+        with self.assertRaisesRegex(ValueError, "챕터 행"):
+            integration._parse_yard_job_workbook(out.getvalue())
+
+    def test_spec_reupload_never_touches_existing_jobs_and_quote_then_fills_budget(self):
+        db = make_db()
+        db.execute("""INSERT INTO jobs(vessel_id,number,section,category,description,vendor,budget,
+            consumption,completion,remarks) VALUES('v_test','1.1','GENERAL','Shipyard','Owner text','',500,20,40,'[]')""")
+        db.execute("UPDATE vessels SET dc_rate=7 WHERE id='v_test'")
+        parsed = integration._parse_yard_job_workbook(spec_workbook_bytes())
+        result = integration._apply_yard_job_import(db, "v_test", parsed)
+        db.commit()
+        self.assertEqual(("spec", 3, 1, 0), (result["mode"], result["inserted"],
+                                            result["unchanged"], result["updated"]))
+        kept = db.execute("SELECT * FROM jobs WHERE number='1.1'").fetchone()
+        self.assertEqual((500.0, 20.0, 40.0, "Owner text"),
+                         (kept["budget"], kept["consumption"], kept["completion"], kept["description"]))
+        self.assertEqual(7.0, db.execute("SELECT dc_rate FROM vessels WHERE id='v_test'").fetchone()[0])
+        new = db.execute("SELECT * FROM jobs WHERE number='4.1'").fetchone()
+        self.assertEqual(("DECK", "Shipyard", 0.0), (new["section"], new["category"], new["budget"]))
+
+        # A later yard quotation on the same numbers fills the spec-created Job budget.
+        quote = {"jobs": [{"number": "4.1", "section": "PAINT", "category": "Shipyard",
+                           "description": "Quote wording", "budget": 1234.5}],
+                 "discount_rate": None}
+        result = integration._apply_yard_job_import(db, "v_test", quote)
+        updated = db.execute("SELECT * FROM jobs WHERE number='4.1'").fetchone()
+        self.assertEqual(1, result["updated"])
+        self.assertEqual((1234.5, "DECK", "Anchors & Anchor chains"),
+                         (updated["budget"], updated["section"], updated["description"]))
+
+
+def spec_workbook_bytes(extra=None, extra_sheet=None):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "JOB LIST"
+    ws.append(["Job No. ", "DESCRIPTION", "Link"])
+    ws.append([None, None, None])
+    ws.append([None, "1. GENERAL", None])
+    ws.append(["1.1", "Fixed fire fighting system isolation", "1.1"])
+    ws.append(["1.10", "Ballasting", "1.10"])
+    ws.append(["1.29", None, None])
+    ws.append([None, "4. DECK", None])
+    ws.append(["4.1", "Anchors & Anchor chains", "4.1"])
+    ws.append([None, "6. ELECTRIC", None])
+    ws.append(["6.1", "General yard tariff for Electric motor overhaul", "6.1"])
+    ws.append(["6.17", "", None])
+    for row in extra or []:
+        ws.append(row)
+    detail = wb.create_sheet("4. DECK")
+    detail.append(["NO", "DESCRIPTION", None, None, None, None, None, None, None, None, None, "REMARK"])
+    detail.append(["4.1", "Anchors & Anchor chains"])
+    if extra_sheet:
+        wb.create_sheet("Priced").append(extra_sheet)
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
 
 if __name__ == "__main__":
     unittest.main()

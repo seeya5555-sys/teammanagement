@@ -29,6 +29,22 @@
         <td>${escapeHtml(job.description)}</td><td style="text-align:right">${money(job.budget)}</td>
       </tr>`).join('');
     const warnings = (data.warnings || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
+    const spec = data.mode === 'spec';
+    const sectionSummary = Object.entries(data.section_counts || {})
+      .map(([section, count]) => `${escapeHtml(section)} ${Number(count)}`).join(' · ');
+    const title = spec ? 'Dock Specification 파싱 미리보기' : '조선소 견적서 파싱 미리보기';
+    const subtitle = spec
+      ? `${escapeHtml(data.sheet)} 시트 · 신규 Job만 예산 0으로 추가, 이미 있는 Job은 변경하지 않음`
+      : `${escapeHtml(data.sheet)} 시트 · 기존 진행률/소비액/비고/수동분류는 보존됨`;
+    const stats = spec ? `
+          <div class="yx-stat">Job 리스트<b>${Number(data.job_count || 0).toLocaleString()}개</b></div>
+          <div class="yx-stat">섹션<b>${Object.keys(data.section_counts || {}).length}개</b></div>
+          <div class="yx-stat">빈 번호 제외<b>${Number(data.skipped_blank || 0).toLocaleString()}개</b></div>
+          <div class="yx-stat">Budget<b>견적 전 (0)</b></div>` : `
+          <div class="yx-stat">Job 리스트<b>${Number(data.job_count || 0).toLocaleString()}개</b></div>
+          <div class="yx-stat">금액 있는 Job<b>${Number(data.priced_count || 0).toLocaleString()}개</b></div>
+          <div class="yx-stat">Gross Budget<b>${money(data.gross_total)}</b></div>
+          <div class="yx-stat">Final D/C ${data.discount_rate == null ? '-' : escapeHtml(data.discount_rate) + '%'}<b>${money(data.after_discount)}</b></div>`;
     const modal = document.createElement('div');
     modal.id = 'yard-xlsx-preview';
     modal.innerHTML = `
@@ -48,14 +64,10 @@
         @media(max-width:680px){#yard-xlsx-preview .yx-stats{grid-template-columns:1fr 1fr}}
       </style>
       <div class="yx-card" role="dialog" aria-modal="true" aria-labelledby="yx-title">
-        <div class="yx-head"><div><h3 id="yx-title">조선소 견적서 파싱 미리보기</h3>
-          <p>${escapeHtml(data.sheet)} 시트 · 기존 진행률/소비액/비고/수동분류는 보존됨</p></div>
+        <div class="yx-head"><div><h3 id="yx-title">${title}</h3>
+          <p>${subtitle}</p>${sectionSummary ? `<p>${sectionSummary}</p>` : ''}</div>
           <button type="button" data-action="close" aria-label="닫기">×</button></div>
-        <div class="yx-stats">
-          <div class="yx-stat">Job 리스트<b>${Number(data.job_count || 0).toLocaleString()}개</b></div>
-          <div class="yx-stat">금액 있는 Job<b>${Number(data.priced_count || 0).toLocaleString()}개</b></div>
-          <div class="yx-stat">Gross Budget<b>${money(data.gross_total)}</b></div>
-          <div class="yx-stat">Final D/C ${data.discount_rate == null ? '-' : escapeHtml(data.discount_rate) + '%'}<b>${money(data.after_discount)}</b></div>
+        <div class="yx-stats">${stats}
         </div>
         ${warnings ? `<ul class="yx-warn">${warnings}</ul>` : ''}
         <table><thead><tr><th>No.</th><th>Section</th><th>Description (앞 12개)</th><th style="text-align:right">Budget</th></tr></thead><tbody>${rows}</tbody></table>
@@ -197,7 +209,9 @@
           FLEET[VID].jobs = newJobs.map(dbJ);
           buildJFilters(); renderJobs(); renderDash();
           closePreview(); setSS('synced');
-          toast(`✓ 견적서 반영: ${applied.inserted}개 추가, ${applied.updated}개 예산 갱신`);
+          toast(applied.mode === 'spec'
+            ? `✓ Specification 반영: ${applied.inserted}개 추가, ${applied.unchanged}개 기존 유지`
+            : `✓ 견적서 반영: ${applied.inserted}개 추가, ${applied.updated}개 예산 갱신`);
         } catch (error) {
           setSS('error'); toast(error.message, true);
           const apply = document.querySelector('#yard-xlsx-preview [data-action="apply"]');
