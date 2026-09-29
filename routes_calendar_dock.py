@@ -6111,6 +6111,36 @@ def api_aor_list():
                     'evidence_gaps': evidence_gaps})
 
 
+_AOR_DRAFT_FIELDS = ('proposed_comment', 'email_subj', 'match_conf', 'outlook_evidence', 'outlook_match_keys')
+
+
+def _aor_keep_existing_draft(cols, did):
+    """초안 생성 실패(공란 Comment) 재적재가 기존 pending 카드의 초안·근거를 공란으로 덮지 않게 한다.
+
+    prep 은 초안 실패여도 결재대기 AOR 카드 자체는 적재한다(누락 방지, 2026-09-29).
+    금액·제목·첨부·raw_row 등 SVMS 사실은 계속 최신으로 갱신한다.
+    기존 초안은 금액(Comment 3줄째)·통화·제목이 그대로일 때만 보존한다 — 사실이 바뀌었는데
+    옛 초안을 남기면 틀린 금액 Comment 가 승인될 수 있으므로 공란으로 떨어뜨려 재작성을 강제한다.
+    """
+    if str(cols.get('proposed_comment') or '').strip():
+        return
+    cur = query("SELECT proposed_comment, amt, cur_cd, subj FROM aor_draft WHERE id=?", (did,), one=True)
+    if not cur or not str(cur['proposed_comment'] or '').strip():
+        return
+
+    def _amt(v):
+        try:
+            return round(float(v), 4)
+        except (TypeError, ValueError):
+            return str(v or '').strip()
+    norm = lambda v: ' '.join(str(v or '').split()).upper()
+    if (_amt(cur['amt']) != _amt(cols.get('amt')) or norm(cur['cur_cd']) != norm(cols.get('cur_cd'))
+            or norm(cur['subj']) != norm(cols.get('subj'))):
+        return
+    for k in _AOR_DRAFT_FIELDS:
+        cols.pop(k, None)
+
+
 @bp.route('/api/ext/aor/drafts', methods=['POST'])
 @api_key_required
 def api_ext_aor_create():
@@ -6150,6 +6180,7 @@ def api_ext_aor_create():
                  if d.get('raw_row') is not None else None),
     )
     if ex and ex['status'] == 'pending':
+        _aor_keep_existing_draft(cols, ex['id'])
         sets = ', '.join(f"{k}=?" for k in cols)
         execute(f"UPDATE aor_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
         _aor_pdf_delete(ex['id'])  # fresh ingest re-uploads current attachment set; stale extras removed
@@ -6181,6 +6212,7 @@ def api_ext_aor_create():
         if not ex:
             raise
         if ex['status'] == 'pending':
+            _aor_keep_existing_draft(cols, ex['id'])
             sets = ', '.join(f"{k}=?" for k in cols)
             execute(f"UPDATE aor_draft SET {sets} WHERE id=?", (*cols.values(), ex['id']))
             return jsonify({'id': ex['id'], 'status': 'pending',
@@ -6222,6 +6254,10 @@ def api_aor_approve(did):
         return jsonify({'error': 'already decided', 'status': row['status']}), 409
     d = request.get_json(silent=True) or {}
     comment = d['proposed_comment'] if 'proposed_comment' in d else row['proposed_comment']
+    if not str(comment or '').strip():
+        # 초안 실패 카드는 Comment 공란으로 적재된다 — 공란 그대로 SVMS 상신되지 않게 막는다.
+        return jsonify({'error': '결재 Comment 가 비어 있음 — 카드에서 Comment 작성 후 승인',
+                        'field': 'proposed_comment'}), 400
     app_no = (d.get('approval_app_no') or row['approval_app_no'] or '').strip()
     if not app_no:
         return jsonify({'error': '결재라인(approval_app_no) 미지정 — 카드에서 결재라인 선택 후 승인',
