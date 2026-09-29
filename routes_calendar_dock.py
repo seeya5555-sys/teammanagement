@@ -6111,7 +6111,8 @@ def api_aor_list():
                     'evidence_gaps': evidence_gaps})
 
 
-_AOR_DRAFT_FIELDS = ('proposed_comment', 'email_subj', 'match_conf', 'outlook_evidence', 'outlook_match_keys')
+_AOR_DRAFT_FIELDS = ('proposed_comment', 'email_subj', 'match_conf', 'outlook_evidence', 'outlook_match_keys',
+                     'reject_suggest', 'reject_draft')
 
 
 def _aor_keep_existing_draft(cols, did):
@@ -6178,6 +6179,8 @@ def api_ext_aor_create():
                       if d.get('attach_files') is not None else None),
         raw_row=(json.dumps(d.get('raw_row'), ensure_ascii=False)
                  if d.get('raw_row') is not None else None),
+        reject_suggest=(str(d.get('reject_suggest') or '').strip()[:500] or None),
+        reject_draft=(str(d.get('reject_draft') or '').strip()[:2000] or None),
     )
     if ex and ex['status'] == 'pending':
         _aor_keep_existing_draft(cols, ex['id'])
@@ -6191,8 +6194,8 @@ def api_ext_aor_create():
         did = execute(
             "INSERT INTO aor_draft (aor_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, req_user_nm, "
             "cost_proposed, cost_match, match_conf, email_subj, outlook_evidence, outlook_match_keys, proposed_comment, "
-            "approval_app_no, approval_line, attach_files, raw_row) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "approval_app_no, approval_line, attach_files, raw_row, reject_suggest, reject_draft) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (aor_cd, *cols.values()))
         return jsonify({'id': did, 'status': 'pending'}), 201
     except sqlite3.IntegrityError as exc:

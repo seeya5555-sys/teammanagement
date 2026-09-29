@@ -395,7 +395,8 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_aor_draft_status ON aor_draft(status)")
         for _col in ("upstream_status", "upstream_reject_remark", "corrective_action", "upstream_rejected_at",
-                     "upstream_checked_at", "outlook_evidence", "outlook_match_keys"):
+                     "upstream_checked_at", "outlook_evidence", "outlook_match_keys",
+                     "reject_suggest", "reject_draft"):   # 리젝 권고(한국어 요약)·영문 리젝 사유 초안 — prep 산출, 실행은 사람
             if _col not in [r[1] for r in conn.execute('PRAGMA table_info(aor_draft)').fetchall()]:
                 conn.execute(f'ALTER TABLE aor_draft ADD COLUMN {_col} TEXT')
         # aor_cd is the SVMS document identity. Older deployments only performed a

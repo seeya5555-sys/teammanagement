@@ -90,6 +90,33 @@ class AORBlankDraftTests(unittest.TestCase):
             self.assertEqual("proposed_comment", r.get_json()["field"])
             self.assertEqual("pending", self._row()["status"])
 
+    def test_reject_advice_stored_and_cleared(self):
+        r = self.client.post("/api/ext/aor/drafts", headers={"X-API-Key": "secret"}, json={
+            "aor_cd": "SAPSCA2609240001", "vsl_nm": "SOUTH AFRICA PROSPERITY", "subj": "SERVICE", "amt": 100,
+            "cur_cd": "USD", "proposed_comment": "", "raw_row": {"AOR_CD": "SAPSCA2609240001"},
+            "reject_suggest": "첨부가 타선박 문서", "reject_draft": "1. Wrong vessel.\n2. Please re-submit."})
+        self.assertEqual(201, r.status_code)
+        self.assertEqual("첨부가 타선박 문서", self._row()["reject_suggest"])
+        self.assertIn("re-submit", self._row()["reject_draft"])
+        self._ingest("1. 새 정상 초안")   # 초안 성공 재적재 → 권고 해제
+        self.assertIsNone(self._row()["reject_suggest"])
+        self.assertIsNone(self._row()["reject_draft"])
+
+    def test_blank_reingest_does_not_attach_advice_over_preserved_comment(self):
+        self._ingest("1. 기존 정상 초안", conf=95)
+        self.client.post("/api/ext/aor/drafts", headers={"X-API-Key": "secret"}, json={
+            "aor_cd": "SAPSCA2609240001", "vsl_nm": "SOUTH AFRICA PROSPERITY", "subj": "SERVICE", "amt": 100,
+            "cur_cd": "USD", "proposed_comment": "", "raw_row": {"AOR_CD": "SAPSCA2609240001"},
+            "reject_suggest": "첨부 없음", "reject_draft": "1. x\n2. y"})
+        self.assertEqual("1. 기존 정상 초안", self._row()["proposed_comment"])
+        self.assertIsNone(self._row()["reject_suggest"])
+
+    def test_web_card_prefills_reject_prompt(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1] / "templates" / "aor.html").read_text(encoding="utf-8")
+        self.assertIn("d.reject_draft || ''", src)
+        self.assertIn("리젝 권고", src)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -261,6 +261,7 @@
         ${d.upstream_reject_remark ? `<div class="aor-rmk" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>↩ 상위결재 반려 이력</b><br>${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>` : ''}
         ${d.reconcile_alert ? `<div class="aor-rmk" style="border-left:4px solid var(--amber-dot);background:var(--amber-bg)"><b>⚠ SVMS–TRMT 상태 불일치</b><br>${esc(d.reconcile_alert)}<br><small>SVMS 확인 ${esc(d.upstream_checked_at || '')} · 자동 변경 없음</small></div>` : ''}
         ${outlookBox}
+        ${d.reject_suggest && d.status === 'pending' ? `<div class="aor-rmk" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>🚩 리젝 권고</b> — ${esc(d.reject_suggest)}${d.reject_draft ? `<br><small>리젝 사유 초안(리젝 버튼에 미리 채워짐, 수정 가능):</small><div style="white-space:pre-wrap">${esc(d.reject_draft)}</div>` : ''}</div>` : ''}
         <div class="aor-field">
           <label>Comment (RMK_APP — 결재 상신 코멘트, 비우면 공란)</label>
           <textarea class="f-cmt"${editable ? '' : ' readonly'}>${esc(d.proposed_comment || '')}</textarea>
@@ -437,7 +438,7 @@
   }
 
   async function reject(el, d) {
-    const reason = prompt(`[${d.vsl_nm || d.aor_cd}] 리젝하면 SVMS STATUS=R + 관리사 통보메일이 발송됩니다 (메일은 SVMS 템플릿).\n리젝 사유 (SVMS Owner Remark에 기록됨):`, '');
+    const reason = prompt(`[${d.vsl_nm || d.aor_cd}] 리젝하면 SVMS STATUS=R + 관리사 통보메일이 발송됩니다 (메일은 SVMS 템플릿).\n리젝 사유 (SVMS Owner Remark에 기록됨):`, d.reject_draft || '');
     if (reason === null) return;
     if (!reason.trim() && !confirm('리젝 사유가 비어있습니다.\nOwner Remark 공란으로 리젝할까요?')) return;
     await actOn(el, d, '/api/aor/drafts/' + d.id + '/reject', {
