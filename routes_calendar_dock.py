@@ -7452,6 +7452,80 @@ def _invoice_manual_inv_dt_override(raw_card):
     }
 
 
+_INVOICE_INV_NO_MAX = 50
+
+
+def _invoice_normalize_inv_no(value):
+    """사람이 입력한 INV_NO 정규화·검증 → (값, 오류). 앞뒤 공백 제거, 1~50자, 제어문자 금지."""
+    v = str(value if value is not None else '').strip()
+    if not v:
+        return None, 'INV_NO 는 비워 둘 수 없습니다'
+    if len(v) > _INVOICE_INV_NO_MAX:
+        return None, 'INV_NO 는 %d자 이하여야 합니다' % _INVOICE_INV_NO_MAX
+    if not v.isprintable():
+        return None, 'INV_NO 에 줄바꿈·탭 같은 제어문자는 쓸 수 없습니다'
+    return v, None
+
+
+def _invoice_manual_inv_no_override(raw_card):
+    """raw_card 안 수동 INV_NO override audit 추출. 유효한 override(원본≠override)만 반환."""
+    rc = _invoice_raw_card_obj(raw_card)
+    original = str(rc.get('original_inv_no') or '').strip()
+    override = str(rc.get('inv_no_override') or '').strip()
+    if not (original and override) or original == override:
+        return None
+    return {
+        'original_inv_no': original,
+        'inv_no_override': override,
+        'inv_no_override_by': rc.get('inv_no_override_by'),
+        'inv_no_override_at': rc.get('inv_no_override_at'),
+        'original_inv_no_match': rc.get('original_inv_no_match'),
+    }
+
+
+_INVOICE_INV_NO_AUDIT_KEYS = ('original_inv_no', 'inv_no_override', 'inv_no_override_by',
+                              'inv_no_override_at', 'original_inv_no_match')
+
+
+def _invoice_strip_inv_no_audit(cols):
+    """ingest payload 의 raw_card 에서 INV_NO 교정 audit 키 제거. 러너는 raw_card 만 보고 교정을 적용하므로
+    이 키는 사람이 /edit 로 만든 것만 존재해야 한다(재적재 보존은 _invoice_merge_pending_manual_inv_no 가 기존 행에서 복원)."""
+    if not cols.get('raw_card'):
+        return cols
+    rc = _invoice_raw_card_obj(cols['raw_card'])
+    if any(k in rc for k in _INVOICE_INV_NO_AUDIT_KEYS):
+        for k in _INVOICE_INV_NO_AUDIT_KEYS:
+            rc.pop(k, None)
+        cols['raw_card'] = json.dumps(rc, ensure_ascii=False)
+    return cols
+
+
+def _invoice_merge_pending_manual_inv_no(existing_row, cols):
+    """pending 재적재 시 사람이 준 INV_NO override 보존.
+
+    🔴 새 prep 의 SVMS INV_NO(=cols['inv_no'])가 override 기준 원본과 다르면 SVMS 쪽에서 번호가 바뀐 것이다 →
+    override 를 버리고 새 값으로 다시 검토하게 한다(옛 교정값이 새 번호를 덮어쓰지 않게). gate 는 자동 승격하지 않는다.
+    """
+    audit = _invoice_manual_inv_no_override(existing_row['raw_card'])
+    if not audit:
+        return cols
+    if str(cols.get('inv_no') or '').strip() != audit['original_inv_no']:
+        return cols
+    rc = _invoice_raw_card_obj(cols.get('raw_card'))
+    rc['original_inv_no'] = audit['original_inv_no']
+    rc['inv_no_override'] = audit['inv_no_override']
+    rc['inv_no_override_by'] = audit.get('inv_no_override_by')
+    rc['inv_no_override_at'] = audit.get('inv_no_override_at')
+    rc['original_inv_no_match'] = cols.get('inv_no_match')
+    rc['inv_no'] = audit['inv_no_override']
+    rc['inv_no_match'] = True
+    cols['inv_no'] = audit['inv_no_override']
+    cols['inv_no_match'] = 1
+    cols['gate'] = 'HOLD' if cols.get('gate') == 'HOLD' else (existing_row['gate'] or cols.get('gate'))
+    cols['raw_card'] = json.dumps(rc, ensure_ascii=False)
+    return cols
+
+
 def _invoice_merge_pending_manual_inv_dt(existing_row, cols):
     """pending 재적재 시 사람이 준 INV_DT override audit 보존.
 
@@ -7565,8 +7639,10 @@ def api_ext_invoice_create():
         gate=d.get('gate'),
         raw_card=(json.dumps(d.get('raw_card'), ensure_ascii=False) if d.get('raw_card') is not None else None),
     )
+    cols = _invoice_strip_inv_no_audit(cols)       # INV_NO 교정 audit 은 서버(사람 편집) 전용 — 외부 주입 차단
     if ex and ex['status'] == 'pending':
         cols = _invoice_merge_pending_manual_inv_dt(ex, cols)
+        cols = _invoice_merge_pending_manual_inv_no(ex, cols)
         if (ex['attachments'] or 'null') != (cols.get('attachments') or 'null'):
             _invoice_attachment_delete_all(ex['id'])
         sets = ', '.join(f"{k}=?" for k in cols)
@@ -7758,10 +7834,11 @@ def api_ext_invoice_expense_codes():
 @bp.route('/api/invoice/drafts/<int:did>/edit', methods=['POST'])
 @admin_required
 def api_invoice_edit(did):
-    """적요(subject)·expense(exp_cd/exp_nm)·INV_DT 사람 교정 — prep 오선택/날짜오입력 방지.
+    """적요(subject)·expense(exp_cd/exp_nm)·INV_DT·INV_NO 사람 교정 — prep 오선택/날짜·번호 오입력 방지.
     payload 에 있는 필드만 갱신(없는 필드 NULL 덮어쓰기 방지) + pending 조건부 갱신(TOCTOU 가드)."""
     d = request.get_json(silent=True) or {}
-    row = query('SELECT raw_card, status, inv_dt, gate FROM invoice_draft WHERE id=?', (did,), one=True)
+    row = query('SELECT raw_card, status, inv_dt, inv_no, inv_no_match, gate FROM invoice_draft WHERE id=?',
+                (did,), one=True)
     if not row:
         return jsonify({'error': 'not found'}), 404
     if row['status'] != 'pending':
@@ -7806,19 +7883,54 @@ def api_invoice_edit(did):
             rc['inv_dt_override'] = inv_dt
             rc['inv_dt_override_by'] = override_by
             rc['inv_dt_override_at'] = override_at
+    if 'inv_no' in d:
+        # INV_NO 교정 — 벤더/RPA 가 SVMS 에 번호를 잘못 넣은 경우(예: 접두어 오타). 컨펌 때 러너가 SVMS 헤더에 반영하고
+        # read-back 으로 확인한다. 원본 SVMS 값은 original_inv_no 로 남겨 stale 판정 기준으로 쓴다.
+        inv_no, err = _invoice_normalize_inv_no(d.get('inv_no'))
+        if err:
+            return jsonify({'error': err, 'field': 'inv_no'}), 400
+        current_inv_no = str(rc.get('inv_no') or row['inv_no'] or '').strip()
+        if inv_no != current_inv_no:
+            original_inv_no = str(rc.get('original_inv_no') or row['inv_no'] or rc.get('inv_no') or '').strip()
+            if not original_inv_no:
+                return jsonify({'error': '원본 INV_NO 가 없어 교정 기준을 잡을 수 없습니다 — 재적재 후 다시 시도',
+                                'field': 'inv_no'}), 409
+            if 'original_inv_no' not in rc:
+                rc['original_inv_no_match'] = row['inv_no_match']
+            if inv_no == original_inv_no:       # 원래 값으로 되돌림 = override 해제
+                restored = rc.get('original_inv_no_match')
+                sets += ['inv_no=?', 'inv_no_match=?']; vals += [inv_no, restored]
+                rc['inv_no'] = inv_no
+                rc['inv_no_match'] = None if restored is None else bool(restored)
+                for k in ('original_inv_no', 'inv_no_override', 'inv_no_override_by',
+                          'inv_no_override_at', 'original_inv_no_match'):
+                    rc.pop(k, None)
+            else:
+                sets += ['inv_no=?', 'inv_no_match=?']; vals += [inv_no, 1]
+                rc['inv_no'] = inv_no
+                rc['inv_no_match'] = True
+                rc['original_inv_no'] = original_inv_no
+                rc['inv_no_override'] = inv_no
+                rc['inv_no_override_by'] = session.get('username') or 'web'
+                rc['inv_no_override_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     if not sets:
         return jsonify({'id': did, 'subject': rc.get('subject'), 'inv_dt': rc.get('inv_dt') or row['inv_dt'],
+                        'inv_no': rc.get('inv_no') or row['inv_no'],
                         'date_match': rc.get('date_match'), 'gate': row['gate'],
                         'exp_cd': rc.get('exp_cd'), 'exp_nm': rc.get('exp_nm'), 'noop': True})
     sets.append('raw_card=?'); vals.append(json.dumps(rc, ensure_ascii=False))
-    # 조건부 claim — 위 SELECT 후 승인/리젝으로 상태가 바뀌었으면(race) 덮어쓰지 않음
-    n = execute_rc(f"UPDATE invoice_draft SET {', '.join(sets)} WHERE id=? AND status='pending'",
-                   (*vals, did))
+    # 조건부 claim — 위 SELECT 후 승인/리젝으로 상태가 바뀌었거나(race) 다른 수정/재적재가 raw_card 를
+    # 먼저 바꿨으면(동시 편집 lost update → INV_NO 컬럼과 audit 불일치) 덮어쓰지 않음.
+    n = execute_rc(f"UPDATE invoice_draft SET {', '.join(sets)} WHERE id=? AND status='pending' AND raw_card IS ?",
+                   (*vals, did, row['raw_card']))
     if not n:
         cur = query('SELECT status FROM invoice_draft WHERE id=?', (did,), one=True)
+        if cur and cur['status'] == 'pending':
+            return jsonify({'error': '다른 수정/재적재와 겹쳤습니다 — 새로고침 후 다시 저장하세요'}), 409
         return jsonify({'error': '대기(pending) 카드만 편집 가능 — 현재 %s'
                         % (cur['status'] if cur else '?')}), 409
     return jsonify({'id': did, 'subject': rc.get('subject'), 'inv_dt': rc.get('inv_dt'),
+                    'inv_no': rc.get('inv_no') or row['inv_no'],
                     'date_match': rc.get('date_match'), 'gate': row['gate'],
                     'exp_cd': rc.get('exp_cd'), 'exp_nm': rc.get('exp_nm')})
 

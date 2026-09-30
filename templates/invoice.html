@@ -142,11 +142,15 @@
     const _fl=jparse(d.flags)||[];
     const e15=Array.isArray(_fl)&&_fl.some(f=>/E15|라인합/.test(String(f)));
     const e15Badge=e15?`<span class="fr-badge b-flag">라인합≠총액</span>`:'';
+    // INV_NO 수동교정 흔적(원본≠교정일 때만) — 컨펌 시 러너가 SVMS 헤더에 반영
+    const _rcNo=jparse(d.raw_card)||{};
+    const invNoOv=(_rcNo.inv_no_override&&_rcNo.original_inv_no&&_rcNo.inv_no_override!==_rcNo.original_inv_no)
+      ?{orig:_rcNo.original_inv_no,by:_rcNo.inv_no_override_by,at:_rcNo.inv_no_override_at}:null;
     // 헤더 메타
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b> ${vesselChip(d)}</span>`
           +`<span>벤더 <b>${esc(d.vndr_nm||d.vndr_cd||'-')}</b></span>`
           +`<span>금액 <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b>${d.vat!=null?` (VAT ${esc(d.vat)})`:''}</span>`
-          +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b></span>`
+          +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b>${invNoOv?` <span class="mun" title="수동교정 ${esc(invNoOv.by||'')} ${esc(invNoOv.at||'')}">(수동교정 · SVMS 원본 ${esc(invNoOv.orig)})</span>`:''}</span>`
           +`<span>INV_DT <b>${esc(d.inv_dt||'-')}</b></span>`;
     // 대조결과
     // 원본 PDF 링크는 has_pdf(서버에 실제 파일 있음) 기준 — match_src 기준이면 대조 실패건에서
@@ -180,6 +184,7 @@
     if(d.status==='pending'){
       line=`<div class="fr-sect"><div class="fr-sect-t">라인(Expense) · 수정가능</div>`
         +`<div class="fr-edit">`
+        +`<label>INV_NO <input class="fr-invno-in" maxlength="50" value="${esc(d.inv_no||'')}" placeholder="인보이스 번호" title="SVMS 에 잘못 들어간 인보이스 번호를 PDF 기준으로 고칠 때만 수정(컨펌 시 SVMS 에 반영)"></label>`
         +`<label>적요 <input class="fr-subj-in" value="${esc(d.subject||'')}" placeholder="적요(라인 내용)"></label>`
         +`<label>EXP <input class="fr-exp-in" list="expcodes" value="${esc(d.exp_cd||'')}" placeholder="코드/명칭 검색"></label>`
         +`<label>INV_DT <input type="date" class="fr-date-in" value="${esc(dtIso(d.inv_dt))}" title="인보이스 일자(캘린더에서 선택)"></label>`
@@ -296,6 +301,15 @@
       }
       const curInvDt=(el.dataset.invDt||'').trim();
       if(invDt && invDt!==curInvDt) body.inv_dt=invDt;
+      const invNoIn=el.querySelector('.fr-invno-in');
+      if(invNoIn){
+        const invNo=invNoIn.value.trim();
+        if(invNo!==invNoIn.defaultValue.trim()){
+          if(!invNo){alert('INV_NO 는 비워 둘 수 없습니다.');return;}
+          if(!confirm(`INV_NO 를 바꿀까요?\n· ${invNoIn.defaultValue.trim()||'-'} → ${invNo}\n· 컨펌(승인) 때 SVMS 인보이스 번호도 이 값으로 바뀝니다`))return;
+          body.inv_no=invNo;
+        }
+      }
       if(!Object.keys(body).length){ if(window.InlineEdit) InlineEdit.toast('바뀐 내용이 없습니다'); return; }
       el.classList.add('is-busy');
       const {ok,j}=await api('POST',`/api/invoice/drafts/${id}/edit`,body);

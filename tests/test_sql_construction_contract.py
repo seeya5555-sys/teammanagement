@@ -135,7 +135,7 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # 보간값이 리터럴 튜플/모듈 dict/allowlist(KINDS)/`?` 자리표시자 반복/정적 SQL dict 조회뿐이고
 # 요청값이 SQL 문법에 닿는 경로 없음(요청값은 전부 bound parameter). 새 사이트는 다시 검토 후에만 갱신.
 EXPECTED_COUNT = 187
-EXPECTED_SHA256 = "39700195ef576c0ca435430bb920acbba6aff9439dc662f1115bd63eaf900d00"
+EXPECTED_SHA256 = "7a3dd940fecf4f125b284c6b1ff013f4c67e76012665c718ee1f608c8d6b0d49"  # 2026-09-30 invoice edit: +AND raw_card IS ? (CAS, 컬럼목록 리터럴 불변)
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }
