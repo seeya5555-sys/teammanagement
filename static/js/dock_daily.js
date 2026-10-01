@@ -126,7 +126,7 @@
     if (!confirm(`${r.report_date} 보고서를 삭제할까요?${final?'\n\n확정된 보고서입니다. 지우면 되돌릴 수 없습니다.':''}`)) return;
     await api(`/api/dock-daily/reports/${id}`, {...json(final?{confirm:'delete-final'}:{}), method:'DELETE'});
     const openWasDeleted = state.report?.id === id;
-    if (openWasDeleted) { state.report = null; state.dirty = false; $('#dd-report').classList.remove('show'); $('#dd-empty').style.display = 'block'; }
+    if (openWasDeleted) { state.report = null; state.dirty = false; $('#dd-report').classList.remove('show'); $('#dd-empty').style.display = 'block'; renderSpecialTools(); }
     state.reports = await api(`/api/dock-daily/projects/${state.project.id}/reports`);
     await loadProjects();                       // the day count on the row changed
     renderReportDates();
@@ -164,6 +164,8 @@
   // 안 하는 것처럼 보인다. 일자가 없을 때만 프로젝트 목록으로 떨어진다(읽기 전용).
   function renderSpecialTools() {
     const onReport = !!state.report;
+    // 확정본엔 섹션을 못 만든다(서버·addSection 도 막는다) — 버튼을 살려두면 눌러야 거절을 안다.
+    const canAdd = onReport && state.report.status !== 'final';
     const specials = ((onReport ? state.report.sections : state.project?.sections)||[])
       .filter(s => s.kind === 'special');
     const rows = specials.length
@@ -172,9 +174,11 @@
           + `<button class="dd-list-del" type="button" data-del-section="${esc(s.section_key)}" title="이 일자에서 빼기" aria-label="${esc(s.label||s.section_key)} 섹션을 이 일자에서 빼기">${onReport?'빼기':'삭제'}</button></div>`).join('')
       : '<span class="dd-muted">Special 항목 없음</span>';
     $('#dd-special-tools').innerHTML = rows
-      + `<input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:9px 0 7px"${onReport?'':' disabled'}>`
-      + `<div class="dd-row"><button class="dd-btn alt" id="dd-section-add" type="button"${onReport?'':' disabled'}>＋ 섹션</button><button class="dd-btn alt" id="dd-section-add-table" type="button"${onReport?'':' disabled'}>＋ 표 섹션</button></div>`
-      + (onReport
+      + `<input class="dd-input" id="dd-section-label" placeholder="새 섹션 제목 (예: 비용 정산표)" maxlength="60" style="margin:9px 0 7px"${canAdd?'':' disabled'}>`
+      + `<div class="dd-row"><button class="dd-btn alt" id="dd-section-add" type="button"${canAdd?'':' disabled'}>＋ 섹션</button><button class="dd-btn alt" id="dd-section-add-table" type="button"${canAdd?'':' disabled'}>＋ 표 섹션</button></div>`
+      + (onReport && !canAdd
+        ? '<p class="dd-muted dd-block-note">확정된 일자에는 섹션을 추가할 수 없습니다. <b>확정취소</b> 후 추가하세요.</p>'
+        : onReport
         ? '<p class="dd-muted dd-block-note">섹션은 <b>열려 있는 일자에만</b> 생깁니다. 다른 일자로 옮기려면 그 일자에서 <b>이전 일자 가져오기</b>로 당겨오고, 필요 없는 일자에서는 <b>빼기</b>로 그 일자에서만 지우세요(다른 일자는 그대로). 잠시 감추려면 체크를 해제하세요 — 감추기는 프로젝트 전체에 적용됩니다. <b>＋ 표 섹션</b>은 제목을 가진 빈 표 카드를 이 일자에 만듭니다(앱과 같은 기능).</p>'
         : '<p class="dd-muted dd-block-note">섹션을 추가·제거하려면 먼저 일자를 여세요. 섹션은 열려 있는 일자에만 생깁니다.</p>');
     // 🔴 실패를 삼키지 않는다. 전엔 `.catch` 가 없어서 PATCH 가 500 이 나면 unhandled
@@ -190,6 +194,8 @@
     // 이 일자의 카드와 메일에 두 번 나간다.
     $('#dd-section-add').onclick = () => once($('#dd-section-add'), () => addSection($('#dd-section-label').value));
     $('#dd-section-add-table').onclick = () => once($('#dd-section-add-table'), () => addSection($('#dd-section-label').value, true));
+    // 제목 입력 후 Enter = ＋ 섹션(한글 조합 중 Enter 는 무시).
+    $('#dd-section-label').onkeydown = e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); $('#dd-section-add').click(); } };
   }
   function ensureSectionEditors() {
     // 🔴 확정본에는 초안 칸을 깔지 않는다(앱 `needsTextDraft` 는 `guard !readOnly`).
@@ -227,6 +233,10 @@
     $('#dd-report-title').textContent=`${state.report.vessel_name} · 입거 Daily Report`;
     $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`;
     renderSvmsState(); renderReportDates(); renderItinerary(); renderSections(); renderAttachments();
+    // 🔴 Special 도구도 **열린 일자 기준으로 다시** 그린다(형 지적 2026-10-01). 전엔 프로젝트
+    // 선택 때 "일자 없음" 상태로 한 번만 그려서, 보고서를 연 뒤에도 ＋ 섹션이 비활성이고
+    // "먼저 일자를 여세요" 가 남아 작성 중인 보고서에 섹션을 못 넣었다.
+    renderSpecialTools();
     const locked = state.report.status === 'final'; ['#dd-save','#dd-attach'].forEach(s => $(s).disabled=locked);
     // 확정 버튼만은 잠긴 상태에서도 살아있어야 한다 — 잠금을 여는 유일한 통로다.
     // 여기서 disabled 를 걸면 확정된 보고서는 영구히 잠긴다.
