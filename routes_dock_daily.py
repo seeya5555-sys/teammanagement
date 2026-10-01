@@ -1046,6 +1046,30 @@ def _delete_cascade(target, row_id, guard=None, also=None):
             'attachments_removed': removed}, None
 
 
+@bp.route('/api/dock-daily/projects/<int:pid>/completion', methods=['POST'])
+@login_required
+def project_completion(pid):
+    """입거가 끝난 프로젝트를 <완료> 탭으로 옮기거나 진행중으로 되돌린다(형 지시 2026-10-01).
+
+    목록 분류 표시일 뿐이다 -- 보고서·확정본·SVMS 상태·자동생성 설정은 건드리지 않는다.
+    PATCH 에 섞지 않은 이유: 그 라우트는 일정·Dock 연결·섹션 검증을 함께 도는데, 탭 이동
+    한 번에 그 검증이 다른 이유로 막히면 형에게는 "완료가 안 된다" 로만 보인다.
+    """
+    if not _project(pid):
+        return _error('project not found', 404)
+    flag = _body().get('completed')
+    if not isinstance(flag, bool):
+        return _error('completed must be true or false')
+    if flag:
+        # 이미 완료면 최초 완료 시각을 유지한다(재요청이 시각을 밀지 않게).
+        execute("UPDATE dock_daily_project SET completed_at=COALESCE(completed_at, datetime('now','localtime')),"
+                " updated_at=datetime('now','localtime') WHERE id=?", (pid,))
+    else:
+        execute("UPDATE dock_daily_project SET completed_at=NULL,"
+                " updated_at=datetime('now','localtime') WHERE id=?", (pid,))
+    return jsonify(_project_response(_project(pid)))
+
+
 @bp.route('/api/dock-daily/projects/<int:pid>', methods=['DELETE'])
 @login_required
 def project_delete(pid):

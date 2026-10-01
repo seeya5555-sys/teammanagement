@@ -330,6 +330,30 @@ class DockDailyTests(unittest.TestCase):
         self.assertEqual(404, self.client.delete(
             f'/api/dock-daily/projects/{pid}', json={'confirm': 'delete-project'}).status_code)
 
+    def test_project_completion_moves_between_tabs_without_touching_reports(self):
+        """<완료> 탭(형 지시 2026-10-01): completed_at 만 바뀌고 보고서는 그대로다."""
+        project, report, _ = self._project_with_attachment('Completion DD')
+        pid = project['id']
+        self.assertIsNone(self.client.get('/api/dock-daily/projects').get_json()[0].get('completed_at'))
+        self.assertEqual(400, self.client.post(f'/api/dock-daily/projects/{pid}/completion',
+                                               json={'completed': 'yes'}).status_code)
+        self.assertEqual(404, self.client.post('/api/dock-daily/projects/999999/completion',
+                                               json={'completed': True}).status_code)
+        done = self.client.post(f'/api/dock-daily/projects/{pid}/completion', json={'completed': True})
+        self.assertEqual(200, done.status_code, done.get_data(as_text=True))
+        self.assertTrue(done.get_json()['completed_at'])
+        # 같은 초 재요청은 덮어써도 통과하므로 과거 시각으로 고정한 뒤 재요청한다.
+        first = '2026-01-02 03:04:05'
+        with appmod.app.app_context():
+            appmod.execute('UPDATE dock_daily_project SET completed_at=? WHERE id=?', (first, pid))
+        again = self.client.post(f'/api/dock-daily/projects/{pid}/completion', json={'completed': True})
+        self.assertEqual(first, again.get_json()['completed_at'])   # 재요청이 시각을 밀지 않음
+        listed = self.client.get('/api/dock-daily/projects').get_json()[0]
+        self.assertEqual(first, listed['completed_at'])
+        self.assertEqual(200, self.client.get(f"/api/dock-daily/reports/{report['id']}").status_code)
+        back = self.client.post(f'/api/dock-daily/projects/{pid}/completion', json={'completed': False})
+        self.assertIsNone(back.get_json()['completed_at'])
+
     def test_soft_deleted_attachment_blob_is_purged_with_its_report(self):
         """`deleted_at` only hides the row; the file stays on disk.  A report
         delete that skipped hidden rows would leak those blobs forever."""

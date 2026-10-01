@@ -347,6 +347,8 @@ CREATE TABLE IF NOT EXISTS dock_daily_project (
     -- `SP_GET_DOCK` 결과를 여기에 넣어 주고, 사람은 그 목록에서 `svms_dk_cd` 를 고른다.
     svms_dock_candidates_json TEXT,
     svms_dock_synced_at TEXT,
+    -- 입거 종료 표시(형 지시 2026-10-01). NULL=진행중, 값=완료 처리 시각. 목록 탭 분류에만 쓴다.
+    completed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (vessel_id) REFERENCES vessels(id) ON DELETE RESTRICT

@@ -2103,6 +2103,9 @@ def _auto_migrate():
                  'ALTER TABLE dock_daily_project ADD COLUMN svms_dock_candidates_json TEXT'),
                 ('svms_dock_synced_at',
                  'ALTER TABLE dock_daily_project ADD COLUMN svms_dock_synced_at TEXT'),
+                # 입거 종료 → <완료> 탭 분류(형 지시 2026-10-01). NULL=진행중.
+                ('completed_at',
+                 'ALTER TABLE dock_daily_project ADD COLUMN completed_at TEXT'),
             ):
                 if name not in cols:
                     conn.execute(ddl)

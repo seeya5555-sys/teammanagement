@@ -37,12 +37,39 @@
   }
   const today = () => new Date().toLocaleDateString('en-CA');
 
+  // 진행중/완료 탭(형 지시 2026-10-01). 입거가 끝난 배는 <완료> 로 옮겨 진행중 목록에서 뺀다.
+  // 분류는 서버 `completed_at` 하나뿐이다 — 보고서·확정본·SVMS 상태는 그대로다.
+  state.projectTab = state.projectTab || 'active';
+  const isDone = p => !!p.completed_at;
+  function renderProjects() {
+    const all = state.projects, done = all.filter(isDone), active = all.filter(p => !isDone(p));
+    const rows = state.projectTab === 'done' ? done : active;
+    const tab = (key, label, n) => `<button type="button" role="tab" data-project-tab="${key}" aria-selected="${state.projectTab===key}" class="${state.projectTab===key?'active':''}">${label} <span>${n}</span></button>`;
+    $('#dd-project-tabs').innerHTML = tab('active', '진행중', active.length) + tab('done', '완료', done.length);
+    const move = p => isDone(p)
+      ? `<button class="dd-list-move" type="button" data-complete-project="${p.id}" data-completed="0" title="진행중 탭으로 되돌리기" aria-label="${esc(p.vessel_name)} 진행중으로 되돌리기">되돌리기</button>`
+      : `<button class="dd-list-move" type="button" data-complete-project="${p.id}" data-completed="1" title="입거 종료 — 완료 탭으로 이동" aria-label="${esc(p.vessel_name)} 완료로 이동">완료</button>`;
+    $('#dd-project-list').innerHTML = rows.length ? rows.map(p =>
+      `<div class="dd-list-row"><button data-project="${p.id}" class="${state.project?.id===p.id?'active':''}"><b>${esc(p.vessel_name)}</b><br><span class="dd-muted">${esc(p.title)} · ${p.report_count||0}일</span></button>${move(p)}<button class="dd-list-del" type="button" data-del-project="${p.id}" title="프로젝트 삭제" aria-label="${esc(p.vessel_name)} 프로젝트 삭제">삭제</button></div>`).join('')
+      : `<p class="dd-muted">${!all.length ? '등록된 프로젝트가 없습니다.' : state.projectTab === 'done' ? '완료된 프로젝트가 없습니다.' : '진행중인 프로젝트가 없습니다.'}</p>`;
+    document.querySelectorAll('[data-project-tab]').forEach(b => b.onclick = () => { state.projectTab = b.dataset.projectTab; renderProjects(); });
+    document.querySelectorAll('[data-project]').forEach(b => b.onclick = () => {if(canLeaveDraft())selectProject(+b.dataset.project);});
+    document.querySelectorAll('[data-complete-project]').forEach(b => b.onclick = () => once(b, () => setProjectCompleted(+b.dataset.completeProject, b.dataset.completed === '1')));
+    document.querySelectorAll('[data-del-project]').forEach(b => b.onclick = () => once(b, () => deleteProject(+b.dataset.delProject)));
+  }
   async function loadProjects() {
     state.projects = await api('/api/dock-daily/projects');
-    $('#dd-project-list').innerHTML = state.projects.length ? state.projects.map(p =>
-      `<div class="dd-list-row"><button data-project="${p.id}" class="${state.project?.id===p.id?'active':''}"><b>${esc(p.vessel_name)}</b><br><span class="dd-muted">${esc(p.title)} · ${p.report_count||0}일</span></button><button class="dd-list-del" type="button" data-del-project="${p.id}" title="프로젝트 삭제" aria-label="${esc(p.vessel_name)} 프로젝트 삭제">삭제</button></div>`).join('') : '<p class="dd-muted">등록된 프로젝트가 없습니다.</p>';
-    document.querySelectorAll('[data-project]').forEach(b => b.onclick = () => {if(canLeaveDraft())selectProject(+b.dataset.project);});
-    document.querySelectorAll('[data-del-project]').forEach(b => b.onclick = () => once(b, () => deleteProject(+b.dataset.delProject)));
+    renderProjects();
+  }
+  async function setProjectCompleted(id, completed) {
+    const p = state.projects.find(x => x.id === id); if (!p) return; clearErr();
+    const updated = await api(`/api/dock-daily/projects/${id}/completion`, {...json({completed}), method:'POST'});
+    // 열려 있는 편집 화면(state.project·초안)은 건드리지 않는다 — 목록 분류만 바뀐다.
+    // 열린 프로젝트를 옮겼으면 그 행이 보이도록 탭도 따라간다(안 그러면 선택 행이 사라져 보인다).
+    if (state.project?.id === id) { state.project.completed_at = updated.completed_at; state.projectTab = completed ? 'done' : 'active'; }
+    await loadProjects();
+    notice(completed ? `[${p.vessel_name}] ${p.title} 을(를) 완료 탭으로 옮겼습니다. 보고서는 그대로 남아 있습니다.`
+                     : `[${p.vessel_name}] ${p.title} 을(를) 진행중 탭으로 되돌렸습니다.`);
   }
   // 필터 규칙 정본은 static/js/dock_daily_filter.js 다(실행형 테스트로 잠긴다).
   const FILTER = window.DockDailyReportFilter;

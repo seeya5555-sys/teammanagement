@@ -68,6 +68,7 @@ class AutoMigrateDockDailyTests(unittest.TestCase):
         project = self._columns('dock_daily_project')
         self.assertIn('svms_dock_candidates_json', project)
         self.assertIn('svms_dock_synced_at', project)
+        self.assertIn('completed_at', project)
         report = self._columns('dock_daily_report')
         for col in ('svms_claim_token', 'svms_claimed_at', 'svms_approved_by',
                     'svms_approved_revision', 'svms_approved_hash', 'svms_result_json'):
