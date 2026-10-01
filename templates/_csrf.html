@@ -10,6 +10,8 @@
    헤더를 손으로 붙이면 새로 추가되는 호출이 조용히 빠진다.
    ═══════════════════════════════════════════════════════════════════ #}
 <meta name="csrf-token" content="{{ csrf_token() }}">
+{# 업로드 가속(사진 축소+진행률). CSRF 래퍼가 이것을 native 로 잡도록 먼저 로드. #}
+<script src="/static/js/upload-accel.js?v=20261001-1"></script>
 <script>
 (function () {
   var meta = document.querySelector('meta[name="csrf-token"]');
