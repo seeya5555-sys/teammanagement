@@ -1076,7 +1076,7 @@ def _yard_parse_quote(fileobj, profile):
                 sec_cat = _sec_cat(cur_sec)
                 cur_sub, sub_cat = None, None
             if re.fullmatch(r'\d+\.\d+', s):              # n.m 소항목만(n.m.k 세부라인은 소항목 유지)
-                cur_sub = re.split(r'[,(\[]| - ', title)[0].strip()[:45] or s   # remark용 짧은 작업명
+                cur_sub = re.split(r'[(\[]| - ', title)[0].strip().rstrip(',')[:45] or s   # remark용 짧은 작업명
                 sub_cat = 'Deck' if (not map_ok and _YARD_DECK_SUB.search(title)) else None
         if not isinstance(nt, (int, float)) or not nt or not cur_sec:
             continue
