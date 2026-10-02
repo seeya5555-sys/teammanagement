@@ -1200,3 +1200,86 @@ CREATE TABLE IF NOT EXISTS followup_tracking (
     reason TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(kind,target_id)
 );
+
+-- -------------------------------------------------------------
+--  Daily 업무관리 — 주간 현안 업데이트 요청 메일 자동화 (2026-10-02)
+--   · 맥 러너가 /api/ext/daily-mail/* 로 설정 조회 → Outlook 발송 → run 기록 → 회신 반영.
+--   · 선박 식별 = vessels.id (사이트 정본). 발송 태그용 코드는 vessels.vsl_cd 를 쓰고
+--     없으면 'V<id>' (태그 정규식 [A-Z0-9]{1,8}).
+--   · 기본 enabled=0 — 선박별로 관리자가 켜야만 발송 대상이 된다.
+--   · 이슈는 **기존 Open/InProgress 만** 다룬다. 이 기능은 issues 에 INSERT 하지 않는다.
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_mail_settings (
+    vessel_id   INTEGER PRIMARY KEY REFERENCES vessels(id) ON DELETE CASCADE,
+    to_emails   TEXT    NOT NULL DEFAULT '',          -- ';' 구분
+    cc_emails   TEXT    NOT NULL DEFAULT '',
+    enabled     INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1)),
+    updated_by  TEXT,
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+-- 전역 템플릿 1행(id=1). 변수: {vessel} {count} {due_date}
+CREATE TABLE IF NOT EXISTS daily_mail_template (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    subject_tpl TEXT    NOT NULL,
+    body_tpl    TEXT    NOT NULL,
+    updated_by  TEXT,
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+INSERT OR IGNORE INTO daily_mail_template (id, subject_tpl, body_tpl) VALUES (1,
+ '{vessel} – Open Technical Issues / Weekly Update Request ({count} items)',
+ 'Dear Sir/Madam,' || char(10) || char(10) || 'Good day.' || char(10) || char(10) ||
+ 'Please find attached the list of {count} open technical issues for {vessel}.' || char(10) || char(10) ||
+ 'Kindly fill in the "Update (reply here)" column with the current progress / repair plan for each item, '
+ || 'change "Status (Open/Closed)" to Closed for any completed item, and reply to this mail with the file attached by {due_date}.' || char(10) || char(10) ||
+ 'Please keep the Issue ID column and the subject line unchanged so that your reply can be matched.' || char(10) || char(10) ||
+ 'Thank you for your cooperation.' || char(10) || char(10) || 'Best regards,');
+
+-- 선박×ISO주 1회 발송. UNIQUE(vessel_id, iso_week) 가 중복발송 차단의 서버측 정본이다.
+-- state: sending(러너가 claim, 아직 발송 확인 전) → sent | failed.
+--   sending/failed 에서 자동 재발송하지 않는다(실제 발송 여부 불명 = fail-closed). 관리자가 release.
+CREATE TABLE IF NOT EXISTS daily_mail_runs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id        INTEGER NOT NULL REFERENCES vessels(id) ON DELETE CASCADE,
+    vessel_code      TEXT    NOT NULL,
+    iso_week         TEXT    NOT NULL,                 -- 2026W40
+    tag              TEXT    NOT NULL UNIQUE,          -- [TRMT-DU 2026W40 KWPR]
+    state            TEXT    NOT NULL DEFAULT 'sending' CHECK (state IN ('sending','sent','failed')),
+    subject          TEXT,
+    to_emails        TEXT,
+    cc_emails        TEXT,
+    issue_ids        TEXT    NOT NULL DEFAULT '[]',    -- JSON 배열(발송 시점 스냅샷)
+    excel_path       TEXT,                             -- 맥 러너 로컬 스냅샷 경로
+    excel_sha256     TEXT,
+    error            TEXT,
+    sent_at          TEXT,
+    reply_status     TEXT    NOT NULL DEFAULT 'pending' CHECK (reply_status IN ('pending','replied','partial')),
+    last_reply_at    TEXT,
+    reminder_count   INTEGER NOT NULL DEFAULT 0,
+    last_reminder_at TEXT,
+    notified_at      TEXT,                             -- 리마인드 2회 후 사람 통보 이벤트 시각
+    created_at       TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE (vessel_id, iso_week)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_mail_runs_week ON daily_mail_runs(iso_week, state);
+
+-- 회신 처리 이벤트. close_suggest 는 state(open/approved/rejected), close 는 state(done/reverted).
+-- 같은 메일(message_id)·같은 종류·같은 이슈는 1회만 — 폴링 재실행 dedup.
+CREATE TABLE IF NOT EXISTS daily_mail_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER NOT NULL REFERENCES daily_mail_runs(id) ON DELETE CASCADE,
+    kind        TEXT    NOT NULL CHECK (kind IN ('reply','update','close','close_suggest',
+                                                 'unmatched','reminder','notify','attachment')),
+    issue_id    INTEGER,                               -- FK 없음: 이슈 삭제 후에도 근거 보존
+    message_id  TEXT,
+    evidence    TEXT    NOT NULL DEFAULT '',
+    payload     TEXT    NOT NULL DEFAULT '{}',
+    state       TEXT,
+    resolved_by TEXT,
+    resolved_at TEXT,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_mail_events_msg
+    ON daily_mail_events(run_id, kind, COALESCE(issue_id, 0), message_id)
+    WHERE message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_daily_mail_events_run ON daily_mail_events(run_id, kind);
+CREATE INDEX IF NOT EXISTS idx_daily_mail_events_state ON daily_mail_events(kind, state);

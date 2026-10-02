@@ -1134,6 +1134,88 @@
     "defaults": {}
   },
   {
+    "rule": "/api/daily-mail/closes/<int:eid>/reopen",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_close_reopen",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/daily-mail/runs/<int:rid>/release",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_run_release",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/daily-mail/settings",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_settings",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/daily-mail/settings/<int:vid>",
+    "methods": [
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_setting_save",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/daily-mail/status",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_status",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/daily-mail/suggestions/<int:eid>/approve",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_suggestion_approve",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/daily-mail/suggestions/<int:eid>/reject",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_suggestion_reject",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/daily-mail/template",
+    "methods": [
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_template_save",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/dashboard/cockpit",
     "methods": [
       "GET",
@@ -2267,6 +2349,109 @@
       "POST"
     ],
     "endpoint": "routes_calendar_dock.api_ext_class_status_upload",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/config",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_config",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/runs",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_run_claim",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/runs/<int:rid>/events",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_event",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/runs/<int:rid>/issues/<int:iid>/attachments",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_attachment",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/runs/<int:rid>/issues/<int:iid>/close",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_close",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/runs/<int:rid>/issues/<int:iid>/close-suggest",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_close_suggest",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/runs/<int:rid>/issues/<int:iid>/progress",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_progress",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/runs/<int:rid>/state",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_run_state",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/runs/pending",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_runs_pending",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/daily-mail/vessels/<int:vid>/export.xlsx",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_export",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -5161,6 +5346,17 @@
       "OPTIONS"
     ],
     "endpoint": "routes_core.condition_survey",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/daily-mail",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_daily_mail.daily_mail_page",
     "strict_slashes": true,
     "defaults": {}
   },

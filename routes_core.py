@@ -18,6 +18,7 @@ from datetime import date, timedelta
 from flask import abort, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import datetime
+from issue_export_service import build_issue_workbook
 from app_core import (
     INSTANCE_DIR, SOA_REVIEW_PDF_DIR, UPLOAD_DIR, app, execute, execute_rc, get_db, query,
 )
@@ -738,9 +739,7 @@ def api_issue_export():
     from io import BytesIO
     from datetime import datetime
     try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-        from openpyxl.utils import get_column_letter
+        import openpyxl  # noqa: F401 — 미설치면 기존과 같은 500 메시지
     except ImportError:
         return jsonify({'error': 'openpyxl 미설치 — 서버에 pip install openpyxl 필요'}), 500
     from flask import send_file
@@ -804,98 +803,6 @@ def api_issue_export():
     if EN:
         _translate_rows_en(rows)
 
-    # ── 2) 선박별 그룹 (sheet = 선박) ──────────────────────────
-    VTYPE_ORDER = ['VLCC', 'LR', 'AFRAMAX', 'MR', 'CNTR']
-    def _vrank(t):
-        t = (t or '').upper()
-        return VTYPE_ORDER.index(t) if t in VTYPE_ORDER else len(VTYPE_ORDER)
-    ves_map = {}   # vessel_name -> {'type':, 'rows':[]}
-    for r in rows:
-        vn = r.get('vessel_name') or ('Unassigned' if EN else '미배정')
-        if vn not in ves_map:
-            ves_map[vn] = {'type': r.get('vessel_type') or '', 'rows': []}
-        ves_map[vn]['rows'].append(r)
-    # 시트 순서 = 선종(VLCC→…→CNTR) → 선명
-    ves_seq = sorted(ves_map.keys(), key=lambda n: (_vrank(ves_map[n]['type']), n))
-
-    # ── 3) 스타일 / 헤더 ────────────────────────────────────────
-    HEADERS = (['No.', 'Issue Date', 'Item', 'Description', 'Action Plan',
-                'Priority', 'Status', 'Due Date', 'TSI Comment']
-               if EN else
-               ['No.', '발생일', '현안업무', '상세 내용', '진행사항 (조치 이력)',
-                '우선순위', '상태', '마감일', 'TSI Comment'])
-    COL_WIDTHS = [5, 12, 30, 40, 44, 12, 11, 12, 34]
-    N_COLS   = len(HEADERS)
-    PRI_COL, STAT_COL = 6, 7
-
-    F = 'Malgun Gothic'
-    title_font   = Font(name=F, size=14, bold=True, color='FFFFFF')
-    sub_font     = Font(name=F, size=10, color='ECF0F1', italic=True)
-    title_fill   = PatternFill('solid', start_color='1F3A5F')
-    sub_fill     = PatternFill('solid', start_color='2C5282')
-    col_hdr_font = Font(name=F, size=10, bold=True, color='FFFFFF')
-    col_hdr_fill = PatternFill('solid', start_color='34495E')
-    body_font    = Font(name=F, size=10)
-    tsi_font     = Font(name=F, size=10, italic=True, color='95A5A6')
-    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    body_align   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
-    cent_top     = Alignment(horizontal='center', vertical='top',    wrap_text=True)
-
-    thin = Side(style='thin',   color='BDC3C7')
-    med  = Side(style='medium', color='34495E')
-    border_thin = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    PRI_FILL = {
-        'COC & Flag': PatternFill('solid', start_color='F8CECC'),
-        'Urgent':     PatternFill('solid', start_color='FFE6CC'),
-        'Next DD':    PatternFill('solid', start_color='FFF2CC'),
-        'Normal':     None,
-    }
-    PRI_FONT = {
-        'COC & Flag': Font(name=F, size=10, bold=True, color='B71C1C'),
-        'Urgent':     Font(name=F, size=10, bold=True, color='E65100'),
-        'Next DD':    Font(name=F, size=10, bold=True, color='6D4C0F'),
-        'Normal':     Font(name=F, size=10, color='5D6D7E'),
-    }
-    STAT_FILL = {
-        'Open':       PatternFill('solid', start_color='E1F5FE'),
-        'InProgress': PatternFill('solid', start_color='FFF9C4'),
-        'Closed':     PatternFill('solid', start_color='E8F5E9'),
-    }
-    STAT_FONT = {
-        'Open':       Font(name=F, size=10, bold=True, color='0277BD'),
-        'InProgress': Font(name=F, size=10, bold=True, color='F57F17'),
-        'Closed':     Font(name=F, size=10, bold=True, color='2E7D32'),
-    }
-    STAT_LABEL = ({'Open': 'Open', 'InProgress': 'In Progress', 'Closed': 'Closed'}
-                  if EN else
-                  {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'})
-
-    def _sheet_safe(name):
-        bad = '[]:*?/\\'
-        out = ''.join('_' if c in bad else c for c in name)
-        return (out[:31] or 'Sheet')
-
-    def _fmt_actions(acts):
-        if not acts:
-            return ''
-        lines = []
-        for a in acts:
-            d = (a.get('date') or '').strip()
-            p = (a.get('progress') or '').strip()
-            mark = '★ ' if a.get('important') else ''
-            if d and p:   lines.append(f'{mark}[{d}] {p}')
-            elif d:       lines.append(f'{mark}[{d}]')
-            elif p:       lines.append(f'{mark}{p}')
-        return '\n'.join(lines)
-
-    # ── 4) Workbook 생성 ────────────────────────────────────────
-    wb = Workbook()
-    wb.remove(wb.active)
-    now = datetime.now()
-    today_str = now.strftime('%Y-%m-%d')
-    me = session.get('display_name') or session.get('username') or ''
-
     sub_chips = []
     if status_in:
         sub_chips.append(('Filter: ' if EN else '필터: ') + status_in.replace(',', ' / '))
@@ -905,112 +812,15 @@ def api_issue_export():
         sub_chips.append(('Priority: ' if EN else '우선순위: ') + request.args.get('priority'))
     if request.args.get('q'):
         sub_chips.append(('Search: ' if EN else '검색: ') + request.args.get('q'))
-    sub_text = ' | '.join(sub_chips) if sub_chips else ('All items' if EN else '전체 항목')
+    sub_text = ' | '.join(sub_chips) if sub_chips else None
 
-    if not ves_seq:
-        ws = wb.create_sheet('No Data' if EN else '데이터 없음')
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS)
-        c = ws.cell(row=1, column=1, value=('Daily Work Log — No Data' if EN else 'Daily 업무관리 — 데이터 없음'))
-        c.font = title_font; c.fill = title_fill; c.alignment = center_align
-        ws.cell(row=3, column=1, value=('No issues match the filter.' if EN else '필터 조건에 해당하는 이슈가 없습니다.')).font = Font(name=F, size=11, italic=True)
-        for idx, w in enumerate(COL_WIDTHS, start=1):
-            ws.column_dimensions[get_column_letter(idx)].width = w
-    else:
-        for vn in ves_seq:
-            info = ves_map[vn]
-            ws = wb.create_sheet(_sheet_safe(vn))
-            for idx, w in enumerate(COL_WIDTHS, start=1):
-                ws.column_dimensions[get_column_letter(idx)].width = w
-
-            # 제목(행1) = 선박명 (+선종),  부제(행2) = 추출 메타
-            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS)
-            vt = info['type']
-            c1 = ws.cell(row=1, column=1, value=(f'{vn}   |   {vt}' if vt else vn))
-            c1.font = title_font; c1.fill = title_fill
-            c1.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-            ws.row_dimensions[1].height = 30
-
-            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=N_COLS)
-            cnt = len(info['rows'])
-            if EN:
-                sub_msg = f'Exported: {today_str}    │    Total {cnt}    │    {sub_text}'
-                if me: sub_msg += f'    │    By: {me}'
-            else:
-                sub_msg = f'추출일: {today_str}    │    총 {cnt}건    │    {sub_text}'
-                if me: sub_msg += f'    │    출력: {me}'
-            c2 = ws.cell(row=2, column=1, value=sub_msg)
-            c2.font = sub_font; c2.fill = sub_fill
-            c2.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-            ws.row_dimensions[2].height = 20
-            ws.row_dimensions[3].height = 6
-
-            # 컬럼 헤더(행4)
-            HDR_ROW = 4
-            for col_idx, h in enumerate(HEADERS, start=1):
-                c = ws.cell(row=HDR_ROW, column=col_idx, value=h)
-                c.font = col_hdr_font; c.fill = col_hdr_fill
-                c.alignment = center_align
-                c.border = Border(left=thin, right=thin, top=med, bottom=med)
-            ws.row_dimensions[HDR_ROW].height = 26
-
-            # 데이터(행5~) — 날짜 그룹 없이 발생일 오래된순, No.=선박 내 1..N
-            cur_row = HDR_ROW + 1
-            for no, r in enumerate(sorted(info['rows'],
-                                          key=lambda x: ((x.get('issue_date') or ''), x.get('id') or 0)), start=1):
-                vals = [
-                    no,
-                    r.get('issue_date') or '',
-                    r.get('item_topic') or '',
-                    r.get('description') or '',
-                    _fmt_actions(r.get('actions')),
-                    r.get('priority') or '',
-                    STAT_LABEL.get(r.get('status'), r.get('status') or ''),
-                    r.get('due_date') or '',
-                    '',                                   # TSI Comment — 수기 기입용 빈 칸
-                ]
-                for col_idx, v in enumerate(vals, start=1):
-                    c = ws.cell(row=cur_row, column=col_idx, value=v)
-                    c.font = body_font
-                    c.border = border_thin
-                    if col_idx in (1, 2, 8):              # No / 발생일 / 마감일
-                        c.alignment = cent_top
-                    elif col_idx in (PRI_COL, STAT_COL):  # 우선순위 / 상태
-                        c.alignment = center_align
-                    else:                                 # 현안업무 / 상세 / 진행사항 / TSI
-                        c.alignment = body_align
-                # 우선순위 / 상태 색
-                pri = r.get('priority')
-                if PRI_FILL.get(pri): ws.cell(row=cur_row, column=PRI_COL).fill = PRI_FILL[pri]
-                if pri in PRI_FONT:   ws.cell(row=cur_row, column=PRI_COL).font = PRI_FONT[pri]
-                st = r.get('status')
-                if STAT_FILL.get(st): ws.cell(row=cur_row, column=STAT_COL).fill = STAT_FILL[st]
-                if st in STAT_FONT:   ws.cell(row=cur_row, column=STAT_COL).font = STAT_FONT[st]
-                cur_row += 1
-
-            last_row = cur_row - 1
-            if last_row > HDR_ROW:
-                ws.auto_filter.ref = f'A{HDR_ROW}:{get_column_letter(N_COLS)}{last_row}'
-            ws.freeze_panes = f'A{HDR_ROW + 1}'
-            ws.print_options.horizontalCentered = True
-            ws.page_setup.orientation = 'landscape'
-            ws.page_setup.fitToWidth = 1
-            ws.page_setup.fitToHeight = 0
-            ws.sheet_properties.pageSetUpPr.fitToPage = True
-            ws.print_title_rows = f'{HDR_ROW}:{HDR_ROW}'
-
-    # ── 5) 파일명 ──
-    today = now.strftime('%Y%m%d')
-    suffix = '_EN' if EN else ''
-    if len(ves_seq) == 1:
-        fname = f'TRMT_Daily_{_sheet_safe(ves_seq[0])}_{today}{suffix}.xlsx'
-    else:
-        fname = f'TRMT_Daily_{today}{suffix}.xlsx'
-
-    bio = BytesIO()
-    wb.save(bio)
-    bio.seek(0)
+    # 시트 구조는 issue_export_service 한 곳에서 만든다(맥 러너용 선박별 영문 xlsx 와 공유).
+    data, fname, _sheets = build_issue_workbook(
+        rows, en=EN, sub_text=sub_text,
+        exported_by=session.get('display_name') or session.get('username') or '',
+        now=datetime.now())
     return send_file(
-        bio,
+        BytesIO(data),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         as_attachment=True,
         download_name=fname,

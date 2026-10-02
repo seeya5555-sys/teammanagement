@@ -134,8 +134,8 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # 2026-09-27 재검토 후 갱신(167 → 187). 08-31~09-19 에 쌓인 16곳 + 이번 리팩터링 4곳, 전부
 # 보간값이 리터럴 튜플/모듈 dict/allowlist(KINDS)/`?` 자리표시자 반복/정적 SQL dict 조회뿐이고
 # 요청값이 SQL 문법에 닿는 경로 없음(요청값은 전부 bound parameter). 새 사이트는 다시 검토 후에만 갱신.
-EXPECTED_COUNT = 187
-EXPECTED_SHA256 = "7a3dd940fecf4f125b284c6b1ff013f4c67e76012665c718ee1f608c8d6b0d49"  # 2026-09-30 invoice edit: +AND raw_card IS ? (CAS, 컬럼목록 리터럴 불변)
+EXPECTED_COUNT = 191
+EXPECTED_SHA256 = "237975dd7e5ee6bac67bc48ba2242d6a7c28e831bbb8767e2ab4ab1e13839a2f"  # 2026-10-02 daily_mail: +IN(?,..) placeholder 2곳(ids 비면 skip) + actions CAS 리터럴 guard 2곳
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

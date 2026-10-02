@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Daily 자동화 설정 · TRMT3{% endblock %}
+
+{% block head %}
+<style>
+  .dm-wrap{max-width:1180px;margin:0 auto}
+  .dm-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 14px}
+  .dm-spacer{flex:1}
+  .dm-sec{background:var(--surface);border:1px solid var(--border-subtle);border-radius:6px;padding:14px 16px;margin-bottom:14px}
+  .dm-sec h2{font-size:14.5px;font-weight:700;margin:0 0 10px;color:var(--text-primary)}
+  .dm-note{font-size:12px;color:var(--text-secondary);line-height:1.6;margin:0 0 10px}
+  .dm-pills{display:flex;gap:10px;flex-wrap:wrap}
+  .dm-pill{background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:6px;padding:8px 14px;min-width:92px}
+  .dm-pill .n{font-size:20px;font-weight:700;line-height:1.1;color:var(--text-primary)}
+  .dm-pill .l{font-size:11.5px;color:var(--text-secondary);font-weight:600}
+  .dm-pill.warn .n{color:var(--amber)}
+  .dm-pill.bad .n{color:var(--red)}
+  table.dm-t{width:100%;border-collapse:collapse;font-size:12.5px}
+  .dm-t th{text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border);padding:6px 6px;white-space:nowrap}
+  .dm-t td{border-bottom:1px solid var(--border-subtle);padding:6px 6px;vertical-align:top}
+  .dm-t input[type=text]{width:100%;min-width:180px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface)}
+  .dm-t .muted{color:var(--text-tertiary)}
+  .dm-ev{max-width:420px;white-space:pre-wrap;color:var(--text-secondary)}
+  .dm-tpl label{display:block;font-size:12px;font-weight:600;color:var(--text-secondary);margin:8px 0 4px}
+  .dm-tpl input,.dm-tpl textarea{width:100%;font-size:12.5px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);font-family:inherit}
+  .dm-tpl textarea{min-height:190px;line-height:1.5}
+  .dm-row-actions{display:flex;gap:6px;flex-wrap:wrap}
+  .dm-badge{font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-secondary);white-space:nowrap}
+  .dm-badge.ok{background:var(--green-bg);color:var(--green);border-color:transparent}
+  .dm-badge.warn{background:var(--amber-bg);color:var(--amber);border-color:transparent}
+  .dm-badge.bad{background:var(--red-bg);color:var(--red);border-color:transparent}
+  .dm-empty{color:var(--text-tertiary);font-size:12.5px;padding:6px 0}
+  .dm-msg{font-size:12px;margin-left:8px;color:var(--text-secondary)}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dm-wrap">
+  <div class="dm-head ops-page-header">
+    <div><p class="ops-page-kicker">Daily 업무관리</p><h1 class="page-title">Daily 자동화 설정</h1></div>
+    <div class="dm-spacer"></div>
+    <a class="btn btn-outline btn-sm" href="{{ url_for('routes_core.index') }}">Daily 업무관리로</a>
+  </div>
+
+  <div class="dm-sec">
+    <h2>이번 주 회신현황 <span class="muted" id="dmWeek" style="font-weight:400;font-size:12px"></span></h2>
+    <div class="dm-pills" id="dmPills"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="dm-sec">
+    <h2>Close 제안 (검토 필요)</h2>
+    <p class="dm-note">회신 근거가 애매하거나 COC &amp; Flag 이슈라 자동 Close 하지 않은 건입니다. 승인하면 Close, 반려하면 Open 유지.</p>
+    <div id="dmSuggest"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="dm-sec">
+    <h2>최근 자동 Close (30일)</h2>
+    <p class="dm-note">근거가 명확해 자동화가 바로 Close 한 건입니다. 잘못 닫혔으면 Reopen.</p>
+    <div id="dmCloses"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="dm-sec">
+    <h2>선박별 수신자 · ON/OFF</h2>
+    <p class="dm-note">ON 인 선박만 매주 월요일 08:30 자동 발송됩니다(Open/진행중 이슈가 1건 이상일 때). 주소는 <code>;</code> 로 구분. 기본값은 OFF.</p>
+    <div id="dmVessels"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="dm-sec dm-tpl">
+    <h2>메일 템플릿</h2>
+    <p class="dm-note">변수: <code>{vessel}</code> 선명 · <code>{count}</code> 이슈 수 · <code>{due_date}</code> 회신 기한(발송일+4일). 제목 앞에는 매칭용 태그 <code>[TRMT-DU 2026W40 CODE]</code> 가 자동으로 붙습니다.</p>
+    <label for="dmSubj">제목</label>
+    <input id="dmSubj" type="text" maxlength="300">
+    <label for="dmBody">본문</label>
+    <textarea id="dmBody" maxlength="8000"></textarea>
+    <div style="margin-top:8px"><button class="btn btn-primary btn-sm" id="dmTplSave" type="button">템플릿 저장</button><span class="dm-msg" id="dmTplMsg"></span></div>
+  </div>
+
+  <div class="dm-sec">
+    <h2>이번 주 발송 run</h2>
+    <div id="dmRuns"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const $=(id)=>document.getElementById(id);
+  const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  async function api(url,opt){
+    const r=await fetch(url,Object.assign({headers:{'Accept':'application/json','Content-Type':'application/json'}},opt||{}));
+    let d={}; try{d=await r.json();}catch(e){}
+    if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+    return d;
+  }
+  function table(cols,rows){
+    if(!rows.length) return '<div class="dm-empty">없음</div>';
+    return '<table class="dm-t"><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>'+rows.join('')+'</tbody></table>';
+  }
+  function replyBadge(r){
+    if(r.state!=='sent') return '<span class="dm-badge bad">'+esc(r.state==='sending'?'발송확인 대기':'발송실패')+'</span>';
+    if(r.reply_status==='replied') return '<span class="dm-badge ok">회신완료</span>';
+    if(r.reply_status==='partial') return '<span class="dm-badge warn">일부회신</span>';
+    return '<span class="dm-badge">무회신</span>';
+  }
+
+  async function loadStatus(){
+    const d=await api('/api/daily-mail/status');
+    const c=d.counts;
+    $('dmWeek').textContent=d.iso_week;
+    const pill=(n,l,cls)=>'<div class="dm-pill '+(cls||'')+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';
+    $('dmPills').innerHTML=pill(c.sent,'발송')+pill(c.replied,'회신')+pill(c.no_reply,'무회신',c.no_reply?'warn':'')
+      +pill(c.reminders,'리마인드')+pill(c.needs_review,'검토 필요',c.needs_review?'warn':'')
+      +(c.stuck?pill(c.stuck,'발송 확인 필요','bad'):'');
+    $('dmSuggest').innerHTML=table(['선박','이슈','근거','생성',''],d.suggestions.map(s=>
+      '<tr><td>'+esc(s.vessel_name)+'</td><td>#'+s.issue_id+' '+esc(s.item_topic||'')+(s.priority==='COC & Flag'?' <span class="dm-badge bad">COC &amp; Flag</span>':'')+'</td>'
+      +'<td class="dm-ev">'+esc(s.evidence)+'</td><td class="muted">'+esc(s.created_at)+'</td>'
+      +'<td><div class="dm-row-actions"><button class="btn btn-primary btn-sm" data-act="approve" data-id="'+s.id+'">승인(Close)</button>'
+      +'<button class="btn btn-outline btn-sm" data-act="reject" data-id="'+s.id+'">반려</button></div></td></tr>'));
+    $('dmCloses').innerHTML=table(['선박','이슈','근거','시각','상태',''],d.closes.map(e=>
+      '<tr><td>'+esc(e.vessel_name)+'</td><td>#'+e.issue_id+' '+esc(e.item_topic||'')+'</td><td class="dm-ev">'+esc(e.evidence)+'</td>'
+      +'<td class="muted">'+esc(e.created_at)+'</td><td>'+(e.state==='reverted'?'<span class="dm-badge">되돌림</span>':'<span class="dm-badge ok">Closed</span>')+'</td>'
+      +'<td>'+(e.state==='done'?'<button class="btn btn-outline btn-sm" data-act="reopen" data-id="'+e.id+'">Reopen</button>':'')+'</td></tr>'));
+    $('dmRuns').innerHTML=table(['선박','태그','발송','회신','리마인드','이슈 수',''],d.runs.map(r=>
+      '<tr><td>'+esc(r.vessel_name)+'</td><td class="muted">'+esc(r.tag)+'</td><td>'+esc(r.sent_at||'-')+'</td><td>'+replyBadge(r)+'</td>'
+      +'<td>'+r.reminder_count+'</td><td>'+r.issue_ids.length+'</td>'
+      +'<td>'+(r.state!=='sent'?'<button class="btn btn-outline btn-sm" data-act="release" data-id="'+r.id+'" title="Outlook 보낸편지함에 실제로 없는지 확인한 뒤에만">재발송 허용</button>':'')+'</td></tr>'));
+  }
+
+  async function loadSettings(){
+    const d=await api('/api/daily-mail/settings');
+    $('dmSubj').value=d.template.subject_tpl||'';
+    $('dmBody').value=d.template.body_tpl||'';
+    $('dmVessels').innerHTML=table(['선박','코드','Open','To','CC','발송',''],d.vessels.map(v=>
+      '<tr data-vid="'+v.vessel_id+'"><td>'+esc(v.name)+'</td><td class="muted">'+esc(v.code)+'</td><td>'+v.open_count+'</td>'
+      +'<td><input type="text" data-f="to" value="'+esc(v.to_emails)+'"></td><td><input type="text" data-f="cc" value="'+esc(v.cc_emails)+'"></td>'
+      +'<td><label><input type="checkbox" data-f="en" '+(v.enabled?'checked':'')+'> ON</label></td>'
+      +'<td><button class="btn btn-outline btn-sm" data-act="save-vessel">저장</button><span class="dm-msg"></span></td></tr>'));
+  }
+
+  document.addEventListener('click',async(ev)=>{
+    const b=ev.target.closest('button[data-act]'); if(!b) return;
+    const act=b.dataset.act, id=b.dataset.id;
+    try{
+      if(act==='save-vessel'){
+        const tr=b.closest('tr'), msg=tr.querySelector('.dm-msg');
+        const body={to_emails:tr.querySelector('[data-f=to]').value,cc_emails:tr.querySelector('[data-f=cc]').value,enabled:tr.querySelector('[data-f=en]').checked};
+        b.disabled=true;
+        try{ await api('/api/daily-mail/settings/'+tr.dataset.vid,{method:'PUT',body:JSON.stringify(body)}); msg.textContent='저장됨'; }
+        catch(e){ msg.textContent=e.message; }
+        finally{ b.disabled=false; }
+        return;
+      }
+      const conf={approve:'이 이슈를 Close 할까요?',reject:'제안을 반려할까요? (Open 유지)',reopen:'이 자동 Close 를 되돌려 다시 Open 할까요?',
+                  release:'Outlook 보낸편지함에서 이 메일이 실제로 안 나간 것을 확인했나요? 확인 후에만 재발송을 허용하세요.'}[act];
+      if(conf && !confirm(conf)) return;
+      const url={approve:'/api/daily-mail/suggestions/'+id+'/approve',reject:'/api/daily-mail/suggestions/'+id+'/reject',
+                 reopen:'/api/daily-mail/closes/'+id+'/reopen',release:'/api/daily-mail/runs/'+id+'/release'}[act];
+      b.disabled=true;
+      await api(url,{method:'POST',body:'{}'});
+      await loadStatus();
+    }catch(e){ alert(e.message); b.disabled=false; }
+  });
+
+  $('dmTplSave').addEventListener('click',async()=>{
+    const m=$('dmTplMsg');
+    try{ await api('/api/daily-mail/template',{method:'PUT',body:JSON.stringify({subject_tpl:$('dmSubj').value,body_tpl:$('dmBody').value})}); m.textContent='저장됨'; }
+    catch(e){ m.textContent=e.message; }
+  });
+
+  loadStatus().catch(e=>{$('dmPills').innerHTML='<div class="dm-empty">'+esc(e.message)+'</div>';});
+  loadSettings().catch(e=>{$('dmVessels').innerHTML='<div class="dm-empty">'+esc(e.message)+'</div>';});
+})();
+</script>
+{% endblock %}
