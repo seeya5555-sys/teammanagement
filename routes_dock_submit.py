@@ -941,25 +941,143 @@ def _load_yard_profile(name):
         return json.load(f)
 
 
+# 섹션 제목 → 카테고리 (견적 양식마다 섹션 번호가 달라 번호표만으로는 오배정됨 — 2026-10-02 SOUTH AFRICA PROSPERITY 실측)
+_YARD_TITLE_RULES = [
+    (r'general\s*service|docking', 'General'),
+    (r'hull\s*paint|painting', 'Paint'),
+    (r'steel', 'Steel'),
+    (r'electric', 'Electric'),
+    (r'^deck', 'Deck'),
+    (r'engine|machinery', 'Engine'),
+]
+# 대분류 제목행이 없는 섹션(예 '3.1'부터 시작)은 소항목 제목 다수결로 판정
+_YARD_SUB_VOTE = [
+    (r'steel|pitting|watertight|vent head|louver', 'Steel'),
+    (r'electric|motor|radar|ecdis|gmdss|battery|switchboard|iccp|compass|echosounder|speed log|vdr', 'Electric'),
+    (r'boiler|cooler|heater|economi|turbo|m/e|a/e|e/r|er fan|governor|purifier|engine|tail shaft|stern tube', 'Engine'),
+    (r'anchor|windlass|mooring|davit|life ?boat|ladder|hatch|cargo|pv valve|ig |deck', 'Deck'),
+]
+# 소항목 제목 중 Deck 로 보내는 작업(_YARD_AI_PROMPT 의 Deck 정의와 동일 기준) — 기관부 섹션 안에 있어도 Deck
+_YARD_DECK_SUB = re.compile(r'propeller|rudder|sea\s*chest', re.I)
+
+
+def _yard_title_cat(title, rules):
+    t = (title or '').strip()
+    for pat, cat in rules:
+        if re.search(pat, t, re.I):
+            return cat
+    return None
+
+
+def _yard_find_layout(ws_rows):
+    """헤더행(Item No./Net Total)에서 열 위치 자동탐지. 없으면 None."""
+    for r in ws_rows[:40]:
+        low = [re.sub(r'\s+', ' ', str(c)).strip().lower() if isinstance(c, str) else '' for c in r]
+        if any(x.startswith('item no') for x in low) and any(x.startswith('net total') for x in low):
+            def ix(pred):
+                for i, x in enumerate(low):
+                    if pred(x):
+                        return i
+                return None
+            return {'item_no': ix(lambda x: x.startswith('item no')),
+                    'desc': ix(lambda x: 'description' in x),
+                    'qty': ix(lambda x: x in ("q'ty", 'qty', 'quantity')),
+                    'net_total': ix(lambda x: x.startswith('net total'))}
+    return None
+
+
+def _yard_cover_days(wb):
+    """Cover 시트 'Total repair period: N' → N(일). 못 찾으면 None(추정 금지)."""
+    for ws in wb.worksheets:
+        if ws.title.strip().lower() != 'cover':
+            continue
+        for r in ws.iter_rows(values_only=True):
+            for i, c in enumerate(r):
+                if isinstance(c, str) and re.search(r'total repair period', c, re.I):
+                    for v in r[i + 1:]:
+                        if isinstance(v, (int, float)) and 0 < v < 400:
+                            return int(v)
+    return None
+
+
+def _yard_rule_remark(items):
+    """카테고리 내 소항목(제목,금액) → 고액순 영문 1줄 요약. 결정적(LLM 미사용)."""
+    top = [t for t, a in sorted(items.items(), key=lambda kv: -kv[1]) if a > 0 and t]
+    if not top:
+        return None
+    s = ', '.join(top[:4])
+    return s + (' etc.' if len(top) > 4 else '')
+
+
 def _yard_parse_quote(fileobj, profile):
-    """조선소 견적 xlsx → 7카테고리 소계. 총계행(텍스트) 제외 + Item No 첫정수=섹션. (yard_parse.py 검증본 이식)"""
+    """조선소 견적 xlsx → 7카테고리 소계·리마크(결정적). 섹션=제목규칙 우선, 번호표(section_map) 폴백.
+    견적서의 Normal Total/Final discount/Net 총액과 교차검증해 불일치는 경고로 돌려준다."""
     import openpyxl
-    c = profile["cols"]
-    ci, cd, cq, cn = c["item_no"], c["desc"], c["qty"], c["net_total"]
-    smap = profile["section_map"]
     wb = openpyxl.load_workbook(fileobj, data_only=True, read_only=True)
-    ws = wb[profile.get("sheet", "Quotation")]
-    sect = {}
-    cur_sec = None
-    for r in ws.iter_rows(values_only=True):
+    sheet = profile.get("sheet", "Quotation")
+    ws = wb[sheet] if sheet in wb.sheetnames else wb.worksheets[0]
+    rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+    c = _yard_find_layout(rows) or profile.get("cols")
+    if not c or c.get('item_no') is None or c.get('net_total') is None:
+        raise ValueError('견적 헤더(Item No./Net Total) 탐지 실패')
+    ci, cd, cq, cn = c["item_no"], c.get("desc"), c.get("qty"), c["net_total"]
+    smap = profile.get("section_map") or {}
+    rules = [tuple(x) for x in profile.get("title_rules") or _YARD_TITLE_RULES]
+    cat = {k: 0.0 for k in YARD_CATEGORIES}
+    sub_items = {k: {} for k in YARD_CATEGORIES}
+    unmapped = {}
+    quoted = {}
+    sec_top, sec_votes = {}, {}                          # 1차: 섹션별 제목 수집 → 카테고리 확정
+    for r in rows:
+        itm = r[ci] if ci < len(r) else None
+        desc = r[cd] if cd is not None and cd < len(r) else None
+        m = re.match(r'^(\d+)(?:\.(\d+))?', str(itm).strip() if itm is not None else '')
+        if not m or not isinstance(desc, str):
+            continue
+        if not m.group(2):
+            sec_top.setdefault(m.group(1), _yard_title_cat(desc, rules))
+        elif re.fullmatch(r'\d+\.\d+', str(itm).strip()):
+            v = _yard_title_cat(desc, _YARD_SUB_VOTE)
+            if v:
+                d = sec_votes.setdefault(m.group(1), {})
+                d[v] = d.get(v, 0) + 1
+    # 프로파일 번호표가 이 견적 양식용인지 판정: 제목으로 판정되는 대분류가 번호표와 하나라도 어긋나면 다른 양식
+    # (일치 근거가 0건이면 양식 일치로 보지 않는다 — 올마이트 지적). 부적합 번호표로는 절대 복귀하지 않고 unmapped 처리.
+    titled = {k: v for k, v in sec_top.items() if v}
+    map_ok = bool(smap) and bool(titled) and all(smap.get(k) == v for k, v in titled.items())
+    def _sec_cat(sec):
+        if map_ok:
+            return smap.get(sec) or sec_top.get(sec)
+        if sec_top.get(sec):
+            return sec_top[sec]
+        if sec_votes.get(sec):
+            return max(sec_votes[sec].items(), key=lambda kv: kv[1])[0]
+        return None
+    cur_sec = sec_cat = cur_sub = sub_cat = None
+    for r in rows:
         def cell(i):
-            return r[i] if i < len(r) else None
+            return r[i] if i is not None and i < len(r) else None
         itm, desc, qty, nt = cell(ci), cell(cd), cell(cq), cell(cn)
-        s = str(itm).strip() if itm is not None else ""
-        m = re.match(r'^(\d+)', s)
-        if m:
-            cur_sec = m.group(1)
         rowtext = " ".join(str(x) for x in r if isinstance(x, str))
+        low = rowtext.lower()
+        if isinstance(nt, (int, float)):                 # 견적서 자체 총계(교차검증용)
+            if 'normal total' in low:
+                quoted['normal'] = float(nt)
+            elif 'final discount' in low and 0 <= nt < 1:   # 명시적 0% 도 존중
+                quoted['disc'] = float(nt)
+            elif re.search(r'after di[s]?count', low):
+                quoted['net'] = float(nt)
+        s = str(itm).strip() if itm is not None else ""
+        m = re.match(r'^(\d+)(?:\.(\d+))?', s)
+        if m:
+            title = str(desc).strip() if isinstance(desc, str) else ''
+            if m.group(1) != cur_sec:
+                cur_sec = m.group(1)
+                sec_cat = _sec_cat(cur_sec)
+                cur_sub, sub_cat = None, None
+            if re.fullmatch(r'\d+\.\d+', s):              # n.m 소항목만(n.m.k 세부라인은 소항목 유지)
+                cur_sub = re.split(r'[,(\[]| - ', title)[0].strip()[:45] or s   # remark용 짧은 작업명
+                sub_cat = 'Deck' if (not map_ok and _YARD_DECK_SUB.search(title)) else None
         if not isinstance(nt, (int, float)) or not nt or not cur_sec:
             continue
         if _YARD_TOTAL_ROW.search(rowtext):              # 총계/소계행 제외
@@ -969,21 +1087,33 @@ def _yard_parse_quote(fileobj, profile):
                 float(qty.replace(',', ''))             # 숫자문자열 qty("1")는 라인 허용
             except (TypeError, ValueError):
                 continue                                 # 진짜 텍스트(총계 라벨) = 제외
-        sect[cur_sec] = sect.get(cur_sec, 0.0) + nt
-    cat = {k: 0.0 for k in YARD_CATEGORIES}
-    unmapped = {}
-    for sec, amt in sect.items():
-        c2 = smap.get(sec)
-        if c2 in cat:
-            cat[c2] += amt
+        c2 = sub_cat or sec_cat
+        if c2 in cat and c2 != 'Discount':
+            cat[c2] += nt
+            key = cur_sub or ''
+            sub_items[c2][key] = sub_items[c2].get(key, 0.0) + nt
         else:
-            unmapped[sec] = round(unmapped.get(sec, 0.0) + amt, 2)
+            unmapped[cur_sec] = round(unmapped.get(cur_sec, 0.0) + nt, 2)
     line_total = sum(cat.values())
-    cat["Discount"] = round(-line_total * profile.get("discount_rate", 0.0), 2)
+    rate = quoted.get('disc', profile.get("discount_rate", 0.0))
+    cat["Discount"] = round(-line_total * rate, 2)
     cat = {k: round(v, 2) for k, v in cat.items()}
+    final_total = round(sum(cat.values()), 2)
+    checks = []
+    if 'normal' in quoted and abs(quoted['normal'] - line_total - sum(unmapped.values())) > 1:
+        checks.append(f"⚠️ 라인합계 {line_total:,.2f} ≠ 견적 Normal Total {quoted['normal']:,.2f}")
+    if 'net' in quoted and not unmapped and abs(quoted['net'] - final_total) > 1:
+        checks.append(f"⚠️ 최종 {final_total:,.2f} ≠ 견적 Net {quoted['net']:,.2f}")
+    if not quoted.get('normal'):
+        checks.append('⚠️ 견적서 Normal Total 행 없음 — 합계 교차검증 불가')
+    remarks = {k: _yard_rule_remark(sub_items[k]) for k in ("Steel", "Deck", "Engine", "Electric")}
+    days = _yard_cover_days(wb)
+    remarks["General"] = f"입거 예상일정 : {days}일, 상가일정 : " if days else _YARD_GEN_SKELETON
+    remarks["Paint"] = _YARD_PAINT_SKELETON
+    remarks["Discount"] = f"Final discount {rate * 100:g}%" if rate else None
     return {"categories": cat, "line_total": round(line_total, 2),
-            "final_total": round(sum(cat.values()), 2), "unmapped": unmapped,
-            "yard_name": profile.get("yard_name")}
+            "final_total": final_total, "unmapped": unmapped, "remarks": remarks,
+            "quoted": quoted, "checks": checks, "yard_name": profile.get("yard_name")}
 
 
 @bp.route('/api/dock_yard/profiles')
@@ -1089,32 +1219,31 @@ def api_dock_yard_upload():
             profile = _load_yard_profile(prof_name)
         except Exception:
             profile = None
-    # 하이브리드: 금액=규칙파서(결정적) 우선, Remark=Gemini(AI). 프로파일 없으면 AI 금액 폴백(비결정 경고).
-    ai = _yard_ai_extract(data)                       # Remark(+프로파일 없을때 금액 폴백)
-    ai_remarks = {}
-    if ai and ai.get('categories'):
-        for c in ai['categories']:
-            if c.get('cat') in YARD_CATEGORIES:
-                ai_remarks[c['cat']] = (c.get('remark') or None)
+    # 금액·Remark 모두 규칙파서(결정적, LLM 미사용) 우선. 프로파일 없으면 헤더 자동탐지 기본규칙으로 시도.
+    # Gemini 는 규칙파서가 견적 구조를 못 읽을 때만 마지막 폴백(2026-10-02 형 지시: 불안정한 AI 의존 제거).
     rule = None
-    if profile:
-        try:
-            rule = _yard_parse_quote(_io.BytesIO(data), profile)
-        except Exception:
-            app.logger.exception('yard-rule')
-            rule = None
+    try:
+        rule = _yard_parse_quote(_io.BytesIO(data), profile or {"yard_name": None})
+    except Exception:
+        app.logger.exception('yard-rule')
+        rule = None
+    if rule and not any(rule['categories'][k] for k in YARD_CATEGORIES if k != 'Discount'):
+        rule = None                                    # 0원 결과 = 구조 미인식 → 폴백
+    ai = None if rule else _yard_ai_extract(data)
 
     warns = []
     yard_nm = (profile or {}).get('yard_name')
-    if rule:                                           # ✅ 금액=규칙(결정), Remark=AI
-        source = 'rule+ai'
+    if rule:                                           # ✅ 금액·Remark=규칙(결정)
+        source = 'rule'
         cur_default = 'USD'
-        catmap = {c: {'amount': round(rule['categories'][c], 2), 'remark': _yard_norm_remark(c, ai_remarks.get(c))}
+        catmap = {c: {'amount': round(rule['categories'][c], 2),
+                      'remark': _yard_norm_remark(c, rule['remarks'].get(c))}
                   for c in YARD_CATEGORIES}
         if rule.get('unmapped'):
-            warns.append('⚠️ 미매핑 섹션: ' + ','.join(rule['unmapped'].keys()) + ' — 프로파일 보강 필요')
-        if not ai:
-            warns.append('Remark 생성 실패(Gemini) — 금액만 반영')
+            warns.append('⚠️ 미매핑 섹션: ' + ','.join(rule['unmapped'].keys()) + ' — 금액 누락, 프로파일 보강 필요')
+        warns.extend(rule.get('checks') or [])
+        if not profile:
+            warns.append('프로파일 없음 — 기본규칙(섹션 제목) 적용')
     elif ai and ai.get('categories'):                  # 프로파일 없음 → AI 금액(비결정 경고)
         source = 'ai'
         cur_default = (ai.get('currency') or 'USD').strip().upper()[:3] or 'USD'
