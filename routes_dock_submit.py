@@ -822,7 +822,7 @@ _YARD_TOTAL_ROW = re.compile(r'total price|final discount|after dicount|after di
 _YARD_GEN_SKELETON = "입거 예상일정 : 일, 상가일정 : "
 _YARD_PAINT_SKELETON = "Top : SA %, SA %, The other area :  (m2)"
 # full-shape 검증(lead token만 아니라 구조 토큰 전부 존재해야 통과 — 올마이트 반영)
-_YARD_GEN_RE = re.compile(r'^입거 예상일정 : .*상가일정 : ', re.S)
+_YARD_GEN_RE = re.compile(r'^입거 예상일정 : .*상가일정 :', re.S)   # strip 후 끝공백 없음도 허용
 _YARD_PAINT_RE = re.compile(r'^Top : .*The other area : .*m2', re.S)
 
 
@@ -830,7 +830,9 @@ def _yard_norm_remark(cat, remark):
     """General/Paint remark를 고정 형식으로 보장(구조 토큰 전부 있어야 AI 원문 유지, 아니면 빈 스켈레톤). 나머지 카테고리는 AI 원문."""
     r = (remark or '').strip()
     if cat == "General":
-        return r if _YARD_GEN_RE.match(r) else _YARD_GEN_SKELETON
+        if not _YARD_GEN_RE.match(r):
+            return _YARD_GEN_SKELETON
+        return r + ' ' if r.endswith(':') else r     # 상가일정 공란이면 스켈레톤과 같은 끝공백 유지
     if cat == "Paint":
         return r if _YARD_PAINT_RE.match(r) else _YARD_PAINT_SKELETON
     return r or None
