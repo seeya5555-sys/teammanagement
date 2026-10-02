@@ -1409,6 +1409,8 @@ def api_ext_dock_yard_remark_result(jid):
         applied = kept = 0
         for catn, old in ph.items():
             new = _yard_norm_remark(catn, rem[catn].strip()[:_YARD_REMARK_MAX]) or ''
+            if new in (_YARD_GEN_SKELETON, _YARD_PAINT_SKELETON) and old and old != new:
+                new = old                            # 데쿠가 빈 형식만 주면 규칙이 찾은 값(예 수리기간) 유지
             cur = db.execute("UPDATE dock_yard SET remark=?, updated_at=datetime('now','localtime') "
                              "WHERE vsl_nm=? AND category=? AND COALESCE(src,'auto')!='manual' AND COALESCE(remark,'')=?",
                              (new or None, job['vsl_nm'], catn, old or ''))

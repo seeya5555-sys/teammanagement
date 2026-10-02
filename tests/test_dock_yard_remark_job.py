@@ -87,7 +87,7 @@ class YardRemarkJobTests(unittest.TestCase):
         rows = self.rows()
         self.assertEqual(rows['Deck']['remark'], 'Deck pipe renewal etc.')
         self.assertEqual(rows['Steel']['remark'], '형 메모')
-        self.assertEqual(rows['General']['remark'], '입거 예상일정 : 일, 상가일정 : ')   # 형식 위반 → 스켈레톤
+        self.assertEqual(rows['General']['remark'], '입거 예상일정 : 30일, 상가일정 : ')  # 형식 위반 → 규칙값 유지
         self.assertEqual(len(rows['Engine']['remark']), 300)
         self.assertGreaterEqual(res['kept_human'], 1)
         self.assertEqual(self.jobs(), [])
