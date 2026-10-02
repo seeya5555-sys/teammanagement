@@ -1248,6 +1248,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/dock-daily/projects/<int:pid>/completion",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_dock_daily.project_completion",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/dock-daily/projects/<int:pid>/reports",
     "methods": [
       "GET",
@@ -2520,6 +2530,27 @@
       "POST"
     ],
     "endpoint": "routes_dock_submit.api_ext_dock_submit_result",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/dock_yard/remark_jobs",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_dock_submit.api_ext_dock_yard_remark_jobs",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/dock_yard/remark_jobs/<int:jid>",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_dock_submit.api_ext_dock_yard_remark_result",
     "strict_slashes": true,
     "defaults": {}
   },

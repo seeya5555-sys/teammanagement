@@ -888,6 +888,42 @@ def _yard_xlsx_to_text(raw_bytes, max_rows=3000):
     return '\n'.join(out)
 
 
+def _yard_remark_text(raw_bytes, limit=110000):
+    """데쿠 remark 입력용 압축 텍스트: Cover 전문 + Quotation 의 항목번호행·금액있는 라인·도장섹션 전문.
+    (전체 덤프는 12만자를 넘어 뒤쪽 Engine/Electric 이 잘렸다 — 2026-10-02 실측)"""
+    import io as _io
+    from openpyxl import load_workbook
+    wb = load_workbook(_io.BytesIO(raw_bytes), read_only=True, data_only=True)
+    out = []
+    for ws in wb.worksheets:
+        t = ws.title.strip().lower()
+        if t not in ('cover', 'quotation'):
+            continue
+        out.append(f"### SHEET: {ws.title}")
+        rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+        lay = _yard_find_layout(rows) if t == 'quotation' else None
+        in_paint = False
+        for r in rows:
+            cells = ['' if c is None else str(c).strip() for c in r]
+            while cells and cells[-1] == '':
+                cells.pop()
+            if not cells:
+                continue
+            if lay:
+                itm = r[lay['item_no']] if lay['item_no'] < len(r) else None
+                nt = r[lay['net_total']] if lay['net_total'] < len(r) else None
+                desc = r[lay['desc']] if lay.get('desc') is not None and lay['desc'] < len(r) else None
+                head = itm is not None and re.match(r'^\d+(\.\d+)?$', str(itm).strip())
+                if head and '.' not in str(itm).strip().rstrip('0').rstrip('.') and isinstance(desc, str):
+                    in_paint = bool(re.search(r'paint', desc, re.I))
+                keep = head or in_paint or (isinstance(nt, (int, float)) and nt)
+                if not keep:
+                    continue
+                cells = [x for x in cells if x not in ('', '0')]
+            out.append(' | '.join(cells))
+    return '\n'.join(out)[:limit]
+
+
 def _yard_ai_extract(raw_bytes):
     """Gemini Flash로 견적 → 7카테고리 금액+remark+총액. 실패/키없음 시 None."""
     if not GEMINI_API_KEY:
@@ -1269,6 +1305,10 @@ def api_dock_yard_upload():
         return jsonify({'error': 'AI 파싱 실패 + 규칙 폴백 없음 — 조선소 프로파일 선택 또는 Gemini 키 확인'}), 400
 
     vsl_cd = (request.form.get('vsl_cd') or '').strip().upper() or None
+    # 🔒 이전 견적의 remark 작업은 행을 새 견적으로 덮기 **전에** 무효화(올마이트: stale 결과 반영 차단).
+    #   결과 반영은 BEGIN IMMEDIATE 안에서 pending 재확인 → 이 UPDATE 이후엔 옛 결과가 들어갈 수 없다.
+    execute("UPDATE dock_yard_remark_job SET status='superseded', updated_at=datetime('now','localtime') "
+            "WHERE vsl_nm=? AND status='pending'", (vsl_nm,))
     added = updated = skipped = 0
     for i, catn in enumerate(YARD_CATEGORIES):
         c = catmap.get(catn) or {'amount': 0.0, 'remark': None}
@@ -1290,10 +1330,100 @@ def api_dock_yard_upload():
                     (vsl_nm, vsl_cd, catn, amt, cur_default, rmk, yard_nm, i))
             added += 1
     final = round(sum(c['amount'] for c in catmap.values()), 2)
+    # remark 는 견적 내용이 매번 달라 데쿠(맥)가 견적 전문을 읽고 판단해 작성한다(2026-10-02 형 지시).
+    # 업로드 즉시는 규칙 요약을 임시로 두고, 데쿠 작성분은 그 임시값이 그대로일 때만 덮는다(사람 수정 보존).
+    remark_job = None
+    if source == 'rule':
+        ph = {}
+        for catn in YARD_CATEGORIES:
+            row = query("SELECT remark, src FROM dock_yard WHERE vsl_nm=? AND category=?", (vsl_nm, catn), one=True)
+            if row and (row['src'] or 'auto') != 'manual':
+                ph[catn] = row['remark'] or ''
+        if ph:
+            try:
+                qtext = _yard_remark_text(data)
+            except Exception:
+                app.logger.exception('yard-remark-text')
+                qtext = ''
+            if qtext:
+                remark_job = execute(
+                    "INSERT INTO dock_yard_remark_job (vsl_nm, quote_text, amounts, placeholders) VALUES (?,?,?,?)",
+                    (vsl_nm, qtext, json.dumps({c: catmap[c]['amount'] for c in catmap}),
+                     json.dumps(ph, ensure_ascii=False)))
     verified = not any('⚠️' in w for w in warns)
     return jsonify({'ok': True, 'source': source, 'verified': verified, 'warns': warns,
                     'added': added, 'updated': updated, 'skipped_manual': skipped,
-                    'final_total': final})
+                    'final_total': final, 'remark_job': remark_job})
+
+
+_YARD_REMARK_MAX = 300
+
+
+@bp.route('/api/ext/dock_yard/remark_jobs')
+@api_key_required
+def api_ext_dock_yard_remark_jobs():
+    """맥 데쿠 runner: 대기 중 remark 작업(오래된 순, 최대 3건)."""
+    rows = query("SELECT id, vsl_nm, quote_text, amounts, placeholders, attempts FROM dock_yard_remark_job "
+                 "WHERE status='pending' AND attempts < 3 ORDER BY id LIMIT 3")
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['amounts'] = json.loads(d['amounts'] or '{}')
+        d['categories'] = sorted(json.loads(d.pop('placeholders') or '{}').keys(), key=YARD_CATEGORIES.index)
+        out.append(d)
+    return jsonify({'jobs': out})
+
+
+@bp.route('/api/ext/dock_yard/remark_jobs/<int:jid>', methods=['POST'])
+@api_key_required
+def api_ext_dock_yard_remark_result(jid):
+    """데쿠 작성 remark 반영. 임시값이 그대로인(사람이 안 건드린) auto 행만 CAS 갱신."""
+    d = request.get_json(silent=True) or {}
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")                    # 재업로드(supersede)와 직렬화 — pending 확인~반영~done 한 묶음
+    try:
+        job = db.execute("SELECT * FROM dock_yard_remark_job WHERE id=?", (jid,)).fetchone()
+        if not job:
+            db.rollback()
+            return jsonify({'error': 'not found'}), 404
+        if job['status'] != 'pending':
+            db.rollback()
+            return jsonify({'ok': True, 'status': job['status'], 'applied': 0})
+        ph = json.loads(job['placeholders'] or '{}')
+        rem = d.get('remarks')
+        err = d.get('error')
+        if not err:                                  # 필수 카테고리 전부 문자열이어야 성공(누락≠명시적 "")
+            if not isinstance(rem, dict):
+                err = 'remarks{} 없음'
+            else:
+                bad = [c for c in ph if not isinstance(rem.get(c), str)]
+                if bad:
+                    err = '불완전 응답: ' + ','.join(bad)
+        if err:
+            att = (job['attempts'] or 0) + 1
+            st = 'failed' if att >= 3 else 'pending'
+            db.execute("UPDATE dock_yard_remark_job SET attempts=?, error=?, status=?, "
+                       "updated_at=datetime('now','localtime') WHERE id=?", (att, str(err)[:300], st, jid))
+            db.commit()
+            return jsonify({'ok': False, 'status': st, 'error': str(err)[:300]}), (200 if d.get('error') else 422)
+        applied = kept = 0
+        for catn, old in ph.items():
+            new = _yard_norm_remark(catn, rem[catn].strip()[:_YARD_REMARK_MAX]) or ''
+            cur = db.execute("UPDATE dock_yard SET remark=?, updated_at=datetime('now','localtime') "
+                             "WHERE vsl_nm=? AND category=? AND COALESCE(src,'auto')!='manual' AND COALESCE(remark,'')=?",
+                             (new or None, job['vsl_nm'], catn, old or ''))
+            if cur.rowcount:
+                applied += 1
+            else:
+                kept += 1                            # 그 사이 사람이 수정 → 보존
+        db.execute("UPDATE dock_yard_remark_job SET status='done', attempts=attempts+1, error=NULL, "
+                   "updated_at=datetime('now','localtime') WHERE id=? AND status='pending'", (jid,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        app.logger.exception('yard-remark-result')
+        return jsonify({'error': '반영 실패(rollback)'}), 500
+    return jsonify({'ok': True, 'status': 'done', 'applied': applied, 'kept_human': kept})
 
 
 @bp.route('/api/dock_yard/<int:lid>', methods=['PATCH'])

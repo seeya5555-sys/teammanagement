@@ -818,6 +818,21 @@ def init_db(drop=False):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_yard_vsl ON dock_yard(vsl_nm)")
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS dock_yard_remark_job (   -- 조선소 견적 remark 작성 대기열(맥 데쿠가 판단·작성)
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                vsl_nm     TEXT NOT NULL,
+                quote_text TEXT NOT NULL,                       -- 견적 xlsx 텍스트 추출본(LLM 입력)
+                amounts    TEXT,                                -- 규칙파서 7카테고리 금액 JSON(금액은 결정값, remark 근거 참고)
+                placeholders TEXT,                              -- 업로드 시 써둔 임시 remark JSON — 같을 때만 덮어씀(CAS)
+                status     TEXT NOT NULL DEFAULT 'pending',     -- pending/done/failed/superseded
+                attempts   INTEGER NOT NULL DEFAULT 0,
+                error      TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dock_yard_rjob ON dock_yard_remark_job(status)")
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS yard_vendor (            -- SVMS 조선소 벤더마스터 캐시(맥이 pull→적재)
                 vndr_cd     TEXT PRIMARY KEY,                   -- PKG_CM_VNDR VNDR_CD (dock 봉투 DR_CD/VNDR_CD 소스)
                 vndr_nm     TEXT,                               -- 국문명

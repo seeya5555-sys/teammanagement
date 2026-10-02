@@ -664,6 +664,7 @@
       if(!r.ok){ toast('실패: '+(j.error||'오류')); return; }
       let msg=`조선소 반영 (${j.source==='ai'?'AI':'규칙'}, 최종 ${fmtAmt(j.final_total)}) — 신규${j.added}·갱신${j.updated}·잠김${j.skipped_manual}`;
       if(j.warns && j.warns.length) msg += ' · ' + j.warns.join(' · ');
+      if(j.remark_job) msg += ' · 리마크는 데쿠가 견적을 읽고 작성 중(1~3분 뒤 새로고침)';
       toast(msg); await loadYard(DATA.current);
     };
   }
