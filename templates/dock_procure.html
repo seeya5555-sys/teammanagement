@@ -651,6 +651,20 @@
       toast('조선소: '+(j.vndr_nm||'(해제)'));
     };
   }
+  // 데쿠 remark 작성 완료를 10초 간격(최대 5분) 확인 → 완료 시 조선소 카드 자동 갱신
+  function pollYardRemark(jid, vsl){
+    let n=0;
+    const tick=async()=>{
+      n++;
+      let st='';
+      try{ const r=await fetch('/api/dock_yard/remark_job/'+jid); st=(await r.json()).status||''; }catch(e){}
+      if(st==='done'){ if(DATA.current===vsl){ await loadYard(vsl); toast('데쿠 리마크 반영 완료'); } return; }
+      if(st==='failed'){ toast('데쿠 리마크 작성 실패 — 임시 요약 유지'); return; }
+      if(st==='superseded') return;                 // 더 새 업로드가 대신함
+      if(n<30) setTimeout(tick,10000); else toast('데쿠 리마크 지연 — 잠시 뒤 새로고침');
+    };
+    setTimeout(tick,10000);
+  }
   function bindYardFile(){
     $('#dy-file').onchange=async e=>{
       const f=e.target.files[0]; if(!f)return;
@@ -658,14 +672,16 @@
       if(!DATA.current){ toast('선박 먼저 선택'); return; }
       const ves=DATA.vessels.find(v=>v.vsl_nm===DATA.current)||{};
       if(!ves.shipyard_vndr_cd){ toast('조선소 먼저 선택'); return; }   // 조선소=봉투 VNDR 소스 + 프로파일 자동매칭
-      const fd=new FormData(); fd.append('file',f); fd.append('vsl_nm',DATA.current); if(ves.vsl_cd)fd.append('vsl_cd',ves.vsl_cd);
+      const upVsl=DATA.current;                    // 업로드 대상 고정(대기 중 선박 전환 대비 — 올마이트)
+      const fd=new FormData(); fd.append('file',f); fd.append('vsl_nm',upVsl); if(ves.vsl_cd)fd.append('vsl_cd',ves.vsl_cd);
       toast('견적 파싱 중…');
       const r=await fetch('/api/dock_yard/upload',{method:'POST',body:fd}); const j=await r.json();
       if(!r.ok){ toast('실패: '+(j.error||'오류')); return; }
       let msg=`조선소 반영 (${j.source==='ai'?'AI':'규칙'}, 최종 ${fmtAmt(j.final_total)}) — 신규${j.added}·갱신${j.updated}·잠김${j.skipped_manual}`;
       if(j.warns && j.warns.length) msg += ' · ' + j.warns.join(' · ');
-      if(j.remark_job) msg += ' · 리마크는 데쿠가 견적을 읽고 작성 중(1~3분 뒤 새로고침)';
+      if(j.remark_job) msg += ' · 리마크는 데쿠가 견적을 읽고 작성 중 — 끝나면 자동 반영';
       toast(msg); await loadYard(DATA.current);
+      if(j.remark_job) pollYardRemark(j.remark_job, upVsl);
     };
   }
 

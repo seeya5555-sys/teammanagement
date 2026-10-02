@@ -1989,6 +1989,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/dock_yard/remark_job/<int:jid>",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_dock_submit.api_dock_yard_remark_job_status",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/dock_yard/shipyards",
     "methods": [
       "GET",

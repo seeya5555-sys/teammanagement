@@ -1361,6 +1361,16 @@ def api_dock_yard_upload():
 _YARD_REMARK_MAX = 300
 
 
+@bp.route('/api/dock_yard/remark_job/<int:jid>')
+@login_required
+def api_dock_yard_remark_job_status(jid):
+    """업로드 화면이 데쿠 remark 완료를 폴링(완료 시 자동 새로고침)."""
+    r = query("SELECT status, attempts, error FROM dock_yard_remark_job WHERE id=?", (jid,), one=True)
+    if not r:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify(dict(r))
+
+
 @bp.route('/api/ext/dock_yard/remark_jobs')
 @api_key_required
 def api_ext_dock_yard_remark_jobs():
