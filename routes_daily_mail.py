@@ -61,6 +61,15 @@ def api_daily_mail_setting_save(vid):
         return _err(e)
 
 
+@bp.route('/api/daily-mail/settings/<int:vid>/enabled', methods=['POST'])
+@admin_required
+def api_daily_mail_setting_enabled(vid):
+    try:
+        return jsonify(svc.set_enabled(vid, bool(_json().get('enabled')), _user()))
+    except svc.DailyMailError as e:
+        return _err(e)
+
+
 @bp.route('/api/daily-mail/template', methods=['PUT'])
 @admin_required
 def api_daily_mail_template_save():

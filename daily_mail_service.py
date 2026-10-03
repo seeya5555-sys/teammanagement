@@ -224,6 +224,24 @@ def save_setting(vessel_id, to_text, cc_text, enabled, user, dear_name=None):
             'cc_emails': '; '.join(cc_list), 'dear_name': dear_name, 'enabled': enabled}
 
 
+def set_enabled(vessel_id, enabled, user):
+    """ON/OFF 만 변경(수신자·Dear 는 건드리지 않음) — 앱 인라인 스위치용. ON 은 저장된 To 가 있어야 함."""
+    if not query('SELECT 1 FROM vessels WHERE id=?', (vessel_id,), one=True):
+        raise DailyMailError(404, '선박이 없습니다.')
+    if not in_roster(vessel_id):
+        raise DailyMailError(403, '담당 선박이 아닙니다.')
+    enabled = 1 if enabled else 0
+    cur = query('SELECT to_emails FROM daily_mail_settings WHERE vessel_id=?', (vessel_id,), one=True)
+    if enabled and not (cur and parse_emails(cur['to_emails'])[0]):
+        raise DailyMailError(400, 'To 주소 없이 ON 할 수 없습니다.')
+    if cur:
+        execute("UPDATE daily_mail_settings SET enabled=?, updated_by=?, updated_at=datetime('now','localtime') "
+                'WHERE vessel_id=?', (enabled, user, vessel_id))
+    else:
+        execute("INSERT INTO daily_mail_settings(vessel_id, enabled, updated_by) VALUES(?,?,?)", (vessel_id, enabled, user))
+    return {'vessel_id': vessel_id, 'enabled': enabled}
+
+
 def runner_config(iso_week=None, today=None):
     """러너용: enabled=1 이고 To 가 있는 선박만. 이번 주 run 여부를 같이 준다."""
     iso_week = iso_week or iso_week_of(today)

@@ -114,6 +114,19 @@ class DailyMailTests(unittest.TestCase):
         cfg = self.c.get('/api/ext/daily-mail/config?week=2026W40', headers=self.h).get_json()
         self.assertNotEqual(fp, next(x for x in cfg['vessels'] if x['vessel_id'] == self.vid)['issue_fp'])
 
+
+    def test_enabled_toggle_only_changes_enabled(self):
+        self._enable()
+        r = self.c.post(f'/api/daily-mail/settings/{self.vid}/enabled', json={'enabled': False})
+        self.assertEqual(200, r.status_code, r.get_json())
+        v = next(x for x in self.c.get('/api/daily-mail/settings').get_json()['vessels'] if x['vessel_id'] == self.vid)
+        self.assertEqual((0, 'master@x.com', 'team@x.com'), (v['enabled'], v['to_emails'], v['cc_emails']))
+        self.assertEqual(200, self.c.post(f'/api/daily-mail/settings/{self.vid}/enabled', json={'enabled': True}).status_code)
+        with appmod.app.app_context():
+            from app_core import execute
+            vid2 = execute("INSERT INTO vessels(name, vsl_cd) VALUES('NO TO','NOTO')")
+        self.assertEqual(400, self.c.post(f'/api/daily-mail/settings/{vid2}/enabled', json={'enabled': True}).status_code)
+
     def _enable(self):
         r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
                        json={'to_emails': 'master@x.com', 'cc_emails': 'team@x.com; bad', 'enabled': 1})

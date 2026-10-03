@@ -1175,6 +1175,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/daily-mail/settings/<int:vid>/enabled",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_daily_mail_setting_enabled",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/daily-mail/status",
     "methods": [
       "GET",
