@@ -1284,3 +1284,55 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_mail_events_msg
     WHERE message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_daily_mail_events_run ON daily_mail_events(run_id, kind);
 CREATE INDEX IF NOT EXISTS idx_daily_mail_events_state ON daily_mail_events(kind, state);
+
+-- -------------------------------------------------------------
+--  Vetting OBS 자동화 (2026-10-03)
+--   · vt_close_auto_runs: SVMS Close report 자동판정 1회 기록(같은 입력 재판정 방지).
+--   · vetting_mail_settings: 선박별 Vetting OBS 메일 ON/OFF (수신자는 daily_mail_settings To/CC 재사용).
+--   · vetting_mail_runs: vetting×ISO주 1회 발송. UNIQUE 가 중복발송 차단의 정본.
+--     sending/failed 는 자동 재발송하지 않는다(관리자 release).
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vt_close_auto_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    vetting_id  INTEGER NOT NULL REFERENCES vettings(id) ON DELETE CASCADE,
+    input_fp    TEXT    NOT NULL,
+    closed_ids  TEXT    NOT NULL DEFAULT '[]',
+    result_json TEXT    NOT NULL DEFAULT '{}',
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE (vetting_id, input_fp)
+);
+CREATE TABLE IF NOT EXISTS vetting_mail_settings (
+    vessel_id   INTEGER PRIMARY KEY REFERENCES vessels(id) ON DELETE CASCADE,
+    enabled     INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1)),
+    updated_by  TEXT,
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS vetting_mail_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    vetting_id    INTEGER NOT NULL REFERENCES vettings(id) ON DELETE CASCADE,
+    vessel_id     INTEGER NOT NULL REFERENCES vessels(id) ON DELETE CASCADE,
+    iso_week      TEXT    NOT NULL,
+    state         TEXT    NOT NULL DEFAULT 'sending' CHECK (state IN ('sending','sent','failed')),
+    subject       TEXT,
+    to_emails     TEXT,
+    cc_emails     TEXT,
+    finding_ids   TEXT    NOT NULL DEFAULT '[]',
+    excel_sha256  TEXT,
+    error         TEXT,
+    sent_at       TEXT,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE (vetting_id, iso_week)
+);
+-- vetting_mail_events: 회신 반영 이력(메일×항목×종류 1회). 자동 변경 근거·되돌리기용 before 값 보존.
+CREATE TABLE IF NOT EXISTS vetting_mail_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER NOT NULL REFERENCES vetting_mail_runs(id) ON DELETE CASCADE,
+    finding_id  INTEGER,
+    kind        TEXT    NOT NULL CHECK (kind IN ('close','update','needs_review','reply')),
+    message_id  TEXT    NOT NULL,
+    evidence    TEXT,
+    before_json TEXT,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vetting_mail_events
+    ON vetting_mail_events(run_id, COALESCE(finding_id,0), kind, message_id);

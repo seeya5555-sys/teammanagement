@@ -36,6 +36,7 @@ from helpers_shared import (
     _vetting_display_order, _vetting_with_counts, _xlsx_to_text, login_required,
     api_key_required,
 )
+import vetting_mail_service as vms
 
 bp = Blueprint("ai_gemini", __name__)
 
@@ -1391,9 +1392,17 @@ def _condense_obs(items):
 @login_required
 def api_vt_obs_summary(vid):
     """Priority 체크 + Open 항목 기준으로 '지적 상세' 요약을 생성해 overall_remark에 기록."""
+    res = _rebuild_obs_summary(vid)
+    if res is None:
+        abort(404)
+    return jsonify({'ok': True, **res})
+
+
+def _rebuild_obs_summary(vid):
+    """'지적 상세' 버튼 본체. 자동 Close 후에도 같은 규칙으로 재생성한다(None=vetting 없음)."""
     v = query('SELECT * FROM vettings WHERE id=?', (vid,), one=True)
     if not v:
-        abort(404)
+        return None
     findings = query('SELECT * FROM vt_findings WHERE vetting_id=? ORDER BY no, id', (vid,))
     open_f = [f for f in findings if (f['status'] or 'Open') == 'Open']
     def _is_prio(f):
@@ -1409,7 +1418,8 @@ def api_vt_obs_summary(vid):
                                _company_abbr(v['inspection_company']),
                                _sire_abbr(v['sire_type'])) if b]
     header = (' '.join(header_bits) + ' ' if header_bits else '') + \
-             f'SIRE OBS 잔여 {total_open}건 조치 중'
+             (f'SIRE OBS 잔여 {total_open}건 조치 중' if total_open else
+              f'SIRE OBS {len(findings)}건 전건 Close')
 
     shorts = _condense_obs([
         {'i': i, 'summary': f['remark'] or '', 'description': f['description'] or '',
@@ -1429,8 +1439,7 @@ def api_vt_obs_summary(vid):
 
     execute("UPDATE vettings SET overall_remark=?, updated_at=datetime('now','localtime') WHERE id=?",
             (text, vid))
-    return jsonify({'ok': True, 'summary': text,
-                    'total_open': total_open, 'priority_open': len(prio), 'minor': minor})
+    return {'summary': text, 'total_open': total_open, 'priority_open': len(prio), 'minor': minor}
 
 
 @bp.route('/api/vettings/<int:vid>/export')
@@ -1678,3 +1687,368 @@ def api_vt_attachment_delete(aid):
             app.logger.exception('vt-attachment-delete')
     execute('DELETE FROM vt_attachments WHERE id=?', (aid,))
     return jsonify({'ok': True})
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Vetting OBS 자동화 (형 지시 2026-10-03)
+#   · SVMS 에서 받은 Close report(운영사 회신·조치서)로 Observation 별 Close 를 자동 판정.
+#   · 자동 쓰기는 **Open→Closed 단방향**만. 재오픈·신규 지적 생성·"목록에 없음=Close" 는 하지 않는다
+#     (그건 사람이 수동 'Full report 반영' 으로만).
+#   · Closed 는 AI 판정 + 결정론 가드(근거 원문 실재 + 완료 동사 + 예정/대기 표현 없음)가 모두 맞을 때만.
+#     가드 탈락은 Open 유지 → 월요일 메일로 선박에 확인 요청이 나간다(보수 쪽 실패).
+#   · 같은 입력(첨부 sha 집합 + Open 항목 집합)은 1회만 판정(vt_close_auto_runs UNIQUE).
+# ═════════════════════════════════════════════════════════════════
+_CLOSE_DOC_EXTS = ('pdf', 'docx')
+_CLOSE_TEXT_LIMIT = 400_000
+_CLOSE_DONE_RE = _re_cls.compile(
+    r'\b(completed?|closed|rectified|repaired|replaced|renewed|carried out|conducted|implemented|'
+    r'corrected|amended|revised|updated|issued|installed|fixed|resolved|done|trained|briefed|'
+    r'delivered|received|tested|verified|cleaned|removed|re-?calibrated|calibrated|provided|'
+    r'overhauled|restored|landed|discussed|shared|reviewed|instructed)\b', _re_cls.I)
+_CLOSE_PENDING_RE = _re_cls.compile(
+    r"\b(not|never|yet|unable|failed|will|shall|to be|planned|plan to|pending|awaiting|await|waiting|once|until|scheduled|"
+    r"next port|next dry ?dock|dry ?dock(ing)? period|in progress|ongoing|on-going|requisition(ed)?|"
+    r"not yet|tbc|expected to|partially|temporar(y|ily)|interim)\b", _re_cls.I)
+
+
+def _close_norm(text):
+    return _re_cls.sub(r'[^a-z0-9]+', ' ', (text or '').lower()).strip()
+
+
+def _close_doc_text(path, ext):
+    """Close report 원문 텍스트. 미지원/판독 실패는 '' (판정 대상에서 빠짐)."""
+    try:
+        if ext == 'pdf':
+            import pdfplumber
+            with pdfplumber.open(path) as pdf:
+                return '\n'.join((p.extract_text() or '') for p in pdf.pages)
+        if ext == 'docx':
+            import docx as _docx
+            d = _docx.Document(path)
+            parts = [p.text for p in d.paragraphs if p.text.strip()]
+            for tb in d.tables:
+                for row in tb.rows:
+                    seen = []
+                    for cell in row.cells:            # 병합 셀은 같은 텍스트가 반복된다
+                        t = cell.text.strip()
+                        if t and t not in seen:
+                            seen.append(t)
+                    if seen:
+                        parts.append(' | '.join(seen))
+            return '\n'.join(parts)
+    except Exception:
+        app.logger.exception('close-doc-text')
+    return ''
+
+
+def _close_guard(status, evidence, doc_norm):
+    """AI 판정을 결정론으로 거른다 → (최종 status, 사유)."""
+    ev = (evidence or '').strip()
+    ev_n = _close_norm(ev)
+    if len(ev_n) < 20 or ev_n not in doc_norm:
+        return 'Open', 'evidence_not_in_document'
+    if status != 'Closed':
+        return 'Open', 'ai_not_closed'
+    if _CLOSE_PENDING_RE.search(ev):
+        return 'Open', 'evidence_has_pending_wording'
+    if not _CLOSE_DONE_RE.search(ev):
+        return 'Open', 'evidence_has_no_completion_wording'
+    return 'Closed', 'ok'
+
+
+def _close_prompt(vetting, vessel, findings, doc_text):
+    obs = [{'finding_id': int(f['id']), 'no': f['no'], 'item': f['item'] or '',
+            'description': (f['description'] or '')[:1200]} for f in findings]
+    return (
+        "You review SIRE inspection close-out documents (operator comments / corrective action reports) "
+        f"for vessel {vessel}, SIRE report {vetting['report_number'] or '-'} "
+        f"inspected {vetting['inspection_date'] or '-'}.\n"
+        "For EVERY observation in the JSON list decide its status from the document:\n"
+        '- "Closed": the document explicitly states the corrective action for THIS observation has been '
+        "completed (past tense: replaced, repaired, completed, training carried out, procedure amended...).\n"
+        '- "Open": action is planned / pending / awaiting spares / scheduled for next port or dry dock / '
+        "partially done / temporary, or only causes are analysed.\n"
+        '- "NotFound": the observation is not addressed in the document.\n'
+        "evidence = an EXACT verbatim copy (8-60 words, no paraphrase, no ellipsis) of the document sentence "
+        "that shows the corrective action status of that observation. Empty string for NotFound.\n"
+        "action_ko = Korean one-line summary of the corrective action status, max 50 chars, ship jargon "
+        "(e.g. '로프 교체 완료', '부품 수령 후 교체 예정', '절차서 개정 및 교육 완료').\n"
+        'Answer JSON only: {"items":[{"finding_id":1,"status":"Closed","evidence":"...","action_ko":"..."}]}\n\n'
+        f"[Observations]\n{json.dumps(obs, ensure_ascii=False)}\n\n[Document]\n{doc_text[:_CLOSE_TEXT_LIMIT]}"
+    )
+
+
+def _close_candidates():
+    return query(
+        "SELECT vt.id, vt.vessel_id, vt.report_number, vt.inspection_date, ve.name AS vessel_name, "
+        " (SELECT COUNT(*) FROM vt_findings f WHERE f.vetting_id=vt.id AND COALESCE(f.status,'Open')='Open') AS open_count "
+        "FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id "
+        "WHERE vt.svms_close_report_yn='Y' AND EXISTS (SELECT 1 FROM vt_attachments a WHERE a.vetting_id=vt.id "
+        "  AND a.source='svms' AND a.source_type='close' AND a.inactive_at IS NULL) "
+        "ORDER BY vt.inspection_date DESC, vt.id DESC")
+
+
+def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
+    """1개 vetting 판정(+적용). 반환 dict 는 러너가 그대로 텔레그램 보고에 쓴다."""
+    v = query('SELECT vt.*, ve.name AS vessel_name FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id '
+              'WHERE vt.id=?', (vid,), one=True)
+    if not v:
+        return {'vetting_id': vid, 'skipped': 'not_found'}
+    base = {'vetting_id': vid, 'vessel': v['vessel_name'], 'report_number': v['report_number']}
+    if (v['svms_close_report_yn'] or '') != 'Y':
+        return {**base, 'skipped': 'no_close_report_flag'}
+    open_f = query("SELECT * FROM vt_findings WHERE vetting_id=? AND COALESCE(status,'Open')='Open' "
+                   'ORDER BY no, id', (vid,))
+    if not open_f:
+        return {**base, 'skipped': 'no_open_findings'}
+    atts = query("SELECT * FROM vt_attachments WHERE vetting_id=? AND source='svms' AND source_type='close' "
+                 'AND inactive_at IS NULL ORDER BY id', (vid,))
+    docs, used = [], []
+    for a in atts:
+        ext = (a['filename'] or '').rsplit('.', 1)[-1].lower()
+        if ext not in _CLOSE_DOC_EXTS:
+            continue
+        text = _close_doc_text(os.path.join(UPLOAD_DIR, a['stored_name']), ext)
+        if text.strip():
+            docs.append(f"=== {a['filename']} ===\n{text}")
+            used.append({'id': a['id'], 'filename': a['filename'], 'sha256': a['sha256'] or ''})
+    if not docs:
+        return {**base, 'skipped': 'no_readable_close_document'}
+    fp = hashlib.sha256(json.dumps({'att': sorted(u['sha256'] + str(u['id']) for u in used),
+                                    'open': [int(f['id']) for f in open_f]}).encode()).hexdigest()
+    if not force and query('SELECT 1 FROM vt_close_auto_runs WHERE vetting_id=? AND input_fp=?',
+                           (vid, fp), one=True):
+        return {**base, 'skipped': 'already_judged_same_input'}
+    doc_text = '\n\n'.join(docs)
+    if not GEMINI_API_KEY:
+        return {**base, 'error': 'no_ai_key'}
+    parsed = _gemini_call_json([{'text': _close_prompt(v, v['vessel_name'], open_f, doc_text)}],
+                               model=_model_for('findings'))
+    items = parsed.get('items') if isinstance(parsed, dict) else None
+    if not isinstance(items, list):
+        return {**base, 'error': 'ai_parse_failed'}
+    doc_norm = _close_norm(doc_text)
+    by_id = {int(f['id']): f for f in open_f}
+    judged, seen = [], set()
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        try:
+            fid = int(it.get('finding_id'))
+        except (TypeError, ValueError):
+            continue
+        if fid not in by_id or fid in seen:
+            continue
+        seen.add(fid)
+        ai_status = (it.get('status') or '').strip()
+        final, why = _close_guard(ai_status, it.get('evidence'), doc_norm)
+        action = _concise_full_report_remark((it.get('action_ko') or '').strip(), limit=80)
+        judged.append({'finding_id': fid, 'no': by_id[fid]['no'], 'ai_status': ai_status,
+                       'status': final, 'reason': why, 'evidence': (it.get('evidence') or '').strip()[:600],
+                       'action': action if why != 'evidence_not_in_document' else ''})
+    for fid in by_id:
+        if fid not in seen:
+            judged.append({'finding_id': fid, 'no': by_id[fid]['no'], 'ai_status': '', 'status': 'Open',
+                           'reason': 'not_judged', 'evidence': '', 'action': ''})
+    judged.sort(key=lambda j: (j['no'] or 0, j['finding_id']))
+    closed = [j for j in judged if j['status'] == 'Closed']
+    result = {**base, 'documents': [u['filename'] for u in used], 'judged': judged,
+              'closed_count': len(closed), 'open_after': len(open_f) - len(closed), 'dry': bool(dry)}
+    if dry:
+        return result
+
+    db = get_db()
+    applied = []
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        for j in judged:
+            if not j['action'] and j['status'] != 'Closed':
+                continue
+            old = by_id[j['finding_id']]
+            auto = j['action'] or (old['full_report_remark'] or '')
+            user_remark = _replace_full_report_remark(old['user_remark'], old['full_report_remark'], auto)
+            cur = db.execute(
+                "UPDATE vt_findings SET status=?, user_remark=?, full_report_remark=?, "
+                "updated_at=datetime('now','localtime') "
+                "WHERE id=? AND vetting_id=? AND COALESCE(status,'Open')='Open' "
+                "AND COALESCE(user_remark,'')=? AND COALESCE(full_report_remark,'')=? "
+                "AND COALESCE(description,'')=?",
+                (j['status'], user_remark, auto, j['finding_id'], vid, old['user_remark'] or '',
+                 old['full_report_remark'] or '', old['description'] or ''))
+            if cur.rowcount == 1:          # 그 사이 사람이 바꿨으면 건드리지 않는다
+                applied.append({'finding_id': j['finding_id'], 'status': j['status'],
+                                'full_report_remark': auto, 'evidence': j['evidence'],
+                                'before_remark': old['full_report_remark'] or ''})
+        db.execute('INSERT INTO vt_close_auto_runs(vetting_id, input_fp, closed_ids, result_json) VALUES(?,?,?,?)',
+                   (vid, fp, json.dumps([a['finding_id'] for a in applied if a['status'] == 'Closed']),
+                    json.dumps(result, ensure_ascii=False)))
+        if applied:
+            db.execute(
+                "INSERT INTO vt_full_report_audit "
+                "(vetting_id,report_number,file_sha256,filename,before_json,after_json,applied_by) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (vid, v['report_number'] or '', fp, 'SVMS close auto: ' + ', '.join(u['filename'] for u in used),
+                 json.dumps([{'finding_id': a['finding_id'], 'status': 'Open',
+                              'full_report_remark': a['before_remark']} for a in applied], ensure_ascii=False),
+                 json.dumps(applied, ensure_ascii=False), actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        app.logger.exception('close-auto-apply')
+        return {**base, 'error': 'db_update_failed'}
+    result['applied'] = len(applied)
+    result['closed_count'] = sum(1 for a in applied if a['status'] == 'Closed')
+    result['open_after'] = query("SELECT COUNT(*) AS n FROM vt_findings WHERE vetting_id=? "
+                                 "AND COALESCE(status,'Open')='Open'", (vid,), one=True)['n']
+    try:
+        summary = _rebuild_obs_summary(vid)         # '지적 상세' 버튼 자동 실행
+        result['overall_remark'] = (summary or {}).get('summary')
+    except Exception:
+        app.logger.exception('close-auto-obs-summary')
+        result['overall_remark_error'] = True
+    return result
+
+
+@bp.route('/api/ext/vettings/close-auto/candidates')
+@api_key_required
+def api_ext_vt_close_auto_candidates():
+    return jsonify({'candidates': [dict(r) for r in _close_candidates()]})
+
+
+@bp.route('/api/ext/vettings/<int:vid>/close-auto', methods=['POST'])
+@api_key_required
+def api_ext_vt_close_auto(vid):
+    d = request.get_json(silent=True) or {}
+    return jsonify(close_auto_judge(vid, dry=bool(d.get('dry')), force=bool(d.get('force'))))
+
+
+def vt_open_workbook(vid):
+    """메일 첨부용 — '엑셀 추출' 과 같은 서식으로 **Open 항목만**. (bio, filename, ids) / None."""
+    v = query('''SELECT vt.*, ve.name AS vessel_name FROM vettings vt JOIN vessels ve ON ve.id = vt.vessel_id
+                  WHERE vt.id=?''', (vid,), one=True)
+    if not v:
+        return None
+    fr = query("SELECT id, no, item, description, status FROM vt_findings WHERE vetting_id=? "
+               "AND COALESCE(status,'Open')='Open' ORDER BY no, id", (vid,))
+    rows = [[r['no'], r['item'] or '', r['description'] or '', '', '', r['status'] or 'Open'] for r in fr]
+    vessel = v['vessel_name']
+    sub_bits = [f"Inspection: {v['inspection_date'] or '-'}", f"Port: {v['port'] or '-'}"]
+    if v['report_number']:
+        sub_bits.append(f"Report: {v['report_number']}")
+    sub_bits.append(f"Open {len(rows)}")
+    bio = _findings_workbook(f"SIRE Observation List — {vessel}", '   │   '.join(sub_bits),
+                             ['No.', 'ITEM', 'DESCRIPTION', 'RECTIFICATION', 'PHOTO', 'STATUS'], rows,
+                             wrap_cols={2, 3, 4, 5}, widths=[6, 26, 46, 40, 30, 10])
+    date_tag = (v['inspection_date'] or '').replace('-', '')
+    return bio, f"SIRE_{_safe_filename(vessel)}_{date_tag or vid}.xlsx", [int(r['id']) for r in fr]
+
+
+@bp.route('/api/ext/vettings/<int:vid>/open-export.xlsx')
+@api_key_required
+def api_ext_vt_open_export(vid):
+    from flask import send_file
+    res = vt_open_workbook(vid)
+    if not res:
+        abort(404)
+    bio, fname, ids = res
+    resp = send_file(bio, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp.headers['X-Finding-Ids'] = ','.join(str(i) for i in ids)
+    return resp
+
+
+# ── Vetting 메일 회신 반영 (형 지시 2026-10-03) — 층위상 ai_gemini 헬퍼가 필요해 여기 둔다 ──
+def _vt_reply_close_ok(evidence, body_norm=None):
+    ev = (evidence or '').strip()
+    return (len(_close_norm(ev)) >= 20 and bool(_CLOSE_DONE_RE.search(ev))
+            and not _CLOSE_PENDING_RE.search(ev))
+
+
+def vt_mail_apply_reply(rid, fid, d):
+    """d = {message_id, kind: close|update|needs_review, text, evidence}. 반환 {applied|duplicate|not_open}.
+    close 는 서버도 근거 문장(완료 동사·부정/예정 표현 없음)을 재검증하고, 못 미치면 needs_review 로 강등한다."""
+    kind = d.get('kind')
+    mid = (d.get('message_id') or '').strip()
+    if kind not in ('close', 'update', 'needs_review') or not mid:
+        raise vms.VettingMailError(400, 'kind/message_id 필요')
+    run, f = vms._run_finding(rid, fid)
+    if not query("SELECT 1 FROM vetting_mail_runs WHERE id=? AND sent_at >= datetime('now','localtime',?)",
+                 (rid, f'-{vms.REPLY_WINDOW_DAYS} days'), one=True):
+        raise vms.VettingMailError(409, '회신 반영 기간 지남')
+    if kind == 'close' and not _vt_reply_close_ok(d.get('evidence')):
+        kind = 'needs_review'
+    if query('SELECT 1 FROM vetting_mail_events WHERE run_id=? AND finding_id=? AND message_id=? '
+             "AND kind IN ('close','update','needs_review')", (rid, fid, mid), one=True):
+        return {'duplicate': True}
+    if (f['status'] or 'Open') != 'Open':
+        return {'not_open': True}
+    date = (d.get('date') or datetime.now().strftime('%Y-%m-%d'))[5:10].replace('-', '/')
+    text = _concise_full_report_remark((d.get('text') or '').strip(), limit=120)
+    auto = (vms.REVIEW_TAG if kind == 'needs_review' else '') + (f'회신({date}) ' + text if text else f'회신({date}) 확인 필요')
+    user_remark = _replace_full_report_remark(f['user_remark'], f['full_report_remark'], auto)
+    new_status = 'Closed' if kind == 'close' else 'Open'
+    before = {'status': f['status'], 'user_remark': f['user_remark'], 'full_report_remark': f['full_report_remark']}
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        cur = db.execute(
+            "UPDATE vt_findings SET status=?, user_remark=?, full_report_remark=?, updated_at=datetime('now','localtime') "
+            "WHERE id=? AND COALESCE(status,'Open')='Open' AND COALESCE(full_report_remark,'')=? "
+            "AND COALESCE(user_remark,'')=?",
+            (new_status, user_remark, auto, fid, f['full_report_remark'] or '', f['user_remark'] or ''))
+        if cur.rowcount != 1:
+            db.rollback()
+            raise vms.VettingMailError(409, '그 사이 항목이 바뀜 — 다음 실행에 재시도')
+        db.execute('INSERT INTO vetting_mail_events(run_id, finding_id, kind, message_id, evidence, before_json) '
+                   'VALUES(?,?,?,?,?,?)', (rid, fid, kind, mid, (d.get('evidence') or text or '')[:3900],
+                                          json.dumps(before, ensure_ascii=False)))
+        if kind == 'close':
+            db.execute(
+                "INSERT INTO vt_full_report_audit (vetting_id,report_number,file_sha256,filename,before_json,"
+                "after_json,applied_by) VALUES(?,?,?,?,?,?,?)",
+                (run['vetting_id'], '', mid[:64], 'Vetting mail reply',
+                 json.dumps([{'finding_id': fid, **before}], ensure_ascii=False),
+                 json.dumps([{'finding_id': fid, 'status': 'Closed', 'evidence': (d.get('evidence') or '')[:600]}],
+                            ensure_ascii=False), 'auto:vetting-mail-reply'))
+        db.commit()
+    except vms.VettingMailError:
+        raise
+    except Exception as e:
+        db.rollback()
+        if 'UNIQUE' in str(e):
+            return {'duplicate': True}
+        raise
+    return {'applied': kind, 'status': new_status}
+
+
+def vt_mail_finish_reply(rid, d):
+    """메일 1통 처리 완료 표시 + '지적 상세'(overall remark) 재생성. 마지막에 호출(중간 실패 시 재처리)."""
+    mid = (d.get('message_id') or '').strip()
+    if not mid:
+        raise vms.VettingMailError(400, 'message_id 필요')
+    run = query('SELECT * FROM vetting_mail_runs WHERE id=?', (rid,), one=True)
+    if not run:
+        raise vms.VettingMailError(404, 'run 없음')
+    vms._event(rid, None, 'reply', mid, d.get('evidence'), d.get('payload'))
+    summary = None
+    if d.get('changed'):
+        summary = (_rebuild_obs_summary(run['vetting_id']) or {}).get('summary')
+    return {'ok': True, 'overall_remark': summary}
+
+
+@bp.route('/api/ext/vetting-mail/runs/<int:rid>/findings/<int:fid>/reply', methods=['POST'])
+@api_key_required
+def api_ext_vetting_mail_reply(rid, fid):
+    try:
+        return jsonify(vt_mail_apply_reply(rid, fid, request.get_json(silent=True) or {}))
+    except vms.VettingMailError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+@bp.route('/api/ext/vetting-mail/runs/<int:rid>/reply-done', methods=['POST'])
+@api_key_required
+def api_ext_vetting_mail_reply_done(rid):
+    try:
+        return jsonify(vt_mail_finish_reply(rid, request.get_json(silent=True) or {}))
+    except vms.VettingMailError as e:
+        return jsonify({'error': e.message}), e.status

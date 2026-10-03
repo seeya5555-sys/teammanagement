@@ -3598,6 +3598,68 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/vetting-mail/config",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_config",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vetting-mail/runs",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_claim",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vetting-mail/runs/<int:rid>/findings/<int:fid>/reply",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "ai_gemini.api_ext_vetting_mail_reply",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vetting-mail/runs/<int:rid>/reply-done",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "ai_gemini.api_ext_vetting_mail_reply_done",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vetting-mail/runs/<int:rid>/state",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_state",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vetting-mail/runs/pending",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_pending",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/vettings",
     "methods": [
       "GET",
@@ -3605,6 +3667,38 @@
       "OPTIONS"
     ],
     "endpoint": "routes_calendar_dock.api_ext_vettings",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vettings/<int:vid>/close-auto",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "ai_gemini.api_ext_vt_close_auto",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vettings/<int:vid>/open-export.xlsx",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "ai_gemini.api_ext_vt_open_export",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vettings/close-auto/candidates",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "ai_gemini.api_ext_vt_close_auto_candidates",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -5060,6 +5154,37 @@
       "OPTIONS"
     ],
     "endpoint": "routes_core.api_vessels_all",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/vetting-mail/runs/<int:rid>/release",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_vetting_mail.api_vetting_mail_release",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/vetting-mail/settings/<int:vid>/enabled",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_vetting_mail.api_vetting_mail_enabled",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/vetting-mail/status",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_vetting_mail.api_vetting_mail_status",
     "strict_slashes": true,
     "defaults": {}
   },

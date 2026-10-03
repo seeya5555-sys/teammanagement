@@ -25,7 +25,8 @@
       "_xlsx_to_text",
       "api_key_required",
       "login_required"
-    ]
+    ],
+    "vetting_mail_service.py": []
   },
   "apns_push.py": {},
   "app.py": {
@@ -80,6 +81,7 @@
     "routes_liscr.py": [],
     "routes_repair_request.py": [],
     "routes_tail.py": [],
+    "routes_vetting_mail.py": [],
     "token_auth.py": [
       "_DUMMY_PW_HASH",
       "_TOKEN_MAXAGE",
@@ -466,9 +468,24 @@
       "login_required"
     ]
   },
+  "routes_vetting_mail.py": {
+    "helpers_shared.py": [
+      "admin_required",
+      "api_key_required"
+    ],
+    "vetting_mail_service.py": []
+  },
   "token_auth.py": {
     "app_core.py": [
       "app"
     ]
+  },
+  "vetting_mail_service.py": {
+    "app_core.py": [
+      "execute",
+      "execute_rc",
+      "query"
+    ],
+    "daily_mail_service.py": []
   }
 }

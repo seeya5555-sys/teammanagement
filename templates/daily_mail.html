@@ -80,6 +80,16 @@
     <h2>이번 주 발송 run</h2>
     <div id="dmRuns"><div class="dm-empty">불러오는 중…</div></div>
   </div>
+
+  <div class="dm-sec" id="vmSec">
+    <h2>Vetting OBS 자동 메일</h2>
+    <p class="dm-note">매주 월 09:00 SVMS Close report 로 Observation 자동 Close·지적 상세 갱신 → 09:30 Open Observation 이 남은 SIRE 마다 Open 항목 엑셀을 첨부해 발송. 수신자는 위 Daily 설정의 To/CC·Dear 를 그대로 씁니다. 기본값 OFF.</p>
+    <div id="vmVessels"><div class="dm-empty">불러오는 중…</div></div>
+    <h2 style="margin-top:14px">자동 판정 기록</h2>
+    <div id="vmCloses"><div class="dm-empty">불러오는 중…</div></div>
+    <h2 style="margin-top:14px">발송 run</h2>
+    <div id="vmRuns"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
 </div>
 {% endblock %}
 
@@ -170,6 +180,31 @@
     catch(e){ m.textContent=e.message; }
   });
 
+  async function loadVetting(){
+    const d=await api('/api/vetting-mail/status');
+    $('vmVessels').innerHTML=table(['선박','Open SIRE','To','발송',''],d.vessels.map(v=>
+      '<tr data-vid="'+v.vessel_id+'"><td>'+esc(v.name)+'</td><td>'+v.open_vettings+'</td><td class="muted">'+esc(v.to_emails||'-')+'</td>'
+      +'<td><label><input type="checkbox" data-vm="en" '+(v.enabled?'checked':'')+'> ON</label></td><td><span class="dm-msg"></span></td></tr>'));
+    $('vmCloses').innerHTML=table(['선박','Report','자동 Close','시각'],d.closes.map(c=>
+      '<tr><td>'+esc(c.vessel_name)+'</td><td class="muted">'+esc(c.report_number)+'</td><td>'+c.closed_ids.length+'건</td><td class="muted">'+esc(c.created_at)+'</td></tr>'));
+    $('vmRuns').innerHTML=table(['선박','Report','주차','상태','발송','',''],d.runs.map(r=>
+      '<tr><td>'+esc(r.vessel_name)+'</td><td class="muted">'+esc(r.report_number)+'</td><td>'+esc(r.iso_week)+'</td><td>'+esc(r.state)+'</td><td>'+esc(r.sent_at||'-')+'</td>'
+      +'<td class="dm-ev">'+esc(r.error||'')+'</td><td>'+(r.state!=='sent'?'<button class="btn btn-outline btn-sm" data-vmrel="'+r.id+'" title="Outlook 보낸편지함에 실제로 없는지 확인한 뒤에만">재발송 허용</button>':'')+'</td></tr>'));
+  }
+  document.addEventListener('change',async(ev)=>{
+    const cb=ev.target.closest('input[data-vm=en]'); if(!cb) return;
+    const tr=cb.closest('tr'), msg=tr.querySelector('.dm-msg');
+    if(cb.checked && !confirm('이 선박에 Vetting OBS 메일 자동 발송을 켤까요?')){ cb.checked=false; return; }
+    try{ await api('/api/vetting-mail/settings/'+tr.dataset.vid+'/enabled',{method:'POST',body:JSON.stringify({enabled:cb.checked})}); msg.textContent='저장됨'; }
+    catch(e){ cb.checked=!cb.checked; msg.textContent=e.message; }
+  });
+  document.addEventListener('click',async(ev)=>{
+    const b=ev.target.closest('button[data-vmrel]'); if(!b) return;
+    if(!confirm('Outlook 보낸편지함에서 이 메일이 실제로 안 나간 것을 확인했나요?')) return;
+    try{ await api('/api/vetting-mail/runs/'+b.dataset.vmrel+'/release',{method:'POST',body:'{}'}); await loadVetting(); }
+    catch(e){ alert(e.message); }
+  });
+  loadVetting().catch(e=>{$('vmVessels').innerHTML='<div class="dm-empty">'+esc(e.message)+'</div>';});
   loadStatus().catch(e=>{$('dmPills').innerHTML='<div class="dm-empty">'+esc(e.message)+'</div>';});
   loadSettings().catch(e=>{$('dmVessels').innerHTML='<div class="dm-empty">'+esc(e.message)+'</div>';});
 })();
