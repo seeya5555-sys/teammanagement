@@ -139,6 +139,15 @@ def save_template(subject_tpl, body_tpl, user):
     return get_template()
 
 
+def issue_fingerprint(rows):
+    """첨부 엑셀 최신성 지문: 원문 행 전체(번역 전) 해시. updated_at 은 모든 수정 경로가 갱신하지 않아 쓰지 않는다."""
+    import hashlib
+    h = hashlib.sha256()
+    for r in sorted((dict(x) for x in rows), key=lambda d: d['id']):
+        h.update(json.dumps(r, sort_keys=True, default=str, ensure_ascii=False).encode())
+    return h.hexdigest()
+
+
 def open_issue_rows(vessel_id):
     return query(
         "SELECT i.*, v.name AS vessel_name, v.vessel_type AS vessel_type "
@@ -228,14 +237,15 @@ def runner_config(iso_week=None, today=None):
         if not to_list:
             continue
         cc_list, _ = parse_emails(s['cc_emails'])
-        ids = [r['id'] for r in open_issue_rows(s['vessel_id'])]
+        rows = open_issue_rows(s['vessel_id'])
+        ids = [r['id'] for r in rows]
         run = query('SELECT id, state, tag FROM daily_mail_runs WHERE vessel_id=? AND iso_week=?',
                     (s['vessel_id'], iso_week), one=True)
         tag = make_tag(iso_week, s['code'])
         vessels.append({
             'vessel_id': s['vessel_id'], 'name': s['name'], 'code': s['code'],
             'enabled': 1, 'to': to_list, 'cc': cc_list,
-            'open_count': len(ids), 'open_issue_ids': ids, 'tag': tag,
+            'open_count': len(ids), 'open_issue_ids': ids, 'issue_fp': issue_fingerprint(rows), 'tag': tag,
             'dear': s['dear_name'] or DEFAULT_DEAR,
             'subject': tag + ' ' + render_template(tpl['subject_tpl'], s['name'], len(ids), due, s['dear_name']),
             'body': render_template(tpl['body_tpl'], s['name'], len(ids), due, s['dear_name']),

@@ -101,6 +101,19 @@ class DailyMailTests(unittest.TestCase):
         self.assertEqual('Dear Gerasimos,\nreply by 07th Oct 2026.', out)
         self.assertTrue(render_template('Dear Sir/Madam,', 'V', 1, '2026-10-07', '').startswith('Dear Sir/Madam,'))
 
+
+    def test_issue_fingerprint_in_config_and_export(self):
+        self._enable()
+        cfg = self.c.get('/api/ext/daily-mail/config?week=2026W40', headers=self.h).get_json()
+        fp = next(x for x in cfg['vessels'] if x['vessel_id'] == self.vid)['issue_fp']
+        r = self.c.get(f'/api/ext/daily-mail/vessels/{self.vid}/export.xlsx?translate=0', headers=self.h)
+        self.assertEqual(fp, r.headers.get('X-Issue-Fp'))
+        with appmod.app.app_context():
+            from app_core import execute
+            execute("UPDATE issues SET description='changed' WHERE id=?", (self.i1,))
+        cfg = self.c.get('/api/ext/daily-mail/config?week=2026W40', headers=self.h).get_json()
+        self.assertNotEqual(fp, next(x for x in cfg['vessels'] if x['vessel_id'] == self.vid)['issue_fp'])
+
     def _enable(self):
         r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
                        json={'to_emails': 'master@x.com', 'cc_emails': 'team@x.com; bad', 'enabled': 1})

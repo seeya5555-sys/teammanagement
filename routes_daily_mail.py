@@ -130,7 +130,8 @@ def api_ext_daily_mail_config():
 @api_key_required
 def api_ext_daily_mail_export(vid):
     """선박 1척의 Open/InProgress 이슈 영문 xlsx (Issue ID · 회신 칸 포함)."""
-    rows = [_issue_to_dict(r) for r in svc.open_issue_rows(vid)]
+    raw = svc.open_issue_rows(vid)
+    rows = [_issue_to_dict(r) for r in raw]
     if not rows:
         return jsonify({'error': 'no open issues'}), 404
     if request.args.get('translate', '1') != '0':
@@ -143,6 +144,7 @@ def api_ext_daily_mail_export(vid):
     resp = Response(data, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     resp.headers['Content-Disposition'] = f'attachment; filename="{fname}"'
     resp.headers['X-Issue-Ids'] = ','.join(str(r['id']) for r in rows)
+    resp.headers['X-Issue-Fp'] = svc.issue_fingerprint(raw)   # 번역 전 원문 지문(러너 준비분 최신성 확인)
     return resp
 
 
