@@ -227,6 +227,56 @@ class VettingObsAutomationTests(unittest.TestCase):
         r = self.c.post(f'/api/ext/vetting-mail/runs/{rid}/findings/{self.f1}/reply', headers=self.h,
                         json={'message_id': 'x', 'kind': 'close'})
         self.assertEqual(409, r.status_code)
+    def test_manual_request_separate_from_weekly_and_followup_latest(self):
+        ids = sorted([self.f1, self.f2, self.f3])
+        # 수동은 OFF 여도 가능, 자동 주간 claim 과 별개
+        q = self.c.post(f'/api/vetting-mail/manual/{self.ves}', json={})
+        self.assertEqual(201, q.status_code)
+        self.assertEqual(409, self.c.post(f'/api/vetting-mail/manual/{self.ves}', json={}).status_code)  # 대기 중복
+        self.assertEqual(400, self.c.post(f'/api/vetting-mail/manual/{self.cntr}', json={}).status_code)  # VLCC 아님
+        qid = q.get_json()['id']
+        self.assertEqual([qid], [r['id'] for r in self.c.get('/api/ext/vetting-mail/manual', headers=self.h).get_json()['requests']])
+        self.assertEqual(409, self.c.post('/api/ext/vetting-mail/runs', headers=self.h, json={   # claim 전 거부
+            'vetting_id': self.vt, 'iso_week': '2026W41', 'finding_ids': ids, 'request_id': qid}).status_code)
+        self.assertEqual(200, self.c.post(f'/api/ext/vetting-mail/manual/{qid}/claim', headers=self.h).status_code)
+        self.assertEqual(409, self.c.post(f'/api/ext/vetting-mail/manual/{qid}/claim', headers=self.h).status_code)
+        m = self.c.post('/api/ext/vetting-mail/runs', headers=self.h, json={
+            'vetting_id': self.vt, 'iso_week': '2026W41', 'finding_ids': ids, 'request_id': qid})
+        # 주차가 바뀌어도 같은 요청×SIRE 재claim 불가(키=M<id>)
+        self.assertEqual(409, self.c.post('/api/ext/vetting-mail/runs', headers=self.h, json={
+            'vetting_id': self.vt, 'iso_week': '2026W42', 'finding_ids': ids, 'request_id': qid}).status_code)
+        self.assertEqual(201, m.status_code)
+        self.assertTrue(m.get_json()['manual'])
+        self.assertTrue(m.get_json()['body'].startswith('Dear Charalampos,'))
+        mid = m.get_json()['id']
+        self.c.post(f'/api/ext/vetting-mail/runs/{mid}/state', headers=self.h, json={'state': 'sent', 'sent_at': '2026-10-05 10:00:00'})
+        self.assertEqual('done', self.c.post(f'/api/ext/vetting-mail/manual/{qid}/state', headers=self.h,
+                                             json={'state': 'done'}).get_json()['state'])
+        # 같은 주 자동 발송은 여전히 가능(별개)
+        cfg = self.c.get('/api/ext/vetting-mail/config?week=2026W41', headers=self.h).get_json()
+        self.assertIsNone(cfg['vettings'][0]['run_this_week'])
+        self.c.post(f'/api/vetting-mail/settings/{self.ves}/enabled', json={'enabled': True})
+        a = self.c.post('/api/ext/vetting-mail/runs', headers=self.h, json={
+            'vetting_id': self.vt, 'iso_week': '2026W41', 'finding_ids': ids}).get_json()['id']
+        self.c.post(f'/api/ext/vetting-mail/runs/{a}/state', headers=self.h, json={'state': 'sent', 'sent_at': '2026-10-06 09:30:00'})
+        # 팔로우업 = 최신 발송분 1건만
+        p = self.c.get('/api/ext/vetting-mail/runs/pending', headers=self.h).get_json()['runs']
+        self.assertEqual([a], [r['id'] for r in p])
+
+    def test_template_edit_and_validation(self):
+        t = self.c.get('/api/vetting-mail/template').get_json()
+        self.assertIn('{open}', t['template']['body_tpl'])
+        self.assertEqual(400, self.c.put('/api/vetting-mail/template', json={'subject_tpl': 'x {bad}', 'body_tpl': 'y'}).status_code)
+        self.assertEqual(200, self.c.put('/api/vetting-mail/template', json={
+            'subject_tpl': '{vessel} OBS ({open})', 'body_tpl': 'Dear {dear},\n{open} of {total}'}).status_code)
+        v = self.c.get('/api/ext/vetting-mail/config?week=2026W41', headers=self.h).get_json()['vettings'][0]
+        self.assertEqual('GHANA TEST OBS (3)', v['subject'])
+        self.assertEqual('Dear Charalampos,\n3 of 4', v['body'])
+
+    def test_page_renders(self):
+        r = self.c.get('/vetting-mail')
+        self.assertEqual(200, r.status_code)
+        self.assertIn('수동 발송', r.get_data(as_text=True))
 
 
 if __name__ == '__main__':

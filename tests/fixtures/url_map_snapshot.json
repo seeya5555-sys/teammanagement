@@ -3609,6 +3609,37 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/vetting-mail/manual",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_manual_queue",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vetting-mail/manual/<int:qid>/claim",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_manual_claim",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vetting-mail/manual/<int:qid>/state",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_manual_state",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/vetting-mail/runs",
     "methods": [
       "OPTIONS",
@@ -5158,6 +5189,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/vetting-mail/manual/<int:vid>",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_vetting_mail.api_vetting_mail_manual",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/vetting-mail/runs/<int:rid>/release",
     "methods": [
       "OPTIONS",
@@ -5185,6 +5226,18 @@
       "OPTIONS"
     ],
     "endpoint": "routes_vetting_mail.api_vetting_mail_status",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/vetting-mail/template",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_vetting_mail.api_vetting_mail_template",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -5811,6 +5864,17 @@
       "OPTIONS"
     ],
     "endpoint": "static",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/vetting-mail",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_vetting_mail.vetting_mail_page",
     "strict_slashes": true,
     "defaults": {}
   },

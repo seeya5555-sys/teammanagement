@@ -1336,3 +1336,23 @@ CREATE TABLE IF NOT EXISTS vetting_mail_events (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vetting_mail_events
     ON vetting_mail_events(run_id, COALESCE(finding_id,0), kind, message_id);
+-- vetting_mail_template: Vetting OBS 메일 템플릿(형 지정 Ghana Prosperity 문구가 기본값).
+CREATE TABLE IF NOT EXISTS vetting_mail_template (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    subject_tpl TEXT    NOT NULL,
+    body_tpl    TEXT    NOT NULL,
+    updated_by  TEXT,
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+-- vetting_mail_requests: 선박별 수동 실행 요청(형이 원할 때만). 맥 러너가 집어 발송. 자동 주간 run 과 별개.
+CREATE TABLE IF NOT EXISTS vetting_mail_requests (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id    INTEGER NOT NULL REFERENCES vessels(id) ON DELETE CASCADE,
+    state        TEXT    NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','processing','done','failed')),
+    requested_by TEXT,
+    result       TEXT,
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    done_at      TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vetting_mail_requests_queued
+    ON vetting_mail_requests(vessel_id) WHERE state IN ('queued','processing');

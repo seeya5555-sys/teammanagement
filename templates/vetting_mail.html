@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Vetting 자동화 · TRMT3{% endblock %}
+
+{% block head %}
+<style>
+  .dm-wrap{max-width:1180px;margin:0 auto}
+  .dm-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 14px}
+  .dm-spacer{flex:1}
+  .dm-sec{background:var(--surface);border:1px solid var(--border-subtle);border-radius:6px;padding:14px 16px;margin-bottom:14px}
+  .dm-sec h2{font-size:14.5px;font-weight:700;margin:0 0 10px;color:var(--text-primary)}
+  .dm-note{font-size:12px;color:var(--text-secondary);line-height:1.6;margin:0 0 10px}
+  .dm-pills{display:flex;gap:10px;flex-wrap:wrap}
+  .dm-pill{background:var(--surface-2);border:1px solid var(--border-subtle);border-radius:6px;padding:8px 14px;min-width:92px}
+  .dm-pill .n{font-size:20px;font-weight:700;line-height:1.1;color:var(--text-primary)}
+  .dm-pill .l{font-size:11.5px;color:var(--text-secondary);font-weight:600}
+  .dm-pill.warn .n{color:var(--amber)}
+  .dm-pill.bad .n{color:var(--red)}
+  table.dm-t{width:100%;border-collapse:collapse;font-size:12.5px}
+  .dm-t th{text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border);padding:6px 6px;white-space:nowrap}
+  .dm-t td{border-bottom:1px solid var(--border-subtle);padding:6px 6px;vertical-align:top}
+  .dm-t input[type=text]{width:100%;min-width:180px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface)}
+  .dm-t input[data-f=dear]{min-width:120px}
+  .dm-t .muted{color:var(--text-tertiary)}
+  .dm-ev{max-width:420px;white-space:pre-wrap;color:var(--text-secondary)}
+  .dm-tpl label{display:block;font-size:12px;font-weight:600;color:var(--text-secondary);margin:8px 0 4px}
+  .dm-tpl input,.dm-tpl textarea{width:100%;font-size:12.5px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);font-family:inherit}
+  .dm-tpl textarea{min-height:190px;line-height:1.5}
+  .dm-row-actions{display:flex;gap:6px;flex-wrap:wrap}
+  .dm-badge{font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-secondary);white-space:nowrap}
+  .dm-badge.ok{background:var(--green-bg);color:var(--green);border-color:transparent}
+  .dm-badge.warn{background:var(--amber-bg);color:var(--amber);border-color:transparent}
+  .dm-badge.bad{background:var(--red-bg);color:var(--red);border-color:transparent}
+  .dm-empty{color:var(--text-tertiary);font-size:12.5px;padding:6px 0}
+  .dm-msg{font-size:12px;margin-left:8px;color:var(--text-secondary)}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dm-wrap">
+  <div class="dm-head ops-page-header">
+    <div><p class="ops-page-kicker">Vetting Status</p><h1 class="page-title">Vetting 자동화 (VLCC)</h1></div>
+    <div class="dm-spacer"></div>
+  </div>
+
+  <div class="dm-sec">
+    <h2>선박별 수신자 · ON/OFF · 수동 실행</h2>
+    <p class="dm-note">매주 월 09:00 SVMS Close report 로 Observation 자동 Close·지적 상세 갱신 → 09:30 ON 인 선박의 Open Observation 이 남은 SIRE 마다 Open 항목 엑셀을 첨부해 발송. VLCC 전용.
+      To/CC/Dear 는 <a href="{{ url_for('routes_daily_mail.daily_mail_page') }}">Daily 메일 자동화</a> 설정을 그대로 씁니다(수정도 거기서).
+      <b>수동 실행</b>은 ON/OFF 와 무관하게 그 선박의 Open SIRE 전부를 바로(약 10분 내) 발송하며 자동 주간 발송과 별개입니다. 회신 팔로우업은 SIRE 별로 <b>가장 최근 발송분</b>(자동·수동 무관) 기준.</p>
+    <div id="vmVessels"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="dm-sec dm-tpl">
+    <h2>메일 템플릿</h2>
+    <p class="dm-note">변수: <code>{vessel}</code> 선명 · <code>{sire_type}</code> SIRE 종류(뒤 공백 포함) · <code>{date}</code> 검사일 · <code>{inspection}</code> (검사기관, 항구, 검사일) · <code>{open}</code> Open 건수 · <code>{s}</code> 복수형 s · <code>{total}</code> 전체 지적 수 · <code>{dear}</code> Daily 설정 Dear(빈칸이면 Sir/Madam). 첨부=Open 항목 엑셀 자동.</p>
+    <label for="vmSubj">제목</label>
+    <input id="vmSubj" type="text" maxlength="300">
+    <label for="vmBody">본문</label>
+    <textarea id="vmBody" maxlength="8000" style="min-height:300px"></textarea>
+    <div style="margin-top:8px"><button class="btn btn-primary btn-sm" id="vmTplSave" type="button">템플릿 저장</button><span class="dm-msg" id="vmTplMsg"></span></div>
+  </div>
+
+  <div class="dm-sec">
+    <h2>수동 실행 요청</h2>
+    <div id="vmReqs"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="dm-sec">
+    <h2>자동 판정 기록</h2>
+    <div id="vmCloses"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="dm-sec">
+    <h2>발송 기록</h2>
+    <div id="vmRuns"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const $=(id)=>document.getElementById(id);
+  const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  async function api(url,opt){
+    const r=await fetch(url,Object.assign({headers:{'Accept':'application/json','Content-Type':'application/json'}},opt||{}));
+    let d={}; try{d=await r.json();}catch(e){}
+    if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+    return d;
+  }
+  function table(cols,rows){
+    if(!rows.length) return '<div class="dm-empty">없음</div>';
+    return '<table class="dm-t"><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>'+rows.join('')+'</tbody></table>';
+  }
+  const kind=(w)=>/^M\d/.test(String(w||''))?'<span class="dm-badge warn">수동</span>':'<span class="dm-badge">자동</span>';
+  async function load(){
+    const d=await api('/api/vetting-mail/status');
+    $('vmVessels').innerHTML=table(['선박','Open SIRE','To','CC','Dear','자동 발송','수동',''],d.vessels.map(v=>
+      '<tr data-vid="'+v.vessel_id+'"><td>'+esc(v.name)+'</td><td>'+v.open_vettings+'</td>'
+      +'<td class="muted">'+esc(v.to_emails||'-')+'</td><td class="muted">'+esc(v.cc_emails||'-')+'</td><td class="muted">'+esc(v.dear_name||'Sir/Madam')+'</td>'
+      +'<td><label><input type="checkbox" data-vm="en" '+(v.enabled?'checked':'')+'> ON</label></td>'
+      +'<td><button class="btn btn-outline btn-sm" data-vmman="'+v.vessel_id+'" '+(v.open_vettings&&v.to_emails?'':'disabled')+'>수동 발송</button></td>'
+      +'<td><span class="dm-msg"></span></td></tr>'));
+    $('vmReqs').innerHTML=table(['선박','상태','요청자','요청','처리','결과'],d.requests.map(q=>
+      '<tr><td>'+esc(q.vessel_name)+'</td><td>'+esc({queued:'대기',processing:'발송 중',done:'완료',failed:'실패'}[q.state]||q.state)+'</td><td class="muted">'+esc(q.requested_by)+'</td><td class="muted">'+esc(q.created_at)+'</td><td class="muted">'+esc(q.done_at||'-')+'</td><td class="dm-ev">'+esc(q.result||'')+'</td></tr>'));
+    $('vmCloses').innerHTML=table(['선박','Report','자동 Close','시각'],d.closes.map(c=>
+      '<tr><td>'+esc(c.vessel_name)+'</td><td class="muted">'+esc(c.report_number)+'</td><td>'+c.closed_ids.length+'건</td><td class="muted">'+esc(c.created_at)+'</td></tr>'));
+    $('vmRuns').innerHTML=table(['선박','Report','구분','주차','상태','발송','',''],d.runs.map(r=>
+      '<tr><td>'+esc(r.vessel_name)+'</td><td class="muted">'+esc(r.report_number)+'</td><td>'+kind(r.iso_week)+'</td><td>'+esc(/^M\d/.test(String(r.iso_week))?'-':r.iso_week)+'</td><td>'+esc(r.state)+'</td><td>'+esc(r.sent_at||'-')+'</td>'
+      +'<td class="dm-ev">'+esc(r.error||'')+'</td><td>'+(r.state!=='sent'?'<button class="btn btn-outline btn-sm" data-vmrel="'+r.id+'" title="Outlook 보낸편지함에 실제로 없는지 확인한 뒤에만">재발송 허용</button>':'')+'</td></tr>'));
+  }
+  async function loadTpl(){
+    const d=await api('/api/vetting-mail/template');
+    $('vmSubj').value=d.template.subject_tpl; $('vmBody').value=d.template.body_tpl;
+    $('vmTplMsg').textContent=d.template.updated_at?('최종 저장 '+d.template.updated_at+' · '+(d.template.updated_by||'')):'기본 템플릿';
+  }
+  $('vmTplSave').addEventListener('click',async()=>{
+    try{ const t=await api('/api/vetting-mail/template',{method:'PUT',body:JSON.stringify({subject_tpl:$('vmSubj').value,body_tpl:$('vmBody').value})});
+      $('vmTplMsg').textContent='저장됨 '+t.updated_at; }
+    catch(e){ $('vmTplMsg').textContent=e.message; }
+  });
+  document.addEventListener('change',async(ev)=>{
+    const cb=ev.target.closest('input[data-vm=en]'); if(!cb) return;
+    const tr=cb.closest('tr'), msg=tr.querySelector('.dm-msg');
+    if(cb.checked && !confirm('이 선박에 Vetting OBS 메일 자동 발송(매주 월 09:30)을 켤까요?')){ cb.checked=false; return; }
+    try{ await api('/api/vetting-mail/settings/'+tr.dataset.vid+'/enabled',{method:'POST',body:JSON.stringify({enabled:cb.checked})}); msg.textContent='저장됨'; }
+    catch(e){ cb.checked=!cb.checked; msg.textContent=e.message; }
+  });
+  document.addEventListener('click',async(ev)=>{
+    const m=ev.target.closest('button[data-vmman]');
+    if(m){
+      const tr=m.closest('tr'), msg=tr.querySelector('.dm-msg');
+      if(!confirm(tr.children[0].textContent+' 의 Open SIRE 전부에 지금 확인요청 메일을 보낼까요? (자동 발송과 별개)')) return;
+      try{ await api('/api/vetting-mail/manual/'+m.dataset.vmman,{method:'POST',body:'{}'}); msg.textContent='요청됨 · 약 10분 내 발송'; await load(); }
+      catch(e){ msg.textContent=e.message; }
+      return;
+    }
+    const b=ev.target.closest('button[data-vmrel]'); if(!b) return;
+    if(!confirm('Outlook 보낸편지함에서 이 메일이 실제로 안 나간 것을 확인했나요?')) return;
+    try{ await api('/api/vetting-mail/runs/'+b.dataset.vmrel+'/release',{method:'POST',body:'{}'}); await load(); }
+    catch(e){ alert(e.message); }
+  });
+  load().catch(e=>{$('vmVessels').innerHTML='<div class="dm-empty">'+esc(e.message)+'</div>';});
+  loadTpl().catch(e=>{$('vmTplMsg').textContent=e.message;});
+})();
+</script>
+{% endblock %}

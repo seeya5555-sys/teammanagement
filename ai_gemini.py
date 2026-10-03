@@ -1783,7 +1783,7 @@ def _close_candidates():
         "SELECT vt.id, vt.vessel_id, vt.report_number, vt.inspection_date, ve.name AS vessel_name, "
         " (SELECT COUNT(*) FROM vt_findings f WHERE f.vetting_id=vt.id AND COALESCE(f.status,'Open')='Open') AS open_count "
         "FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id "
-        "WHERE vt.svms_close_report_yn='Y' AND " + vms.VLCC_SQL.format(t='ve') + " AND EXISTS (SELECT 1 FROM vt_attachments a WHERE a.vetting_id=vt.id "
+        "WHERE vt.svms_close_report_yn='Y' AND UPPER(TRIM(COALESCE(ve.vessel_type,'')))='VLCC' AND EXISTS (SELECT 1 FROM vt_attachments a WHERE a.vetting_id=vt.id "
         "  AND a.source='svms' AND a.source_type='close' AND a.inactive_at IS NULL) "
         "ORDER BY vt.inspection_date DESC, vt.id DESC")
 
