@@ -90,6 +90,17 @@ class DailyMailTests(unittest.TestCase):
                        json={'to_emails': 'master@x.com', 'enabled': 1, 'dear_name': '{vessel}'})
         self.assertEqual(400, r.status_code)
 
+
+    def test_literal_greeting_uses_dear_and_date_format(self):
+        from daily_mail_service import render_template, format_mail_date
+        self.assertEqual('07th Oct 2026', format_mail_date('2026-10-07'))
+        self.assertEqual('01st Nov 2026', format_mail_date('2026-11-01'))
+        self.assertEqual('22nd Oct 2026', format_mail_date('2026-10-22'))
+        self.assertEqual('13th Oct 2026', format_mail_date('2026-10-13'))
+        out = render_template('Dear Sir/Madam,\nreply by {due_date}.', 'V', 1, '2026-10-07', 'Gerasimos')
+        self.assertEqual('Dear Gerasimos,\nreply by 07th Oct 2026.', out)
+        self.assertTrue(render_template('Dear Sir/Madam,', 'V', 1, '2026-10-07', '').startswith('Dear Sir/Madam,'))
+
     def _enable(self):
         r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
                        json={'to_emails': 'master@x.com', 'cc_emails': 'team@x.com; bad', 'enabled': 1})

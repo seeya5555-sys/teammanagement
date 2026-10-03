@@ -72,11 +72,31 @@ def parse_emails(text):
     return out, bad
 
 
+_MONTHS = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')  # locale 무관
+
+
+def format_mail_date(value):
+    """형 지정 메일 날짜 형식: '07th Oct 2026'(일 2자리+서수). 파싱 불가면 원문."""
+    try:
+        d = date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return str(value)
+    suf = 'th' if 11 <= d.day % 100 <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(d.day % 10, 'th')
+    return f"{d.day:02d}{suf} {_MONTHS[d.month - 1]} {d.year}"
+
+
+_LITERAL_GREETING = re.compile(r'^(\s*Dear\s+)Sir\s*/\s*Madam\b', re.I)
+
+
 def render_template(tpl, vessel, count, due_date, dear=''):
-    """{vessel}/{count}/{due_date}/{dear} 만 치환. str.format 을 쓰지 않는다(중괄호 주입·속성접근 차단)."""
-    vals = {'vessel': str(vessel), 'count': str(count), 'due_date': str(due_date),
+    """{vessel}/{count}/{due_date}/{dear} 만 치환. str.format 을 쓰지 않는다(중괄호 주입·속성접근 차단).
+    템플릿에 {dear} 가 없고 첫 인사가 'Dear Sir/Madam' 이면 그 자리를 선박별 이름으로 쓴다(형 2026-10-03)."""
+    tpl = tpl or ''
+    if '{dear}' not in tpl:
+        tpl = _LITERAL_GREETING.sub(lambda m: m.group(1) + '{dear}', tpl, count=1)
+    vals = {'vessel': str(vessel), 'count': str(count), 'due_date': format_mail_date(due_date),
             'dear': (dear or '').strip() or DEFAULT_DEAR}
-    return re.sub(r'\{(vessel|count|due_date|dear)\}', lambda m: vals[m.group(1)], tpl or '')
+    return re.sub(r'\{(vessel|count|due_date|dear)\}', lambda m: vals[m.group(1)], tpl)
 
 
 def due_date_for(sent_day=None):
