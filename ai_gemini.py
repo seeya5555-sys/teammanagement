@@ -1783,18 +1783,20 @@ def _close_candidates():
         "SELECT vt.id, vt.vessel_id, vt.report_number, vt.inspection_date, ve.name AS vessel_name, "
         " (SELECT COUNT(*) FROM vt_findings f WHERE f.vetting_id=vt.id AND COALESCE(f.status,'Open')='Open') AS open_count "
         "FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id "
-        "WHERE vt.svms_close_report_yn='Y' AND EXISTS (SELECT 1 FROM vt_attachments a WHERE a.vetting_id=vt.id "
+        "WHERE vt.svms_close_report_yn='Y' AND " + vms.VLCC_SQL.format(t='ve') + " AND EXISTS (SELECT 1 FROM vt_attachments a WHERE a.vetting_id=vt.id "
         "  AND a.source='svms' AND a.source_type='close' AND a.inactive_at IS NULL) "
         "ORDER BY vt.inspection_date DESC, vt.id DESC")
 
 
 def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
     """1개 vetting 판정(+적용). 반환 dict 는 러너가 그대로 텔레그램 보고에 쓴다."""
-    v = query('SELECT vt.*, ve.name AS vessel_name FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id '
+    v = query('SELECT vt.*, ve.name AS vessel_name, ve.vessel_type FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id '
               'WHERE vt.id=?', (vid,), one=True)
     if not v:
         return {'vetting_id': vid, 'skipped': 'not_found'}
     base = {'vetting_id': vid, 'vessel': v['vessel_name'], 'report_number': v['report_number']}
+    if not vms.is_vlcc(v['vessel_type']):
+        return {**base, 'skipped': 'not_vlcc'}
     if (v['svms_close_report_yn'] or '') != 'Y':
         return {**base, 'skipped': 'no_close_report_flag'}
     open_f = query("SELECT * FROM vt_findings WHERE vetting_id=? AND COALESCE(status,'Open')='Open' "

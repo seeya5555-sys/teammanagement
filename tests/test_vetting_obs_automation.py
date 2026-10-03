@@ -28,7 +28,14 @@ class VettingObsAutomationTests(unittest.TestCase):
             from helpers_shared import _get_api_key
             from app_core import execute
             self.key = _get_api_key(create=True)
-            self.ves = execute("INSERT INTO vessels(name, vsl_cd) VALUES('GHANA TEST','GHTS')")
+            self.ves = execute("INSERT INTO vessels(name, vsl_cd, vessel_type) VALUES('GHANA TEST','GHTS','VLCC')")
+            self.cntr = execute("INSERT INTO vessels(name, vsl_cd, vessel_type) VALUES('BOX TEST','BXTS','CONTAINER')")
+            self.cvt = execute("INSERT INTO vettings(vessel_id, report_number, svms_close_report_yn) VALUES(?,?,'Y')",
+                               (self.cntr, 'CNTR-1'))
+            execute("INSERT INTO vt_findings(vetting_id,no,item,description,status) VALUES(?,1,'x','y','Open')", (self.cvt,))
+            execute("INSERT INTO vt_attachments(vetting_id, filename, stored_name, source, source_type, sha256) "
+                    "VALUES(?,'c.docx','c.docx','svms','close','cd')", (self.cvt,))
+            execute("INSERT INTO daily_mail_settings(vessel_id,to_emails,enabled) VALUES(?,'b@x.com',1)", (self.cntr,))
             self.vt = execute("INSERT INTO vettings(vessel_id, report_number, inspection_date, inspection_company, port, "
                               "sire_type, valid, svms_close_report_yn) VALUES(?,?,?,?,?,?,?,'Y')",
                               (self.ves, 'LVKX-0383-3966-7845', '2026-08-06', 'PETROVIETNAM', 'Rotterdam',
@@ -150,6 +157,15 @@ class VettingObsAutomationTests(unittest.TestCase):
         self.assertEqual(409, self.c.post(f'/api/vetting-mail/runs/{rid}/release').status_code)
         cfg = self.c.get('/api/ext/vetting-mail/config?week=2026W41', headers=self.h).get_json()
         self.assertEqual('sent', cfg['vettings'][0]['run_this_week']['state'])
+
+    def test_vlcc_only(self):
+        self.assertEqual(400, self.c.post(f'/api/vetting-mail/settings/{self.cntr}/enabled', json={'enabled': True}).status_code)
+        names = [v['name'] for v in self.c.get('/api/vetting-mail/status').get_json()['vessels']]
+        self.assertNotIn('BOX TEST', names)
+        cfg = self.c.get('/api/ext/vetting-mail/config?week=2026W41', headers=self.h).get_json()
+        self.assertEqual([self.vt], [v['vetting_id'] for v in cfg['vettings']])
+        r = self.c.post(f'/api/ext/vettings/{self.cvt}/close-auto', headers=self.h, json={}).get_json()
+        self.assertEqual('not_vlcc', r['skipped'])
 
     def test_on_requires_to(self):
         with appmod.app.app_context():

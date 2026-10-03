@@ -37,6 +37,14 @@ BODY_TPL = (
 )
 
 
+# 형 지시(2026-10-03): Vetting OBS 자동화(자동 Close·메일·회신반영)는 VLCC 전용.
+VLCC_SQL = "UPPER(TRIM(COALESCE({t}.vessel_type,'')))='VLCC'"
+
+
+def is_vlcc(vessel_type):
+    return (vessel_type or '').strip().upper() == 'VLCC'
+
+
 class VettingMailError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
@@ -70,13 +78,16 @@ def list_settings():
         "       (SELECT COUNT(*) FROM vettings vt WHERE vt.vessel_id=v.id AND EXISTS (SELECT 1 FROM vt_findings f "
         "          WHERE f.vetting_id=vt.id AND COALESCE(f.status,'Open')='Open')) AS open_vettings "
         "FROM vessels v LEFT JOIN daily_mail_settings s ON s.vessel_id=v.id "
-        "LEFT JOIN vetting_mail_settings m ON m.vessel_id=v.id WHERE v.active=1 ORDER BY v.name")
+        "LEFT JOIN vetting_mail_settings m ON m.vessel_id=v.id WHERE v.active=1 AND "+VLCC_SQL.format(t='v')+" ORDER BY v.name")
     return [dict(r) for r in rows if roster is None or r['vessel_id'] in roster]
 
 
 def set_enabled(vessel_id, enabled, user):
-    if not query('SELECT 1 FROM vessels WHERE id=?', (vessel_id,), one=True):
+    ves = query('SELECT vessel_type FROM vessels WHERE id=?', (vessel_id,), one=True)
+    if not ves:
         raise VettingMailError(404, '선박이 없습니다.')
+    if not is_vlcc(ves['vessel_type']):
+        raise VettingMailError(400, 'Vetting OBS 메일은 VLCC 전용입니다.')
     if not dm.in_roster(vessel_id):
         raise VettingMailError(403, '담당 선박이 아닙니다.')
     enabled = 1 if enabled else 0
@@ -103,7 +114,7 @@ def runner_config(iso_week=None):
         "       (SELECT COUNT(*) FROM vt_findings f WHERE f.vetting_id=vt.id) AS total "
         "FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id "
         "LEFT JOIN daily_mail_settings s ON s.vessel_id=ve.id LEFT JOIN vetting_mail_settings m ON m.vessel_id=ve.id "
-        "WHERE ve.active=1 ORDER BY ve.name, vt.inspection_date DESC, vt.id DESC")
+        "WHERE ve.active=1 AND "+VLCC_SQL.format(t='ve')+" ORDER BY ve.name, vt.inspection_date DESC, vt.id DESC")
     out = []
     for v in rows:
         if roster is not None and v['vessel_id'] not in roster:
@@ -137,12 +148,14 @@ def claim_run(d):
     week = d.get('iso_week') or ''
     if not dm.valid_iso_week(week):
         raise VettingMailError(400, 'iso_week 형식 오류')
-    v = query('SELECT vt.*, ve.name AS vessel_name, (SELECT COUNT(*) FROM vt_findings f WHERE f.vetting_id=vt.id) AS total '
+    v = query('SELECT vt.*, ve.name AS vessel_name, ve.vessel_type, (SELECT COUNT(*) FROM vt_findings f WHERE f.vetting_id=vt.id) AS total '
               'FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id WHERE vt.id=?', (vid,), one=True)
     if not v:
         raise VettingMailError(404, 'vetting 없음')
     if not dm.in_roster(v['vessel_id']):
         raise VettingMailError(409, '담당 선박 아님')
+    if not is_vlcc(v['vessel_type']):
+        raise VettingMailError(409, 'VLCC 아님')
     m = query('SELECT enabled FROM vetting_mail_settings WHERE vessel_id=?', (v['vessel_id'],), one=True)
     if not (m and m['enabled']):
         raise VettingMailError(409, 'Vetting 메일 OFF')
