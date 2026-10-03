@@ -125,7 +125,26 @@ def open_issue_rows(vessel_id):
         "ORDER BY i.issue_date ASC, i.id ASC", (vessel_id,))
 
 
+# 형 지시(2026-10-03): Daily 업무현황과 같은 담당 로스터(손유석 supervisor_vessels)만 대상.
+# Daily(app.js onlySupId)와 동일하게 손유석 감독 레코드가 없으면 전체(active) 유지.
+ROSTER_SUPERVISOR = '손유석'
+
+
+def roster_vessel_ids():
+    sup = query('SELECT id FROM supervisors WHERE TRIM(name)=?', (ROSTER_SUPERVISOR,), one=True)
+    if not sup:
+        return None
+    return {r['vessel_id'] for r in query(
+        'SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?', (sup['id'],))}
+
+
+def in_roster(vessel_id):
+    ids = roster_vessel_ids()
+    return ids is None or vessel_id in ids
+
+
 def list_settings():
+    roster = roster_vessel_ids()
     rows = query(
         "SELECT v.id AS vessel_id, v.name, v.vsl_cd, v.vessel_type, "
         "       COALESCE(s.to_emails,'') AS to_emails, COALESCE(s.cc_emails,'') AS cc_emails, "
@@ -136,6 +155,8 @@ def list_settings():
         "WHERE v.active=1 ORDER BY v.name")
     out = []
     for r in rows:
+        if roster is not None and r['vessel_id'] not in roster:
+            continue
         d = dict(r)
         d['code'] = vessel_code({'vsl_cd': d['vsl_cd'], 'id': d['vessel_id']})
         out.append(d)
@@ -145,6 +166,8 @@ def list_settings():
 def save_setting(vessel_id, to_text, cc_text, enabled, user):
     if not query('SELECT 1 FROM vessels WHERE id=?', (vessel_id,), one=True):
         raise DailyMailError(404, '선박이 없습니다.')
+    if not in_roster(vessel_id):
+        raise DailyMailError(403, '담당 선박이 아닙니다.')
     to_list, bad_to = parse_emails(to_text)
     cc_list, bad_cc = parse_emails(cc_text)
     if bad_to or bad_cc:
@@ -211,6 +234,8 @@ def claim_run(d):
     v = query('SELECT id, name, vsl_cd FROM vessels WHERE id=?', (vessel_id,), one=True)
     if not v:
         raise DailyMailError(404, 'vessel not found')
+    if not in_roster(vessel_id):
+        raise DailyMailError(409, 'vessel not in roster')
     st = query('SELECT enabled, to_emails, cc_emails FROM daily_mail_settings WHERE vessel_id=?',
                (vessel_id,), one=True)
     if not st or not st['enabled']:

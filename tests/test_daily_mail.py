@@ -46,6 +46,25 @@ class DailyMailTests(unittest.TestCase):
         appmod.app.config['DATABASE'] = self.old_cfg
         self.tmp.cleanup()
 
+
+    def test_roster_scope_hides_and_blocks_non_assigned_vessels(self):
+        with appmod.app.app_context():
+            from app_core import execute
+            me = execute("INSERT INTO supervisors(name) VALUES('손유석')")
+            mine = execute("INSERT INTO vessels(name, vsl_cd) VALUES('MY SHIP','MYSH')")
+            execute('INSERT INTO supervisor_vessels(supervisor_id, vessel_id) VALUES(?,?)', (me, mine))
+        names = [v['name'] for v in self.c.get('/api/daily-mail/settings').get_json()['vessels']]
+        self.assertIn('MY SHIP', names)
+        self.assertNotIn('TEST STAR', names)
+        r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
+                       json={'to_emails': 'master@x.com', 'cc_emails': '', 'enabled': 1})
+        self.assertEqual(403, r.status_code)
+        cfg = self.c.get('/api/ext/daily-mail/config?week=2026W40', headers=self.h).get_json()
+        self.assertNotIn(self.vid, [v['vessel_id'] for v in cfg['vessels']])
+        r = self.c.post('/api/ext/daily-mail/runs', headers=self.h,
+                        json={'vessel_id': self.vid, 'iso_week': '2026W40', 'issue_ids': [self.i1]})
+        self.assertEqual(409, r.status_code)
+
     def _enable(self):
         r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
                        json={'to_emails': 'master@x.com', 'cc_emails': 'team@x.com; bad', 'enabled': 1})
