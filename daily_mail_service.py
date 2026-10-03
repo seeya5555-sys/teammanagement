@@ -576,8 +576,10 @@ def close_issue(run_id, issue_id, d, actor='daily-mail'):
         execute('DELETE FROM daily_mail_events WHERE id=?', (eid,))
         raise DailyMailError(409, 'issue changed concurrently, retry')
     try:
+        # 형 지시(2026-10-03): Close 는 진행경과 한 줄만(별도 업데이트 줄과 중복 금지). 러너가 준 한글 요약 우선.
+        text = (d.get('progress') or '').strip()[:1500] or ('Closed — ' + evidence[:500])
         append_action_cas(issue_id, _entry({'date': d.get('date'), 'sender': d.get('sender'),
-                                            'progress': 'Closed — ' + evidence[:500]}, '회신메일 자동 Close'))
+                                            'progress': text}, '회신메일 자동 Close'))
     except DailyMailError:
         pass        # 상태 전환과 근거(이벤트)는 이미 확정. 진행이력 한 줄은 보조라 실패해도 되돌리지 않는다.
     _recompute_reply_status(run_id)
