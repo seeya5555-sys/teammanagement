@@ -56,7 +56,7 @@ def api_daily_mail_setting_save(vid):
     d = _json()
     try:
         return jsonify(svc.save_setting(vid, d.get('to_emails'), d.get('cc_emails'),
-                                        bool(d.get('enabled')), _user()))
+                                        bool(d.get('enabled')), _user(), d['dear_name'] if 'dear_name' in d else None))
     except svc.DailyMailError as e:
         return _err(e)
 

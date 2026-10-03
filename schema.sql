@@ -1213,11 +1213,12 @@ CREATE TABLE IF NOT EXISTS daily_mail_settings (
     vessel_id   INTEGER PRIMARY KEY REFERENCES vessels(id) ON DELETE CASCADE,
     to_emails   TEXT    NOT NULL DEFAULT '',          -- ';' 구분
     cc_emails   TEXT    NOT NULL DEFAULT '',
+    dear_name   TEXT    NOT NULL DEFAULT '',          -- 메일 'Dear {dear}' (빈칸=Sir/Madam)
     enabled     INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1)),
     updated_by  TEXT,
     updated_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
--- 전역 템플릿 1행(id=1). 변수: {vessel} {count} {due_date}
+-- 전역 템플릿 1행(id=1). 변수: {vessel} {count} {due_date} {dear}
 CREATE TABLE IF NOT EXISTS daily_mail_template (
     id          INTEGER PRIMARY KEY CHECK (id = 1),
     subject_tpl TEXT    NOT NULL,

@@ -19,6 +19,7 @@
   .dm-t th{text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border);padding:6px 6px;white-space:nowrap}
   .dm-t td{border-bottom:1px solid var(--border-subtle);padding:6px 6px;vertical-align:top}
   .dm-t input[type=text]{width:100%;min-width:180px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface)}
+  .dm-t input[data-f=dear]{min-width:120px}
   .dm-t .muted{color:var(--text-tertiary)}
   .dm-ev{max-width:420px;white-space:pre-wrap;color:var(--text-secondary)}
   .dm-tpl label{display:block;font-size:12px;font-weight:600;color:var(--text-secondary);margin:8px 0 4px}
@@ -67,7 +68,7 @@
 
   <div class="dm-sec dm-tpl">
     <h2>메일 템플릿</h2>
-    <p class="dm-note">변수: <code>{vessel}</code> 선명 · <code>{count}</code> 이슈 수 · <code>{due_date}</code> 회신 기한(발송일+4일). 제목 앞에는 매칭용 태그 <code>[TRMT-DU 2026W40 CODE]</code> 가 자동으로 붙습니다.</p>
+    <p class="dm-note">변수: <code>{vessel}</code> 선명 · <code>{count}</code> 이슈 수 · <code>{due_date}</code> 회신 기한(발송일+4일) · <code>{dear}</code> 선박별 Dear 이름(빈칸이면 Sir/Madam). 예: <code>Dear {dear},</code> 제목 앞에는 매칭용 태그 <code>[TRMT-DU 2026W40 CODE]</code> 가 자동으로 붙습니다.</p>
     <label for="dmSubj">제목</label>
     <input id="dmSubj" type="text" maxlength="300">
     <label for="dmBody">본문</label>
@@ -131,8 +132,9 @@
     const d=await api('/api/daily-mail/settings');
     $('dmSubj').value=d.template.subject_tpl||'';
     $('dmBody').value=d.template.body_tpl||'';
-    $('dmVessels').innerHTML=table(['선박','코드','Open','To','CC','발송',''],d.vessels.map(v=>
+    $('dmVessels').innerHTML=table(['선박','코드','Open','Dear (이름)','To','CC','발송',''],d.vessels.map(v=>
       '<tr data-vid="'+v.vessel_id+'"><td>'+esc(v.name)+'</td><td class="muted">'+esc(v.code)+'</td><td>'+v.open_count+'</td>'
+      +'<td><input type="text" data-f="dear" placeholder="Sir/Madam" value="'+esc(v.dear_name||'')+'"></td>'
       +'<td><input type="text" data-f="to" value="'+esc(v.to_emails)+'"></td><td><input type="text" data-f="cc" value="'+esc(v.cc_emails)+'"></td>'
       +'<td><label><input type="checkbox" data-f="en" '+(v.enabled?'checked':'')+'> ON</label></td>'
       +'<td><button class="btn btn-outline btn-sm" data-act="save-vessel">저장</button><span class="dm-msg"></span></td></tr>'));
@@ -144,7 +146,7 @@
     try{
       if(act==='save-vessel'){
         const tr=b.closest('tr'), msg=tr.querySelector('.dm-msg');
-        const body={to_emails:tr.querySelector('[data-f=to]').value,cc_emails:tr.querySelector('[data-f=cc]').value,enabled:tr.querySelector('[data-f=en]').checked};
+        const body={dear_name:tr.querySelector('[data-f=dear]').value,to_emails:tr.querySelector('[data-f=to]').value,cc_emails:tr.querySelector('[data-f=cc]').value,enabled:tr.querySelector('[data-f=en]').checked};
         b.disabled=true;
         try{ await api('/api/daily-mail/settings/'+tr.dataset.vid,{method:'PUT',body:JSON.stringify(body)}); msg.textContent='저장됨'; }
         catch(e){ msg.textContent=e.message; }

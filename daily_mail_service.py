@@ -17,7 +17,8 @@ from datetime import date, datetime, timedelta
 from app_core import execute, execute_rc, query
 
 OPEN_STATUSES = ('Open', 'InProgress')
-TEMPLATE_VARS = ('vessel', 'count', 'due_date')
+TEMPLATE_VARS = ('vessel', 'count', 'due_date', 'dear')
+DEFAULT_DEAR = 'Sir/Madam'   # 선박별 Dear 이름이 비었을 때
 TAG_RE = re.compile(r'\[TRMT-DU (\d{4})W(\d{2}) ([A-Z0-9]{1,8})\]')
 _EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+\-\']+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$')
 EVENT_KINDS_GENERIC = ('reply', 'close_suggest', 'unmatched', 'reminder', 'notify')
@@ -71,10 +72,11 @@ def parse_emails(text):
     return out, bad
 
 
-def render_template(tpl, vessel, count, due_date):
-    """{vessel}/{count}/{due_date} 만 치환. str.format 을 쓰지 않는다(중괄호 주입·속성접근 차단)."""
-    vals = {'vessel': str(vessel), 'count': str(count), 'due_date': str(due_date)}
-    return re.sub(r'\{(vessel|count|due_date)\}', lambda m: vals[m.group(1)], tpl or '')
+def render_template(tpl, vessel, count, due_date, dear=''):
+    """{vessel}/{count}/{due_date}/{dear} 만 치환. str.format 을 쓰지 않는다(중괄호 주입·속성접근 차단)."""
+    vals = {'vessel': str(vessel), 'count': str(count), 'due_date': str(due_date),
+            'dear': (dear or '').strip() or DEFAULT_DEAR}
+    return re.sub(r'\{(vessel|count|due_date|dear)\}', lambda m: vals[m.group(1)], tpl or '')
 
 
 def due_date_for(sent_day=None):
@@ -148,7 +150,7 @@ def list_settings():
     rows = query(
         "SELECT v.id AS vessel_id, v.name, v.vsl_cd, v.vessel_type, "
         "       COALESCE(s.to_emails,'') AS to_emails, COALESCE(s.cc_emails,'') AS cc_emails, "
-        "       COALESCE(s.enabled,0) AS enabled, s.updated_by, s.updated_at, "
+        "       COALESCE(s.dear_name,'') AS dear_name, COALESCE(s.enabled,0) AS enabled, s.updated_by, s.updated_at, "
         "       (SELECT COUNT(*) FROM issues i WHERE i.vessel_id=v.id "
         "         AND i.status IN ('Open','InProgress')) AS open_count "
         "FROM vessels v LEFT JOIN daily_mail_settings s ON s.vessel_id=v.id "
@@ -163,7 +165,7 @@ def list_settings():
     return out
 
 
-def save_setting(vessel_id, to_text, cc_text, enabled, user):
+def save_setting(vessel_id, to_text, cc_text, enabled, user, dear_name=None):
     if not query('SELECT 1 FROM vessels WHERE id=?', (vessel_id,), one=True):
         raise DailyMailError(404, '선박이 없습니다.')
     if not in_roster(vessel_id):
@@ -174,16 +176,23 @@ def save_setting(vessel_id, to_text, cc_text, enabled, user):
         raise DailyMailError(400, '메일 주소 형식 오류: ' + ', '.join(bad_to + bad_cc))
     if len(to_list) > MAX_EMAILS or len(cc_list) > MAX_EMAILS:
         raise DailyMailError(400, f'수신자는 To/CC 각각 {MAX_EMAILS}명까지입니다.')
+    if dear_name is None:   # 필드 누락(구 클라이언트) = 기존 값 유지, 명시적 '' 만 초기화
+        cur = query('SELECT dear_name FROM daily_mail_settings WHERE vessel_id=?', (vessel_id,), one=True)
+        dear_name = cur['dear_name'] if cur else ''
+    dear_name = re.sub(r'\s+', ' ', str(dear_name or '')).strip()
+    if len(dear_name) > 120 or re.search(r'[{}<>]', dear_name):
+        raise DailyMailError(400, 'Dear 이름은 120자 이내, 중괄호·<> 불가입니다.')
     enabled = 1 if enabled else 0
     if enabled and not to_list:
         raise DailyMailError(400, 'To 주소 없이 ON 할 수 없습니다.')
-    execute('INSERT INTO daily_mail_settings(vessel_id, to_emails, cc_emails, enabled, updated_by, updated_at) '
-            "VALUES(?,?,?,?,?,datetime('now','localtime')) "
+    execute('INSERT INTO daily_mail_settings(vessel_id, to_emails, cc_emails, dear_name, enabled, updated_by, updated_at) '
+            "VALUES(?,?,?,?,?,?,datetime('now','localtime')) "
             'ON CONFLICT(vessel_id) DO UPDATE SET to_emails=excluded.to_emails, cc_emails=excluded.cc_emails, '
+            'dear_name=excluded.dear_name, '
             'enabled=excluded.enabled, updated_by=excluded.updated_by, updated_at=excluded.updated_at',
-            (vessel_id, '; '.join(to_list), '; '.join(cc_list), enabled, user))
+            (vessel_id, '; '.join(to_list), '; '.join(cc_list), dear_name, enabled, user))
     return {'vessel_id': vessel_id, 'to_emails': '; '.join(to_list),
-            'cc_emails': '; '.join(cc_list), 'enabled': enabled}
+            'cc_emails': '; '.join(cc_list), 'dear_name': dear_name, 'enabled': enabled}
 
 
 def runner_config(iso_week=None, today=None):
@@ -207,8 +216,9 @@ def runner_config(iso_week=None, today=None):
             'vessel_id': s['vessel_id'], 'name': s['name'], 'code': s['code'],
             'enabled': 1, 'to': to_list, 'cc': cc_list,
             'open_count': len(ids), 'open_issue_ids': ids, 'tag': tag,
-            'subject': tag + ' ' + render_template(tpl['subject_tpl'], s['name'], len(ids), due),
-            'body': render_template(tpl['body_tpl'], s['name'], len(ids), due),
+            'dear': s['dear_name'] or DEFAULT_DEAR,
+            'subject': tag + ' ' + render_template(tpl['subject_tpl'], s['name'], len(ids), due, s['dear_name']),
+            'body': render_template(tpl['body_tpl'], s['name'], len(ids), due, s['dear_name']),
             'run_this_week': dict(run) if run else None,
         })
     return {'iso_week': iso_week, 'due_date': due, 'template': tpl, 'vessels': vessels}

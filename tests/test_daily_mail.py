@@ -65,6 +65,31 @@ class DailyMailTests(unittest.TestCase):
                         json={'vessel_id': self.vid, 'iso_week': '2026W40', 'issue_ids': [self.i1]})
         self.assertEqual(409, r.status_code)
 
+
+    def test_dear_name_per_vessel_in_template(self):
+        r = self.c.put('/api/daily-mail/template', json={'subject_tpl': '{vessel} open items',
+                                                          'body_tpl': 'Dear {dear},\nPlease update {count} items.'})
+        self.assertEqual(200, r.status_code, r.get_json())
+        r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
+                       json={'to_emails': 'master@x.com', 'cc_emails': '', 'enabled': 1, 'dear_name': ' Capt.  Kim '})
+        self.assertEqual(200, r.status_code, r.get_json())
+        self.assertEqual('Capt. Kim', r.get_json()['dear_name'])
+        cfg = self.c.get('/api/ext/daily-mail/config?week=2026W40', headers=self.h).get_json()
+        v = next(x for x in cfg['vessels'] if x['vessel_id'] == self.vid)
+        self.assertTrue(v['body'].startswith('Dear Capt. Kim,'))
+        self.assertEqual('Capt. Kim', v['dear'])
+        r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
+                       json={'to_emails': 'master@x.com', 'cc_emails': '', 'enabled': 1})   # 필드 누락 = 유지
+        self.assertEqual('Capt. Kim', r.get_json()['dear_name'])
+        r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
+                       json={'to_emails': 'master@x.com', 'cc_emails': '', 'enabled': 1, 'dear_name': ''})
+        cfg = self.c.get('/api/ext/daily-mail/config?week=2026W40', headers=self.h).get_json()
+        v = next(x for x in cfg['vessels'] if x['vessel_id'] == self.vid)
+        self.assertTrue(v['body'].startswith('Dear Sir/Madam,'))
+        r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
+                       json={'to_emails': 'master@x.com', 'enabled': 1, 'dear_name': '{vessel}'})
+        self.assertEqual(400, r.status_code)
+
     def _enable(self):
         r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
                        json={'to_emails': 'master@x.com', 'cc_emails': 'team@x.com; bad', 'enabled': 1})
