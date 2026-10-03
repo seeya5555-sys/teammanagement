@@ -383,3 +383,28 @@ def list_requests(limit=30):
     return [dict(r) for r in query(
         'SELECT q.*, ve.name AS vessel_name FROM vetting_mail_requests q JOIN vessels ve ON ve.id=q.vessel_id '
         'ORDER BY q.id DESC LIMIT ?', (limit,))]
+
+
+def reply_status():
+    """SIRE 별 가장 최근 발송분(자동·수동 무관)의 회신 여부·반영 결과 — 웹/앱 '회신현황' 섹션."""
+    rows = query("SELECT r.id, r.vetting_id, r.iso_week, r.sent_at, r.finding_ids, ve.name AS vessel_name, vt.report_number "
+                 "FROM vetting_mail_runs r JOIN vessels ve ON ve.id=r.vessel_id JOIN vettings vt ON vt.id=r.vetting_id "
+                 "WHERE r.state='sent' AND r.id = (SELECT r2.id FROM vetting_mail_runs r2 WHERE r2.vetting_id=r.vetting_id "
+                 "  AND r2.state='sent' ORDER BY r2.sent_at DESC, r2.id DESC LIMIT 1) "
+                 "ORDER BY ve.name, r.sent_at DESC")
+    out = []
+    for r in rows:
+        ev = query("SELECT kind, evidence, created_at FROM vetting_mail_events WHERE run_id=? ORDER BY id", (r['id'],))
+        replies = [e for e in ev if e['kind'] == 'reply']
+        cnt = {k: sum(1 for e in ev if e['kind'] == k) for k in ('close', 'update', 'needs_review')}
+        last = replies[-1] if replies else None
+        ids = json.loads(r['finding_ids'] or '[]')
+        open_now = query("SELECT COUNT(*) AS n FROM vt_findings WHERE id IN (SELECT value FROM json_each(?)) "
+                         "AND COALESCE(status,'Open')='Open'", (r['finding_ids'] or '[]',), one=True)['n']
+        out.append({'run_id': r['id'], 'vessel_name': r['vessel_name'], 'report_number': r['report_number'],
+                    'manual': (r['iso_week'] or '').startswith(MANUAL_PREFIX), 'sent_at': r['sent_at'],
+                    'sent_count': len(ids), 'open_now': open_now, 'replied': bool(replies),
+                    'reply_count': len(replies), 'last_reply_at': last['created_at'] if last else None,
+                    'last_reply_from': (last['evidence'] or '').split(' · ')[0] if last else None,
+                    'closed': cnt['close'], 'updated': cnt['update'], 'needs_review': cnt['needs_review']})
+    return out

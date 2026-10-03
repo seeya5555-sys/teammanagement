@@ -214,6 +214,10 @@ class VettingObsAutomationTests(unittest.TestCase):
         self.assertIn('SIRE OBS 잔여 2건', d['overall_remark'])
         p = self.c.get('/api/ext/vetting-mail/runs/pending', headers=self.h).get_json()['runs']
         self.assertEqual(['outlook:1'], p[0]['processed_message_ids'])
+        rs = self.c.get('/api/vetting-mail/status').get_json()['replies']
+        self.assertEqual(1, len(rs))
+        self.assertEqual((True, 1, 1, 2, 2, 3), (rs[0]['replied'], rs[0]['closed'], rs[0]['updated'],
+                                                 rs[0]['needs_review'], rs[0]['open_now'], rs[0]['sent_count']))
         with appmod.app.app_context():
             from app_core import query
             ev = query("SELECT kind, before_json FROM vetting_mail_events WHERE run_id=? AND kind='close'", (rid,))

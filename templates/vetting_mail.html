@@ -61,6 +61,12 @@
   </div>
 
   <div class="dm-sec">
+    <h2>회신현황</h2>
+    <p class="dm-note">SIRE 별 가장 최근 발송분(자동·수동 무관) 기준. 회신은 2시간마다(08:45~20:45) 읽어 자동 반영 — 발신자 제한 없음(대행자 포함). Open = 지금 남은 Open / 발송 당시 건수.</p>
+    <div id="vmReplies"><div class="dm-empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="dm-sec">
     <h2>수동 실행 요청</h2>
     <div id="vmReqs"><div class="dm-empty">불러오는 중…</div></div>
   </div>
@@ -92,6 +98,7 @@
     if(!rows.length) return '<div class="dm-empty">없음</div>';
     return '<table class="dm-t"><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>'+rows.join('')+'</tbody></table>';
   }
+  const kindB=(m)=>m?'<span class="dm-badge warn">수동</span>':'<span class="dm-badge">자동</span>';
   const kind=(w)=>/^M\d/.test(String(w||''))?'<span class="dm-badge warn">수동</span>':'<span class="dm-badge">자동</span>';
   async function load(){
     const d=await api('/api/vetting-mail/status');
@@ -101,6 +108,13 @@
       +'<td><label><input type="checkbox" data-vm="en" '+(v.enabled?'checked':'')+'> ON</label></td>'
       +'<td><button class="btn btn-outline btn-sm" data-vmman="'+v.vessel_id+'" '+(v.open_vettings&&v.to_emails?'':'disabled')+'>수동 발송</button></td>'
       +'<td><span class="dm-msg"></span></td></tr>'));
+    const rp=d.replies||[];
+    $('vmReplies').innerHTML=table(['선박','Report','발송','회신','마지막 회신','반영','Open'],rp.map(x=>
+      '<tr><td>'+esc(x.vessel_name)+'</td><td class="muted">'+esc(x.report_number)+'</td><td>'+kindB(x.manual)+' <span class="muted">'+esc(x.sent_at||'')+'</span></td>'
+      +'<td>'+(x.replied?'<span class="dm-badge ok">회신 '+x.reply_count+'</span>':'<span class="dm-badge warn">미회신</span>')+'</td>'
+      +'<td class="muted">'+(x.last_reply_at?esc(x.last_reply_at)+'<br>'+esc(x.last_reply_from||''):'-')+'</td>'
+      +'<td>'+(x.replied?'Close '+x.closed+' · 진행 '+x.updated+(x.needs_review?' · <span class="dm-badge warn">확인필요 '+x.needs_review+'</span>':''):'-')+'</td>'
+      +'<td>'+x.open_now+' / '+x.sent_count+'</td></tr>'));
     $('vmReqs').innerHTML=table(['선박','상태','요청자','요청','처리','결과'],d.requests.map(q=>
       '<tr><td>'+esc(q.vessel_name)+'</td><td>'+esc({queued:'대기',processing:'발송 중',done:'완료',failed:'실패'}[q.state]||q.state)+'</td><td class="muted">'+esc(q.requested_by)+'</td><td class="muted">'+esc(q.created_at)+'</td><td class="muted">'+esc(q.done_at||'-')+'</td><td class="dm-ev">'+esc(q.result||'')+'</td></tr>'));
     $('vmCloses').innerHTML=table(['선박','Report','자동 Close','시각'],d.closes.map(c=>

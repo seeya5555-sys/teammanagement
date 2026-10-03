@@ -75,7 +75,7 @@ def api_ext_vetting_mail_manual_state(qid):
 @admin_required
 def api_vetting_mail_status():
     return jsonify({'vessels': svc.list_settings(), 'runs': svc.list_runs(), 'closes': svc.recent_auto_closes(),
-                    'requests': svc.list_requests()})
+                    'requests': svc.list_requests(), 'replies': svc.reply_status()})
 
 
 @bp.route('/api/vetting-mail/settings/<int:vid>/enabled', methods=['POST'])
