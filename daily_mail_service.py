@@ -512,8 +512,8 @@ def _entry(d, prefix):
         adate = date.today().isoformat()
     sender = re.sub(r'\s+', ' ', str(d.get('sender') or '')).strip()[:120]
     text = (d.get('progress') or '').strip()
-    src = f'[{prefix}' + (f' · {sender}' if sender else '') + ']'
-    return {'date': adate, 'progress': f'{src} {text}'.strip(), 'important': False}
+    # 형 지시(2026-10-03): 진행경과에는 내용만 심플하게(출처·발신자 꼬리표 없음). 근거는 daily_mail_events 에 남는다.
+    return {'date': adate, 'progress': text, 'important': False}
 
 
 def run_id_vessel(run_id):
@@ -577,7 +577,7 @@ def close_issue(run_id, issue_id, d, actor='daily-mail'):
         raise DailyMailError(409, 'issue changed concurrently, retry')
     try:
         # 형 지시(2026-10-03): Close 는 진행경과 한 줄만(별도 업데이트 줄과 중복 금지). 러너가 준 한글 요약 우선.
-        text = (d.get('progress') or '').strip()[:1500] or ('Closed — ' + evidence[:500])
+        text = (d.get('progress') or '').strip()[:1500] or evidence[:500]
         append_action_cas(issue_id, _entry({'date': d.get('date'), 'sender': d.get('sender'),
                                             'progress': text}, '회신메일 자동 Close'))
     except DailyMailError:
@@ -616,7 +616,7 @@ def approve_suggestion(event_id, user):
                         ensure_ascii=False), user))
     try:
         append_action_cas(ev['issue_id'], {'date': date.today().isoformat(), 'important': False,
-                                           'progress': f'[회신메일 Close 제안 승인 · {user}] {ev["evidence"][:500]}'})
+                                           'progress': ev["evidence"][:500]})
     except DailyMailError:
         pass
     return {'ok': True}
@@ -653,7 +653,7 @@ def reopen_close(event_id, user):
             (user, _now(), event_id))
     try:
         append_action_cas(ev['issue_id'], {'date': date.today().isoformat(), 'important': False,
-                                           'progress': f'[회신메일 자동 Close 취소 · {user}] {prev} 로 되돌림'})
+                                           'progress': f'Close 취소, {prev} 로 되돌림'})
     except DailyMailError:
         pass
     return {'ok': True, 'status': prev}
