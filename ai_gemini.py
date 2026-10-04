@@ -1755,7 +1755,7 @@ def _close_doc_text(path, ext):
     return ''
 
 
-_CLOSE_GUARD_VERSION = '2026-10-04.2'
+_CLOSE_GUARD_VERSION = '2026-10-04.3'
 _CLOSED_DATE_RE = _re_cls.compile(
     r'(?im)^\s*date\s+(?:closed|rectified)\s*[:\-]?\s*'
     r'(?:\d{1,2}[ /\-]+[A-Za-z]{3,9}[ /\-]+\d{4}|\d{4}[ /\-]\d{1,2}[ /\-]\d{1,2})\b')
@@ -1778,13 +1778,12 @@ def _has_past_closure_date(context):
     return False
 
 
-def _close_evidence_context(evidence, blocks, finding_description=''):
+def _close_identity_block(blocks, finding_description):
     """Return only a unique negative assessment's Operator Comments for its CA quote.
     Closure dates from a neighbouring observation or preventive action cannot prove closure.
     """
-    normalized = _close_norm(evidence)
-    if not finding_description or len(normalized) < 20:
-        return ''
+    if not finding_description:
+        return None
     negatives = [b for b in blocks if b['negative']]
     def identity_tokens(text):
         # Descriptions only, never operator comments. Two unique substantive source
@@ -1804,13 +1803,24 @@ def _close_evidence_context(evidence, blocks, finding_description=''):
         distinctive = wanted & source_tokens[index] - others
         if _description_matches_assessment(finding_description, original) or len(distinctive) >= 2:
             identities.append(block)
-    if len(identities) != 1:
+    return identities[0] if len(identities) == 1 else None
+
+def _close_operator_context(block):
+    comments = block['text'].split('Operator Comments', 1)
+    if len(comments) != 2:
         return ''
+    return _re_cls.split(r'(?m)^\s*\d+\.\d+\.\d+\.?\s', comments[1], maxsplit=1)[0]
+
+def _close_evidence_context(evidence, blocks, finding_description=''):
+    normalized = _close_norm(evidence)
+    if len(normalized) < 20:
+        return ''
+    identity = _close_identity_block(blocks, finding_description)
     contexts = []
-    for block in identities:
+    for block in ([identity] if identity else []):
         if not block['negative'] or 'Operator Comments' not in block['text']:
             continue
-        comments = block['text'].split('Operator Comments', 1)[1]
+        comments = _close_operator_context(block)
         match = _re_cls.search(r'(?is)\bCorrective Action\b(.*?)(?=\bPreventative Action\b|$)', comments)
         if match and normalized in _close_norm(match.group(1)):
             contexts.append(comments)
@@ -1832,11 +1842,14 @@ def _close_guard(status, evidence, doc_norm, observation_context=''):
         return 'Open', 'ai_not_closed'
     if _close_pending_evidence(ev):
         return 'Open', 'evidence_has_pending_wording'
-    if observation_context and _has_past_closure_date(observation_context):
+    if observation_context:
+        if _CLOSED_DATE_RE.search(observation_context) and not _has_past_closure_date(observation_context):
+            return 'Open', 'closure_date_future_or_invalid'
         corrective = _re_cls.search(r'(?is)\bCorrective Action\b(.*?)(?=\bPreventative Action\b|$)', observation_context)
         if corrective and _close_pending_evidence(corrective.group(1)):
             return 'Open', 'corrective_action_has_pending_wording'
-        return 'Closed', 'explicit_observation_closure_date'
+        if _has_past_closure_date(observation_context):
+            return 'Closed', 'explicit_observation_closure_date'
     if not _CLOSE_DONE_RE.search(ev):
         return 'Open', 'evidence_has_no_completion_wording'
     return 'Closed', 'ok'
@@ -1881,7 +1894,18 @@ def _close_candidates():
         "ORDER BY vt.inspection_date DESC, vt.id DESC")
 
 
-def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
+def _verified_sire_document(text, vessel_name, report_number, require_full=True):
+    """Trust only the actual Full report header, not attachment provenance alone."""
+    header = (text or '')[:8000]
+    report = _re_cls.search(r'(?im)^\s*Report\s+([A-Z0-9]+(?:-[A-Z0-9]+)+)\s*$', header)
+    vessel = _re_cls.search(r'(?im)^\s*Vessel Name\s+([^\r\n]+)', header)
+    full = _re_cls.search(r'(?im)^\s*Report Type\s+Full\s*$', header)
+    return bool(report and vessel and (full or not require_full)
+                and _svms_norm(report.group(1)) == _svms_norm(report_number)
+                and _svms_norm(vessel.group(1)) == _svms_norm(vessel_name))
+
+
+def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close', require_verified=False):
     """1개 vetting 판정(+적용). 반환 dict 는 러너가 그대로 텔레그램 보고에 쓴다."""
     v = query('SELECT vt.*, ve.name AS vessel_name, ve.vessel_type FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id '
               'WHERE vt.id=?', (vid,), one=True)
@@ -1890,58 +1914,114 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
     base = {'vetting_id': vid, 'vessel': v['vessel_name'], 'report_number': v['report_number']}
     if not vms.is_vlcc(v['vessel_type']):
         return {**base, 'skipped': 'not_vlcc'}
-    if (v['svms_close_report_yn'] or '') != 'Y':
+    if not require_verified and (v['svms_close_report_yn'] or '') != 'Y':
         return {**base, 'skipped': 'no_close_report_flag'}
     open_f = query("SELECT * FROM vt_findings WHERE vetting_id=? AND COALESCE(status,'Open')='Open' "
                    'ORDER BY no, id', (vid,))
     if not open_f:
-        return {**base, 'skipped': 'no_open_findings'}
+        return {**base, 'skipped': 'no_open_findings', 'send_ready': True}
     atts = query("SELECT * FROM vt_attachments WHERE vetting_id=? AND source='svms' AND source_type='close' "
                  'AND inactive_at IS NULL ORDER BY id', (vid,))
     docs, used = [], []
+    initial_texts = []
+    if require_verified:
+        initial_atts = query("SELECT * FROM vt_attachments WHERE vetting_id=? AND source='svms' AND source_type='initial' AND inactive_at IS NULL ORDER BY id", (vid,))
+        if not initial_atts and not atts:
+            return {**base, 'error': 'no_full_or_close_source', 'send_ready': False}
+        for a in initial_atts:
+            ext = (a['filename'] or '').rsplit('.', 1)[-1].lower()
+            text = _close_doc_text(os.path.join(UPLOAD_DIR, a['stored_name']), ext)
+            if not _verified_sire_document(text, v['vessel_name'], v['report_number']):
+                return {**base, 'error': 'full_document_identity_or_read_failure', 'send_ready': False}
+            if text not in initial_texts:
+                initial_texts.append(text)
+            used.append({'id': a['id'], 'filename': a['filename'], 'sha256': hashlib.sha256(text.encode()).hexdigest()})
     for a in atts:
         ext = (a['filename'] or '').rsplit('.', 1)[-1].lower()
         if ext not in _CLOSE_DOC_EXTS:
+            if require_verified:
+                return {**base, 'error': 'unsupported_close_document', 'send_ready': False}
             continue
         text = _close_doc_text(os.path.join(UPLOAD_DIR, a['stored_name']), ext)
+        if require_verified and not _verified_sire_document(text, v['vessel_name'], v['report_number'], require_full=False):
+            return {**base, 'error': 'close_document_identity_or_read_failure', 'send_ready': False}
         if text.strip():
-            docs.append(f"=== {a['filename']} ===\n{text}")
-            used.append({'id': a['id'], 'filename': a['filename'], 'sha256': a['sha256'] or ''})
+            if text not in docs:
+                docs.append(text)
+            used.append({'id': a['id'], 'filename': a['filename'], 'sha256': hashlib.sha256(text.encode()).hexdigest()})
+    if require_verified and not docs and initial_texts:
+        docs = list(initial_texts)
     if not docs:
         return {**base, 'skipped': 'no_readable_close_document'}
     fp = hashlib.sha256(json.dumps({'att': sorted(u['sha256'] + str(u['id']) for u in used),
-                                    'open': [int(f['id']) for f in open_f], 'guard_version': _CLOSE_GUARD_VERSION}).encode()).hexdigest()
-    if not force and query('SELECT 1 FROM vt_close_auto_runs WHERE vetting_id=? AND input_fp=?',
-                           (vid, fp), one=True):
-        return {**base, 'skipped': 'already_judged_same_input'}
+                                    'open': [{'id': int(f['id']), 'description': f['description'], 'item': f['item'], 'no': f['no']} for f in open_f], 'guard_version': _CLOSE_GUARD_VERSION, 'verified': require_verified}).encode()).hexdigest()
+    previous = query('SELECT result_json FROM vt_close_auto_runs WHERE vetting_id=? AND input_fp=?', (vid, fp), one=True)
+    if not force and previous:
+        prior = json.loads(previous['result_json'] or '{}')
+        return {**base, 'skipped': 'already_judged_same_input', 'send_ready': bool(prior.get('send_ready')), 'open_after': len(open_f)}
     doc_text = '\n\n'.join(docs)
-    if not GEMINI_API_KEY:
-        return {**base, 'error': 'no_ai_key'}
-    parsed = _gemini_call_json([{'text': _close_prompt(v, v['vessel_name'], open_f, doc_text)}],
-                               model=_model_for('findings'))
-    items = parsed.get('items') if isinstance(parsed, dict) else None
-    if not isinstance(items, list):
-        return {**base, 'error': 'ai_parse_failed'}
+    if require_verified and len(doc_text) > _CLOSE_TEXT_LIMIT:
+        return {**base, 'error': 'document_exceeds_model_input_limit', 'send_ready': False}
     doc_norm = _close_norm(doc_text)
     try:
         observation_blocks = _full_report_assessment_blocks_from_text(doc_text)
     except ValueError:
         observation_blocks = []
     by_id = {int(f['id']): f for f in open_f}
-    judged, seen = [], set()
+    direct = {}
+    if require_verified:
+        for fid, finding in by_id.items():
+            block = _close_identity_block(observation_blocks, finding['description'])
+            if not block:
+                continue
+            operator_context = _close_operator_context(block)
+            if not operator_context:
+                direct[fid] = {'finding_id': fid, 'status': 'Open', 'evidence': '', 'action_ko': finding['full_report_remark'] or '', 'source_reason': 'negative_assessment_no_corrective_action'}
+                continue
+            ca = _re_cls.search(r'(?is)\bCorrective Action\b(.*?)(?=\bPreventative Action\b|$)', operator_context)
+            if ca and len(_close_norm(ca.group(1))) >= 20:
+                evidence = ca.group(1).strip()
+                if _has_past_closure_date(operator_context) and not _close_pending_evidence(evidence):
+                    direct[fid] = {'finding_id': fid, 'status': 'Closed', 'evidence': evidence, 'action_ko': finding['full_report_remark'] or '', 'source_reason': 'explicit_observation_closure_date'}
+                # Pending wording can include historical explanation; model handles it.
+    unresolved = [f for f in open_f if int(f['id']) not in direct]
+    items = []
+    if unresolved:
+        if not GEMINI_API_KEY:
+            return {**base, 'error': 'no_ai_key'}
+        parsed = _gemini_call_json([{'text': _close_prompt(v, v['vessel_name'], unresolved, doc_text)}], model=_model_for('findings'))
+        items = parsed.get('items') if isinstance(parsed, dict) else None
+        if not isinstance(items, list):
+            return {**base, 'error': 'ai_parse_failed'}
+    direct_keys = {str(fid) for fid in direct}
+    items = [it for it in items if not (isinstance(it, dict) and str(it.get('finding_id')) in direct_keys)] + list(direct.values())
+    judged, seen, invalid_items = [], set(), False
     for it in items:
         if not isinstance(it, dict):
+            invalid_items = True
             continue
         try:
             fid = int(it.get('finding_id'))
         except (TypeError, ValueError):
+            invalid_items = True
             continue
         if fid not in by_id or fid in seen:
+            invalid_items = True
             continue
         seen.add(fid)
         ai_status = (it.get('status') or '').strip()
         context = _close_evidence_context(it.get('evidence'), observation_blocks, by_id[fid]['description'])
         final, why = _close_guard(ai_status, it.get('evidence'), doc_norm, context)
+        if require_verified:
+            if fid in direct:
+                final, why = direct[fid]['status'], direct[fid]['source_reason']
+            elif not context:
+                final, why = 'Open', 'observation_identity_or_corrective_evidence_unverified'
+            elif ai_status not in ('Open', 'Closed'):
+                final, why = 'Open', 'ai_status_unverified'
+            elif final == 'Open' and ai_status == 'Closed' and why in ('evidence_has_pending_wording', 'corrective_action_has_pending_wording'):
+                # A real residual corrective action is a verified Open, not a review hold.
+                why = 'confirmed_pending_corrective_action'
         action = _concise_full_report_remark((it.get('action_ko') or '').strip())
         judged.append({'finding_id': fid, 'no': by_id[fid]['no'], 'ai_status': ai_status,
                        'status': final, 'reason': why, 'evidence': (it.get('evidence') or '').strip()[:600],
@@ -1954,6 +2034,11 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
     closed = [j for j in judged if j['status'] == 'Closed']
     result = {**base, 'documents': [u['filename'] for u in used], 'judged': judged,
               'closed_count': len(closed), 'open_after': len(open_f) - len(closed), 'dry': bool(dry)}
+    if require_verified:
+        allowed = {'ok', 'explicit_observation_closure_date', 'ai_not_closed', 'negative_assessment_no_corrective_action', 'confirmed_pending_corrective_action'}
+        result['send_ready'] = not invalid_items and len(seen) == len(by_id) and all(j['reason'] in allowed for j in judged)
+        if not result['send_ready']:
+            return {**result, 'error': 'judgment_requires_review'}
     if dry:
         return result
 
@@ -1961,6 +2046,14 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
     applied = []
     try:
         db.execute('BEGIN IMMEDIATE')
+        if require_verified:
+            source_ids = sorted(int(a['id']) for a in initial_atts + atts)
+            current_ids = sorted(int(a['id']) for a in db.execute("SELECT id FROM vt_attachments WHERE vetting_id=? AND source='svms' AND source_type IN ('initial','close') AND inactive_at IS NULL", (vid,)))
+            current_findings = list(db.execute("SELECT id,description,item,no FROM vt_findings WHERE vetting_id=? AND COALESCE(status,'Open')='Open' ORDER BY no,id", (vid,)))
+            wanted = [(f['id'],f['description'],f['item'],f['no']) for f in open_f]
+            if current_ids != source_ids or [tuple(f) for f in current_findings] != wanted:
+                db.rollback()
+                return {**base, 'error': 'source_or_findings_changed_during_judgment', 'send_ready': False}
         for j in judged:
             if not j['action'] and j['status'] != 'Closed':
                 continue
@@ -1975,6 +2068,9 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
                 "AND COALESCE(description,'')=?",
                 (j['status'], user_remark, auto, j['finding_id'], vid, old['user_remark'] or '',
                  old['full_report_remark'] or '', old['description'] or ''))
+            if require_verified and cur.rowcount != 1:
+                db.rollback()
+                return {**base, 'error': 'finding_changed_during_judgment', 'send_ready': False}
             if cur.rowcount == 1:          # 그 사이 사람이 바꿨으면 건드리지 않는다
                 applied.append({'finding_id': j['finding_id'], 'status': j['status'],
                                 'full_report_remark': auto, 'evidence': j['evidence'],
@@ -2019,7 +2115,7 @@ def api_ext_vt_close_auto_candidates():
 @api_key_required
 def api_ext_vt_close_auto(vid):
     d = request.get_json(silent=True) or {}
-    return jsonify(close_auto_judge(vid, dry=bool(d.get('dry')), force=bool(d.get('force'))))
+    return jsonify(close_auto_judge(vid, dry=bool(d.get('dry')), force=bool(d.get('force')), require_verified=bool(d.get('require_verified'))))
 
 
 def vt_open_workbook(vid):

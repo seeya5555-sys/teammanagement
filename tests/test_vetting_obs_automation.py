@@ -57,6 +57,98 @@ class VettingObsAutomationTests(unittest.TestCase):
         appmod.DATABASE, appmod.app.config['DATABASE'] = self.old_db, self.old_cfg
         self.tmp.cleanup()
 
+    def _strict_sources(self, pending=False):
+        from app_core import execute
+        execute("UPDATE vt_findings SET description='Fuel pump shaft fractured' WHERE id=?",(self.f1,))
+        execute("UPDATE vt_findings SET description='Gyrocompass heading indicator defective' WHERE id=?",(self.f2,))
+        execute("UPDATE vt_findings SET description='Ballast valve actuator jammed' WHERE id=?",(self.f3,))
+        execute("INSERT INTO vt_attachments(vetting_id,filename,stored_name,source,source_type,sha256) VALUES(?,'initial.docx','initial.docx','svms','initial','full')",(self.vt,))
+        header = 'SIRE 2.0 Report\nReport LVKX-0383-3966-7845\nVessel Name GHANA TEST\nReport Type Full\n'
+        descriptions = ['Fuel pump shaft fractured','Gyrocompass heading indicator defective','Ballast valve actuator jammed']
+        initial = header + '\n'.join('Human Not as expected\n'+d for d in descriptions)
+        ca = ['The fuel pump shaft has been replaced with a new shaft.', 'The gyrocompass heading indicator was repaired and tested.', 'The ballast valve actuator was replaced and verified.']
+        if pending:
+            ca[1] += ' Final testing will be completed at next port.'
+        close = header + '\n'.join('Human Not as expected\n'+d+'\nOperator Comments\nCorrective Action\n'+a+'\nPreventative Action\nCrew will continue routine checks.\nDate Closed: 24 Aug 2026\n' for d,a in zip(descriptions,ca))
+        return initial,close,ca
+
+    def test_strict_dated_source_does_not_depend_on_ai_status_or_availability(self):
+        with appmod.app.app_context():
+            initial,close,ca = self._strict_sources()
+            with mock.patch.object(ai_gemini,'_close_doc_text',side_effect=lambda path,ext: initial if path.endswith('initial.docx') else close), mock.patch.object(ai_gemini,'_gemini_call_json',side_effect=AssertionError('no AI needed')):
+                result = ai_gemini.close_auto_judge(self.vt,dry=True,require_verified=True)
+        self.assertTrue(result['send_ready'])
+        self.assertEqual(3,result['closed_count'])
+        self.assertTrue(all(x['reason']=='explicit_observation_closure_date' for x in result['judged']))
+
+    def test_strict_residual_action_is_open_not_hold_and_prevention_is_separate(self):
+        with appmod.app.app_context():
+            initial,close,ca = self._strict_sources(pending=True)
+            model = {'items':[{'finding_id':self.f2,'status':'Closed','evidence':ca[1].split(' Final')[0],'action_ko':'Final testing 예정'}]}
+            with mock.patch.object(ai_gemini,'_close_doc_text',side_effect=lambda path,ext: initial if path.endswith('initial.docx') else close),mock.patch.object(ai_gemini,'GEMINI_API_KEY','fake'),mock.patch.object(ai_gemini,'_gemini_call_json',return_value=model):
+                result = ai_gemini.close_auto_judge(self.vt,dry=True,require_verified=True)
+        self.assertTrue(result['send_ready'])
+        self.assertEqual(2,result['closed_count'])
+        self.assertEqual('Open',next(x for x in result['judged'] if x['finding_id']==self.f2)['status'])
+
+    def test_strict_wrong_report_blocks_before_ai_and_writes(self):
+        with appmod.app.app_context():
+            initial,close,ca = self._strict_sources()
+            with mock.patch.object(ai_gemini,'_close_doc_text',return_value=close.replace('LVKX-0383-3966-7845','OTHER-1234-1234-1234')),mock.patch.object(ai_gemini,'_gemini_call_json') as model:
+                result = ai_gemini.close_auto_judge(self.vt,require_verified=True)
+            model.assert_not_called()
+        self.assertFalse(result['send_ready'])
+        self.assertIn('identity',result['error'])
+        self.assertEqual('Open',self._status()[self.f1][0])
+
+    def test_strict_full_only_negative_without_comments_is_verified_open(self):
+        with appmod.app.app_context():
+            from app_core import execute
+            initial,close,ca = self._strict_sources()
+            execute("DELETE FROM vt_attachments WHERE vetting_id=? AND source_type='close'",(self.vt,))
+            with mock.patch.object(ai_gemini,'_close_doc_text',return_value=initial),mock.patch.object(ai_gemini,'_gemini_call_json',side_effect=AssertionError('no AI needed')):
+                result=ai_gemini.close_auto_judge(self.vt,dry=True,require_verified=True)
+        self.assertTrue(result['send_ready'])
+        self.assertEqual(3,result['open_after'])
+
+    def test_source_date_neighbor_and_future_are_not_closure_proof(self):
+        block={'negative':True,'text':'Human Not as expected\nFuel pump shaft fractured\nOperator Comments\nCorrective Action\nThe shaft was replaced with a new unit.\nPreventative Action\nRoutine checks.\n4.3.2 Next observation\nDate Closed: 24 Aug 2026'}
+        ctx=ai_gemini._close_operator_context(block)
+        self.assertFalse(ai_gemini._has_past_closure_date(ctx))
+        future='Corrective Action\nThe shaft was replaced with a new unit.\nPreventative Action\nRoutine checks.\nDate Closed: 24 Aug 2099'
+        self.assertEqual(('Open','closure_date_future_or_invalid'),ai_gemini._close_guard('Closed','The shaft was replaced with a new unit.',ai_gemini._close_norm(future),future))
+
+    def test_source_first_ignores_model_duplicate_of_dated_item(self):
+        with appmod.app.app_context():
+            initial,close,ca=self._strict_sources(pending=True)
+            model={'items':[{'finding_id':self.f1,'status':'Open','evidence':'wrong'}, {'finding_id':self.f2,'status':'Open','evidence':ca[1],'action_ko':'Final testing 예정'}]}
+            with mock.patch.object(ai_gemini,'_close_doc_text',side_effect=lambda path,ext:initial if path.endswith('initial.docx') else close),mock.patch.object(ai_gemini,'GEMINI_API_KEY','fake'),mock.patch.object(ai_gemini,'_gemini_call_json',return_value=model):
+                result=ai_gemini.close_auto_judge(self.vt,dry=True,require_verified=True)
+        self.assertTrue(result['send_ready']);self.assertEqual(2,result['closed_count'])
+
+    def test_source_change_during_model_call_rolls_back_other_closures(self):
+        with appmod.app.app_context():
+            from app_core import execute
+            initial,close,ca=self._strict_sources(pending=True)
+            def model(*args,**kw):
+                execute("UPDATE vt_findings SET description='Changed by user' WHERE id=?",(self.f2,))
+                return {'items':[{'finding_id':self.f2,'status':'Open','evidence':ca[1],'action_ko':'Final testing 예정'}]}
+            with mock.patch.object(ai_gemini,'_close_doc_text',side_effect=lambda path,ext:initial if path.endswith('initial.docx') else close),mock.patch.object(ai_gemini,'GEMINI_API_KEY','fake'),mock.patch.object(ai_gemini,'_gemini_call_json',side_effect=model):
+                result=ai_gemini.close_auto_judge(self.vt,require_verified=True)
+        self.assertFalse(result['send_ready']);self.assertIn('changed',result['error'])
+        self.assertEqual('Open',self._status()[self.f1][0])
+
+    def test_full_only_verified_open_cache_keeps_actual_count(self):
+        with appmod.app.app_context():
+            from app_core import execute
+            initial,close,ca=self._strict_sources()
+            execute("DELETE FROM vt_attachments WHERE vetting_id=? AND source_type='close'",(self.vt,))
+            with mock.patch.object(ai_gemini,'_close_doc_text',return_value=initial),mock.patch.object(ai_gemini,'_rebuild_obs_summary',return_value={}):
+                first=ai_gemini.close_auto_judge(self.vt,require_verified=True)
+                cached=ai_gemini.close_auto_judge(self.vt,dry=True,require_verified=True)
+        self.assertTrue(first['send_ready']);self.assertTrue(cached['send_ready'])
+        self.assertEqual(3,cached['open_after'])
+
     def test_all_closed_overall_is_blank_without_model_call(self):
         with appmod.app.app_context():
             from app_core import execute,query
