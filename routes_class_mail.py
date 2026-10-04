@@ -100,6 +100,15 @@ def api_ext_class_mail_claim():
     return call(svc.claim, payload(), success=201)
 
 
+@bp.route('/api/ext/class-mail/canary', methods=['POST'])
+@api_key_required
+def api_ext_class_mail_canary():
+    data = payload()
+    if data.get('confirmed_send') is not True:
+        return jsonify({'error': 'explicit confirmed_send required'}), 400
+    return call(svc.claim, data, True, success=201)
+
+
 @bp.route('/api/ext/class-mail/runs/<int:rid>/state', methods=['POST'])
 @api_key_required
 def api_ext_class_mail_state(rid):

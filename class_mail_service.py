@@ -133,7 +133,7 @@ def settings(day=None):
         blocker = ('수신처 오류·To 누락' if not to or bad_to or bad_cc else '')
         if re.search(r'[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]', subject + body):
             blocker = '선명·Dear 영문 확인 필요'
-        run = query('SELECT id,state FROM class_mail_runs WHERE vessel_id=? AND iso_week=?', (vid, dm.iso_week_of(day)), one=True)
+        run = query('SELECT id,state FROM class_mail_runs WHERE vessel_id=? AND iso_week IN (?,?) ORDER BY id DESC', (vid, dm.iso_week_of(day), 'C' + dm.iso_week_of(day)), one=True)
         out.append({'vessel_id': vid, 'name': contact['name'], 'enabled': int(row['enabled']) if row else 0,
                     'to_emails': contact['to_emails'], 'cc_emails': contact['cc_emails'], 'dear_name': contact['dear_name'],
                     'to': to, 'cc': cc, 'count': len(items), 'coc': sum(i['category'] == 'COC' for i in items),
@@ -161,18 +161,29 @@ def config(day=None):
             'vessels': [v for v in settings(day) if v['enabled'] and v['count']]}
 
 
-def claim(data):
+def claim(data, canary=False):
     # Server time/cadence and shared recipients are authoritative; clients cannot override.
     vid = data.get('vessel_id')
     conn = get_db()
     try:
         conn.execute('BEGIN IMMEDIATE')
         vessel = next((v for v in settings() if v['vessel_id'] == vid), None)
-        if not vessel or not vessel['enabled'] or not vessel['eligible'] or vessel['blocker']:
+        if not vessel or not vessel['enabled'] or vessel['blocker'] or not vessel['count'] or vessel['cadence'] == 'blocked' or (not canary and not vessel['eligible']):
             raise ClassMailError(409, '발송 대상·주기·ON/OFF·수신처 변경')
+        source_week = vessel['iso_week']
         if vessel['run_this_week']:
             raise ClassMailError(409, '이번 주 발송 시도 이미 있음')
-        if data.get('fingerprint') != vessel['fingerprint'] or data.get('iso_week') != vessel['iso_week']:
+        if canary:
+            scheduled = next_send(vessel['items'])
+            if not scheduled:
+                raise ClassMailError(409, '유효한 다음 예약일 없음')
+            scheduled_day = date.fromisoformat(scheduled[:10])
+            if scheduled_day.weekday() != 0:
+                raise ClassMailError(409, '카나리 예약 기준일은 월요일이어야 함')
+            vessel = next(v for v in settings(scheduled_day) if v['vessel_id'] == vid)
+        if vessel['run_this_week']:
+            raise ClassMailError(409, '이번 주 발송 시도 이미 있음')
+        if data.get('fingerprint') != vessel['fingerprint'] or data.get('iso_week') != source_week:
             raise ClassMailError(409, '엑셀 생성 후 Class Status 변경')
         sha = str(data.get('excel_sha256') or '')
         reply_rows = data.get('reply_rows')
@@ -181,7 +192,7 @@ def claim(data):
         if [r.get('item_id') for r in reply_rows] != [i['id'] for i in vessel['items']]:
             raise ClassMailError(400, '첨부 항목 불일치')
         cur = conn.execute('INSERT INTO class_mail_runs(vessel_id,iso_week,state,tag,subject,body,to_emails,cc_emails,snapshot,reply_rows,excel_sha256) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-                           (vid, vessel['iso_week'], 'sending', vessel['tag'], vessel['subject'], vessel['body'],
+                           (vid, ('C' if canary else '') + vessel['iso_week'], 'sending', vessel['tag'], vessel['subject'], vessel['body'],
                             vessel['to_emails'], vessel['cc_emails'], dumps(vessel['items']), dumps(reply_rows), sha))
         conn.commit()
     except sqlite3.IntegrityError:
@@ -318,7 +329,11 @@ def check_send(rid):
     run = query('SELECT * FROM class_mail_runs WHERE id=?', (rid,), one=True)
     if not run or run['state'] != 'sending':
         raise ClassMailError(409, '발송 run 상태 변경')
-    vessel = next((v for v in settings() if v['vessel_id'] == run['vessel_id']), None)
+    day = None
+    if run['iso_week'].startswith('C'):
+        week = run['iso_week'][1:]
+        day = date.fromisocalendar(int(week[:4]), int(week[5:]), 1)
+    vessel = next((v for v in settings(day) if v['vessel_id'] == run['vessel_id']), None)
     if (not vessel or not vessel['enabled'] or not vessel['eligible'] or vessel['blocker']
             or digest(json.loads(run['snapshot'])) != vessel['fingerprint']
             or any(run[k] != vessel[k] for k in ('subject','body','to_emails','cc_emails'))):

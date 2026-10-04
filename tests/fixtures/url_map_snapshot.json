@@ -2372,6 +2372,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/class-mail/canary",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_canary",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/class-mail/config",
     "methods": [
       "GET",

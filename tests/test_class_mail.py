@@ -159,6 +159,34 @@ class ClassMailTests(unittest.TestCase):
             execute("UPDATE class_status_items SET due_date='' WHERE id=1")
         self.assertEqual(409, self.post('/runs', {**prepared, 'vessel_id': self.vid}).status_code)
 
+    def test_sunday_canary_only_claims_one_ship_and_reserves_next_monday(self):
+        self.client.post(f'/api/class-mail/settings/{self.vid}/enabled', json={'enabled': True})
+        with patch.object(S, 'today_kst', return_value=date(2026, 10, 4)):
+            prepared = self.get(f'/vessels/{self.vid}/prepare').get_json()
+            payload = {**prepared, 'vessel_id': self.vid}
+            self.assertEqual(409, self.post('/runs', payload).status_code)
+            self.assertEqual(400, self.post('/canary', payload).status_code)
+            self.assertEqual(401, A.app.test_client().post('/api/ext/class-mail/canary', json={**payload, 'confirmed_send': True}).status_code)
+            response = self.post('/canary', {**payload, 'confirmed_send': True})
+            self.assertEqual(201, response.status_code, response.get_json())
+            run = response.get_json()
+            self.assertEqual('C2026W41', run['iso_week'])
+            self.assertIn('[TRMT-CS 2026W41', run['subject'])
+            self.assertEqual(200, self.get(f"/runs/{run['id']}/check").status_code)
+            self.assertEqual(409, self.post('/canary', {**payload, 'confirmed_send': True}).status_code)
+            with A.app.app_context():
+                execute("UPDATE daily_mail_settings SET cc_emails='changed@example.com' WHERE vessel_id=?", (self.vid,))
+            self.assertEqual(409, self.get(f"/runs/{run['id']}/check").status_code)
+        with patch.object(S, 'today_kst', return_value=date(2026, 10, 5)):
+            monday = self.get(f'/vessels/{self.vid}/prepare').get_json()
+            rejected = self.post('/runs', {**monday, 'vessel_id': self.vid})
+            self.assertEqual(409, rejected.status_code)
+            self.assertEqual('이번 주 발송 시도 이미 있음', rejected.get_json()['error'])
+            with A.app.app_context():
+                self.assertTrue(next(v for v in S.settings(date(2026,10,5)) if v['vessel_id']==self.vid)['run_this_week'])
+        with A.app.app_context():
+            self.assertEqual(1, query('SELECT COUNT(*) n FROM class_mail_runs', one=True)['n'])
+
     def test_admin_recovery_preserves_week_lock_and_allows_reply(self):
         response, prepared = self.prepare_and_claim()
         rid = response.get_json()['id']
