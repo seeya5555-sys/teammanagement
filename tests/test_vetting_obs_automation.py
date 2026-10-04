@@ -96,6 +96,50 @@ class VettingObsAutomationTests(unittest.TestCase):
             ai_gemini._clear_closed_overall_remark(self.vt)
             self.assertEqual('pending',query('SELECT overall_remark FROM vettings WHERE id=?',(self.vt,),one=True)['overall_remark'])
 
+    def test_compliance_negation_does_not_mean_incomplete(self):
+        ev='Safety orientation was conducted and separate signed records are not mandated.'
+        self.assertEqual('Closed',ai_gemini._close_guard('Closed',ev,ai_gemini._close_norm(ev))[0])
+        ev='The valve was not repaired and additional paperwork is not required.'
+        self.assertEqual('Open',ai_gemini._close_guard('Closed',ev,ai_gemini._close_norm(ev))[0])
+
+    def test_recordkeeping_closure_is_scoped_to_same_corrective_action(self):
+        ev='Vessel commenced recording watch arrangements in the bridge logbook with immediate effect.'
+        doc='Human Deck Officer: Not as expected.\nMissing watch entries.\nOperator Comments\nCorrective Action\n'+ev+'\nPreventative Action\nThe fleet will continue routine audits.\nDate rectified: 12 Sep 2026\n'
+        blocks=ai_gemini._full_report_assessment_blocks_from_text(doc)
+        context=ai_gemini._close_evidence_context(ev,blocks,'Missing watch entries.')
+        self.assertTrue(context)
+        self.assertEqual(('Closed','explicit_observation_closure_date'),ai_gemini._close_guard('Closed',ev,ai_gemini._close_norm(doc),context))
+        self.assertEqual('Open',ai_gemini._close_guard('Closed',ev,ai_gemini._close_norm(doc))[0])
+        # A different observation's closure date may never clear this one.
+        pending_doc=doc.replace('Date rectified: 12 Sep 2026','')+'Human Engineer Officer: Not as expected.\nDifferent deficiency.\nOperator Comments\nCorrective Action\nPump repaired.\nDate Closed: 13 Sep 2026'
+        ctx=ai_gemini._close_evidence_context(ev,ai_gemini._full_report_assessment_blocks_from_text(pending_doc),'Missing watch entries.')
+        self.assertEqual('Open',ai_gemini._close_guard('Closed',ev,ai_gemini._close_norm(pending_doc),ctx)[0])
+
+    def test_pending_corrective_action_beats_closure_date(self):
+        ev='Spares were received but the valve will be repaired at the next port.'
+        doc='Human Engineer Officer: Not as expected.\nOperator Comments\nCorrective Action\n'+ev+'\nPreventative Action\nAudits completed.\nDate Closed: 12 Sep 2026'
+        ctx=ai_gemini._close_evidence_context(ev,ai_gemini._full_report_assessment_blocks_from_text(doc),'Human Engineer Officer: Not as expected.')
+        self.assertEqual('Open',ai_gemini._close_guard('Closed',ev,ai_gemini._close_norm(doc),ctx)[0])
+
+    def test_duplicate_evidence_context_is_not_a_closure_override(self):
+        ev='The office commenced maintaining crew familiarisation records.'
+        block='Human Officer: Not as expected.\nOperator Comments\nCorrective Action\n'+ev+'\nPreventative Action\nAudits ongoing.\nDate Closed: 12 Sep 2026\n'
+        self.assertEqual('',ai_gemini._close_evidence_context(ev,ai_gemini._full_report_assessment_blocks_from_text(block+block),'Human Officer: Not as expected.'))
+
+    def test_future_or_invalid_closure_date_does_not_override(self):
+        self.assertFalse(ai_gemini._has_past_closure_date('Date Closed: 99 Sep 2026'))
+        self.assertFalse(ai_gemini._has_past_closure_date('Date Closed: 12 Sep 2099'))
+        self.assertTrue(ai_gemini._has_past_closure_date('Date closed-12 Sep 2026'))
+
+    def test_wrong_observation_and_hidden_ca_pending_are_rejected(self):
+        ev='Staff commenced documenting navigation watch entries.'
+        doc='Human Officer: Not as expected.\nMissing compass calibration records.\nOperator Comments\nCorrective Action\n'+ev+' The compass calibration will be completed at next port.\nPreventative Action\nAnnual audits.\nDate Closed: 12 Sep 2026'
+        blocks=ai_gemini._full_report_assessment_blocks_from_text(doc)
+        self.assertEqual('',ai_gemini._close_evidence_context(ev,blocks,'Valve pressure and leakage defect.'))
+        ctx=ai_gemini._close_evidence_context(ev,blocks,'Missing compass calibration records.')
+        self.assertEqual(('Open','corrective_action_has_pending_wording'),ai_gemini._close_guard('Closed',ev,ai_gemini._close_norm(doc),ctx))
+        self.assertFalse(ai_gemini._has_past_closure_date('Date Closed: 12 Sep 2026\nAdditional preventative exercises will start.'))
+
     def _ai(self, items):
         return mock.patch.multiple(ai_gemini, _close_doc_text=mock.Mock(return_value=DOC),
                                    _gemini_call_json=mock.Mock(return_value={'items': items}),

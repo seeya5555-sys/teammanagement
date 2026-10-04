@@ -946,6 +946,8 @@ def _full_report_prompt(vetting, findings):
         "나쁜 예: '메인 엔진 6번 실린더 커버 시동 밸브 시트 수리 후 Class Condition이 발행됨. 수리 부위는 정기 점검 및 모니터링 중이며 차기 연례 검사 시 UT/MPI 재검사가 예정되어 있음.' "
         "좋은 예: 'M/E No.6 Cylinder cover starting valve seating 수리 후 COC 발행됨, 차기 Annual Survey 시 UT/MPI 재검사 예정.' "
         "없는 내용을 만들지 않는다.\n"
+        "- 동일 Observation의 Operator Comments에 Date Closed/Date rectified가 있으면 해당 항목의 명시적 종결 근거로 고려한다. "
+        "실제 미완료 Corrective Action이 있으면 Open을 유지하며, 다른 항목 날짜나 미래 반복 Preventative Action을 혼동하지 않는다.\n"
         "- evidence는 status 판정에 직접 사용한 영문 원문 핵심 문장이다.\n"
         "- 보고서에서 동일 지적을 확실히 찾지 못하거나 Open/Closed 판정이 불확실하면 matched=false로 둔다. "
         "Initial에는 있으나 Full 전체 Observation 목록에 없는 것이 확정된 항목만 absence_confirmed=true로 반환한다. "
@@ -1753,7 +1755,74 @@ def _close_doc_text(path, ext):
     return ''
 
 
-def _close_guard(status, evidence, doc_norm):
+_CLOSE_GUARD_VERSION = '2026-10-04.2'
+_CLOSED_DATE_RE = _re_cls.compile(
+    r'(?im)^\s*date\s+(?:closed|rectified)\s*[:\-]?\s*'
+    r'(?:\d{1,2}[ /\-]+[A-Za-z]{3,9}[ /\-]+\d{4}|\d{4}[ /\-]\d{1,2}[ /\-]\d{1,2})\b')
+
+def _has_past_closure_date(context):
+    for match in _CLOSED_DATE_RE.finditer(context or ''):
+        tail = (context or '')[match.end():]
+        lines = [line.strip() for line in tail.splitlines() if line.strip() and not _re_cls.match(r'^(?:©|PAGE\s+\d+|Report for\s)', line.strip(), _re_cls.I)]
+        if lines and not _re_cls.match(r'^(?:\d+\.|Operator Attachments\b)', lines[0], _re_cls.I):
+            continue
+        raw = _re_cls.sub(r'^\s*date\s+(?:closed|rectified)\s*[:\-]?\s*', '', match.group(), flags=_re_cls.I)
+        raw = _re_cls.sub(r'[ /\-]+', ' ', raw).strip()
+        for fmt in ('%d %b %Y', '%d %B %Y', '%Y %m %d'):
+            try:
+                closed_date = datetime.strptime(raw, fmt).date()
+            except ValueError:
+                continue
+            if closed_date <= datetime.now().date():
+                return True
+    return False
+
+
+def _close_evidence_context(evidence, blocks, finding_description=''):
+    """Return only a unique negative assessment's Operator Comments for its CA quote.
+    Closure dates from a neighbouring observation or preventive action cannot prove closure.
+    """
+    normalized = _close_norm(evidence)
+    if not finding_description or len(normalized) < 20:
+        return ''
+    negatives = [b for b in blocks if b['negative']]
+    def identity_tokens(text):
+        # Descriptions only, never operator comments. Two unique substantive source
+        # anchors permit legacy short descriptions without borrowing another item.
+        stop = {'were','have','been','that','this','with','from','during','there','their',
+                'which','these','those','could','would','should','required','accordance',
+                'available','before','after','because','however','confirmed','demonstrated','found'}
+        words = [w for w in _re_cls.findall(r'[a-z]+', (text or '').lower()) if w not in stop]
+        return {w[:-1] if w.endswith('s') and not w.endswith('ss') else w
+                for w in words if len(w) >= 4}
+    source_tokens = [identity_tokens(b['text'].split('Operator Comments', 1)[0]) for b in negatives]
+    wanted = identity_tokens(finding_description)
+    identities = []
+    for index, block in enumerate(negatives):
+        original = block['text'].split('Operator Comments', 1)[0]
+        others = set().union(*(t for i, t in enumerate(source_tokens) if i != index))
+        distinctive = wanted & source_tokens[index] - others
+        if _description_matches_assessment(finding_description, original) or len(distinctive) >= 2:
+            identities.append(block)
+    if len(identities) != 1:
+        return ''
+    contexts = []
+    for block in identities:
+        if not block['negative'] or 'Operator Comments' not in block['text']:
+            continue
+        comments = block['text'].split('Operator Comments', 1)[1]
+        match = _re_cls.search(r'(?is)\bCorrective Action\b(.*?)(?=\bPreventative Action\b|$)', comments)
+        if match and normalized in _close_norm(match.group(1)):
+            contexts.append(comments)
+    return contexts[0] if len(contexts) == 1 else ''
+
+def _close_pending_evidence(evidence):
+    # A statement that a document/action is not required is not a pending action.
+    text = _re_cls.sub(r'\bnot\s+(?:required|mandated|mandatory|necessary)\b', '', evidence or '', flags=_re_cls.I)
+    return bool(_CLOSE_PENDING_RE.search(text))
+
+
+def _close_guard(status, evidence, doc_norm, observation_context=''):
     """AI 판정을 결정론으로 거른다 → (최종 status, 사유)."""
     ev = (evidence or '').strip()
     ev_n = _close_norm(ev)
@@ -1761,8 +1830,13 @@ def _close_guard(status, evidence, doc_norm):
         return 'Open', 'evidence_not_in_document'
     if status != 'Closed':
         return 'Open', 'ai_not_closed'
-    if _CLOSE_PENDING_RE.search(ev):
+    if _close_pending_evidence(ev):
         return 'Open', 'evidence_has_pending_wording'
+    if observation_context and _has_past_closure_date(observation_context):
+        corrective = _re_cls.search(r'(?is)\bCorrective Action\b(.*?)(?=\bPreventative Action\b|$)', observation_context)
+        if corrective and _close_pending_evidence(corrective.group(1)):
+            return 'Open', 'corrective_action_has_pending_wording'
+        return 'Closed', 'explicit_observation_closure_date'
     if not _CLOSE_DONE_RE.search(ev):
         return 'Open', 'evidence_has_no_completion_wording'
     return 'Closed', 'ok'
@@ -1781,6 +1855,13 @@ def _close_prompt(vetting, vessel, findings, doc_text):
         '- "Open": action is planned / pending / awaiting spares / scheduled for next port or dry dock / '
         "partially done / temporary, or only causes are analysed.\n"
         '- "NotFound": the observation is not addressed in the document.\n'
+        "A dated 'Date Closed' or 'Date rectified' inside THIS observation's Operator Comments is explicit "
+        "operator closure evidence. Consider it together with Corrective Action. Record-keeping already "
+        "commenced/started and compliance clarification ('not required/mandated') are not automatically pending. "
+        "Future recurring Preventative Action alone does not reopen a completed corrective action. "
+        "If a corrective action is actually incomplete/pending despite a closure date, keep Open. "
+        "Never borrow another observation's closure date. Quote from Corrective Action for evidence, "
+        "not from Root Cause, Immediate Cause or a different observation.\n"
         "evidence = an EXACT verbatim copy (8-60 words, no paraphrase, no ellipsis) of the document sentence "
         "that shows the corrective action status of that observation. Empty string for NotFound.\n"
         "action_ko = Korean one-line summary of the corrective action status, concise; preserve technical terms, conditions and remaining actions before the 50-char target, ship jargon "
@@ -1829,7 +1910,7 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
     if not docs:
         return {**base, 'skipped': 'no_readable_close_document'}
     fp = hashlib.sha256(json.dumps({'att': sorted(u['sha256'] + str(u['id']) for u in used),
-                                    'open': [int(f['id']) for f in open_f]}).encode()).hexdigest()
+                                    'open': [int(f['id']) for f in open_f], 'guard_version': _CLOSE_GUARD_VERSION}).encode()).hexdigest()
     if not force and query('SELECT 1 FROM vt_close_auto_runs WHERE vetting_id=? AND input_fp=?',
                            (vid, fp), one=True):
         return {**base, 'skipped': 'already_judged_same_input'}
@@ -1842,6 +1923,10 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
     if not isinstance(items, list):
         return {**base, 'error': 'ai_parse_failed'}
     doc_norm = _close_norm(doc_text)
+    try:
+        observation_blocks = _full_report_assessment_blocks_from_text(doc_text)
+    except ValueError:
+        observation_blocks = []
     by_id = {int(f['id']): f for f in open_f}
     judged, seen = [], set()
     for it in items:
@@ -1855,7 +1940,8 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
             continue
         seen.add(fid)
         ai_status = (it.get('status') or '').strip()
-        final, why = _close_guard(ai_status, it.get('evidence'), doc_norm)
+        context = _close_evidence_context(it.get('evidence'), observation_blocks, by_id[fid]['description'])
+        final, why = _close_guard(ai_status, it.get('evidence'), doc_norm, context)
         action = _concise_full_report_remark((it.get('action_ko') or '').strip())
         judged.append({'finding_id': fid, 'no': by_id[fid]['no'], 'ai_status': ai_status,
                        'status': final, 'reason': why, 'evidence': (it.get('evidence') or '').strip()[:600],
