@@ -81,7 +81,7 @@ r = post(iid, {'progress': '셋째 진행', 'date': '2026-08-07', 'important': T
 chk(r.status_code == 200, '200', r.status_code)
 got = acts_of(iid)
 chk(len(got) == 3, '3건', len(got))
-chk(got[:2] == BASE, '기존 2건 글자 그대로', got[:2])
+chk(got[:2] == [dict(a, important=False) for a in BASE], '기존 내용 보존·중요표시 해제', got[:2])
 chk(got[2] == {'date': '2026-08-07', 'progress': '셋째 진행', 'important': True}, '새 항목', got[2:])
 chk(r.get_json().get('actions') == got, '응답 = DB 확정본')
 
@@ -173,7 +173,19 @@ iid = mkissue()
 r = post(iid, {'progress': '날짜 없이'})
 chk(r.status_code == 200 and acts_of(iid)[-1]['date'] == date.today().isoformat(),
     '오늘로 채움', acts_of(iid)[-1] if acts_of(iid) else None)
-chk(acts_of(iid)[-1]['important'] is False, 'important 기본 False')
+chk(acts_of(iid)[-1]['important'] is True, '새 진행 중요 True')
+
+# Legacy edit-modal append also obeys the same server policy.
+iid = mkissue()
+r = c.put(f'/api/issues/{iid}', json={'actions': BASE + [{'date': '2026-08-01', 'progress': 'modal', 'important': False}]})
+chk(r.status_code == 200, '편집창 추가 저장 200')
+chk([a['important'] for a in acts_of(iid)] == [False, False, True], '편집창 서버 최신 항목만 중요')
+
+# Exercise automatic-mail CAS storage, not only the shared pure helper.
+from daily_mail_service import append_action_cas
+iid = mkissue()
+append_action_cas(iid, {'date': '2026-08-01', 'progress': 'auto', 'important': False})
+chk([a['important'] for a in acts_of(iid)] == [False, False, True], '자동메일 CAS 최신 항목만 중요')
 
 print('\n' + ('❌ 실패 %d: %s' % (len(fails), fails) if fails else '✅ 전부 통과'))
 sys.exit(1 if fails else 0)

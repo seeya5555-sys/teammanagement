@@ -1365,7 +1365,7 @@ async function addActionInline(issue) {
   if (S._editing) return;
   if (!Array.isArray(issue.actions)) issue.actions = [];
   // 임시 빈 entry 추가 후 그 entry 편집 진입
-  issue.actions.push({ date: todayISO(), progress: '', important: false, _new: true });
+  issue.actions.push({ date: todayISO(), progress: '', important: true, _new: true });
   if (!S.expandedActions.has(issue.id)) S.expandedActions.add(issue.id);
   renderTable(); renderCards();
 
@@ -1723,7 +1723,7 @@ function renderActionEditor() {
 }
 
 function addActionEntry() {
-  S.editingActions.push({ date: todayISO(), progress: '', important: false });
+  S.editingActions.push({ date: todayISO(), progress: '', important: true, _new: true });
   renderActionEditor();
   const rows = $('#f-action-editor').querySelectorAll('.act-edit-row');
   const last = rows[rows.length - 1];
@@ -1834,6 +1834,10 @@ async function saveIssue(ev) {
       progress: (a.progress || '').trim(),
       important: !!a.important,
     }));
+
+  if (S.editingActions.some(a => a._new && (a.progress || '').trim()) && cleanActions.length) {
+    cleanActions.forEach((a, i) => { a.important = i === cleanActions.length - 1; });
+  }
 
   const payload = {
     supervisor_id: Number($('#f-supervisor').value),

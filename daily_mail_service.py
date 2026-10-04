@@ -10,6 +10,7 @@ HTTP 어댑터는 `routes_daily_mail.py`. 여기는 상태 전이와 DB 규칙�
   · 같은 메일(message_id)·종류·이슈 이벤트는 1회(UNIQUE index) — 재폴링 dedup.
   · 'COC & Flag' 이슈 자동 Close 는 class_confirmed 근거가 있을 때만. 없으면 409 → 러너는 제안으로.
 """
+from maritime_style import append_latest_important
 import json
 import re
 from datetime import date, datetime, timedelta
@@ -488,7 +489,7 @@ def append_action_cas(issue_id, entry, attempts=3, vessel_id=None, require_open=
             raise DailyMailError(409, 'issue is not open', code='not_open')
         raw = row['actions']
         actions = _json_list(raw)
-        merged = actions + [entry]
+        merged = append_latest_important(actions, entry)
         new_raw = json.dumps(merged, ensure_ascii=False)
         guard = (" AND status IN ('Open','InProgress')" if require_open else '') + \
                 (' AND vessel_id=?' if vessel_id is not None else '')

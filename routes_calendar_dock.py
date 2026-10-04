@@ -10,6 +10,7 @@ through ``app``.  Contract enforced by
 no sibling boundary imports.
 """
 from maritime_style import MARITIME_TERMS_RULES
+from maritime_style import append_latest_important
 from flask import Blueprint
 
 import hashlib
@@ -5290,7 +5291,7 @@ def api_ext_issue_add_action(iid):
         except Exception:
             app.logger.exception('ext-issue-add-action')
             actions = []
-        actions.append(entry)
+        actions = append_latest_important(actions, entry)
         new_raw = json.dumps(actions, ensure_ascii=False)
         if raw is None:
             rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '

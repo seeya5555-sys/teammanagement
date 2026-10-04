@@ -9,6 +9,7 @@ through ``app``.  Contract enforced by
 ``test_converted_modules_are_self_contained``: zero unresolved names, and
 no sibling boundary imports.
 """
+from maritime_style import append_latest_important
 from flask import Blueprint
 
 import json
@@ -1031,6 +1032,8 @@ def api_issue_create():
     actions = d.get('actions') or []
     if not isinstance(actions, list):
         actions = []
+    if actions and isinstance(actions[-1], dict):
+        actions = append_latest_important(actions[:-1], actions[-1])
     actions_json = json.dumps(actions, ensure_ascii=False)
 
     iid = execute('''
@@ -1078,6 +1081,13 @@ def api_issue_update(iid):
             if f == 'actions':
                 if not isinstance(val, list):
                     val = []
+                original = query('SELECT actions FROM issues WHERE id=?', (iid,), one=True)
+                try:
+                    previous = json.loads(original['actions'] or '[]')
+                except (ValueError, TypeError):
+                    previous = []
+                if isinstance(previous, list) and len(val) > len(previous) and isinstance(val[-1], dict):
+                    val = append_latest_important(val[:-1], val[-1])
                 val = json.dumps(val, ensure_ascii=False)
             elif val == '':
                 val = None
@@ -1135,7 +1145,7 @@ def api_issue_action_append(iid):
             actions = []
         if not isinstance(actions, list):
             actions = []
-        merged = actions + [entry]
+        merged = append_latest_important(actions, entry)
         new_raw = json.dumps(merged, ensure_ascii=False)
         if raw is None:
             rc = execute_rc('UPDATE issues SET actions=?, updated_at=datetime("now","localtime") '

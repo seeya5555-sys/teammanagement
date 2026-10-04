@@ -110,7 +110,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
         self.assertNotIn('SIRE Full Report 자동반영', rows[0]['user_remark'])
         self.assertEqual(1, rows[0]['user_remark'].count('M/E No.6 Cylinder cover'))
         self.assertIn('starting valve seating', rows[0]['full_report_remark'])
-        self.assertIn('Condition of Class', rows[0]['full_report_remark'])
+        self.assertIn('COC', rows[0]['full_report_remark'])
         self.assertIn('Annual Survey', rows[0]['full_report_remark'])
         self.assertIn('UT/MPI', rows[0]['full_report_remark'])
         self.assertIn('정기 점검 및 모니터링', rows[0]['full_report_remark'])
@@ -472,7 +472,7 @@ Negative crane paragraph.
         summary = response.get_json()['summary']
         self.assertIn(
             '1. M/E NO.6 Cylinder cover Condition of Class 미종결 - '
-            'starting valve seating 수리 후 Condition of Class 모니터링 중임.',
+            'starting valve seating 수리 후 COC 모니터링 중임.',
             summary,
         )
         self.assertNotIn('자동반영', summary)
@@ -554,7 +554,7 @@ Negative crane paragraph.
         shown = finding['user_remark']
         self.assertIn('수동 메모 보존', shown)
         self.assertIn('M/E No.6 Cylinder cover starting valve seating', shown)
-        self.assertIn('Condition of Class', shown)
+        self.assertIn('COC', shown)
         self.assertIn('Annual Survey', shown)
         self.assertIn('UT/MPI', shown)
         self.assertNotIn('메인 엔진', shown)
@@ -569,7 +569,7 @@ Negative crane paragraph.
         bounded = routes._concise_full_report_remark(long_text)
         self.assertGreater(len(bounded), 140)
         self.assertNotIn("…", bounded)
-        self.assertIn('Condition of Class', bounded)
+        self.assertIn('COC', bounded)
         self.assertIn('UT/MPI', bounded)
         self.assertEqual(bounded, routes._concise_full_report_remark(bounded))
 

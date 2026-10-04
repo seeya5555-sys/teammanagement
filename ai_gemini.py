@@ -936,10 +936,10 @@ def _full_report_prompt(vetting, findings):
         "Corrective Action을 Open으로 두지는 않는다. 적합성 확인으로 시정 불필요가 명확하고 후속조치가 없으면 Closed.\n"
         "- 기존 items의 remark는 Operator Comments를 근거로 현재 조치상태와 남은 핵심 조치만 한국어 음슴체 "
         "한 문장으로 간결하게 요약하고 현재 상태와 남은 핵심 조치만 남긴다. Immediate Cause/Root Cause의 경위 설명은 반복하지 않는다. "
-        "Condition of Class, starting valve seating, Cylinder cover, UT/MPI, FIVA, ECDIS 등 기술 명칭·장비명·약어는 "
+        "Condition of Class는 COC로 표기하고, starting valve seating, Cylinder cover, UT/MPI, FIVA, ECDIS 등 기술 명칭·장비명·약어는 "
         "번역하지 말고 보고서의 영문 표기를 그대로 유지한다. "
         "나쁜 예: '메인 엔진 6번 실린더 커버 시동 밸브 시트 수리 후 Class Condition이 발행됨. 수리 부위는 정기 점검 및 모니터링 중이며 차기 연례 검사 시 UT/MPI 재검사가 예정되어 있음.' "
-        "좋은 예: 'M/E No.6 Cylinder cover starting valve seating 수리 후 Condition of Class 발행됨, 차기 Annual Survey 시 UT/MPI 재검사 예정.' "
+        "좋은 예: 'M/E No.6 Cylinder cover starting valve seating 수리 후 COC 발행됨, 차기 Annual Survey 시 UT/MPI 재검사 예정.' "
         "없는 내용을 만들지 않는다.\n"
         "- evidence는 status 판정에 직접 사용한 영문 원문 핵심 문장이다.\n"
         "- 보고서에서 동일 지적을 확실히 찾지 못하거나 Open/Closed 판정이 불확실하면 matched=false로 둔다. "
@@ -985,7 +985,8 @@ def _concise_full_report_remark(value):
         (r'(\d+)\s*번\s*실린더\s*커버', r'No.\1 Cylinder cover'),
         (r'실린더\s*커버', 'Cylinder cover'),
         (r'시동\s*밸브\s*(?:시트|시팅)', 'starting valve seating'),
-        (r'(?:Class\s*Condition|선급\s*조건)(?:이|가)?', 'Condition of Class'),
+        (r'(?<![A-Za-z])(?:Condition\s+of\s+Class(?![A-Za-z])(?:\s*\(CoC\))?|Class\s*Condition(?![A-Za-z])|선급\s*조건|CoC(?![A-Za-z]))(?:이|가)?', 'COC'),
+        (r'(?<![가-힣])보수(?![가-힣])', '수리'),
         (r'연례\s*검사', 'Annual Survey'),
         (r'재검사가\s*예정되어\s*있음', '재검사 예정'),
     )
