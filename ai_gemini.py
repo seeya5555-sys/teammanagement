@@ -2080,22 +2080,35 @@ def vt_mail_apply_reply(rid, fid, d):
     if query('SELECT 1 FROM vetting_mail_events WHERE run_id=? AND finding_id=? AND message_id=? '
              "AND kind IN ('close','update','needs_review')", (rid, fid, mid), one=True):
         return {'duplicate': True}
-    if (f['status'] or 'Open') != 'Open':
+    legacy_mid = (d.get('legacy_message_id') or '').strip()
+    if legacy_mid and query("SELECT 1 FROM vetting_mail_events WHERE run_id=? AND finding_id=? AND message_id=? AND kind IN ('close','update','needs_review')", (rid, fid, legacy_mid), one=True):
+        return {'duplicate': True}
+    if f['status'] not in ('Open', 'Closed'):
         return {'not_open': True}
+    was_closed = f['status'] == 'Closed'
+    if was_closed:
+        kind = 'needs_review' if kind != 'close' else 'update'
     date = (d.get('date') or datetime.now().strftime('%Y-%m-%d'))[5:10].replace('-', '/')
     text = _concise_full_report_remark((d.get('text') or '').strip())
+    if was_closed and text and any(line.endswith(' ' + text) for line in (f['full_report_remark'] or '').splitlines()):
+        return {'duplicate': True}
     auto = (vms.REVIEW_TAG if kind == 'needs_review' else '') + (f'회신({date}) ' + text if text else f'회신({date}) 확인 필요')
-    user_remark = _replace_full_report_remark(f['user_remark'], f['full_report_remark'], auto)
-    new_status = 'Closed' if kind == 'close' else 'Open'
+    if was_closed:
+        new_auto = auto
+        auto = '\n'.join(x for x in (f['full_report_remark'], new_auto) if x)
+        user_remark = '\n'.join(x for x in (f['user_remark'], new_auto) if x)
+    else:
+        user_remark = _replace_full_report_remark(f['user_remark'], f['full_report_remark'], auto)
+    new_status = 'Closed' if was_closed or kind == 'close' else 'Open'
     before = {'status': f['status'], 'user_remark': f['user_remark'], 'full_report_remark': f['full_report_remark']}
     db = get_db()
     try:
         db.execute('BEGIN IMMEDIATE')
         cur = db.execute(
             "UPDATE vt_findings SET status=?, user_remark=?, full_report_remark=?, updated_at=datetime('now','localtime') "
-            "WHERE id=? AND COALESCE(status,'Open')='Open' AND COALESCE(full_report_remark,'')=? "
+            "WHERE id=? AND COALESCE(status,'Open')=? AND COALESCE(full_report_remark,'')=? "
             "AND COALESCE(user_remark,'')=?",
-            (new_status, user_remark, auto, fid, f['full_report_remark'] or '', f['user_remark'] or ''))
+            (new_status, user_remark, auto, fid, f['status'] or 'Open', f['full_report_remark'] or '', f['user_remark'] or ''))
         if cur.rowcount != 1:
             db.rollback()
             raise vms.VettingMailError(409, '그 사이 항목이 바뀜 — 다음 실행에 재시도')

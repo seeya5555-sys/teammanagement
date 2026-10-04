@@ -306,6 +306,23 @@ class VettingObsAutomationTests(unittest.TestCase):
             ev = query("SELECT kind, before_json FROM vetting_mail_events WHERE run_id=? AND kind='close'", (rid,))
             self.assertIn('"status": "Open"', ev[0]['before_json'])
 
+    def test_closed_followup_preserves_status_history_and_dedup(self):
+        rid = self._sent_run()
+        with appmod.app.app_context():
+            from app_core import execute, query
+            execute("UPDATE vt_findings SET status='Closed',user_remark='original',full_report_remark='source' WHERE id=?", (self.f1,))
+        url = f'/api/ext/vetting-mail/runs/{rid}/findings/{self.f1}/reply'
+        payload = {'message_id':'synthetic-followup', 'kind':'update', 'text':'Spare 재고 확인 필요', 'evidence':'Spare still unavailable.'}
+        result = self.c.post(url, headers=self.h, json=payload)
+        self.assertEqual(200, result.status_code)
+        self.assertEqual('needs_review',result.get_json()['applied'])
+        self.assertTrue(self.c.post(url, headers=self.h, json=payload).get_json()['duplicate'])
+        with appmod.app.app_context():
+            row = query('SELECT * FROM vt_findings WHERE id=?',(self.f1,),one=True)
+            self.assertEqual('Closed',row['status'])
+            self.assertTrue(row['user_remark'].startswith('original'))
+            self.assertIn('확인',row['user_remark'])
+
     def test_reply_requires_sent_run(self):
         self.c.post(f'/api/vetting-mail/settings/{self.ves}/enabled', json={'enabled': True})
         ids = sorted([self.f1, self.f2, self.f3])
