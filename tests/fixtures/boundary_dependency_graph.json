@@ -161,10 +161,15 @@
       "execute",
       "get_db",
       "query"
+    ],
+    "maritime_style.py": [
+      "EN_TRANSLATION_RULES",
+      "MARITIME_TERMS_RULES"
     ]
   },
   "issue_export_service.py": {},
   "krcon_client.py": {},
+  "maritime_style.py": {},
   "migration_steps.py": {},
   "report_export_service.py": {},
   "routes_calendar_dock.py": {
@@ -246,6 +251,9 @@
       "soa_task_key"
     ],
     "krcon_client.py": [],
+    "maritime_style.py": [
+      "MARITIME_TERMS_RULES"
+    ],
     "report_export_service.py": []
   },
   "routes_core.py": {

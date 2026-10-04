@@ -27,6 +27,8 @@ import uuid
 from datetime import date, datetime, timedelta
 from functools import wraps
 
+from maritime_style import MARITIME_TERMS_RULES, EN_TRANSLATION_RULES
+
 from flask import abort, g, jsonify, redirect, request, session, url_for
 from werkzeug.utils import secure_filename
 
@@ -548,7 +550,7 @@ def _coerce_translation_items(res):
 def _translate_batch_en(texts, group):
     """group(인덱스 리스트) 한 묶음 번역 → {원본인덱스: 영문}. 실패 시 None."""
     payload = json.dumps([{'i': i, 'text': texts[i]} for i in group], ensure_ascii=False)
-    prompt = (
+    prompt = (EN_TRANSLATION_RULES + "\n" +
         "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 한국어(또는 한영 혼용) "
         "텍스트를 선박 관리 현업에서 자연스럽게 쓰는 영어로 번역하라.\n"
         "- 장비명·약어·단위·수치(예: BRG, RPM, S/W pump, LT cooler, EGCS, °C, kts)는 그대로 둔다.\n"
@@ -583,7 +585,7 @@ def _gen_issue_summaries(payload_items):
         if not group:
             return
         sub = [payload_items[k] for k in group]
-        prompt = (
+        prompt = (_MARITIME_TERMS +
             "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 업무 항목에 대해 "
             "두 가지를 한국어로 작성하라.\n"
             "- desc: description의 핵심 문제를 1문장(최대 2문장)으로 짧게 요약\n"
@@ -788,16 +790,7 @@ def _translate_rows_en(rows):
             r['actions'][ai]['progress'] = en
         else:
             r[field] = en
-_MARITIME_TERMS = (
-    " 요약은 선박 현업(감독/기관부) 용어로 옮긴다. 일반어 → 현업어 매핑: "
-    "repair=수리(※'보수'로 쓰지 말 것), cleaning/clean=소제, replace/renew/renewal=신환, "
-    "install/fitting=설치, overhaul=O/H(분해점검), inspection/survey=수검, maintenance=정비, "
-    "check/verify=확인, adjust/adjustment=조정, calibration=교정, test=시험, crack=균열, "
-    "corrosion/rust=부식, leak/leakage=누설(누유/누수), wear/weardown=마모, deformation=변형, "
-    "spare parts=예비품, weld/welding=용접, coating/painting=도장, submit=제출, "
-    "place onboard=본선 비치. "
-    "목록에 없어도 선박에서 통용되는 자연스러운 표현을 우선 사용한다. "
-)
+_MARITIME_TERMS = "\n" + MARITIME_TERMS_RULES + "\n"
 # ═════════════════════════════════════════════════════════════════
 #  API — Vetting Status (비정기, 선박당 0~N건, CNTR 제외)
 # ═════════════════════════════════════════════════════════════════

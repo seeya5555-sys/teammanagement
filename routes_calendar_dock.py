@@ -9,6 +9,7 @@ through ``app``.  Contract enforced by
 ``test_converted_modules_are_self_contained``: zero unresolved names, and
 no sibling boundary imports.
 """
+from maritime_style import MARITIME_TERMS_RULES
 from flask import Blueprint
 
 import hashlib
@@ -3469,7 +3470,7 @@ def krcon_ai():
     src_txt = '\n\n'.join(
         f"[출처 {d['id']}] {d['title']} (발효일 {d['eff'] or '미상'})\n{d['body']}"
         for d in docs)
-    prompt = (
+    prompt = (MARITIME_TERMS_RULES + "\n" +
         "너는 선박 검사·선급/IMO 규정 어시스턴트다. 아래 KR-CON 발췌(선급룰·"
         "SOLAS·IMO 등)만 근거로 질문에 한국어로 간결히 답하라. 규칙:\n"
         "1) 발췌에 있는 내용만 사용. 추측·일반지식 삽입 금지.\n"

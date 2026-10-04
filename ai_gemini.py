@@ -918,7 +918,7 @@ def _full_report_prompt(vetting, findings):
         'item': f['item'] or '',
         'description': f['description'] or '',
     } for f in findings]
-    return (
+    return (_MARITIME_TERMS +
         "다음 PDF는 선박 SIRE 2.0 Full Report다. 아래 기존 Observation 각각을 보고서의 동일 지적과 "
         "일대일로 매칭하고, Full report에만 새로 추가된 Observation도 빠짐없이 추출하라. JSON으로만 답하라.\n"
         "- report_type: 표지의 Report Type을 그대로 추출(반드시 Full인지 확인).\n"
@@ -977,8 +977,8 @@ def _replace_full_report_remark(existing, previous_auto, generated):
     return f'{current}\n\n{automatic}'.strip() if current else automatic
 
 
-def _concise_full_report_remark(value, limit=140):
-    """AI 조치 Remark를 단일 문장·화면 한두 줄 길이로 강제한다."""
+def _concise_full_report_remark(value):
+    """조치 Remark 문체 정리. 길이 목표보다 잔여 조치·조건 보존 우선."""
     text = (value or '')
     replacements = (
         (r'메인\s*엔진', 'M/E'),
@@ -994,23 +994,9 @@ def _concise_full_report_remark(value, limit=140):
     text = _re_cls.sub(r'\s+', ' ', text).strip()
     if not text:
         return ''
-    parts = [part.strip() for part in _re_cls.split(r'(?<=[.!?])\s+', text) if part.strip()]
-    chosen = parts[:1]
-    if len(parts) > 1 and not _re_cls.search(r'Root\s*Cause|Immediate\s*Cause|원인|경위',
-                                             parts[1], flags=_re_cls.I):
-        if _re_cls.search(r'예정|검사|Survey|UT/MPI|모니터링|monitor|pending|완료|발행',
-                          parts[1], flags=_re_cls.I):
-            future = _re_cls.search(r'(차기\s+.+)', parts[1])
-            chosen.append(future.group(1) if future else parts[1])
-    sentence = ', '.join(part.rstrip(' .!?') for part in chosen).strip()
-    if chosen and chosen[-1].endswith(('.', '!', '?')):
-        sentence += chosen[-1][-1]
-    if len(sentence) <= limit:
-        return sentence
-    cut = sentence[:limit - 1].rstrip()
-    if ' ' in cut:
-        cut = cut.rsplit(' ', 1)[0]
-    return cut.rstrip(' ,.;:') + '…'
+    # Generated summaries are made concise by their prompt. Postprocessing must not
+    # discard a second/third sentence, a condition, a deadline, or truncate a technical term.
+    return text
 
 
 def _summary_full_report_remark(value):
@@ -1759,7 +1745,7 @@ def _close_guard(status, evidence, doc_norm):
 def _close_prompt(vetting, vessel, findings, doc_text):
     obs = [{'finding_id': int(f['id']), 'no': f['no'], 'item': f['item'] or '',
             'description': (f['description'] or '')[:1200]} for f in findings]
-    return (
+    return (_MARITIME_TERMS +
         "You review SIRE inspection close-out documents (operator comments / corrective action reports) "
         f"for vessel {vessel}, SIRE report {vetting['report_number'] or '-'} "
         f"inspected {vetting['inspection_date'] or '-'}.\n"
@@ -1771,8 +1757,8 @@ def _close_prompt(vetting, vessel, findings, doc_text):
         '- "NotFound": the observation is not addressed in the document.\n'
         "evidence = an EXACT verbatim copy (8-60 words, no paraphrase, no ellipsis) of the document sentence "
         "that shows the corrective action status of that observation. Empty string for NotFound.\n"
-        "action_ko = Korean one-line summary of the corrective action status, max 50 chars, ship jargon "
-        "(e.g. '로프 교체 완료', '부품 수령 후 교체 예정', '절차서 개정 및 교육 완료').\n"
+        "action_ko = Korean one-line summary of the corrective action status, concise; preserve technical terms, conditions and remaining actions before the 50-char target, ship jargon "
+        "(e.g. 'Wire rope 신환 완료', 'Spare 보급 후 신환 예정', '절차서 개정 및 교육 완료').\n"
         'Answer JSON only: {"items":[{"finding_id":1,"status":"Closed","evidence":"...","action_ko":"..."}]}\n\n'
         f"[Observations]\n{json.dumps(obs, ensure_ascii=False)}\n\n[Document]\n{doc_text[:_CLOSE_TEXT_LIMIT]}"
     )
@@ -1844,7 +1830,7 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close'):
         seen.add(fid)
         ai_status = (it.get('status') or '').strip()
         final, why = _close_guard(ai_status, it.get('evidence'), doc_norm)
-        action = _concise_full_report_remark((it.get('action_ko') or '').strip(), limit=80)
+        action = _concise_full_report_remark((it.get('action_ko') or '').strip())
         judged.append({'finding_id': fid, 'no': by_id[fid]['no'], 'ai_status': ai_status,
                        'status': final, 'reason': why, 'evidence': (it.get('evidence') or '').strip()[:600],
                        'action': action if why != 'evidence_not_in_document' else ''})
@@ -1985,7 +1971,7 @@ def vt_mail_apply_reply(rid, fid, d):
     if (f['status'] or 'Open') != 'Open':
         return {'not_open': True}
     date = (d.get('date') or datetime.now().strftime('%Y-%m-%d'))[5:10].replace('-', '/')
-    text = _concise_full_report_remark((d.get('text') or '').strip(), limit=120)
+    text = _concise_full_report_remark((d.get('text') or '').strip())
     auto = (vms.REVIEW_TAG if kind == 'needs_review' else '') + (f'회신({date}) ' + text if text else f'회신({date}) 확인 필요')
     user_remark = _replace_full_report_remark(f['user_remark'], f['full_report_remark'], auto)
     new_status = 'Closed' if kind == 'close' else 'Open'

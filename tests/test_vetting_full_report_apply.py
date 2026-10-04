@@ -113,7 +113,7 @@ class VettingFullReportApplyTests(unittest.TestCase):
         self.assertIn('Condition of Class', rows[0]['full_report_remark'])
         self.assertIn('Annual Survey', rows[0]['full_report_remark'])
         self.assertIn('UT/MPI', rows[0]['full_report_remark'])
-        self.assertNotIn('정기 점검 및 모니터링', rows[0]['full_report_remark'])
+        self.assertIn('정기 점검 및 모니터링', rows[0]['full_report_remark'])
         self.assertIn('즉시 갱신', rows[1]['user_remark'])
         self.assertEqual(2, len(audits))
         self.assertEqual(2, len(json.loads(audits[-1]['before_json'])))
@@ -491,7 +491,7 @@ Negative crane paragraph.
         self.assertEqual(200, response.status_code, response.get_data(as_text=True))
         summary = response.get_json()['summary']
         self.assertIn('1. ECDIS 점검 필요 - ECDIS software update 완료함.', summary)
-        self.assertNotIn('불필요한 원인 설명', summary)
+        self.assertIn('불필요한 원인 설명', summary)  # preserve manual source instead of semantic filtering
 
     def test_summary_remark_hides_marker_with_crlf_and_manual_prefix(self):
         value = (
@@ -501,7 +501,7 @@ Negative crane paragraph.
             f'  {routes._FULL_REPORT_END_MARKER}  '
         )
         shown = routes._summary_full_report_remark(value)
-        self.assertEqual('UT/MPI 재검사 완료함.', shown)
+        self.assertEqual('UT/MPI 재검사 완료함. Root Cause 장문 설명임.', shown)
         self.assertNotIn('[', shown)
 
     def test_auto_migrate_removes_existing_marker_and_keeps_manual_text(self):
@@ -560,13 +560,15 @@ Negative crane paragraph.
         self.assertNotIn('메인 엔진', shown)
         self.assertNotIn('SIRE Full Report 자동반영', shown)
 
-    def test_full_report_action_remark_is_one_sentence_and_length_bounded(self):
+    def test_full_report_action_remark_preserves_facts_beyond_length_target(self):
         concise = routes._concise_full_report_remark(
             'starting valve seating 수리 완료함. Root Cause 장문 설명은 종합소견에 불필요함.')
-        self.assertEqual('starting valve seating 수리 완료함.', concise)
+        self.assertIn('starting valve seating 수리 완료함.', concise)
+        self.assertIn('Root Cause', concise)
         long_text = 'Condition of Class에 따라 UT/MPI 재검사 및 모니터링 예정이며 ' + ('추가 설명 ' * 20)
         bounded = routes._concise_full_report_remark(long_text)
-        self.assertLessEqual(len(bounded), 140)
+        self.assertGreater(len(bounded), 140)
+        self.assertNotIn("…", bounded)
         self.assertIn('Condition of Class', bounded)
         self.assertIn('UT/MPI', bounded)
         self.assertEqual(bounded, routes._concise_full_report_remark(bounded))
