@@ -2713,3 +2713,32 @@ def _push_outbox_drain(limit=20):
         out.append({'kind': r['kind'], 'key': key, 'ok': bool(res.get('ok')),
                     'sent': res.get('sent', 0), 'reason': res.get('reason')})
     return out
+
+
+def _class_workbook(title, subtitle, headers, rows, wrap_cols, widths):
+    """English-only export; translate Korean values without changing stored data.
+
+    Never silently export Korean if the existing translator falls back to source.
+    """
+    korean = re.compile(r'[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff]')
+    cells = [title, subtitle] + [value for row in rows for value in row]
+    indices = [i for i, value in enumerate(cells)
+               if isinstance(value, str) and korean.search(value)]
+    if indices:
+        try:
+            translated = _translate_texts_en([cells[i] for i in indices])
+        except Exception:
+            app.logger.warning('Class export English translation failed')
+            return jsonify({'error': 'English translation unavailable. Please retry.'}), 503
+        if (not isinstance(translated, (list, tuple)) or len(translated) != len(indices)
+                or any(not isinstance(t, str) or not t.strip() or korean.search(t)
+                       for t in translated)):
+            return jsonify({'error': 'English translation unavailable. Please retry.'}), 503
+        for i, value in zip(indices, translated):
+            cells[i] = value
+    output_rows = []
+    offset = 2
+    for row in rows:
+        output_rows.append(cells[offset:offset + len(row)])
+        offset += len(row)
+    return _findings_workbook(cells[0], cells[1], headers, output_rows, wrap_cols, widths)

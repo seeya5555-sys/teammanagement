@@ -91,7 +91,8 @@
       "_token_note_fail",
       "_token_rate_limited",
       "_token_reset_fails"
-    ]
+    ],
+    "routes_class_mail.py": []
   },
   "app_core.py": {},
   "boarding_report_docx.py": {
@@ -463,6 +464,7 @@
       "FLEET_MAP_FILE",
       "PUSH_KINDS",
       "PUSH_KIND_KEYS",
+      "_class_workbook",
       "_cls_handle_files",
       "_dashboard_ctx",
       "_ensure_api_table",
@@ -477,7 +479,6 @@
       "_push_dispatch",
       "_push_module",
       "_push_prefs",
-      "_translate_texts_en",
       "_vkey",
       "admin_required",
       "api_key_required",
@@ -503,5 +504,22 @@
       "query"
     ],
     "daily_mail_service.py": []
+  },
+  "class_mail_service.py": {
+    "app_core.py": [
+      "execute",
+      "execute_rc",
+      "get_db",
+      "query"
+    ],
+    "daily_mail_service.py": []
+  },
+  "routes_class_mail.py": {
+    "class_mail_service.py": [],
+    "helpers_shared.py": [
+      "_class_workbook",
+      "admin_required",
+      "api_key_required"
+    ]
   }
 }

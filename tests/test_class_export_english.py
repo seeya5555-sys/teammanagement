@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import openpyxl
 import routes_tail as R
+import helpers_shared as H
 
 
 class ClassExportEnglishTests(unittest.TestCase):
@@ -43,7 +44,7 @@ class ClassExportEnglishTests(unittest.TestCase):
 
     def test_single_and_all_translate_actions_but_not_summary_or_english_description(self):
         for fn in (R.api_class_status_export, R.api_class_status_export_all):
-            with self.subTest(fn=fn.__name__), patch.object(R, '_translate_texts_en', return_value=['Temporary repair completed']) as tr:
+            with self.subTest(fn=fn.__name__), patch.object(H, '_translate_texts_en', return_value=['Temporary repair completed']) as tr:
                 if fn is R.api_class_status_export:
                     # functools wrapper still needs the route argument.
                     with R.app.test_request_context('/'), patch.object(R, 'query', self.query):
@@ -61,7 +62,7 @@ class ClassExportEnglishTests(unittest.TestCase):
                 self.assertEqual('임시수리 완료', self.item['action_taken'])
 
     def test_translation_fallback_blocks_download(self):
-        with R.app.test_request_context('/'), patch.object(R, 'query', self.query), patch.object(R, '_translate_texts_en', return_value=['임시수리 완료']):
+        with R.app.test_request_context('/'), patch.object(R, 'query', self.query), patch.object(H, '_translate_texts_en', return_value=['임시수리 완료']):
             response, status = R.api_class_status_export.__wrapped__(1)
             self.assertEqual(503, status)
             self.assertIn('English translation unavailable', response.get_json()['error'])
@@ -69,7 +70,7 @@ class ClassExportEnglishTests(unittest.TestCase):
     def test_manager_export_translates_mixed_description_and_keeps_reply_blank(self):
         self.item['description'] = 'Pipe 수리 필요'
         vessel = dict(name='SHIP', class_society='BV', manager='M1', items=[self.item])
-        with patch.object(R, '_class_export_vessels', return_value=[vessel]), patch.object(R, '_translate_texts_en', return_value=['Pipe repair required']) as tr:
+        with patch.object(R, '_class_export_vessels', return_value=[vessel]), patch.object(H, '_translate_texts_en', return_value=['Pipe repair required']) as tr:
             ws = self.export(R.api_class_status_export_by_manager, '/?manager=M1')
         self.assert_english(ws)
         self.assertEqual('Pipe repair required', ws.cell(5, 5).value)
@@ -78,7 +79,7 @@ class ClassExportEnglishTests(unittest.TestCase):
 
     def test_empty_action_and_no_items_need_no_translation(self):
         self.item['action_taken'] = ''
-        with patch.object(R, '_translate_texts_en', side_effect=AssertionError('No translation needed')):
+        with patch.object(H, '_translate_texts_en', side_effect=AssertionError('No translation needed')):
             ws = self.export(R.api_class_status_export_all)
         self.assert_english(ws)
         self.assertIsNone(ws.cell(5, 7).value)

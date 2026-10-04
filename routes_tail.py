@@ -33,7 +33,7 @@ from app_core import (
 )
 from helpers_shared import (
     FLEET_MAP_FILE, PUSH_KINDS, PUSH_KIND_KEYS, _cls_handle_files, _dashboard_ctx,
-    _ensure_api_table, _findings_workbook, _translate_texts_en, _fleet_apply_code_first_next_port,
+    _ensure_api_table, _findings_workbook, _class_workbook, _fleet_apply_code_first_next_port,
     _fleet_extract_next_port_code, _fleet_port_catalog, _fleet_route_to_destination,
     _fleet_visible_auto_vessels, _norm_locode, _norm_port_text, _push_dispatch,
     _push_module, _push_prefs, _vkey, admin_required, api_key_required, login_required,
@@ -51,35 +51,6 @@ def api_ext_class_followup_candidates():
 @api_key_required
 def api_ext_class_followup_result(iid):
     return jsonify({'error': 'Class evidence scanning has been retired'}), 410
-
-
-def _class_workbook(title, subtitle, headers, rows, wrap_cols, widths):
-    """English-only export; translate Korean values without changing stored data.
-
-    Never silently export Korean if the existing translator falls back to source.
-    """
-    korean = re.compile(r'[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff]')
-    cells = [title, subtitle] + [value for row in rows for value in row]
-    indices = [i for i, value in enumerate(cells)
-               if isinstance(value, str) and korean.search(value)]
-    if indices:
-        try:
-            translated = _translate_texts_en([cells[i] for i in indices])
-        except Exception:
-            app.logger.warning('Class export English translation failed')
-            return jsonify({'error': 'English translation unavailable. Please retry.'}), 503
-        if (not isinstance(translated, (list, tuple)) or len(translated) != len(indices)
-                or any(not isinstance(t, str) or not t.strip() or korean.search(t)
-                       for t in translated)):
-            return jsonify({'error': 'English translation unavailable. Please retry.'}), 503
-        for i, value in zip(indices, translated):
-            cells[i] = value
-    output_rows = []
-    offset = 2
-    for row in rows:
-        output_rows.append(cells[offset:offset + len(row)])
-        offset += len(row)
-    return _findings_workbook(cells[0], cells[1], headers, output_rows, wrap_cols, widths)
 
 
 # ---- ext (맥 push_cards.py / apply_decisions.py) ----

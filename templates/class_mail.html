@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Class Status 자동화 · TRMT3{% endblock %}
+{% block head %}
+<style>
+.cm-wrap{max-width:1200px;margin:auto}.cm-section{background:var(--surface);border:1px solid var(--border-subtle);border-radius:6px;padding:16px;margin:14px 0}.cm-section h2{font-size:15px;margin:0 0 10px}.cm-note{font-size:12px;color:var(--text-secondary);line-height:1.6}.cm-table{width:100%;border-collapse:collapse;font-size:12px}.cm-table td,.cm-table th{text-align:left;padding:8px;border-bottom:1px solid var(--border-subtle);vertical-align:top}.cm-section input[type=text],.cm-section textarea,.cm-section select{width:100%;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font:inherit}.cm-section textarea{min-height:240px}.cm-preview{white-space:pre-wrap;font-size:12px;line-height:1.7}.cm-error{color:var(--red)}.cm-muted{color:var(--text-secondary)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="cm-wrap">
+<div class="ops-page-header"><p class="ops-page-kicker">Class Status</p><h1 class="page-title">Class Status 자동화</h1></div>
+<div class="cm-section">
+<h2>선박별 자동 발송</h2>
+<p class="cm-note">COC 또는 Statutory 지적이 있는 담당 선박만 대상. Due date가 경과했거나 30일 이내인 항목이 있으면 매주 월요일 07:30, 전부 30일 초과면 매월 첫째·셋째 월요일 07:30에 발송합니다(한국시간). 날짜 누락·오류는 보류합니다.<br>To/CC/Dear는 <a href="{{ url_for('routes_daily_mail.daily_mail_page') }}">Daily 메일 자동화</a>와 공유합니다. Class ON/OFF는 별도이며 최초에는 OFF입니다. Outlook 서명은 “자동화”. 회신 엑셀의 변경된 Action Taken만 조치사항에 추가하며 지적 자동 Close·삭제는 하지 않습니다.</p>
+<div class="tbl-scroll" id="cmVessels">불러오는 중…</div><p id="cmNotice" class="cm-note" role="status"></p>
+</div>
+<div class="cm-section"><h2>메일 템플릿</h2><p class="cm-note">변수: {vessel} 선명 · {dear} 등록 이름(공란이면 Sir/Madam). 제목 추적태그와 영문 엑셀은 자동 첨부합니다. 이름·직함은 본문에 중복으로 넣지 않습니다.</p>
+<label for="cmSubject">제목</label><input type="text" id="cmSubject" maxlength="300">
+<label for="cmBody">본문</label><textarea id="cmBody" maxlength="8000"></textarea>
+<button id="cmSave" type="button" class="btn btn-primary btn-sm">템플릿 저장</button>
+<h2 style="margin-top:18px">선박별 발송 미리보기</h2><select id="cmSelect" aria-label="미리보기 선박"></select><div class="cm-preview" id="cmPreview"></div></div>
+<div class="cm-section"><h2>발송 기록</h2><div class="tbl-scroll" id="cmRuns"></div></div>
+<div class="cm-section"><h2>회신현황</h2><p class="cm-note">2시간마다 08:00~20:00 확인. 본문만 있는 회신은 수신 기록과 확인필요 표시만 남깁니다. 항목 불일치·동시 수정은 덮어쓰지 않습니다.</p><div class="tbl-scroll" id="cmReplies"></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/class_mail.js') }}"></script>
+{% endblock %}

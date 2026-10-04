@@ -1356,3 +1356,33 @@ CREATE TABLE IF NOT EXISTS vetting_mail_requests (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vetting_mail_requests_queued
     ON vetting_mail_requests(vessel_id) WHERE state IN ('queued','processing');
+
+
+-- Class Status mail: independent OFF-by-default switches, shared Daily contacts.
+CREATE TABLE IF NOT EXISTS class_mail_settings (
+ vessel_id INTEGER PRIMARY KEY REFERENCES vessels(id) ON DELETE CASCADE,
+ enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+ updated_by TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS class_mail_template (
+ id INTEGER PRIMARY KEY CHECK(id=1), subject_tpl TEXT NOT NULL, body_tpl TEXT NOT NULL,
+ updated_by TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS class_mail_runs (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, vessel_id INTEGER NOT NULL REFERENCES vessels(id),
+ iso_week TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('sending','sent','failed')),
+ tag TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
+ to_emails TEXT NOT NULL, cc_emails TEXT NOT NULL, snapshot TEXT NOT NULL, reply_rows TEXT NOT NULL,
+ excel_sha256 TEXT NOT NULL, sent_at TEXT, error TEXT,
+ created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), UNIQUE(vessel_id,iso_week)
+);
+CREATE TABLE IF NOT EXISTS class_mail_replies (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES class_mail_runs(id),
+ message_id TEXT NOT NULL, sender TEXT NOT NULL, received_at TEXT, updated INTEGER NOT NULL DEFAULT 0,
+ note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+ UNIQUE(run_id,message_id)
+);
+CREATE TABLE IF NOT EXISTS class_mail_item_state (
+ run_id INTEGER NOT NULL REFERENCES class_mail_runs(id), item_key TEXT NOT NULL,
+ last_action TEXT NOT NULL, reply_baseline TEXT NOT NULL, PRIMARY KEY(run_id,item_key)
+);

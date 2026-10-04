@@ -862,6 +862,47 @@
     "defaults": {}
   },
   {
+    "rule": "/api/class-mail/runs/<int:rid>/recover-sent",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_class_mail.api_class_mail_recover_sent",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/class-mail/settings/<int:vid>/enabled",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_class_mail.api_class_mail_enabled",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/class-mail/status",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_class_mail.api_class_mail_status",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/class-mail/template",
+    "methods": [
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_class_mail.api_class_mail_template",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/class-status",
     "methods": [
       "GET",
@@ -2327,6 +2368,80 @@
       "OPTIONS"
     ],
     "endpoint": "routes_tail.api_ext_class_followup_candidates",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-mail/config",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_config",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-mail/runs",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_claim",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-mail/runs/<int:rid>/check",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_check",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-mail/runs/<int:rid>/reply",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_reply",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-mail/runs/<int:rid>/state",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_state",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-mail/runs/pending",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_pending",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-mail/vessels/<int:vid>/prepare",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_prepare",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -5512,6 +5627,17 @@
       "OPTIONS"
     ],
     "endpoint": "routes_core.calendar_page",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/class-mail",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_class_mail.class_mail_page",
     "strict_slashes": true,
     "defaults": {}
   },
