@@ -533,6 +533,7 @@ def api_vetting_update(vid):
         return jsonify({'ok': True})
     sets.append("updated_at = datetime('now','localtime')")
     execute(f'UPDATE vettings SET {", ".join(sets)} WHERE id=?', tuple(params + [vid]))
+    _clear_closed_overall_remark(vid)
     return jsonify({'ok': True})
 
 
@@ -593,6 +594,7 @@ def api_vt_findings_create(vid):
               st))
         created.append(fid)
         next_no += 1
+    _clear_closed_overall_remark(vid)
     return jsonify({'ids': created, 'count': len(created)}), 201
 
 
@@ -620,6 +622,8 @@ def api_vt_finding_update(fid):
     sets.append("updated_at = datetime('now','localtime')")
     execute(f'UPDATE vt_findings SET {", ".join(sets)} WHERE id=?', tuple(params + [fid]))
 
+    _clear_closed_overall_remark(cur['vetting_id'])
+
     # status 변경 시 vettings.updated_at 갱신 (선박 헤더의 Last update에 반영)
     if 'status' in d and d['status'] != cur['status']:
         execute(
@@ -641,6 +645,7 @@ def api_vt_finding_delete(fid):
     rows = query('SELECT id FROM vt_findings WHERE vetting_id=? ORDER BY no', (vid,))
     for new_no, r in enumerate(rows, start=1):
         execute('UPDATE vt_findings SET no=? WHERE id=?', (new_no, r['id']))
+    _clear_closed_overall_remark(vid)
     return jsonify({'ok': True})
 
 
@@ -1305,6 +1310,7 @@ def api_vt_apply_full_report(vid):
         return jsonify({'ok': False, 'reason': 'DB_UPDATE_FAILED',
                         'message': message, 'error': message}), 500
 
+    _clear_closed_overall_remark(vid)
     changed = updates + created + absent_closed
     opened = sum(1 for item in changed if item['status'] == 'Open')
     closed = len(changed) - opened
@@ -1385,6 +1391,17 @@ def api_vt_obs_summary(vid):
     return jsonify({'ok': True, **res})
 
 
+def _clear_closed_overall_remark(vid):
+    """Clear summary only when real findings exist and every status is Closed.
+    SQL guard prevents a concurrent reopen from losing an outstanding summary.
+    """
+    execute("UPDATE vettings SET overall_remark='', updated_at=datetime('now','localtime') "
+            "WHERE id=? AND COALESCE(overall_remark,'') != '' "
+            "AND EXISTS (SELECT 1 FROM vt_findings WHERE vetting_id=?) "
+            "AND NOT EXISTS (SELECT 1 FROM vt_findings WHERE vetting_id=? "
+            "AND COALESCE(status,'Open') != 'Closed')", (vid, vid, vid))
+
+
 def _rebuild_obs_summary(vid):
     """'지적 상세' 버튼 본체. 자동 Close 후에도 같은 규칙으로 재생성한다(None=vetting 없음)."""
     v = query('SELECT * FROM vettings WHERE id=?', (vid,), one=True)
@@ -1397,6 +1414,14 @@ def _rebuild_obs_summary(vid):
             return bool(f['priority'])
         except (KeyError, IndexError):
             return False
+    if findings and all(f['status'] == 'Closed' for f in findings):
+        _clear_closed_overall_remark(vid)
+        current = query('SELECT overall_remark FROM vettings WHERE id=?', (vid,), one=True)
+        live = query("SELECT status,priority FROM vt_findings WHERE vetting_id=?", (vid,))
+        live_open = [f for f in live if (f['status'] or 'Open') == 'Open']
+        live_prio = sum(1 for f in live_open if _is_prio(f))
+        return {'summary': current['overall_remark'] or '', 'total_open': len(live_open),
+                'priority_open': live_prio, 'minor': len(live_open) - live_prio}
     prio = [f for f in open_f if _is_prio(f)]
     total_open = len(open_f)
     minor = total_open - len(prio)

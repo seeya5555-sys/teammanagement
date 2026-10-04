@@ -57,6 +57,45 @@ class VettingObsAutomationTests(unittest.TestCase):
         appmod.DATABASE, appmod.app.config['DATABASE'] = self.old_db, self.old_cfg
         self.tmp.cleanup()
 
+    def test_all_closed_overall_is_blank_without_model_call(self):
+        with appmod.app.app_context():
+            from app_core import execute,query
+            execute("UPDATE vt_findings SET status='Closed' WHERE vetting_id=?",(self.vt,))
+            execute("UPDATE vettings SET overall_remark='old summary' WHERE id=?",(self.vt,))
+            before=[dict(x) for x in query('SELECT * FROM vt_findings WHERE vetting_id=?',(self.vt,))]
+            with mock.patch.object(ai_gemini,'_condense_obs',side_effect=AssertionError('no model needed')):
+                result=ai_gemini._rebuild_obs_summary(self.vt)
+            self.assertEqual('',result['summary'])
+            self.assertEqual('',query('SELECT overall_remark FROM vettings WHERE id=?',(self.vt,),one=True)['overall_remark'])
+            self.assertEqual(before,[dict(x) for x in query('SELECT * FROM vt_findings WHERE vetting_id=?',(self.vt,))])
+    def test_manual_last_close_clears_and_open_remark_survives(self):
+        with appmod.app.app_context():
+            from app_core import execute,query
+            execute("UPDATE vt_findings SET status='Closed' WHERE vetting_id=? AND id != ?",(self.vt,self.f1))
+            execute("UPDATE vettings SET overall_remark='pending' WHERE id=?",(self.vt,))
+            ai_gemini._clear_closed_overall_remark(self.vt)
+            self.assertEqual('pending',query('SELECT overall_remark FROM vettings WHERE id=?',(self.vt,),one=True)['overall_remark'])
+        response=self.c.put(f'/api/vt-findings/{self.f1}',json={'status':'Closed'})
+        self.assertEqual(200,response.status_code)
+        with appmod.app.app_context():
+            from app_core import query
+            self.assertEqual('',query('SELECT overall_remark FROM vettings WHERE id=?',(self.vt,),one=True)['overall_remark'])
+
+    def test_clear_guard_empty_null_and_idempotent(self):
+        with appmod.app.app_context():
+            from app_core import execute,query
+            execute("UPDATE vt_findings SET status='Closed' WHERE vetting_id=?",(self.vt,))
+            execute("UPDATE vettings SET overall_remark='',updated_at='2000-01-01' WHERE id=?",(self.vt,))
+            ai_gemini._clear_closed_overall_remark(self.vt)
+            self.assertEqual('2000-01-01',query('SELECT updated_at FROM vettings WHERE id=?',(self.vt,),one=True)['updated_at'])
+            execute("UPDATE vt_findings SET status=NULL WHERE id=?",(self.f1,))
+            execute("UPDATE vettings SET overall_remark='pending' WHERE id=?",(self.vt,))
+            ai_gemini._clear_closed_overall_remark(self.vt)
+            self.assertEqual('pending',query('SELECT overall_remark FROM vettings WHERE id=?',(self.vt,),one=True)['overall_remark'])
+            execute('DELETE FROM vt_findings WHERE vetting_id=?',(self.vt,))
+            ai_gemini._clear_closed_overall_remark(self.vt)
+            self.assertEqual('pending',query('SELECT overall_remark FROM vettings WHERE id=?',(self.vt,),one=True)['overall_remark'])
+
     def _ai(self, items):
         return mock.patch.multiple(ai_gemini, _close_doc_text=mock.Mock(return_value=DOC),
                                    _gemini_call_json=mock.Mock(return_value={'items': items}),
