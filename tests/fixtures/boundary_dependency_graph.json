@@ -477,6 +477,7 @@
       "_push_dispatch",
       "_push_module",
       "_push_prefs",
+      "_translate_texts_en",
       "_vkey",
       "admin_required",
       "api_key_required",

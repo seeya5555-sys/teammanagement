@@ -288,14 +288,9 @@ function itemRow(it) {
     saveItem(it.id, { importance: val });
   });
 
-  const evState=it.evidence_state||'';
-  const evLabel=evState==='candidate'?'◉ Outlook 증빙후보(확인필요)':evState==='not_found'?'⚠ Outlook 미확인':evState==='unsearchable'?'? 검색키 부족':evState==='error'?'? 검색오류':'? 미점검';
-  let evAtt=[]; try{evAtt=JSON.parse(it.evidence_attachments||'[]')||[];}catch(e){}
-  const ev=el('div',{class:'cls-evidence',title:(it.evidence_subject||'')+(evAtt.length?'\n'+evAtt.join('\n'):'')},evLabel);
-  // 증빙 라벨은 편집영역 밖에 둔다 — 같은 contenteditable 안에 있으면 "? 미점검" 이 조치사항 본문으로 저장됐음
   const actEdit=el('div', { class: 'cls-edit cls-edit-inner', contenteditable: 'true',
     'data-id': it.id, 'data-field': 'action_taken', spellcheck: 'false' }, esc(it.action_taken));
-  const actCell=el('td', { class: 'c-act' }, actEdit, ev);
+  const actCell=el('td', { class: 'c-act' }, actEdit);
 
   return el('tr', { class: it.importance === 'Urgent' ? 'cls-urgent-row' : '' },
     el('td', { class: 'c-no' }, it.no),

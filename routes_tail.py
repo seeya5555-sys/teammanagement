@@ -33,7 +33,7 @@ from app_core import (
 )
 from helpers_shared import (
     FLEET_MAP_FILE, PUSH_KINDS, PUSH_KIND_KEYS, _cls_handle_files, _dashboard_ctx,
-    _ensure_api_table, _findings_workbook, _fleet_apply_code_first_next_port,
+    _ensure_api_table, _findings_workbook, _translate_texts_en, _fleet_apply_code_first_next_port,
     _fleet_extract_next_port_code, _fleet_port_catalog, _fleet_route_to_destination,
     _fleet_visible_auto_vessels, _norm_locode, _norm_port_text, _push_dispatch,
     _push_module, _push_prefs, _vkey, admin_required, api_key_required, login_required,
@@ -41,44 +41,45 @@ from helpers_shared import (
 
 bp = Blueprint("routes_tail", __name__)
 
-def _class_evidence_fingerprint(row):
-    raw='|'.join(str(row.get(k) or '').strip() for k in ('vessel_name','category','description','due_date'))
-    return hashlib.sha256(raw.encode()).hexdigest()
-
+# Retired Outlook evidence scanner: preserve URLs for old callers, never write.
 @bp.route('/api/ext/class-followup/candidates')
 @api_key_required
 def api_ext_class_followup_candidates():
-    rows=query('''SELECT i.*,v.name vessel_name FROM class_status_items i
-                  JOIN class_status c ON c.id=i.cs_id JOIN vessels v ON v.id=c.vessel_id
-                  WHERE trim(COALESCE(i.due_date,''))<>'' AND trim(COALESCE(i.action_taken,''))=''
-                  ORDER BY CASE WHEN i.evidence_checked_at IS NULL THEN 0 ELSE 1 END,
-                           i.evidence_checked_at,i.due_date,i.id LIMIT 20''')
-    out=[]
-    for rr in rows:
-        d=dict(rr); d['fingerprint']=_class_evidence_fingerprint(d)
-        out.append({k:d.get(k) for k in ('id','vessel_name','category','description','remark','due_date','fingerprint')})
-    return jsonify({'items':out,'count':len(out),'limit':20})
+    return jsonify({'items': [], 'count': 0, 'limit': 20, 'disabled': True})
 
-@bp.route('/api/ext/class-followup/<int:iid>',methods=['POST'])
+@bp.route('/api/ext/class-followup/<int:iid>', methods=['POST'])
 @api_key_required
 def api_ext_class_followup_result(iid):
-    d=request.get_json(silent=True) or {}
-    row=query('''SELECT i.*,v.name vessel_name FROM class_status_items i
-                 JOIN class_status c ON c.id=i.cs_id JOIN vessels v ON v.id=c.vessel_id
-                 WHERE i.id=?''',(iid,),one=True)
-    if not row:return jsonify({'error':'not found'}),404
-    if str(d.get('fingerprint') or '')!=_class_evidence_fingerprint(dict(row)):
-        return jsonify({'error':'stale candidate'}),409
-    state=str(d.get('state') or '')
-    if state not in ('candidate','not_found','unsearchable','error'):
-        return jsonify({'error':'invalid state'}),400
-    subject=str(d.get('subject') or '')[:500]
-    atts=d.get('attachments') if isinstance(d.get('attachments'),list) else []
-    atts=[str(x)[:300] for x in atts[:20]]
-    execute('''UPDATE class_status_items SET evidence_state=?,evidence_subject=?,evidence_attachments=?,
-               evidence_checked_at=datetime('now','localtime'),evidence_fingerprint=? WHERE id=?''',
-            (state,subject,json.dumps(atts,ensure_ascii=False),d['fingerprint'],iid))
-    return jsonify({'ok':True,'id':iid,'state':state,'attachments':len(atts)})
+    return jsonify({'error': 'Class evidence scanning has been retired'}), 410
+
+
+def _class_workbook(title, subtitle, headers, rows, wrap_cols, widths):
+    """English-only export; translate Korean values without changing stored data.
+
+    Never silently export Korean if the existing translator falls back to source.
+    """
+    korean = re.compile(r'[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff]')
+    cells = [title, subtitle] + [value for row in rows for value in row]
+    indices = [i for i, value in enumerate(cells)
+               if isinstance(value, str) and korean.search(value)]
+    if indices:
+        try:
+            translated = _translate_texts_en([cells[i] for i in indices])
+        except Exception:
+            app.logger.warning('Class export English translation failed')
+            return jsonify({'error': 'English translation unavailable. Please retry.'}), 503
+        if (not isinstance(translated, (list, tuple)) or len(translated) != len(indices)
+                or any(not isinstance(t, str) or not t.strip() or korean.search(t)
+                       for t in translated)):
+            return jsonify({'error': 'English translation unavailable. Please retry.'}), 503
+        for i, value in zip(indices, translated):
+            cells[i] = value
+    output_rows = []
+    offset = 2
+    for row in rows:
+        output_rows.append(cells[offset:offset + len(row)])
+        offset += len(row)
+    return _findings_workbook(cells[0], cells[1], headers, output_rows, wrap_cols, widths)
 
 
 # ---- ext (맥 push_cards.py / apply_decisions.py) ----
@@ -1725,25 +1726,26 @@ def api_class_status_export(cs_id):
         if vrow:
             vname = vrow['name']
     items = query('SELECT * FROM class_status_items WHERE cs_id=? ORDER BY category, no', (cs_id,))
-    cat_ko = {'COC': '선급지적(COC)', 'STATUTORY': '기국(Statutory)'}
+    cat_en = {'COC': 'Condition of Class (COC)', 'STATUTORY': 'Statutory (Flag)'}
     rows = []
     for it in items:
         rows.append([
-            cat_ko.get(it['category'], it['category']),
+            cat_en.get(it['category'], it['category']),
             it['no'],
             it['issued_date'] or '',
             it['description'] or '',
             it['due_date'] or '',
-            it['remark'] or '',
             it['action_taken'] or '',
             it['importance'] or '',
         ])
-    headers = ['Category', 'No', 'Issued', 'Description', 'Due', '한글 요약', '조치사항', 'Urgent']
-    subtitle = f"{snap['class_society'] or ''}  ·  발행 {snap['report_date'] or '-'}"
-    bio = _findings_workbook(
+    headers = ['Category', 'No', 'Issued', 'Description', 'Due', 'Action Taken', 'Urgent']
+    subtitle = f"{snap['class_society'] or ''}  ·  Issued {snap['report_date'] or '-'}"
+    bio = _class_workbook(
         f'{vname} Class Status', subtitle, headers, rows,
-        wrap_cols={4, 6, 7}, widths=[16, 5, 13, 60, 13, 40, 40, 8])
-    safe = _re_cls.sub(r'[^A-Za-z0-9가-힣 _-]', '', vname).strip() or 'class_status'
+        wrap_cols={4, 6}, widths=[24, 5, 13, 60, 13, 40, 8])
+    if isinstance(bio, tuple):
+        return bio
+    safe = _re_cls.sub(r'[^A-Za-z0-9 _-]', '', vname).strip() or 'class_status'
     return send_file(bio, as_attachment=True,
                      download_name=f'{safe}_ClassStatus.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -1781,7 +1783,7 @@ def api_class_status_export_all():
                    query('SELECT vessel_id FROM supervisor_vessels WHERE supervisor_id=?', (sup_id,))}
     # 선박명 정렬
     snaps = sorted(snaps, key=lambda s: (name_by_v.get(s['vessel_id']) or s['vessel_name_raw'] or '').lower())
-    cat_ko = {'COC': '선급지적(COC)', 'STATUTORY': '기국(Statutory)'}
+    cat_en = {'COC': 'Condition of Class (COC)', 'STATUTORY': 'Statutory (Flag)'}
     rows = []
     for s in snaps:
         if allowed is not None and s['vessel_id'] not in allowed:
@@ -1789,20 +1791,22 @@ def api_class_status_export_all():
         vname = name_by_v.get(s['vessel_id']) or s['vessel_name_raw'] or ''
         items = query('SELECT * FROM class_status_items WHERE cs_id=? ORDER BY category, no', (s['id'],))
         if not items:
-            rows.append([vname, s['class_society'] or '', '', '', '지적 없음', '', '', '', ''])
+            rows.append([vname, s['class_society'] or '', '', '', 'No open items', '', '', ''])
             continue
         for it in items:
             rows.append([
                 vname, s['class_society'] or '',
-                cat_ko.get(it['category'], it['category']),
+                cat_en.get(it['category'], it['category']),
                 it['issued_date'] or '', it['description'] or '',
-                it['due_date'] or '', it['remark'] or '', it['action_taken'] or '', it['importance'] or '',
+                it['due_date'] or '', it['action_taken'] or '', it['importance'] or '',
             ])
-    headers = ['Vessel', 'Class', 'Category', 'Issued', 'Description', 'Due', '한글 요약', '조치사항', 'Urgent']
+    headers = ['Vessel', 'Class', 'Category', 'Issued', 'Description', 'Due', 'Action Taken', 'Urgent']
     today = query("SELECT date('now','localtime') d", one=True)['d']
-    bio = _findings_workbook(
-        '전체 선박 Class Status', f'생성 {today}', headers, rows,
-        wrap_cols={5, 7, 8}, widths=[20, 7, 16, 13, 58, 13, 38, 38, 8])
+    bio = _class_workbook(
+        'Fleet Class Status', f'Generated {today}', headers, rows,
+        wrap_cols={5, 7}, widths=[20, 7, 24, 13, 58, 13, 40, 8])
+    if isinstance(bio, tuple):
+        return bio
     return send_file(bio, as_attachment=True,
                      download_name=f'ClassStatus_All_{today}.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -1944,10 +1948,12 @@ def api_class_status_export_by_manager():
     headers = ['Vessel', 'Class', 'Category', 'Issued', 'Description', 'Due',
                'Management Action Plan & Progress']
     today = query("SELECT date('now','localtime') d", one=True)['d']
-    safe_mgr = re.sub(r'[^\w\-]+', '_', mgr) or 'manager'
-    bio = _findings_workbook(
+    safe_mgr = re.sub(r'[^A-Za-z0-9\-]+', '_', mgr).strip('_') or 'manager'
+    bio = _class_workbook(
         f'Class Status - {mgr}', f'Generated {today}', headers, rows,
-        wrap_cols={5, 7}, widths=[20, 7, 20, 13, 58, 13, 40])
+        wrap_cols={5, 7}, widths=[20, 7, 24, 13, 58, 13, 40])
+    if isinstance(bio, tuple):
+        return bio
     return send_file(bio, as_attachment=True,
                      download_name=f'ClassStatus_{safe_mgr}_{today}.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
