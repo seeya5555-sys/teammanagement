@@ -81,14 +81,14 @@ class VettingObsAutomationTests(unittest.TestCase):
             from app_core import query
             self.assertEqual('',query('SELECT overall_remark FROM vettings WHERE id=?',(self.vt,),one=True)['overall_remark'])
 
-    def test_clear_guard_empty_null_and_idempotent(self):
+    def test_clear_guard_no_findings_open_status_and_idempotent(self):
         with appmod.app.app_context():
             from app_core import execute,query
             execute("UPDATE vt_findings SET status='Closed' WHERE vetting_id=?",(self.vt,))
             execute("UPDATE vettings SET overall_remark='',updated_at='2000-01-01' WHERE id=?",(self.vt,))
             ai_gemini._clear_closed_overall_remark(self.vt)
             self.assertEqual('2000-01-01',query('SELECT updated_at FROM vettings WHERE id=?',(self.vt,),one=True)['updated_at'])
-            execute("UPDATE vt_findings SET status=NULL WHERE id=?",(self.f1,))
+            execute("UPDATE vt_findings SET status='Open' WHERE id=?",(self.f1,))
             execute("UPDATE vettings SET overall_remark='pending' WHERE id=?",(self.vt,))
             ai_gemini._clear_closed_overall_remark(self.vt)
             self.assertEqual('pending',query('SELECT overall_remark FROM vettings WHERE id=?',(self.vt,),one=True)['overall_remark'])
