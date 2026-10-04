@@ -285,6 +285,12 @@ def apply_reply(rid, data):
             remark = str(update.get('remark') or '').strip()
             if not origin or origin['id'] in seen or not remark or len(remark) > 12000:
                 raise ClassMailError(400, '회신 항목·조치내용 오류')
+            original_remark = update.get('remark_original', remark)
+            if (not isinstance(original_remark, str) or not original_remark.strip() or len(original_remark) > 12000
+                    or ('remark_original' in update and not re.search(r'[가-힣]', remark)
+                        and not (remark == original_remark.strip() and re.fullmatch(r'(BWTS|EGCS|COC|ME|AE|S/W|F/W|T/C|UTM)', original_remark.strip())))):
+                raise ClassMailError(400, '회신 원문·한국어 번역 오류')
+            original_remark = original_remark.strip()
             seen.add(origin['id'])
             matches = [i for i in current if item_key(i) == item_key(origin)]
             if len(matches) != 1:
@@ -300,7 +306,7 @@ def apply_reply(rid, data):
             exported = next(r for r in json.loads(run['reply_rows']) if r['item_id'] == origin['id'])
             baseline_row = conn.execute('SELECT reply_baseline FROM class_mail_item_state WHERE run_id=? AND item_key=?', (rid, item_key(origin))).fetchone()
             reply_base = baseline_row['reply_baseline'] if baseline_row else exported['action']
-            reply_baseline = (reply_base.rstrip() + '\n\n' if reply_base.strip() else '') + remark
+            reply_baseline = (reply_base.rstrip() + '\n\n' if reply_base.strip() else '') + original_remark
             changes.append((updated, live['id'], previous, item_key(origin), reply_baseline))
         for updated, iid, previous, identity, reply_baseline in changes:
             cur = conn.execute("UPDATE class_status_items SET action_taken=?,updated_at=datetime('now','localtime') WHERE id=? AND COALESCE(action_taken,'')=?", (updated, iid, previous))

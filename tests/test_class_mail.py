@@ -159,6 +159,31 @@ class ClassMailTests(unittest.TestCase):
             execute("UPDATE class_status_items SET due_date='' WHERE id=1")
         self.assertEqual(409, self.post('/runs', {**prepared, 'vessel_id': self.vid}).status_code)
 
+    def test_korean_actions_and_original_reply_baseline_are_separate(self):
+        rid=self.sent_run()
+        first={'message_id':'ko1','sender':'delegate@example.com','updates':[{'item_id':1,'remark':'Pipe 30 Oct까지 영구수리 예정','remark_original':'Pipe permanent repair planned by 30 Oct'}]}
+        self.assertEqual(1,self.post(f'/runs/{rid}/reply',first).get_json()['updated'])
+        self.assertTrue(self.post(f'/runs/{rid}/reply',first).get_json()['duplicate'])
+        pending=self.get('/runs/pending').get_json()['runs'][0]
+        self.assertEqual('Existing action\n\nPipe permanent repair planned by 30 Oct',pending['reply_rows'][0]['action'])
+        second={**first,'message_id':'ko2','updates':[{'item_id':1,'remark':'Pipe 30 Oct 영구수리 완료함','remark_original':'Pipe permanent repair completed on 30 Oct'}]}
+        self.assertEqual(1,self.post(f'/runs/{rid}/reply',second).get_json()['updated'])
+        with A.app.app_context():
+            row=query('SELECT * FROM class_status_items WHERE id=1',one=True)
+            self.assertEqual('Existing action\n\nPipe 30 Oct까지 영구수리 예정\n\nPipe 30 Oct 영구수리 완료함',row['action_taken'])
+            self.assertEqual('2026-10-30',row['due_date']);self.assertEqual('COC',row['category'])
+        pending=self.get('/runs/pending').get_json()['runs'][0]
+        self.assertTrue(pending['reply_rows'][0]['action'].endswith('Pipe permanent repair completed on 30 Oct'))
+
+    def test_untranslated_or_invalid_original_is_rejected_without_write(self):
+        rid=self.sent_run()
+        for ko,origin in [('Repair completed','Repair completed'),('수리 완료함',''),('수리 완료함',42)]:
+            body={'message_id':'invalid','sender':'delegate@example.com','updates':[{'item_id':1,'remark':ko,'remark_original':origin}]}
+            self.assertEqual(400,self.post(f'/runs/{rid}/reply',body).status_code)
+        with A.app.app_context():
+            self.assertEqual('Existing action',query('SELECT action_taken FROM class_status_items WHERE id=1',one=True)['action_taken'])
+            self.assertEqual(0,query('SELECT COUNT(*) n FROM class_mail_replies',one=True)['n'])
+
     def test_sunday_canary_only_claims_one_ship_and_reserves_next_monday(self):
         self.client.post(f'/api/class-mail/settings/{self.vid}/enabled', json={'enabled': True})
         with patch.object(S, 'today_kst', return_value=date(2026, 10, 4)):
@@ -250,14 +275,17 @@ class ClassMailTests(unittest.TestCase):
             self.assertEqual(1, send.call_count)
             run = self.get('/runs/pending').get_json()['runs'][0]
             record = dict(sender='delegate@example.com', received_at='2026-10-05 11:00:00', subject='RE: ' + run['subject'], body='Please find attached', message_id='local1', attachments=[os.path.join(self.temp.name, 'reply.xlsx')])
-            with patch.object(runner.dm, 'outlook_scan', return_value=([record], '')):
+            with patch.object(runner.dm, 'outlook_scan', return_value=([record], '')), patch.object(runner.dm, 'to_korean', return_value=['30 Oct까지 수리 예정']) as translator:
                 reply = runner.poll(SimpleNamespace(dry=False))
                 self.assertTrue(reply['ok'], reply)
                 self.assertEqual(1, reply['replies'][0]['updated'])
                 record['message_id'] = 'different-local-id'
                 self.assertEqual([], runner.poll(SimpleNamespace(dry=False))['replies'])
+                self.assertEqual(1, translator.call_count)
+                pending = self.get('/runs/pending').get_json()['runs'][0]
+                self.assertEqual('Existing action\n\nRepairs planned by 30 Oct', pending['reply_rows'][0]['action'])
         with A.app.app_context():
-            self.assertEqual('Existing action\n\nRepairs planned by 30 Oct', query('SELECT action_taken FROM class_status_items WHERE id=1', one=True)['action_taken'])
+            self.assertEqual('Existing action\n\n30 Oct까지 수리 예정', query('SELECT action_taken FROM class_status_items WHERE id=1', one=True)['action_taken'])
             self.assertEqual(1, query('SELECT COUNT(*) n FROM class_mail_runs', one=True)['n'])
             self.assertEqual(1, query('SELECT COUNT(*) n FROM class_mail_replies', one=True)['n'])
 
