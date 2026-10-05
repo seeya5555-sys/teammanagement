@@ -103,6 +103,7 @@
       "_add_horizontal_line",
       "_add_paragraph",
       "_cleanup_temp_files",
+      "_contain_in_static",
       "_crop_to_aspect",
       "_set_cell_borders",
       "_set_cell_shading",

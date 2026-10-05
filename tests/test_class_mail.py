@@ -274,14 +274,17 @@ class ClassMailTests(unittest.TestCase):
             self.assertTrue(runner.send_weekly(SimpleNamespace(dry=False))['ok'])
             self.assertEqual(1, send.call_count)
             run = self.get('/runs/pending').get_json()['runs'][0]
-            record = dict(sender='delegate@example.com', received_at='2026-10-05 11:00:00', subject='RE: ' + run['subject'], body='Please find attached', message_id='local1', attachments=[os.path.join(self.temp.name, 'reply.xlsx')])
-            with patch.object(runner.dm, 'outlook_scan', return_value=([record], '')), patch.object(runner.dm, 'to_korean', return_value=['30 Oct까지 수리 예정']) as translator:
+            # 회신시각=발송시각: 고정 시각이면 실행 시각에 따라 sent_at 보다 앞서 poll 이 무시함(시계 의존 flake).
+            record = dict(sender='delegate@example.com', received_at=run['sent_at'], subject='RE: ' + run['subject'], body='Please find attached', message_id='local1', attachments=[os.path.join(self.temp.name, 'reply.xlsx')])
+            with patch.object(runner.dm, 'outlook_scan', return_value=([record], '')), patch.object(runner.dm, 'to_korean', return_value=['30 Oct까지 수리 예정']) as translator, \
+                    patch.object(runner.dm, 'llm', return_value={'items': [{'item_id': 1, 'kind': 'action'}]}) as judge:
                 reply = runner.poll(SimpleNamespace(dry=False))
                 self.assertTrue(reply['ok'], reply)
                 self.assertEqual(1, reply['replies'][0]['updated'])
                 record['message_id'] = 'different-local-id'
                 self.assertEqual([], runner.poll(SimpleNamespace(dry=False))['replies'])
                 self.assertEqual(1, translator.call_count)
+                self.assertEqual(1, judge.call_count)   # 첨부 셀 실질조치 판정은 LLM 1회(외부호출 없음)
                 pending = self.get('/runs/pending').get_json()['runs'][0]
                 self.assertEqual('Existing action\n\nRepairs planned by 30 Oct', pending['reply_rows'][0]['action'])
         with A.app.app_context():

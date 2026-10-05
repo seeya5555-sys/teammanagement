@@ -39,6 +39,7 @@ class ManagementMetadataMigrationTests(unittest.TestCase):
                 "class_status_items.followup_evidence",   # 29e8806 (2026-09-17)
                 "vessels.management",
                 "mail_card.columns",
+                "daily_mail_settings.dear_name",
             ),
             tuple(name for name, _step in migration_steps.MANAGEMENT_METADATA_MIGRATIONS),
         )

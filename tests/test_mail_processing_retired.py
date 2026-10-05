@@ -42,8 +42,10 @@ class MailProcessingRetirementTests(unittest.TestCase):
         self.assertIn("historical rows are retained in SQLite for audit only", APP)
 
     def test_mail_processing_is_not_exposed_in_any_template(self):
+        # 폐기된 endpoint 는 `*.mail_page` — 현행 daily_/vetting_/class_mail_page 는 오탐이라 경계로 구분.
+        self.assertNotRegex(ALL_TEMPLATE_TEXT, r"\bmail_page\b")
         for text in (
-            "mail_page", "메일 처리", "/api/mail", "/api/wf/pull-now", "/api/wf/pull-flag",
+            "메일 처리", "/api/mail", "/api/wf/pull-now", "/api/wf/pull-flag",
             "mail_active", "stats.mail_active", "approvals.wf1", "['wf1']",
         ):
             self.assertNotIn(text, ALL_TEMPLATE_TEXT)

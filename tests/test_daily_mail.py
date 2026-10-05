@@ -247,8 +247,8 @@ class DailyMailTests(unittest.TestCase):
 class DailyMailNavTests(unittest.TestCase):
     def test_admin_nav_links_to_settings_page(self):
         base = (Path(__file__).resolve().parent.parent / 'templates' / 'base.html').read_text(encoding='utf-8')
-        self.assertEqual(base.count("nlink('routes_daily_mail.daily_mail_page', 'Daily 메일 자동화')"), 2)
-        self.assertIn("'routes_daily_mail.daily_mail_page','routes_vetting_mail.vetting_mail_page'] %}", base)
+        self.assertEqual(base.count("nlink('routes_daily_mail.daily_mail_page', 'Daily')"), 2)
+        self.assertIn("'routes_daily_mail.daily_mail_page','routes_vetting_mail.vetting_mail_page','routes_class_mail.class_mail_page'] %}", base)
 
 if __name__ == '__main__':
     unittest.main()
