@@ -7,20 +7,19 @@ import re
 from flask import Blueprint, jsonify, render_template, request, session
 from helpers_shared import _class_workbook, admin_required, api_key_required
 import class_mail_service as svc
+from mail_common import error_response, json_body
 
 bp = Blueprint('routes_class_mail', __name__)
 
 
-def payload():
-    value = request.get_json(silent=True)
-    return value if isinstance(value, dict) else {}
+payload = json_body
 
 
 def call(fn, *args, success=200):
     try:
         return jsonify(fn(*args)), success
     except svc.ClassMailError as error:
-        return jsonify({'error': error.message}), error.status
+        return error_response(error)
 
 
 @bp.route('/class-mail')

@@ -14,6 +14,7 @@ import re
 from datetime import date, datetime
 
 from app_core import execute, execute_rc, query
+from mail_common import MailServiceError
 import daily_mail_service as dm
 
 SUBJECT_TPL = '{vessel} - {sire_type}SIRE Inspection Status ({date})'
@@ -47,11 +48,8 @@ def is_vlcc(vessel_type):
     return (vessel_type or '').strip().upper() == 'VLCC'
 
 
-class VettingMailError(Exception):
-    def __init__(self, status, message):
-        super().__init__(message)
-        self.status = status
-        self.message = message
+class VettingMailError(MailServiceError):
+    pass
 
 
 def _open_ids(vetting_id):

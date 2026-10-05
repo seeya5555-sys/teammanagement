@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app_core import execute, execute_rc, get_db, query
+from mail_common import MailServiceError
 import daily_mail_service as dm
 
 SUBJECT = '{vessel} - Class Status: Action Plan and Progress Required'
@@ -29,10 +30,8 @@ TAG_RE = re.compile(r'\[TRMT-CS \d{4}W\d{2} [A-Z0-9]{1,8}\]')
 CATEGORIES = {'COC': 'Condition of Class (COC)', 'STATUTORY': 'Statutory (Flag)'}
 
 
-class ClassMailError(Exception):
-    def __init__(self, status, message):
-        super().__init__(message)
-        self.status, self.message = status, message
+class ClassMailError(MailServiceError):
+    pass
 
 
 def today_kst():

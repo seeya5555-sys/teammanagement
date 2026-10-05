@@ -14,6 +14,7 @@ from werkzeug.utils import secure_filename
 from app_core import UPLOAD_DIR, execute
 from issue_export_service import build_issue_workbook
 import daily_mail_service as svc
+from mail_common import error_response, json_body
 from helpers_shared import _issue_to_dict, _translate_rows_en, admin_required, api_key_required
 
 bp = Blueprint('routes_daily_mail', __name__)
@@ -21,19 +22,12 @@ bp = Blueprint('routes_daily_mail', __name__)
 _ATTACH_EXT = {'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'pdf'}
 
 
-def _err(exc):
-    body = {'error': exc.message}
-    body.update(exc.extra)
-    return jsonify(body), exc.status
+_err = error_response
+_json = json_body
 
 
 def _user():
     return session.get('username') or 'admin'
-
-
-def _json():
-    d = request.get_json(silent=True)
-    return d if isinstance(d, dict) else {}
 
 
 # ── 관리자 화면 ─────────────────────────────────────────────────────

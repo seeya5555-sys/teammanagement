@@ -6,18 +6,14 @@
 from flask import Blueprint, jsonify, render_template, request, session
 
 import vetting_mail_service as svc
+from mail_common import error_response, json_body
 from helpers_shared import admin_required, api_key_required
 
 bp = Blueprint('routes_vetting_mail', __name__)
 
 
-def _err(e):
-    return jsonify({'error': e.message}), e.status
-
-
-def _json():
-    d = request.get_json(silent=True)
-    return d if isinstance(d, dict) else {}
+_err = error_response
+_json = json_body
 
 
 @bp.route('/vetting-mail')

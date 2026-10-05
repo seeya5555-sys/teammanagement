@@ -16,6 +16,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from app_core import execute, execute_rc, query
+from mail_common import MailServiceError
 
 OPEN_STATUSES = ('Open', 'InProgress')
 TEMPLATE_VARS = ('vessel', 'count', 'due_date', 'dear')
@@ -27,12 +28,8 @@ MAX_EMAILS = 20
 REPLY_DUE_DAYS = 4          # {due_date} = 발송일 + 4일(월요일 발송 → 금요일)
 
 
-class DailyMailError(Exception):
-    def __init__(self, status, message, **extra):
-        super().__init__(message)
-        self.status = status
-        self.message = message
-        self.extra = extra
+class DailyMailError(MailServiceError):
+    pass
 
 
 # ── 순수 함수 ──────────────────────────────────────────────────────
