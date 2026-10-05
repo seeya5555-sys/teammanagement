@@ -149,6 +149,31 @@ class DailyMailTests(unittest.TestCase):
                                              json={'state': 'sent'}).get_json()['state'])
         return rid
 
+    def test_new_issue_from_reply_row_is_created_once(self):
+        self._enable()
+        rid = self._claim_sent()
+        body = {'message_id': 'm-new', 'issue_date': '2026-09-04', 'due_date': '2026-10-15',
+                'item_en': 'SAT C printer not working', 'item_topic': 'SAT-C printer 작동 불량',
+                'description': '1. SAT-C printer 작동 불량', 'progress': 'Troubleshooting 진행 중', 'priority': 'Bogus'}
+        r = self.c.post(f'/api/ext/daily-mail/runs/{rid}/new-issues', headers=self.h, json=body)
+        self.assertEqual(200, r.status_code, r.get_json())
+        first = r.get_json()
+        self.assertFalse(first['duplicate'])
+        # 다른 메일·표기 차이(대소문자/구두점)여도 같은 발생일+Item 이면 재생성 안 함
+        again = dict(body, message_id='m-other', item_en='SAT-C Printer not working!')
+        r2 = self.c.post(f'/api/ext/daily-mail/runs/{rid}/new-issues', headers=self.h, json=again).get_json()
+        self.assertEqual({'issue_id': first['issue_id'], 'duplicate': True}, r2)
+        with appmod.app.app_context():
+            from app_core import query
+            row = query('SELECT * FROM issues WHERE id=?', (first['issue_id'],), one=True)
+            self.assertEqual((self.vid, 'Open', 'Normal', '2026-09-04', '2026-10-15', 'daily-mail'),
+                             (row['vessel_id'], row['status'], row['priority'], row['issue_date'], row['due_date'], row['created_by']))
+            self.assertIn('Troubleshooting', row['actions'])
+            self.assertEqual(1, query('SELECT COUNT(*) n FROM daily_mail_new_issues', one=True)['n'])
+        self.assertEqual(400, self.c.post(f'/api/ext/daily-mail/runs/{rid}/new-issues', headers=self.h,
+                                          json=dict(body, issue_date='Sep 4')).status_code)
+        self.assertNotEqual(200, self.c.post(f'/api/ext/daily-mail/runs/{rid}/new-issues', json=body).status_code)
+
     def test_requires_api_key_and_disabled_vessel_not_listed(self):
         self.assertEqual(401, self.c.get('/api/ext/daily-mail/config').status_code)
         cfg = self.c.get('/api/ext/daily-mail/config', headers=self.h).get_json()

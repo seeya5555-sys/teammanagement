@@ -2559,6 +2559,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/daily-mail/runs/<int:rid>/new-issues",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_daily_mail.api_ext_daily_mail_new_issue",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/daily-mail/runs/<int:rid>/state",
     "methods": [
       "OPTIONS",

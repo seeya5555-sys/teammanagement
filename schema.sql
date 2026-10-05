@@ -1285,6 +1285,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_mail_events_msg
 CREATE INDEX IF NOT EXISTS idx_daily_mail_events_run ON daily_mail_events(run_id, kind);
 CREATE INDEX IF NOT EXISTS idx_daily_mail_events_state ON daily_mail_events(kind, state);
 
+-- 회신 엑셀에 감독이 추가한 신규 현안(Issue ID 빈 행) → issues 생성 1회 기록(2026-10-05).
+--   fingerprint = 서버 계산(발생일 + 정규화 영문 Item) — 같은 행 재회신·재폴링 시 중복 생성 방지.
+CREATE TABLE IF NOT EXISTS daily_mail_new_issues (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    vessel_id   INTEGER NOT NULL,
+    fingerprint TEXT    NOT NULL,
+    issue_id    INTEGER NOT NULL,
+    run_id      INTEGER NOT NULL,
+    message_id  TEXT    NOT NULL,
+    item_en     TEXT    NOT NULL DEFAULT '',
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE (vessel_id, fingerprint)
+);
+
 -- -------------------------------------------------------------
 --  Vetting OBS 자동화 (2026-10-03)
 --   · vt_close_auto_runs: SVMS Close report 자동판정 1회 기록(같은 입력 재판정 방지).

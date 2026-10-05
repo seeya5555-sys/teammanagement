@@ -129,6 +129,7 @@
     "app_core.py": [
       "execute",
       "execute_rc",
+      "get_db",
       "query"
     ],
     "maritime_style.py": [

@@ -12,10 +12,11 @@ HTTP 어댑터는 `routes_daily_mail.py`. 여기는 상태 전이와 DB 규칙�
 """
 from maritime_style import append_latest_important
 import json
+import sqlite3
 import re
 from datetime import date, datetime, timedelta
 
-from app_core import execute, execute_rc, query
+from app_core import execute, execute_rc, get_db, query
 from mail_common import MailServiceError
 
 OPEN_STATUSES = ('Open', 'InProgress')
@@ -705,3 +706,73 @@ def record_attachment(run_id, issue_id, message_id, filename):
     key = f'{(message_id or "").strip()}#{filename}'
     return _insert_event(run_id, 'attachment', issue_id, key, filename, {'filename': filename})
 
+
+
+# ── 회신 엑셀 추가행 → 신규 현안 (2026-10-05) ────────────────────────────
+NEW_ISSUE_PRIORITIES = ('Normal', 'Urgent', 'COC & Flag', 'Next DD')
+
+
+def new_issue_fingerprint(issue_date, item_en):
+    import hashlib
+    norm = re.sub(r'[^a-z0-9]+', ' ', str(item_en or '').lower()).strip()
+    return hashlib.sha256(f'{issue_date}|{norm}'.encode()).hexdigest()
+
+
+def create_issue_from_reply(run_id, d):
+    """감독 회신 엑셀에 Issue ID 없이 추가된 행을 Open 현안으로 1회 생성. 같은 지문은 기존 id 반환(멱등)."""
+    run = get_run(run_id)
+    if run['state'] != 'sent':
+        raise DailyMailError(409, 'run is not sent')
+    message_id = (d.get('message_id') or '').strip()
+    item_en = (d.get('item_en') or '').strip()
+    topic = (d.get('item_topic') or '').strip()
+    if not message_id or not item_en or not topic:
+        raise DailyMailError(400, 'message_id, item_en, item_topic required')
+    if len(topic) > 300 or len(item_en) > 500 or len(d.get('description') or '') > 4000 \
+            or len(d.get('progress') or '') > 4000:
+        raise DailyMailError(400, 'field too long')
+    try:
+        issue_date = datetime.strptime((d.get('issue_date') or '').strip()[:10], '%Y-%m-%d').strftime('%Y-%m-%d')
+    except ValueError:
+        raise DailyMailError(400, 'issue_date must be YYYY-MM-DD')
+    due = (d.get('due_date') or '').strip()[:10] or None
+    if due:
+        try:
+            due = datetime.strptime(due, '%Y-%m-%d').strftime('%Y-%m-%d')
+        except ValueError:
+            due = None
+    priority = d.get('priority') if d.get('priority') in NEW_ISSUE_PRIORITIES else 'Normal'
+    vessel_id = run['vessel_id']
+    fp = new_issue_fingerprint(issue_date, item_en)
+    prior = query('SELECT issue_id FROM daily_mail_new_issues WHERE vessel_id=? AND fingerprint=?',
+                  (vessel_id, fp), one=True)
+    if prior:
+        return {'issue_id': prior['issue_id'], 'duplicate': True}
+    sup = query('SELECT id FROM supervisors WHERE TRIM(name)=?', (ROSTER_SUPERVISOR,), one=True) \
+        or query('SELECT supervisor_id AS id FROM issues WHERE vessel_id=? ORDER BY id DESC LIMIT 1',
+                 (vessel_id,), one=True)
+    if not sup:
+        raise DailyMailError(409, 'supervisor not resolvable')
+    progress = (d.get('progress') or '').strip()
+    actions = [{'date': date.today().isoformat(), 'progress': progress, 'important': False}] if progress else []
+    if actions:
+        actions = append_latest_important([], actions[0])
+    db = get_db()
+    try:
+        cur = db.execute(
+            'INSERT INTO issues (supervisor_id, vessel_id, issue_date, due_date, item_topic, description, '
+            'actions, priority, status, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (sup['id'], vessel_id, issue_date, due, topic, (d.get('description') or '').strip(),
+             json.dumps(actions, ensure_ascii=False), priority, 'Open', 'daily-mail'))
+        iid = cur.lastrowid
+        db.execute('INSERT INTO daily_mail_new_issues (vessel_id, fingerprint, issue_id, run_id, message_id, item_en) '
+                   'VALUES (?,?,?,?,?,?)', (vessel_id, fp, iid, run_id, message_id, item_en[:500]))
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()                      # 동시 생성 경합 — 먼저 만든 쪽 반환
+        prior = query('SELECT issue_id FROM daily_mail_new_issues WHERE vessel_id=? AND fingerprint=?',
+                      (vessel_id, fp), one=True)
+        if not prior:
+            raise
+        return {'issue_id': prior['issue_id'], 'duplicate': True}
+    return {'issue_id': iid, 'duplicate': False}

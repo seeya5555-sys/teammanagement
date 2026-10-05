@@ -193,6 +193,15 @@ def api_ext_daily_mail_progress(rid, iid):
         return _err(e)
 
 
+@bp.route('/api/ext/daily-mail/runs/<int:rid>/new-issues', methods=['POST'])
+@api_key_required
+def api_ext_daily_mail_new_issue(rid):
+    try:
+        return jsonify(svc.create_issue_from_reply(rid, _json()))
+    except svc.DailyMailError as e:
+        return _err(e)
+
+
 @bp.route('/api/ext/daily-mail/runs/<int:rid>/issues/<int:iid>/close', methods=['POST'])
 @api_key_required
 def api_ext_daily_mail_close(rid, iid):
