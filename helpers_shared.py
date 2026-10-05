@@ -2388,6 +2388,75 @@ def _normalize_class_status(parsed):
         'coc':           lst('coc'),
         'statutory':     lst('statutory'),
     }
+_CLS_MEMO_HDR = re.compile(r'memoranda', re.I)
+# 메모란다 구간을 끝내는 다음 섹션 제목(페이지 머리말/꼬리말은 구간을 끝내지 않는다)
+_CLS_SECTION_HDR = re.compile(
+    r'^\s*(planned inspection items|conditions? of class|conditions related to|statutory (items|recommendations)'
+    r'|continuous survey|classification surveys|statutory surveys|certificates|class surveys|legend'
+    r'|regulatory information|bureau veritas contacts|ship particulars|\* ?verification scheme)', re.I)
+_CLS_PAGE_NOISE = re.compile(r'generated on|page \d+\s*/\s*\d+|survey status report|ship name\s*:', re.I)
+
+
+def _cls_alnum(s):
+    return re.sub(r'[^a-z0-9]', '', (s or '').lower())
+
+
+def _cls_is_section_title(ln):
+    t = ln.strip()
+    if not _CLS_SECTION_HDR.search(t) or len(t) > 70 or '(' in t or re.match(r'\d{1,2} [A-Za-z]{3} \d{4}', t):
+        return False
+    if t.isupper():
+        # 대문자 제목(예: 'CONDITIONS OF CLASS - HULL')은 제목 단어 + 짧은 구분 꼬리만 허용 — 본문 줄바꿈 잔여 배제
+        return bool(re.fullmatch(_CLS_SECTION_HDR.pattern + r'\s*([-/:]\s*[A-Z ]{0,30})?\s*:?', t, re.I))
+    return True
+
+
+def _cls_split_memoranda(text):
+    """보고서 텍스트 → (메모란다 구간 텍스트, 나머지 텍스트). 순수함수(단위테스트용)."""
+    memo, other, in_memo = [], [], False
+    for ln in (text or '').splitlines():
+        if _CLS_MEMO_HDR.search(ln):
+            in_memo = True
+            continue
+        # 제목은 짧은 단독 줄. 본문 줄바꿈 잔여(예: 'CERTIFICATES BEFORE … (Copied from …')는 제목으로 보지 않는다
+        if in_memo and _cls_is_section_title(ln):
+            in_memo = False
+        if in_memo and _CLS_PAGE_NOISE.search(ln):
+            continue
+        (memo if in_memo else other).append(ln)
+    return '\n'.join(memo), '\n'.join(other)
+
+
+def _cls_drop_memoranda(data, text):
+    """AI가 프롬프트를 어기고 Memoranda 항목을 지적/기국으로 가져온 경우 결정적으로 제거.
+    본문 앞 60자(영숫자 정규화)가 메모란다 구간에 있고 문두 30자가 나머지 구간에 없을 때만 뺀다(fail-safe)."""
+    memo, other = _cls_split_memoranda(text)
+    memo_n, other_n = _cls_alnum(memo), _cls_alnum(other)
+    if not memo_n:
+        return data, 0
+    dropped = 0
+    for key in ('coc', 'statutory'):
+        kept = []
+        for it in data.get(key) or []:
+            probe = _cls_alnum(re.sub(r'^\s*statutory\s+', '', it.get('description') or '', flags=re.I))[:60]
+            # 지적 표에도 있는 항목(메모란다에 중복 기재된 실제 COC)은 유지. 표 컬럼이 본문 중간에 끼므로 짧은 문두로 대조
+            if len(probe) >= 15 and probe in memo_n and probe[:30] not in other_n:
+                dropped += 1
+                continue
+            kept.append(it)
+        data[key] = kept
+    return data, dropped
+
+
+def _cls_pdf_text(raw):
+    import io
+    import pdfplumber
+    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+        if len(pdf.pages) > 200:
+            return None      # 전체 대조 불가 → 필터 생략(오삭제보다 미삭제)
+        return '\n'.join((p.extract_text() or '') for p in pdf.pages)
+
+
 def _xlsx_to_text(raw_bytes):
     import io
     from openpyxl import load_workbook
@@ -2447,6 +2516,18 @@ def _extract_class_status_from_upload(f):
     data = _normalize_class_status(parsed)
     if data is None:
         return None, {'reason': 'PARSE_FAILED', 'message': '추출 결과를 해석하지 못했습니다.'}
+    src_text = None
+    if ext == 'pdf':
+        try:
+            src_text = _cls_pdf_text(raw)
+        except Exception:
+            app.logger.exception('cls-pdf-text')
+    elif ext in ('xlsx', 'xls'):
+        src_text = txt
+    if src_text:
+        data, n = _cls_drop_memoranda(data, src_text)
+        if n:
+            app.logger.info('cls memoranda dropped=%s file=%s', n, name)
     return data, None
 def _cls_delete_file(path):
     """보관 파일 삭제(교체 시 이전 파일 자동삭제). 경로가 업로드 폴더 내일 때만."""
