@@ -24,7 +24,7 @@ from docx.oxml import OxmlElement
 from dock_report_docx import (
     _set_cell_shading, _set_cell_borders, _set_font, _add_paragraph,
     _set_row_height, _set_table_fixed_layout, _add_horizontal_line,
-    _crop_to_aspect, _temp_files, _cleanup_temp_files,
+    _crop_to_aspect, _temp_files, _cleanup_temp_files, _contain_in_static,
 )
 
 
@@ -753,16 +753,6 @@ def _render_image(doc, content, base_indent):
     col_cm_list = [cell_cm] * columns
     _set_table_fixed_layout(tbl, total_cm, col_cm_list)
     _add_paragraph(doc, '', before=2, after=6)
-
-
-def _contain_in_static(candidate):
-    """candidate 경로가 static 디렉터리 밖(경로순회 ../)이면 None 반환."""
-    from app_core import app
-    root = os.path.realpath(app.static_folder)
-    real = os.path.realpath(candidate)
-    if real == root or real.startswith(root + os.sep):
-        return real
-    return None
 
 
 def _resolve_brep_image_path(url, filename):
