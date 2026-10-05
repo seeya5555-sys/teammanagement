@@ -710,6 +710,8 @@ def record_attachment(run_id, issue_id, message_id, filename):
 
 # ── 회신 엑셀 추가행 → 신규 현안 (2026-10-05) ────────────────────────────
 NEW_ISSUE_PRIORITIES = ('Normal', 'Urgent', 'COC & Flag', 'Next DD')
+# 감독 엑셀 표기 → TRMT 우선순위(형 지시 2026-10-05: High=Urgent).
+PRIORITY_ALIASES = {'high': 'Urgent'}
 
 
 def new_issue_fingerprint(issue_date, item_en):
@@ -741,7 +743,10 @@ def create_issue_from_reply(run_id, d):
             due = datetime.strptime(due, '%Y-%m-%d').strftime('%Y-%m-%d')
         except ValueError:
             due = None
-    priority = d.get('priority') if d.get('priority') in NEW_ISSUE_PRIORITIES else 'Normal'
+    priority = str(d.get('priority') or '').strip()
+    priority = PRIORITY_ALIASES.get(priority.lower(), priority)
+    if priority not in NEW_ISSUE_PRIORITIES:
+        priority = 'Normal'
     vessel_id = run['vessel_id']
     fp = new_issue_fingerprint(issue_date, item_en)
     prior = query('SELECT issue_id FROM daily_mail_new_issues WHERE vessel_id=? AND fingerprint=?',

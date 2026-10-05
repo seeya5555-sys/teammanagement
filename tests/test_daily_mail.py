@@ -170,6 +170,11 @@ class DailyMailTests(unittest.TestCase):
                              (row['vessel_id'], row['status'], row['priority'], row['issue_date'], row['due_date'], row['created_by']))
             self.assertIn('Troubleshooting', row['actions'])
             self.assertEqual(1, query('SELECT COUNT(*) n FROM daily_mail_new_issues', one=True)['n'])
+        hi = self.c.post(f'/api/ext/daily-mail/runs/{rid}/new-issues', headers=self.h,
+                         json=dict(body, item_en='Main Air Compressor low efficiency', priority=' High ')).get_json()
+        with appmod.app.app_context():
+            from app_core import query
+            self.assertEqual('Urgent', query('SELECT priority FROM issues WHERE id=?', (hi['issue_id'],), one=True)['priority'])
         self.assertEqual(400, self.c.post(f'/api/ext/daily-mail/runs/{rid}/new-issues', headers=self.h,
                                           json=dict(body, issue_date='Sep 4')).status_code)
         self.assertNotEqual(200, self.c.post(f'/api/ext/daily-mail/runs/{rid}/new-issues', json=body).status_code)
