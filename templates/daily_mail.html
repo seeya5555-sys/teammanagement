@@ -16,7 +16,7 @@
   .dm-pill.warn .n{color:var(--amber)}
   .dm-pill.bad .n{color:var(--red)}
   table.dm-t{width:100%;border-collapse:collapse;font-size:12.5px}
-  .dm-t th{text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border);padding:6px 6px;white-space:nowrap}
+  .dm-t th{position:sticky;top:54px;z-index:2;background:var(--surface);text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border);padding:6px 6px;white-space:nowrap}
   .dm-t td{border-bottom:1px solid var(--border-subtle);padding:6px 6px;vertical-align:top}
   .dm-t input[type=text]{width:100%;min-width:180px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface)}
   .dm-t input[data-f=dear]{min-width:120px}
@@ -89,6 +89,7 @@
 (function(){
   const $=(id)=>document.getElementById(id);
   const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const toast=(m,k)=>{ if(window.InlineEdit) InlineEdit.toast(m,k); else alert(m); };
   async function api(url,opt){
     const r=await fetch(url,Object.assign({headers:{'Accept':'application/json','Content-Type':'application/json'}},opt||{}));
     let d={}; try{d=await r.json();}catch(e){}
@@ -148,10 +149,11 @@
       if(act==='save-vessel'){
         const tr=b.closest('tr'), msg=tr.querySelector('.dm-msg');
         const body={dear_name:tr.querySelector('[data-f=dear]').value,to_emails:tr.querySelector('[data-f=to]').value,cc_emails:tr.querySelector('[data-f=cc]').value,enabled:tr.querySelector('[data-f=en]').checked};
-        b.disabled=true;
-        try{ await api('/api/daily-mail/settings/'+tr.dataset.vid,{method:'PUT',body:JSON.stringify(body)}); msg.textContent='저장됨'; }
-        catch(e){ msg.textContent=e.message; }
-        finally{ b.disabled=false; }
+        const ctrls=[b,...tr.querySelectorAll('input')];
+        ctrls.forEach(x=>x.disabled=true); msg.textContent='';
+        try{ await api('/api/daily-mail/settings/'+tr.dataset.vid,{method:'PUT',body:JSON.stringify(body)}); toast('저장됨'); }
+        catch(e){ toast('저장 실패: '+e.message,'error'); }
+        finally{ ctrls.forEach(x=>x.disabled=false); }
         return;
       }
       const conf={approve:'이 이슈를 Close 할까요?',reject:'제안을 반려할까요? (Open 유지)',reopen:'이 자동 Close 를 되돌려 다시 Open 할까요?',
@@ -162,13 +164,15 @@
       b.disabled=true;
       await api(url,{method:'POST',body:'{}'});
       await loadStatus();
-    }catch(e){ alert(e.message); b.disabled=false; }
+      toast('처리됨');
+    }catch(e){ toast(e.message,'error'); b.disabled=false; }
   });
 
   $('dmTplSave').addEventListener('click',async()=>{
-    const m=$('dmTplMsg');
-    try{ await api('/api/daily-mail/template',{method:'PUT',body:JSON.stringify({subject_tpl:$('dmSubj').value,body_tpl:$('dmBody').value})}); m.textContent='저장됨'; }
-    catch(e){ m.textContent=e.message; }
+    const b=$('dmTplSave'); b.disabled=true;
+    try{ await api('/api/daily-mail/template',{method:'PUT',body:JSON.stringify({subject_tpl:$('dmSubj').value,body_tpl:$('dmBody').value})}); toast('템플릿 저장됨'); }
+    catch(e){ toast('저장 실패: '+e.message,'error'); }
+    finally{ b.disabled=false; }
   });
 
   loadStatus().catch(e=>{$('dmPills').innerHTML='<div class="dm-empty">'+esc(e.message)+'</div>';});

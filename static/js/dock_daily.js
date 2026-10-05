@@ -231,7 +231,7 @@
     state.report = loaded; state.dirty=false; ensureSectionEditors();
     $('#dd-empty').style.display='none'; $('#dd-report').classList.add('show');
     $('#dd-report-title').textContent=`${state.report.vessel_name} · 입거 Daily Report`;
-    $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`;
+    renderReportMeta();
     renderSvmsState(); renderReportDates(); renderItinerary(); renderSections(); renderAttachments();
     // 🔴 Special 도구도 **열린 일자 기준으로 다시** 그린다(형 지적 2026-10-01). 전엔 프로젝트
     // 선택 때 "일자 없음" 상태로 한 번만 그려서, 보고서를 연 뒤에도 ＋ 섹션이 비활성이고
@@ -587,6 +587,13 @@
     document.querySelectorAll('[data-add-table]').forEach(b=>b.onclick=()=>once(b,()=>addTable(b.dataset.addTable)));
     document.querySelectorAll('[data-move-section]').forEach(b=>b.onclick=()=>once(b,()=>moveSection(b.dataset.moveSection,Number(b.dataset.delta))));
     document.querySelectorAll('[data-del-section-card]').forEach(b=>b.onclick=()=>once(b,()=>deleteSection(b.dataset.delSectionCard)));
+    // 프로젝트 전용(special) 섹션 제목은 클릭해서 이름 변경 — PATCH 는 label 만 바꾸고 enabled 는 유지
+    if(!locked&&window.InlineEdit) all.filter(s=>s.enabled&&s.kind==='special').forEach(s=>{
+      const h=document.querySelector(`.dd-section[data-section="${CSS.escape(s.section_key)}"] .dd-section-head h3`);
+      if(h) InlineEdit.bind(h,{kind:'text',value:s.label||'',allowEmpty:false,
+        save:(label)=>renameSpecial(s.section_key,label.trim().slice(0,60)),
+        onDone:()=>{renderSections();renderSpecialTools();}});
+    });
     document.querySelectorAll('.delete-inline').forEach(btn=>btn.onclick=()=>{const b=findBlock(btn.dataset.key);if(!b)return;
       // 표·이미지는 웹에서 다시 만들 수 없고(편집기는 앱에만 있다), 이미지 블록을 지우면
       // 서버가 연결된 첨부까지 함께 지운다. 한 번 확인을 받는다.
@@ -651,7 +658,7 @@
     const saved=await api(`/api/dock-daily/reports/${rid}`,{...json(payload),method:'PUT'});
     if(seq!==selectSeq||state.report?.id!==rid)return false;
     state.report=saved; state.dirty=false; ensureSectionEditors();
-    $('#dd-report-meta').textContent=`${state.report.report_date} · ${state.report.status} · revision ${state.report.revision}`; renderItinerary(); renderSections(); renderAttachments();
+    renderReportMeta(); renderItinerary(); renderSections(); renderAttachments();
     return true;
   }
   // section_key 는 서버가 만든다(POST .../sections). 웹과 앱이 각자 키를 만들면 규칙이
@@ -875,6 +882,14 @@
   // 🔴 갱신된 프로젝트 목록을 보고서에 **그대로** 넣지 않는다(형 지시 2026-08-23) --
   // 다른 일자에만 있는 섹션까지 이 일자에 붙어 빈 카드가 뜨고, 저장하면 서버가 409
   // `section_not_on_report` 로 튕긴다. 이 일자에 있던 키만 남기고 값만 새로 받는다.
+  async function renameSpecial(key,label){
+    const pid=state.project.id;
+    const updated=await api(`/api/dock-daily/projects/${pid}`,{...json({sections:[{section_key:key,label}]}),method:'PATCH'});
+    if(state.project?.id!==pid)return;
+    state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
+    const fresh=(updated.sections||[]).find(x=>x.section_key===key);
+    if(state.report&&fresh)(state.report.sections||[]).forEach(x=>{if(x.section_key===key)x.label=fresh.label;});
+  }
   async function toggleSpecial(key,enabled){
     const updated=await api(`/api/dock-daily/projects/${state.project.id}`,{...json({sections:[{section_key:key,enabled}]}),method:'PATCH'});
     state.project=updated;state.projects=state.projects.map(p=>p.id===updated.id?updated:p);
@@ -1159,25 +1174,44 @@
     $('#dd-date-save').disabled=locked;
     dateModal.hidden=false;document.body.style.overflow='hidden';$('#dd-date-new').focus();
   }
-  async function saveReportDate(){
-    if(!state.report)return;
+  // 보고서 머리줄 — 일자는 클릭해서 그 자리 정정(모달과 같은 PUT·revision CAS 경로)
+  function renderReportMeta(){
+    const meta=$('#dd-report-meta'), r=state.report; if(!r)return;
+    meta.innerHTML='';
+    const dateEl=document.createElement('span'); dateEl.textContent=r.report_date||'';
+    meta.append(dateEl, ` · ${r.status} · revision ${r.revision}`);
+    if(r.status!=='final'&&window.InlineEdit){
+      InlineEdit.bind(dateEl,{kind:'date',value:r.report_date||'',allowEmpty:false,
+        save:async(next)=>{ if(next&&next!==state.report?.report_date) await changeReportDate(next); },
+        onDone:()=>renderReportMeta()});
+    }
+  }
+  // 일자 정정 공통 — 실패 시 throw(호출부가 표시). 남은 편집은 먼저 저장한다(revision 409 방지).
+  async function changeReportDate(next){
     // 프로젝트·보고서 id 를 먼저 고정한다. await 뒤에 state 를 다시 읽으면, 그 사이
     // 형이 다른 프로젝트로 옮겨갔을 때 남의 목록을 덮어쓴다(올마이트 지적 2026-08-21).
-    const rid=state.report.id, pid=state.project.id, next=$('#dd-date-new').value;
-    if(!next){$('#dd-date-error').textContent='새 보고서 일자를 선택하세요.';return;}
-    if(next===state.report.report_date){closeDateModal();return;}
-    const btn=$('#dd-date-save'); btn.disabled=true; $('#dd-date-error').textContent='';
+    const rid=state.report.id, pid=state.project.id;
+    if(state.dirty&&state.report.status!=='final')await save();
+    if(state.report?.id!==rid)throw new Error('다른 일자로 이동되어 취소했습니다.');
     try{
       await api(`/api/dock-daily/reports/${rid}`,
         {...json({revision:state.report.revision,operations:[],report_date:next}),method:'PUT'});
-      const rows=await api(`/api/dock-daily/projects/${pid}/reports`);
-      closeDateModal();
-      if(state.project?.id!==pid)return;        // 옮겨간 화면은 건드리지 않는다
-      state.reports=rows;
-      if(state.report?.id===rid)await selectReport(rid); else renderReportDates();
-      // 자동수집을 새 날짜로 다시 돌리지 않는 건 의도다 — 돌리면 사람이 고친 본문을 덮는다.
-      notice(`보고서 일자를 ${next} 로 변경했습니다. 자동수집 블록과 원천 링크는 다시 수집하지 않습니다.`);
-    }catch(e){$('#dd-date-error').textContent=conflictText(e);}
+    }catch(e){throw new Error(conflictText(e));}
+    const rows=await api(`/api/dock-daily/projects/${pid}/reports`);
+    if(state.project?.id!==pid)return;        // 옮겨간 화면은 건드리지 않는다
+    state.reports=rows;
+    if(state.report?.id===rid)await selectReport(rid); else renderReportDates();
+    // 자동수집을 새 날짜로 다시 돌리지 않는 건 의도다 — 돌리면 사람이 고친 본문을 덮는다.
+    notice(`보고서 일자를 ${next} 로 변경했습니다. 자동수집 블록과 원천 링크는 다시 수집하지 않습니다.`);
+  }
+  async function saveReportDate(){
+    if(!state.report)return;
+    const next=$('#dd-date-new').value;
+    if(!next){$('#dd-date-error').textContent='새 보고서 일자를 선택하세요.';return;}
+    if(next===state.report.report_date){closeDateModal();return;}
+    const btn=$('#dd-date-save'); btn.disabled=true; $('#dd-date-error').textContent='';
+    try{ await changeReportDate(next); closeDateModal(); }
+    catch(e){$('#dd-date-error').textContent=e.message;}
     finally{btn.disabled=state.report?.status==='final';}
   }
   // 이전 일자 가져오기. 자동초안을 폐기한 대신 들어온 경로다(형 지시 2026-08-21) —

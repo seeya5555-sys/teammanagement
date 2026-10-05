@@ -198,6 +198,16 @@ def save_setting(vessel_id, to_text, cc_text, enabled, user, dear_name=None):
         raise DailyMailError(404, '선박이 없습니다.')
     if not in_roster(vessel_id):
         raise DailyMailError(403, '담당 선박이 아닙니다.')
+    # 부분 수정(2026-10-05): None = 그 키가 요청에 없음 → 기존 값 유지(누락 enabled 가 OFF 로 덮이던 버그)
+    if to_text is None or cc_text is None or enabled is None:
+        cur = query('SELECT to_emails, cc_emails, enabled FROM daily_mail_settings WHERE vessel_id=?',
+                    (vessel_id,), one=True)
+        if to_text is None:
+            to_text = cur['to_emails'] if cur else ''
+        if cc_text is None:
+            cc_text = cur['cc_emails'] if cur else ''
+        if enabled is None:
+            enabled = cur['enabled'] if cur else 0
     to_list, bad_to = parse_emails(to_text)
     cc_list, bad_cc = parse_emails(cc_text)
     if bad_to or bad_cc:

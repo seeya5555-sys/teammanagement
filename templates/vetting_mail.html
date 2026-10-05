@@ -16,7 +16,7 @@
   .dm-pill.warn .n{color:var(--amber)}
   .dm-pill.bad .n{color:var(--red)}
   table.dm-t{width:100%;border-collapse:collapse;font-size:12.5px}
-  .dm-t th{text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border);padding:6px 6px;white-space:nowrap}
+  .dm-t th{position:sticky;top:54px;z-index:2;background:var(--surface);text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border);padding:6px 6px;white-space:nowrap}
   .dm-t td{border-bottom:1px solid var(--border-subtle);padding:6px 6px;vertical-align:top}
   .dm-t input[type=text]{width:100%;min-width:180px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface)}
   .dm-t input[data-f=dear]{min-width:120px}
@@ -88,6 +88,7 @@
 (function(){
   const $=(id)=>document.getElementById(id);
   const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const toast=(m,k)=>{ if(window.InlineEdit) InlineEdit.toast(m,k); else alert(m); };
   async function api(url,opt){
     const r=await fetch(url,Object.assign({headers:{'Accept':'application/json','Content-Type':'application/json'}},opt||{}));
     let d={}; try{d=await r.json();}catch(e){}
@@ -129,30 +130,36 @@
     $('vmTplMsg').textContent=d.template.updated_at?('최종 저장 '+d.template.updated_at+' · '+(d.template.updated_by||'')):'기본 템플릿';
   }
   $('vmTplSave').addEventListener('click',async()=>{
+    const b=$('vmTplSave'); b.disabled=true;
     try{ const t=await api('/api/vetting-mail/template',{method:'PUT',body:JSON.stringify({subject_tpl:$('vmSubj').value,body_tpl:$('vmBody').value})});
-      $('vmTplMsg').textContent='저장됨 '+t.updated_at; }
-    catch(e){ $('vmTplMsg').textContent=e.message; }
+      $('vmTplMsg').textContent='저장됨 '+t.updated_at; toast('템플릿 저장됨'); }
+    catch(e){ toast('저장 실패: '+e.message,'error'); }
+    finally{ b.disabled=false; }
   });
   document.addEventListener('change',async(ev)=>{
     const cb=ev.target.closest('input[data-vm=en]'); if(!cb) return;
     const tr=cb.closest('tr'), msg=tr.querySelector('.dm-msg');
     if(cb.checked && !confirm('이 선박에 Vetting OBS 메일 자동 발송(매주 월 09:30)을 켤까요?')){ cb.checked=false; return; }
-    try{ await api('/api/vetting-mail/settings/'+tr.dataset.vid+'/enabled',{method:'POST',body:JSON.stringify({enabled:cb.checked})}); msg.textContent='저장됨'; }
-    catch(e){ cb.checked=!cb.checked; msg.textContent=e.message; }
+    cb.disabled=true;
+    try{ await api('/api/vetting-mail/settings/'+tr.dataset.vid+'/enabled',{method:'POST',body:JSON.stringify({enabled:cb.checked})}); toast(cb.checked?'자동 발송 ON':'자동 발송 OFF'); }
+    catch(e){ cb.checked=!cb.checked; toast('저장 실패: '+e.message,'error'); }
+    finally{ cb.disabled=false; }
   });
   document.addEventListener('click',async(ev)=>{
     const m=ev.target.closest('button[data-vmman]');
     if(m){
       const tr=m.closest('tr'), msg=tr.querySelector('.dm-msg');
       if(!confirm(tr.children[0].textContent+' 의 Open SIRE 전부에 지금 확인요청 메일을 보낼까요? (자동 발송과 별개)')) return;
-      try{ await api('/api/vetting-mail/manual/'+m.dataset.vmman,{method:'POST',body:'{}'}); msg.textContent='요청됨 · 약 10분 내 발송'; await load(); }
-      catch(e){ msg.textContent=e.message; }
+      m.disabled=true;
+      try{ await api('/api/vetting-mail/manual/'+m.dataset.vmman,{method:'POST',body:'{}'}); toast('요청됨 · 약 10분 내 발송'); await load(); }
+      catch(e){ toast(e.message,'error'); m.disabled=false; }
       return;
     }
     const b=ev.target.closest('button[data-vmrel]'); if(!b) return;
     if(!confirm('Outlook 보낸편지함에서 이 메일이 실제로 안 나간 것을 확인했나요?')) return;
-    try{ await api('/api/vetting-mail/runs/'+b.dataset.vmrel+'/release',{method:'POST',body:'{}'}); await load(); }
-    catch(e){ alert(e.message); }
+    b.disabled=true;
+    try{ await api('/api/vetting-mail/runs/'+b.dataset.vmrel+'/release',{method:'POST',body:'{}'}); toast('재발송 허용됨'); await load(); }
+    catch(e){ toast(e.message,'error'); b.disabled=false; }
   });
   load().catch(e=>{$('vmVessels').innerHTML='<div class="dm-empty">'+esc(e.message)+'</div>';});
   loadTpl().catch(e=>{$('vmTplMsg').textContent=e.message;});

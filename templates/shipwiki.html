@@ -4,7 +4,7 @@
 <style>
   .sw-head{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
   .sw-count{color:var(--text-secondary);font-size:13px}
-  .sw-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px;max-width:1000px;line-height:1.5}
+  .sw-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:12px;max-width:1000px;line-height:1.5}
   .sw-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
   .sw-ships{display:flex;gap:6px;flex-wrap:wrap}
   .sw-chip{font-size:12px;font-weight:600;padding:5px 12px;border-radius:4px;border:1px solid var(--border);background:#fff;color:var(--text-secondary);cursor:pointer;white-space:nowrap}
@@ -12,13 +12,13 @@
   .sw-chip .pn{color:var(--red);font-weight:800;margin-left:4px}
   .sw-chip.active .pn{color:#ffd9d2}
   .sw-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
-  .sw-tab{font-size:12px;font-weight:600;padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--text-secondary);cursor:pointer}
+  .sw-tab{font-size:12px;font-weight:600;padding:5px 12px;border-radius:4px;border:1px solid var(--border);background:#fff;color:var(--text-secondary);cursor:pointer}
   .sw-tab.active{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
-  .sw-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .sw-b{border:0;border-radius:4px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
   .sw-b.rs{background:var(--border);color:var(--text-secondary)}
   .sw-b.del{background:#fff;color:var(--text-tertiary);border:1px solid var(--border)}
   .sw-list{display:flex;flex-direction:column;gap:12px;max-width:1000px}
-  .sw-card{border:1px solid var(--border);border-radius:6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .sw-card{border:1px solid var(--border);border-radius:6px;background:#fff;overflow:hidden}
   .sw-card.is-busy{opacity:.6;pointer-events:none}
   .sw-card.sel{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-border)}
   .sw-top{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
@@ -69,10 +69,10 @@
   .sw-mhd .x{margin-left:auto;border:0;background:0;font-size:20px;cursor:pointer;color:var(--text-tertiary)}
   .sw-mb{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
   .sw-f label{font-size:11px;font-weight:700;color:var(--text-secondary);display:block;margin-bottom:3px}
-  .sw-f input,.sw-f select,.sw-f textarea{width:100%;border:1px solid var(--border-strong);border-radius:8px;padding:8px 10px;font-size:13px;box-sizing:border-box;font-family:inherit}
+  .sw-f input,.sw-f select,.sw-f textarea{width:100%;border:1px solid var(--border-strong);border-radius:4px;padding:8px 10px;font-size:13px;box-sizing:border-box;font-family:inherit}
   .sw-f textarea{min-height:110px;resize:vertical;line-height:1.5}
   .sw-mft{display:flex;gap:8px;justify-content:flex-end;padding:12px 18px;border-top:1px solid var(--border-subtle);position:sticky;bottom:0;background:#fff}
-  .sw-mergebox{background:var(--purple-bg);border:1px solid var(--purple);border-radius:10px;padding:10px 14px;margin-bottom:12px;max-width:1000px;font-size:13px;color:var(--text-primary);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .sw-mergebox{background:var(--purple-bg);border:1px solid var(--purple);border-radius:6px;padding:10px 14px;margin-bottom:12px;max-width:1000px;font-size:13px;color:var(--text-primary);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 </style>
 {% endblock %}
 {% block content %}
@@ -230,6 +230,22 @@
     list.innerHTML = cs.length ? cs.map(card).join('') : '<div class="sw-empty">해당 카드 없음.</div>';
     $('#sw-mergebox').style.display = MERGE?'flex':'none';
     if(MERGE) $('#sw-mergecnt').textContent = `${MERGE.size}건 선택`;
+    bindInline(cs);
+  }
+
+  // 결정됨(맥 적용 대기) 카드: 제목·카테고리 클릭 수정 → partial decide(나머지 결정값 유지)
+  const SW_CATS=['DEFECT','AOR','VETTING','DOCK','NOTICE','INQUIRY','OTHER'];
+  function bindInline(cs){
+    if(!window.InlineEdit) return;
+    const byId=new Map(cs.map(c=>[String(c.id),c]));
+    list.querySelectorAll('.sw-card').forEach(el=>{
+      const d=byId.get(el.dataset.id); if(!d || d.card_status!=='decided') return;
+      const save=key=>async v=>{ await api('POST',`/api/shipwiki/cards/${d.id}/decide`,{partial:true,[key]:v}); };
+      const t=el.querySelector('.sw-title');
+      if(t) InlineEdit.bind(t,{kind:'text',value:d.new_title||d.title||'',allowEmpty:false,save:save('new_title'),onDone:load});
+      const b=el.querySelector('.sw-badges .sw-badge');
+      if(b) InlineEdit.bind(b,{kind:'select',value:d.new_category||d.category||'OTHER',options:SW_CATS.map(x=>[x,x]),save:save('new_category'),onDone:load});
+    });
   }
 
   function renderShips(ships){
@@ -338,7 +354,7 @@
   });
 
   load();
-  setInterval(()=>{ if(document.hidden || (_loading && Date.now()-_loadStartedAt<30000)) return; if(document.querySelector('.st-applying,.st-decided')) load(); }, 8000);  // 숨김 탭·요청 진행 중이면 건너뜀
+  setInterval(()=>{ if(document.hidden || (window.InlineEdit&&InlineEdit.busy()) || (_loading && Date.now()-_loadStartedAt<30000)) return; if(document.querySelector('.st-applying,.st-decided')) load(); }, 8000);  // 숨김 탭·요청 진행 중이면 건너뜀
 })();
 </script>
 {% endblock %}

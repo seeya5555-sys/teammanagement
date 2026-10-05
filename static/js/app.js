@@ -2494,6 +2494,29 @@ async function triggerVlccPush() {
   setTimeout(poll, INTERVAL);
 }
 
+// 선박 목록 보조줄 — 필드별 span(편집권한이면 클릭 수정). PUT /api/vessels/<id> 는 보낸 키만 갱신.
+const VES_FIELD_LABEL = { short_name: '약칭', imo: 'IMO', class_society: '선급', manager: '관리사' };
+function vesselSubFields(v, fields, canEdit, onDone) {
+  const sub = el('div', { class: 'item-sub' });
+  const parts = [];
+  for (const f of fields) {
+    const val = v[f] || '';
+    if (!val && !canEdit) continue;
+    const shown = val ? (f === 'imo' ? 'IMO ' + val : val) : '+ ' + VES_FIELD_LABEL[f];
+    const node = el('span', { class: val ? '' : 'dd-meta-empty' }, shown);
+    if (canEdit && window.InlineEdit) {
+      InlineEdit.bind(node, {
+        kind: 'text', value: val, placeholder: VES_FIELD_LABEL[f],
+        save: (nv) => api('/api/vessels/' + v.id, { method: 'PUT', body: JSON.stringify({ [f]: nv.trim() }) }),
+        onDone,
+      });
+    }
+    parts.push(node);
+  }
+  parts.forEach((n, i) => { if (i) sub.append(' · '); sub.append(n); });
+  return { sub, count: parts.length };
+}
+
 function renderAdminVesList() {
   const list = $('#admin-ves-list');
   list.innerHTML = '';
@@ -2504,12 +2527,19 @@ function renderAdminVesList() {
   for (const v of ADMIN.vessels) {
     const item = el('div', { class: 'admin-list-item' + (v.active ? '' : ' inactive') });
     item.append(el('span', { class: 'item-tag type' }, v.vessel_type || '?'));
-    item.append(el('div', { class: 'item-main' },
-      el('strong', {}, v.name),
-      el('div', { class: 'item-sub' },
-        // 위와 같음 — 텍스트노드라 이중 이스케이프가 된다.
-        `${v.short_name ? v.short_name + ' · ' : ''}${v.imo ? 'IMO ' + v.imo + ' · ' : ''}` +
-        `담당: ${v.supervisor_names || '없음'} · 관리사 감독: ${v.manager_supervisor || '없음'}`)));
+    const nameEl = el('strong', {}, v.name);
+    const reloadVes = async () => { await loadAdminVessels(); };
+    if (window.InlineEdit) {
+      InlineEdit.bind(nameEl, {
+        kind: 'text', value: v.name, allowEmpty: false,
+        save: (nv) => api('/api/vessels/' + v.id, { method: 'PUT', body: JSON.stringify({ name: nv.trim() }) }),
+        onDone: reloadVes,
+      });
+    }
+    const { sub } = vesselSubFields(v, ['short_name', 'imo'], true, reloadVes);
+    if (sub.childNodes.length) sub.append(' · ');
+    sub.append(`담당: ${v.supervisor_names || '없음'} · 관리사 감독: ${v.manager_supervisor || '없음'}`);
+    item.append(el('div', { class: 'item-main' }, nameEl, sub));
     item.append(el('div', {}));
 
     const actions = el('div', { class: 'item-actions' });
@@ -2810,13 +2840,12 @@ async function renderMyVesList() {
     }
     item.append(el('div', { class: 'item-main' },
       nameEl,
-      el('div', { class: 'item-sub' },
-        [
-          v.short_name && `${v.short_name}`,
-          v.imo && `IMO ${v.imo}`,
-          v.class_society,
-          v.manager,
-        ].filter(Boolean).join(' · ') || '-')));
+      (() => {
+        const { sub, count } = vesselSubFields(v, ['short_name', 'imo', 'class_society', 'manager'], canEdit,
+          async () => { await renderMyVesList(); await reloadAll(); });
+        if (!count) sub.textContent = '-';
+        return sub;
+      })()));
     item.append(el('div', {}));
 
     // 권한별 버튼 노출

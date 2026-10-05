@@ -3447,6 +3447,8 @@ def api_shipwiki_decide(cid):
     if row['card_status'] in ('applying',):
         return jsonify({'error': '맥 적용 진행중 — 잠시 후', 'status': row['card_status']}), 409
     d = request.get_json(silent=True) or {}
+    if d.get('partial'):
+        return _shipwiki_decide_partial(cid, row, d)
     decision = (d.get('decision') or '').strip()
     if decision not in SHIPWIKI_DECISIONS:
         return jsonify({'error': f'bad decision (one of {SHIPWIKI_DECISIONS})'}), 400
@@ -3468,6 +3470,46 @@ def api_shipwiki_decide(cid):
             "decided_at=datetime('now','localtime'), result=NULL WHERE id=?",
             (decision, nt, nc, ncf, jud, mg, new_status, session.get('username', ''), cid))
     return jsonify({'id': cid, 'decision': decision, 'card_status': new_status})
+
+
+def _shipwiki_decide_partial(cid, row, d):
+    """partial=true: 요청에 들어온 키만 갱신(인라인 편집용). 없는 키는 기존 값 유지.
+    decision 이 오면 전체 모드와 같은 상태 전이를 따른다. 적용완료 카드는 수정 불가(파일 이미 생성).
+    정적 UPDATE 1개 — 없는 키는 현재 행 값을 그대로 다시 쓴다(동적 SQL 조립 없음)."""
+    if row['card_status'] == 'applied':
+        return jsonify({'error': '이미 적용됨 — 수정 불가', 'status': row['card_status']}), 409
+    keys = ('decision', 'new_title', 'new_category', 'new_conf', 'decided_judgment', 'merge_group')
+    if not any(k in d for k in keys):
+        return jsonify({'error': 'no fields'}), 400
+    decision, status, new_decision = row['decision'], row['card_status'], 0
+    if 'decision' in d:
+        decision = (d.get('decision') or '').strip()
+        if decision not in SHIPWIKI_DECISIONS:
+            return jsonify({'error': f'bad decision (one of {SHIPWIKI_DECISIONS})'}), 400
+        status, new_decision = ('open' if decision == 'split_flag' else 'decided'), 1
+    nt = ((d.get('new_title') or '').strip() or row['title']) if 'new_title' in d else row['new_title']
+    nc = ((d.get('new_category') or '').strip() or row['category']) if 'new_category' in d else row['new_category']
+    ncf = (d.get('new_conf') or '').strip() if 'new_conf' in d else row['new_conf']
+    if 'new_conf' in d and decision in ('promote', 'upgrade') and ncf not in ('medium', 'high'):
+        ncf = 'medium'
+    jud = ((d.get('decided_judgment') or '').strip() or None) if 'decided_judgment' in d else row['decided_judgment']
+    mg = ((d.get('merge_group') or '').strip() or None) if 'merge_group' in d else row['merge_group']
+    rc = execute_rc("UPDATE shipwiki_card SET decision=?, new_title=?, new_category=?, new_conf=?, "
+            "decided_judgment=?, merge_group=?, card_status=?, decided_by=?, "
+            "decided_at=CASE WHEN ? THEN datetime('now','localtime') ELSE decided_at END, "
+            "result=CASE WHEN ? THEN NULL ELSE result END WHERE id=? "
+            # CAS: 읽은 뒤 다른 저장·맥 상태전이가 끼었으면 덮어쓰지 않음(409)
+            "AND card_status IS ? AND decision IS ? AND new_title IS ? AND new_category IS ? "
+            "AND new_conf IS ? AND decided_judgment IS ? AND merge_group IS ?",
+            (decision, nt, nc, ncf, jud, mg, status, session.get('username', ''),
+             new_decision, new_decision, cid,
+             row['card_status'], row['decision'], row['new_title'], row['new_category'],
+             row['new_conf'], row['decided_judgment'], row['merge_group']))
+    if rc != 1:
+        return jsonify({'error': '다른 변경과 충돌 — 새로고침 후 다시 시도'}), 409
+    cur = query("SELECT decision, card_status, new_title, new_category FROM shipwiki_card WHERE id=?",
+                (cid,), one=True)
+    return jsonify({'id': cid, **dict(cur)})
 
 
 @bp.route('/api/shipwiki/cards/<int:cid>/reset', methods=['POST'])

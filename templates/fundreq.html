@@ -5,7 +5,7 @@
   .fr-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   .fr-count{color:var(--text-secondary);font-size:13px}
   .fr-list{display:flex;flex-direction:column;gap:12px;max-width:920px}
-  .fr-card{border:1px solid var(--border);border-radius:6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
+  .fr-card{border:1px solid var(--border);border-radius:6px;background:#fff;overflow:hidden}
   .fr-card.is-busy{opacity:.55;pointer-events:none}
   .fr-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
   .fr-subj{font-weight:600;color:var(--text-primary);line-height:1.35}
@@ -23,7 +23,7 @@
   .b-mismatch{background:var(--red-bg);color:var(--red)}
   .b-flag{background:var(--red-bg);color:var(--red)}
   /* 계약 대조 배지 — 한눈에 일치/불일치 (tech_opex_contract 구조화 결과, why 문장과 별개) */
-  .fr-contract{font-size:12px;font-weight:800;padding:3px 10px;border-radius:8px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;border:1px solid transparent}
+  .fr-contract{font-size:12px;font-weight:800;padding:3px 10px;border-radius:6px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;border:1px solid transparent}
   .fr-contract.pass{background:var(--green-bg);color:var(--green);border-color:var(--green)}
   .fr-contract.mismatch{background:var(--red-bg);color:var(--red);border-color:var(--red)}
   .fr-contract.flag{background:var(--amber-bg);color:var(--amber);border-color:var(--amber)}
@@ -43,15 +43,15 @@
   .fr-att-a{color:#1F5FA9;text-decoration:underline;cursor:pointer}
   .fr-att-x{color:#8A8880}
   .fr-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;align-items:center}
-  .fr-b{border:0;border-radius:8px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .fr-b{border:0;border-radius:4px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
   .fr-b.ap{background:var(--green);color:#fff}
   .fr-b.rj{background:var(--red);color:#fff}
   .fr-b.rs{background:var(--border);color:var(--text-secondary)}
   .fr-b.del{background:#fff;color:var(--text-tertiary);border:1px solid var(--border)}
-  .fr-rsn{flex:1;min-width:200px;border:1px solid var(--border-strong);border-radius:8px;padding:7px 10px;font-size:13px}
+  .fr-rsn{flex:1;min-width:200px;border:1px solid var(--border-strong);border-radius:6px;padding:7px 10px;font-size:13px}
   .fr-decided{font-size:12px;color:var(--text-secondary)}
   .fr-empty{color:var(--text-tertiary);padding:30px;text-align:center}
-  .fr-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+  .fr-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:12px}
 </style>
 {% endblock %}
 {% block content %}

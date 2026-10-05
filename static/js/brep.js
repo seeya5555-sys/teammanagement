@@ -145,9 +145,15 @@ function renderCard(r) {
     }, '편집'));
   }
 
+  const titleNode = el('h3', { class: 'dd-card-title' }, r.title);
+  if (canEdit && window.InlineEdit) InlineEdit.bind(titleNode, {
+    kind: 'text', value: r.title || '', allowEmpty: false,
+    save: (nv) => api(`/api/boarding-reports/${r.id}`, { method: 'PUT', body: JSON.stringify({ title: nv.trim() }) }),
+    onDone: (nv) => { r.title = nv.trim(); },
+  });
   card.append(
     el('div', { class: 'dd-card-head' },
-      el('h3', { class: 'dd-card-title' }, r.title),
+      titleNode,
       headRight,
     ),
     el('div', { class: 'dd-card-vessel' }, r.vessel_name || '—'),
@@ -164,8 +170,36 @@ function renderCard(r) {
     });
     meta.append(portEl);
   }
-  const period = fmtPeriod(r);
-  if (period)     meta.append(el('span', { class: 'dd-meta-text' }, period));
+  if (canEdit && window.InlineEdit) {
+    // 승선 기간: 시작·종료일 각각 클릭 수정 (PUT 은 보낸 키만 갱신)
+    const per = el('span', { class: 'dd-meta-text' });
+    const dateNode = (field, placeholder) => {
+      const node = el('span', { class: r[field] ? '' : 'dd-meta-empty' }, r[field] ? fmtDate(r[field]) : placeholder);
+      InlineEdit.bind(node, {
+        kind: 'date', value: r[field] || '', placeholder,
+        save: (nv) => {
+          const other = field === 'boarding_start' ? r.boarding_end : r.boarding_start;
+          if (nv && other && (field === 'boarding_start' ? nv > other : nv < other)) throw new Error('시작일이 종료일보다 늦을 수 없습니다');
+          return api(`/api/boarding-reports/${r.id}`, { method: 'PUT', body: JSON.stringify({ [field]: nv || null }) });
+        },
+        onDone: (nv) => { r[field] = nv || null; renderPeriod(); },
+      });
+      return node;
+    };
+    const renderPeriod = () => {
+      per.innerHTML = '';
+      per.append(dateNode('boarding_start', '+ 시작일'), ' ~ ', dateNode('boarding_end', '+ 종료일'));
+      if (r.boarding_start && r.boarding_end) {
+        const days = Math.round((new Date(r.boarding_end) - new Date(r.boarding_start)) / 86400000) + 1;
+        per.append(`  (${days}일)`);
+      }
+      return per;
+    };
+    meta.append(renderPeriod());
+  } else {
+    const period = fmtPeriod(r);
+    if (period)     meta.append(el('span', { class: 'dd-meta-text' }, period));
+  }
   card.append(meta);
 
   card.append(

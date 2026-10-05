@@ -87,11 +87,23 @@ function renderHeader() {
   const period = (E.trip.trip_start || E.trip.trip_end)
     ? `${fmtDate(E.trip.trip_start)} ~ ${fmtDate(E.trip.trip_end)}` : '';
   const cards = (E.trip.corp_cards || []).join(', ');
-  const bits = [];
-  if (period) bits.push(period);
-  bits.push(E.trip.status === 'settled' ? '정산완료' : '진행 중');
-  if (cards) bits.push('법인카드 ' + cards);
-  $('#expd-subtitle').textContent = bits.join('  ·  ');
+  const sub = $('#expd-subtitle');
+  sub.innerHTML = '';
+  const startEl = el('span', { class: 'expd-trip-start', title: E.trip.can_edit ? '클릭하여 시작일 수정' : '' }, E.trip.trip_start ? fmtDate(E.trip.trip_start) : '시작일');
+  const endEl = el('span', { class: 'expd-trip-end', title: E.trip.can_edit ? '클릭하여 종료일 수정' : '' }, E.trip.trip_end ? fmtDate(E.trip.trip_end) : '종료일');
+  if (period || E.trip.can_edit) sub.append(startEl, ' ~ ', endEl, '  ·  ');
+  sub.append(E.trip.status === 'settled' ? '정산완료' : '진행 중');
+  if (cards) sub.append('  ·  법인카드 ' + cards);
+  // 기간 클릭 → 그 자리 수정 (PUT 은 보낸 키만 갱신)
+  if (E.trip.can_edit && window.InlineEdit) {
+    for (const [node, key] of [[startEl, 'trip_start'], [endEl, 'trip_end']]) {
+      InlineEdit.bind(node, {
+        kind: 'date', value: (E.trip[key] || '').slice(0, 10),
+        save: (v) => api(`/api/biz-trips/${E.trip.id}`, { method: 'PUT', body: JSON.stringify({ [key]: v || null }) }),
+        onDone: (v) => { E.trip[key] = v || null; renderHeader(); },
+      });
+    }
+  }
   renderTotals();
 
   // 인쇄용 머리글

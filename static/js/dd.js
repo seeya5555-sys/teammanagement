@@ -155,9 +155,15 @@ function renderCard(r) {
     headRight.append(metaBtn);
   }
 
+  const titleNode = el('h3', { class: 'dd-card-title' }, r.title);
+  if (canEdit && window.InlineEdit) InlineEdit.bind(titleNode, {
+    kind: 'text', value: r.title || '', allowEmpty: false,
+    save: (nv) => api(`/api/dock-reports/${r.id}`, { method: 'PUT', body: JSON.stringify({ title: nv.trim() }) }),
+    onDone: (nv) => { r.title = nv.trim(); },
+  });
   card.append(
     el('div', { class: 'dd-card-head' },
-      el('h3', { class: 'dd-card-title' }, r.title),
+      titleNode,
       headRight,
     )
   );
@@ -183,8 +189,36 @@ function renderCard(r) {
   };
   metaField('dock_no', 'dd-meta-chip', '+ 회차');
   metaField('shipyard', 'dd-meta-text', '+ 조선소');
-  const period = fmtPeriod(r);
-  if (period)      meta.append(el('span', { class: 'dd-meta-text' }, period));
+  if (canEdit && window.InlineEdit) {
+    // 기간: 시작·종료일 각각 클릭 수정 (PUT 은 보낸 키만 갱신)
+    const per = el('span', { class: 'dd-meta-text' });
+    const dateNode = (field, placeholder) => {
+      const node = el('span', { class: r[field] ? '' : 'dd-meta-empty' }, r[field] ? fmtDate(r[field]) : placeholder);
+      InlineEdit.bind(node, {
+        kind: 'date', value: r[field] || '', placeholder,
+        save: (nv) => {
+          const other = field === 'period_start' ? r.period_end : r.period_start;
+          if (nv && other && (field === 'period_start' ? nv > other : nv < other)) throw new Error('시작일이 종료일보다 늦을 수 없습니다');
+          return api(`/api/dock-reports/${r.id}`, { method: 'PUT', body: JSON.stringify({ [field]: nv || null }) });
+        },
+        onDone: (nv) => { r[field] = nv || null; renderPeriod(); },
+      });
+      return node;
+    };
+    const renderPeriod = () => {
+      per.innerHTML = '';
+      per.append(dateNode('period_start', '+ 시작일'), ' ~ ', dateNode('period_end', '+ 종료일'));
+      if (r.period_start && r.period_end) {
+        const days = Math.round((new Date(r.period_end) - new Date(r.period_start)) / 86400000) + 1;
+        per.append(`  (${days}일)`);
+      }
+      return per;
+    };
+    meta.append(renderPeriod());
+  } else {
+    const period = fmtPeriod(r);
+    if (period)      meta.append(el('span', { class: 'dd-meta-text' }, period));
+  }
   card.append(meta);
 
   // 푸터 — 작성자, 업데이트 시각

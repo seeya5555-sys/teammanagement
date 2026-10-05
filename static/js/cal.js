@@ -323,6 +323,20 @@ function inlineCal(node, ev, field, kind, extra = {}) {
   }, extra));
 }
 
+const CAL_INLINE_CATS = ['회의', '출장', 'ETA', 'ETD', 'DD', '검사', '기타'];
+function calTimeSave(ev, field) {
+  return async (v) => {
+    const t = (v || '').trim();
+    if (t && !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) throw new Error('시각은 HH:MM 형식(예: 09:30)');
+    const other = field === 'start_time' ? ev.end_time : ev.start_time;
+    if (t && other && (field === 'start_time' ? t > other : t < other) && ev.start_date === (ev.end_date || ev.start_date)) {
+      throw new Error('종료 시각이 시작보다 빠를 수 없습니다');
+    }
+    await api(`/api/cal/events/${ev.id}`, { method: 'PUT', body: JSON.stringify({ [field]: t || null }) });
+    ev[field] = t || null;
+  };
+}
+
 function renderSideList() {
   const list = $('#cal-side-list');
   const head = $('#cal-side-date');
@@ -397,10 +411,22 @@ function renderSideList() {
     if (ev.all_day) {
       meta.append(el('span', { class: 'cal-side-time' }, '종일'));
     } else if (ev.start_time) {
-      const tlbl = ev.end_time ? `${ev.start_time} - ${ev.end_time}` : ev.start_time;
-      meta.append(el('span', { class: 'cal-side-time' }, tlbl));
+      // 시작·종료 시각 각각 클릭 수정 (HH:MM)
+      const tm = el('span', { class: 'cal-side-time' });
+      const tStart = el('span', {}, ev.start_time);
+      tm.append(tStart);
+      inlineCal(tStart, ev, 'start_time', 'text', { allowEmpty: false, placeholder: 'HH:MM', save: calTimeSave(ev, 'start_time') });
+      const tEnd = el('span', { class: ev.end_time ? '' : 'is-placeholder' }, ev.end_time || '+ 종료');
+      tm.append(' - ', tEnd);
+      inlineCal(tEnd, ev, 'end_time', 'text', { placeholder: 'HH:MM', save: calTimeSave(ev, 'end_time') });
+      meta.append(tm);
     }
-    if (ev.category) meta.append(el('span', { class: 'cal-side-cat' }, ev.category));
+    if (ev.category) {
+      const catEl = el('span', { class: 'cal-side-cat' }, ev.category);
+      // 휴가는 연차 필드와 묶여 있어 모달에서만 바꾼다
+      if (ev.category !== '휴가') inlineCal(catEl, ev, 'category', 'select', { options: CAL_INLINE_CATS.map(c => [c, c]) });
+      meta.append(catEl);
+    }
     const locEl = el('span', { class: 'cal-side-loc' }, ev.location || '+ 장소');
     if (!ev.location) locEl.classList.add('is-placeholder');
     inlineCal(locEl, ev, 'location', 'text', { placeholder: '장소' });
