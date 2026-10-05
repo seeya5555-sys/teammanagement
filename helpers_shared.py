@@ -597,6 +597,7 @@ def _gen_issue_summaries(payload_items):
             "입력의 i를 그대로 사용해 JSON 객체로만 답하라.\n"
             '형식: {"items":[{"i":0,"desc":"...","action":"..."}]}\n\n[입력]\n'
             + json.dumps(sub, ensure_ascii=False))
+        allowed = {item['i'] for item in sub}
         res = _gemini_call_json([{'text': prompt}], model=_model_for('summary'))
         arr = _coerce_translation_items(res)  # translations/items/results/data 모두 수용
         if arr is None:
@@ -612,20 +613,26 @@ def _gen_issue_summaries(payload_items):
                 i = int(o.get('i'))
             except (TypeError, ValueError):
                 continue
+            if i not in allowed:  # 다른 청크의 i 응답은 버린다(병렬 덮어쓰기 방지)
+                continue
             result[i] = {
                 'desc':   (o.get('desc') or o.get('desc_summary') or '').strip(),
                 'action': (o.get('action') or o.get('action_summary') or '').strip(),
             }
             got.add(i)
-        missing = [k for k in group if k not in got]
+        missing = [k for k in group if payload_items[k]['i'] not in got]
         if missing and len(group) > 1 and depth < 6:
             mid = max(1, len(missing) // 2)
             run(missing[:mid], depth + 1); run(missing[mid:], depth + 1)
 
+    # 240건+ 순차 호출은 1~3분 걸려 앱·gunicorn 타임아웃(2026-10-06). 청크를 병렬 호출한다.
+    # 청크마다 서로 다른 i 키만 result 에 쓰므로 dict 대입 경합이 없다.
+    from concurrent.futures import ThreadPoolExecutor
     CHUNK = 12
     idxs = list(range(len(payload_items)))
-    for s in range(0, len(idxs), CHUNK):
-        run(idxs[s:s + CHUNK])
+    groups = [idxs[s:s + CHUNK] for s in range(0, len(idxs), CHUNK)]
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(groups)))) as pool:
+        list(pool.map(run, groups))
     return result
 def _latest_action_progress(acts):
     if not acts:
