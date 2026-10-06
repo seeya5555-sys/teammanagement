@@ -957,7 +957,13 @@ def api_fleet_map_wind():
             d = json.load(f)
     except (FileNotFoundError, ValueError):
         return jsonify({'grid': None, 'empty': True})
-    return jsonify({'grid': d.get('grid'), 'generated_at': d.get('generated_at')})
+    grid = d.get('grid')
+    # 표시용 바람 입자라 0.1m/s 정밀도면 충분 — 2자리 원본 대비 전송량 축소(압축 후 242KB가 병목).
+    if isinstance(grid, list):
+        grid = [dict(c, data=[round(x, 1) if isinstance(x, float) else x for x in c['data']])
+                if isinstance(c, dict) and isinstance(c.get('data'), list) else c
+                for c in grid]
+    return jsonify({'grid': grid, 'generated_at': d.get('generated_at')})
 
 
 FLEET_EMAIL_WATCH_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_email_watch.json')

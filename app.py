@@ -1453,6 +1453,24 @@ def _suppress_bearer_session_cookie(response):
     return response
 
 
+@app.after_request
+def _json_conditional_get(response):
+    """GET JSON 에 ETag 를 붙여 데이터가 그대로면 304(본문 0)로 끝낸다.
+
+    서버 계산은 5~50ms 인데 고RTT·저대역 회선에서는 본문 재전송(/api/issues 압축 73KB 등)이
+    탭 로딩 체감을 좌우했다(2026-10-06 실측). `private, no-cache` = 브라우저/URLSession 이 보관하되
+    **매번 재검증** → stale 표시 없음. 이미 Cache-Control 을 정한 응답(no-store 등)은 건드리지 않는다.
+    """
+    if (request.method == 'GET' and response.status_code == 200
+            and response.mimetype == 'application/json'
+            and not response.direct_passthrough and not response.is_streamed
+            and 'Cache-Control' not in response.headers):
+        response.headers['Cache-Control'] = 'private, no-cache'
+        response.add_etag()
+        response.make_conditional(request)
+    return response
+
+
 # ═════════════════════════════════════════════════════════════════
 #  입거 Daily Report 첨부 blob 직접접근 차단 — 등록 위치가 계약이다
 #  🔴 반드시 `_bearer_auth` **아래**: 위에 두면 g._token_auth 를 못 읽는다.
