@@ -7335,6 +7335,8 @@ def api_remittance_list():
         (_remittance_today(),))]
     today = _remittance_today()
     for row in rows:
+        # raw_row(SVMS 원본행 통째)는 화면이 쓰지 않는데 응답의 대부분(2.3MB)을 차지해 탭 로딩을 늦췄다.
+        row.pop('raw_row', None)
         row['overdue'] = _remittance_overdue(row.get('pay_dt'), today)
         row['source_label'] = '관리사' if row.get('payer_type') == 'management' else '벤더'
         # 자동체크는 지급여부가 확정된 Fund Request 미지급 건에만 허용한다.

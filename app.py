@@ -94,6 +94,23 @@ def _add_static_version(endpoint, values):
             app.logger.debug('add-static-version: static mtime miss', exc_info=True)
 
 
+# ?v=<mtime> 이 붙은 static 은 내용이 바뀌면 URL 자체가 바뀌므로 장기 캐시해도 stale 이 없다.
+# 옛 구조(SEND_FILE_MAX_AGE_DEFAULT=0)는 탭 이동마다 css/js 전부를 재검증(왕복)해 고RTT 회선에서
+# 탭 로딩이 느렸다(2026-10-06 실측). 버전 없는 /static/... 직접경로는 기존대로 매번 재검증.
+_STATIC_IMMUTABLE_AGE = 365 * 24 * 3600
+_orig_get_send_file_max_age = app.get_send_file_max_age
+
+
+def _static_max_age(filename):
+    # send_file 을 쓰는 다른 라우트(첨부·PDF 등)는 대상 아님 — static endpoint 한정.
+    if request.endpoint == 'static' and request.args.get('v'):
+        return _STATIC_IMMUTABLE_AGE
+    return _orig_get_send_file_max_age(filename)
+
+
+app.get_send_file_max_age = _static_max_age
+
+
 
 def init_db(drop=False):
     """schema + seed 실행, 기본 admin 계정 자동 생성.

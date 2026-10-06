@@ -10,7 +10,7 @@ Group=opc
 WorkingDirectory=/home/opc/app
 EnvironmentFile=/etc/trmt.env
 ExecStartPre=/bin/bash -lc 'cd /home/opc/app && venv/bin/python3 -c "import app; app.init_db(drop=False); app._auto_migrate()"'
-ExecStart=/bin/bash -lc 'cd /home/opc/app && exec venv/bin/gunicorn -w 1 --threads 8 -k gthread -b 0.0.0.0:5000 --timeout 60 --graceful-timeout 30 --max-requests 500 --max-requests-jitter 50 --error-logfile - wsgi:application'
+ExecStart=/bin/bash -lc 'cd /home/opc/app && exec venv/bin/gunicorn -w 1 --threads 8 -k gthread -b 0.0.0.0:5000 --timeout 60 --graceful-timeout 30 --max-requests 5000 --max-requests-jitter 500 --error-logfile - wsgi:application'
 Restart=always
 RestartSec=3
 MemoryHigh=1G
