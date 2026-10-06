@@ -254,6 +254,18 @@ def pending():
     return out
 
 
+def reply_date_prefix(received_at, remark):
+    """자동 조치사항 맨 앞에 회신일 [M/D] (형 지시 2026-10-06). 이미 [M/D]로 시작하면 그대로."""
+    if re.match(r'\[\d{1,2}/\d{1,2}\]', remark):
+        return remark
+    raw = str(received_at or '')[:10]
+    try:
+        day = date.fromisoformat(raw)
+    except ValueError:
+        day = date.today()
+    return f'[{day.month}/{day.day}]{remark}'
+
+
 def apply_reply(rid, data):
     """All-or-nothing remark append, identity rebind after daily snapshot refresh, CAS.
 
@@ -301,7 +313,7 @@ def apply_reply(rid, data):
             if previous != base:
                 raise ClassMailError(409, '조치사항 동시 변경: 수동 확인 필요')
             # Existing manual text remains intact; only actual reply remarks are appended.
-            updated = (previous.rstrip() + '\n\n' if previous.strip() else '') + remark
+            updated = (previous.rstrip() + '\n\n' if previous.strip() else '') + reply_date_prefix(data.get('received_at'), remark)
             exported = next(r for r in json.loads(run['reply_rows']) if r['item_id'] == origin['id'])
             baseline_row = conn.execute('SELECT reply_baseline FROM class_mail_item_state WHERE run_id=? AND item_key=?', (rid, item_key(origin))).fetchone()
             reply_base = baseline_row['reply_baseline'] if baseline_row else exported['action']

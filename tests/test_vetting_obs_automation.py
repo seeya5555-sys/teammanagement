@@ -381,8 +381,8 @@ class VettingObsAutomationTests(unittest.TestCase):
         self.assertEqual(409, self.c.post(u % self.f4, headers=self.h, json=dict(m, kind='close')).status_code)
         st = self._status()
         self.assertEqual('Closed', st[self.f1][0])
-        self.assertEqual(('Open', '회신(10/06) PCB 수령 대기'), st[self.f2])
-        self.assertTrue(st[self.f3][1].startswith('[확인 필요] '))
+        self.assertEqual(('Open', '[10/6]PCB 수령 대기'), st[self.f2])
+        self.assertTrue(st[self.f3][1].split(']', 1)[1].startswith('[확인 필요] '))
         with self._ai([]):
             d = self.c.post(f'/api/ext/vetting-mail/runs/{rid}/reply-done', headers=self.h,
                             json={'message_id': 'outlook:1', 'changed': True}).get_json()

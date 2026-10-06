@@ -133,7 +133,7 @@ class ClassMailTests(unittest.TestCase):
         self.assertEqual(1, response.get_json()['updated'])
         self.assertTrue(self.post(f'/runs/{rid}/reply', body).get_json()['duplicate'])
         with A.app.app_context():
-            self.assertEqual('Existing action\n\nPermanent repair planned by 30 Oct', query('SELECT action_taken FROM class_status_items WHERE id=99', one=True)['action_taken'])
+            self.assertEqual('Existing action\n\n[10/5]Permanent repair planned by 30 Oct', query('SELECT action_taken FROM class_status_items WHERE id=99', one=True)['action_taken'])
             self.assertEqual(1, query('SELECT COUNT(*) n FROM class_status_items', one=True)['n'])
         followup = {**body, 'message_id': 'message2', 'updates': [{'item_id': 1, 'remark': 'Repair completed'}]}
         self.assertEqual(1, self.post(f'/runs/{rid}/reply', followup).get_json()['updated'])
@@ -170,7 +170,8 @@ class ClassMailTests(unittest.TestCase):
         self.assertEqual(1,self.post(f'/runs/{rid}/reply',second).get_json()['updated'])
         with A.app.app_context():
             row=query('SELECT * FROM class_status_items WHERE id=1',one=True)
-            self.assertEqual('Existing action\n\nPipe 30 Oct까지 영구수리 예정\n\nPipe 30 Oct 영구수리 완료함',row['action_taken'])
+            today = '[%d/%d]' % (__import__('datetime').date.today().month, __import__('datetime').date.today().day)
+            self.assertEqual(f'Existing action\n\n{today}Pipe 30 Oct까지 영구수리 예정\n\n{today}Pipe 30 Oct 영구수리 완료함',row['action_taken'])
             self.assertEqual('2026-10-30',row['due_date']);self.assertEqual('COC',row['category'])
         pending=self.get('/runs/pending').get_json()['runs'][0]
         self.assertTrue(pending['reply_rows'][0]['action'].endswith('Pipe permanent repair completed on 30 Oct'))
@@ -288,7 +289,7 @@ class ClassMailTests(unittest.TestCase):
                 pending = self.get('/runs/pending').get_json()['runs'][0]
                 self.assertEqual('Existing action\n\nRepairs planned by 30 Oct', pending['reply_rows'][0]['action'])
         with A.app.app_context():
-            self.assertEqual('Existing action\n\n30 Oct까지 수리 예정', query('SELECT action_taken FROM class_status_items WHERE id=1', one=True)['action_taken'])
+            self.assertEqual('Existing action\n\n' + S.reply_date_prefix(run['sent_at'], '30 Oct까지 수리 예정'), query('SELECT action_taken FROM class_status_items WHERE id=1', one=True)['action_taken'])
             self.assertEqual(1, query('SELECT COUNT(*) n FROM class_mail_runs', one=True)['n'])
             self.assertEqual(1, query('SELECT COUNT(*) n FROM class_mail_replies', one=True)['n'])
 

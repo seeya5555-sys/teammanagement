@@ -2184,11 +2184,16 @@ def vt_mail_apply_reply(rid, fid, d):
     was_closed = f['status'] == 'Closed'
     if was_closed:
         kind = 'needs_review' if kind != 'close' else 'update'
-    date = (d.get('date') or datetime.now().strftime('%Y-%m-%d'))[5:10].replace('-', '/')
+    _ymd = (d.get('date') or datetime.now().strftime('%Y-%m-%d'))[:10]
+    try:
+        date = f'{int(_ymd[5:7])}/{int(_ymd[8:10])}'
+    except ValueError:
+        date = datetime.now().strftime('%-m/%-d')
     text = _concise_full_report_remark((d.get('text') or '').strip())
-    if was_closed and text and any(line.endswith(' ' + text) for line in (f['full_report_remark'] or '').splitlines()):
+    if was_closed and text and any(line.endswith((' ' + text, ']' + text)) for line in (f['full_report_remark'] or '').splitlines()):
         return {'duplicate': True}
-    auto = (vms.REVIEW_TAG if kind == 'needs_review' else '') + (f'회신({date}) ' + text if text else f'회신({date}) 확인 필요')
+    # 형 지시(10-06): 날짜가 맨 앞 — '[10/6][확인 필요] 내용'
+    auto = f'[{date}]' + (vms.REVIEW_TAG if kind == 'needs_review' else '') + (text or '회신 확인 필요')
     if was_closed:
         new_auto = auto
         auto = '\n'.join(x for x in (f['full_report_remark'], new_auto) if x)
