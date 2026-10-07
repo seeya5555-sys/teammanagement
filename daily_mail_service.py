@@ -411,11 +411,14 @@ def _recompute_reply_status(run_id):
     run = get_run(run_id)
     if not query("SELECT 1 FROM daily_mail_events WHERE run_id=? AND kind='reply' LIMIT 1", (run_id,), one=True):
         return
-    ids = set(_json_list(run['issue_ids']))
     touched = {r['issue_id'] for r in query(
         "SELECT DISTINCT issue_id FROM daily_mail_events WHERE run_id=? "
         "AND kind IN ('update','close','close_suggest') AND issue_id IS NOT NULL", (run_id,))}
-    status = 'replied' if ids and ids <= touched else 'partial'
+    # Weekly response is independent of how many individual issues remain open.
+    # Immutable reply-time evidence; later office edits must not change weekly response.
+    new_progress = query("SELECT 1 FROM daily_mail_events WHERE run_id=? AND kind='reply' "
+                         "AND json_extract(payload,'$.new_progress')=1 LIMIT 1", (run_id,), one=True)
+    status = 'replied' if touched or new_progress else 'pending'
     execute('UPDATE daily_mail_runs SET reply_status=? WHERE id=?', (status, run_id))
 
 

@@ -47,6 +47,38 @@ class DailyMailTests(unittest.TestCase):
         self.tmp.cleanup()
 
 
+    def test_one_substantive_item_means_week_replied(self):
+        self._enable();rid=self._claim_sent()
+        self.c.post(f'/api/ext/daily-mail/runs/{rid}/issues/{self.i1}/progress', headers=self.h,
+                    json={'message_id':'weekly-one', 'progress':'Repair planned tomorrow', 'date':'2026-10-08'})
+        self.c.post(f'/api/ext/daily-mail/runs/{rid}/events',headers=self.h,
+                    json={'kind':'reply','message_id':'weekly-one'})
+        with appmod.app.app_context():
+            from daily_mail_service import get_run
+            self.assertEqual('replied',get_run(rid)['reply_status'])
+            from app_core import query
+            self.assertEqual('Open',query('SELECT status FROM issues WHERE id=?',(self.i2,),one=True)['status'])
+        next_run=self._claim_sent(week='2026W41')
+        with appmod.app.app_context():
+            from daily_mail_service import get_run
+            self.assertEqual('pending',get_run(next_run)['reply_status'])
+
+    def test_receipt_without_update_stays_pending(self):
+        self._enable();rid=self._claim_sent()
+        self.c.post(f'/api/ext/daily-mail/runs/{rid}/events',headers=self.h,
+                    json={'kind':'reply','message_id':'legacy-receipt','evidence':'Received with thanks'})
+        with appmod.app.app_context():
+            from daily_mail_service import get_run
+            self.assertEqual('pending',get_run(rid)['reply_status'])
+
+    def test_new_row_progress_reply_evidence_counts(self):
+        self._enable();rid=self._claim_sent()
+        self.c.post(f'/api/ext/daily-mail/runs/{rid}/events',headers=self.h,
+                    json={'kind':'reply','message_id':'new-row','payload':{'new_progress':True}})
+        with appmod.app.app_context():
+            from daily_mail_service import get_run
+            self.assertEqual('replied',get_run(rid)['reply_status'])
+
     def test_roster_scope_hides_and_blocks_non_assigned_vessels(self):
         with appmod.app.app_context():
             from app_core import execute
@@ -140,7 +172,7 @@ class DailyMailTests(unittest.TestCase):
         cfg = self.c.get(f'/api/ext/daily-mail/config?week={week}', headers=self.h).get_json()
         v = next(x for x in cfg['vessels'] if x['vessel_id'] == self.vid)
         self.assertEqual(sorted([self.i1, self.i2, self.i3]), sorted(v['open_issue_ids']))
-        self.assertTrue(v['subject'].startswith('[TRMT-DU 2026W40 TSTR]'))
+        self.assertTrue(v['subject'].startswith(f'[TRMT-DU {week} TSTR]'))
         r = self.c.post('/api/ext/daily-mail/runs', headers=self.h, json={
             'vessel_id': self.vid, 'iso_week': week, 'tag': v['tag'], 'issue_ids': v['open_issue_ids']})
         self.assertEqual(201, r.status_code, r.get_json())
