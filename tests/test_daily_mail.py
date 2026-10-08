@@ -47,6 +47,15 @@ class DailyMailTests(unittest.TestCase):
         self.tmp.cleanup()
 
 
+    def test_followup_week_fallback_is_display_only(self):
+        from unittest.mock import patch
+        import daily_mail_service as svc
+        self._enable(); self._claim_sent(week='2026W40')
+        with appmod.app.app_context(), patch.object(svc, 'iso_week_of', return_value='2026W41'):
+            self.assertEqual([], svc.week_status()['runs'])
+            self.assertEqual('2026W40', svc.week_status(fallback_latest=True)['iso_week'])
+            self.assertEqual([], svc.week_status('2026W41', fallback_latest=True)['runs'])
+
     def test_one_substantive_item_means_week_replied(self):
         self._enable();rid=self._claim_sent()
         self.c.post(f'/api/ext/daily-mail/runs/{rid}/issues/{self.i1}/progress', headers=self.h,

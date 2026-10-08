@@ -44,7 +44,7 @@
   </div>
 
   <div class="dm-sec">
-    <h2>이번 주 회신현황 <span class="muted" id="dmWeek" style="font-weight:400;font-size:12px"></span></h2>
+    <h2>표시 주차 회신현황 <span class="muted" id="dmWeek" style="font-weight:400;font-size:12px"></span></h2>
     <div class="dm-pills" id="dmPills"><div class="dm-empty">불러오는 중…</div></div>
   </div>
 
@@ -77,7 +77,7 @@
   </div>
 
   <div class="dm-sec">
-    <h2>이번 주 발송 run</h2>
+    <h2>회신·미회신 팔로우업</h2><p class="dm-note">표시 주차의 실질 업데이트 1건 이상이면 회신완료. Open은 현재 남은 현안 / 발송 당시 현안 수입니다. 회신 확인: 매일 08:30~20:30, 2시간 간격.</p>
     <div id="dmRuns"><div class="dm-empty">불러오는 중…</div></div>
   </div>
 
@@ -124,9 +124,9 @@
       '<tr><td>'+esc(e.vessel_name)+'</td><td>#'+e.issue_id+' '+esc(e.item_topic||'')+'</td><td class="dm-ev">'+esc(e.evidence)+'</td>'
       +'<td class="muted">'+esc(e.created_at)+'</td><td>'+(e.state==='reverted'?'<span class="dm-badge">되돌림</span>':'<span class="dm-badge ok">Closed</span>')+'</td>'
       +'<td>'+(e.state==='done'?'<button class="btn btn-outline btn-sm" data-act="reopen" data-id="'+e.id+'">Reopen</button>':'')+'</td></tr>'));
-    $('dmRuns').innerHTML=table(['선박','태그','발송','회신','리마인드','이슈 수',''],d.runs.map(r=>
+    $('dmRuns').innerHTML=table(['선박','태그','발송','회신','마지막 회신','누적 반영 기록','Open / 발송 당시','리마인드',''],d.runs.map(r=>
       '<tr><td>'+esc(r.vessel_name)+'</td><td class="muted">'+esc(r.tag)+'</td><td>'+esc(r.sent_at||'-')+'</td><td>'+replyBadge(r)+'</td>'
-      +'<td>'+r.reminder_count+'</td><td>'+r.issue_ids.length+'</td>'
+      +'<td>'+esc(r.last_reply_at||'-')+'<br>'+esc(r.sender||'')+'</td><td>진행 '+r.update_count+' · Close '+r.close_count+' · 확인필요 '+r.review_count+'</td><td>'+r.open_count+' / '+r.sent_count+'</td><td>'+r.reminder_count+'</td>'
       +'<td>'+(r.state!=='sent'?'<button class="btn btn-outline btn-sm" data-act="release" data-id="'+r.id+'" title="Outlook 보낸편지함에 실제로 없는지 확인한 뒤에만">재발송 허용</button>':'')+'</td></tr>'));
   }
 

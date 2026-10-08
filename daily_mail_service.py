@@ -690,7 +690,13 @@ def reopen_close(event_id, user):
     return {'ok': True, 'status': prev}
 
 
-def week_status(iso_week=None):
+def week_status(iso_week=None, fallback_latest=False):
+    if iso_week is None and fallback_latest:
+        iso_week = iso_week_of()
+        if not query('SELECT 1 FROM daily_mail_runs WHERE iso_week=? LIMIT 1', (iso_week,), one=True):
+            latest = query('SELECT iso_week FROM daily_mail_runs ORDER BY created_at DESC,id DESC LIMIT 1', one=True)
+            if latest:
+                iso_week = latest['iso_week']
     iso_week = iso_week or iso_week_of()
     runs = [_run_public(r) for r in query(
         'SELECT r.*, v.name AS vessel_name FROM daily_mail_runs r JOIN vessels v ON v.id=r.vessel_id '
@@ -728,7 +734,7 @@ def week_status(iso_week=None):
             'needs_review': len(suggestions) + unmatched,
             'stuck': sum(1 for r in runs if r['state'] in ('sending', 'failed')),
         },
-        'runs': runs, 'suggestions': suggestions, 'closes': closes, 'unmatched': unmatched_rows,
+        'runs': daily_rows(runs), 'suggestions': suggestions, 'closes': closes, 'unmatched': unmatched_rows,
     }
 
 
@@ -813,3 +819,27 @@ def create_issue_from_reply(run_id, d):
             raise
         return {'issue_id': prior['issue_id'], 'duplicate': True}
     return {'issue_id': iid, 'duplicate': False}
+
+
+def daily_rows(runs):
+    result = []
+    for run in runs:
+        row = dict(run)
+        events = [dict(e) for e in query('SELECT kind,message_id,payload,evidence,created_at FROM daily_mail_events WHERE run_id=? ORDER BY id', (run['id'],))]
+        counts = {kind: sum(e['kind'] == kind for e in events) for kind in ('update', 'close', 'close_suggest', 'unmatched')}
+        replies = [e for e in events if e['kind'] == 'reply']
+        sender = ''
+        if replies:
+            try:
+                payload = json.loads(replies[-1]['payload'] or '{}')
+                sender = str(payload.get('sender') or replies[-1].get('evidence', '').split(' · ', 1)[0])
+            except (ValueError, AttributeError):
+                pass
+        ids = run['issue_ids']
+        live = query('SELECT status FROM issues WHERE id IN (SELECT value FROM json_each(?))', (json.dumps(ids),)) if ids else []
+        row.update(reply_state=(run['reply_status'] or 'pending') if run['state'] == 'sent' else 'not_sent',
+                   sender=sender, update_count=counts['update'], close_count=counts['close'],
+                   review_count=counts['close_suggest'] + counts['unmatched'],
+                   open_count=sum(i['status'] in ('Open', 'InProgress') for i in live), sent_count=len(ids))
+        result.append(row)
+    return result

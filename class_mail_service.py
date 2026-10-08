@@ -339,7 +339,7 @@ def status():
         v.pop('items')
     runs = [dict(r) for r in query('SELECT r.id,r.vessel_id,v.name vessel_name,r.iso_week,r.state,r.sent_at,r.error FROM class_mail_runs r JOIN vessels v ON v.id=r.vessel_id ORDER BY r.id DESC LIMIT 100')]
     replies = [dict(r) for r in query('SELECT p.*,v.name vessel_name FROM class_mail_replies p JOIN class_mail_runs r ON r.id=p.run_id JOIN vessels v ON v.id=r.vessel_id ORDER BY p.id DESC LIMIT 100')]
-    return {'vessels': vessels, 'runs': runs, 'replies': replies, 'template': template(), 'timezone': 'Asia/Seoul'}
+    return {'vessels': vessels, 'runs': runs, 'replies': replies, 'followup': class_rows([dict(r) for r in query('SELECT r.id,r.vessel_id,v.name vessel_name,r.iso_week,r.state,r.sent_at,r.error FROM class_mail_runs r JOIN vessels v ON v.id=r.vessel_id WHERE r.id=(SELECT MAX(x.id) FROM class_mail_runs x WHERE x.vessel_id=r.vessel_id) ORDER BY v.name')]), 'template': template(), 'timezone': 'Asia/Seoul'}
 
 
 def check_send(rid):
@@ -356,3 +356,27 @@ def check_send(rid):
             or any(run[k] != vessel[k] for k in ('subject','body','to_emails','cc_emails'))):
         raise ClassMailError(409, '발송 직전 항목·설정 변경')
     return {'ok': True}
+
+
+def class_rows(runs):
+    result, seen = [], set()
+    for run in runs:  # newest run per vessel (including failed / unconfirmed sends)
+        if run['vessel_id'] in seen:
+            continue
+        seen.add(run['vessel_id'])
+        replies = [dict(r) for r in query('SELECT * FROM class_mail_replies WHERE run_id=? ORDER BY id', (run['id'],))]
+        substantive = [r for r in replies if r['updated'] > 0]
+        last = substantive[-1] if substantive else None
+        snapshot = query('SELECT snapshot FROM class_mail_runs WHERE id=?', (run['id'],), one=True)
+        try:
+            items = json.loads(snapshot['snapshot'] or '[]')
+            sent_count = len(items) if isinstance(items, list) else 0
+        except (ValueError, TypeError):
+            sent_count = 0
+        result.append(dict(run, reply_state=('replied' if substantive else 'pending') if run['state'] == 'sent' else 'not_sent',
+                           last_reply_at=(last['received_at'] or last['created_at']) if last else None,
+                           sender=last['sender'] if last else '', update_count=sum(r['updated'] for r in replies),
+                           receipt_count=sum(r['updated'] == 0 for r in replies),
+                           review_count=sum(r['updated'] == 0 and r['note'] != '수신 확인만 — 결과/조치 회신 아님' for r in replies),
+                           sent_count=sent_count))
+    return result

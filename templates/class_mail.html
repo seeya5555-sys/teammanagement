@@ -18,8 +18,9 @@
 <label for="cmBody">본문</label><textarea id="cmBody" maxlength="8000"></textarea>
 <button id="cmSave" type="button" class="btn btn-primary btn-sm">템플릿 저장</button>
 <h2 style="margin-top:18px">선박별 발송 미리보기</h2><select id="cmSelect" aria-label="미리보기 선박"></select><div class="cm-preview" id="cmPreview"></div></div>
+<div class="cm-section"><h2>회신·미회신 팔로우업</h2><p class="cm-note">선박별 최근 발송 기준. Action Taken 반영이 있는 회신과 수신확인만 있는 답장을 구분합니다. 지적 자동 Close·리마인드 발송은 추가하지 않습니다.</p><div class="tbl-scroll" id="cmFollowup"></div></div>
 <div class="cm-section"><h2>발송 기록</h2><div class="tbl-scroll" id="cmRuns"></div></div>
-<div class="cm-section"><h2>회신현황</h2><p class="cm-note">2시간마다 08:00~20:00 확인. 본문만 있는 회신은 수신 기록과 확인필요 표시만 남깁니다. 항목 불일치·동시 수정은 덮어쓰지 않습니다.</p><div class="tbl-scroll" id="cmReplies"></div></div>
+<div class="cm-section"><h2>회신현황</h2><p class="cm-note">2시간마다 08:00~20:00 확인. 실질 조치가 없는 수신확인과 추가확인이 필요한 미반영 회신은 별도 기록으로 표시합니다. 항목 불일치·동시 수정은 덮어쓰지 않습니다.</p><div class="tbl-scroll" id="cmReplies"></div></div>
 </div>
 {% endblock %}
 {% block scripts %}

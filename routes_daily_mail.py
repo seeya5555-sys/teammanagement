@@ -82,7 +82,7 @@ def api_daily_mail_status():
     week = request.args.get('week') or None
     if week and not svc.valid_iso_week(week):
         return jsonify({'error': 'week must be YYYYWww'}), 400
-    return jsonify(svc.week_status(week))
+    return jsonify(svc.week_status(week, fallback_latest=True))
 
 
 @bp.route('/api/daily-mail/suggestions/<int:eid>/approve', methods=['POST'])

@@ -46,6 +46,7 @@
     $('cmSelect').innerHTML = vessels.filter(v => v.count).map(v => `<option value="${v.vessel_id}">${esc(v.name)}</option>`).join('');
     if (vessels.some(v => String(v.vessel_id) === selected && v.count)) $('cmSelect').value = selected;
     preview();
+    $('cmFollowup').innerHTML = table(['선박','주차','발송','회신','마지막 실질 회신','반영','발송 항목'], (data.followup || []).map(r => `<tr><td>${esc(r.vessel_name)}</td><td>${esc(r.iso_week)}</td><td>${esc(r.sent_at || r.state)}</td><td>${esc(r.reply_state === 'replied' ? '회신' : r.reply_state === 'pending' ? '미회신' : '발송 미확인')}</td><td>${esc(r.last_reply_at || '-')}<br>${esc(r.sender)}</td><td>진행 ${r.update_count} · 추가확인 ${r.review_count} · 미반영 수신 ${r.receipt_count}</td><td>${r.sent_count}</td></tr>`));
     $('cmRuns').innerHTML = table(['선박','주차','상태','발송','결과'], data.runs.map(r => `<tr><td>${esc(r.vessel_name)}</td><td>${esc(r.iso_week)}</td><td>${esc({sending:'발송 확인 대기', sent:'발송 완료', failed:'실패·확인 필요'}[r.state] || r.state)}</td><td>${esc(r.sent_at || '-')}</td><td>${esc(r.error || '')}${r.state !== 'sent' ? `<br><button data-recover="${r.id}">보낸 편지함 확인 후 복구</button>` : ''}</td></tr>`));
     $('cmReplies').innerHTML = table(['선박','발신자','수신','조치사항 반영','비고'], data.replies.map(r => `<tr><td>${esc(r.vessel_name)}</td><td>${esc(r.sender)}</td><td>${esc(r.received_at || r.created_at)}</td><td>${r.updated}건</td><td>${esc(r.note)}</td></tr>`));
   }
