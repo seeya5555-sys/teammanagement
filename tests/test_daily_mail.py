@@ -100,6 +100,8 @@ class DailyMailTests(unittest.TestCase):
         self.c.post(url,headers=self.h,json=dict(message_id='old',progress='Repair started'))
         out=self.c.post(url,headers=self.h,json=dict(message_id='stable-new',legacy_message_id='old',source_fingerprint='a'*64,progress='수리 진행')).get_json()
         self.assertTrue(out['duplicate'])
+        same_old=self.c.post(url,headers=self.h,json=dict(message_id='old',source_fingerprint='b'*64,progress='수리 진행')).get_json()
+        self.assertTrue(same_old['duplicate'])
         self.assertEqual(400,self.c.post(url,headers=self.h,json=dict(message_id='bad',source_fingerprint='invalid',progress='x')).status_code)
 
     def test_unique_claim_survives_both_prechecks_missing_row(self):

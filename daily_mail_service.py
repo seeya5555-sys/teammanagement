@@ -441,7 +441,7 @@ def _insert_event(run_id, kind, issue_id, message_id, evidence, payload, state=N
     message_id = (message_id or '').strip()[:500] or None
     payload = dict(payload or {})
     fp = payload.get('source_fingerprint')
-    legacy = payload.get('legacy_message_id')
+    legacy = payload.get('legacy_message_id') or (message_id if fp else None)
     if fp is not None and not re.fullmatch(r'[a-f0-9]{64}', str(fp)):
         raise DailyMailError(400, 'invalid source_fingerprint')
     # Compatibility with historical local IDs and backfilled raw-source evidence.
