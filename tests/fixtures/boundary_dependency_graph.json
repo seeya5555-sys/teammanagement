@@ -72,6 +72,7 @@
     ],
     "migration_steps.py": [],
     "routes_calendar_dock.py": [],
+    "routes_class_mail.py": [],
     "routes_core.py": [],
     "routes_daily_mail.py": [],
     "routes_dock_daily.py": [],
@@ -91,8 +92,7 @@
       "_token_note_fail",
       "_token_rate_limited",
       "_token_reset_fails"
-    ],
-    "routes_class_mail.py": []
+    ]
   },
   "app_core.py": {},
   "boarding_report_docx.py": {
@@ -124,6 +124,18 @@
       "query"
     ]
   },
+  "class_mail_service.py": {
+    "app_core.py": [
+      "execute",
+      "execute_rc",
+      "get_db",
+      "query"
+    ],
+    "daily_mail_service.py": [],
+    "mail_common.py": [
+      "MailServiceError"
+    ]
+  },
   "csrf.py": {},
   "daily_mail_service.py": {
     "app_core.py": [
@@ -132,11 +144,11 @@
       "get_db",
       "query"
     ],
-    "maritime_style.py": [
-      "append_latest_important"
-    ],
     "mail_common.py": [
       "MailServiceError"
+    ],
+    "maritime_style.py": [
+      "append_latest_important"
     ]
   },
   "dock_daily_docx.py": {},
@@ -178,6 +190,18 @@
   },
   "issue_export_service.py": {},
   "krcon_client.py": {},
+  "mail_common.py": {},
+  "mail_reminder_service.py": {
+    "app_core.py": [
+      "get_db",
+      "query"
+    ],
+    "class_mail_service.py": [],
+    "daily_mail_service.py": [],
+    "mail_common.py": [
+      "MailServiceError"
+    ]
+  },
   "maritime_style.py": {},
   "migration_steps.py": {},
   "report_export_service.py": {},
@@ -266,6 +290,19 @@
     ],
     "report_export_service.py": []
   },
+  "routes_class_mail.py": {
+    "class_mail_service.py": [],
+    "helpers_shared.py": [
+      "_class_workbook",
+      "admin_required",
+      "api_key_required"
+    ],
+    "mail_common.py": [
+      "error_response",
+      "json_body"
+    ],
+    "mail_reminder_service.py": []
+  },
   "routes_core.py": {
     "app_core.py": [
       "INSTANCE_DIR",
@@ -298,6 +335,9 @@
     "issue_export_service.py": [
       "build_issue_workbook"
     ],
+    "maritime_style.py": [
+      "append_latest_important"
+    ],
     "token_auth.py": [
       "_DUMMY_PW_HASH",
       "_TOKEN_MAXAGE",
@@ -305,9 +345,6 @@
       "_token_note_fail",
       "_token_rate_limited",
       "_token_reset_fails"
-    ],
-    "maritime_style.py": [
-      "append_latest_important"
     ]
   },
   "routes_daily_mail.py": {
@@ -499,11 +536,12 @@
       "admin_required",
       "api_key_required"
     ],
-    "vetting_mail_service.py": [],
     "mail_common.py": [
       "error_response",
       "json_body"
-    ]
+    ],
+    "mail_reminder_service.py": [],
+    "vetting_mail_service.py": []
   },
   "token_auth.py": {
     "app_core.py": [
@@ -520,30 +558,5 @@
     "mail_common.py": [
       "MailServiceError"
     ]
-  },
-  "class_mail_service.py": {
-    "app_core.py": [
-      "execute",
-      "execute_rc",
-      "get_db",
-      "query"
-    ],
-    "daily_mail_service.py": [],
-    "mail_common.py": [
-      "MailServiceError"
-    ]
-  },
-  "routes_class_mail.py": {
-    "class_mail_service.py": [],
-    "helpers_shared.py": [
-      "_class_workbook",
-      "admin_required",
-      "api_key_required"
-    ],
-    "mail_common.py": [
-      "error_response",
-      "json_body"
-    ]
-  },
-  "mail_common.py": {}
+  }
 }

@@ -130,3 +130,20 @@ def api_ext_class_mail_reply(rid):
 @api_key_required
 def api_ext_class_mail_check(rid):
     return call(svc.check_send, rid)
+
+
+@bp.route('/api/ext/class-mail/reminders')
+@api_key_required
+def api_ext_class_mail_reminders():
+    import mail_reminder_service as reminders
+    return jsonify(reminders.pending('class'))
+
+
+@bp.route('/api/ext/class-mail/runs/<int:rid>/reminder', methods=['POST'])
+@api_key_required
+def api_ext_class_mail_reminder(rid):
+    import mail_reminder_service as reminders
+    try:
+        return jsonify(reminders.action('class', rid, json_body()))
+    except reminders.ReminderError as error:
+        return error_response(error)

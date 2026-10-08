@@ -2393,6 +2393,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/class-mail/reminders",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_reminders",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/class-mail/runs",
     "methods": [
       "OPTIONS",
@@ -2410,6 +2421,16 @@
       "OPTIONS"
     ],
     "endpoint": "routes_class_mail.api_ext_class_mail_check",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/class-mail/runs/<int:rid>/reminder",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_class_mail.api_ext_class_mail_reminder",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -3775,6 +3796,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/vetting-mail/reminders",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_reminders",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/vetting-mail/runs",
     "methods": [
       "OPTIONS",
@@ -3791,6 +3823,16 @@
       "POST"
     ],
     "endpoint": "ai_gemini.api_ext_vetting_mail_reply",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/vetting-mail/runs/<int:rid>/reminder",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_vetting_mail.api_ext_vetting_mail_reminder",
     "strict_slashes": true,
     "defaults": {}
   },

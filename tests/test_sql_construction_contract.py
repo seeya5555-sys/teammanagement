@@ -134,8 +134,12 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # 2026-09-27 재검토 후 갱신(167 → 187). 08-31~09-19 에 쌓인 16곳 + 이번 리팩터링 4곳, 전부
 # 보간값이 리터럴 튜플/모듈 dict/allowlist(KINDS)/`?` 자리표시자 반복/정적 SQL dict 조회뿐이고
 # 요청값이 SQL 문법에 닿는 경로 없음(요청값은 전부 bound parameter). 새 사이트는 다시 검토 후에만 갱신.
-EXPECTED_COUNT = 191
-EXPECTED_SHA256 = "237975dd7e5ee6bac67bc48ba2242d6a7c28e831bbb8767e2ab4ab1e13839a2f"  # 2026-10-02 daily_mail: +IN(?,..) placeholder 2곳(ids 비면 skip) + actions CAS 리터럴 guard 2곳
+# 2026-10-09 reminder ledger: five reviewed sites; _mode whitelist class/vetting only,
+# fixed vessel_id/vetting_id keys and two complete literal reply-query choices.
+# All values bound; verified all previous 191 fingerprints unchanged.
+# Single AllMight review accepted identifier whitelist; no blanket regeneration.
+EXPECTED_COUNT = 196
+EXPECTED_SHA256 = "45441eb399e1e6c5a7778c19087b7ef75475c056401249f848baad1eff09f7e3"  # 2026-10-02 daily_mail: +IN(?,..) placeholder 2곳(ids 비면 skip) + actions CAS 리터럴 guard 2곳
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

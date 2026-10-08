@@ -1400,3 +1400,16 @@ CREATE TABLE IF NOT EXISTS class_mail_item_state (
  run_id INTEGER NOT NULL REFERENCES class_mail_runs(id), item_key TEXT NOT NULL,
  last_action TEXT NOT NULL, reply_baseline TEXT NOT NULL, PRIMARY KEY(run_id,item_key)
 );
+
+-- Bounded follow-up ledger; claims are not counted as successful sends.
+CREATE TABLE IF NOT EXISTS mail_reminder_attempts (
+ mode TEXT NOT NULL CHECK(mode IN ('class','vetting')), run_id INTEGER NOT NULL,
+ n INTEGER NOT NULL CHECK(n IN (1,2)), token TEXT NOT NULL UNIQUE,
+ state TEXT NOT NULL CHECK(state IN ('claimed','sent','failed','unknown')),
+ claimed_at TEXT NOT NULL, sent_at TEXT, error TEXT,
+ PRIMARY KEY(mode,run_id,n)
+);
+CREATE TABLE IF NOT EXISTS mail_reminder_notices (
+ mode TEXT NOT NULL CHECK(mode IN ('class','vetting')), run_id INTEGER NOT NULL,
+ notified_at TEXT NOT NULL, PRIMARY KEY(mode,run_id)
+);

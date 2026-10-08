@@ -124,3 +124,20 @@ def api_ext_vetting_mail_state(rid):
 def api_ext_vetting_mail_pending():
     return jsonify(svc.pending_runs())
 
+
+
+@bp.route('/api/ext/vetting-mail/reminders')
+@api_key_required
+def api_ext_vetting_mail_reminders():
+    import mail_reminder_service as reminders
+    return jsonify(reminders.pending('vetting'))
+
+
+@bp.route('/api/ext/vetting-mail/runs/<int:rid>/reminder', methods=['POST'])
+@api_key_required
+def api_ext_vetting_mail_reminder(rid):
+    import mail_reminder_service as reminders
+    try:
+        return jsonify(reminders.action('vetting', rid, json_body()))
+    except reminders.ReminderError as error:
+        return error_response(error)
