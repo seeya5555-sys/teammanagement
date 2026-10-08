@@ -439,6 +439,23 @@ def _sent_run_with_issue(run_id, issue_id):
 def _insert_event(run_id, kind, issue_id, message_id, evidence, payload, state=None):
     """dedup insert. 이미 있으면 None."""
     message_id = (message_id or '').strip()[:500] or None
+    payload = dict(payload or {})
+    fp = payload.get('source_fingerprint')
+    legacy = payload.get('legacy_message_id')
+    if fp is not None and not re.fullmatch(r'[a-f0-9]{64}', str(fp)):
+        raise DailyMailError(400, 'invalid source_fingerprint')
+    # Compatibility with historical local IDs and backfilled raw-source evidence.
+    if legacy and query('SELECT 1 FROM daily_mail_events WHERE run_id=? AND kind=? AND issue_id IS ? '
+                        'AND message_id=? LIMIT 1', (run_id, kind, issue_id, legacy), one=True):
+        return None
+    if fp:
+        if query("SELECT 1 FROM daily_mail_events WHERE run_id=? AND kind=? AND issue_id IS ? "
+                 "AND json_extract(payload,'$.source_fingerprint')=? LIMIT 1",
+                 (run_id, kind, issue_id, fp), one=True):
+            return None
+        payload['original_message_id'] = message_id
+        # Existing UNIQUE(run, kind, message, issue) now claims raw content atomically.
+        message_id = 'daily-source:' + fp
     try:
         return execute(
             'INSERT INTO daily_mail_events(run_id, kind, issue_id, message_id, evidence, payload, state) '
@@ -547,7 +564,8 @@ def append_update(run_id, issue_id, d):
     if cur['status'] not in OPEN_STATUSES:
         raise DailyMailError(409, 'issue is not open', code='not_open')
     payload = {'sender': d.get('sender'), 'date': d.get('date'), 'source': d.get('source') or 'reply_mail',
-               'confidence': d.get('confidence')}
+               'confidence': d.get('confidence'), 'source_fingerprint': d.get('source_fingerprint'),
+               'legacy_message_id': d.get('legacy_message_id')}
     eid = _insert_event(run_id, 'update', issue_id, d.get('message_id'), progress, payload)
     if eid is None:
         return {'duplicate': True}
@@ -576,7 +594,8 @@ def close_issue(run_id, issue_id, d, actor='daily-mail'):
     if cur['priority'] == 'COC & Flag' and not d.get('class_confirmed'):
         raise DailyMailError(409, 'COC & Flag issue needs explicit class confirmation', code='needs_suggestion')
     payload = {'prev_status': cur['status'], 'sender': d.get('sender'), 'date': d.get('date'),
-               'class_confirmed': bool(d.get('class_confirmed')), 'basis': d.get('basis'), 'actor': actor}
+               'class_confirmed': bool(d.get('class_confirmed')), 'basis': d.get('basis'), 'actor': actor,
+               'source_fingerprint': d.get('source_fingerprint'), 'legacy_message_id': d.get('legacy_message_id')}
     eid = _insert_event(run_id, 'close', issue_id, d.get('message_id'), evidence, payload, state='done')
     if eid is None:
         return {'duplicate': True}

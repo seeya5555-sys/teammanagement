@@ -79,6 +79,86 @@ class DailyMailTests(unittest.TestCase):
             from daily_mail_service import get_run
             self.assertEqual('replied',get_run(rid)['reply_status'])
 
+    def test_raw_source_key_dedups_different_message_and_translation(self):
+        self._enable();rid=self._claim_sent()
+        url=f'/api/ext/daily-mail/runs/{rid}/issues/{self.i1}/progress'
+        body=dict(message_id='outlook:1',progress='수리 진행 중',date='2026-10-06',source_fingerprint='a'*64)
+        self.assertFalse(self.c.post(url,headers=self.h,json=body).get_json()['duplicate'])
+        second=self.c.post(url,headers=self.h,json=dict(body,message_id='outlook:2',progress='수리 작업 진행 중')).get_json()
+        self.assertTrue(second['duplicate'])
+        with appmod.app.app_context():
+            import json
+            from app_core import query
+            self.assertEqual(1,len(json.loads(query('SELECT actions FROM issues WHERE id=?',(self.i1,),one=True)['actions'])))
+        self.assertFalse(self.c.post(url,headers=self.h,json=dict(body,message_id='new',progress='부품 보급 완료',source_fingerprint='b'*64)).get_json()['duplicate'])
+        next_run=self._claim_sent(week='2026W41')
+        self.assertFalse(self.c.post(f'/api/ext/daily-mail/runs/{next_run}/issues/{self.i1}/progress',headers=self.h,json=body).get_json()['duplicate'])
+
+    def test_legacy_local_message_still_dedups(self):
+        self._enable();rid=self._claim_sent()
+        url=f'/api/ext/daily-mail/runs/{rid}/issues/{self.i1}/progress'
+        self.c.post(url,headers=self.h,json=dict(message_id='old',progress='Repair started'))
+        out=self.c.post(url,headers=self.h,json=dict(message_id='stable-new',legacy_message_id='old',source_fingerprint='a'*64,progress='수리 진행')).get_json()
+        self.assertTrue(out['duplicate'])
+        self.assertEqual(400,self.c.post(url,headers=self.h,json=dict(message_id='bad',source_fingerprint='invalid',progress='x')).status_code)
+
+    def test_unique_claim_survives_both_prechecks_missing_row(self):
+        from unittest import mock
+        import daily_mail_service as service
+        self._enable();rid=self._claim_sent()
+        url=f'/api/ext/daily-mail/runs/{rid}/issues/{self.i1}/progress'
+        body=dict(message_id='first',progress='Repair started',source_fingerprint='c'*64)
+        self.c.post(url,headers=self.h,json=body)
+        original_query=service.query
+        def race_query(sql,*args,**kw):
+            if "json_extract(payload,'$.source_fingerprint')" in sql:return None
+            return original_query(sql,*args,**kw)
+        with mock.patch.object(service,'query',side_effect=race_query):
+            second=self.c.post(url,headers=self.h,json=dict(body,message_id='second',progress='수리 시작'))
+        self.assertEqual(200,second.status_code);self.assertTrue(second.get_json()['duplicate'])
+        # Identical source on another issue must not suppress its independent update.
+        other=self.c.post(f'/api/ext/daily-mail/runs/{rid}/issues/{self.i2}/progress',headers=self.h,json=body)
+        self.assertFalse(other.get_json()['duplicate'])
+
+    def test_legacy_source_backfill_and_two_real_polls_no_new_action(self):
+        from unittest import mock
+        from datetime import datetime, timedelta
+        import json
+        from openpyxl import Workbook
+        spec=importlib.util.spec_from_file_location('dedup_daily_runner',RUNNER)
+        runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
+        self._enable();rid=self._claim_sent()
+        path=Path(self.tmp.name)/'reply.xlsx';workbook=Workbook();sheet=workbook.active
+        sheet.append(['Issue ID','Update (reply here)','Status (Open/Closed)'])
+        sheet.append([self.i1,'Repair in progress','Open']);workbook.save(path);workbook.close()
+        rec=dict(message_id='outlook:changed',subject='RE: [TRMT-DU 2026W40 TSTR] Update',
+                 received_at=(datetime.now()+timedelta(seconds=2)).strftime('%Y-%m-%d %H:%M:%S'),
+                 sender='master@example.com',body='',attachments=[str(path)])
+        self.c.post(f'/api/ext/daily-mail/runs/{rid}/issues/{self.i1}/progress',headers=self.h,
+                    json=dict(message_id='old-local',progress='수리 진행 중',date=rec['received_at'][:10]))
+        parsed=runner.read_reply_excel(path,{self.i1})[self.i1]['update']
+        fp=runner.source_update_fingerprint(rec,parsed,'no')
+        with appmod.app.app_context():
+            from app_core import query,execute
+            event=query("SELECT id,payload FROM daily_mail_events WHERE run_id=? AND kind='update'",(rid,),one=True)
+            payload=dict(json.loads(event['payload']),source_fingerprint=fp)
+            execute('UPDATE daily_mail_events SET payload=? WHERE id=?',(json.dumps(payload),event['id']))
+        def http(method,path,payload=None,**kwargs):
+            response=self.c.open(path,method=method,headers=self.h,json=payload)
+            return response.status_code,response.get_json()
+        from types import SimpleNamespace
+        with mock.patch.object(runner,'http',side_effect=http),mock.patch.object(runner,'outlook_scan',return_value=([rec],'')),mock.patch.object(runner,'substantive_attachment_text',return_value=True),mock.patch.object(runner,'to_korean',return_value=['수리 작업 진행 중']) as translation:
+            first=runner.cmd_poll(SimpleNamespace(dry=False,no_remind=True))
+            second=runner.cmd_poll(SimpleNamespace(dry=False,no_remind=True))
+        self.assertTrue(first['ok']);self.assertTrue(first['replies'][0]['log'][0]['dup'])
+        self.assertEqual([],second['replies']);self.assertEqual(1,translation.call_count)
+        with appmod.app.app_context():
+            from app_core import query
+            from daily_mail_service import pending_runs
+            self.assertEqual(1,len(json.loads(query('SELECT actions FROM issues WHERE id=?',(self.i1,),one=True)['actions'])))
+            run=next(x for x in pending_runs() if x['id']==rid)
+            self.assertIn(runner.stable_reply_id(rec),run['processed_message_ids'])
+
     def test_roster_scope_hides_and_blocks_non_assigned_vessels(self):
         with appmod.app.app_context():
             from app_core import execute
