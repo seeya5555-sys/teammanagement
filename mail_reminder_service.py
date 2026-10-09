@@ -90,7 +90,7 @@ def pending(mode):
                     continue
             else:
                 base = _timestamp(run['last_reminder_at'] or run['sent_at'])
-                due = (base + timedelta(days=1 if run['reminder_count'] else 5)).replace(hour=8, minute=30, second=0, microsecond=0)
+                due = (base + timedelta(days=1 if run['reminder_count'] else dm.REPLY_DUE_DAYS + 1)).replace(hour=8, minute=30, second=0, microsecond=0)
                 if now_kst() < due:
                     continue
             out.append({k: run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','reminder_count','last_reminder_at','notified_at','reminder_attempts')})
@@ -155,7 +155,7 @@ def action(mode, rid, data):
                 if any(a['n'] == n for a in run['reminder_attempts']):
                     raise ReminderError(409, 'reminder already claimed; reconcile outcome, do not resend')
                 base = _timestamp(run['sent_at'] if n == 1 else run['last_reminder_at'])
-                due = (base + timedelta(days=5 if n == 1 else 1)).replace(hour=8, minute=30, second=0, microsecond=0)
+                due = (base + timedelta(days=dm.REPLY_DUE_DAYS + 1 if n == 1 else 1)).replace(hour=8, minute=30, second=0, microsecond=0)
                 if now_kst() < due:
                     raise ReminderError(409, 'reminder not due')
                 token = uuid.uuid4().hex
