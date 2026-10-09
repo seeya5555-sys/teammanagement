@@ -15,6 +15,7 @@ class ReminderTests(ClassMailTests):
         with patch.object(R, 'now_kst', return_value=datetime(2026,10,4,8,30)):
             first = self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':1})
             self.assertEqual(200, first.status_code, first.get_json())
+            self.assertIn('excel_sha256',first.get_json()['run'])
             self.assertEqual(200,self.post(f'/runs/{rid}/reminder',{'kind':'check','n':1,'token':first.get_json()['token']}).status_code)
             self.assertEqual(409, self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':1}).status_code)
             self.assertEqual(409, self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':2}).status_code)
@@ -72,6 +73,7 @@ class ReminderTests(ClassMailTests):
             response = self.client.post(f'/api/ext/vetting-mail/runs/{rid}/reminder',headers=self.headers,json={'kind':'claim','n':1})
             self.assertEqual(200,response.status_code,response.get_json())
             self.assertEqual('captain@example.com',response.get_json()['run']['to_emails'])
+            self.assertIn('excel_sha256',response.get_json()['run'])
             with self.app_context():
                 execute("INSERT INTO vetting_mail_events(run_id,kind,message_id) VALUES(?,'reply','action')",(rid,))
             self.assertEqual(409,self.client.post(f'/api/ext/vetting-mail/runs/{rid}/reminder',headers=self.headers,json={'kind':'notify'}).status_code)
@@ -84,6 +86,7 @@ class ReminderTests(ClassMailTests):
             self.assertEqual([],self.get('/reminders').get_json()['runs'])
         with patch.object(R,'now_kst',return_value=datetime(2026,10,4,8,30)):
             self.assertEqual([rid],[r['id'] for r in self.get('/reminders').get_json()['runs']])
+            self.assertIn('excel_sha256',self.get('/reminders').get_json()['runs'][0])
             claim=self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':1}).get_json()
             queue=self.get('/reminders').get_json()
             self.assertEqual([],queue['runs'])

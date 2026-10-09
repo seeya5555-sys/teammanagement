@@ -93,7 +93,7 @@ def pending(mode):
                 due = (base + timedelta(days=1 if run['reminder_count'] else dm.REPLY_DUE_DAYS + 1)).replace(hour=8, minute=30, second=0, microsecond=0)
                 if now_kst() < due:
                     continue
-            out.append({k: run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','reminder_count','last_reminder_at','notified_at','reminder_attempts')})
+            out.append({k: run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','reminder_count','last_reminder_at','notified_at','reminder_attempts','excel_sha256')})
         except ReminderError:
             pass
     return {'runs': out, 'blocked': blocked}
@@ -114,7 +114,7 @@ def action(mode, rid, data):
                 raise ReminderError(409, 'claim token mismatch or no longer claimed')
             run = _run(mode, rid)
             db.rollback()
-            return {'ok': True, 'run': {k:run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at')}}
+            return {'ok': True, 'run': {k:run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','excel_sha256')}}
         if kind == 'result':
             # Outcome must be recoverable even when a reply/disable occurred after claim.
             n, token, state = data.get('n'), data.get('token'), data.get('state')
@@ -160,7 +160,7 @@ def action(mode, rid, data):
                     raise ReminderError(409, 'reminder not due')
                 token = uuid.uuid4().hex
                 db.execute('INSERT INTO mail_reminder_attempts(mode,run_id,n,token,state,claimed_at) VALUES(?,?,?,?,?,?)', (mode,rid,n,token,'claimed',now_kst().strftime('%Y-%m-%d %H:%M:%S')))
-                result = {'ok': True, 'token': token, 'n': n, 'run': {k:run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at')}}
+                result = {'ok': True, 'token': token, 'n': n, 'run': {k:run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','excel_sha256')}}
             else:
                 raise ReminderError(400, 'invalid reminder action')
         db.commit()
