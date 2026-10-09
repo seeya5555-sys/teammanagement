@@ -26,7 +26,7 @@ TAG_RE = re.compile(r'\[TRMT-DU (\d{4})W(\d{2}) ([A-Z0-9]{1,8})\]')
 _EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+\-\']+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$')
 EVENT_KINDS_GENERIC = ('reply', 'close_suggest', 'unmatched', 'reminder', 'notify')
 MAX_EMAILS = 20
-REPLY_DUE_DAYS = 3          # {due_date} = 발송일 + 3일(월요일 발송 → 목요일)
+REPLY_DUE_DAYS = 2          # {due_date} = 발송일 + 2일(월요일 발송 → 수요일)
 
 
 class DailyMailError(MailServiceError):

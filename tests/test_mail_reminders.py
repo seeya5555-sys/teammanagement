@@ -10,15 +10,15 @@ class ReminderTests(ClassMailTests):
         rid = self.sent_run()
         with self.app_context():
             execute("UPDATE class_mail_runs SET sent_at='2026-10-01 18:00:00' WHERE id=?", (rid,))
-        with patch.object(R, 'now_kst', return_value=datetime(2026,10,5,8,29)):
+        with patch.object(R, 'now_kst', return_value=datetime(2026,10,4,8,29)):
             self.assertEqual(409, self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':1}).status_code)
-        with patch.object(R, 'now_kst', return_value=datetime(2026,10,5,8,30)):
+        with patch.object(R, 'now_kst', return_value=datetime(2026,10,4,8,30)):
             first = self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':1})
             self.assertEqual(200, first.status_code, first.get_json())
             self.assertEqual(200,self.post(f'/runs/{rid}/reminder',{'kind':'check','n':1,'token':first.get_json()['token']}).status_code)
             self.assertEqual(409, self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':1}).status_code)
             self.assertEqual(409, self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':2}).status_code)
-            self.assertEqual(200, self.post(f'/runs/{rid}/reminder', {'kind':'result','n':1,'token':first.get_json()['token'],'state':'sent','sent_at':'2026-10-05 08:30:00'}).status_code)
+            self.assertEqual(200, self.post(f'/runs/{rid}/reminder', {'kind':'result','n':1,'token':first.get_json()['token'],'state':'sent','sent_at':'2026-10-04 08:30:00'}).status_code)
             self.assertEqual(409, self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':2}).status_code)
         with self.app_context():
             execute("INSERT INTO class_mail_replies(run_id,message_id,sender,updated) VALUES(?,'receipt','captain',0)",(rid,))
@@ -37,7 +37,7 @@ class ReminderTests(ClassMailTests):
         with self.app_context():
             execute("UPDATE class_mail_runs SET sent_at='2026-10-01 18:00:00' WHERE id=?",(rid,))
             execute("INSERT INTO class_mail_replies(run_id,message_id,sender,updated,note) VALUES(?,'hold','captain',0,'Unmatched action needs review')",(rid,))
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,5,8,30)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,4,8,30)):
             self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':1}).status_code)
 
     def test_confirmed_two_sends_notify_once_and_disable_blocks(self):
@@ -68,7 +68,7 @@ class ReminderTests(ClassMailTests):
             fid = execute("INSERT INTO vt_findings(vetting_id,no,status) VALUES(?,1,'Open')",(vt,))
             rid = execute("INSERT INTO vetting_mail_runs(vetting_id,vessel_id,iso_week,state,subject,to_emails,cc_emails,sent_at) VALUES(?,?,'2026W40','sent','English subject','old@example.com','','2026-10-01 18:00:00')",(vt,self.vid))
             execute('UPDATE vetting_mail_runs SET finding_ids=? WHERE id=?',('['+str(fid)+']',rid))
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,5,8,30)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,4,8,30)):
             response = self.client.post(f'/api/ext/vetting-mail/runs/{rid}/reminder',headers=self.headers,json={'kind':'claim','n':1})
             self.assertEqual(200,response.status_code,response.get_json())
             self.assertEqual('captain@example.com',response.get_json()['run']['to_emails'])
@@ -80,9 +80,9 @@ class ReminderTests(ClassMailTests):
         rid = self.sent_run()
         with self.app_context():
             execute("UPDATE class_mail_runs SET sent_at='2026-10-01 18:00:00' WHERE id=?",(rid,))
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,5,8,29)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,4,8,29)):
             self.assertEqual([],self.get('/reminders').get_json()['runs'])
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,5,8,30)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,4,8,30)):
             self.assertEqual([rid],[r['id'] for r in self.get('/reminders').get_json()['runs']])
             claim=self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':1}).get_json()
             queue=self.get('/reminders').get_json()
@@ -97,7 +97,7 @@ class ReminderTests(ClassMailTests):
         rid=self.sent_run()
         with self.app_context():
             execute("UPDATE class_mail_runs SET sent_at='2026-09-01 18:00:00' WHERE id=?",(rid,))
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,5,8,30)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,4,8,30)):
             self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':1}).status_code)
             with self.app_context():
                 execute('UPDATE class_mail_runs SET sent_at=NULL WHERE id=?',(rid,))
