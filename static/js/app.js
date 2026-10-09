@@ -1109,6 +1109,8 @@ function renderActionCell(issue) {
       else        entry.append(el('span', { class: 'act-date', style: 'visibility:hidden' }, '-'));
       entry.append(el('span', { class: 'act-progress' }, a.progress || ''));
 
+      entry._dailyAction = a; // exact action identity across desktop/mobile representations
+
       // entry 본체(날짜/내용) 클릭 시 인라인 편집
       entry.addEventListener('click', (ev) => {
         if (ev.target.closest('.act-arrow')) return;
@@ -1141,9 +1143,43 @@ function toggleActionExpand(issueId) {
 }
 
 // ───────────── 인라인 편집 — 공통 ─────────────
+// A rerender/viewport change can leave a reference to a removed or hidden editor.
+// Only a visible, connected editor owns the lock; old callbacks must not unlock a new one.
+function dailyInlineEditBlocked() {
+  const editor = S._editing;
+  if (!editor) return false;
+  if (!editor.isConnected || !editor.getClientRects().length) {
+    if (editor._cancelDailyEdit) editor._cancelDailyEdit();
+    releaseDailyInlineEditor(editor);
+    return false;
+  }
+  if (window.InlineEdit) InlineEdit.toast('작성 중인 칸을 먼저 저장하거나 취소하세요', 'error');
+  const input = editor.querySelector('textarea') || editor.querySelector('input,select');
+  if (input) input.focus();
+  return true;
+}
+
+function releaseDailyInlineEditor(editor) {
+  if (S._editing === editor) S._editing = null;
+}
+
+// Remove only the transient draft and its two rendered representations, without
+// rerendering a different live editor or disturbing stored/CAS-protected actions.
+function removeDailyActionDraft(issue, draft) {
+  const idx = (issue.actions || []).indexOf(draft);
+  if (idx < 0 || !draft._new) return;
+  issue.actions.splice(idx, 1);
+  for (const cont of document.querySelectorAll(
+    `tr[data-exp-id="${issue.id}"] .act-cell-wrap, .issue-card[data-id="${issue.id}"] .act-cell-wrap`)) {
+    for (const entry of cont.querySelectorAll('.act-entry')) {
+      if (entry._dailyAction === draft) entry.remove();
+    }
+  }
+}
+
 /** text / textarea / date 필드 인라인 편집 */
 async function startEditInline(cellEl, issue, field, kind) {
-  if (S._editing) return;
+  if (dailyInlineEditBlocked()) return;
   S._editing = cellEl;
   const orig = issue[field] ?? '';
   const prevHTML = cellEl.innerHTML;
@@ -1167,9 +1203,20 @@ async function startEditInline(cellEl, issue, field, kind) {
   }
 
   let done = false;
+  cellEl._cancelDailyEdit = () => {
+    if (done) return;
+    done = true;
+    releaseDailyInlineEditor(cellEl);
+    cellEl.innerHTML = prevHTML;
+  };
   const finish = async (save) => {
-    if (done) return; done = true;
-    S._editing = null;
+    if (done) return;
+    if (!cellEl.isConnected || !cellEl.getClientRects().length) {
+      cellEl._cancelDailyEdit();
+      return;
+    }
+    done = true;
+    releaseDailyInlineEditor(cellEl);
     if (save) {
       const newVal = (kind === 'date' ? (input.value || null) : input.value);
       if ((field === 'item_topic' || field === 'issue_date') && !String(newVal || '').trim()) {
@@ -1228,7 +1275,7 @@ async function startEditInline(cellEl, issue, field, kind) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
     if (e.key === 'Escape') {
-      done = true; S._editing = null;
+      done = true; releaseDailyInlineEditor(cellEl);
       cellEl.innerHTML = prevHTML;
     }
   });
@@ -1236,7 +1283,7 @@ async function startEditInline(cellEl, issue, field, kind) {
 
 /** select 인라인 편집 */
 async function startEditSelect(cellEl, issue, field, options) {
-  if (S._editing) return;
+  if (dailyInlineEditBlocked()) return;
   S._editing = cellEl;
   const orig = issue[field] ?? '';
 
@@ -1254,9 +1301,20 @@ async function startEditSelect(cellEl, issue, field, options) {
   sel.focus();
 
   let done = false;
+  cellEl._cancelDailyEdit = () => {
+    if (done) return;
+    done = true;
+    releaseDailyInlineEditor(cellEl);
+    cellEl.innerHTML = prevHTML;
+  };
   const finish = async (save) => {
-    if (done) return; done = true;
-    S._editing = null;
+    if (done) return;
+    if (!cellEl.isConnected || !cellEl.getClientRects().length) {
+      cellEl._cancelDailyEdit();
+      return;
+    }
+    done = true;
+    releaseDailyInlineEditor(cellEl);
     if (save && sel.value !== orig) {
       try {
         await api('/api/issues/' + issue.id, {
@@ -1273,17 +1331,18 @@ async function startEditSelect(cellEl, issue, field, options) {
   sel.addEventListener('change', () => finish(true));
   sel.addEventListener('blur', () => setTimeout(() => finish(true), 80));
   sel.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { done = true; S._editing = null; cellEl.innerHTML = prevHTML; }
+    if (e.key === 'Escape') { done = true; releaseDailyInlineEditor(cellEl); cellEl.innerHTML = prevHTML; }
   });
 }
 
 // ───────────── Action entry 인라인 편집 ─────────────
 function startEditActionEntry(entryEl, issue, idx) {
-  if (S._editing) return;
+  if (dailyInlineEditBlocked()) return;
   S._editing = entryEl;
 
   const a = issue.actions[idx] || { date: '', progress: '', important: false };
   const orig = { date: a.date || '', progress: a.progress || '', important: !!a.important };
+  const prevHTML = entryEl.innerHTML;
   let imp = orig.important;
 
   entryEl.innerHTML = '';
@@ -1315,15 +1374,31 @@ function startEditActionEntry(entryEl, issue, idx) {
   const isNew = !!a._new;
   const prev = { date: a.date ?? null, progress: a.progress ?? '', important: !!a.important,
                  count: (issue.actions || []).filter(x => !x._new).length };
+  entryEl._cancelDailyEdit = () => {
+    if (done) return;
+    done = true;
+    releaseDailyInlineEditor(entryEl);
+    if (isNew) removeDailyActionDraft(issue, a);
+    else {
+      entryEl.innerHTML = prevHTML;
+      entryEl.classList.remove('editing');
+      entryEl.classList.toggle('important', orig.important);
+    }
+  };
   const finish = async (mode) => {
-    if (done) return; done = true;
-    S._editing = null;
+    if (done) return;
+    if (!entryEl.isConnected || !entryEl.getClientRects().length) {
+      entryEl._cancelDailyEdit();
+      return;
+    }
+    done = true;
+    releaseDailyInlineEditor(entryEl);
 
     const progVal = progIn.value.trim();
     if (mode === 'save' && !progVal) mode = isNew ? 'cancel' : 'remove';
     if (mode === 'remove' && !isNew && !confirm('이 진행 경과를 삭제할까요?')) mode = 'cancel';
     if (mode === 'cancel' || (mode === 'remove' && isNew)) {
-      if (isNew) issue.actions.splice(idx, 1);
+      if (isNew) removeDailyActionDraft(issue, a);
       renderTable(); renderCards();
       return;
     }
@@ -1367,21 +1442,28 @@ function startEditActionEntry(entryEl, issue, idx) {
 }
 
 async function addActionInline(issue) {
-  if (S._editing) return;
+  if (dailyInlineEditBlocked()) return;
   if (!Array.isArray(issue.actions)) issue.actions = [];
   // 임시 빈 entry 추가 후 그 entry 편집 진입
-  issue.actions.push({ date: todayISO(), progress: '', important: true, _new: true });
+  const draft = { date: todayISO(), progress: '', important: true, _new: true };
+  issue.actions.push(draft);
   if (!S.expandedActions.has(issue.id)) S.expandedActions.add(issue.id);
   renderTable(); renderCards();
 
   setTimeout(() => {
     // 액션 UI는 데스크탑=별도 펼침행(tr.exp-row[data-exp-id]), 모바일=카드(.issue-card[data-id])에 있음
-    const cont = document.querySelector(
-      `tr[data-exp-id="${issue.id}"] .act-cell-wrap, .issue-card[data-id="${issue.id}"] .act-cell-wrap`);
-    if (!cont) return;
-    const entries = cont.querySelectorAll('.act-entry');
-    const last = entries[entries.length - 1];
-    if (last) startEditActionEntry(last, issue, issue.actions.length - 1);
+    const idx = issue.actions.indexOf(draft);
+    if (idx < 0) return; // a reload has already replaced this transient draft
+    const cont = Array.from(document.querySelectorAll(
+      `tr[data-exp-id="${issue.id}"] .act-cell-wrap, .issue-card[data-id="${issue.id}"] .act-cell-wrap`))
+      .find(node => node.isConnected && node.getClientRects().length);
+    const entry = cont && Array.from(cont.querySelectorAll('.act-entry'))
+      .find(node => node._dailyAction === draft);
+    if (!entry || dailyInlineEditBlocked()) {
+      removeDailyActionDraft(issue, draft);
+      return;
+    }
+    startEditActionEntry(entry, issue, issue.actions.indexOf(draft));
   }, 30);
 }
 
