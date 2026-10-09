@@ -82,7 +82,7 @@ def pending(mode):
             if unresolved:
                 blocked.append({'id':run['id'], 'vessel_name':run['vessel_name'], 'state':unresolved[-1]['state']})
                 continue
-            if run['reminder_count'] == 2:
+            if run['reminder_count'] >= dm.MAX_REMINDERS:
                 if run['notified_at']:
                     continue
                 due = (_timestamp(run['last_reminder_at']) + timedelta(days=1)).replace(hour=8, minute=30, second=0, microsecond=0)
@@ -107,7 +107,7 @@ def action(mode, rid, data):
         kind = data.get('kind')
         if kind == 'check':
             n, token = data.get('n'), data.get('token')
-            if type(n) is not int or n not in (1,2) or not token:
+            if type(n) is not int or not 1 <= n <= dm.MAX_REMINDERS or not token:
                 raise ReminderError(400, 'invalid reminder claim check')
             issued = db.execute("SELECT 1 FROM mail_reminder_attempts WHERE mode=? AND run_id=? AND n=? AND token=? AND state='claimed'", (mode,rid,n,token)).fetchone()
             if not issued:
@@ -141,8 +141,8 @@ def action(mode, rid, data):
         else:
             run = _run(mode, rid)
             if kind == 'notify':
-                if run['reminder_count'] != 2:
-                    raise ReminderError(409, 'two successful reminders required')
+                if run['reminder_count'] < dm.MAX_REMINDERS:
+                    raise ReminderError(409, 'successful reminder required')
                 due = (_timestamp(run['last_reminder_at']) + timedelta(days=1)).replace(hour=8, minute=30, second=0, microsecond=0)
                 if now_kst() < due:
                     raise ReminderError(409, 'notification not due')
@@ -150,7 +150,7 @@ def action(mode, rid, data):
                 result = {'ok': True, 'duplicate': cur.rowcount == 0}
             elif kind == 'claim':
                 n = data.get('n')
-                if type(n) is not int or n not in (1,2) or n != run['reminder_count'] + 1:
+                if type(n) is not int or not 1 <= n <= dm.MAX_REMINDERS or n != run['reminder_count'] + 1:
                     raise ReminderError(409, 'invalid reminder sequence')
                 if any(a['n'] == n for a in run['reminder_attempts']):
                     raise ReminderError(409, 'reminder already claimed; reconcile outcome, do not resend')

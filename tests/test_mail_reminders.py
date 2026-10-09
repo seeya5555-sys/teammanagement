@@ -25,13 +25,14 @@ class ReminderTests(ClassMailTests):
             execute("INSERT INTO class_mail_replies(run_id,message_id,sender,updated) VALUES(?,'receipt','captain',0)",(rid,))
         with patch.object(R, 'now_kst', return_value=datetime(2026,10,7,8,30)):
             second = self.post(f'/runs/{rid}/reminder', {'kind':'claim','n':2})
-            self.assertEqual(200,second.status_code,second.get_json())
+            self.assertEqual(409,second.status_code,second.get_json())
+            self.assertEqual(1,self.get('/reminders').get_json()['runs'][0]['reminder_count'])
             with self.app_context():
                 execute("INSERT INTO class_mail_replies(run_id,message_id,sender,updated) VALUES(?,'action','captain',1)",(rid,))
-            self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'check','n':2,'token':second.get_json()['token']}).status_code)
+            self.assertEqual([],self.get('/reminders').get_json()['runs'])
             self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'notify'}).status_code)
-            # Persist actual outcome after late reply, without requiring continued eligibility.
-            self.assertEqual(200,self.post(f'/runs/{rid}/reminder',{'kind':'result','n':2,'token':second.get_json()['token'],'state':'failed'}).status_code)
+            # An already-recorded actual first outcome remains idempotent after a late reply.
+            self.assertTrue(self.post(f'/runs/{rid}/reminder',{'kind':'result','n':1,'token':first.get_json()['token'],'state':'sent','sent_at':'2026-10-04 08:30:00'}).get_json()['duplicate'])
 
     def test_interpretation_hold_not_treated_as_no_reply(self):
         rid=self.sent_run()
@@ -41,20 +42,20 @@ class ReminderTests(ClassMailTests):
         with patch.object(R,'now_kst',return_value=datetime(2026,10,4,8,30)):
             self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':1}).status_code)
 
-    def test_confirmed_two_sends_notify_once_and_disable_blocks(self):
+    def test_confirmed_one_send_notify_once_and_disable_blocks(self):
         rid = self.sent_run()
         with self.app_context():
             execute("UPDATE class_mail_runs SET sent_at='2026-10-01 18:00:00' WHERE id=?", (rid,))
-        for n, day in [(1,6),(2,7)]:
+        for n, day in [(1,6)]:
             with patch.object(R,'now_kst',return_value=datetime(2026,10,day,8,30)):
                 claim = self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':n}).get_json()
                 response = self.post(f'/runs/{rid}/reminder',{'kind':'result','n':n,'token':claim['token'],'state':'sent','sent_at':f'2026-10-{day:02d} 08:30:00'})
                 self.assertEqual(200,response.status_code,response.get_json())
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,8,8,29)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,7,8,29)):
             self.assertEqual([],self.get('/reminders').get_json()['runs'])
             self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'notify'}).status_code)
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,8,8,30)):
-            self.assertEqual(2,self.get('/reminders').get_json()['runs'][0]['reminder_count'])
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,7,8,30)):
+            self.assertEqual(1,self.get('/reminders').get_json()['runs'][0]['reminder_count'])
             self.assertFalse(self.post(f'/runs/{rid}/reminder',{'kind':'notify'}).get_json()['duplicate'])
             self.assertTrue(self.post(f'/runs/{rid}/reminder',{'kind':'notify'}).get_json()['duplicate'])
             self.assertEqual([],self.get('/reminders').get_json()['runs'])

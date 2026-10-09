@@ -362,6 +362,13 @@ class DailyMailTests(unittest.TestCase):
                                  json={'kind': 'reminder', 'message_id': 'reminder-1'}).get_json()
         self.assertFalse(ev()['duplicate'])
         self.assertTrue(ev()['duplicate'])
+        second = self.c.post(f'/api/ext/daily-mail/runs/{rid}/events', headers=self.h,
+                             json={'kind':'reminder','message_id':'reminder-2'})
+        self.assertEqual(409,second.status_code)
+        with appmod.app.app_context():
+            from app_core import query
+            self.assertEqual(1,query('SELECT reminder_count FROM daily_mail_runs WHERE id=?',(rid,),one=True)['reminder_count'])
+            self.assertEqual(1,query("SELECT COUNT(*) n FROM daily_mail_events WHERE run_id=? AND kind='reminder'",(rid,),one=True)['n'])
         self.assertEqual(409, self.c.post(f'/api/daily-mail/runs/{rid}/release').status_code)
 
     @unittest.skipUnless(RUNNER.exists(), 'mac runner not present')

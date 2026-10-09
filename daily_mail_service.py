@@ -26,6 +26,7 @@ TAG_RE = re.compile(r'\[TRMT-DU (\d{4})W(\d{2}) ([A-Z0-9]{1,8})\]')
 _EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+\-\']+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$')
 EVENT_KINDS_GENERIC = ('reply', 'close_suggest', 'unmatched', 'reminder', 'notify')
 MAX_EMAILS = 20
+MAX_REMINDERS = 1          # 최초 주간 요청당 리마인드 1회
 REPLY_DUE_DAYS = 2          # {due_date} = 발송일 + 2일(월요일 발송 → 수요일)
 
 
@@ -468,10 +469,44 @@ def _insert_event(run_id, kind, issue_id, message_id, evidence, payload, state=N
         raise
 
 
+
+def _record_reminder_once(run_id, d):
+    """Atomic server cap; preserve retries of the same already-recorded claim."""
+    if d.get('issue_id') is not None and not isinstance(d['issue_id'], int):
+        raise DailyMailError(400, 'issue_id must be int')
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        run = _sent_run_with_issue(run_id, d.get('issue_id'))
+        message_id = (d.get('message_id') or '').strip()[:500]
+        if not message_id:
+            raise DailyMailError(400, 'reminder message_id required')
+        existing = db.execute('SELECT 1 FROM daily_mail_events WHERE run_id=? AND kind=? AND issue_id IS ? '
+                              'AND message_id=? LIMIT 1', (run_id, 'reminder', d.get('issue_id'), message_id)).fetchone()
+        if existing:
+            db.rollback()
+            return {'duplicate': True}
+        if run['reminder_count'] >= MAX_REMINDERS:
+            raise DailyMailError(409, 'reminder limit reached')
+        payload = d.get('payload') if isinstance(d.get('payload'), dict) else {}
+        cur = db.execute('INSERT INTO daily_mail_events(run_id, kind, issue_id, message_id, evidence, payload, state) '
+                         'VALUES(?,?,?,?,?,?,?)', (run_id, 'reminder', d.get('issue_id'), message_id,
+                         (d.get('evidence') or '')[:4000], json.dumps(payload, ensure_ascii=False)[:20000], None))
+        db.execute('UPDATE daily_mail_runs SET reminder_count=reminder_count+1, last_reminder_at=? WHERE id=?',
+                   ((d.get('sent_at') or '').strip() or _now(), run_id))
+        db.commit()
+        return {'id': cur.lastrowid, 'duplicate': False}
+    except Exception:
+        db.rollback()
+        raise
+
+
 def record_event(run_id, d):
     kind = d.get('kind')
     if kind not in EVENT_KINDS_GENERIC:
         raise DailyMailError(400, 'kind must be one of ' + ','.join(EVENT_KINDS_GENERIC))
+    if kind == 'reminder':
+        return _record_reminder_once(run_id, d)
     issue_id = d.get('issue_id')
     if issue_id is not None and not isinstance(issue_id, int):
         raise DailyMailError(400, 'issue_id must be int')
@@ -496,9 +531,6 @@ def record_event(run_id, d):
         _recompute_reply_status(run_id)
     elif kind == 'close_suggest':
         _recompute_reply_status(run_id)
-    elif kind == 'reminder':
-        execute('UPDATE daily_mail_runs SET reminder_count=reminder_count+1, last_reminder_at=? WHERE id=?',
-                ((d.get('sent_at') or '').strip() or _now(), run_id))
     elif kind == 'notify':
         execute('UPDATE daily_mail_runs SET notified_at=COALESCE(notified_at, ?) WHERE id=?', (_now(), run_id))
     return {'id': eid, 'duplicate': False}
