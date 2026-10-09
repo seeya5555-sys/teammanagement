@@ -12,7 +12,7 @@
     for (const v of (vessels || [])) {
       byId.set(String(v.id), {
         id: v.id, name: v.name, type: v.vessel_type || '',
-        issues: [], active: 0, risk: false, latest: '',
+        issues: [], active: 0, risk: false, latest: '', daily_new_date: v.daily_new_date || null,
       });
     }
     for (const issue of (issues || [])) {
@@ -29,5 +29,13 @@
     return [...byId.values()];
   }
 
-  return { assignedGroups };
+  function hasNewToday(vessel, now = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(now);
+    const value = type => parts.find(p => p.type === type).value;
+    return vessel.daily_new_date === `${value('year')}-${value('month')}-${value('day')}`;
+  }
+
+  return { assignedGroups, hasNewToday };
 }));

@@ -178,6 +178,7 @@ async function saveVesselOrder(order) {
   catch (e) { console.warn('vessel-order save fail', e); }
 }
 async function loadIssues() {
+  await loadVessels(S.activeTab === 'all' ? null : S.activeTab);
   const p = new URLSearchParams();
   if (S.activeTab !== 'all') p.set('supervisor_id', S.activeTab);
 
@@ -884,7 +885,11 @@ function fillVesselList() {
       const item = el('div', {
         class: 'vsb-item' + (String(S.selectedVessel) === String(v.id) ? ' active' : ''),
         'data-vid': String(v.id),
-      }, handle, el('span', { class: 'vsb-nm' }, v.name), badge);
+      }, handle, el('span', { class: 'vsb-nm' }, v.name),
+        DailyVesselScope.hasNewToday(v) ? el('span', {
+          class: 'vsb-new', title: '오늘 신규 등록된 현안 있음 (한국시간)',
+          'aria-label': '오늘 신규 현안',
+        }, 'New') : null, badge);
       item.addEventListener('click', (e) => { if (!e.target.closest('.vsb-drag')) selectVessel(v.id); });
       box.append(item);
     }
@@ -927,7 +932,7 @@ function renderVmainHead() {
     for (const grp of groups) {
       const og = el('optgroup', { label: grp.type });
       for (const v of grp.vessels) {
-        const o = el('option', { value: String(v.id) }, `${v.name} (${vBadgeCount(v)})`);
+        const o = el('option', { value: String(v.id) }, `${v.name}${DailyVesselScope.hasNewToday(v) ? ' · New' : ''} (${vBadgeCount(v)})`);
         if (String(v.id) === String(S.selectedVessel)) o.selected = true;
         og.append(o);
       }

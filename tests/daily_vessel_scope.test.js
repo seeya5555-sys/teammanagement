@@ -36,3 +36,11 @@ test('현재 담당 선박은 이슈가 0건이어도 목록에 유지한다', (
   assert.equal(groups.length, 1);
   assert.deepEqual(groups[0].issues, []);
 });
+
+test('New follows KST registration metadata, independent of filtered issues and midnight', () => {
+  const [v] = Scope.assignedGroups([{ id: 1, name: 'Assigned', daily_new_date: '2026-10-09' }], [], active, risks);
+  assert.equal(Scope.hasNewToday(v, new Date('2026-10-08T15:00:00Z')), true);
+  assert.equal(Scope.hasNewToday(v, new Date('2026-10-09T14:59:59Z')), true);
+  assert.equal(Scope.hasNewToday(v, new Date('2026-10-09T15:00:00Z')), false);
+  assert.equal(Scope.hasNewToday({daily_new_date: null}, new Date('2026-10-09T00:00:00Z')), false);
+});

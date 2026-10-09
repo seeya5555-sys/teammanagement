@@ -452,7 +452,18 @@ def api_vessels():
         ''', (sup,))
     else:
         rows = query('SELECT * FROM vessels WHERE active=1 ORDER BY name')
-    return jsonify([dict(r) for r in rows])
+    # created_at is stored in server local time (KST), not issue_date/updated_at.
+    # Read separately from issue filters so Closed/search never hide today's registration.
+    new_rows = query('''
+        SELECT DISTINCT vessel_id FROM issues
+         WHERE created_at >= date('now', '+9 hours')
+           AND created_at < date('now', '+9 hours', '+1 day')
+           AND (? IS NULL OR supervisor_id = ?)
+    ''', (sup, sup))
+    new_ids = {r['vessel_id'] for r in new_rows}
+    today = query("SELECT date('now', '+9 hours') AS day", one=True)['day']
+    return jsonify([dict(r, daily_new_date=today if r['id'] in new_ids else None)
+                    for r in rows])
 
 
 # Daily 사이드바 선박 커스텀 순서 (유저별, 드래그앤드롭). 빈 배열 = 기본정렬(디펙트순).
