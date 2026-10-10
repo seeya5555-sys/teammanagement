@@ -6152,6 +6152,9 @@ def api_ext_aor_create():
     aor_cd = (d.get('aor_cd') or '').strip().upper()
     if not aor_cd:
         return jsonify({'error': 'aor_cd required'}), 400
+    deleted = _draft_deleted_response('aor', aor_cd)
+    if deleted:
+        return deleted
     # dedup 조회에 hold/rejecting 포함 — 보류·리젝진행 중 prep 재적재가 동일 aor_cd 의
     # 신규 pending 을 만들면(양쪽 승인시) 이중 SVMS 상신 위험.
     # DB unique index도 canonical key를 쓴다. 조회가 raw aor_cd 비교면 legacy 공백/대소문자
@@ -6208,6 +6211,9 @@ def api_ext_aor_create():
         # raw-column 구 index와 canonical expression index 모두 같은 race를 표면화한다.
         # index 이름은 SQLite 버전/표현식에 따라 메시지가 다르므로, aor_draft 관련 UNIQUE만
         # recovery 대상으로 삼고 canonical key로 승자를 다시 찾는다.
+        deleted = _draft_deleted_response('aor', aor_cd)
+        if deleted:
+            return deleted
         msg = str(exc)
         if 'UNIQUE constraint failed:' not in msg or 'uq_aor_draft_active_cd' not in msg and 'aor_draft.aor_cd' not in msg:
             raise
@@ -6354,6 +6360,35 @@ _DRAFT_RESETTABLE = {
 }
 
 
+def _draft_deleted_response(kind, document_cd):
+    row = query("SELECT document_cd FROM draft_queue_deleted WHERE kind=? AND document_cd=?",
+                (kind, str(document_cd).strip().upper()), one=True)
+    if row:
+        return jsonify({'status': 'deleted', 'ignored': True, 'dedup': True,
+                        'document_cd': row['document_cd']}), 200
+    return None
+
+
+def _delete_queue_documents(kind, where, params=()):
+    # Only explicit UI delete routes call this; vessel purges are not opt-out decisions.
+    table, key = {'aor': ('aor_draft', 'aor_cd'),
+                  'fundreq': ('fundreq_draft', 'opex_cd')}[kind]
+    db = get_db()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        rows = db.execute(f'SELECT id,{key} FROM {table} WHERE {where}', params).fetchall()
+        for row in rows:
+            db.execute("INSERT OR IGNORE INTO draft_queue_deleted(kind,document_cd,deleted_by) "
+                       "VALUES(?,upper(trim(?)),?)",
+                       (kind, row[key], session.get('username') or 'web'))
+        db.execute(f'DELETE FROM {table} WHERE {where}', params)
+        db.commit()
+        return [row['id'] for row in rows]
+    except BaseException:
+        db.rollback()
+        raise
+
+
 def _draft_delete_conflict(did, table):
     """조건부 DELETE 가 0건일 때 not-found와 보호 상태를 구분한다."""
     row = query(f'SELECT status FROM {table} WHERE id=?', (did,), one=True)
@@ -6377,7 +6412,7 @@ def _draft_delete_conflict(did, table):
 def api_aor_delete(did):
     # 상태 판독 후 DELETE 를 분리하면 runner 가 사이에서 approved 로 바꾼
     # 행을 지우는 TOCTOU가 생긴다. 삭제 허용 상태를 DELETE 자체에 고정한다.
-    if not execute_rc(f"DELETE FROM aor_draft WHERE id=? AND status IN ({_DRAFT_DELETABLE_SQL})", (did,)):
+    if not _delete_queue_documents('aor', f"id=? AND status IN ({_DRAFT_DELETABLE_SQL})", (did,)):
         return _draft_delete_conflict(did, 'aor_draft')
     _aor_pdf_delete(did)
     return jsonify({'id': did, 'deleted': True})
@@ -6387,7 +6422,7 @@ def api_aor_delete(did):
 @admin_required
 def api_aor_bulk_delete():
     """체크박스 다중선택 삭제 — 미처리(pending) 건만 허용(진행중·완료건 보호).
-    삭제해도 다음 aor_prep 푸싱때 SVMS에 여전히 STATUS=S면 신규 aor_cd로 재적재됨."""
+    문서번호 삭제 기록을 보존하여 이후 자동 재적재를 차단한다."""
     d = request.get_json(silent=True) or {}
     raw = d.get('ids') or []
     if not isinstance(raw, list) or not raw:
@@ -6396,7 +6431,10 @@ def api_aor_bulk_delete():
     if not ids:
         return jsonify({'error': 'no valid ids'}), 400
     ph = ','.join('?' * len(ids))
-    n = execute_rc(f"DELETE FROM aor_draft WHERE id IN ({ph}) AND status='pending'", tuple(ids))
+    doomed = _delete_queue_documents('aor', f"id IN ({ph}) AND status='pending'", tuple(ids))
+    n = len(doomed)
+    for did in doomed:
+        _aor_pdf_delete(did)
     return jsonify({'ok': True, 'deleted': n, 'requested': len(ids)})
 
 
@@ -6406,7 +6444,10 @@ def api_aor_clear_decided():
     """처리완료 일괄 삭제 — 명시 허용리스트(fundreq/invoice와 동일 패턴).
     블록리스트('pending','hold','submitting' 제외)였을 땐 approved/rejecting(러너 미처리분)까지
     조용히 삭제돼 SVMS 액션 유실 위험 → 종결상태만 명시 삭제."""
-    n = execute_rc("DELETE FROM aor_draft WHERE status IN ('submitted','rejected','failed','reject_failed')")
+    doomed = _delete_queue_documents('aor', "status IN ('submitted','rejected','failed','reject_failed')")
+    n = len(doomed)
+    for did in doomed:
+        _aor_pdf_delete(did)
     return jsonify({'ok': True, 'deleted': n})
 
 
@@ -7058,6 +7099,9 @@ def api_ext_fundreq_create():
     opex_cd = (d.get('opex_cd') or '').strip()
     if not opex_cd:
         return jsonify({'error': 'opex_cd required'}), 400
+    deleted = _draft_deleted_response('fundreq', opex_cd)
+    if deleted:
+        return deleted
     # 결정적 pass 는 fundreq_auto 가 사람 카드와 별개로 무인 상신한다. 검증 카드가 먼저
     # 생긴 뒤 자동상신이 성공하면 그 pending 카드가 남아 사람이 재승인하게 되므로,
     # STATUS=U readback 을 끝낸 러너가 기존 카드만 submitted 로 흡수한다(새 카드 생성 없음).
@@ -7105,11 +7149,18 @@ def api_ext_fundreq_create():
         return jsonify({'id': ex['id'], 'status': 'pending', 'updated': True}), 200
     if ex:   # 이미 결정/진행중 — 손대지 않음
         return jsonify({'id': ex['id'], 'status': ex['status'], 'dedup': True}), 200
-    did = execute(
-        "INSERT INTO fundreq_draft (opex_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, tp, ref_no, "
-        "ref_amt, dn, diff, verdict, why, contract_check, attach_files, raw_row) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (opex_cd, *cols.values()))
+    try:
+        did = execute(
+            "INSERT INTO fundreq_draft (opex_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, tp, ref_no, "
+            "ref_amt, dn, diff, verdict, why, contract_check, attach_files, raw_row) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (opex_cd, *cols.values()))
+    except sqlite3.IntegrityError:
+        get_db().rollback()
+        deleted = _draft_deleted_response('fundreq', opex_cd)
+        if deleted:
+            return deleted
+        raise
     return jsonify({'id': did, 'status': 'pending'}), 201
 
 
@@ -7197,7 +7248,7 @@ def api_fundreq_reset(did):
 @bp.route('/api/fundreq/drafts/<int:did>', methods=['DELETE'])
 @admin_required
 def api_fundreq_delete(did):
-    if not execute_rc(f"DELETE FROM fundreq_draft WHERE id=? AND status IN ({_DRAFT_DELETABLE_SQL})", (did,)):
+    if not _delete_queue_documents('fundreq', f"id=? AND status IN ({_DRAFT_DELETABLE_SQL})", (did,)):
         return _draft_delete_conflict(did, 'fundreq_draft')
     _fundreq_att_delete(did)   # 행이 사라지면 첨부 cache 도 고아 — 같이 정리
     return jsonify({'id': did, 'deleted': True})
@@ -7207,9 +7258,8 @@ def api_fundreq_delete(did):
 @admin_required
 def api_fundreq_clear_decided():
     """처리완료 일괄 삭제 — 대기(pending)·결정대기(approved/rejecting)·진행중(submitting)은 보존."""
-    doomed = [r['id'] for r in query(
-        "SELECT id FROM fundreq_draft WHERE status IN ('submitted','rejected','failed','reject_failed')") or []]
-    n = execute_rc("DELETE FROM fundreq_draft WHERE status IN ('submitted','rejected','failed','reject_failed')")
+    doomed = _delete_queue_documents('fundreq', "status IN ('submitted','rejected','failed','reject_failed')")
+    n = len(doomed)
     for i in doomed:
         _fundreq_att_delete(i)
     return jsonify({'ok': True, 'deleted': n})

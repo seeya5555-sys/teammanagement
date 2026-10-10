@@ -138,8 +138,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # fixed vessel_id/vetting_id keys and two complete literal reply-query choices.
 # All values bound; verified all previous 191 fingerprints unchanged.
 # Single AllMight review accepted identifier whitelist; no blanket regeneration.
+# 2026-10-10 user queue deletion: count unchanged, +3/-3 exact AST expressions reviewed.
+# Trigger identifiers come only from inline ('aor',aor_draft,aor_cd)/('fundreq',fundreq_draft,opex_cd).
+# Delete helper table/key use a fixed mapping; where is supplied ONLY by explicit internal delete routes,
+# including existing literal status lists and '?' placeholder lists. Values stay parameterized.
+# Removed old direct dynamic DELETE sites are now one atomic SELECT+DELETE helper; one trigger added.
 EXPECTED_COUNT = 196
-EXPECTED_SHA256 = "45441eb399e1e6c5a7778c19087b7ef75475c056401249f848baad1eff09f7e3"  # 2026-10-02 daily_mail: +IN(?,..) placeholder 2곳(ids 비면 skip) + actions CAS 리터럴 guard 2곳
+EXPECTED_SHA256 = "b099e36d155b38db619794b78b28e37e6979eae811f222e36e6e6583f9ba345f"  # 2026-10-02 daily_mail: +IN(?,..) placeholder 2곳(ids 비면 skip) + actions CAS 리터럴 guard 2곳
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

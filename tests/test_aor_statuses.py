@@ -798,7 +798,7 @@ class AbsorbingStatusInvariantTests(unittest.TestCase):
     # (예: absorbing 이탈이 거부되는지 보는 UPDATE) 스캔 대상이 되면 항상 위반으로 잡힌다.
     # 운영 경로가 아니므로 제외해도 방어가 약해지지 않는다.
     _SKIP_DIRS = {'.git', 'venv', 'node_modules', '__pycache__', 'static', '.state', 'tests'}
-    _UPD_RE = re.compile(r'UPDATE\s+aor_draft\s+SET\b(?:(?!;).)*?\bstatus\s*=', re.S | re.I)
+    _UPD_RE = re.compile(r'UPDATE\s+aor_draft(?:\s+AS\s+\w+)?\s+SET\b(?:(?!;).)*?\bstatus\s*=', re.S | re.I)
     _STATUS_LIT_RE = re.compile(r"status\s*(?:=\s*'([^']*)'|IN\s*\(([^)]*)\))", re.I)
     #: 순수 리터럴처럼 보여도 `"... status='%s'" % x` / `.format()` 로 나중에 값이 꽂히면
     #: 정적 판단은 거짓이 된다. 이런 흔적이 보이면 분석불가로 떨군다(올마이트 R18 test gap).

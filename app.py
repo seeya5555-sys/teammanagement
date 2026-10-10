@@ -515,6 +515,23 @@ def init_db(drop=False):
             if _col not in [r[1] for r in conn.execute('PRAGMA table_info(fundreq_draft)').fetchall()]:
                 conn.execute(f'ALTER TABLE fundreq_draft ADD COLUMN {_col} TEXT')
 
+        # Explicit user deletes survive physical queue-row removal and all future ingest.
+        conn.execute("""CREATE TABLE IF NOT EXISTS draft_queue_deleted (
+            kind TEXT NOT NULL CHECK(kind IN ('aor','fundreq')),
+            document_cd TEXT NOT NULL,
+            deleted_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            deleted_by TEXT NOT NULL,
+            PRIMARY KEY(kind, document_cd)
+        )""")
+        for kind, table, key in (('aor', 'aor_draft', 'aor_cd'),
+                                 ('fundreq', 'fundreq_draft', 'opex_cd')):
+            # Last-line race guard: delete may commit after the route's read-only check.
+            conn.execute(f"""CREATE TRIGGER IF NOT EXISTS trg_{kind}_deleted_insert
+                BEFORE INSERT ON {table}
+                WHEN EXISTS(SELECT 1 FROM draft_queue_deleted
+                            WHERE kind='{kind}' AND document_cd=upper(trim(NEW.{key})))
+                BEGIN SELECT RAISE(ABORT, 'draft document deleted'); END""")
+
         # 인보이스 자동컨펌(SVMS Invoice Confirm) 2단게이트 draft 큐 (prep 엔진 ingest → 사람이 /invoice 탭서 opt-out 승인/리젝 결정 → 맥 invoice_confirm 러너가 SVMS 교정·컨펌)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS invoice_draft (

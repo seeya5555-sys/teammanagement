@@ -88,7 +88,7 @@
   </label>
   <button class="btn btn-sm" id="aor-bulk-del" type="button" hidden
           style="border:1px solid var(--red-border);background:var(--red-bg);color:var(--red)"
-          title="선택한 미처리 AOR을 목록에서 삭제 (다음 SVMS 불러오기때 여전히 결재대기면 다시 나타남)">선택 삭제 (0)</button>
+          title="선택한 미처리 AOR을 목록에서 삭제 (동일 문서번호는 다시 불러오지 않음)">선택 삭제 (0)</button>
   <span class="flex-spacer"></span>
   <button class="btn btn-primary btn-sm" id="aor-pull" type="button">SVMS에서 불러오기</button>
   <button class="btn btn-outline btn-sm" id="aor-refresh" type="button">새로고침</button>
@@ -339,7 +339,7 @@
     const ids = checkedIds();
     if (!ids.length) return;
     if (!confirm(ids.length + '건의 미처리 AOR을 목록에서 삭제합니다.\n'
-      + '(다음 SVMS 불러오기때 여전히 결재대기(submit) 상태면 다시 나타납니다)\n진행할까요?')) return;
+      + '(삭제한 문서번호는 다음 SVMS 불러오기에서도 제외됩니다)\n진행할까요?')) return;
     try {
       const r = await fetch('/api/aor/drafts/bulk-delete', {
         method: 'POST', headers: {'Content-Type': 'application/json'},

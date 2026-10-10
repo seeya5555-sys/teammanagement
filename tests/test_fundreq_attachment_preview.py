@@ -44,10 +44,10 @@ class FundreqAttachmentPreviewTests(unittest.TestCase):
         self.tmp.cleanup()
 
     # ── helpers ──
-    def ingest(self, names=('DN 26 07.pdf', 'AOR summary.xlsx')):
+    def ingest(self, names=('DN 26 07.pdf', 'AOR summary.xlsx'), code='GYPSCO2607270001'):
         r = self.client.post('/api/ext/fundreq/drafts',
-                             json={'opex_cd': 'GYPSCO2607270001', 'vsl_cd': 'GYPS', 'amt': 100.0,
-                                   'tp': 'O', 'verdict': 'pass', 'raw_row': {'OPEX_CD': 'GYPSCO2607270001'},
+                             json={'opex_cd': code, 'vsl_cd': 'GYPS', 'amt': 100.0,
+                                   'tp': 'O', 'verdict': 'pass', 'raw_row': {'OPEX_CD': code},
                                    'attach_files': list(names)},
                              headers={'X-API-Key': 'secret'})
         self.assertIn(r.status_code, (200, 201))
@@ -125,7 +125,7 @@ class FundreqAttachmentPreviewTests(unittest.TestCase):
         self.assertEqual(200, self.upload(0, PDF, 'pdf').status_code)
         self.client.delete('/api/fundreq/drafts/%d' % self.did)
         self.assertEqual([], os.listdir(shared_ns.FUNDREQ_FILE_DIR))
-        did2 = self.ingest()
+        did2 = self.ingest(code='GYPSCO2607270002')  # deleted document cannot be recreated
         self.assertEqual(200, self.upload(0, PDF, 'pdf', did=did2).status_code)
         with appmod.app.app_context():
             appmod.execute("UPDATE fundreq_draft SET status='submitted' WHERE id=?", (did2,))
