@@ -390,5 +390,70 @@ class RpCostTests(unittest.TestCase):
         self.assertIn('TRMT 에만 표시', r.get_data(as_text=True))
 
 
+class RpCostBearerTests(unittest.TestCase):
+    """iOS 앱은 쿠키 없이 Bearer 토큰만 보낸다 — 인보이스 큐와 같은 @admin_required 경로로
+    /api/rpcost/* (목록·PDF·편집·승인·리젝·결정취소) 가 통과해야 한다(CSRF 면제 포함)."""
+    tearDown = RpCostTests.tearDown
+    ingest = RpCostTests.ingest
+    row = RpCostTests.row
+
+    def setUp(self):
+        RpCostTests.setUp(self)
+        from werkzeug.security import generate_password_hash
+        with appmod.app.app_context():
+            appmod.execute("INSERT INTO users(username, password_hash, display_name, role, active) "
+                           "VALUES('rpapp', ?, 'rpapp', 'admin', 1)", (generate_password_hash('pw-rp'),))
+        self.app_c = appmod.app.test_client()          # 쿠키 세션 없음
+        r = self.app_c.post('/api/auth/token', json={'username': 'rpapp', 'password': 'pw-rp'})
+        self.assertEqual(200, r.status_code, r.get_data(as_text=True)[:200])
+        self.h = {'Authorization': 'Bearer %s' % r.get_json()['token']}
+
+    def test_bearer_full_flow(self):
+        old = appmod.app.config.get('CSRF_PROTECT')
+        appmod.app.config['CSRF_PROTECT'] = True          # Bearer 는 CSRF 면제여야 함
+        try:
+            rid = self.ingest(repair_payload()).get_json()['id']
+            pid = self.ingest(purchase_payload()).get_json()['id']
+            self.assertEqual(401, self.app_c.get('/api/rpcost/drafts').status_code)
+            lst = self.app_c.get('/api/rpcost/drafts', headers=self.h)
+            self.assertEqual(200, lst.status_code)
+            self.assertEqual({rid, pid}, {d['id'] for d in lst.get_json()['drafts']})
+            self.assertEqual(404, self.app_c.get('/api/rpcost/drafts/%d/pdf' % rid, headers=self.h).status_code)
+            e = self.app_c.post('/api/rpcost/drafts/%d/edit' % rid, headers=self.h,
+                                json={'inv_dt': '20261010', 'exp': {'02': '030205'}})
+            self.assertEqual(200, e.status_code, e.get_data(as_text=True))
+            self.assertEqual('rpapp', self.row(rid)['rc']['exp_sel']['02']['by'])
+            self.assertEqual(400, self.app_c.post('/api/rpcost/drafts/%d/edit' % pid, headers=self.h,
+                                                  json={'inv_dt': '20261010'}).status_code)
+            self.assertEqual(200, self.app_c.post('/api/rpcost/drafts/%d/approve' % rid, headers=self.h,
+                                                  json={}).status_code)
+            self.assertEqual('rpapp', self.row(rid)['decided_by'])
+            self.assertEqual(200, self.app_c.post('/api/rpcost/drafts/%d/reset' % rid, headers=self.h,
+                                                  json={}).status_code)
+            rj = self.app_c.post('/api/rpcost/drafts/%d/reject' % pid, headers=self.h, json={'reason': 'dup'})
+            self.assertEqual(200, rj.status_code)
+            self.assertIn('SVMS 는 그대로', rj.get_json()['message'])
+        finally:
+            appmod.app.config['CSRF_PROTECT'] = old
+
+    def test_approve_expect_rev_cas(self):
+        rid = self.ingest(repair_payload()).get_json()['id']
+        rev = {d['id']: d['rev'] for d in self.app_c.get('/api/rpcost/drafts', headers=self.h).get_json()['drafts']}[rid]
+        # 표시 후 사람 편집(또는 재적재)으로 카드가 바뀜 → 옛 rev 승인은 409, 상태 pending 유지
+        self.assertEqual(200, self.app_c.post('/api/rpcost/drafts/%d/edit' % rid, headers=self.h,
+                                              json={'exp': {'02': '030205'}}).status_code)
+        r = self.app_c.post('/api/rpcost/drafts/%d/approve' % rid, headers=self.h, json={'expect_rev': rev})
+        self.assertEqual(409, r.status_code)
+        self.assertTrue(r.get_json().get('stale'))
+        self.assertEqual('pending', self.row(rid)['status'])
+        new = {d['id']: d['rev'] for d in self.app_c.get('/api/rpcost/drafts', headers=self.h).get_json()['drafts']}[rid]
+        self.assertNotEqual(rev, new)
+        self.assertEqual(200, self.app_c.post('/api/rpcost/drafts/%d/approve' % rid, headers=self.h,
+                                              json={'expect_rev': new}).status_code)
+        self.assertEqual('approved', self.row(rid)['status'])
+        r2 = self.app_c.post('/api/rpcost/drafts/%d/approve' % rid, headers=self.h, json={'expect_rev': new})
+        self.assertEqual(409, r2.status_code)          # 이미 결정됨
+
+
 if __name__ == '__main__':
     unittest.main()

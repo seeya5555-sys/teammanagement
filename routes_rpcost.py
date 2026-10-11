@@ -121,6 +121,7 @@ def api_rpcost_list():
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])
     for d in drafts:
         d['has_pdf'] = os.path.exists(_rpcost_pdf_path(d['id']))
+        d['rev'] = _rpcost_rev(d)
     return jsonify({'drafts': drafts, 'pending': pending['c'], 'enabled': _automation_enabled()})
 
 
@@ -220,6 +221,13 @@ def api_ext_rpcost_pdf_upload(did):
     return jsonify({'id': did, 'stored': True, 'bytes': len(data)})
 
 
+def _rpcost_rev(row):
+    """카드 표시 리비전 — 앱이 본 카드와 승인 시점 카드가 같은지(CAS) 확인용. raw_card + updated_at."""
+    import hashlib
+    src = '%s|%s' % (row['raw_card'] or '', row['updated_at'] or '')
+    return hashlib.sha256(src.encode('utf-8')).hexdigest()[:32]
+
+
 def _rpcost_set_approved(did, who):
     return execute_rc("UPDATE rp_cost_draft SET status='approved', decided_at=datetime('now','localtime'), "
                       "decided_by=? WHERE id=? AND status='pending' AND raw_card IS NOT NULL", (who, did))
@@ -228,10 +236,27 @@ def _rpcost_set_approved(did, who):
 @bp.route('/api/rpcost/drafts/<int:did>/approve', methods=['POST'])
 @admin_required
 def api_rpcost_approve(did):
-    if not _rpcost_set_approved(did, session.get('username') or 'web'):
+    """선택 `expect_rev`(목록의 rev) 가 오면 표시 후 카드가 바뀌었는지 CAS — 다르면 409(앱 stale 승인 차단)."""
+    expect = str((request.get_json(silent=True) or {}).get('expect_rev') or '').strip()
+    who = session.get('username') or 'web'
+    if expect:
+        row = query('SELECT status, raw_card, updated_at FROM rp_cost_draft WHERE id=?', (did,), one=True)
+        if not row:
+            return jsonify({'error': 'not found'}), 404
+        if row['status'] == 'pending' and _rpcost_rev(row) != expect:
+            return jsonify({'error': '표시 후 카드가 바뀌었습니다 — 새로고침 후 다시 확인하세요', 'stale': True}), 409
+        ok = row['status'] == 'pending' and row['raw_card'] is not None and execute_rc(
+            "UPDATE rp_cost_draft SET status='approved', decided_at=datetime('now','localtime'), decided_by=? "
+            "WHERE id=? AND status='pending' AND raw_card IS ? AND updated_at IS ?",
+            (who, did, row['raw_card'], row['updated_at']))
+    else:
+        ok = _rpcost_set_approved(did, who)
+    if not ok:
         cur = query('SELECT status FROM rp_cost_draft WHERE id=?', (did,), one=True)
         if not cur:
             return jsonify({'error': 'not found'}), 404
+        if expect and cur['status'] == 'pending':
+            return jsonify({'error': '표시 후 카드가 바뀌었습니다 — 새로고침 후 다시 확인하세요', 'stale': True}), 409
         return jsonify({'error': 'already decided', 'status': cur['status']}), 409
     return jsonify({'id': did, 'status': 'approved'})
 
