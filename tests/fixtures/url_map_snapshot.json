@@ -3509,6 +3509,68 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/rpcost/approved",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_rpcost.api_ext_rpcost_approved",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/rpcost/drafts",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_ext_rpcost_create",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/rpcost/drafts/<int:did>/pdf",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_ext_rpcost_pdf_upload",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/rpcost/drafts/<int:did>/result",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_ext_rpcost_result",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/rpcost/open",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_rpcost.api_ext_rpcost_open",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/rpcost/reconcile",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_ext_rpcost_reconcile",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/shipwiki/<int:cid>/result",
     "methods": [
       "OPTIONS",
@@ -5054,6 +5116,98 @@
     "defaults": {}
   },
   {
+    "rule": "/api/rpcost/drafts",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_list",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/rpcost/drafts/<int:did>",
+    "methods": [
+      "DELETE",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_delete",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/rpcost/drafts/<int:did>/approve",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_approve",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/rpcost/drafts/<int:did>/edit",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_edit",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/rpcost/drafts/<int:did>/pdf",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_pdf",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/rpcost/drafts/<int:did>/reject",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_reject",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/rpcost/drafts/<int:did>/reset",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_reset",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/rpcost/drafts/approve-bulk",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_approve_bulk",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/rpcost/drafts/decided",
+    "methods": [
+      "DELETE",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_rpcost.api_rpcost_clear_decided",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/shipwiki/cards",
     "methods": [
       "GET",
@@ -6030,6 +6184,17 @@
       "OPTIONS"
     ],
     "endpoint": "routes_calendar_dock.reqgen_page",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/rpcost",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_rpcost.rpcost_page",
     "strict_slashes": true,
     "defaults": {}
   },

@@ -24,6 +24,16 @@
     "guard": "admin_required",
     "non_admin": 403
   },
+  "DELETE /api/rpcost/drafts/<int:did>": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "DELETE /api/rpcost/drafts/decided": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
   "GET /api/automation/jeonja/items": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -94,6 +104,16 @@
     "guard": "api_key_required",
     "non_admin": 401
   },
+  "GET /api/ext/rpcost/approved": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "GET /api/ext/rpcost/open": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
   "GET /api/fundreq/drafts": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -144,6 +164,16 @@
     "guard": "admin_required",
     "non_admin": 403
   },
+  "GET /api/rpcost/drafts": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "GET /api/rpcost/drafts/<int:did>/pdf": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
   "GET /fundreq": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -160,6 +190,11 @@
     "non_admin": 403
   },
   "GET /remittance": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "GET /rpcost": {
     "anonymous": 401,
     "guard": "admin_required",
     "non_admin": 403
@@ -269,6 +304,26 @@
     "guard": "api_key_required",
     "non_admin": 401
   },
+  "POST /api/ext/rpcost/drafts": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/rpcost/drafts/<int:did>/pdf": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/rpcost/drafts/<int:did>/result": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/rpcost/reconcile": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
   "POST /api/fundreq/drafts/<int:did>/approve": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -340,6 +395,31 @@
     "non_admin": 403
   },
   "POST /api/liscr/upload": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/rpcost/drafts/<int:did>/approve": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/rpcost/drafts/<int:did>/edit": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/rpcost/drafts/<int:did>/reject": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/rpcost/drafts/<int:did>/reset": {
+    "anonymous": 401,
+    "guard": "admin_required",
+    "non_admin": 403
+  },
+  "POST /api/rpcost/drafts/approve-bulk": {
     "anonymous": 401,
     "guard": "admin_required",
     "non_admin": 403

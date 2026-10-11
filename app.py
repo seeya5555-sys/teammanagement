@@ -112,6 +112,62 @@ app.get_send_file_max_age = _static_max_age
 
 
 
+# 수리·구매비용(SVMS 수리 HQ Confirm / 구매 Approve) 2단게이트 draft 큐 — /rpcost (routes_rpcost.py).
+# init_db 와 _auto_migrate 둘 다 만든다(기존 prod DB 에도 확실히 생기게).
+def _rp_cost_draft_install(conn):
+    # SQL 은 인라인 리터럴만(test_sql_construction_contract 동적 SQL 게이트 대상 아님).
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS rp_cost_draft (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind          TEXT NOT NULL CHECK(kind IN ('repair','purchase')),
+        svms_key      TEXT NOT NULL,                       -- 수리 INV_CD / 구매 INV_NO(SVMS 키) — kind 와 함께 dedup 키
+        ref_key       TEXT,                                -- 수리 REP_CD / 구매 ODR_NO
+        vsl_cd        TEXT,
+        vsl_nm        TEXT,
+        subj          TEXT,
+        vndr_cd       TEXT,
+        vndr_nm       TEXT,
+        inv_no        TEXT,                                -- 벤더 인보이스 번호(수리 INV_NO / 구매 INVO_NO)
+        inv_dt        TEXT,                                -- 표시·적용 INV_DT(수리는 사람 교정값 반영)
+        cur_cd        TEXT,
+        amt           REAL,                                -- Grand Total(수리 GRD_AMT / 구매 TAMT)
+        pay_dt        TEXT,                                -- 현재 SVMS Remit(수리 PAY_DT / 구매 RMT_DT)
+        inv_no_match  INTEGER,
+        amt_match     INTEGER,
+        date_match    INTEGER,
+        match_src     TEXT,
+        attachments   TEXT,                                -- JSON
+        flags         TEXT,                                -- JSON
+        hold_reasons  TEXT,                                -- JSON
+        gate          TEXT,                                -- PASS/HOLD
+        svms_status   TEXT,                                -- 적재 시 SVMS 라이브 상태(IU/U 등)
+        raw_card      TEXT,                                -- prep 카드 + 사람 교정(exp_sel, inv_dt_override audit)
+        status        TEXT NOT NULL DEFAULT 'pending',     -- pending/approved/submitting/submitted/failed/rejected
+        reject_reason TEXT,
+        decided_at    TEXT,
+        decided_by    TEXT,
+        done_at       TEXT,
+        result        TEXT,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at    TEXT,
+        claim_token   TEXT                                 -- 러너 claim 토큰(result 는 이 토큰이 맞을 때만 반영)
+    )
+""")
+    if 'claim_token' not in [r[1] for r in conn.execute('PRAGMA table_info(rp_cost_draft)').fetchall()]:
+        conn.execute("ALTER TABLE rp_cost_draft ADD COLUMN claim_token TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rp_cost_draft_status ON rp_cost_draft(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rp_cost_draft_key ON rp_cost_draft(kind, svms_key)")
+    # 같은 SVMS 건의 '살아있는' 카드는 1장만(동시 ingest 경합 차단). 이력(submitted/failed/rejected)은 여러 장 허용.
+    # 인덱스 생성 전 기존 중복은 최신 1장만 남기고 failed 로 내려 사람 재검토에 맡긴다.
+    conn.execute("UPDATE rp_cost_draft SET status='failed', "
+                 "result=COALESCE(result,'')||' [auto: 중복 활성카드 정리 — UNIQUE 도입]' "
+                 "WHERE status IN ('pending','approved','submitting') AND id NOT IN ("
+                 "SELECT MAX(id) FROM rp_cost_draft WHERE status IN ('pending','approved','submitting') "
+                 "GROUP BY kind, svms_key)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_rp_cost_draft_active ON rp_cost_draft(kind, svms_key) "
+                 "WHERE status IN ('pending','approved','submitting')")
+
+
 def init_db(drop=False):
     """schema + seed 실행, 기본 admin 계정 자동 생성.
 
@@ -576,6 +632,7 @@ def init_db(drop=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_draft_status ON invoice_draft(status)")
+        _rp_cost_draft_install(conn)
         for _col in ("upstream_status", "upstream_reject_remark", "corrective_action", "upstream_rejected_at"):
             if _col not in [r[1] for r in conn.execute('PRAGMA table_info(invoice_draft)').fetchall()]:
                 conn.execute(f'ALTER TABLE invoice_draft ADD COLUMN {_col} TEXT')
@@ -1729,6 +1786,8 @@ import routes_family_assets
 app.register_blueprint(routes_family_assets.bp)
 import routes_liscr
 app.register_blueprint(routes_liscr.bp)
+import routes_rpcost
+app.register_blueprint(routes_rpcost.bp)
 import routes_tail
 app.register_blueprint(routes_tail.bp)
 import routes_followup
@@ -1820,6 +1879,10 @@ def _auto_migrate():
                     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
         except Exception as e:
             print(f'[auto_migrate] liscr_master 점검 건너뜀: {e}')
+        try:
+            _rp_cost_draft_install(conn)
+        except Exception as e:
+            print(f'[auto_migrate] 🔴 rp_cost_draft 생성 실패 — /rpcost 가 죽을 수 있음: {e}')
         # 오프라인 보관함 재전송 중복방지 원장. schema 재적용으로도 생기지만, 위 executescript 가
         # 어떤 이유로든 중간에 끊기면 이 표만 없어 **재전송이 중복 생성**으로 이어진다.
         # 🔴 독립 try + 명시 생성 — 중복방지는 조용히 빠지면 안 되는 종류다.

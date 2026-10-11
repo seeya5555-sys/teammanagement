@@ -1,0 +1,331 @@
+{% extends "base.html" %}
+{% block title %}수리·구매비용 컨펌 · TRMT3{% endblock %}
+{% block head %}
+<style>
+  .fr-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .fr-count{color:var(--text-secondary);font-size:13px}
+  .fr-list{display:flex;flex-direction:column;gap:12px;max-width:960px}
+  .fr-card{border:1px solid var(--border);border-radius:6px;background:#fff;overflow:hidden}
+  .fr-card.is-busy{opacity:.55;pointer-events:none}
+  .fr-top{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle);cursor:pointer}
+  .fr-subj{font-weight:600;color:var(--text-primary);line-height:1.35}
+  .fr-meta{font-size:12px;color:var(--text-secondary);margin-top:3px}
+  .fr-badges{margin-left:auto;display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .fr-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:nowrap}
+  .ves-chip{font-size:11px;font-weight:600;padding:1px 7px;border-radius:4px;white-space:nowrap;display:inline-block}
+  .ves-chip.ok{background:var(--green-bg);color:var(--green)}
+  .ves-chip.other{background:var(--surface-3);color:var(--text-secondary)}
+  .ves-chip.none{background:var(--surface-2);color:var(--text-secondary)}
+  .b-repair{background:var(--purple-bg);color:var(--purple)}
+  .b-purchase{background:var(--blue-bg);color:var(--blue)}
+  .b-pass{background:var(--green-bg);color:var(--green)}
+  .b-hold{background:var(--amber-bg);color:var(--amber)}
+  .st-approved{background:var(--blue-bg);color:var(--blue)}
+  .st-submitting{background:var(--amber-bg);color:var(--amber)}
+  .st-submitted{background:var(--green-bg);color:var(--green)}
+  .st-rejected{background:var(--surface-3);color:var(--text-secondary)}
+  .st-failed{background:var(--red-bg);color:var(--red)}
+  .fr-body{padding:10px 14px;font-size:13px;color:var(--text-secondary)}
+  .fr-kv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:6px}
+  .fr-kv b{color:var(--text-primary)}
+  .fr-sect{margin-top:6px;padding-top:6px;border-top:1px dashed var(--border-subtle)}
+  .fr-sect-t{font-size:11px;font-weight:700;color:var(--text-tertiary);margin-bottom:3px;letter-spacing:.02em}
+  .mok{color:var(--green);font-weight:700}
+  .mng{color:var(--red);font-weight:700}
+  .mun{color:var(--text-tertiary)}
+  .fr-flag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;background:var(--red-bg);color:var(--red);margin:2px 4px 0 0}
+  .fr-why{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;background:var(--amber-bg);color:var(--amber);margin:2px 4px 0 0}
+  .fr-acts{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border-subtle);flex-wrap:wrap;align-items:center}
+  .fr-b{border:0;border-radius:4px;padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .fr-b.ap{background:var(--green);color:#fff}
+  .fr-b.rj{background:var(--red);color:#fff}
+  .fr-b.rs{background:var(--border);color:var(--text-secondary)}
+  .fr-b.del{background:#fff;color:var(--text-tertiary);border:1px solid var(--border)}
+  .fr-b.ed{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)}
+  .fr-rsn{flex:1;min-width:200px;border:1px solid var(--border-strong);border-radius:6px;padding:7px 10px;font-size:13px}
+  .fr-optout{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);margin-right:4px}
+  .fr-optout input{width:16px;height:16px;cursor:pointer}
+  .fr-decided{font-size:12px;color:var(--text-secondary)}
+  .fr-empty{color:var(--text-tertiary);padding:30px;text-align:center}
+  .fr-note{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber);border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:12px;max-width:960px}
+  .fr-caret{color:var(--text-tertiary);font-size:11px;margin-right:6px;display:inline-block;transition:transform .15s;flex-shrink:0}
+  .fr-card.collapsed .fr-caret{transform:rotate(-90deg)}
+  .fr-card.collapsed .fr-body{display:none}
+  .rp-slots{width:100%;border-collapse:collapse;font-size:12px;margin-top:2px}
+  .rp-slots th{text-align:left;font-weight:700;color:var(--text-tertiary);padding:4px 6px;border-bottom:1px solid var(--border-subtle)}
+  .rp-slots td{padding:4px 6px;border-bottom:1px solid var(--border-subtle);vertical-align:middle;color:var(--text-primary)}
+  .rp-slots td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .rp-exp-in{min-width:190px;border:1px solid var(--border-strong);border-radius:6px;padding:4px 7px;font-size:12px}
+  .rp-src{font-size:11px;color:var(--text-tertiary)}
+  .rp-src.sg{color:var(--amber);font-weight:700}
+  .rp-src.us{color:var(--blue);font-weight:700}
+  .fr-edit{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}
+  .fr-edit label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-tertiary)}
+  .fr-date-in{width:150px;font-family:inherit;border:1px solid var(--border-strong);border-radius:6px;padding:5px 8px;font-size:13px}
+  .pdf-lnk{color:var(--blue);font-weight:600;text-decoration:none;cursor:pointer}
+  .pdf-lnk:hover{text-decoration:underline}
+  .pdf-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9000;align-items:center;justify-content:center;padding:24px}
+  .pdf-modal.open{display:flex}
+  .pdf-box{background:#fff;border-radius:6px;width:min(960px,96vw);height:min(90vh,1200px);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}
+  .pdf-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+  .pdf-bar .pdf-ttl{font-weight:700;font-size:13px;color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pdf-bar a,.pdf-bar button{font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:var(--text-secondary);border-radius:4px;padding:5px 10px;cursor:pointer;text-decoration:none}
+  .pdf-frame{flex:1;border:0;width:100%}
+</style>
+{% endblock %}
+{% block content %}
+<header class="fr-head ops-page-header">
+  <div><p class="ops-page-kicker">Approval queue</p><h2 class="page-title" style="margin:0"><svg class="ic-svg"><use href="#i-file-text"/></svg> 수리·구매비용 컨펌</h2></div>
+  <span class="fr-count" id="fr-count"></span>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify"><svg class="ic-svg"><use href="#i-search-check"/></svg>카드적재(prep)</button>
+    <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit"><svg class="ic-svg" viewBox="0 0 24 24"><path d="m7 5 12 7-12 7V5Z"/></svg>체크한 것 일괄승인+컨펌</button>
+    <button class="fr-b rs" id="fr-collapse">전체펼치기</button>
+    <button class="fr-b rs" id="fr-reload">새로고침</button>
+    <button class="fr-b del" id="fr-clear">처리완료 비우기</button>
+  </div>
+</header>
+<div class="fr-note">
+  SVMS My Vessel 의 <b>수리비용</b>(Vendor Submitted)과 <b>구매비용</b>(Approve 대기)을 PDF 대조 결과와 함께 카드로 보여줍니다.
+  <span class="b-pass" style="padding:1px 6px;border-radius:4px">PASS</span> 는 기본 체크, <span class="b-hold" style="padding:1px 6px;border-radius:4px">HOLD</span> 는 기본 해제 →
+  <b>[체크한 것 일괄승인+컨펌]</b>을 누르면 맥 러너가 SVMS 를 다시 읽고 금액이 그대로일 때만 반영합니다.<br>
+  · <b>구매</b>: SVMS Approve(STATUS=A). Remit 은 SVMS 값 그대로, 메일 안 보냄.<br>
+  · <b>수리</b>: Invoice Date·Expense code 를 카드에서 고칠 수 있고, Remit 은 Invoice Date 의 월말로 맞춥니다. 승인 후 컨펌하면 <b>SVMS HQ Confirm(INV_STATUS CU)</b>을 저장합니다. 저장 직전 SVMS 를 다시 읽어 금액·상태가 바뀌었으면 멈춥니다. BIZ_NO(세금계산서 메일) 건은 거부됩니다.<br>
+  · <b>리젝</b>은 TRMT 에만 표시합니다. SVMS 반려는 하지 않으니 필요하면 SVMS 에서 직접 반려하세요.
+</div>
+<div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
+<datalist id="expcodes"></datalist>
+<div class="pdf-modal" id="pdf-modal">
+  <div class="pdf-box">
+    <div class="pdf-bar">
+      <span class="pdf-ttl" id="pdf-ttl">PDF</span>
+      <a id="pdf-open" href="#" target="_blank" rel="noopener">새 탭</a>
+      <button id="pdf-close" type="button">닫기</button>
+    </div>
+    <iframe class="pdf-frame" id="pdf-frame" title="인보이스 PDF 미리보기"></iframe>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const SLOT_LABEL={'01':'수리비 (Repair)','02':'관련기부속비 (Spare)','03':'출장비 외 (Travel & etc)'};
+  const vesselChip=d=>{
+    const m=d&&d.matched_vessel;
+    if(!m) return `<span class="ves-chip none">미매칭</span>`;
+    return `<span class="ves-chip ${m.in_my_roster?'ok':'other'}">${esc(m.name)}</span>`;
+  };
+  async function api(method,url,body){
+    const o={method,headers:{}};
+    if(body){o.headers['Content-type']='application/json';o.body=JSON.stringify(body);}
+    const r=await fetch(url,o);let j={};try{j=await r.json();}catch(e){}
+    return {ok:r.ok,j};
+  }
+  function jparse(s){if(s==null)return null;if(typeof s!=='string')return s;try{return JSON.parse(s);}catch(e){return null;}}
+  function mark(v,label){
+    if(v===1||v===true) return `<span class="mok">${label} ✓</span>`;
+    if(v===0||v===false) return `<span class="mng">${label} ✗</span>`;
+    return `<span class="mun">${label} —</span>`;
+  }
+  const money=v=>v==null||v===''?'-':Number(v).toLocaleString('en-US',{maximumFractionDigits:2});
+  function dtIso(s){s=String(s==null?'':s).trim();return /^\d{8}$/.test(s)?`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}`:'';}
+  function dtCompact(s){return String(s==null?'':s).replace(/-/g,'').trim();}
+  function eom(s){s=String(s||'');if(!/^\d{8}$/.test(s))return '-';const y=+s.slice(0,4),m=+s.slice(4,6);return s.slice(0,6)+String(new Date(y,m,0).getDate()).padStart(2,'0');}
+  function srcTag(sel){
+    if(!sel||!sel.source) return '';
+    if(sel.source==='svms') return '<span class="rp-src">SVMS 값</span>';
+    if(sel.source==='suggest') return `<span class="rp-src sg">제안${sel.conf!=null?' conf '+esc(sel.conf):''} · 확인 필요</span>`;
+    if(sel.source==='user') return `<span class="rp-src us">사람 지정${sel.by?' · '+esc(sel.by):''}</span>`;
+    return '';
+  }
+  function repairBlock(d,rc,editable){
+    const slots=Array.isArray(rc.slots)?rc.slots:[];
+    const sel=rc.exp_sel||{};
+    const rows=slots.map(s=>{
+      const p=sel[s.slot]||{};
+      const cur=p.exp_cd?`${p.exp_cd}${p.exp_nm?' '+p.exp_nm:''}`:'';
+      const need=Number(s.inv_amt||0)!==0;
+      const cell=editable
+        ?`<input class="rp-exp-in" data-slot="${esc(s.slot)}" list="expcodes" value="${esc(cur)}" placeholder="${need?'코드/명칭 검색 (필수)':'코드/명칭 검색'}">`
+        :esc(cur||'-');
+      return `<tr><td>${esc(SLOT_LABEL[s.slot]||s.slot)}</td><td class="num">${money(s.quote_amt)}</td><td class="num"><b>${money(s.inv_amt)}</b></td>`
+        +`<td>${esc(s.exp_cd||'-')}</td><td>${cell} ${srcTag(p)}${need&&!p.exp_cd?' <span class="mng">미지정</span>':''}</td></tr>`;
+    }).join('');
+    const ov=(rc.inv_dt_override&&rc.original_inv_dt&&rc.inv_dt_override!==rc.original_inv_dt)
+      ?` <span class="mun">(수동교정 · SVMS 원본 ${esc(rc.original_inv_dt)} · ${esc(rc.inv_dt_override_by||'')} ${esc(rc.inv_dt_override_at||'')})</span>`:'';
+    const remit=`Remit <i class="mun">${esc(d.pay_dt||'-')}</i> → <b>${esc(eom(d.inv_dt))}</b> <span class="mun">(Invoice Date 월말)</span>`;
+    let html=`<div class="fr-sect"><div class="fr-sect-t">비용 · Expense code${editable?' · 수정가능':''}</div>`
+      +`<table class="rp-slots"><thead><tr><th>항목</th><th>견적</th><th>인보이스</th><th>SVMS EXP</th><th>적용 EXP</th></tr></thead><tbody>${rows}</tbody></table>`
+      +`<div style="margin-top:6px">INV_DT <b>${esc(d.inv_dt||'-')}</b>${ov} &nbsp; ${remit}</div>`;
+    if(editable){
+      html+=`<div class="fr-edit"><label>Invoice Date <input type="date" class="fr-date-in" value="${esc(dtIso(d.inv_dt))}"></label>`
+        +`<button class="fr-b ed" data-act="edit">수정저장</button>`
+        +`<span class="mun">제안 코드는 확인용입니다. 맞으면 그대로 두고, 아니면 목록에서 고르세요.</span></div>`;
+    }
+    return html+'</div>';
+  }
+  function purchaseBlock(d,rc){
+    const lines=Array.isArray(rc.lines)?rc.lines:[];
+    const rows=lines.map(l=>`<tr><td>${esc(l.seq)}</td><td>${esc(l.part)}</td><td class="num">${esc(l.qty)}</td><td class="num">${money(l.amt)}</td><td>${esc(l.exp_cd||'-')} ${esc(l.exp_nm||'')}</td></tr>`).join('');
+    return `<div class="fr-sect"><div class="fr-sect-t">구매 라인 (${esc(rc.n_lines??lines.length)})</div>`
+      +`<table class="rp-slots"><thead><tr><th>#</th><th>품목</th><th>수량</th><th>금액</th><th>EXP</th></tr></thead><tbody>${rows}</tbody></table>`
+      +`<div style="margin-top:6px">Order <b>${esc(rc.odr_no||d.ref_key||'-')}</b> · Delivery ${esc(rc.obd_dt||'-')} · Remit <b>${esc(d.pay_dt||'-')}</b> <span class="mun">(SVMS 값 그대로)</span>`
+      +` · Total ${money(rc.amt)} · VAT ${money(rc.vat)} · Discount ${money(rc.dis_amt)} · Surcharge ${money(rc.add_mny)}</div></div>`;
+  }
+  function card(d){
+    const rc=jparse(d.raw_card)||{};
+    const gate=(d.gate||'').toUpperCase();
+    const kindBadge=d.kind==='repair'?'<span class="fr-badge b-repair">수리</span>':'<span class="fr-badge b-purchase">구매</span>';
+    const gateBadge=gate?`<span class="fr-badge ${gate==='PASS'?'b-pass':'b-hold'}">${gate}</span>`:'';
+    const stBadge=d.status!=='pending'?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
+    const kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b> ${vesselChip(d)}</span>`
+      +`<span>벤더 <b>${esc(d.vndr_nm||d.vndr_cd||'-')}</b></span>`
+      +`<span>Grand Total <b>${money(d.amt)} ${esc(d.cur_cd||'')}</b></span>`
+      +`<span>Invoice No <b>${esc(d.inv_no||'-')}</b></span>`
+      +`<span>Invoice Date <b>${esc(d.inv_dt||'-')}</b></span>`;
+    const pdfNm=d.match_src||rc.preview_src||'원본 PDF';
+    const pdf=d.has_pdf?`<a class="pdf-lnk" data-pdf="${d.id}" data-nm="${esc(pdfNm)}">${d.match_src?'매칭 인보이스':'대표 첨부(대조 미일치)'}: ${esc(pdfNm)}</a>`:'<span class="mun">미리보기 없음</span>';
+    const atts=jparse(d.attachments)||[];
+    const match=`<div class="fr-sect"><div class="fr-sect-t">PDF 대조</div>${mark(d.inv_no_match,'Invoice No')} &nbsp; ${mark(d.amt_match,'금액')} &nbsp; ${mark(d.date_match,'날짜')}`
+      +`<div style="margin-top:4px">${pdf}</div>${atts.length?`<div class="mun" style="margin-top:2px">첨부: ${atts.map(esc).join(' · ')}</div>`:''}</div>`;
+    const why=jparse(d.hold_reasons)||[], flags=jparse(d.flags)||[];
+    const whyLine=(why.length||flags.length)?`<div class="fr-sect">${why.map(f=>`<span class="fr-why">${esc(f)}</span>`).join('')}${flags.map(f=>`<span class="fr-flag">${esc(f)}</span>`).join('')}</div>`:'';
+    const editable=d.status==='pending'&&d.kind==='repair';
+    const detail=d.kind==='repair'?repairBlock(d,rc,editable):purchaseBlock(d,rc);
+    let acts;
+    if(d.status==='pending'){
+      acts=`<label class="fr-optout"><input type="checkbox" data-optout ${gate==='PASS'?'checked':''}> 승인(컨펌)</label>
+        <button class="fr-b ap" data-act="approve">승인</button>
+        <input class="fr-rsn" placeholder="리젝 사유 (TRMT 표시만 — SVMS 반려 안 함)">
+        <button class="fr-b rj" data-act="reject">리젝</button>
+        <button class="fr-b del" data-act="delete">삭제</button>`;
+    } else if(d.status==='approved'||d.status==='rejected'){
+      const lbl=d.status==='approved'?'승인 — 컨펌 실행 대기':'리젝 표시(TRMT 만)';
+      acts=`<span class="fr-decided">${lbl}${d.reject_reason?' — 사유: '+esc(d.reject_reason):''} (${esc(d.decided_by||'')})</span>
+        <button class="fr-b rs" data-act="reset">결정 취소</button>${d.status==='rejected'?'<button class="fr-b del" data-act="delete">삭제</button>':''}`;
+    } else {
+      acts=`<span class="fr-decided">${esc(d.status)}${d.result?' — '+esc(d.result):''}</span>${d.status!=='submitting'?'<button class="fr-b del" data-act="delete">삭제</button>':''}`;
+    }
+    return `<div class="fr-card collapsed" data-id="${d.id}" data-status="${esc(d.status)}" data-kind="${esc(d.kind)}" data-inv-dt="${esc(d.inv_dt||'')}">
+      <div class="fr-top"><span class="fr-caret">▾</span>
+        <div style="flex:1"><div class="fr-subj">${esc(d.subj||d.vndr_nm||d.svms_key)}</div>
+        <div class="fr-meta">${esc(d.svms_key)} · ${esc(d.vsl_nm||d.vsl_cd||'')} · ${esc(d.vndr_nm||'')} · <b>${money(d.amt)} ${esc(d.cur_cd||'')}</b></div></div>
+        <div class="fr-badges">${kindBadge}${gateBadge}${stBadge}</div></div>
+      <div class="fr-body"><div class="fr-kv">${kv}</div>${match}${detail}${whyLine}</div>
+      <div class="fr-acts">${acts}</div></div>`;
+  }
+  function editingNow(){
+    const a=document.activeElement;
+    return !!(a&&a.closest&&a.closest('.fr-card')&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+  }
+  async function load(auto){
+    if(auto&&editingNow()) return;
+    const _sy=window.scrollY, snap={};
+    document.querySelectorAll('.fr-card').forEach(el=>{
+      const cb=el.querySelector('[data-optout]'),dt=el.querySelector('.fr-date-in'),rs=el.querySelector('.fr-rsn');
+      const ex={};el.querySelectorAll('.rp-exp-in').forEach(i=>ex[i.dataset.slot]=i.value);
+      snap[el.dataset.id]={chk:cb?cb.checked:null,dt:dt?dt.value:null,rs:rs?rs.value:null,ex,coll:el.classList.contains('collapsed')};
+    });
+    const {ok,j}=await api('GET','/api/rpcost/drafts');
+    if(!ok){$('#fr-list').innerHTML='<div class="fr-empty">불러오기 실패</div>';return;}
+    const ds=j.drafts||[];
+    $('#fr-count').textContent=`대기 ${j.pending}건 / 전체 ${ds.length}건`+(j.enabled?'':' · 킬스위치 ON');
+    $('#fr-list').innerHTML=ds.length?ds.map(card).join(''):'<div class="fr-empty">카드 없음 — [카드적재(prep)] 실행</div>';
+    document.querySelectorAll('.fr-card').forEach(el=>{
+      const s=snap[el.dataset.id];
+      if(s){
+        const cb=el.querySelector('[data-optout]'),dt=el.querySelector('.fr-date-in'),rs=el.querySelector('.fr-rsn');
+        if(cb&&s.chk!=null)cb.checked=s.chk;
+        if(dt&&s.dt!=null)dt.value=s.dt;
+        if(rs&&s.rs!=null)rs.value=s.rs;
+        el.querySelectorAll('.rp-exp-in').forEach(i=>{if(s.ex[i.dataset.slot]!=null)i.value=s.ex[i.dataset.slot];});
+        el.classList.toggle('collapsed',!!s.coll);
+      }
+      el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>act(el,b.dataset.act));
+      el.querySelectorAll('.pdf-lnk').forEach(a=>a.onclick=e=>{e.preventDefault();e.stopPropagation();openPdf(a.dataset.pdf,a.dataset.nm);});
+      el.querySelector('.fr-top').onclick=()=>el.classList.toggle('collapsed');
+    });
+    requestAnimationFrame(()=>window.scrollTo(0,_sy));
+  }
+  function openPdf(id,nm){
+    const url=`/api/rpcost/drafts/${id}/pdf`;
+    $('#pdf-ttl').textContent=nm||'PDF';$('#pdf-frame').src=url;$('#pdf-open').href=url;$('#pdf-modal').classList.add('open');
+  }
+  function closePdf(){$('#pdf-modal').classList.remove('open');$('#pdf-frame').src='about:blank';}
+  $('#pdf-close').onclick=closePdf;
+  $('#pdf-modal').onclick=e=>{if(e.target.id==='pdf-modal')closePdf();};
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closePdf();});
+  async function loadExp(){
+    const {ok,j}=await api('GET','/api/invoice/expense-codes');
+    if(ok&&j.codes){$('#expcodes').innerHTML=j.codes.map(c=>`<option value="${esc(c.code)} ${esc(c.name||c.name_en||'')}">`).join('');}
+  }
+  async function act(el,a){
+    const id=el.dataset.id;
+    if(a==='edit'){
+      const body={};
+      const invDt=dtCompact(el.querySelector('.fr-date-in').value);
+      if(invDt&&invDt!==(el.dataset.invDt||'')) body.inv_dt=invDt;
+      const exp={};
+      el.querySelectorAll('.rp-exp-in').forEach(i=>{
+        if(i.value.trim()===i.defaultValue.trim()) return;
+        exp[i.dataset.slot]=i.value.trim().split(/\s+/)[0].replace(/[^0-9A-Za-z]/g,'');
+      });
+      if(Object.keys(exp).length) body.exp=exp;
+      if(!Object.keys(body).length){alert('바뀐 내용이 없습니다');return;}
+      el.classList.add('is-busy');
+      const {ok,j}=await api('POST',`/api/rpcost/drafts/${id}/edit`,body);
+      el.classList.remove('is-busy');
+      if(!ok){alert('수정 실패: '+(j.error||''));return;}
+      load();return;
+    }
+    let url=`/api/rpcost/drafts/${id}`,method='POST',body=null;
+    if(a==='approve'){
+      const cb=el.querySelector('[data-optout]');
+      if(cb&&!cb.checked){alert('승인(컨펌) 체크가 해제돼 있습니다. 체크 후 승인하거나 리젝/삭제하세요.');return;}
+      url+='/approve';
+    } else if(a==='reject'){
+      const rsn=el.querySelector('.fr-rsn').value.trim();
+      if(!rsn){alert('리젝 사유를 입력하세요.');return;}
+      if(!confirm(`TRMT 에만 리젝으로 표시할까요?\n· 사유: ${rsn}\n· SVMS 는 바뀌지 않습니다(반려가 필요하면 SVMS 에서 직접)`))return;
+      body={reason:rsn};url+='/reject';
+    } else if(a==='reset'){url+='/reset';}
+    else if(a==='delete'){if(!confirm('이 카드를 삭제할까요?'))return;method='DELETE';}
+    el.classList.add('is-busy');
+    const {ok,j}=await api(method,url,body);
+    if(!ok){alert('실패: '+(j.error||''));el.classList.remove('is-busy');}
+    load();
+  }
+  $('#fr-verify').onclick=async()=>{
+    if(!confirm('SVMS 수리·구매비용 컨펌대기 건을 카드로 적재할까요? (SVMS 읽기만, 수 분 소요)'))return;
+    const {ok,j}=await api('POST','/api/automation/run',{task:'rpcost_confirm',mode:'verify'});
+    alert(ok?'적재 실행 — 몇 분 뒤 새로고침하세요.':(j.error||'실패'));
+  };
+  $('#fr-submit').onclick=async()=>{
+    const cards=[...document.querySelectorAll('.fr-card')];
+    const ids=cards.filter(el=>{const cb=el.querySelector('[data-optout]');return cb&&cb.checked&&el.dataset.status==='pending';}).map(el=>el.dataset.id);
+    const already=cards.filter(el=>el.dataset.status==='approved').length;
+    if(!ids.length&&!already){alert('승인(체크)된 카드가 없습니다.');return;}
+    const nRepair=cards.filter(el=>ids.includes(el.dataset.id)&&el.dataset.kind==='repair').length;
+    if(!confirm(`체크한 ${ids.length}건 승인 + (기존 승인 ${already}건 포함) 컨펌을 실행할까요?\n· 구매: SVMS Approve(STATUS=A)\n· 수리: SVMS HQ Confirm(INV_STATUS=CU) ${nRepair}건`))return;
+    if(ids.length){
+      const r=await api('POST','/api/rpcost/drafts/approve-bulk',{ids});
+      if(!r.ok){alert('일괄승인 실패: '+(r.j.error||''));return;}
+    }
+    const {ok,j}=await api('POST','/api/automation/run',{task:'rpcost_confirm',mode:'live'});
+    alert(ok?`${ids.length}건 승인 + 컨펌 실행 — 몇 분 뒤 새로고침하세요.`:(j.error||'실패'));
+    load();
+  };
+  $('#fr-collapse').onclick=()=>{
+    const cards=[...document.querySelectorAll('.fr-card')];
+    const anyOpen=cards.some(el=>!el.classList.contains('collapsed'));
+    cards.forEach(el=>el.classList.toggle('collapsed',anyOpen));
+    $('#fr-collapse').textContent=anyOpen?'전체펼치기':'전체접기';
+  };
+  $('#fr-reload').onclick=()=>load();
+  $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌·리젝표시·실패) 카드를 비울까요?'))return;await api('DELETE','/api/rpcost/drafts/decided');load();};
+  loadExp(); load(); setInterval(()=>{if(document.hidden||(window.InlineEdit&&InlineEdit.busy()))return;load(true);},8000);
+})();
+</script>
+{% endblock %}

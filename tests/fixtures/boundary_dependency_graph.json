@@ -81,6 +81,7 @@
     "routes_followup.py": [],
     "routes_liscr.py": [],
     "routes_repair_request.py": [],
+    "routes_rpcost.py": [],
     "routes_tail.py": [],
     "routes_vetting_mail.py": [],
     "token_auth.py": [
@@ -494,6 +495,20 @@
       "admin_required",
       "api_key_required",
       "login_required"
+    ]
+  },
+  "routes_rpcost.py": {
+    "app_core.py": [
+      "RPCOST_PDF_DIR",
+      "execute",
+      "execute_rc",
+      "query"
+    ],
+    "helpers_shared.py": [
+      "_annotate_drafts_with_vessel",
+      "_automation_enabled",
+      "admin_required",
+      "api_key_required"
     ]
   },
   "routes_tail.py": {

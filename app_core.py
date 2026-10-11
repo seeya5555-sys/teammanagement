@@ -41,6 +41,7 @@ SOA_REVIEW_PDF_DIR = os.path.join(INSTANCE_DIR, 'soa_review_pdfs')  # SOA 수동
 DOCKATT_FILE_DIR = os.path.join(INSTANCE_DIR, 'dockproc_files')  # Dock 발주현황 벤더 견적서(SVMS MAOE) preview cache
 STT_AUDIO_DIR = os.path.join(INSTANCE_DIR, 'stt_audio')       # 회의록 STT 원본 오디오 cache
 LISCR_PDF_DIR = os.path.join(INSTANCE_DIR, 'liscr_pdfs')      # 기국(LISCR) 인보이스 PDF 업로드 원본 — 맥 러너가 받아 SVMS 첨부까지 씀
+RPCOST_PDF_DIR = os.path.join(INSTANCE_DIR, 'rpcost_pdfs')    # 수리·구매비용 컨펌 미리보기 PDF(컨펌/리젝/삭제 시 자동삭제)
 # 회의록 STT Phase 0a 상수
 STT_AUDIO_EXT = {'m4a', 'wav', 'mp3', 'aac', 'caf', 'webm', 'ogg', 'mp4', 'aiff', 'flac'}
 STT_MAX_BYTES = 200 * 1024 * 1024   # 200MB 상한
@@ -60,7 +61,7 @@ ALLOWED_EXT = {
 _RUNTIME_DIRS = (
     INSTANCE_DIR, UPLOAD_DIR, INVOICE_PDF_DIR, JEONJA_PDF_DIR, AOR_PDF_DIR,
     FUNDREQ_FILE_DIR, SOA_REVIEW_PDF_DIR, DOCKATT_FILE_DIR, STT_AUDIO_DIR,
-    LISCR_PDF_DIR,
+    LISCR_PDF_DIR, RPCOST_PDF_DIR,
 )
 
 

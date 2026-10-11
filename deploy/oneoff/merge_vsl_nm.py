@@ -32,6 +32,7 @@ KNOWN_REFS = {
     'aor_draft', 'dock_inquiry_draft', 'dock_procure', 'dock_submit_draft', 'dock_yard',
     'fundreq_draft', 'invoice_draft', 'liscr_job', 'repair_request', 'reqgen_draft',
     'soa_review_case', 'remittance_draft', 'dock_yard_remark_job',
+    'rp_cost_draft',   # /rpcost 수리·구매비용 카드 — vsl_nm 은 표시용(UNIQUE 없음), invoice_draft 와 동일 취급
 }
 OWNER = 'dock_procure_vessel'          # PK = vsl_nm. 대상 행이 이미 있으면 출처 행은 삭제한다.
 META_SKIP = {'vsl_nm', 'updated_at', 'origin'}   # origin=출처 태그라 shim 과 함께 사라지는 게 정상
