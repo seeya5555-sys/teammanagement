@@ -3022,6 +3022,13 @@ def api_automation_run():
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
         params = json.dumps(vessel_params[0], ensure_ascii=False)
+    if task == 'rpcost_confirm':   # 수리/구매 분리 실행(옵션). 미지정 = 둘 다(하위호환)
+        p = d.get('params') if isinstance(d.get('params'), dict) else {}
+        kind = p.get('kind')
+        if kind not in (None, ''):
+            if kind not in ('repair', 'purchase'):
+                return jsonify({'error': 'kind must be repair|purchase'}), 400
+            params = json.dumps({'kind': kind})
     if not _automation_enabled():
         return jsonify({'error': 'killswitch ON — 자동화 정지중. 마스터 스위치 먼저 켜세요.'}), 409
     # lock: 같은 task가 queued/running이면 거부(중복클릭·동시실행 방지)

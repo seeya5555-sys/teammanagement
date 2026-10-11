@@ -403,24 +403,29 @@ def api_rpcost_edit(did):
 @bp.route('/api/ext/rpcost/approved')
 @api_key_required
 def api_ext_rpcost_approved():
-    """approved → submitting claim(조건부 CAS). ?peek=1 = 상태 안 바꾸고 조회만(DRY 전용).
+    """approved → submitting claim(조건부 CAS). ?peek=1 = 상태 안 바꾸고 조회만(DRY 전용). ?kind=repair|purchase = 그 종류만.
     ?only=<svms_key> = 그 건만(카나리). claim 은 `status='approved' AND raw_card IS <읽은 값>` CAS 로
     새 claim_token 을 박고, 응답 스냅샷은 정확히 CAS 가 확인한 그 raw_card 다. result 는 이 토큰이 맞을 때만 반영.
     6h+ submitting = failed(사람 재검토), 자동 재컨펌 안 함(절반성공 이중처리 방지)."""
     only = str(request.args.get('only') or '').strip()
+    kind = str(request.args.get('kind') or '').strip().lower()   # repair|purchase 만 처리(미지정=둘 다)
+    if kind and kind not in RPCOST_KINDS:
+        return jsonify({'error': 'kind must be repair|purchase'}), 400
     if request.args.get('peek'):
         rows = query("SELECT id, kind, svms_key, ref_key, vsl_cd, raw_card FROM rp_cost_draft "
-                     "WHERE status='approved' AND (?='' OR svms_key=?) ORDER BY id ASC", (only, only))
+                     "WHERE status='approved' AND (?='' OR svms_key=?) AND (?='' OR kind=?) ORDER BY id ASC",
+                     (only, only, kind, kind))
         return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
     execute("UPDATE rp_cost_draft SET status='failed', "
             "result=COALESCE(result,'')||' [auto:6h+ submitting→failed, 사람 재검토]' "
             "WHERE status='submitting' AND done_at IS NOT NULL AND done_at < datetime('now','localtime','-6 hours')")
     out = []
     for r in query("SELECT id, kind, svms_key, ref_key, vsl_cd, raw_card FROM rp_cost_draft "
-                   "WHERE status='approved' AND (?='' OR svms_key=?) ORDER BY id ASC", (only, only)):
+                   "WHERE status='approved' AND (?='' OR svms_key=?) AND (?='' OR kind=?) ORDER BY id ASC",
+                     (only, only, kind, kind)):
         token = secrets.token_hex(16)
         if execute_rc("UPDATE rp_cost_draft SET status='submitting', claim_token=?, done_at=datetime('now','localtime') "
-                      "WHERE id=? AND status='approved' AND raw_card IS ?", (token, r['id'], r['raw_card'])):
+                      "WHERE id=? AND status='approved' AND raw_card IS ? AND kind=?", (token, r['id'], r['raw_card'], r['kind'])):
             out.append(dict(r, claim_token=token))
     return jsonify({'count': len(out), 'drafts': out})
 

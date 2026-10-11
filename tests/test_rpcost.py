@@ -364,6 +364,26 @@ class RpCostTests(unittest.TestCase):
         r = self.c.post('/api/automation/run', json={'task': 'rpcost_confirm', 'mode': 'live'})
         self.assertEqual(200, r.status_code, r.get_json())
 
+    def test_claim_kind_filter(self):
+        a = self.ingest(purchase_payload()).get_json()['id']
+        self.set_status(a, 'approved')
+        self.assertEqual(400, self.c.get('/api/ext/rpcost/approved?kind=bogus', headers=KEY).status_code)
+        self.assertEqual(0, self.c.get('/api/ext/rpcost/approved?peek=1&kind=repair', headers=KEY).get_json()['count'])
+        self.assertEqual(0, self.c.get('/api/ext/rpcost/approved?kind=repair', headers=KEY).get_json()['count'])
+        self.assertEqual('approved', self.row(a)['status'])
+        self.assertEqual(1, self.c.get('/api/ext/rpcost/approved?peek=1&kind=purchase', headers=KEY).get_json()['count'])
+        self.assertEqual(1, self.c.get('/api/ext/rpcost/approved?kind=purchase', headers=KEY).get_json()['count'])
+        self.assertEqual('submitting', self.row(a)['status'])
+
+    def test_run_kind_param(self):
+        r = self.c.post('/api/automation/run', json={'task': 'rpcost_confirm', 'mode': 'verify', 'params': {'kind': 'x'}})
+        self.assertEqual(400, r.status_code)
+        r = self.c.post('/api/automation/run', json={'task': 'rpcost_confirm', 'mode': 'verify', 'params': {'kind': 'repair'}})
+        self.assertEqual(200, r.status_code, r.get_json())
+        with appmod.app.app_context():
+            row = appmod.query("SELECT params FROM automation_run WHERE run_id=?", (r.get_json()['run_id'],), one=True)
+        self.assertEqual({'kind': 'repair'}, json.loads(row['params']))
+
     def test_page_renders(self):
         r = self.c.get('/rpcost')
         self.assertEqual(200, r.status_code)
