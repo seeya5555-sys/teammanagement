@@ -290,7 +290,7 @@ def apply_reply(rid, data):
             return {'ok': True, 'duplicate': True, 'updated': 0}
         snapshot = {i['id']: i for i in json.loads(run['snapshot'])}
         current = items_for(run['vessel_id'])
-        changes, seen = [], set()
+        changes, seen, vanished = [], set(), []
         for update in updates:
             origin = snapshot.get(update.get('item_id'))
             remark = str(update.get('remark') or '').strip()
@@ -304,8 +304,12 @@ def apply_reply(rid, data):
             original_remark = original_remark.strip()
             seen.add(origin['id'])
             matches = [i for i in current if item_key(i) == item_key(origin)]
+            if not matches:
+                # 최신 Class 스냅샷에서 종결·삭제된 항목: 덮어쓸 대상이 없으므로 반영 생략, 회신은 확인필요로 기록(무한 409 방지)
+                vanished.append(str(origin.get('no') or origin['id']))
+                continue
             if len(matches) != 1:
-                raise ClassMailError(409, 'Class 항목 변경·삭제·중복: 수동 확인 필요')
+                raise ClassMailError(409, 'Class 항목 변경·중복: 수동 확인 필요')
             live = matches[0]
             tracked = conn.execute('SELECT last_action FROM class_mail_item_state WHERE run_id=? AND item_key=?', (rid, item_key(origin))).fetchone()
             base = tracked['last_action'] if tracked else (origin['action_taken'] or '')
@@ -324,7 +328,11 @@ def apply_reply(rid, data):
             if cur.rowcount != 1:
                 raise ClassMailError(409, '조치사항 CAS 충돌')
             conn.execute('INSERT INTO class_mail_item_state(run_id,item_key,last_action,reply_baseline) VALUES(?,?,?,?) ON CONFLICT(run_id,item_key) DO UPDATE SET last_action=excluded.last_action,reply_baseline=excluded.reply_baseline', (rid, identity, updated, reply_baseline))
-        note = str(data.get('note') or '')[:1000]
+        note = str(data.get('note') or '')
+        if vanished:  # 경고를 앞에 두어 길이 절단에도 '확인 필요'가 남게 함
+            warn = f"확인 필요: 최신 Class에 없는 항목(종결·삭제·추출누락 가능) No.{','.join(vanished)[:300]} 회신 반영 생략"
+            note = warn + ('; ' + note if note else '')
+        note = note[:1000]
         conn.execute('INSERT INTO class_mail_replies(run_id,message_id,sender,received_at,updated,note) VALUES(?,?,?,?,?,?)', (rid, msg, sender[:200], str(data.get('received_at') or '')[:30], len(changes), note))
         conn.commit()
     except Exception:

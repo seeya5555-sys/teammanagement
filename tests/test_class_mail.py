@@ -150,6 +150,26 @@ class ClassMailTests(unittest.TestCase):
             self.assertEqual('Manual changed', query('SELECT action_taken FROM class_status_items WHERE id=1', one=True)['action_taken'])
             self.assertEqual(0, query('SELECT COUNT(*) n FROM class_mail_replies', one=True)['n'])
 
+    def test_reply_for_item_cleared_from_class_snapshot_is_recorded_not_409(self):
+        rid = self.sent_run()
+        with A.app.app_context():
+            execute('DELETE FROM class_status_items')
+        body = {'message_id': 'gone1', 'sender': 'x@example.com', 'note': 'x' * 2000, 'updates': [{'item_id': 1, 'remark': 'Complete'}]}
+        response = self.post(f'/runs/{rid}/reply', body)
+        self.assertEqual(200, response.status_code, response.get_json())
+        self.assertEqual(0, response.get_json()['updated'])
+        self.assertTrue(self.post(f'/runs/{rid}/reply', body).get_json()['duplicate'])
+        with A.app.app_context():
+            note = query('SELECT note FROM class_mail_replies', one=True)['note']
+            self.assertTrue(note.startswith('확인 필요: 최신 Class에 없는 항목'), note[:80])
+            self.assertIn('No.1 회신 반영 생략', note)
+
+    def test_duplicate_class_items_still_block_reply(self):
+        rid = self.sent_run()
+        with A.app.app_context():
+            execute("INSERT INTO class_status_items(id,cs_id,category,no,issued_date,description,due_date,action_taken,importance,updated_at) VALUES(2,1,'COC',1,'2026-09-01','Repair pipe','2026-10-30','Existing action','','')")
+        self.assertEqual(409, self.post(f'/runs/{rid}/reply', {'message_id': 'dup1', 'sender': 'x@example.com', 'updates': [{'item_id': 1, 'remark': 'Complete'}]}).status_code)
+
     def test_no_date_no_findings_or_off_cannot_claim(self):
         _, prepared = self.prepare_and_claim()
         # Separate vessel-week cannot be forced via requested week.
