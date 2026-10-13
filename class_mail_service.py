@@ -327,7 +327,7 @@ def apply_reply(rid, data):
             if cur.rowcount != 1:
                 raise ClassMailError(409, '조치사항 CAS 충돌')
             conn.execute('INSERT INTO class_mail_item_state(run_id,item_key,last_action,reply_baseline) VALUES(?,?,?,?) ON CONFLICT(run_id,item_key) DO UPDATE SET last_action=excluded.last_action,reply_baseline=excluded.reply_baseline', (rid, identity, updated, reply_baseline))
-        note = str(data.get('note') or '')[:1000]
+        note = ''  # 처리 메모는 TRMT에 저장하지 않음, 텔레그램 보고로만(형 지시 2026-10-13)
         conn.execute('INSERT INTO class_mail_replies(run_id,message_id,sender,received_at,updated,note) VALUES(?,?,?,?,?,?)', (rid, msg, sender[:200], str(data.get('received_at') or '')[:30], len(changes), note))
         conn.commit()
     except Exception:
@@ -380,6 +380,6 @@ def class_rows(runs):
                            last_reply_at=(last['received_at'] or last['created_at']) if last else None,
                            sender=last['sender'] if last else '', update_count=sum(r['updated'] for r in replies),
                            receipt_count=sum(r['updated'] == 0 for r in replies),
-                           review_count=sum(r['updated'] == 0 and r['note'] != '수신 확인만 — 결과/조치 회신 아님' for r in replies),
+                           review_count=sum(str(r['message_id']).endswith('#hold') for r in replies),
                            sent_count=sent_count))
     return result
