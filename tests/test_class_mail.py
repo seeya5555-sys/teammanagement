@@ -154,15 +154,14 @@ class ClassMailTests(unittest.TestCase):
         rid = self.sent_run()
         with A.app.app_context():
             execute('DELETE FROM class_status_items')
-        body = {'message_id': 'gone1', 'sender': 'x@example.com', 'note': 'x' * 2000, 'updates': [{'item_id': 1, 'remark': 'Complete'}]}
+        body = {'message_id': 'gone1', 'sender': 'x@example.com', 'updates': [{'item_id': 1, 'remark': 'Complete'}]}
         response = self.post(f'/runs/{rid}/reply', body)
         self.assertEqual(200, response.status_code, response.get_json())
         self.assertEqual(0, response.get_json()['updated'])
         self.assertTrue(self.post(f'/runs/{rid}/reply', body).get_json()['duplicate'])
         with A.app.app_context():
-            note = query('SELECT note FROM class_mail_replies', one=True)['note']
-            self.assertTrue(note.startswith('확인 필요: 최신 Class에 없는 항목'), note[:80])
-            self.assertIn('No.1 회신 반영 생략', note)
+            # 최신 Class에 없음=종결: 리마크·확인필요 메모 없이 처리완료
+            self.assertEqual('', query('SELECT note FROM class_mail_replies', one=True)['note'])
 
     def test_duplicate_class_items_still_block_reply(self):
         rid = self.sent_run()
