@@ -65,15 +65,17 @@ def build_issue_workbook(rows, en=False, sub_text=None, exported_by='', now=None
         ves_map[vn]['rows'].append(r)
     ves_seq = sorted(ves_map.keys(), key=lambda n: (_vrank(ves_map[n]['type']), n))
 
+    # 형 지시(2026-10-15): TSI Comment 삭제. 회신용(EN)은 Status 1칸(=TRMT 현재값, 선박이 바꾸면 회신 반영)+Update 칸.
     HEADERS = (['No.', 'Issue Date', 'Item', 'Description', 'Action Plan',
-                'Priority', 'Status', 'Due Date', 'TSI Comment',
-                REPLY_ID_HEADER, REPLY_UPDATE_HEADER, REPLY_STATUS_HEADER]
+                'Priority', 'Due Date', REPLY_ID_HEADER, REPLY_STATUS_HEADER, REPLY_UPDATE_HEADER]
                if EN else
                ['No.', '발생일', '현안업무', '상세 내용', '진행사항 (조치 이력)',
-                '우선순위', '상태', '마감일', 'TSI Comment'])
-    COL_WIDTHS = [5, 12, 30, 40, 44, 12, 11, 12, 34] + ([10, 44, 16] if EN else [])
+                '우선순위', '상태', '마감일'])
+    COL_WIDTHS = [5, 12, 30, 40, 44, 12, 12, 10, 16, 50] if EN else [5, 12, 30, 40, 44, 12, 11, 12]
     N_COLS = len(HEADERS)
-    PRI_COL, STAT_COL = 6, 7
+    PRI_COL = 6
+    STAT_COL = 9 if EN else 7
+    REPLY_COLS = (9, 10) if EN else ()
 
     F = 'Malgun Gothic'
     title_font   = Font(name=F, size=14, bold=True, color='FFFFFF')
@@ -167,7 +169,7 @@ def build_issue_workbook(rows, en=False, sub_text=None, exported_by='', now=None
             for col_idx, h in enumerate(HEADERS, start=1):
                 c = ws.cell(row=HDR_ROW, column=col_idx, value=h)
                 c.font = col_hdr_font
-                c.fill = reply_hdr_fill if col_idx > 9 else col_hdr_fill
+                c.fill = reply_hdr_fill if col_idx in REPLY_COLS else col_hdr_fill
                 c.alignment = center_align
                 c.border = Border(left=thin, right=thin, top=med, bottom=med)
             ws.row_dimensions[HDR_ROW].height = 26
@@ -182,29 +184,28 @@ def build_issue_workbook(rows, en=False, sub_text=None, exported_by='', now=None
                     r.get('description') or '',
                     _fmt_actions(r.get('actions')),
                     r.get('priority') or '',
-                    STAT_LABEL.get(r.get('status'), r.get('status') or ''),
-                    r.get('due_date') or '',
-                    '',                                   # TSI Comment — 수기 기입용 빈 칸
                 ]
                 if EN:
-                    vals += [r.get('id'), '', REPLY_STATUS.get(r.get('status'), 'Open')]
+                    vals += [r.get('due_date') or '', r.get('id'), REPLY_STATUS.get(r.get('status'), 'Open'), '']
+                else:
+                    vals += [STAT_LABEL.get(r.get('status'), r.get('status') or ''), r.get('due_date') or '']
                 for col_idx, v in enumerate(vals, start=1):
                     c = ws.cell(row=cur_row, column=col_idx, value=v)
                     c.font = body_font
                     c.border = border_thin
-                    if col_idx in (1, 2, 8, 10, 12):
+                    if col_idx in ((1, 2, 7, 8) if EN else (1, 2, 8)):
                         c.alignment = cent_top
                     elif col_idx in (PRI_COL, STAT_COL):
                         c.alignment = center_align
                     else:
                         c.alignment = body_align
-                    if col_idx in (11, 12):
+                    if col_idx in REPLY_COLS:
                         c.fill = reply_fill
                 pri = r.get('priority')
                 if PRI_FILL.get(pri): ws.cell(row=cur_row, column=PRI_COL).fill = PRI_FILL[pri]
                 if pri in PRI_FONT:   ws.cell(row=cur_row, column=PRI_COL).font = PRI_FONT[pri]
                 st = r.get('status')
-                if STAT_FILL.get(st): ws.cell(row=cur_row, column=STAT_COL).fill = STAT_FILL[st]
+                if not EN and STAT_FILL.get(st): ws.cell(row=cur_row, column=STAT_COL).fill = STAT_FILL[st]
                 if st in STAT_FONT:   ws.cell(row=cur_row, column=STAT_COL).font = STAT_FONT[st]
                 cur_row += 1
 
@@ -215,7 +216,7 @@ def build_issue_workbook(rows, en=False, sub_text=None, exported_by='', now=None
                 from openpyxl.worksheet.datavalidation import DataValidation
                 dv = DataValidation(type='list', formula1='"Open,Closed"', allow_blank=True)
                 ws.add_data_validation(dv)
-                dv.add(f'L{HDR_ROW + 1}:L{last_row}')
+                dv.add(f'I{HDR_ROW + 1}:I{last_row}')
             ws.freeze_panes = f'A{HDR_ROW + 1}'
             ws.print_options.horizontalCentered = True
             ws.page_setup.orientation = 'landscape'

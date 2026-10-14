@@ -401,6 +401,15 @@ def pending_runs(days=21):
         for i in issues:
             i['updated'] = i['id'] in touched
         d['issues'] = issues
+        # 같은 선박의 다른 주차 메일에, 이번 발송 이후 수신된 회신으로 이번 주 현안 중 하나라도 실질 업데이트/종결되면
+        # (선박이 옛 메일에 답장) 이번 주도 회신으로 본다. close_suggest·무관 현안·발송 전 수신분은 제외.
+        sent_key = d.get('sent_at') or d.get('created_at') or ''
+        d['vessel_replied_after_sent'] = any(
+            r['issue_id'] in ids for r in query(
+                "SELECT e.issue_id FROM daily_mail_events e JOIN daily_mail_runs r2 ON r2.id=e.run_id "
+                "WHERE r2.vessel_id=? AND r2.id<>? AND e.kind IN ('update','close') AND e.issue_id IS NOT NULL "
+                "AND COALESCE(r2.last_reply_at,'') >= ? AND e.created_at >= ?",
+                (d['vessel_id'], d['id'], sent_key, sent_key)))
         d['processed_message_ids'] = [r['message_id'] for r in query(
             "SELECT DISTINCT message_id FROM daily_mail_events WHERE run_id=? AND kind='reply' "
             "AND message_id IS NOT NULL", (d['id'],))]
