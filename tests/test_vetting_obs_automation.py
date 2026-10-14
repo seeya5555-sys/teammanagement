@@ -101,6 +101,58 @@ class VettingObsAutomationTests(unittest.TestCase):
         self.assertIn('identity',result['error'])
         self.assertEqual('Open',self._status()[self.f1][0])
 
+    def test_strict_unreadable_extra_initial_is_ignored_not_fatal(self):
+        with appmod.app.app_context():
+            from app_core import execute
+            initial,close,ca = self._strict_sources()
+            execute("INSERT INTO vt_attachments(vetting_id,filename,stored_name,source,source_type,sha256) VALUES(?,'scan.pdf','scan.pdf','svms','initial','scan')",(self.vt,))
+            docs={'initial.docx':initial,'scan.pdf':'\n\n'}
+            with mock.patch.object(ai_gemini,'_close_doc_text',side_effect=lambda p,e: docs.get(os.path.basename(p),close)),mock.patch.object(ai_gemini,'_gemini_call_json',side_effect=AssertionError('no AI needed')):
+                result=ai_gemini.close_auto_judge(self.vt,dry=True,require_verified=True)
+        self.assertTrue(result['send_ready'])
+        self.assertEqual(3,result['closed_count'])
+
+    def test_strict_manual_full_upload_is_source_when_header_verified(self):
+        with appmod.app.app_context():
+            from app_core import execute
+            initial,close,ca = self._strict_sources()
+            execute("DELETE FROM vt_attachments WHERE vetting_id=?",(self.vt,))
+            execute("INSERT INTO vt_attachments(vetting_id,filename,stored_name,source,source_type,sha256) VALUES(?,'m.pdf','m.pdf','manual',NULL,'m')",(self.vt,))
+            with mock.patch.object(ai_gemini,'_close_doc_text',return_value=initial),mock.patch.object(ai_gemini,'_gemini_call_json',side_effect=AssertionError('no AI needed')):
+                ok=ai_gemini.close_auto_judge(self.vt,dry=True,require_verified=True)
+            with mock.patch.object(ai_gemini,'_close_doc_text',return_value=initial.replace('LVKX-0383-3966-7845','OTHER-1234-1234-1234')):
+                bad=ai_gemini.close_auto_judge(self.vt,dry=True,require_verified=True)
+        self.assertTrue(ok['send_ready'])
+        self.assertEqual(3,ok['open_after'])
+        self.assertFalse(bad['send_ready'])
+        self.assertIn('identity',bad['error'])
+
+    def test_close_response_identity_by_vessel_and_inspection_date(self):
+        resp='Vetting Inspection Response\nVessel: GHANA TEST Inspection Co: PETROVIETNAM\nPort: Ulsan Date: 06.Aug.2026\n'
+        ok=lambda t,d='2026-08-06',c='Petrovietnam': ai_gemini._verified_close_response(t,'Ghana Test','LVKX-0383-3966-7845',d,c)
+        self.assertTrue(ok(resp))
+        self.assertTrue(ok(resp.replace(' Inspection Co',' | Inspection Co').replace(' Date',' | Date')))
+        self.assertFalse(ok(resp,'2026-08-07'))
+        self.assertFalse(ok(resp,c='TOTAL'))
+        self.assertFalse(ok(resp,c=None))
+        self.assertFalse(ok(resp.replace('GHANA','GUYANA')))
+        self.assertFalse(ok(resp+'Report OTHR-1234-1234-1234\n'))  # 명시적 다른 Report No.는 fallback 불가
+        self.assertFalse(ok(resp.replace('Port: Ulsan Date: 06.Aug.2026','Port: Ulsan\nResponse Date: 06.Aug.2026')))
+        decl='SIRE 2.0 EDITOR\nObservation Declaration for LVKX-0383-3966-7845\nVessel Name GHANA TEST\n'
+        self.assertTrue(ai_gemini._verified_close_response(decl,'Ghana Test','LVKX-0383-3966-7845',None))
+        self.assertFalse(ai_gemini._verified_close_response(decl,'Ghana Test','OTHER-1234-1234-1234',None))
+
+    def test_strict_ai_open_unlocated_is_open_but_unlocated_closed_holds(self):
+        with appmod.app.app_context():
+            initial,close,ca = self._strict_sources()
+            close_nodate=close.replace('Date Closed: 24 Aug 2026\n','')
+            for st,ready in (('Open',True),('Closed',False)):
+                model={'items':[{'finding_id':f,'status':st,'evidence':'text that is nowhere in the document at all','action_ko':'x'} for f in (self.f1,self.f2,self.f3)]}
+                with mock.patch.object(ai_gemini,'_close_doc_text',side_effect=lambda p,e: initial if p.endswith('initial.docx') else close_nodate),mock.patch.object(ai_gemini,'GEMINI_API_KEY','fake'),mock.patch.object(ai_gemini,'_gemini_call_json',return_value=model):
+                    r=ai_gemini.close_auto_judge(self.vt,dry=True,force=True,require_verified=True)
+                self.assertEqual(ready,bool(r.get('send_ready')),st)
+                self.assertEqual(0,r['closed_count'])
+
     def test_strict_full_only_negative_without_comments_is_verified_open(self):
         with appmod.app.app_context():
             from app_core import execute

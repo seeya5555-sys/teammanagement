@@ -1905,6 +1905,43 @@ def _verified_sire_document(text, vessel_name, report_number, require_full=True)
                 and _svms_norm(vessel.group(1)) == _svms_norm(vessel_name))
 
 
+def _full_candidate_attachments(vid, db=None):
+    if db is not None:
+        return list(db.execute("SELECT * FROM vt_attachments WHERE vetting_id=? AND inactive_at IS NULL AND "
+                               "((source='svms' AND source_type='initial') OR COALESCE(source,'manual')='manual') ORDER BY id", (vid,)))
+    return query("SELECT * FROM vt_attachments WHERE vetting_id=? AND inactive_at IS NULL AND "
+                 "((source='svms' AND source_type='initial') OR COALESCE(source,'manual')='manual') ORDER BY id", (vid,))
+
+
+_MON = {m: i for i, m in enumerate(('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'), 1)}
+
+
+def _verified_close_response(text, vessel_name, report_number, inspection_date, inspection_company=None):
+    """Report No. 표지가 없는 운영사 회신서/SIRE 2.0 Observation Declaration 신원 확인.
+    Declaration=Report No.+선명, 회신서=선명+검사일(Report No. 없음) 둘 다 정확 일치만."""
+    header = (text or '')[:8000]
+    # 다른 Report No.가 하나라도 보이면 fallback 없이 거부
+    if any(_svms_norm(r) != _svms_norm(report_number)
+           for r in _re_cls.findall(r'\b[A-Z]{4}-\d{4}-\d{4}-\d{4}\b', header)):
+        return False
+    decl = _re_cls.search(r'(?im)^\s*Observation Declaration for\s+([A-Z0-9]+(?:-[A-Z0-9]+)+)\s*$', header)
+    vessel = _re_cls.search(r'(?im)^\s*Vessel Name\s+([^\r\n]+)', header)
+    if decl and vessel:
+        return (_svms_norm(decl.group(1)) == _svms_norm(report_number)
+                and _svms_norm(vessel.group(1)) == _svms_norm(vessel_name))
+    # 회신서 표지: "Vessel: X | Inspection Co: Y" + "Port: P | Date: <검사일>" — 선명·검사사·검사일 모두 정확 일치
+    rv = _re_cls.search(r'(?im)^\s*Vessel:\s*(.+?)\s*\|?\s*Inspection Co:\s*([^\r\n|]+?)\s*$', header)
+    rd = _re_cls.search(r'(?im)^\s*Port:[^\r\n]*?\bDate:\s*(\d{1,2})[.\-/ ]([A-Za-z]{3})[A-Za-z]*[.\-/ ](\d{4})\s*$', header)
+    if not (rv and rd and inspection_date and inspection_company):
+        return False
+    mon = _MON.get(rd.group(2).lower())
+    if not mon:
+        return False
+    return (_svms_norm(rv.group(1)) == _svms_norm(vessel_name)
+            and _svms_norm(rv.group(2)) == _svms_norm(inspection_company)
+            and f'{int(rd.group(3)):04d}-{mon:02d}-{int(rd.group(1)):02d}' == str(inspection_date)[:10])
+
+
 def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close', require_verified=False):
     """1개 vetting 판정(+적용). 반환 dict 는 러너가 그대로 텔레그램 보고에 쓴다."""
     v = query('SELECT vt.*, ve.name AS vessel_name, ve.vessel_type FROM vettings vt JOIN vessels ve ON ve.id=vt.vessel_id '
@@ -1925,30 +1962,37 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close', requi
     docs, used = [], []
     initial_texts = []
     if require_verified:
-        initial_atts = query("SELECT * FROM vt_attachments WHERE vetting_id=? AND source='svms' AND source_type='initial' AND inactive_at IS NULL ORDER BY id", (vid,))
+        # Full 후보=SVMS initial + 수동 업로드. 출처가 아니라 본문 헤더(Report/Vessel/Full)로 신원을 확정하고,
+        # 스캔본·Observation Declaration 등 검증 안 되는 파일은 근거에서 제외만 한다(전체 실패 아님).
+        initial_atts = _full_candidate_attachments(vid)
         if not initial_atts and not atts:
             return {**base, 'error': 'no_full_or_close_source', 'send_ready': False}
         for a in initial_atts:
             ext = (a['filename'] or '').rsplit('.', 1)[-1].lower()
             text = _close_doc_text(os.path.join(UPLOAD_DIR, a['stored_name']), ext)
             if not _verified_sire_document(text, v['vessel_name'], v['report_number']):
-                return {**base, 'error': 'full_document_identity_or_read_failure', 'send_ready': False}
+                if _verified_close_response(text, v["vessel_name"], v["report_number"], v["inspection_date"], v["inspection_company"]):
+                    if text not in docs:
+                        docs.append(text)
+                    used.append({'id': a['id'], 'filename': a['filename'], 'sha256': hashlib.sha256(text.encode()).hexdigest()})
+                continue
             if text not in initial_texts:
                 initial_texts.append(text)
             used.append({'id': a['id'], 'filename': a['filename'], 'sha256': hashlib.sha256(text.encode()).hexdigest()})
     for a in atts:
         ext = (a['filename'] or '').rsplit('.', 1)[-1].lower()
         if ext not in _CLOSE_DOC_EXTS:
-            if require_verified:
-                return {**base, 'error': 'unsupported_close_document', 'send_ready': False}
-            continue
+            continue  # 사진 등 판독 불가 증빙은 근거에서 제외
         text = _close_doc_text(os.path.join(UPLOAD_DIR, a['stored_name']), ext)
-        if require_verified and not _verified_sire_document(text, v['vessel_name'], v['report_number'], require_full=False):
-            return {**base, 'error': 'close_document_identity_or_read_failure', 'send_ready': False}
+        if require_verified and not (_verified_sire_document(text, v['vessel_name'], v['report_number'], require_full=False)
+                                     or _verified_close_response(text, v["vessel_name"], v["report_number"], v["inspection_date"], v["inspection_company"])):
+            continue  # 증빙 첨부(DMLC 등)·신원 불명 문서는 근거에서 제외
         if text.strip():
             if text not in docs:
                 docs.append(text)
             used.append({'id': a['id'], 'filename': a['filename'], 'sha256': hashlib.sha256(text.encode()).hexdigest()})
+    if require_verified and not docs and not initial_texts:
+        return {**base, 'error': 'full_document_identity_or_read_failure', 'send_ready': False}
     if require_verified and not docs and initial_texts:
         docs = list(initial_texts)
     if not docs:
@@ -1989,8 +2033,11 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close', requi
     if unresolved:
         if not GEMINI_API_KEY:
             return {**base, 'error': 'no_ai_key'}
-        parsed = _gemini_call_json([{'text': _close_prompt(v, v['vessel_name'], unresolved, doc_text)}], model=_model_for('findings'))
-        items = parsed.get('items') if isinstance(parsed, dict) else None
+        for _attempt in range(2):  # 간헐 응답 파싱 실패 1회 재시도
+            parsed = _gemini_call_json([{'text': _close_prompt(v, v['vessel_name'], unresolved, doc_text)}], model=_model_for('findings'))
+            items = parsed.get('items') if isinstance(parsed, dict) else None
+            if isinstance(items, list):
+                break
         if not isinstance(items, list):
             return {**base, 'error': 'ai_parse_failed'}
     direct_keys = {str(fid) for fid in direct}
@@ -2015,6 +2062,9 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close', requi
         if require_verified:
             if fid in direct:
                 final, why = direct[fid]['status'], direct[fid]['source_reason']
+            elif not context and ai_status == 'Open':
+                # Open 유지=보수적 결론(선박 확인요청 대상). 근거 위치 미확인은 Closed만 막으면 충분.
+                final, why = 'Open', 'ai_open_evidence_unlocated'
             elif not context:
                 final, why = 'Open', 'observation_identity_or_corrective_evidence_unverified'
             elif ai_status not in ('Open', 'Closed'):
@@ -2035,7 +2085,7 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close', requi
     result = {**base, 'documents': [u['filename'] for u in used], 'judged': judged,
               'closed_count': len(closed), 'open_after': len(open_f) - len(closed), 'dry': bool(dry)}
     if require_verified:
-        allowed = {'ok', 'explicit_observation_closure_date', 'ai_not_closed', 'negative_assessment_no_corrective_action', 'confirmed_pending_corrective_action'}
+        allowed = {'ok', 'explicit_observation_closure_date', 'ai_not_closed', 'negative_assessment_no_corrective_action', 'confirmed_pending_corrective_action', 'ai_open_evidence_unlocated'}
         result['send_ready'] = not invalid_items and len(seen) == len(by_id) and all(j['reason'] in allowed for j in judged)
         if not result['send_ready']:
             return {**result, 'error': 'judgment_requires_review'}
@@ -2048,7 +2098,7 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close', requi
         db.execute('BEGIN IMMEDIATE')
         if require_verified:
             source_ids = sorted(int(a['id']) for a in initial_atts + atts)
-            current_ids = sorted(int(a['id']) for a in db.execute("SELECT id FROM vt_attachments WHERE vetting_id=? AND source='svms' AND source_type IN ('initial','close') AND inactive_at IS NULL", (vid,)))
+            current_ids = sorted(int(a['id']) for a in _full_candidate_attachments(vid, db) + list(db.execute("SELECT id FROM vt_attachments WHERE vetting_id=? AND source='svms' AND source_type='close' AND inactive_at IS NULL", (vid,))))
             current_findings = list(db.execute("SELECT id,description,item,no FROM vt_findings WHERE vetting_id=? AND COALESCE(status,'Open')='Open' ORDER BY no,id", (vid,)))
             wanted = [(f['id'],f['description'],f['item'],f['no']) for f in open_f]
             if current_ids != source_ids or [tuple(f) for f in current_findings] != wanted:
