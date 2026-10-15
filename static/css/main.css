@@ -5094,9 +5094,12 @@ tr.cls-urgent-row .c-no { color: var(--red); font-weight: 700; }
   white-space: nowrap; border-bottom: 1px solid var(--border);
 }
 .vt-digest-table td { padding: 9px 12px; vertical-align: top; white-space: nowrap; }
-/* 지적 상세·조치계획 넓게, 조치계획 일자(마지막 열) 좁게 */
-.vt-digest-table th:last-child, .vt-digest-table td:last-child { width: 96px; }
-.vt-digest-table td.vt-dg-detail { width: 34%; white-space: normal; }
+/* 지적 상세·조치계획 넓게, 항구·OIL MAJOR 여유, 조치계획 일자는 표 오른쪽 끝에 좁게 */
+.vt-digest-table th:nth-child(2), .vt-digest-table td:nth-child(2),
+.vt-digest-table th:nth-child(4), .vt-digest-table td:nth-child(4) { min-width: 130px; }
+.vt-digest-table th:nth-child(6), .vt-digest-table td:nth-child(6),
+.vt-digest-table th:nth-child(7), .vt-digest-table td:nth-child(7) { width: 38%; white-space: normal; }
+.vt-digest-table th:last-child, .vt-digest-table td:last-child { width: 1%; text-align: right; white-space: nowrap; }
 .vt-dg-status { font-weight: 700; }
 .vt-dg-next { color: var(--accent-hover); }
 .vt-dg-last { color: #b91c1c; }
