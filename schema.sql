@@ -570,7 +570,8 @@ CREATE TABLE IF NOT EXISTS vt_findings (
     item        TEXT,
     description TEXT,
     remark      TEXT,
-    user_remark TEXT NOT NULL DEFAULT '',   -- 자율 입력 Remark (번역요약과 별개)
+    user_remark TEXT NOT NULL DEFAULT '',   -- 조치계획(구 Remark, 번역요약과 별개)
+    plan_date   TEXT NOT NULL DEFAULT '',   -- 조치계획 일자 YYYY-MM-DD ('' = 미입력)
     full_report_remark TEXT NOT NULL DEFAULT '', -- 마지막 Full report 자동 Remark (멱등 교체용, API 비노출)
     priority    INTEGER NOT NULL DEFAULT 0,  -- 1=중요(Priority 체크), 0=일반
     status      TEXT NOT NULL DEFAULT 'Open' CHECK (status IN ('Open','Closed')),

@@ -785,7 +785,8 @@ function findingsSection(vt, findings) {
     el('th', { class: 'cs-th-item' }, 'Item'),
     el('th', { class: 'cs-th-desc' }, 'Description'),
     el('th', { class: 'cs-th-trans' }, '번역 요약'),
-    el('th', { class: 'cs-th-urem' }, 'Remark'),
+    el('th', { class: 'cs-th-urem' }, '조치계획'),
+    el('th', { style: 'width:130px; text-align:center' }, '조치계획 일자'),
     el('th', { class: 'cs-th-prio', style: 'width:64px; text-align:center' }, 'Priority'),
     el('th', { style: 'width:90px; text-align:center' }, 'Status'),
     el('th', { style: 'width:80px' }, ''),
@@ -794,7 +795,7 @@ function findingsSection(vt, findings) {
   const tbody = el('tbody');
   if (!findings.length && !(vt._inlineAdd)) {
     tbody.append(el('tr', {},
-      el('td', { colspan: 8, class: 'vt-empty-row' },
+      el('td', { colspan: 9, class: 'vt-empty-row' },
         '아직 Observation이 없습니다. 아래 + 버튼으로 추가하세요.')
     ));
   } else {
@@ -836,6 +837,7 @@ function findingRow(vt, f) {
   tr.append(findingEditableCell(f, 'description', vt));
   tr.append(findingEditableCell(f, 'remark', vt));
   tr.append(findingEditableCell(f, 'user_remark', vt));
+  tr.append(findingPlanDateCell(f));
   tr.append(findingPriorityCell(f));
 
   const stTd = el('td', { class: 'cs-status', style: 'text-align:center' });
@@ -867,11 +869,33 @@ function findingRow(vt, f) {
   rm.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2">
     <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
     <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`;
-  if (window.Followup) acts.append(Followup.button('vt', f.id));
   acts.append(rm);
   tr.append(acts);
 
   return tr;
+}
+
+// 조치계획 일자 — 캘린더 선택, 비우면 미입력('')
+function findingPlanDateCell(f) {
+  const td = el('td', { style: 'text-align:center' });
+  const inp = el('input', { type: 'date', class: 'cs-inline-input', title: '조치계획 일자' });
+  inp.value = f.plan_date || '';
+  inp.addEventListener('change', async () => {
+    const prev = f.plan_date || '';
+    const val = inp.value || '';
+    if (val === prev) return;
+    try {
+      await api(`/api/vt-findings/${f.id}`, {
+        method: 'PUT', body: JSON.stringify({ plan_date: val }),
+      });
+      f.plan_date = val;
+    } catch (err) {
+      alert('저장 실패: ' + err.message);
+      inp.value = prev;
+    }
+  });
+  td.append(inp);
+  return td;
 }
 
 function findingPriorityCell(f) {
@@ -983,7 +1007,7 @@ async function bulkUpdateFindings(vt, startF, field, values) {
   const willUpdate = Math.min(values.length, remaining);
   const skipped = values.length - willUpdate;
 
-  const fieldLabel = { item: 'Item', description: 'Description', remark: '번역 요약', user_remark: 'Remark' }[field] || field;
+  const fieldLabel = { item: 'Item', description: 'Description', remark: '번역 요약', user_remark: '조치계획' }[field] || field;
   const startNo = startF.no;
   const endNo = list[startIdx + willUpdate - 1].no;
   let msg = `Observation ${startNo}번 ~ ${endNo}번 항목의 ${fieldLabel}을(를) 일괄 수정합니다.\n총 ${willUpdate}개 항목.`;
@@ -1061,7 +1085,7 @@ function inlineAddRow(vt, row, idx, baseNo) {
     type: 'text', class: 'cs-inline-input', placeholder: '번역 요약', value: row.remark,
   });
   const uremInput = el('input', {
-    type: 'text', class: 'cs-inline-input', placeholder: 'Remark (자율 입력)', value: row.user_remark || '',
+    type: 'text', class: 'cs-inline-input', placeholder: '조치계획', value: row.user_remark || '',
   });
   const statusSel = document.createElement('select');
   statusSel.className = 'cs-inline-input';
@@ -1125,9 +1149,10 @@ function inlineAddRow(vt, row, idx, baseNo) {
   const td1 = el('td'); td1.append(descInput);
   const td2 = el('td'); td2.append(remarkInput);
   const td3 = el('td'); td3.append(uremInput);
+  const tdd = el('td', { style: 'text-align:center', title: '저장 후 조치계획 일자 선택 가능' }, '–');
   const tdp = el('td', { class: 'cs-prio', style: 'text-align:center', title: '저장 후 Priority 체크 가능' }, '–');
   const td4 = el('td', { style: 'text-align:center' }); td4.append(statusSel);
-  tr.append(td0, td1, td2, td3, tdp, td4);
+  tr.append(td0, td1, td2, td3, tdd, tdp, td4);
 
   const acts = el('td', { class: 'cs-actions' });
   const rm = el('button', {

@@ -614,6 +614,17 @@ def api_vt_finding_update(fid):
             params.append(d[f] or '')
     if 'user_remark' in d and (d.get('user_remark') or '') != (cur['user_remark'] or ''):
         sets.append("full_report_remark = ''")
+    if 'plan_date' in d:
+        pd = d.get('plan_date') or ''
+        pd = pd.strip() if isinstance(pd, str) else None
+        try:
+            if pd is None or (pd and (not _re_cls.fullmatch(r'\d{4}-\d{2}-\d{2}', pd)
+                                      or not datetime.strptime(pd, '%Y-%m-%d'))):
+                raise ValueError
+        except ValueError:
+            return jsonify({'error': 'plan_date 형식은 YYYY-MM-DD'}), 400
+        sets.append('plan_date = ?')
+        params.append(pd)
     if 'priority' in d:
         sets.append('priority = ?')
         params.append(1 if d.get('priority') else 0)

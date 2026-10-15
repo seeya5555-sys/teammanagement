@@ -121,6 +121,32 @@ chk(row2 is not None and row2['obs_total'] is None and row2['obs_open'] is None,
 chk(row2 is not None and row2['report_obs_total'] is None and row2['report_obs_open'] is None,
     '계획만 있을 때 report_* 는 모름(null) — obsNote 보존')
 
+# ---- VLCC-SIRE 지적상세/조치계획/일자 (2026-10-15) ----
+V2 = 'PLAN PROSPERITY'
+A.execute("INSERT INTO vessels (name, vessel_type, imo, active) VALUES (?, 'VLCC', '9999998', 1)", (V2,))
+V2ID = A.query('SELECT id FROM vessels WHERE name=?', (V2,), one=True)['id']
+A.execute("INSERT INTO vettings (vessel_id, valid, inspection_date, inspection_company, port, overall_remark)"
+          " VALUES (?, 'Last Result', '2026-09-01', 'SHELL', 'SOHAR', 'OVERALL')", (V2ID,))
+VT2 = A.query('SELECT id FROM vettings WHERE vessel_id=?', (V2ID,), one=True)['id']
+for no, rem, urem, pd, st in [(1, '닫힌항목', '완료', '2026-12-31', 'Closed'),
+                              (2, '번역A', '계획A', '2026-10-20', 'Open'),
+                              (3, '번역B', '', '', 'Open'),
+                              (4, '번역C', '계획C', '2026-11-05', 'Open')]:
+    A.execute("INSERT INTO vt_findings (vetting_id,no,item,description,remark,user_remark,plan_date,status)"
+              " VALUES (?,?,?,?,?,?,?,?)", (VT2, no, 'i', 'd', rem, urem, pd, st))
+r2 = next(d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == V2)
+chk(r2['obs_detail'] == '1. 번역A\n2. 번역B\n3. 번역C', 'ext: 지적상세=Open 번역요약 번호', r2['obs_detail'])
+chk(r2['obs_plan'] == '1. 계획A\n2. 조치계획 회신 대기 중\n3. 계획C', 'ext: 조치계획 번호·공란 문구', r2['obs_plan'])
+chk(r2['obs_plan_date'] == '2026-11-05', 'ext: 일자=Open 중 최댓값(Closed 제외)', r2['obs_plan_date'])
+A.execute("UPDATE vt_findings SET status='Closed' WHERE vetting_id=?", (VT2,))
+r3 = next(d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == V2)
+chk((r3['obs_detail'], r3['obs_plan'], r3['obs_plan_date']) == ('', '', ''), 'ext: Open 0건 → 세 칸 공란')
+fid = A.query('SELECT id FROM vt_findings WHERE vetting_id=? AND no=2', (VT2,), one=True)['id']
+with c.session_transaction() as s:
+    s['user_id'] = 1
+bad = c.put(f'/api/vt-findings/{fid}', json={'plan_date': '10/20'})
+chk(bad.status_code in (400, 401, 302), 'PUT plan_date 형식 오류 거부', bad.status_code)
+
 print()
 if fails:
     print(f'❌ 실패 {len(fails)}건: ' + ', '.join(fails))

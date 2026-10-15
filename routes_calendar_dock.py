@@ -3843,6 +3843,22 @@ def _ext_vetting_digests():
             detail = next(((v.get('overall_remark') or '').strip()
                            for v in enr if (v.get('overall_remark') or '').strip()), '')
         obs_total, obs_open, _obs_closed = _vetting_summary_counts(latest)
+        # VLCC-SIRE 지적상세/조치계획/조치계획일자(형 지시 2026-10-15): Open 항목만 1,2,3 번호,
+        # 지적상세=번역요약, 조치계획=같은 번호의 조치계획(공란이면 회신 대기 문구), 일자=Open 중 최댓값.
+        open_ids = [v.get('id') for v in enr if (v.get('open_count') or 0) > 0 and v.get('id')]
+        open_rows = []
+        if open_ids:
+            rows = query("SELECT vetting_id, no, remark, user_remark, plan_date FROM vt_findings "
+                         "WHERE vetting_id IN (SELECT value FROM json_each(?)) AND status='Open'",
+                         (json.dumps(open_ids),))
+            order = {vid: i for i, vid in enumerate(open_ids)}
+            open_rows = sorted(rows, key=lambda r: (order.get(r['vetting_id'], 0), r['no'] or 0))
+        obs_detail = '\n'.join(f"{i}. {(r['remark'] or '').strip()}"
+                               for i, r in enumerate(open_rows, 1))
+        obs_plan = '\n'.join(f"{i}. {(r['user_remark'] or '').strip() or '조치계획 회신 대기 중'}"
+                             for i, r in enumerate(open_rows, 1))
+        obs_plan_date = max(((r['plan_date'] or '').strip() for r in open_rows
+                             if (r['plan_date'] or '').strip()), default='')
         out.append({
             'ref': _ref('vetting_digest', ve['id']),
             'vessel_name': ve['name'],
@@ -3863,6 +3879,9 @@ def _ext_vetting_digests():
             'report_obs_total': (report.get('observation_count') or 0) if report else None,
             'report_obs_open': (report.get('open_count') or 0) if report else None,
             'detail': detail,
+            'obs_detail': obs_detail,
+            'obs_plan': obs_plan,
+            'obs_plan_date': obs_plan_date,
             'latest_vetting_ref': _ref('vetting', latest.get('id')),
         })
     return out

@@ -2070,6 +2070,9 @@ def _auto_migrate():
             if cols and 'full_report_remark' not in cols:
                 conn.execute("ALTER TABLE vt_findings ADD COLUMN full_report_remark TEXT NOT NULL DEFAULT ''")
                 print('[auto_migrate] vt_findings.full_report_remark 추가됨')
+            if cols and 'plan_date' not in cols:
+                conn.execute("ALTER TABLE vt_findings ADD COLUMN plan_date TEXT NOT NULL DEFAULT ''")
+                print('[auto_migrate] vt_findings.plan_date 추가됨')
             if cols and 'priority' not in cols:
                 conn.execute("ALTER TABLE vt_findings ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
                 print('[auto_migrate] vt_findings.priority 추가됨')
