@@ -83,6 +83,9 @@ import app as A
 A.DATABASE = p
 A.app.config['DATABASE'] = p
 A.app.config['TESTING'] = True
+# 리허설은 wsgi 엔트리를 거치지 않으므로 런타임 초기화 게이트를 일회용 키로 통과시킨다.
+# init_runtime() 은 운영 secret key 파일·업로드 경로를 건드리므로 쓰지 않는다.
+A.app.config['SECRET_KEY'] = os.urandom(32)
 with A.app.app_context():
     for t in ('users', 'vessels', 'issues', 'dock_procure'):
         n = A.query(f'SELECT COUNT(*) AS c FROM {t}')[0]['c']
