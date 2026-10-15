@@ -362,6 +362,29 @@ class VettingObsAutomationTests(unittest.TestCase):
         self.assertEqual(sorted([self.f1, self.f2, self.f3]), sorted(int(x) for x in r.headers['X-Finding-Ids'].split(',')))
         self.assertIn('SIRE_GHANA TEST_20260806.xlsx', r.headers['Content-Disposition'])
 
+    def test_export_target_date_column_and_reply_plan_date(self):
+        import io
+        from openpyxl import load_workbook
+        with appmod.app.app_context():
+            from app_core import execute, query
+            execute("UPDATE vt_findings SET plan_date='2026-11-20' WHERE id=?", (self.f1,))
+        r = self.c.get(f'/api/ext/vettings/{self.vt}/open-export.xlsx', headers=self.h)
+        ws = load_workbook(io.BytesIO(r.data)).active
+        hdr = [c.value for c in ws[4]]
+        self.assertEqual('TARGET DATE (DD-MM-YYYY)', hdr[4])
+        self.assertIn('20-11-2026', [ws.cell(i, 5).value for i in range(5, ws.max_row + 1)])
+        rid = self._sent_run()
+        u = f'/api/ext/vetting-mail/runs/{rid}/findings/%d/reply'
+        self.c.post(u % self.f2, headers=self.h, json={'message_id': 'outlook:pd', 'date': '2026-10-15',
+                    'kind': 'update', 'text': '스페어 주문', 'evidence': 'Spare ordered', 'plan_date': '2026-12-05'})
+        self.c.post(u % self.f1, headers=self.h, json={'message_id': 'outlook:pd', 'date': '2026-10-15',
+                    'kind': 'update', 'text': '진행', 'evidence': 'In progress', 'plan_date': 'bad'})
+        with appmod.app.app_context():
+            from app_core import query
+            got = {x['id']: x['plan_date'] for x in query('SELECT id, plan_date FROM vt_findings')}
+        self.assertEqual('2026-12-05', got[self.f2])
+        self.assertEqual('2026-11-20', got[self.f1])   # 잘못된 값은 무시, 기존 유지
+
     def test_mail_off_by_default_then_claim_once(self):
         cfg = self.c.get('/api/ext/vetting-mail/config?week=2026W41', headers=self.h).get_json()
         v = cfg['vettings'][0]

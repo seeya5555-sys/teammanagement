@@ -1467,6 +1467,19 @@ def _rebuild_obs_summary(vid):
     return {'summary': text, 'total_open': total_open, 'priority_open': len(prio), 'minor': minor}
 
 
+# Vetting 엑셀(추출·메일첨부 공통). 회신 runner 는 헤더명으로 읽으므로 이름 변경 시 runner 동시 수정.
+VT_EXPORT_HEADERS = ['No.', 'ITEM', 'DESCRIPTION', 'RECTIFICATION', 'TARGET DATE (DD-MM-YYYY)', 'PHOTO', 'STATUS']
+VT_EXPORT_WIDTHS = [6, 26, 46, 40, 16, 30, 10]
+
+
+def _vt_dmy(ymd):
+    """'YYYY-MM-DD' → 'DD-MM-YYYY' (공란/이상값은 '')."""
+    try:
+        return datetime.strptime((ymd or '').strip(), '%Y-%m-%d').strftime('%d-%m-%Y')
+    except ValueError:
+        return ''
+
+
 @bp.route('/api/vettings/<int:vid>/export')
 @login_required
 def api_vt_export(vid):
@@ -1476,11 +1489,12 @@ def api_vt_export(vid):
                   WHERE vt.id=?''', (vid,), one=True)
     if not v:
         abort(404)
-    fr = query('''SELECT no, item, description, remark, user_remark, status
+    fr = query('''SELECT no, item, description, remark, user_remark, plan_date, status
                     FROM vt_findings WHERE vetting_id=? ORDER BY no, id''', (vid,))
-    # RECTIFICATION·PHOTO 2열은 공란으로 출력(현장기입용). 번역요약·Remark는 export에서 제외.
+    # RECTIFICATION·PHOTO 2열은 공란으로 출력(현장기입용). 번역요약·조치계획은 export에서 제외.
+    # TARGET DATE = 조치계획 일자(DD-MM-YYYY, 형 지시 2026-10-15) — 입력값이 있으면 미리 채움.
     rows = [[r['no'], r['item'] or '', r['description'] or '',
-             '', '', r['status'] or ''] for r in fr]
+             '', _vt_dmy(r['plan_date']), '', r['status'] or ''] for r in fr]
     vessel = v['vessel_name']
     rno = v['report_number'] or ''
     title = f"SIRE Observation List — {vessel}"
@@ -1488,9 +1502,8 @@ def api_vt_export(vid):
     if rno:
         sub_bits.append(f"Report: {rno}")
     sub_bits.append(f"총 {len(rows)}건")
-    headers = ['No.', 'ITEM', 'DESCRIPTION', 'RECTIFICATION', 'PHOTO', 'STATUS']
-    bio = _findings_workbook(title, '   │   '.join(sub_bits), headers, rows,
-                             wrap_cols={2, 3, 4, 5}, widths=[6, 26, 46, 40, 30, 10])
+    bio = _findings_workbook(title, '   │   '.join(sub_bits), VT_EXPORT_HEADERS, rows,
+                             wrap_cols={2, 3, 4, 6}, widths=VT_EXPORT_WIDTHS)
     date_tag = (v['inspection_date'] or '').replace('-', '')
     fname = f"SIRE_{_safe_filename(vessel)}_{date_tag or vid}.xlsx"
     return send_file(bio, as_attachment=True, download_name=fname,
@@ -2185,17 +2198,18 @@ def vt_open_workbook(vid):
                   WHERE vt.id=?''', (vid,), one=True)
     if not v:
         return None
-    fr = query("SELECT id, no, item, description, status FROM vt_findings WHERE vetting_id=? "
+    fr = query("SELECT id, no, item, description, plan_date, status FROM vt_findings WHERE vetting_id=? "
                "AND COALESCE(status,'Open')='Open' ORDER BY no, id", (vid,))
-    rows = [[r['no'], r['item'] or '', r['description'] or '', '', '', r['status'] or 'Open'] for r in fr]
+    rows = [[r['no'], r['item'] or '', r['description'] or '', '', _vt_dmy(r['plan_date']), '',
+             r['status'] or 'Open'] for r in fr]
     vessel = v['vessel_name']
     sub_bits = [f"Inspection: {v['inspection_date'] or '-'}", f"Port: {v['port'] or '-'}"]
     if v['report_number']:
         sub_bits.append(f"Report: {v['report_number']}")
     sub_bits.append(f"Open {len(rows)}")
     bio = _findings_workbook(f"SIRE Observation List — {vessel}", '   │   '.join(sub_bits),
-                             ['No.', 'ITEM', 'DESCRIPTION', 'RECTIFICATION', 'PHOTO', 'STATUS'], rows,
-                             wrap_cols={2, 3, 4, 5}, widths=[6, 26, 46, 40, 30, 10])
+                             VT_EXPORT_HEADERS, rows,
+                             wrap_cols={2, 3, 4, 6}, widths=VT_EXPORT_WIDTHS)
     date_tag = (v['inspection_date'] or '').replace('-', '')
     return bio, f"SIRE_{_safe_filename(vessel)}_{date_tag or vid}.xlsx", [int(r['id']) for r in fr]
 
@@ -2262,15 +2276,26 @@ def vt_mail_apply_reply(rid, fid, d):
     else:
         user_remark = _replace_full_report_remark(f['user_remark'], f['full_report_remark'], auto)
     new_status = 'Closed' if was_closed or kind == 'close' else 'Open'
-    before = {'status': f['status'], 'user_remark': f['user_remark'], 'full_report_remark': f['full_report_remark']}
+    # 회신 엑셀 TARGET DATE → 조치계획 일자(형 지시 2026-10-15). 유효한 YYYY-MM-DD 만, 없으면 기존값 유지.
+    plan_date = f['plan_date'] or ''
+    pd_in = d.get('plan_date')
+    if isinstance(pd_in, str) and pd_in.strip():
+        try:
+            plan_date = datetime.strptime(pd_in.strip(), '%Y-%m-%d').strftime('%Y-%m-%d')
+        except ValueError:
+            pass
+    before = {'status': f['status'], 'user_remark': f['user_remark'], 'full_report_remark': f['full_report_remark'],
+              'plan_date': f['plan_date'] or ''}
     db = get_db()
     try:
         db.execute('BEGIN IMMEDIATE')
         cur = db.execute(
-            "UPDATE vt_findings SET status=?, user_remark=?, full_report_remark=?, updated_at=datetime('now','localtime') "
+            "UPDATE vt_findings SET status=?, user_remark=?, full_report_remark=?, plan_date=?, "
+            "updated_at=datetime('now','localtime') "
             "WHERE id=? AND COALESCE(status,'Open')=? AND COALESCE(full_report_remark,'')=? "
-            "AND COALESCE(user_remark,'')=?",
-            (new_status, user_remark, auto, fid, f['status'] or 'Open', f['full_report_remark'] or '', f['user_remark'] or ''))
+            "AND COALESCE(user_remark,'')=? AND COALESCE(plan_date,'')=?",
+            (new_status, user_remark, auto, plan_date, fid, f['status'] or 'Open', f['full_report_remark'] or '',
+             f['user_remark'] or '', f['plan_date'] or ''))
         if cur.rowcount != 1:
             db.rollback()
             raise vms.VettingMailError(409, '그 사이 항목이 바뀜 — 다음 실행에 재시도')
