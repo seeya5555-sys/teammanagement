@@ -470,11 +470,9 @@ Negative crane paragraph.
             headers={'X-CSRF-Token': self.csrf})
         self.assertEqual(200, response.status_code, response.get_data(as_text=True))
         summary = response.get_json()['summary']
-        self.assertIn(
-            '1. M/E NO.6 Cylinder cover Condition of Class 미종결 - '
-            'starting valve seating 수리 후 COC 모니터링 중임.',
-            summary,
-        )
+        # 2026-10-15: 지적 상세=번역요약만, 조치계획은 요약행 조치계획 칸으로 분리
+        self.assertIn('1. M/E NO.6 Cylinder cover Condition of Class 미종결\n', summary)
+        self.assertNotIn('starting valve', summary)
         self.assertNotIn('자동반영', summary)
 
     def test_obs_summary_concises_unmarked_manual_remark(self):
@@ -490,8 +488,8 @@ Negative crane paragraph.
             headers={'X-CSRF-Token': self.csrf})
         self.assertEqual(200, response.status_code, response.get_data(as_text=True))
         summary = response.get_json()['summary']
-        self.assertIn('1. ECDIS 점검 필요 - ECDIS software update 완료함.', summary)
-        self.assertIn('불필요한 원인 설명', summary)  # preserve manual source instead of semantic filtering
+        self.assertIn('1. ECDIS 점검 필요\n2. ', summary)   # Priority 무관 Open 전부, 조치계획 미포함
+        self.assertNotIn('software update', summary)
 
     def test_summary_remark_hides_marker_with_crlf_and_manual_prefix(self):
         value = (

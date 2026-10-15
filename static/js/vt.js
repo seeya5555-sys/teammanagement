@@ -302,25 +302,22 @@ function vettingDigest(item) {
   const openCnt = isNextPlan ? ''
     : ((latest.open_count != null) ? latest.open_count : 0);
 
-  // 지적 상세: Open 항목이 있는 모든 Report의 Overall Remark, 최신순, 빈 줄 구분
-  let detail = vts
-    .filter(v => (v.open_count || 0) > 0 && (v.overall_remark || '').trim())
-    .map(v => v.overall_remark.trim())
-    .join('\n\n');
-  // open 지적이 하나도 없을 때만 작성된 최신 remark 노출(ext /vetting-digests 와 동일 규칙)
-  if (!vts.some(v => (v.open_count || 0) > 0)) {
-    const r = vts.find(v => (v.overall_remark || '').trim());
-    detail = r ? r.overall_remark.trim() : '';
-  }
-
-  const detailCell = el('td', { class: 'vt-dg-detail' });
-  if (detail) {
-    detail.split('\n').forEach(line => {
-      detailCell.append(el('div', { class: 'vt-dg-line' }, line.trim() ? line : '\u00A0'));
-    });
-  } else {
-    detailCell.append(el('span', { class: 'placeholder' }, '–'));
-  }
+  // 지적 상세 / 조치계획 / 조치계획 일자 = VLCC-SIRE(Vercel)에 그대로 올라가는 값
+  const mirror = vtMirrorBlocks(vts);
+  const textCell = (text) => {
+    const td = el('td', { class: 'vt-dg-detail' });
+    if (text) {
+      text.split('\n').forEach(line => {
+        td.append(el('div', { class: 'vt-dg-line' }, line.trim() ? line : '\u00A0'));
+      });
+    } else {
+      td.append(el('span', { class: 'placeholder' }, '–'));
+    }
+    return td;
+  };
+  const detailCell = textCell(mirror.detail);
+  const planCell = textCell(mirror.plan);
+  const planDateCell = el('td', { style: 'white-space:nowrap' }, mirror.date || '–');
 
   const table = el('table', { class: 'vt-digest-table' });
   table.append(el('thead', {}, el('tr', {},
@@ -330,6 +327,8 @@ function vettingDigest(item) {
     el('th', {}, 'OIL MAJOR'),
     el('th', {}, 'OBS (전체 / 잔여)'),
     el('th', {}, '지적 상세'),
+    el('th', {}, '조치계획'),
+    el('th', {}, '조치계획 일자'),
   )));
   table.append(el('tbody', {}, el('tr', {},
     el('td', { class: 'vt-dg-status ' + statusCls }, status || '–'),
@@ -341,9 +340,39 @@ function vettingDigest(item) {
       el('span', { class: 'vt-dg-sep' }, ' / '),
       el('span', { class: (!isNextPlan && openCnt > 0 ? 'vt-dg-open' : 'vt-dg-open-zero') }, String(openCnt))),
     detailCell,
+    planCell,
+    planDateCell,
   )));
 
   return el('div', { class: 'vt-digest' }, table);
+}
+
+// routes_calendar_dock._vt_report_label / _vt_mirror_blocks 와 같은 규칙 — 바꾸면 양쪽 동시 수정.
+const VT_PLAN_PENDING = '조치계획 회신 대기 중';
+function vtReportLabel(v) {
+  const bits = [];
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.inspection_date || '');
+  if (m) bits.push(`${Number(m[2])}/${Number(m[3])}`);
+  const comp = (v.inspection_company || '').trim();
+  if (comp) bits.push(comp.split(/\s+/)[0].toUpperCase());
+  return bits.join(' ');
+}
+function vtMirrorBlocks(vts) {
+  const details = [], plans = [], dates = [];
+  for (const v of vts) {
+    const rows = (v.findings || []).filter(f => f.status === 'Open')
+      .slice().sort((a, b) => (a.no - b.no) || (a.id - b.id));
+    if (!rows.length) continue;
+    const label = vtReportLabel(v);
+    const remark = (v.overall_remark || '').trim();
+    details.push(remark || [`${label} SIRE OBS 잔여 ${rows.length}건 조치 중`.trim()]
+      .concat(rows.map((f, i) => `${i + 1}. ${(f.remark || '').trim()}`)).join('\n'));
+    plans.push((label ? [label] : [])
+      .concat(rows.map((f, i) => `${i + 1}. ${(f.user_remark || '').trim() || VT_PLAN_PENDING}`)).join('\n'));
+    rows.forEach(f => { const d = (f.plan_date || '').trim(); if (d) dates.push(d); });
+  }
+  dates.sort();
+  return { detail: details.join('\n\n'), plan: plans.join('\n\n'), date: dates.length ? dates[dates.length - 1] : '' };
 }
 
 function lastUpdateLabelVT(updatedAt) {
@@ -738,7 +767,7 @@ function detailRow(vt) {
       class: 'btn btn-outline btn-sm',
       style: 'margin-left:auto',
       onclick: () => generateObsSummary(vt),
-      title: 'Priority 체크 + 현재 Open Status 기준으로 지적 상세 요약을 Overall Remark에 자동 작성',
+      title: '현재 Open 항목 전체를 번호로 정리해 Overall Remark(지적 상세)에 자동 작성',
     }, '지적 상세'),
     el('button', {
       class: 'btn btn-outline btn-sm',
@@ -889,6 +918,7 @@ function findingPlanDateCell(f) {
         method: 'PUT', body: JSON.stringify({ plan_date: val }),
       });
       f.plan_date = val;
+      await reloadData();   // 요약행 조치계획 일자 즉시 갱신
     } catch (err) {
       alert('저장 실패: ' + err.message);
       inp.value = prev;
@@ -919,10 +949,7 @@ function findingPriorityCell(f) {
 }
 
 async function generateObsSummary(vt) {
-  const hasPrio = (vt.findings || []).some(f => f.priority && (f.status || 'Open') === 'Open');
-  const msg = hasPrio
-    ? 'Priority 체크 항목과 현재 Open Status 기준으로 지적 상세 요약을 만들어 Overall Remark에 기록합니다.\n(기존 Overall Remark 내용은 대체됩니다.) 진행할까요?'
-    : 'Priority로 체크된 Open 항목이 없습니다. 헤더(잔여 건수)만 작성됩니다.\n(기존 Overall Remark 내용은 대체됩니다.) 진행할까요?';
+  const msg = '현재 Open 항목 전체(번역 요약)를 번호로 정리해 Overall Remark에 기록합니다.\n(기존 Overall Remark 내용은 대체됩니다.) 진행할까요?';
   if (!confirm(msg)) return;
   try {
     await api(`/api/vettings/${vt.id}/obs-summary`, { method: 'POST' });

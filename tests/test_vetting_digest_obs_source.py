@@ -135,9 +135,24 @@ for no, rem, urem, pd, st in [(1, '닫힌항목', '완료', '2026-12-31', 'Close
     A.execute("INSERT INTO vt_findings (vetting_id,no,item,description,remark,user_remark,plan_date,status)"
               " VALUES (?,?,?,?,?,?,?,?)", (VT2, no, 'i', 'd', rem, urem, pd, st))
 r2 = next(d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == V2)
-chk(r2['obs_detail'] == '1. 번역A\n2. 번역B\n3. 번역C', 'ext: 지적상세=Open 번역요약 번호', r2['obs_detail'])
-chk(r2['obs_plan'] == '1. 계획A\n2. 조치계획 회신 대기 중\n3. 계획C', 'ext: 조치계획 번호·공란 문구', r2['obs_plan'])
+chk(r2['obs_detail'] == 'OVERALL', 'ext: 지적상세=Overall Remark(버튼 결과)', r2['obs_detail'])
+chk(r2['obs_plan'] == '9/1 SHELL\n1. 계획A\n2. 조치계획 회신 대기 중\n3. 계획C', 'ext: 조치계획 라벨+번호·공란 문구', r2['obs_plan'])
 chk(r2['obs_plan_date'] == '2026-11-05', 'ext: 일자=Open 중 최댓값(Closed 제외)', r2['obs_plan_date'])
+# '지적 상세' 버튼 = 헤더 + Open 전부 번호
+A.execute("UPDATE vettings SET sire_type='Discharge' WHERE id=?", (VT2,))
+summ = shared_ns._rebuild_obs_summary(VT2)['summary']
+chk(summ == '9/1 SHELL DISCHARGE SIRE OBS 잔여 3건 조치 중\n1. 번역A\n2. 번역B\n3. 번역C', '버튼: 헤더+Open 전부', summ)
+# 두 번째 Open Report → 블록 분리, 일자는 전체 최댓값
+A.execute("INSERT INTO vettings (vessel_id, valid, inspection_date, inspection_company, port, overall_remark)"
+          " VALUES (?, 'Last Result', '2026-05-02', 'BP OIL', 'X', '')", (V2ID,))
+VT3 = A.query('SELECT MAX(id) id FROM vettings', one=True)['id']
+A.execute("INSERT INTO vt_findings (vetting_id,no,item,description,remark,user_remark,plan_date,status)"
+          " VALUES (?,1,'i','d','번역Z','계획Z','2026-12-31','Open')", (VT3,))
+r4 = next(d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == V2)
+chk(r4['obs_plan'].count('\n\n') == 1 and '5/2 BP\n1. 계획Z' in r4['obs_plan'], 'ext: 레포트 2개 조치계획 블록 분리', r4['obs_plan'])
+chk('5/2 BP SIRE OBS 잔여 1건 조치 중\n1. 번역Z' in r4['obs_detail'], 'ext: remark 공란 Report 는 자동 블록', r4['obs_detail'])
+chk(r4['obs_plan_date'] == '2026-12-31', 'ext: 일자=두 레포트 중 최댓값', r4['obs_plan_date'])
+A.execute("DELETE FROM vettings WHERE id=?", (VT3,)); A.execute("DELETE FROM vt_findings WHERE vetting_id=?", (VT3,))
 A.execute("UPDATE vt_findings SET status='Closed' WHERE vetting_id=?", (VT2,))
 r3 = next(d for d in shared_ns._ext_vetting_digests() if d['vessel_name'] == V2)
 chk((r3['obs_detail'], r3['obs_plan'], r3['obs_plan_date']) == ('', '', ''), 'ext: Open 0건 → 세 칸 공란')

@@ -1437,7 +1437,7 @@ def _rebuild_obs_summary(vid):
                 'priority_open': live_prio, 'minor': len(live_open) - live_prio}
     prio = [f for f in open_f if _is_prio(f)]
     total_open = len(open_f)
-    minor = total_open - len(prio)
+    minor = 0   # 형 지시 2026-10-15: Priority 와 무관하게 Open 항목 전부를 번호로 나열
 
     header_bits = [b for b in (_md_from_date(v['inspection_date']),
                                _company_abbr(v['inspection_company']),
@@ -1446,20 +1446,9 @@ def _rebuild_obs_summary(vid):
              (f'SIRE OBS 잔여 {total_open}건 조치 중' if total_open else
               f'SIRE OBS {len(findings)}건 전건 Close')
 
-    shorts = _condense_obs([
-        {'i': i, 'summary': f['remark'] or '', 'description': f['description'] or '',
-         'user_remark': f['user_remark'] or ''}
-        for i, f in enumerate(prio)
-    ])
-
-    lines = [header]
-    for i, f in enumerate(prio):
-        short = shorts.get(i) or (f['remark'] or f['item'] or '').strip()
-        action = _concise_full_report_remark(
-            f['full_report_remark'] or _summary_full_report_remark(f['user_remark']))
-        lines.append(f'{i + 1}. {short}' + (f' - {action}' if action else ''))
-    if minor > 0:
-        lines.append(f'그 외 Minor 지적 {minor}건')
+    # 지적 상세 = 헤더 + Open 항목 번역요약 1,2,3 (조치계획은 요약행 조치계획 칸으로 분리)
+    lines = [header] + [f"{i}. {(f['remark'] or f['item'] or '').strip()}"
+                        for i, f in enumerate(open_f, 1)]
     text = '\n'.join(lines)
 
     execute("UPDATE vettings SET overall_remark=?, updated_at=datetime('now','localtime') WHERE id=?",

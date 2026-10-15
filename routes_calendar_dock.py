@@ -3822,6 +3822,51 @@ def _ext_summaries():
     return out
 
 
+VT_PLAN_PENDING = '조치계획 회신 대기 중'
+
+
+def _vt_report_label(v):
+    """조치계획 블록 라벨 '8/6 PETROVIETNAM' (vt.js vtReportLabel 과 동일 규칙)."""
+    bits = []
+    m = re.fullmatch(r'(\d{4})-(\d{2})-(\d{2})', v.get('inspection_date') or '')
+    if m:
+        bits.append(f'{int(m.group(2))}/{int(m.group(3))}')
+    comp = (v.get('inspection_company') or '').strip()
+    if comp:
+        bits.append(comp.split()[0].upper())
+    return ' '.join(bits)
+
+
+def _vt_mirror_blocks(enr):
+    """Vetting 요약행 지적상세/조치계획/조치계획일자 = VLCC-SIRE 미러 정본(형 지시 2026-10-15 2차).
+    Open 항목이 있는 Report 마다 블록, 블록 사이 빈 줄. 지적상세=Overall Remark('지적 상세' 버튼 결과),
+    조치계획=라벨 + Open 항목 번호별 조치계획, 일자=모든 Open 항목 중 최댓값. Open 0건이면 셋 다 ''.
+    vt.js vtMirrorBlocks 와 같은 규칙 — 바꾸면 양쪽 동시 수정."""
+    open_vts = [v for v in enr if v.get('id')]
+    ids = [v['id'] for v in open_vts]
+    by_vt = {}
+    if ids:
+        for r in query("SELECT vetting_id, no, remark, user_remark, plan_date FROM vt_findings "
+                       "WHERE vetting_id IN (SELECT value FROM json_each(?)) AND status='Open' "
+                       "ORDER BY no, id", (json.dumps(ids),)):
+            by_vt.setdefault(r['vetting_id'], []).append(r)
+    details, plans, dates = [], [], []
+    for v in open_vts:
+        rows = by_vt.get(v['id']) or []
+        if not rows:
+            continue
+        label = _vt_report_label(v)
+        remark = (v.get('overall_remark') or '').strip()
+        details.append(remark or '\n'.join(
+            [f'{label} SIRE OBS 잔여 {len(rows)}건 조치 중'.strip()] +
+            [f"{i}. {(r['remark'] or '').strip()}" for i, r in enumerate(rows, 1)]))
+        plans.append('\n'.join(
+            ([label] if label else []) +
+            [f"{i}. {(r['user_remark'] or '').strip() or VT_PLAN_PENDING}" for i, r in enumerate(rows, 1)]))
+        dates += [(r['plan_date'] or '').strip() for r in rows if (r['plan_date'] or '').strip()]
+    return '\n\n'.join(details), '\n\n'.join(plans), max(dates, default='')
+
+
 def _ext_vetting_digests():
     """선박 단위 SIRE 요약(자동 집계) — Vetting 탭 펼침 요약 패널과 동일 내용."""
     out = []
@@ -3843,22 +3888,7 @@ def _ext_vetting_digests():
             detail = next(((v.get('overall_remark') or '').strip()
                            for v in enr if (v.get('overall_remark') or '').strip()), '')
         obs_total, obs_open, _obs_closed = _vetting_summary_counts(latest)
-        # VLCC-SIRE 지적상세/조치계획/조치계획일자(형 지시 2026-10-15): Open 항목만 1,2,3 번호,
-        # 지적상세=번역요약, 조치계획=같은 번호의 조치계획(공란이면 회신 대기 문구), 일자=Open 중 최댓값.
-        open_ids = [v.get('id') for v in enr if (v.get('open_count') or 0) > 0 and v.get('id')]
-        open_rows = []
-        if open_ids:
-            rows = query("SELECT vetting_id, no, remark, user_remark, plan_date FROM vt_findings "
-                         "WHERE vetting_id IN (SELECT value FROM json_each(?)) AND status='Open'",
-                         (json.dumps(open_ids),))
-            order = {vid: i for i, vid in enumerate(open_ids)}
-            open_rows = sorted(rows, key=lambda r: (order.get(r['vetting_id'], 0), r['no'] or 0))
-        obs_detail = '\n'.join(f"{i}. {(r['remark'] or '').strip()}"
-                               for i, r in enumerate(open_rows, 1))
-        obs_plan = '\n'.join(f"{i}. {(r['user_remark'] or '').strip() or '조치계획 회신 대기 중'}"
-                             for i, r in enumerate(open_rows, 1))
-        obs_plan_date = max(((r['plan_date'] or '').strip() for r in open_rows
-                             if (r['plan_date'] or '').strip()), default='')
+        obs_detail, obs_plan, obs_plan_date = _vt_mirror_blocks(enr)
         out.append({
             'ref': _ref('vetting_digest', ve['id']),
             'vessel_name': ve['name'],
