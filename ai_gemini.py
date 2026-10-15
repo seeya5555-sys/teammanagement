@@ -1404,6 +1404,23 @@ def api_vt_obs_summary(vid):
     return jsonify({'ok': True, **res})
 
 
+@bp.route('/api/ext/vettings/obs-summary/rebuild-open', methods=['POST'])
+@api_key_required
+def api_ext_vt_obs_summary_rebuild_open():
+    """VLCC-SIRE commit 푸시 직전 전 선박 '지적 상세' 일괄 재생성(형 지시 2026-10-15, A안=수기 수정도 덮어씀).
+    Open 항목이 1건 이상인 Report 만 대상. Report 단위 실패격리 — 실패 id 를 돌려주고 나머지는 계속."""
+    ids = [r['vetting_id'] for r in query(
+        "SELECT DISTINCT vetting_id FROM vt_findings WHERE COALESCE(status,'Open')='Open' ORDER BY vetting_id")]
+    done, failed = [], []
+    for vid in ids:
+        try:
+            if _rebuild_obs_summary(vid) is not None:
+                done.append(vid)
+        except Exception as e:
+            failed.append({'id': vid, 'error': str(e)[:200]})
+    return jsonify({'ok': not failed, 'rebuilt': len(done), 'failed': failed})
+
+
 def _clear_closed_overall_remark(vid):
     """Clear summary only when real findings exist and every status is Closed.
     SQL guard prevents a concurrent reopen from losing an outstanding summary.

@@ -455,6 +455,28 @@ Negative crane paragraph.
         incomplete = f'수동 메모\n{routes._FULL_REPORT_MARKER}\n미완료 블록'
         self.assertEqual(incomplete, helpers_shared._clean_vetting_overall_remark(incomplete))
 
+    def test_ext_rebuild_open_overwrites_manual_remark(self):
+        # 2026-10-15 A안: VLCC-SIRE 푸시 직전 일괄 재생성은 수기 Overall Remark 도 덮어쓴다
+        with appmod.app.app_context():
+            from source_bundle import shared_ns
+            shared_ns._ensure_api_table()
+            appmod.execute("INSERT OR REPLACE INTO api_settings(k,v) VALUES('api_key',?)", ('secret',))
+            appmod.execute('UPDATE vettings SET overall_remark=? WHERE id=?', ('수기 메모', self.vetting))
+            appmod.execute("UPDATE vt_findings SET status='Open', remark=? WHERE id=?",
+                           ('ECDIS 점검 필요', self.f1))
+        self.assertIn(self.client.post(
+            '/api/ext/vettings/obs-summary/rebuild-open').status_code, (401, 403))
+        r = self.client.post('/api/ext/vettings/obs-summary/rebuild-open',
+                             headers={'X-API-Key': 'secret'})
+        self.assertEqual(200, r.status_code, r.get_data(as_text=True))
+        self.assertTrue(r.get_json()['ok'])
+        self.assertGreaterEqual(r.get_json()['rebuilt'], 1)
+        with appmod.app.app_context():
+            remark = appmod.query('SELECT overall_remark FROM vettings WHERE id=?',
+                                  (self.vetting,), one=True)['overall_remark']
+        self.assertNotIn('수기 메모', remark)
+        self.assertIn('ECDIS 점검 필요', remark)
+
     def test_obs_summary_keeps_finding_dash_concise_remark_style(self):
         marked = routes._replace_full_report_remark(
             '', '', 'starting valve seating 수리 후 Condition of Class 모니터링 중임.')

@@ -3973,6 +3973,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/vettings/obs-summary/rebuild-open",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "ai_gemini.api_ext_vt_obs_summary_rebuild_open",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/vettings/svms-attachment",
     "methods": [
       "OPTIONS",
