@@ -5094,7 +5094,9 @@ tr.cls-urgent-row .c-no { color: var(--red); font-weight: 700; }
   white-space: nowrap; border-bottom: 1px solid var(--border);
 }
 .vt-digest-table td { padding: 9px 12px; vertical-align: top; white-space: nowrap; }
-.vt-digest-table th:last-child, .vt-digest-table td:last-child { width: 46%; white-space: normal; }
+/* 지적 상세·조치계획 넓게, 조치계획 일자(마지막 열) 좁게 */
+.vt-digest-table th:last-child, .vt-digest-table td:last-child { width: 96px; }
+.vt-digest-table td.vt-dg-detail { width: 34%; white-space: normal; }
 .vt-dg-status { font-weight: 700; }
 .vt-dg-next { color: var(--accent-hover); }
 .vt-dg-last { color: #b91c1c; }
