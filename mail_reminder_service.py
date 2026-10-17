@@ -22,6 +22,36 @@ def _timestamp(value):
         raise ReminderError(409, 'invalid stored send timestamp')
 
 
+VETTING_MAX_REMINDERS = 2            # 형 지시 2026-10-18: Vetting 주 2회
+VETTING_SLOTS = (2, 4)               # 수(2)·금(4) 08:00 KST
+
+
+def max_reminders(mode):
+    return VETTING_MAX_REMINDERS if mode == 'vetting' else dm.MAX_REMINDERS
+
+
+def next_vetting_slot(after):
+    """after 이후(초과) 첫 수/금 08:00."""
+    day = after.replace(hour=8, minute=0, second=0, microsecond=0)
+    if day <= after:
+        day += timedelta(days=1)
+    while day.weekday() not in VETTING_SLOTS:
+        day += timedelta(days=1)
+    return day
+
+
+def in_vetting_window(now):
+    """외부 발송은 수·금 08:00~08:59 KST 안에서만. 놓친 슬롯은 늦게 보내지 않고 다음 슬롯."""
+    return now.weekday() in VETTING_SLOTS and now.hour == 8
+
+
+def reminder_due(mode, run, n):
+    if mode == 'vetting':
+        return next_vetting_slot(_timestamp(run['sent_at'] if n == 1 else run['last_reminder_at']))
+    base = _timestamp(run['sent_at'] if n == 1 else run['last_reminder_at'])
+    return (base + timedelta(days=dm.REPLY_DUE_DAYS + 1 if n == 1 else 1)).replace(hour=8, minute=30, second=0, microsecond=0)
+
+
 def _mode(mode):
     if mode not in ('class', 'vetting'):
         raise ReminderError(400, 'invalid reminder mode')
@@ -82,17 +112,14 @@ def pending(mode):
             if unresolved:
                 blocked.append({'id':run['id'], 'vessel_name':run['vessel_name'], 'state':unresolved[-1]['state']})
                 continue
-            if run['reminder_count'] >= dm.MAX_REMINDERS:
+            if run['reminder_count'] >= max_reminders(mode):
                 if run['notified_at']:
                     continue
                 due = (_timestamp(run['last_reminder_at']) + timedelta(days=1)).replace(hour=8, minute=30, second=0, microsecond=0)
                 if now_kst() < due:
                     continue
-            else:
-                base = _timestamp(run['last_reminder_at'] or run['sent_at'])
-                due = (base + timedelta(days=1 if run['reminder_count'] else dm.REPLY_DUE_DAYS + 1)).replace(hour=8, minute=30, second=0, microsecond=0)
-                if now_kst() < due:
-                    continue
+            elif now_kst() < reminder_due(mode, run, run['reminder_count'] + 1) or (mode == 'vetting' and not in_vetting_window(now_kst())):
+                continue
             out.append({k: run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','reminder_count','last_reminder_at','notified_at','reminder_attempts','excel_sha256')})
         except ReminderError:
             pass
@@ -107,12 +134,14 @@ def action(mode, rid, data):
         kind = data.get('kind')
         if kind == 'check':
             n, token = data.get('n'), data.get('token')
-            if type(n) is not int or not 1 <= n <= dm.MAX_REMINDERS or not token:
+            if type(n) is not int or not 1 <= n <= max_reminders(mode) or not token:
                 raise ReminderError(400, 'invalid reminder claim check')
             issued = db.execute("SELECT 1 FROM mail_reminder_attempts WHERE mode=? AND run_id=? AND n=? AND token=? AND state='claimed'", (mode,rid,n,token)).fetchone()
             if not issued:
                 raise ReminderError(409, 'claim token mismatch or no longer claimed')
             run = _run(mode, rid)
+            if mode == 'vetting' and not in_vetting_window(now_kst()):
+                raise ReminderError(409, 'outside vetting send window')
             db.rollback()
             return {'ok': True, 'run': {k:run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','excel_sha256')}}
         if kind == 'result':
@@ -141,7 +170,7 @@ def action(mode, rid, data):
         else:
             run = _run(mode, rid)
             if kind == 'notify':
-                if run['reminder_count'] < dm.MAX_REMINDERS:
+                if run['reminder_count'] < max_reminders(mode):
                     raise ReminderError(409, 'successful reminder required')
                 due = (_timestamp(run['last_reminder_at']) + timedelta(days=1)).replace(hour=8, minute=30, second=0, microsecond=0)
                 if now_kst() < due:
@@ -150,13 +179,11 @@ def action(mode, rid, data):
                 result = {'ok': True, 'duplicate': cur.rowcount == 0}
             elif kind == 'claim':
                 n = data.get('n')
-                if type(n) is not int or not 1 <= n <= dm.MAX_REMINDERS or n != run['reminder_count'] + 1:
+                if type(n) is not int or not 1 <= n <= max_reminders(mode) or n != run['reminder_count'] + 1:
                     raise ReminderError(409, 'invalid reminder sequence')
                 if any(a['n'] == n for a in run['reminder_attempts']):
                     raise ReminderError(409, 'reminder already claimed; reconcile outcome, do not resend')
-                base = _timestamp(run['sent_at'] if n == 1 else run['last_reminder_at'])
-                due = (base + timedelta(days=dm.REPLY_DUE_DAYS + 1 if n == 1 else 1)).replace(hour=8, minute=30, second=0, microsecond=0)
-                if now_kst() < due:
+                if now_kst() < reminder_due(mode, run, n) or (mode == 'vetting' and not in_vetting_window(now_kst())):
                     raise ReminderError(409, 'reminder not due')
                 token = uuid.uuid4().hex
                 db.execute('INSERT INTO mail_reminder_attempts(mode,run_id,n,token,state,claimed_at) VALUES(?,?,?,?,?,?)', (mode,rid,n,token,'claimed',now_kst().strftime('%Y-%m-%d %H:%M:%S')))

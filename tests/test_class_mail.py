@@ -327,7 +327,8 @@ class ClassMailTests(unittest.TestCase):
             # 회신시각=발송시각: 고정 시각이면 실행 시각에 따라 sent_at 보다 앞서 poll 이 무시함(시계 의존 flake).
             record = dict(sender='delegate@example.com', received_at=run['sent_at'], subject='RE: ' + run['subject'], body='Please find attached', message_id='local1', attachments=[os.path.join(self.temp.name, 'reply.xlsx')])
             with patch.object(runner.dm, 'outlook_scan', return_value=([record], '')), patch.object(runner.dm, 'to_korean', return_value=['30 Oct까지 수리 예정']) as translator, \
-                    patch.object(runner.dm, 'llm', return_value={'items': [{'item_id': 1, 'kind': 'action'}]}) as judge:
+                    patch.object(runner.dm, 'llm', return_value={'items': [{'item_id': 1, 'kind': 'action'}]}) as judge, \
+                    patch.object(runner, '_decision_split', side_effect=lambda r: ({}, {})):   # Decision 외부호출 차단
                 reply = runner.poll(SimpleNamespace(dry=False))
                 self.assertTrue(reply['ok'], reply)
                 self.assertEqual(1, reply['replies'][0]['updated'])
