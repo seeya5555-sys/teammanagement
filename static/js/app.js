@@ -1075,8 +1075,8 @@ function renderActionCell(issue) {
   const expanded = S.expandedActions.has(issue.id);
   const showAll = list.length <= 1 || expanded;
 
+  // 형 지시(2026-10-17): Daily '후속 약속 확인' 버튼 제거 — 현안 팔로우업은 주간 메일 자동화가 담당.
   const wrap = el('div', { class: 'act-cell-wrap' });
-  if (window.Followup) wrap.append(Followup.button('daily', issue.id));
   const entries = el('div', {
     class: 'act-entries' + (showAll ? '' : ' collapsed'),
   });
