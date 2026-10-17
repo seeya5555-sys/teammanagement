@@ -490,6 +490,27 @@ class VettingObsAutomationTests(unittest.TestCase):
             self.assertTrue(row['user_remark'].startswith('original'))
             self.assertIn('확인',row['user_remark'])
 
+    def test_source_key_dedups_other_sender_copy_and_previous_week_same_original(self):
+        rid = self._sent_run()
+        u = f'/api/ext/vetting-mail/runs/{rid}/findings/{self.f2}/reply'
+        body = {'message_id': 'outlook-content:vessel', 'date': '2026-10-06', 'kind': 'update', 'text': 'PCB 수령 대기',
+                'evidence': 'PCB awaiting delivery', 'source_fingerprint': 'e' * 64}
+        self.assertEqual('update', self.c.post(u, headers=self.h, json=body).get_json()['applied'])
+        copy = dict(body, message_id='outlook-content:manager', date='2026-10-07', text='PCB 입고 대기 중')
+        self.assertTrue(self.c.post(u, headers=self.h, json=copy).get_json()['duplicate'])
+        self.assertEqual(('Open', '[10/6]PCB 수령 대기'), self._status()[self.f2])
+        self.assertEqual(400, self.c.post(u, headers=self.h, json=dict(body, source_fingerprint='bad')).status_code)
+        nxt = self.c.post('/api/ext/vetting-mail/runs', headers=self.h,
+                          json={'vetting_id': self.vt, 'iso_week': '2026W42', 'finding_ids': sorted([self.f1, self.f2, self.f3])}).get_json()['id']
+        self.c.post(f'/api/ext/vetting-mail/runs/{nxt}/state', headers=self.h, json={'state': 'sent'})
+        u2 = f'/api/ext/vetting-mail/runs/{nxt}/findings/{self.f2}/reply'
+        same = self.c.post(u2, headers=self.h, json=dict(body, message_id='w42', date='2026-10-13')).get_json()
+        self.assertEqual((True, True), (same['duplicate'], same['unchanged']))
+        self.assertEqual(('Open', '[10/6]PCB 수령 대기'), self._status()[self.f2])
+        changed = self.c.post(u2, headers=self.h, json=dict(body, message_id='w42b', date='2026-10-13', text='PCB 입고 완료, 교체 예정',
+                                                            source_fingerprint='f' * 64)).get_json()
+        self.assertEqual('update', changed['applied'])
+
     def test_reply_requires_sent_run(self):
         self.c.post(f'/api/vetting-mail/settings/{self.ves}/enabled', json={'enabled': True})
         ids = sorted([self.f1, self.f2, self.f3])

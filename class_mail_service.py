@@ -290,7 +290,7 @@ def apply_reply(rid, data):
             return {'ok': True, 'duplicate': True, 'updated': 0}
         snapshot = {i['id']: i for i in json.loads(run['snapshot'])}
         current = items_for(run['vessel_id'])
-        changes, seen = [], set()
+        changes, seen, unchanged, sources = [], set(), 0, []
         for update in updates:
             origin = snapshot.get(update.get('item_id'))
             remark = str(update.get('remark') or '').strip()
@@ -310,7 +310,14 @@ def apply_reply(rid, data):
             if len(matches) != 1:
                 raise ClassMailError(409, 'Class 항목 변경·중복: 수동 확인 필요')
             live = matches[0]
-            tracked = conn.execute('SELECT last_action FROM class_mail_item_state WHERE run_id=? AND item_key=?', (rid, item_key(origin))).fetchone()
+            fp = source_fingerprint(original_remark)
+            if _same_as_last_reply(conn, rid, item_key(origin), fp):
+                # 형 지시(2026-10-17): 같은 회차 사본·전 주와 같은 원문=추가 조치 없음. 조치사항 줄은 안 쓰되 회신완료는 인정.
+                unchanged += 1
+                sources.append((item_key(origin), fp))
+                continue
+            sources.append((item_key(origin), fp))
+            tracked =conn.execute('SELECT last_action FROM class_mail_item_state WHERE run_id=? AND item_key=?', (rid, item_key(origin))).fetchone()
             base = tracked['last_action'] if tracked else (origin['action_taken'] or '')
             previous = live['action_taken'] or ''
             if previous != base:
@@ -328,12 +335,31 @@ def apply_reply(rid, data):
                 raise ClassMailError(409, '조치사항 CAS 충돌')
             conn.execute('INSERT INTO class_mail_item_state(run_id,item_key,last_action,reply_baseline) VALUES(?,?,?,?) ON CONFLICT(run_id,item_key) DO UPDATE SET last_action=excluded.last_action,reply_baseline=excluded.reply_baseline', (rid, identity, updated, reply_baseline))
         note = ''  # 처리 메모는 TRMT에 저장하지 않음, 텔레그램 보고로만(형 지시 2026-10-13)
-        conn.execute('INSERT INTO class_mail_replies(run_id,message_id,sender,received_at,updated,note) VALUES(?,?,?,?,?,?)', (rid, msg, sender[:200], str(data.get('received_at') or '')[:30], len(changes), note))
+        for identity, fp in sources:   # 같은 원문은 회차·항목당 1행, 재수신 시 최신 순서(id)로 갱신
+            conn.execute('DELETE FROM class_mail_reply_sources WHERE run_id=? AND item_key=? AND fp=?', (rid, identity, fp))
+            conn.execute('INSERT INTO class_mail_reply_sources(run_id,item_key,fp) VALUES(?,?,?)', (rid, identity, fp))
+        # updated = 실질 회신 항목 수(전 주 동일 포함) — 회신완료·리마인드 판정 기준과 일치.
+        conn.execute('INSERT INTO class_mail_replies(run_id,message_id,sender,received_at,updated,note) VALUES(?,?,?,?,?,?)', (rid, msg, sender[:200], str(data.get('received_at') or '')[:30], len(changes) + unchanged, note))
         conn.commit()
     except Exception:
         conn.rollback()
         raise
-    return {'ok': True, 'updated': len(changes), 'duplicate': False}
+    return {'ok': True, 'updated': len(changes), 'unchanged': unchanged, 'duplicate': False}
+
+
+def source_fingerprint(original):
+    return hashlib.sha256(re.sub(r'\s+', ' ', original or '').strip().casefold().encode()).hexdigest()
+
+
+def _same_as_last_reply(conn, rid, key, fp):
+    """Same raw already recorded for this item in this run (any order/sender), or equals the latest raw of an
+    earlier week's run for the same vessel. Structured per-raw keys, not suffixes of the accumulated text."""
+    if conn.execute('SELECT 1 FROM class_mail_reply_sources WHERE run_id=? AND item_key=? AND fp=?', (rid, key, fp)).fetchone():
+        return True
+    prev = conn.execute('SELECT s.fp FROM class_mail_reply_sources s JOIN class_mail_runs r ON r.id=s.run_id '
+                        'WHERE s.item_key=? AND s.run_id<? AND r.vessel_id=(SELECT vessel_id FROM class_mail_runs WHERE id=?) '
+                        'ORDER BY s.run_id DESC, s.id DESC LIMIT 1', (key, rid, rid)).fetchone()
+    return bool(prev) and prev['fp'] == fp
 
 
 def status():

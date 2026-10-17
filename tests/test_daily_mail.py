@@ -103,6 +103,27 @@ class DailyMailTests(unittest.TestCase):
         next_run=self._claim_sent(week='2026W41')
         self.assertFalse(self.c.post(f'/api/ext/daily-mail/runs/{next_run}/issues/{self.i1}/progress',headers=self.h,json=body).get_json()['duplicate'])
 
+    def test_same_raw_as_previous_week_records_reply_without_new_action(self):
+        import json
+        from app_core import query
+        self._enable();rid=self._claim_sent()
+        body=dict(message_id='w40',progress='수리 진행 중',date='2026-10-06',source_fingerprint='c'*64)
+        self.c.post(f'/api/ext/daily-mail/runs/{rid}/issues/{self.i1}/progress',headers=self.h,json=body)
+        nxt=self._claim_sent(week='2026W41')
+        out=self.c.post(f'/api/ext/daily-mail/runs/{nxt}/issues/{self.i1}/progress',headers=self.h,
+                        json=dict(body,message_id='w41',progress='수리 작업 진행 중',date='2026-10-13')).get_json()
+        self.assertTrue(out['unchanged']);self.assertFalse(out['duplicate'])
+        self.c.post(f'/api/ext/daily-mail/runs/{nxt}/events',headers=self.h,json={'kind':'reply','message_id':'w41'})
+        with appmod.app.app_context():
+            from daily_mail_service import get_run
+            self.assertEqual(1,len(json.loads(query('SELECT actions FROM issues WHERE id=?',(self.i1,),one=True)['actions'])))
+            self.assertEqual('replied',get_run(nxt)['reply_status'])
+        changed=self.c.post(f'/api/ext/daily-mail/runs/{nxt}/issues/{self.i1}/progress',headers=self.h,
+                            json=dict(body,message_id='w41b',progress='수리 완료',source_fingerprint='d'*64)).get_json()
+        self.assertNotIn('unchanged',changed)
+        with appmod.app.app_context():
+            self.assertEqual(2,len(json.loads(query('SELECT actions FROM issues WHERE id=?',(self.i1,),one=True)['actions'])))
+
     def test_legacy_local_message_still_dedups(self):
         self._enable();rid=self._claim_sent()
         url=f'/api/ext/daily-mail/runs/{rid}/issues/{self.i1}/progress'

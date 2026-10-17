@@ -195,6 +195,36 @@ class ClassMailTests(unittest.TestCase):
         pending=self.get('/runs/pending').get_json()['runs'][0]
         self.assertTrue(pending['reply_rows'][0]['action'].endswith('Pipe permanent repair completed on 30 Oct'))
 
+    def test_same_original_from_other_sender_or_previous_week_adds_no_line(self):
+        rid=self.sent_run()
+        first={'message_id':'v1','sender':'vessel@example.com','received_at':'2026-10-05 08:00:00','updates':[{'item_id':1,'remark':'Pipe 수리 진행 중','remark_original':'Pipe repair in progress'}]}
+        self.assertEqual(1,self.post(f'/runs/{rid}/reply',first).get_json()['updated'])
+        copy={**first,'message_id':'m1','sender':'manager@example.com','received_at':'2026-10-06 09:00:00','updates':[{'item_id':1,'remark':'Pipe 수리 작업 진행 중','remark_original':'Pipe  repair in progress'}]}
+        out=self.post(f'/runs/{rid}/reply',copy).get_json()
+        self.assertEqual((0,1),(out['updated'],out['unchanged']))
+        with A.app.app_context():
+            self.assertEqual(1,query("SELECT action_taken FROM class_status_items WHERE id=1",one=True)['action_taken'].count('수리'))
+            # 회신완료 판정(updated>0)은 유지
+            self.assertEqual(1,query("SELECT updated FROM class_mail_replies WHERE message_id='m1'",one=True)['updated'])
+        # 같은 회차 A→B→A: 마지막 A는 줄 추가 없음. 여러 문단 원문 뒤 그 일부(B)만 오면 다른 원문이라 기록.
+        multi={**first,'message_id':'v2','updates':[{'item_id':1,'remark':'Pipe 교체 / 시험 예정','remark_original':'Pipe renewed\n\nTest planned'}]}
+        self.assertEqual(1,self.post(f'/runs/{rid}/reply',multi).get_json()['updated'])
+        part={**first,'message_id':'v3','updates':[{'item_id':1,'remark':'시험 예정','remark_original':'Test planned'}]}
+        self.assertEqual(1,self.post(f'/runs/{rid}/reply',part).get_json()['updated'])
+        again={**first,'message_id':'v4'}
+        self.assertEqual((0,1),(lambda o:(o['updated'],o['unchanged']))(self.post(f'/runs/{rid}/reply',again).get_json()))
+        with A.app.app_context():
+            # 다음 주 run: 직전 원문(A)과 같으면 줄 없음, 다르면 기록. 다른 선박 run 은 비교 대상 아님.
+            conn=A.get_db()
+            row=dict(conn.execute('SELECT * FROM class_mail_runs WHERE id=?',(rid,)).fetchone())
+            row.update(id=rid+1,iso_week='2026W42')
+            conn.execute(f"INSERT INTO class_mail_runs({','.join(row)}) VALUES({','.join('?'*len(row))})",tuple(row.values()))
+            key=S.item_key(json.loads(row['snapshot'])[0])
+            self.assertTrue(S._same_as_last_reply(conn,rid+1,key,S.source_fingerprint('Pipe repair  in progress')))
+            self.assertFalse(S._same_as_last_reply(conn,rid+1,key,S.source_fingerprint('Test planned')))
+            self.assertFalse(S._same_as_last_reply(conn,rid+1,key,S.source_fingerprint('Pipe repair completed')))
+            conn.rollback()
+
     def test_untranslated_or_invalid_original_is_rejected_without_write(self):
         rid=self.sent_run()
         for ko,origin in [('Repair completed','Repair completed'),('수리 완료함',''),('수리 완료함',42)]:

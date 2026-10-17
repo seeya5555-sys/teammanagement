@@ -1401,6 +1401,12 @@ CREATE TABLE IF NOT EXISTS class_mail_item_state (
  run_id INTEGER NOT NULL REFERENCES class_mail_runs(id), item_key TEXT NOT NULL,
  last_action TEXT NOT NULL, reply_baseline TEXT NOT NULL, PRIMARY KEY(run_id,item_key)
 );
+-- Class 회신 원문 키(2026-10-17): 같은 회차 사본·전 주 동일 원문은 조치사항 줄 추가 없음.
+CREATE TABLE IF NOT EXISTS class_mail_reply_sources (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES class_mail_runs(id),
+ item_key TEXT NOT NULL, fp TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+ UNIQUE(run_id,item_key,fp)
+);
 
 -- Bounded follow-up ledger; claims are not counted as successful sends.
 CREATE TABLE IF NOT EXISTS mail_reminder_attempts (

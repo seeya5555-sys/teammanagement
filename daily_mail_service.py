@@ -590,6 +590,17 @@ def run_id_vessel(run_id):
     return get_run(run_id)['vessel_id']
 
 
+def _same_as_previous_week(run_id, issue_id, fp):
+    """Latest raw source recorded for this issue in an earlier run equals this reply's raw source."""
+    if not fp:
+        return False
+    prev = query("SELECT json_extract(payload,'$.source_fingerprint') fp FROM daily_mail_events "
+                 "WHERE issue_id=? AND kind='update' AND run_id<? "
+                 "AND json_extract(payload,'$.source_fingerprint') IS NOT NULL ORDER BY run_id DESC, id DESC LIMIT 1",
+                 (issue_id, run_id), one=True)
+    return bool(prev) and prev['fp'] == fp
+
+
 def append_update(run_id, issue_id, d):
     if not (d.get('message_id') or '').strip():
         raise DailyMailError(400, 'message_id required')
@@ -607,9 +618,16 @@ def append_update(run_id, issue_id, d):
     payload = {'sender': d.get('sender'), 'date': d.get('date'), 'source': d.get('source') or 'reply_mail',
                'confidence': d.get('confidence'), 'source_fingerprint': d.get('source_fingerprint'),
                'legacy_message_id': d.get('legacy_message_id')}
+    unchanged = _same_as_previous_week(run_id, issue_id, d.get('source_fingerprint'))
+    if unchanged:
+        payload['unchanged'] = True
     eid = _insert_event(run_id, 'update', issue_id, d.get('message_id'), progress, payload)
     if eid is None:
         return {'duplicate': True}
+    if unchanged:
+        # 형 지시(2026-10-17): 전 주와 같은 원문=추가 진행 없음. 이력 줄은 안 쓰되 회신완료는 인정.
+        _recompute_reply_status(run_id)
+        return {'id': eid, 'duplicate': False, 'unchanged': True}
     try:
         n = append_action_cas(issue_id, _entry(d, '회신메일'), vessel_id=run_id_vessel(run_id), require_open=True)
     except DailyMailError:

@@ -2260,6 +2260,21 @@ def vt_mail_apply_reply(rid, fid, d):
     legacy_mid = (d.get('legacy_message_id') or '').strip()
     if legacy_mid and query("SELECT 1 FROM vetting_mail_events WHERE run_id=? AND finding_id=? AND message_id=? AND kind IN ('close','update','needs_review')", (rid, fid, legacy_mid), one=True):
         return {'duplicate': True}
+    fp = d.get('source_fingerprint')
+    if fp is not None and not _re_cls.fullmatch(r'[a-f0-9]{64}', str(fp)):
+        raise vms.VettingMailError(400, 'invalid source_fingerprint')
+    if fp:
+        # 형 지시(2026-10-17): 회신 원문 키 — 같은 회차의 다른 발신자 사본=중복, 이 항목의 직전 회신 원문과 같으면
+        # (전 주 동일) 추가 업데이트 없음. 비고 쓰기 없음; 회신완료는 reply-done 이 따로 기록.
+        mid = 'vetting-source:' + fp
+        if query("SELECT 1 FROM vetting_mail_events WHERE run_id=? AND finding_id=? AND message_id=? "
+                 "AND kind IN ('close','update','needs_review')", (rid, fid, mid), one=True):
+            return {'duplicate': True}
+        prev = query("SELECT message_id FROM vetting_mail_events WHERE finding_id=? AND run_id<? "
+                     "AND kind IN ('close','update','needs_review') AND message_id LIKE 'vetting-source:%' "
+                     "ORDER BY run_id DESC, id DESC LIMIT 1", (fid, rid), one=True)
+        if prev and prev['message_id'] == mid and kind != 'close':
+            return {'duplicate': True, 'unchanged': True}
     if f['status'] not in ('Open', 'Closed'):
         return {'not_open': True}
     was_closed = f['status'] == 'Closed'
