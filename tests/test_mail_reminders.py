@@ -107,6 +107,11 @@ class ReminderTests(ClassMailTests):
             self.assertEqual(200,self.post(f'/runs/{rid}/reminder',{'kind':'result','n':1,'token':claim['token'],'state':'unknown'}).status_code)
             self.assertEqual('unknown',self.get('/reminders').get_json()['blocked'][0]['state'])
             self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':2}).status_code)
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,6,8,30)):   # 다음 ISO 주: 경보 제외, 기록 보존
+            queue=self.get('/reminders').get_json()
+            self.assertEqual([],queue['blocked']); self.assertEqual([],queue['runs'])
+            with self.app_context():
+                self.assertEqual('unknown',R._run('class',rid)['reminder_attempts'][0]['state'])
 
     def test_expired_invalid_timestamp_and_superseded_run(self):
         rid=self.sent_run()

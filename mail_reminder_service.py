@@ -119,6 +119,9 @@ def pending(mode):
             run = _run(mode, r['id'])
             unresolved = [a for a in run['reminder_attempts'] if a['state'] != 'sent']
             if unresolved:
+                # 지난 주차 건은 어차피 리마인드 대상이 아님(week_open) → 차단 경보 제외. 미정리 기록 자체는 보존.
+                if not week_open(run, now_kst()):
+                    continue
                 blocked.append({'id':run['id'], 'vessel_name':run['vessel_name'], 'state':unresolved[-1]['state']})
                 continue
             if run['reminder_count'] >= max_reminders(mode):
