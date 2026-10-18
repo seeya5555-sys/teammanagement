@@ -47,15 +47,19 @@ class ReminderTests(ClassMailTests):
         rid = self.sent_run()
         with self.app_context():
             execute("UPDATE class_mail_runs SET sent_at='2026-10-01 18:00:00' WHERE id=?", (rid,))
-        for n, day in [(1,6)]:
+        # 같은 주(W40) 안에서만 리마인드(형 지시 10-18): 다음 주 화요일 claim 은 409
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,6,8,30)):
+            self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':1}).status_code)
+            self.assertEqual([],self.get('/reminders').get_json()['runs'])
+        for n, day in [(1,4)]:
             with patch.object(R,'now_kst',return_value=datetime(2026,10,day,8,30)):
                 claim = self.post(f'/runs/{rid}/reminder',{'kind':'claim','n':n}).get_json()
                 response = self.post(f'/runs/{rid}/reminder',{'kind':'result','n':n,'token':claim['token'],'state':'sent','sent_at':f'2026-10-{day:02d} 08:30:00'})
                 self.assertEqual(200,response.status_code,response.get_json())
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,7,8,29)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,5,8,29)):
             self.assertEqual([],self.get('/reminders').get_json()['runs'])
             self.assertEqual(409,self.post(f'/runs/{rid}/reminder',{'kind':'notify'}).status_code)
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,7,8,30)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,10,5,8,30)):   # 미회신 통보(내부)는 주 경계 무관
             self.assertEqual(1,self.get('/reminders').get_json()['runs'][0]['reminder_count'])
             self.assertFalse(self.post(f'/runs/{rid}/reminder',{'kind':'notify'}).get_json()['duplicate'])
             self.assertTrue(self.post(f'/runs/{rid}/reminder',{'kind':'notify'}).get_json()['duplicate'])
@@ -145,9 +149,9 @@ class VettingSlotTests(unittest.TestCase):
         self.assertFalse(mr.in_vetting_window(D(2026, 10, 22, 8, 0)))     # 목요일
         self.assertFalse(mr.in_vetting_window(D(2026, 10, 21, 7, 59)))
         # 같은 주 안에서만: 월 발송 → 같은 주 수·금 OK, 다음 주 수요일 X
-        self.assertTrue(mr.vetting_week_open(run, D(2026, 10, 23, 8, 0)))
-        self.assertFalse(mr.vetting_week_open(run, D(2026, 10, 28, 8, 0)))
-        self.assertFalse(mr.vetting_week_open({'sent_at': '2026-10-14 15:29:28'}, D(2026, 10, 21, 8, 0)))   # Indonesia run10: W42 → W43 미발송
+        self.assertTrue(mr.week_open(run, D(2026, 10, 23, 8, 0)))
+        self.assertFalse(mr.week_open(run, D(2026, 10, 28, 8, 0)))
+        self.assertFalse(mr.week_open({'sent_at': '2026-10-14 15:29:28'}, D(2026, 10, 21, 8, 0)))   # Indonesia run10: W42 → W43 미발송
 
 
 if __name__ == '__main__':

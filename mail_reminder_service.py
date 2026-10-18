@@ -49,8 +49,8 @@ def same_iso_week(a, b):
     return a.isocalendar()[:2] == b.isocalendar()[:2]
 
 
-def vetting_week_open(run, now):
-    """형 지시 2026-10-18: Vetting 리마인드는 최초 발송한 그 주(ISO 주차) 안에서만. 주가 지나면 지난주 건은 안 나감."""
+def week_open(run, now):
+    """형 지시 2026-10-18: 리마인드(Vetting·Class 공통)는 최초 발송한 그 주(ISO 주차) 안에서만. 주가 지나면 지난주 건은 안 나감."""
     return same_iso_week(_timestamp(run['sent_at']), now)
 
 
@@ -127,7 +127,7 @@ def pending(mode):
                 due = (_timestamp(run['last_reminder_at']) + timedelta(days=1)).replace(hour=8, minute=30, second=0, microsecond=0)
                 if now_kst() < due:
                     continue
-            elif now_kst() < reminder_due(mode, run, run['reminder_count'] + 1) or (mode == 'vetting' and (not in_vetting_window(now_kst()) or not vetting_week_open(run, now_kst()))):
+            elif now_kst() < reminder_due(mode, run, run['reminder_count'] + 1) or not week_open(run, now_kst()) or (mode == 'vetting' and not in_vetting_window(now_kst())):
                 continue
             out.append({k: run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','reminder_count','last_reminder_at','notified_at','reminder_attempts','excel_sha256')})
         except ReminderError:
@@ -149,7 +149,7 @@ def action(mode, rid, data):
             if not issued:
                 raise ReminderError(409, 'claim token mismatch or no longer claimed')
             run = _run(mode, rid)
-            if mode == 'vetting' and (not in_vetting_window(now_kst()) or not vetting_week_open(run, now_kst())):
+            if not week_open(run, now_kst()) or (mode == 'vetting' and not in_vetting_window(now_kst())):
                 raise ReminderError(409, 'outside vetting send window')
             db.rollback()
             return {'ok': True, 'run': {k:run[k] for k in ('id','vessel_name','subject','to_emails','cc_emails','dear','sent_at','excel_sha256')}}
@@ -192,7 +192,7 @@ def action(mode, rid, data):
                     raise ReminderError(409, 'invalid reminder sequence')
                 if any(a['n'] == n for a in run['reminder_attempts']):
                     raise ReminderError(409, 'reminder already claimed; reconcile outcome, do not resend')
-                if now_kst() < reminder_due(mode, run, n) or (mode == 'vetting' and (not in_vetting_window(now_kst()) or not vetting_week_open(run, now_kst()))):
+                if now_kst() < reminder_due(mode, run, n) or not week_open(run, now_kst()) or (mode == 'vetting' and not in_vetting_window(now_kst())):
                     raise ReminderError(409, 'reminder not due')
                 token = uuid.uuid4().hex
                 db.execute('INSERT INTO mail_reminder_attempts(mode,run_id,n,token,state,claimed_at) VALUES(?,?,?,?,?,?)', (mode,rid,n,token,'claimed',now_kst().strftime('%Y-%m-%d %H:%M:%S')))
