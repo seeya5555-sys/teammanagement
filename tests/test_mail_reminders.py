@@ -144,6 +144,10 @@ class VettingSlotTests(unittest.TestCase):
         self.assertFalse(mr.in_vetting_window(D(2026, 10, 21, 9, 0)))     # 지연·재실행 → 다음 슬롯
         self.assertFalse(mr.in_vetting_window(D(2026, 10, 22, 8, 0)))     # 목요일
         self.assertFalse(mr.in_vetting_window(D(2026, 10, 21, 7, 59)))
+        # 같은 주 안에서만: 월 발송 → 같은 주 수·금 OK, 다음 주 수요일 X
+        self.assertTrue(mr.vetting_week_open(run, D(2026, 10, 23, 8, 0)))
+        self.assertFalse(mr.vetting_week_open(run, D(2026, 10, 28, 8, 0)))
+        self.assertFalse(mr.vetting_week_open({'sent_at': '2026-10-14 15:29:28'}, D(2026, 10, 21, 8, 0)))   # Indonesia run10: W42 → W43 미발송
 
 
 if __name__ == '__main__':
