@@ -2831,3 +2831,34 @@ def _class_workbook(title, subtitle, headers, rows, wrap_cols, widths):
         output_rows.append(cells[offset:offset + len(row)])
         offset += len(row)
     return _findings_workbook(cells[0], cells[1], headers, output_rows, wrap_cols, widths)
+
+
+CS_EXPORT_HEADERS = ['Category', 'No.', 'ITEM', 'DESCRIPTION', 'RECTIFICATION', 'PHOTO', 'STATUS']
+
+
+def _cs_survey_workbook(sid):
+    """Condition Survey 엑셀추출 단일 생성기(화면 버튼·CS 메일 첨부 공용).
+
+    Returns (BytesIO, download filename, finding rows) or None when the survey is missing.
+    양식(제목·열·폭)은 엑셀추출 버튼과 동일해야 하므로 이 함수만 수정한다.
+    """
+    s = query('''SELECT cs.*, v.name AS vessel_name
+                   FROM cs_surveys cs JOIN vessels v ON v.id = cs.vessel_id
+                  WHERE cs.id=?''', (sid,), one=True)
+    if not s:
+        return None
+    fr = query('''SELECT id, category, no, item, description, remark, status
+                    FROM cs_findings WHERE survey_id=?
+                   ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id''', (sid,))
+    # RECTIFICATION·PHOTO 2열은 공란으로 출력(현장기입용). REMARK는 export에서 제외.
+    rows = [[r['category'], r['no'], r['item'] or '', r['description'] or '',
+             '', '', r['status'] or ''] for r in fr]
+    vessel = s['vessel_name']
+    title = f"Condition Survey — {vessel}  {s['year']} Q{s['quarter']}"
+    sub_bits = [f"수검일: {s['inspection_date'] or '-'}", f"Vendor: {s['vendor'] or '-'}",
+                f"총 {len(rows)}건 (Defect {sum(1 for r in fr if r['category']=='Defect')} / "
+                f"Observation {sum(1 for r in fr if r['category']=='Observation')})"]
+    bio = _findings_workbook(title, '   │   '.join(sub_bits), CS_EXPORT_HEADERS, rows,
+                             wrap_cols={3, 4, 5, 6}, widths=[12, 6, 28, 50, 40, 30, 10])
+    fname = f"CS_{_safe_filename(vessel)}_{s['year']}Q{s['quarter']}.xlsx"
+    return bio, fname, [dict(r) for r in fr]

@@ -143,8 +143,13 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # Delete helper table/key use a fixed mapping; where is supplied ONLY by explicit internal delete routes,
 # including existing literal status lists and '?' placeholder lists. Values stay parameterized.
 # Removed old direct dynamic DELETE sites are now one atomic SELECT+DELETE helper; one trigger added.
-EXPECTED_COUNT = 196
-EXPECTED_SHA256 = "b099e36d155b38db619794b78b28e37e6979eae811f222e36e6e6583f9ba345f"  # 2026-10-02 daily_mail: +IN(?,..) placeholder 2곳(ids 비면 skip) + actions CAS 리터럴 guard 2곳
+# 2026-10-19 Condition Survey mail reminder ledger: +7 sites in mail_reminder_service.py, all
+# `{attempts_table}`/`{notices_table}` from ledger(mode), which returns only two inline literal
+# pairs (cs_mail_reminder_* for 'cs', mail_reminder_* otherwise) after the _mode whitelist
+# class/vetting/cs. No request/config/DB value reaches SQL syntax; all values bound.
+# Measured with repository_fingerprints(): previous 196 fingerprints unchanged, +7 exact.
+EXPECTED_COUNT = 203
+EXPECTED_SHA256 = "68ad98698484fa0aa0c906b67c0744d02b815881faff850595ffc102401a5232"  # 2026-10-19 cs reminder ledger +7
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

@@ -1420,3 +1420,50 @@ CREATE TABLE IF NOT EXISTS mail_reminder_notices (
  mode TEXT NOT NULL CHECK(mode IN ('class','vetting')), run_id INTEGER NOT NULL,
  notified_at TEXT NOT NULL, PRIMARY KEY(mode,run_id)
 );
+
+-- Condition Survey mail (CONTAINER only): OFF-by-default switches, shared Daily contacts.
+-- One weekly run per vessel; attachments = 엑셀추출 workbook per survey with Open findings.
+CREATE TABLE IF NOT EXISTS cs_mail_settings (
+ vessel_id INTEGER PRIMARY KEY REFERENCES vessels(id) ON DELETE CASCADE,
+ enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+ updated_by TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS cs_mail_template (
+ id INTEGER PRIMARY KEY CHECK(id=1), subject_tpl TEXT NOT NULL, body_tpl TEXT NOT NULL,
+ updated_by TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS cs_mail_runs (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, vessel_id INTEGER NOT NULL REFERENCES vessels(id),
+ iso_week TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('sending','sent','failed')),
+ tag TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
+ to_emails TEXT NOT NULL, cc_emails TEXT NOT NULL, snapshot TEXT NOT NULL, reply_rows TEXT NOT NULL,
+ attachments TEXT NOT NULL, excel_sha256 TEXT NOT NULL, sent_at TEXT, error TEXT,
+ created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), UNIQUE(vessel_id,iso_week)
+);
+CREATE TABLE IF NOT EXISTS cs_mail_replies (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES cs_mail_runs(id),
+ message_id TEXT NOT NULL, sender TEXT NOT NULL, received_at TEXT, updated INTEGER NOT NULL DEFAULT 0,
+ closed INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), UNIQUE(run_id,message_id)
+);
+CREATE TABLE IF NOT EXISTS cs_mail_item_state (
+ run_id INTEGER NOT NULL REFERENCES cs_mail_runs(id), finding_id INTEGER NOT NULL,
+ last_remark TEXT NOT NULL, last_status TEXT NOT NULL DEFAULT 'Open', PRIMARY KEY(run_id,finding_id)
+);
+CREATE TABLE IF NOT EXISTS cs_mail_reply_sources (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES cs_mail_runs(id),
+ item_key TEXT NOT NULL, fp TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+ UNIQUE(run_id,item_key,fp)
+);
+-- CS follow-up ledger(Thursday, max 1). 공용 ledger 의 mode CHECK 재생성을 피하려 별도 표.
+CREATE TABLE IF NOT EXISTS cs_mail_reminder_attempts (
+ mode TEXT NOT NULL CHECK(mode='cs'), run_id INTEGER NOT NULL,
+ n INTEGER NOT NULL CHECK(n=1), token TEXT NOT NULL UNIQUE,
+ state TEXT NOT NULL CHECK(state IN ('claimed','sent','failed','unknown')),
+ claimed_at TEXT NOT NULL, sent_at TEXT, error TEXT,
+ PRIMARY KEY(mode,run_id,n)
+);
+CREATE TABLE IF NOT EXISTS cs_mail_reminder_notices (
+ mode TEXT NOT NULL CHECK(mode='cs'), run_id INTEGER NOT NULL,
+ notified_at TEXT NOT NULL, PRIMARY KEY(mode,run_id)
+);

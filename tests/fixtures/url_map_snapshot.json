@@ -1019,6 +1019,47 @@
     "defaults": {}
   },
   {
+    "rule": "/api/cs-mail/runs/<int:rid>/recover-sent",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_cs_mail.api_cs_mail_recover_sent",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/cs-mail/settings/<int:vid>/enabled",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_cs_mail.api_cs_mail_enabled",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/cs-mail/status",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_cs_mail.api_cs_mail_status",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/cs-mail/template",
+    "methods": [
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_cs_mail.api_cs_mail_template",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/cs/attachments/<int:aid>",
     "methods": [
       "DELETE",
@@ -2505,6 +2546,111 @@
       "POST"
     ],
     "endpoint": "routes_calendar_dock.api_ext_class_status_upload",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/canary",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_canary",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/config",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_config",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/reminders",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_reminders",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/runs",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_claim",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/runs/<int:rid>/check",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_check",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/runs/<int:rid>/reminder",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_reminder",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/runs/<int:rid>/reply",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_reply",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/runs/<int:rid>/state",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_state",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/runs/pending",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_pending",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/cs-mail/vessels/<int:vid>/prepare",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_cs_mail.api_ext_cs_mail_prepare",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -5886,6 +6032,17 @@
       "OPTIONS"
     ],
     "endpoint": "routes_core.condition_survey",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/cs-mail",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_cs_mail.cs_mail_page",
     "strict_slashes": true,
     "defaults": {}
   },
