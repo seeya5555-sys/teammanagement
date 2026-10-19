@@ -936,7 +936,8 @@ def _full_report_prompt(vetting, findings):
         "임시조치 또는 모니터링 단계면 Open. Preventative Action이 상시/미래형이라는 이유만으로, 이미 완료된 "
         "Corrective Action을 Open으로 두지는 않는다. 적합성 확인으로 시정 불필요가 명확하고 후속조치가 없으면 Closed.\n"
         "- 기존 items의 remark는 Operator Comments를 근거로 현재 조치상태와 남은 핵심 조치만 한국어 음슴체 "
-        "한 문장으로 간결하게 요약하고 현재 상태와 남은 핵심 조치만 남긴다. Immediate Cause/Root Cause의 경위 설명은 반복하지 않는다. "
+        "한 문장으로 간결하게 요약하고 현재 상태와 남은 핵심 조치만 남긴다. remark는 TRMT '조치계획' 칸에 들어가므로 "
+        "남은 조치는 '~필요'가 아니라 계획형 '~예정'으로 끝맺는다(예: '수리 필요'→'수리 예정', '입력 필요'→'입력 조치 예정'). Immediate Cause/Root Cause의 경위 설명은 반복하지 않는다. "
         "Condition of Class는 COC로 표기하고, starting valve seating, Cylinder cover, UT/MPI, FIVA, ECDIS 등 기술 명칭·장비명·약어는 "
         "번역하지 말고 보고서의 영문 표기를 그대로 유지한다. "
         "나쁜 예: '메인 엔진 6번 실린더 커버 시동 밸브 시트 수리 후 Class Condition이 발행됨. 수리 부위는 정기 점검 및 모니터링 중이며 차기 연례 검사 시 UT/MPI 재검사가 예정되어 있음.' "
@@ -980,6 +981,14 @@ def _replace_full_report_remark(existing, previous_auto, generated):
     return f'{current}\n\n{automatic}'.strip() if current else automatic
 
 
+def _plan_form(text):
+    """조치계획은 '계획'이므로 '~필요'를 '~예정'으로(형 지시 2026-10-20). 문장 중간·끝 모두.
+    '불필요'·'필요 시'·'확인 필요'(회신 확인 태그)는 건드리지 않는다. '입력 필요'→'입력 조치 예정'."""
+    t = _re_cls.sub(r'(입력|수정|기재|교육|제출|개정)\s*필요(?!\s*시)(?=\s*[.。,;/)\]]|\s|$)',
+                    r'\1 조치 예정', text or '')
+    return _re_cls.sub(r'(?<!불)(?<!확인 )(?<!확인)필요(?!\s*시)(?=\s*[.。,;/)\]]|\s|$)', '예정', t)
+
+
 def _concise_full_report_remark(value):
     """조치 Remark 문체 정리. 길이 목표보다 잔여 조치·조건 보존 우선."""
     text = (value or '')
@@ -998,6 +1007,7 @@ def _concise_full_report_remark(value):
     text = _re_cls.sub(r'\s+', ' ', text).strip()
     if not text:
         return ''
+    text = _plan_form(text)
     # Generated summaries are made concise by their prompt. Postprocessing must not
     # discard a second/third sentence, a condition, a deadline, or truncate a technical term.
     return text
@@ -2124,6 +2134,8 @@ def close_auto_judge(vid, dry=False, force=False, actor='auto:svms-close', requi
                 continue
             old = by_id[j['finding_id']]
             auto = j['action'] or (old['full_report_remark'] or '')
+            if j['status'] == 'Open':
+                auto = _plan_form(auto)   # 남은 조치 = 계획형 '~예정'
             user_remark = _replace_full_report_remark(old['user_remark'], old['full_report_remark'], auto)
             cur = db.execute(
                 "UPDATE vt_findings SET status=?, user_remark=?, full_report_remark=?, "

@@ -57,7 +57,7 @@ class MaritimeTranslationPolicyTests(unittest.TestCase):
     def test_third_sentence_deadline_not_lost(self):
         source='Compressor 임시수리 완료. Pressure test 예정. Spare 보급 후 영구수리 필요, 기한 2027-03-31.'
         out=a._concise_full_report_remark(source)
-        self.assertIn('Spare 보급 후 영구수리 필요',out)
+        self.assertIn('Spare 보급 후 영구수리 예정',out)
         self.assertIn('2027-03-31',out)
         self.assertNotIn('…',out)
 
