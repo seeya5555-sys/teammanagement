@@ -804,6 +804,19 @@ function findingsSection(survey, category, findings) {
   return sec;
 }
 
+// Finding Status 3단계 — 서버 routes_core CS_FINDING_STATUSES 와 동일
+const CS_STATUSES = ['Open', 'In progress', 'Closed'];
+const CS_STATUS_NEXT = { 'Open': 'In progress', 'In progress': 'Closed', 'Closed': 'Open' };
+function csStatusClass(st) {
+  return st === 'Closed' ? 'status-done' : st === 'In progress' ? 'status-prog' : 'status-open';
+}
+function normalizeCsStatus(st) {
+  const k = String(st || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (k === 'closed' || k === 'close') return 'Closed';
+  if (k === 'inprogress' || k === 'progress' || k === '진행중') return 'In progress';
+  return 'Open';
+}
+
 function findingRow(survey, f) {
   const tr = el('tr');
   tr.append(el('td', { class: 'cs-no' }, String(f.no)));
@@ -814,9 +827,9 @@ function findingRow(survey, f) {
   // Status — 클릭 토글
   const stTd = el('td', { class: 'cs-status', style: 'text-align:center' });
   const stPill = el('span', {
-    class: 'bd ' + (f.status === 'Closed' ? 'status-done' : 'status-open'),
+    class: 'bd ' + csStatusClass(f.status),
     style: 'cursor:pointer',
-    title: '클릭으로 Open/Closed 토글',
+    title: '클릭으로 Open → In progress → Closed 순환',
     onclick: () => toggleFindingStatus(f),
   }, f.status);
   stTd.append(stPill);
@@ -956,7 +969,7 @@ async function bulkUpdateFindings(survey, startFinding, field, values) {
 }
 
 async function toggleFindingStatus(f) {
-  const newSt = f.status === 'Closed' ? 'Open' : 'Closed';
+  const newSt = CS_STATUS_NEXT[f.status] || 'In progress';
   try {
     await api(`/api/cs/findings/${f.id}`, {
       method: 'PUT',
@@ -1080,7 +1093,7 @@ function inlineAddRow(survey, category, row, idx, baseNo) {
   });
   const statusSel = document.createElement('select');
   statusSel.className = 'cs-inline-input';
-  for (const v of ['Open','Closed']) {
+  for (const v of CS_STATUSES) {
     const o = document.createElement('option'); o.value = v; o.textContent = v;
     if (v === row.status) o.selected = true;
     statusSel.append(o);
@@ -1114,7 +1127,7 @@ function inlineAddRow(survey, category, row, idx, baseNo) {
       if (cols[2] !== undefined && cols[2] !== '') target.remark      = cols[2].trim();
       if (cols[3] !== undefined && cols[3] !== '') {
         const st = cols[3].trim();
-        target.status = (st === 'Closed' || st.toLowerCase() === 'closed') ? 'Closed' : 'Open';
+        target.status = normalizeCsStatus(st);
       }
     });
     render();

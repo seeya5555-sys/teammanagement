@@ -1814,6 +1814,51 @@ app.register_blueprint(routes_cs_mail.bp)
 # Static contract marker: dock sync notifications keep the historical deep link.
 # The executable call remains in routes_dock_submit.py.
 # link='trmt://dock'
+def _cs_findings_status_migrate(conn):
+    """cs_findings.status CHECK 에 'In progress' 허용(2026-10-20). SQLite 는 CHECK 변경 불가 → 테이블 재생성.
+    컬럼명 명시 복사(옛 DB 는 item 이 ALTER 로 뒤에 붙어 순서가 다름), id 보존, idempotent."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='cs_findings'").fetchone()
+    if not row or 'In progress' in row[0]:
+        return
+    conn.commit()
+    conn.execute('PRAGMA foreign_keys=OFF')
+    conn.execute('PRAGMA legacy_alter_table=ON')
+    try:
+        conn.execute('BEGIN')
+        n_before = conn.execute('SELECT COUNT(*) FROM cs_findings').fetchone()[0]
+        conn.execute('ALTER TABLE cs_findings RENAME TO cs_findings_old_status')
+        conn.execute("""
+            CREATE TABLE cs_findings (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                survey_id   INTEGER NOT NULL,
+                category    TEXT    NOT NULL CHECK (category IN ('Defect','Observation')),
+                no          INTEGER NOT NULL,
+                item        TEXT,
+                description TEXT,
+                remark      TEXT,
+                status      TEXT    NOT NULL DEFAULT 'Open' CHECK (status IN ('Open','In progress','Closed')),
+                created_at  TEXT DEFAULT (datetime('now','localtime')),
+                updated_at  TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (survey_id) REFERENCES cs_surveys(id) ON DELETE CASCADE
+            )""")
+        conn.execute('INSERT INTO cs_findings (id, survey_id, category, no, item, description, remark, status, created_at, updated_at) '
+                     'SELECT id, survey_id, category, no, item, description, remark, status, created_at, updated_at '
+                     'FROM cs_findings_old_status')
+        n_after = conn.execute('SELECT COUNT(*) FROM cs_findings').fetchone()[0]
+        if n_after != n_before:
+            raise RuntimeError(f'cs_findings 행수 불일치 {n_before}->{n_after}')
+        conn.execute('DROP TABLE cs_findings_old_status')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_cs_findings_survey ON cs_findings(survey_id, category, no)')
+        conn.execute('COMMIT')
+        print(f'  · cs_findings.status CHECK 에 In progress 추가 ({n_after}행 보존)')
+    except Exception:
+        conn.execute('ROLLBACK')
+        raise
+    finally:
+        conn.execute('PRAGMA legacy_alter_table=OFF')
+        conn.execute('PRAGMA foreign_keys=ON')
+
+
 def _auto_migrate():
     """기존 DB에 대한 idempotent 스키마 보강 — 배포 시 마이그레이션 누락 방지.
     · schema.sql 의 CREATE TABLE/INDEX IF NOT EXISTS 재적용(누락 테이블 생성)
@@ -1832,6 +1877,10 @@ def _auto_migrate():
             _aor_absorbing_trigger_install(conn)
         except Exception as e:
             print(f'[auto_migrate] aor_draft absorbing trigger 생성 실패: {e}')
+        try:
+            _cs_findings_status_migrate(conn)
+        except Exception as e:
+            print(f'[auto_migrate] cs_findings status 마이그레이션 실패: {e}')
         # 활성행 유일성 index 도 같은 이유로 여기서 한 번 더 맞춘다(옛 raw-컬럼 → canonical 표현식).
         # ⚠️ init_db 와 달리 여기엔 앞선 중복 정리가 없다 — 중복이 남아 있으면 install 이 교체를
         #    거부하고 예외를 던진다. 옛 index 는 그대로라 안전하고, 로그로 드러난다.

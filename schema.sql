@@ -510,7 +510,7 @@ CREATE TABLE IF NOT EXISTS cs_findings (
     item        TEXT,                     -- 항목명 (간단)
     description TEXT,                     -- 상세 내용
     remark      TEXT,                     -- 비고
-    status      TEXT    NOT NULL DEFAULT 'Open' CHECK (status IN ('Open','Closed')),
+    status      TEXT    NOT NULL DEFAULT 'Open' CHECK (status IN ('Open','In progress','Closed')),
     created_at  TEXT DEFAULT (datetime('now','localtime')),
     updated_at  TEXT DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (survey_id) REFERENCES cs_surveys(id) ON DELETE CASCADE

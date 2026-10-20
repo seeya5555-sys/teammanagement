@@ -1933,6 +1933,10 @@ def api_user_reset_password(uid):
 #  API — Condition Survey
 # ═════════════════════════════════════════════════════════════════
 
+# CS finding Status 3단계 (In progress=미완료로 Open 카운트·메일 대상에 포함)
+CS_FINDING_STATUSES = ('Open', 'In progress', 'Closed')
+
+
 def _cs_survey_counts_projection(s, count_rows, attach_n):
     """survey 행 + (category, status, n) 집계 + 첨부 수 → 응답 dict (순수 함수, DB 무접근).
     manual_*_count 가 NULL이 아니면 수동 입력값을 우선.
@@ -2173,7 +2177,7 @@ def api_cs_finding_create(sid):
     created_ids = []
     for it in items:
         st = it.get('status') or 'Open'
-        if st not in ('Open','Closed'): st = 'Open'
+        if st not in CS_FINDING_STATUSES: st = 'Open'
         fid = execute("""
             INSERT INTO cs_findings (survey_id, category, no, item, description, remark, status)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -2194,6 +2198,8 @@ def api_cs_finding_update(fid):
     if not cur:
         abort(404)
     d = request.get_json(silent=True) or {}
+    if 'status' in d and d['status'] not in CS_FINDING_STATUSES:
+        return jsonify({'error': 'status는 Open / In progress / Closed'}), 400
     sets, params = [], []
     for f in ('item','description','remark','status'):
         if f in d:

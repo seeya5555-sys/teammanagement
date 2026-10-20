@@ -72,7 +72,7 @@ def surveys_for(vid):
     """Surveys with >=1 Open finding; every finding of those surveys (the workbook rows)."""
     out = []
     for s in query("SELECT id,year,quarter,inspection_date,vendor FROM cs_surveys WHERE vessel_id=? "
-                   "AND EXISTS (SELECT 1 FROM cs_findings f WHERE f.survey_id=cs_surveys.id AND f.status='Open') "
+                   "AND EXISTS (SELECT 1 FROM cs_findings f WHERE f.survey_id=cs_surveys.id AND f.status!='Closed') "
                    "ORDER BY year,quarter,id", (vid,)):
         rows = query("SELECT id,survey_id,category,no,item,description,status FROM cs_findings WHERE survey_id=? "
                      "ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id", (s['id'],))
@@ -83,7 +83,7 @@ def surveys_for(vid):
 
 
 def open_findings(surveys):
-    return [f for s in surveys for f in s['findings'] if f['status'] == 'Open']
+    return [f for s in surveys for f in s['findings'] if f['status'] != 'Closed']
 
 
 def next_send(day=None):
@@ -413,7 +413,7 @@ def apply_reply(rid, data):
             conn.commit()
             return {'ok': True, 'updated': 0, 'unchanged': 0, 'closed': 0, 'duplicate': False, 'held': UNTRUSTED_NOTE}
         _, surveys = json.loads(run['snapshot'])
-        snapshot = {f['id']: dict(f, remark=None) for s in surveys for f in s['findings'] if f['status'] == 'Open'}
+        snapshot = {f['id']: dict(f, remark=None) for s in surveys for f in s['findings'] if f['status'] != 'Closed'}
         sent_remarks = {r['finding_id']: r.get('remark', '') for r in json.loads(run['reply_rows'])}
         changes, seen, unchanged, sources, notes = [], set(), 0, [], []
         for update in updates:
@@ -450,7 +450,7 @@ def apply_reply(rid, data):
             if previous != base:
                 raise CsMailError(409, '비고 동시 변경: 수동 확인 필요')
             updated = (previous.rstrip() + '\n\n' if previous.strip() else '') + reply_date_prefix(data.get('received_at'), remark)
-            status = 'Closed' if close and live['status'] == 'Open' else live['status']
+            status = 'Closed' if close and live['status'] != 'Closed' else live['status']
             changes.append((updated, status, origin['id'], previous, live['status'], live['survey_id'], manual))
         closed = 0
         for updated, status, fid, previous, old_status, sid, manual in changes:
@@ -498,10 +498,10 @@ def sender_trusted(run, sender):
 
 def still_open(run):
     """Reminder guard: at least one finding that was Open at send is still Open."""
-    ids = [r['finding_id'] for r in json.loads(run['reply_rows']) if r.get('status') == 'Open']
+    ids = [r['finding_id'] for r in json.loads(run['reply_rows']) if r.get('status') != 'Closed']
     if not ids:
         return False
-    return bool(query("SELECT 1 FROM cs_findings WHERE status='Open' AND id IN (SELECT value FROM json_each(?)) LIMIT 1", (json.dumps(ids),), one=True))
+    return bool(query("SELECT 1 FROM cs_findings WHERE status!='Closed' AND id IN (SELECT value FROM json_each(?)) LIMIT 1", (json.dumps(ids),), one=True))
 
 
 def followup_rows():
@@ -512,7 +512,7 @@ def followup_rows():
         substantive = [r for r in replies if r['updated'] > 0]
         last = substantive[-1] if substantive else None
         try:
-            sent_count = sum(1 for r in json.loads(run.pop('reply_rows') or '[]') if r.get('status') == 'Open')
+            sent_count = sum(1 for r in json.loads(run.pop('reply_rows') or '[]') if r.get('status') != 'Closed')
         except (ValueError, TypeError):
             sent_count = 0
         out.append(dict(run, reply_state=('replied' if substantive else 'pending') if run['state'] == 'sent' else 'not_sent',
