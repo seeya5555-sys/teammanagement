@@ -25,6 +25,8 @@ MARITIME_TERMS_RULES = """[선박용어 기준]
 - 장비·부품·부위·고유 기술명·Maker/Model·약어는 원문 영어 유지(Compressor, Evaporator, Cylinder head, BRG 등).
   일반 조치와 상태는 한글(보급, 수배, 점검, 소제, 취외, 하륙, 신환, 정상 운전, 미조치, 대기 중).
   Spare를 스페어로 음역하거나 장비명을 임의 한글화하지 않는다. 원문 철자/약어의 임의 교정도 금지.
+  '한글(English)' 병기 금지 — 영문 용어 하나만 쓴다(예: '재(ash)'→'ash', '필수 장비(critical equipment)'→'critical equipment').
+  기술 용어·장비명·시스템명은 번역하지 말고 영문 그대로(cargo loading system, buzzer, risk assessment, deck light, purifier room 등).
 - 한국어 문장은 '대상 + 식별사항/현재 조치 + 남은 작업/일정' 중심의 짧은 음슴체. 진행경과는 변경사항 중심으로 간결하게 쓰되 원문에 재기재된 현재 상태·잔여 조치도 보존한다.
   독립 조치는 1./2. 줄바꿈. 단일 조치는 짧은 한 문장. 인사·Q&A 질문 반복·'본선 회신 내용 아래와 같음'·
   '상기 회신 기준' 같은 보고용 군더더기는 제외하되, 기술적 사실·잔여 조치·제한은 생략하지 않는다.

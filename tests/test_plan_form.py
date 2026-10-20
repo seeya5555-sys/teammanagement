@@ -21,6 +21,13 @@ class PlanForm(unittest.TestCase):
         for src, want in cases.items():
             self.assertEqual(a._plan_form(src), want, src)
 
+    def test_en_only(self):
+        self.assertEqual(a._en_only('지난 운전 후 재(ash)가 제거됨'), '지난 운전 후 ash가 제거됨')
+        self.assertEqual(a._en_only('필수 장비(critical equipment)에 대한'), '필수 critical equipment에 대한')
+        self.assertEqual(a._en_only('점검 후 평가(risk assessment) 미실시'), '점검 후 risk assessment 미실시')
+        self.assertEqual(a._en_only('주기관(M/E) 및 재 (ash)'), 'M/E 및 ash')
+        self.assertEqual(a._en_only('Main deck 부식 (No.3)'), 'Main deck 부식 (No.3)')
+
     def test_concise_applies(self):
         self.assertEqual(a._concise_full_report_remark('수리 필요.\n교체 필요.'), '수리 예정. 교체 예정.')
 

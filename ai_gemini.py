@@ -110,7 +110,7 @@ def _normalize_findings(parsed, kind):
         rec = {
             'item':        (it.get('item') or '').strip(),
             'description': (it.get('description') or '').strip(),
-            'remark':      (it.get('remark') or '').strip(),
+            'remark':      _en_only((it.get('remark') or '').strip()),
         }
         if kind == 'cs':
             cat = it.get('category')
@@ -573,7 +573,7 @@ def api_vt_findings_create(vid):
         """, (vid, next_no,
               it.get('item') or '',
               it.get('description') or '',
-              it.get('remark') or '',
+              _en_only(it.get('remark') or ''),
               it.get('user_remark') or '',
               1 if it.get('priority') else 0,
               st))
@@ -979,6 +979,13 @@ def _replace_full_report_remark(existing, previous_auto, generated):
             current = current[:-(len(previous) + 2)].rstrip()
     automatic = _re_cls.sub(r'\s+', ' ', (generated or '')).strip()
     return f'{current}\n\n{automatic}'.strip() if current else automatic
+
+
+def _en_only(text):
+    """'한글(English)' 병기를 영문만 남긴다(형 지시 2026-10-20: '재(ash)'→'ash', '주기관(M/E)'→'M/E').
+    괄호 바로 앞 한글 한 단어만 지운다(그 앞 단어는 보존 — 의미 손실 방지, 올마이트). 'No.3' 같은 번호 괄호는 제외.
+    다단어 병기의 앞 수식어는 AI 규칙(maritime_style)이 1차로 막는다."""
+    return _re_cls.sub(r'[가-힣]+\s?\((?!No\.)([A-Za-z][A-Za-z0-9 .,/&+-]*[A-Za-z0-9.])\)', r'\1', text or '')
 
 
 def _plan_form(text):
@@ -1459,7 +1466,7 @@ def _rebuild_obs_summary(vid):
               f'SIRE OBS {len(findings)}건 전건 Close')
 
     # 지적 상세 = 헤더 + Open 항목 번역요약 1,2,3 (조치계획은 요약행 조치계획 칸으로 분리)
-    lines = [header] + [f"{i}. {(f['remark'] or f['item'] or '').strip()}"
+    lines = [header] + [f"{i}. {_en_only((f['remark'] or f['item'] or '').strip())}"
                         for i, f in enumerate(open_f, 1)]
     text = '\n'.join(lines)
 
