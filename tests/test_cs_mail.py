@@ -239,6 +239,16 @@ class CsMailTests(unittest.TestCase):
         self.assertEqual('other@example.com', v['to_emails'])
         self.assertFalse(any(v['recipients_custom'].values()))
 
+    def test_quarter_variable_rendered(self):
+        self.assertEqual('2026 Q1, Q3 / 2027 Q1', S.quarter_label([{'year': 2026, 'quarter': 1}, {'year': 2026, 'quarter': 3}, {'year': 2027, 'quarter': 1}]))
+        with self.app_context():
+            v = next(v for v in S.settings() if v['vessel_id'] == self.vid)
+        label = S.quarter_label(v['surveys'])
+        self.assertTrue(label)
+        self.assertIn(f'({label})', v['subject'])
+        self.assertIn(f'({label})', v['body'])
+        self.assertNotIn('{quarter}', v['subject'] + v['body'])
+
     # ── replies ──
     def test_reply_remark_dated_dedup_close_only_when_flagged(self):
         rid = self.sent_run()

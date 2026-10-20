@@ -17,10 +17,10 @@ from app_core import execute, execute_rc, get_db, query
 from mail_common import MailServiceError
 import daily_mail_service as dm
 
-SUBJECT = '{vessel} - Condition Survey: Rectification Status Required'
+SUBJECT = '{vessel} - Condition Survey ({quarter}): Rectification Status Required'
 BODY = '''Dear {dear},
 
-Please find attached the open Condition Survey findings for {vessel}. One Excel file is attached for each survey that still has open findings.
+Please find attached the open Condition Survey findings for {vessel} ({quarter}). One Excel file is attached for each survey that still has open findings.
 
 1) Please enter the rectification carried out or the action plan for each open finding in the "RECTIFICATION" column of the attached Excel file(s) and return the updated file(s) by replying to this email.
 2) For completed findings, please describe the work completed and the completion date, and attach supporting photos where available.
@@ -29,7 +29,7 @@ Please find attached the open Condition Survey findings for {vessel}. One Excel 
 Please keep the other columns unchanged so that your remarks can be matched to the relevant findings. A finding will be closed only when the rectification is reported as completed.
 
 Thank you for your cooperation.'''
-VARS = ('vessel', 'dear')
+VARS = ('vessel', 'dear', 'quarter')
 RECIPIENT_FIELDS = ('to_emails', 'cc_emails', 'dear_name')
 # Distinct from Class's "[TRMT-CS " Outlook scan prefix: "[TRMT-COND " never contains it.
 TAG_PREFIX = '[TRMT-COND '
@@ -114,9 +114,17 @@ def save_template(data, user):
     return template()
 
 
-def render(tpl, name, dear):
-    values = {'vessel': name, 'dear': dear.strip() or dm.DEFAULT_DEAR}
-    return re.sub(r'\{(vessel|dear)\}', lambda m: values[m.group(1)], tpl)
+def quarter_label(surveys):
+    """'2026 Q3' / '2026 Q1, Q3' — surveys that still have Open findings (= attached workbooks)."""
+    years = {}
+    for s in surveys:
+        years.setdefault(s['year'], []).append(f"Q{s['quarter']}")
+    return ' / '.join(f"{y} {', '.join(qs)}" for y, qs in years.items())
+
+
+def render(tpl, name, dear, quarter=''):
+    values = {'vessel': name, 'dear': dear.strip() or dm.DEFAULT_DEAR, 'quarter': quarter}
+    return re.sub(r'\{(vessel|dear|quarter)\}', lambda m: values[m.group(1)], tpl)
 
 
 def settings(day=None):
@@ -140,8 +148,8 @@ def settings(day=None):
         cc, bad_cc = dm.parse_emails(contact['cc_emails'])
         week = dm.iso_week_of(day)
         tag = f"{TAG_PREFIX}{week} V{vid}]"
-        subject = tag + ' ' + render(tpl['subject_tpl'], contact['name'], contact['dear_name'])
-        body = render(tpl['body_tpl'], contact['name'], contact['dear_name'])
+        subject = tag + ' ' + render(tpl['subject_tpl'], contact['name'], contact['dear_name'], quarter_label(surveys))
+        body = render(tpl['body_tpl'], contact['name'], contact['dear_name'], quarter_label(surveys))
         blocker = '수신처 오류·To 누락' if not to or bad_to or bad_cc else ''
         if KOREAN.search(subject + body):
             blocker = '선명·Dear 영문 확인 필요'
