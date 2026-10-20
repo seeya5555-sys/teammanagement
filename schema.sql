@@ -1426,6 +1426,7 @@ CREATE TABLE IF NOT EXISTS mail_reminder_notices (
 CREATE TABLE IF NOT EXISTS cs_mail_settings (
  vessel_id INTEGER PRIMARY KEY REFERENCES vessels(id) ON DELETE CASCADE,
  enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+ to_emails TEXT, cc_emails TEXT, dear_name TEXT,  -- NULL = Daily 수신처 따라감
  updated_by TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS cs_mail_template (

@@ -197,6 +197,48 @@ class CsMailTests(unittest.TestCase):
             execute("UPDATE daily_mail_settings SET cc_emails='changed@example.com' WHERE vessel_id=?", (self.vid,))
         self.assertEqual(409, self.get(f'/runs/{rid}/check').status_code)
 
+    def test_recipient_override_follows_daily_by_default_and_resets(self):
+        url = f'/api/cs-mail/settings/{self.vid}/recipients'
+        vessel = lambda: next(v for v in self.client.get('/api/cs-mail/status').get_json()['vessels'] if v['vessel_id'] == self.vid)
+        self.assertEqual('captain@example.com', vessel()['to_emails'])
+        self.assertFalse(any(vessel()['recipients_custom'].values()))
+        r = self.client.put(url, json={'to_emails': 'cs@example.com, b@example.com', 'cc_emails': '', 'dear_name': 'Chief'})
+        self.assertEqual(200, r.status_code, r.get_json())
+        v = vessel()
+        self.assertEqual(('cs@example.com; b@example.com', '', 'Chief'), (v['to_emails'], v['cc_emails'], v['dear_name']))
+        self.assertIn('Dear Chief', v['body'])
+        with self.app_context():   # Daily 변경은 override 된 선박에 영향 없음
+            execute("UPDATE daily_mail_settings SET to_emails='other@example.com' WHERE vessel_id=?", (self.vid,))
+        self.assertEqual('cs@example.com; b@example.com', vessel()['to_emails'])
+        # 부분 수정: 누락 키는 유지, 명시 null 은 해당 칸만 Daily 로
+        self.assertEqual(200, self.client.put(url, json={'dear_name': 'Master'}).status_code)
+        self.assertEqual(('cs@example.com; b@example.com', 'Master'), (vessel()['to_emails'], vessel()['dear_name']))
+        self.client.put(url, json={'cc_emails': None})
+        self.assertFalse(vessel()['recipients_custom']['cc_emails'])
+        self.assertTrue(vessel()['recipients_custom']['to_emails'])
+        # 발송 claim 은 실효(CS 전용) 수신처 사용
+        self.client.post(f'/api/cs-mail/settings/{self.vid}/enabled', json={'enabled': True})
+        response, _ = self.prepare_and_claim()
+        self.assertEqual('cs@example.com; b@example.com', response.get_json()['to_emails'])
+        rid = response.get_json()['id']
+        self.client.put(url, json={'to_emails': 'cs@example.com'})
+        self.assertEqual(409, self.get(f'/runs/{rid}/check').status_code)
+        # 등록된 CS 전용 수신처의 회신은 신뢰
+        with self.app_context():
+            self.assertTrue(S.sender_trusted({'vessel_id': self.vid, 'to_emails': '', 'cc_emails': ''}, 'CS <cs@example.com>'))
+        self.assertEqual(400, self.client.put(url, json={'to_emails': 'not-an-email'}).status_code)
+        self.assertEqual(400, self.client.put(url, json={'dear_name': '선장'}).status_code)
+        self.assertEqual(403, self.client.put(f'/api/cs-mail/settings/{self.tanker}/recipients', json={'to_emails': 'a@example.com'}).status_code)
+        # ON 상태에서 To 를 비우면 OFF 로 내려감
+        self.client.post(f'/api/cs-mail/settings/{self.vid}/enabled', json={'enabled': True})
+        r = self.client.put(url, json={'to_emails': ''}).get_json()
+        self.assertEqual(0, r['enabled'])
+        self.assertTrue(r['blocker'])
+        self.assertEqual(200, self.client.put(url, json={'reset': True}).status_code)
+        v = vessel()
+        self.assertEqual('other@example.com', v['to_emails'])
+        self.assertFalse(any(v['recipients_custom'].values()))
+
     # ── replies ──
     def test_reply_remark_dated_dedup_close_only_when_flagged(self):
         rid = self.sent_run()

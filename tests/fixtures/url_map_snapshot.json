@@ -1039,6 +1039,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/cs-mail/settings/<int:vid>/recipients",
+    "methods": [
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_cs_mail.api_cs_mail_recipients",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/cs-mail/status",
     "methods": [
       "GET",

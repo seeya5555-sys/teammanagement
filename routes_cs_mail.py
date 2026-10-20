@@ -40,6 +40,12 @@ def api_cs_mail_enabled(vid):
     return call(svc.set_enabled, vid, data['enabled'], session.get('username') or 'admin')
 
 
+@bp.route('/api/cs-mail/settings/<int:vid>/recipients', methods=['PUT'])
+@admin_required
+def api_cs_mail_recipients(vid):
+    return call(svc.set_recipients, vid, payload(), session.get('username') or 'admin')
+
+
 @bp.route('/api/cs-mail/runs/<int:rid>/recover-sent', methods=['POST'])
 @admin_required
 def api_cs_mail_recover_sent(rid):

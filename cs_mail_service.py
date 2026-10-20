@@ -30,6 +30,7 @@ Please keep the other columns unchanged so that your remarks can be matched to t
 
 Thank you for your cooperation.'''
 VARS = ('vessel', 'dear')
+RECIPIENT_FIELDS = ('to_emails', 'cc_emails', 'dear_name')
 # Distinct from Class's "[TRMT-CS " Outlook scan prefix: "[TRMT-COND " never contains it.
 TAG_PREFIX = '[TRMT-COND '
 TAG_RE = re.compile(r'\[TRMT-COND \d{4}W\d{2} [A-Z0-9]{1,8}\]')
@@ -129,7 +130,10 @@ def settings(day=None):
         vid = contact['vessel_id']
         if vid not in roster or not is_container(contact.get('vessel_type')):
             continue
-        row = query('SELECT enabled FROM cs_mail_settings WHERE vessel_id=?', (vid,), one=True)
+        row = query('SELECT enabled,to_emails,cc_emails,dear_name FROM cs_mail_settings WHERE vessel_id=?', (vid,), one=True)
+        daily = {k: contact[k] for k in RECIPIENT_FIELDS}
+        custom = {k: row is not None and row[k] is not None for k in RECIPIENT_FIELDS}
+        contact = dict(contact, **{k: row[k] for k in RECIPIENT_FIELDS if custom[k]})
         surveys = surveys_for(vid)
         opened = open_findings(surveys)
         to, bad_to = dm.parse_emails(contact['to_emails'])
@@ -146,6 +150,7 @@ def settings(day=None):
         out.append({'vessel_id': vid, 'name': contact['name'], 'vessel_type': contact.get('vessel_type') or '',
                     'enabled': int(row['enabled']) if row else 0,
                     'to_emails': contact['to_emails'], 'cc_emails': contact['cc_emails'], 'dear_name': contact['dear_name'],
+                    'recipients_custom': custom, 'daily_recipients': daily,
                     'to': to, 'cc': cc, 'count': len(opened), 'survey_count': len(surveys),
                     'surveys': surveys, 'fingerprint': digest([contact['name'], surveys]),
                     'iso_week': week, 'tag': tag, 'subject': subject, 'body': body, 'signature': '자동화',
@@ -165,6 +170,47 @@ def set_enabled(vid, enabled, user):
     execute("INSERT INTO cs_mail_settings(vessel_id,enabled,updated_by) VALUES(?,?,?) "
             "ON CONFLICT(vessel_id) DO UPDATE SET enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=datetime('now','localtime')", (vid, int(bool(enabled)), user))
     return {'ok': True, 'vessel_id': vid, 'enabled': int(bool(enabled))}
+
+
+def set_recipients(vid, data, user):
+    """Per-vessel override. Missing key = keep; explicit null = follow Daily; reset=true = all follow Daily."""
+    if not next((v for v in settings() if v['vessel_id'] == vid), None):
+        raise CsMailError(403, '담당 CONTAINER 선박이 아닙니다.')
+    cur = query('SELECT to_emails,cc_emails,dear_name FROM cs_mail_settings WHERE vessel_id=?', (vid,), one=True)
+    values = {}
+    for key in RECIPIENT_FIELDS:
+        if data.get('reset'):
+            raw = None
+        elif key in data:
+            raw = data[key]
+        else:
+            raw = cur[key] if cur else None
+        if raw is not None and not isinstance(raw, str):
+            raise CsMailError(400, f'{key} 형식 오류')
+        values[key] = raw
+    for key in ('to_emails', 'cc_emails'):
+        if values[key] is not None:
+            emails, bad = dm.parse_emails(values[key])
+            if bad:
+                raise CsMailError(400, '메일 주소 형식 오류: ' + ', '.join(bad))
+            if len(emails) > dm.MAX_EMAILS:
+                raise CsMailError(400, f'수신자는 To/CC 각각 {dm.MAX_EMAILS}명까지입니다.')
+            values[key] = '; '.join(emails)
+    if values['dear_name'] is not None:
+        dear = re.sub(r'\s+', ' ', values['dear_name']).strip()
+        if len(dear) > 120 or re.search(r'[{}<>]', dear) or KOREAN.search(dear):
+            raise CsMailError(400, 'Dear 이름은 영문 120자 이내, 중괄호·<> 불가입니다.')
+        values['dear_name'] = dear
+    execute("INSERT INTO cs_mail_settings(vessel_id,to_emails,cc_emails,dear_name,updated_by) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(vessel_id) DO UPDATE SET to_emails=excluded.to_emails,cc_emails=excluded.cc_emails,dear_name=excluded.dear_name,"
+            "updated_by=excluded.updated_by,updated_at=datetime('now','localtime')",
+            (vid, values['to_emails'], values['cc_emails'], values['dear_name'], user))
+    vessel = next(v for v in settings() if v['vessel_id'] == vid)
+    if vessel['blocker'] and vessel['enabled']:
+        # 잘못된 수신처로 ON 상태가 남지 않게 OFF 로 내림
+        execute('UPDATE cs_mail_settings SET enabled=0 WHERE vessel_id=?', (vid,))
+        vessel['enabled'] = 0
+    return {k: vessel[k] for k in ('vessel_id', 'to_emails', 'cc_emails', 'dear_name', 'recipients_custom', 'enabled', 'blocker')}
 
 
 def config(day=None):
@@ -433,10 +479,12 @@ def sender_trusted(run, sender):
     allowed = set()
     for text in (run['to_emails'], run['cc_emails']):
         allowed.update(a.lower() for a in dm.parse_emails(text)[0])
-    contact = query('SELECT to_emails,cc_emails FROM daily_mail_settings WHERE vessel_id=?', (run['vessel_id'],), one=True)
-    if contact:
-        for text in (contact['to_emails'], contact['cc_emails']):
-            allowed.update(a.lower() for a in dm.parse_emails(text)[0])
+    contacts = (query('SELECT to_emails,cc_emails FROM daily_mail_settings WHERE vessel_id=?', (run['vessel_id'],), one=True),
+                query('SELECT to_emails,cc_emails FROM cs_mail_settings WHERE vessel_id=?', (run['vessel_id'],), one=True))
+    for contact in contacts:
+        if contact:
+            for text in (contact['to_emails'], contact['cc_emails']):
+                allowed.update(a.lower() for a in dm.parse_emails(text or '')[0])
     return found[0].lower() in allowed
 
 

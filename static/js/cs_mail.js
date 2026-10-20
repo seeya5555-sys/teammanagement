@@ -39,7 +39,7 @@
     data = await api('/status');
     loadedOnce = true;
     const vessels = data.vessels;
-    $('cmVessels').innerHTML = table(['선박','Open 지적 / 수검','주기 · 다음 대상일','To / CC / Dear','자동발송'], vessels.map(v => `<tr><td>${esc(v.name)}</td><td>${v.count} / ${v.survey_count}</td><td>${esc(v.reason)}<br>${esc(v.next_send || '-')}<br><span class="cm-error">${esc(v.blocker)}</span></td><td>${esc(v.to_emails || '-')}<br>${esc(v.cc_emails || '-')}<br>Dear ${esc(v.dear_name || 'Sir/Madam')}</td><td><label><input type="checkbox" data-vid="${v.vessel_id}" ${v.enabled ? 'checked' : ''} ${busy ? 'disabled' : ''}> ON</label></td></tr>`));
+    $('cmVessels').innerHTML = table(['선박','Open 지적 / 수검','주기 · 다음 대상일','To / CC / Dear','자동발송'], vessels.map(v => `<tr><td>${esc(v.name)}</td><td>${v.count} / ${v.survey_count}</td><td>${esc(v.reason)}<br>${esc(v.next_send || '-')}<br><span class="cm-error">${esc(v.blocker)}</span></td><td data-rcpt="${v.vessel_id}">${esc(v.to_emails || '-')}<br>${esc(v.cc_emails || '-')}<br>Dear ${esc(v.dear_name || 'Sir/Madam')}<br><span class="cm-muted">${Object.values(v.recipients_custom || {}).some(Boolean) ? 'CS 전용 수신처' : 'Daily 수신처 따라감'}</span> <button type="button" class="btn btn-outline btn-sm" data-rcpt-edit="${v.vessel_id}" ${busy ? 'disabled' : ''}>수정</button></td><td><label><input type="checkbox" data-vid="${v.vessel_id}" ${v.enabled ? 'checked' : ''} ${busy ? 'disabled' : ''}> ON</label></td></tr>`));
     $('cmSubject').value = data.template.subject_tpl;
     $('cmBody').value = data.template.body_tpl;
     const selected = $('cmSelect').value;
@@ -59,6 +59,34 @@
     try { await api(`/settings/${toggle.dataset.vid}/enabled`, 'POST', {enabled: toggle.checked}); notify(toggle.checked ? '자동발송 ON 저장됨' : '자동발송 OFF 저장됨'); }
     catch (error) { notify('저장 실패: ' + error.message, 'error'); }
     finally { busy = false; await load().catch(error => { $('cmNotice').textContent = error.message; }); }
+  });
+  // 수신처 편집: 비운 칸도 저장값('')으로 고정, 'Daily 따라가기'만 override 해제
+  $('cmVessels').addEventListener('click', async event => {
+    const edit = event.target.closest('button[data-rcpt-edit]');
+    if (edit && !busy) {
+      const v = data.vessels.find(x => String(x.vessel_id) === edit.dataset.rcptEdit);
+      const cell = edit.closest('td');
+      if (cell.querySelector('.cm-rcpt')) return;
+      const box = document.createElement('div');
+      box.className = 'cm-rcpt';
+      box.innerHTML = `<label class="cm-muted">To</label><input data-f="to_emails" value="${esc(v.to_emails)}"><label class="cm-muted">CC</label><input data-f="cc_emails" value="${esc(v.cc_emails)}"><label class="cm-muted">Dear</label><input data-f="dear_name" value="${esc(v.dear_name)}" placeholder="Sir/Madam"><div class="cm-muted">Daily 기본: ${esc(v.daily_recipients?.to_emails || '-')} / ${esc(v.daily_recipients?.cc_emails || '-')} / ${esc(v.daily_recipients?.dear_name || 'Sir/Madam')}</div><button type="button" class="btn btn-primary btn-sm" data-rcpt-save>저장</button><button type="button" class="btn btn-outline btn-sm" data-rcpt-reset>Daily 따라가기</button><button type="button" class="btn btn-outline btn-sm" data-rcpt-cancel>취소</button>`;
+      cell.appendChild(box);
+      box.querySelector('input').focus();
+      return;
+    }
+    const button = event.target.closest('button[data-rcpt-save],button[data-rcpt-reset],button[data-rcpt-cancel]');
+    if (!button || busy) return;
+    const box = button.closest('.cm-rcpt');
+    if (button.hasAttribute('data-rcpt-cancel')) { box.remove(); return; }
+    const vid = button.closest('td').dataset.rcpt;
+    const body = button.hasAttribute('data-rcpt-reset') ? {reset: true} : Object.fromEntries([...box.querySelectorAll('input[data-f]')].map(i => [i.dataset.f, i.value]));
+    busy = true;
+    box.querySelectorAll('input,button').forEach(x => { x.disabled = true; });
+    try {
+      const r = await api(`/settings/${vid}/recipients`, 'PUT', body);
+      notify(r.blocker ? `수신처 저장됨 · ${r.blocker} → 자동발송 OFF` : (body.reset ? 'Daily 수신처로 되돌림' : '수신처 저장됨'), r.blocker ? 'error' : undefined);
+    } catch (error) { notify('저장 실패: ' + error.message, 'error'); }
+    finally { busy = false; await load().catch(error => { notify(error.message, 'error'); }); }
   });
   $('cmRuns').addEventListener('click', async event => {
     const cancel = event.target.closest('button[data-recover-cancel]');

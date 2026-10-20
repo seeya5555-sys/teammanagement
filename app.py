@@ -324,6 +324,17 @@ def init_db(drop=False):
             print('  · cs_findings.item 컬럼 추가')
             conn.commit()
 
+        # cs_mail_settings 선박별 수신처 override (NULL = Daily 수신처 따라감)
+        cm_cols = [r[1] for r in conn.execute('PRAGMA table_info(cs_mail_settings)').fetchall()]
+        if cm_cols:
+            if 'to_emails' not in cm_cols:
+                conn.execute('ALTER TABLE cs_mail_settings ADD COLUMN to_emails TEXT')
+            if 'cc_emails' not in cm_cols:
+                conn.execute('ALTER TABLE cs_mail_settings ADD COLUMN cc_emails TEXT')
+            if 'dear_name' not in cm_cols:
+                conn.execute('ALTER TABLE cs_mail_settings ADD COLUMN dear_name TEXT')
+            conn.commit()
+
         # issues 에 Outlook 매칭용 컬럼 추가 (메일 dedup)
         iss_cols = [r[1] for r in conn.execute('PRAGMA table_info(issues)').fetchall()]
         if iss_cols:
