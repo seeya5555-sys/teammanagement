@@ -1574,11 +1574,13 @@ async function loadSupervisors() {
 //  보고서(PDF·이미지·엑셀) → Defect/Observation 항목 자동 생성
 //  · 업로드 → 서버(Gemini/엑셀파서) 추출 → 검토 목록 → 선택 추가
 // ════════════════════════════════════════════════════════════════
-const CSX = { surveyId: null, items: [], bound: false };
+const CSX = { surveyId: null, survey: null, items: [], inspectionDate: null, bound: false };
 
 function openCsExtract(survey) {
   CSX.surveyId = survey.id;
+  CSX.survey = survey;
   CSX.items = [];
+  CSX.inspectionDate = null;
   if (!CSX.bound) bindCsExtract();
   $('#cs-extract-status').textContent = '';
   $('#cs-extract-list').innerHTML = '';
@@ -1632,11 +1634,13 @@ async function runCsExtract(file) {
   }
   if (!res.ok) { $('#cs-extract-status').textContent = res.message || '추출 실패'; return; }
   CSX.items = res.items || [];
+  CSX.inspectionDate = res.inspection_date || null;
   if (!CSX.items.length) {
     $('#cs-extract-status').textContent = '추출된 항목이 없습니다. 다른 파일을 시도해 보세요.';
     return;
   }
-  $('#cs-extract-status').textContent = `${CSX.items.length}개 항목을 찾았습니다. 확인 후 추가하세요.`;
+  $('#cs-extract-status').textContent = `${CSX.items.length}개 항목을 찾았습니다. 확인 후 추가하세요.`
+    + (CSX.inspectionDate ? ` (검사일 ${CSX.inspectionDate} 인식 — 추가 시 수검일에 반영)` : '');
   renderCsxList();
 }
 
@@ -1695,6 +1699,14 @@ async function confirmCsExtract() {
   } catch (e) {
     $('#cs-extract-status').textContent = '추가 실패: ' + e.message;
     return;
+  }
+  // 보고서에서 읽은 검사일 → 수검일(비어 있으면 바로, 다르면 확인 후)
+  const cur = (CSX.survey && CSX.survey.inspection_date) || '';
+  if (CSX.inspectionDate && CSX.inspectionDate !== cur &&
+      (!cur || confirm(`보고서 검사일 ${CSX.inspectionDate}(현재 ${cur})로 수검일을 바꿀까요?`))) {
+    try {
+      await api(`/api/cs/surveys/${CSX.surveyId}`, { method: 'PUT', body: JSON.stringify({ inspection_date: CSX.inspectionDate }) });
+    } catch (e) { alert('수검일 반영 실패: ' + e.message); }
   }
   closeCsExtract();
   await reloadData();

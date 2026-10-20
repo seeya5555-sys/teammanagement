@@ -406,7 +406,7 @@ def _issue_write_scope(iid=None, payload=None):
 #  From ai_gemini.py (16 symbols)
 # ══════════════════════════════════════════════════════════════════
 # ─── 보고서 → 항목 자동 추출 (Gemini + 엑셀 파서) ─────────────
-def _findings_workbook(title, subtitle, headers, rows, wrap_cols, widths):
+def _findings_workbook(title, subtitle, headers, rows, wrap_cols, widths, status_choices=None):
     """검사 findings → 스타일된 1시트 워크북 BytesIO 반환."""
     from io import BytesIO
     from openpyxl import Workbook
@@ -468,6 +468,14 @@ def _findings_workbook(title, subtitle, headers, rows, wrap_cols, widths):
                     ws.cell(row=r_idx, column=ci).fill = def_fill
         ws.row_dimensions[r_idx].height = max(20, min(120, 15 * max_len + 4))
         r_idx += 1
+
+    st_idx = next((i for i, h in enumerate(headers) if str(h).upper() == 'STATUS'), None)
+    if status_choices and st_idx is not None and r_idx - 1 > HDR:
+        from openpyxl.worksheet.datavalidation import DataValidation
+        col = get_column_letter(st_idx + 1)
+        dv = DataValidation(type='list', formula1='"' + ','.join(status_choices) + '"', allow_blank=True)
+        dv.add(f'{col}{HDR + 1}:{col}{r_idx - 1}')
+        ws.add_data_validation(dv)
 
     ws.freeze_panes = f'A{HDR + 1}'
     if r_idx - 1 > HDR:
@@ -2859,6 +2867,7 @@ def _cs_survey_workbook(sid):
                 f"총 {len(rows)}건 (Defect {sum(1 for r in fr if r['category']=='Defect')} / "
                 f"Observation {sum(1 for r in fr if r['category']=='Observation')})"]
     bio = _findings_workbook(title, '   │   '.join(sub_bits), CS_EXPORT_HEADERS, rows,
-                             wrap_cols={3, 4, 5, 6}, widths=[12, 6, 28, 50, 40, 30, 10])
+                             wrap_cols={3, 4, 5, 6}, widths=[12, 6, 28, 50, 40, 30, 12],
+                             status_choices=('Open', 'In progress', 'Closed'))
     fname = f"CS_{_safe_filename(vessel)}_{s['year']}Q{s['quarter']}.xlsx"
     return bio, fname, [dict(r) for r in fr]

@@ -73,8 +73,10 @@ def _findings_prompt(kind):
             "- description: 지적 상세 내용을 원문 그대로 복사한다(영문이면 영문 그대로). 요약·변형 금지.\n"
             "- remark: description의 핵심 지적사항을 한국어로 1~2문장으로 간결하게 요약한다(전체 직역 금지). 문장은 '~함/~됨/~음' 형태의 음슴체(개조식)로 끝맺는다. "
             "기술 명칭·장비명·약어(예: ECDIS, DCP, DRS, smoke detector, high-high level alarm 등)는 번역하지 말고 영문 그대로 둔다." + _MARITIME_TERMS + "\n"
+            "또한 보고서의 실제 검사(수검·방선) 일자를 inspection_date에 YYYY-MM-DD로 넣는다. "
+            "보고서 작성일·발행일·만기일과 혼동하지 말고, 검사일이 분명하지 않으면 빈 문자열로 둔다.\n"
             "없는 내용을 지어내지 말 것. 항목이 하나도 없으면 items를 빈 배열로.\n"
-            '형식: {"items":[{"category":"Defect","item":"","description":"","remark":""}]}'
+            '형식: {"inspection_date":"","items":[{"category":"Defect","item":"","description":"","remark":""}]}'
         )
     return (
         "다음은 선박 SIRE 2.0 점검 보고서다. 지적(결함) 사항만 추출한다.\n"
@@ -213,8 +215,18 @@ def _summarize_remarks(items, kind):
     return items
 
 
-def _extract_findings_from_upload(f, kind):
-    """업로드 FileStorage → 항목 리스트. (items, err) 반환."""
+def _cs_inspection_date(parsed):
+    """CS 추출 응답의 inspection_date → 유효한 YYYY-MM-DD 또는 None(추측값·형식오류 버림)."""
+    import datetime as _dt
+    raw = parsed.get('inspection_date') if isinstance(parsed, dict) else None
+    try:
+        return _dt.date.fromisoformat(str(raw or '').strip()[:10]).isoformat()
+    except ValueError:
+        return None
+
+
+def _extract_findings_from_upload(f, kind, meta=None):
+    """업로드 FileStorage → 항목 리스트. (items, err) 반환. meta(dict)를 주면 CS inspection_date 를 채움."""
     name = (f.filename or '').lower()
     ext = name.rsplit('.', 1)[-1] if '.' in name else ''
     raw = f.read()
@@ -255,6 +267,8 @@ def _extract_findings_from_upload(f, kind):
     if isinstance(parsed, dict) and parsed.get('error'):
         return None, {'reason': parsed['error'], 'message': '자동 추출에 실패했습니다.',
                       'detail': parsed.get('detail') or parsed.get('raw')}
+    if meta is not None and kind == 'cs':
+        meta['inspection_date'] = _cs_inspection_date(parsed)
     return _normalize_findings(parsed, kind), None
 
 
@@ -265,10 +279,12 @@ def api_cs_extract_report(sid):
         abort(404)
     if 'file' not in request.files or not request.files['file'].filename:
         return jsonify({'ok': False, 'message': '파일이 없습니다.'}), 400
-    items, err = _extract_findings_from_upload(request.files['file'], 'cs')
+    meta = {}
+    items, err = _extract_findings_from_upload(request.files['file'], 'cs', meta)
     if err:
         return jsonify({'ok': False, **err}), 200
-    return jsonify({'ok': True, 'items': items, 'count': len(items)})
+    return jsonify({'ok': True, 'items': items, 'count': len(items),
+                    'inspection_date': meta.get('inspection_date')})
 
 
 @bp.route('/api/cs/surveys/<int:sid>/export')
