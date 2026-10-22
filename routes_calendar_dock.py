@@ -7033,6 +7033,7 @@ def api_fundreq_list():
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
     for draft in drafts:
         draft['contract_check'] = _fundreq_contract_check(draft.get('contract_check'))
+        draft['dup_check'] = _fundreq_dup_check(draft.get('dup_check'))
         draft['attachment_preview_indices'] = _fundreq_att_indices(draft['id'])
         draft['evidence_checklist'] = _evidence_checklist(
             'fundreq', draft, draft['attachment_preview_indices'])
@@ -7083,6 +7084,41 @@ def _fundreq_contract_check(raw):
         elif out['status'] == 'mismatch' and abs(out['diff']) <= _FUNDREQ_CONTRACT_TOL:
             out['status'] = 'flag'
     return out
+
+
+def _fundreq_dup_check(raw):
+    """dup_check 컬럼(JSON) → {status: dup|clear|unknown, month, dept, others[]} 또는 None(대상 밖).
+    러너 opex_dup.check 결과만 신뢰. others 가 있으면 status 와 무관하게 dup 으로 본다(fail-closed)."""
+    if raw is None:
+        return None
+    try:
+        obj = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(obj, dict) or obj.get('status') not in ('dup', 'clear', 'unknown'):
+        return None
+    others = []
+    for o in obj.get('others') or []:
+        if isinstance(o, dict) and isinstance(o.get('opex_cd'), str):
+            amt = o.get('amt')
+            others.append({'opex_cd': o['opex_cd'][:40],
+                           'status': o.get('status') if isinstance(o.get('status'), str) else None,
+                           'amt': amt if isinstance(amt, (int, float)) and not isinstance(amt, bool)
+                           and math.isfinite(amt) else None,
+                           'cur': o.get('cur') if isinstance(o.get('cur'), str) else None,
+                           'subj': str(o.get('subj') or '')[:80]})
+    return {'status': 'dup' if others else obj['status'],
+            'month': obj.get('month') if isinstance(obj.get('month'), str) else None,
+            'dept': obj.get('dept') if obj.get('dept') in ('T', 'C') else None,
+            'others': others[:10]}
+
+
+def _fundreq_is_dup(row):
+    d = _fundreq_dup_check(row['dup_check'] if 'dup_check' in row.keys() else None)
+    return bool(d and d['status'] == 'dup')
+
+
+_FUNDREQ_DUP_BLOCK = '같은 달 동일 OPEX 중복 상신 의심 — 승인 차단. 리젝(사유 입력) 처리하세요.'
 
 
 @bp.route('/api/ext/fundreq/drafts/pending')
@@ -7186,6 +7222,8 @@ def api_ext_fundreq_create():
         diff=d.get('diff'), verdict=d.get('verdict'), why=d.get('why'),
         contract_check=(json.dumps(_fundreq_contract_check(d.get('contract')), ensure_ascii=False)
                         if _fundreq_contract_check(d.get('contract')) else None),
+        dup_check=(json.dumps(_fundreq_dup_check(d.get('dup')), ensure_ascii=False)
+                   if _fundreq_dup_check(d.get('dup')) else None),
         attach_files=(json.dumps(_fundreq_att_names(d.get('attach_files')), ensure_ascii=False)
                       if d.get('attach_files') is not None else None),
         raw_row=(json.dumps(d.get('raw_row'), ensure_ascii=False) if d.get('raw_row') is not None else None),
@@ -7201,8 +7239,8 @@ def api_ext_fundreq_create():
     try:
         did = execute(
             "INSERT INTO fundreq_draft (opex_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, tp, ref_no, "
-            "ref_amt, dn, diff, verdict, why, contract_check, attach_files, raw_row) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "ref_amt, dn, diff, verdict, why, contract_check, dup_check, attach_files, raw_row) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (opex_cd, *cols.values()))
     except sqlite3.IntegrityError:
         get_db().rollback()
@@ -7222,9 +7260,12 @@ def api_fundreq_approve(did):
         return jsonify({'error': 'not found'}), 404
     if not row['raw_row']:
         return jsonify({'error': 'raw_row 없음 — 재검토 필요'}), 400
+    if _fundreq_is_dup(row):
+        return jsonify({'error': _FUNDREQ_DUP_BLOCK, 'dup': True}), 409
     rc = execute_rc("UPDATE fundreq_draft SET status='approved', "
                     "decided_at=datetime('now','localtime'), decided_by=? "
-                    "WHERE id=? AND status IN ('pending','rejecting')",
+                    "WHERE id=? AND status IN ('pending','rejecting') "
+                    "AND (dup_check IS NULL OR dup_check NOT LIKE '%\"status\": \"dup\"%')",
                     (session.get('username') or 'web', did))
     if not rc:
         cur = query('SELECT status FROM fundreq_draft WHERE id=?', (did,), one=True)
@@ -7246,17 +7287,23 @@ def api_fundreq_approve_bulk():
         if did > 0 and did not in ids:
             ids.append(did)
     approved_ids = []
+    dup_ids = []
     for did in ids:
         rc = execute_rc(
             "UPDATE fundreq_draft SET status='approved', reject_reason=NULL, "
             "decided_at=datetime('now','localtime'), decided_by=? "
-            "WHERE id=? AND status='pending' AND raw_row IS NOT NULL AND trim(raw_row)<>''",
+            "WHERE id=? AND status='pending' AND raw_row IS NOT NULL AND trim(raw_row)<>'' "
+            "AND (dup_check IS NULL OR dup_check NOT LIKE '%\"status\": \"dup\"%')",
             (session.get('username') or 'web', did),
         )
         if rc == 1:
             approved_ids.append(did)
+        else:
+            r = query('SELECT dup_check FROM fundreq_draft WHERE id=?', (did,), one=True)
+            if r and _fundreq_is_dup(r):
+                dup_ids.append(did)
     return jsonify({'approved': len(approved_ids), 'skipped': len(ids) - len(approved_ids),
-                    'approved_ids': approved_ids})
+                    'approved_ids': approved_ids, 'dup_blocked_ids': dup_ids})
 
 
 @bp.route('/api/fundreq/drafts/<int:did>/reject', methods=['POST'])

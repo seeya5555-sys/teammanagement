@@ -114,10 +114,23 @@
     const fmt=v=>(typeof v==='number'&&isFinite(v))?v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
     const cbadge=cc?`<span class="fr-contract ${cc.status}" title="TECH OPEX 계약(단가×일수/월정액) 대조 — DN·첨부 대조(검토결과 배지)와 별개. 계약 일치 ≠ 전체 검토통과">${CC[cc.status][0]} ${CC[cc.status][1]}</span>`:'';
     const ckv=cc?`<div class="fr-contract-kv">${cbadge}<span>계약기준 <b>USD ${fmt(cc.expected)}</b>${cc.month?` (${esc(cc.month)}${cc.basis==='DAILY'?' 일할':cc.basis==='MONTHLY'?' 월정액':''})`:''}</span><span>차액 <b>USD ${fmt(cc.diff)}</b></span></div>`:'';
+    const dc=d.dup_check&&['dup','clear','unknown'].includes(d.dup_check.status)?d.dup_check:null;
+    const isDup=!!(dc&&dc.status==='dup');
+    const DEPT={T:'Tech',C:'Crew'};
+    const dbadge=dc?(isDup?`<span class="fr-contract mismatch" title="같은 선박·같은 부서·같은 청구월 OPEX가 이미 상신/결재/확정됨 — 승인 차단">🚫 중복 상신 의심</span>`
+      :dc.status==='clear'?`<span class="fr-contract pass" title="같은 달 동일 OPEX 기존 상신 없음">✓ 월 중복 없음</span>`
+      :`<span class="fr-contract flag" title="청구월 판독 불가 — 중복 여부 직접 확인">? 중복 확인필요</span>`):'';
+    const dkv=isDup?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>🚫 ${esc(dc.month||'')} ${esc(DEPT[dc.dept]||'')} OPEX 기존 건:</b> ${(dc.others||[]).map(o=>`${esc(o.opex_cd)} (${esc(o.status||'?')}${o.amt!=null?' · '+esc(o.amt)+' '+esc(o.cur||''):''})`).join(', ')}<br>승인 불가 — 리젝 사유 입력 후 리젝하세요.</div>`:'';
     const vbadge=d.verdict?`<span class="fr-badge b-${esc(d.verdict)}">${({pass:'검토통과',escalate:'AOR차액≥$1k',mismatch:'금액 불일치',flag:'확인필요'})[d.verdict]||esc(d.verdict)}</span>`:'';
     const stbadge=dec?`<span class="fr-badge st-${esc(d.status)}">${esc(d.status)}</span>`:'';
     let acts;
-    if(d.status==='pending'){
+    if(d.status==='pending'&&isDup){
+      const rs=`Duplicate submission: ${dc.month||''} ${DEPT[dc.dept]||''} OPEX already submitted (${(dc.others||[]).map(o=>o.opex_cd).join(', ')})`;
+      acts=`<span class="fr-decided" style="color:var(--red)">중복 의심 — 승인 차단</span>
+            <input class="fr-rsn" value="${esc(rs)}" />
+            <button class="fr-b rj" data-act="reject"><svg class="ic-svg"><use href="#i-x"/></svg> 리젝</button>
+            <button class="fr-b del" data-act="delete">삭제</button>`;
+    } else if(d.status==='pending'){
       acts=`<label><input type="checkbox" data-confirm> 승인(컨펌)</label>
             <button class="fr-b ap" data-act="approve"><svg class="ic-svg"><use href="#i-check-circle"/></svg> 승인대기</button>
             <input class="fr-rsn" placeholder="리젝 사유 입력 후 리젝 →" />
@@ -134,9 +147,9 @@
       <div class="fr-top">
         <div><div class="fr-subj">${esc(d.subj||d.opex_cd)}</div>
         <div class="fr-meta">${esc(d.opex_cd)}</div></div>
-        <div class="fr-badges">${cbadge}<span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
+        <div class="fr-badges">${dbadge}${cbadge}<span class="fr-badge b-tp">${TP[d.tp]||esc(d.tp)}</span>${vbadge}${stbadge}</div>
       </div>
-      <div class="fr-body">${ckv}<div class="fr-kv">${kv}</div>${attBox(d)}${evBox}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}${d.upstream_reject_remark?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}</div>
+      <div class="fr-body">${dkv}${ckv}<div class="fr-kv">${kv}</div>${attBox(d)}${evBox}${d.why?`<div class="fr-why">${esc(d.why)}</div>`:''}${d.upstream_reject_remark?`<div class="fr-why" style="border-left:4px solid var(--red)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}</div>
       <div class="fr-acts">${acts}</div>{% if session.role == 'admin' %}<div class="fr-acts"><button type="button" class="btn btn-outline btn-sm" data-followup-kind="fundreq" data-followup-id="${d.id}">협의 변경점 확인</button></div>{% endif %}
     </div>`;
   }
@@ -193,6 +206,7 @@
     if(checkedIds.length){
       const r=await api('POST','/api/fundreq/drafts/approve-bulk',{ids:checkedIds});
       if(!r.ok){alert('일괄승인 실패: '+(r.j.error||''));return;}
+      if((r.j.dup_blocked_ids||[]).length) alert(`중복 상신 의심 ${r.j.dup_blocked_ids.length}건은 승인에서 제외됨 — 리젝 처리 필요`);
     }
     const {ok,j}=await api('POST','/api/automation/run',{task:'fundreq',mode:'live'});
     alert(ok?`${checkedIds.length}건 승인+상신 실행 — 1~2분 후 반영됨.`:('실패: '+(j.error||'오류')));

@@ -59,7 +59,7 @@ class FundreqManualGateTests(unittest.TestCase):
 
     def test_empty_selection_is_noop(self):
         did = self.draft()
-        self.assertEqual({"approved": 0, "skipped": 0, "approved_ids": []},
+        self.assertEqual({"approved": 0, "skipped": 0, "approved_ids": [], "dup_blocked_ids": []},
                          self.client.post("/api/fundreq/drafts/approve-bulk", json={"ids": []}).get_json())
         self.assertEqual("pending", self.row(did)["status"])
 
