@@ -502,23 +502,41 @@ def _gemini_call_json(parts, model=None):
         url, data=json.dumps(body).encode('utf-8'),
         headers={'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY},
         method='POST')
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as he:
+    # 429·5xx·타임아웃=Gemini 일시 오류(과부하) → 짧게 재시도. 그 외 4xx는 즉시 실패.
+    import time as _time
+    # 전체 deadline 240초 < iOS 추출 업로드 타임아웃 300초 — 재시도 중 앱이 먼저 끊지 않게.
+    data = None
+    deadline = _time.monotonic() + 240
+    for attempt in range(3):
+        left = deadline - _time.monotonic()
+        if left < 15:
+            return {'error': 'API_CALL_FAILED', 'detail': 'deadline exceeded'}
         try:
-            detail = he.read().decode('utf-8')[:300]
-        except Exception:
-            app.logger.exception('gemini-call-json')
-            detail = str(he)
-        return {'error': 'API_CALL_FAILED', 'detail': detail}
-    except Exception as e:
-        app.logger.exception('gemini-call-json')
-        return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+            with urllib.request.urlopen(req, timeout=min(120, left)) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            break
+        except urllib.error.HTTPError as he:
+            try:
+                detail = he.read().decode('utf-8')[:300]
+            except Exception:
+                detail = str(he)
+            app.logger.warning('gemini-call-json: HTTP %s model=%s try=%d %s',
+                               he.code, mdl, attempt + 1, detail[:200])
+            if he.code in (429, 500, 502, 503, 504) and attempt < 2:
+                _time.sleep(3 * (attempt + 1))
+                continue
+            return {'error': 'API_CALL_FAILED', 'detail': f'HTTP {he.code}: {detail}'}
+        except Exception as e:
+            app.logger.warning('gemini-call-json: %s model=%s try=%d', e, mdl, attempt + 1)
+            if attempt < 2:
+                _time.sleep(3 * (attempt + 1))
+                continue
+            return {'error': 'API_CALL_FAILED', 'detail': str(e)}
     text = ''
     try:
         cands = data.get('candidates') or []
         if not cands:
+            app.logger.warning('gemini-call-json: no candidates %s', json.dumps(data)[:200])
             return {'error': 'API_CALL_FAILED', 'detail': json.dumps(data)[:300]}
         for part in (cands[0].get('content', {}).get('parts') or []):
             if isinstance(part.get('text'), str):

@@ -265,7 +265,10 @@ def _extract_findings_from_upload(f, kind, meta=None):
     if isinstance(parsed, dict) and parsed.get('error') == 'NO_API_KEY':
         return None, {'reason': 'no_api_key', 'message': 'AI 자동추출이 설정되지 않았습니다(키 미설정).'}
     if isinstance(parsed, dict) and parsed.get('error'):
-        return None, {'reason': parsed['error'], 'message': '자동 추출에 실패했습니다.',
+        app.logger.warning('extract-findings %s: %s %s', kind, parsed['error'],
+                           str(parsed.get('detail') or parsed.get('raw') or '')[:200])
+        return None, {'reason': parsed['error'],
+                      'message': '자동 추출에 실패했습니다. 잠시 후 다시 시도해 주세요.',
                       'detail': parsed.get('detail') or parsed.get('raw')}
     if meta is not None and kind == 'cs':
         meta['inspection_date'] = _cs_inspection_date(parsed)
