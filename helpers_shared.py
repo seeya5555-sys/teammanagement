@@ -2482,6 +2482,70 @@ def _cls_drop_memoranda(data, text):
     return data, dropped
 
 
+_CLS_ROW_REF = re.compile(r'^\s*[A-Z]{2,5}\d?/\d{4}/[A-Z0-9][A-Z0-9-]*\b')
+_CLS_OBS_ROW = re.compile(
+    r'^\s*[A-Z]{2,5}\d?/\d{4}/[A-Z0-9][A-Z0-9-]*\s+\d{1,2} [A-Za-z]{3} \d{4}\s+(?:Obs|Observation)\b\.?\s*(?:\d+\s+)?(.*)$')
+_CLS_ROW_TAIL = re.compile(r'\b(?:due|action date)\b.*$|\d{1,2} [A-Za-z]{3} \d{4}.*$', re.I)
+
+
+def _cls_split_observations(text):
+    """BV 'Planned Inspection Items' 등의 Type=Obs/Observation 행 → (본문 지문 목록, Obs 행 제외 나머지 텍스트)."""
+    fps, other, cur, in_obs = [], [], [], False
+
+    def _flush():
+        if cur:
+            fp = _cls_alnum(' '.join(cur))[:60]
+            if len(fp) >= 20:
+                fps.append(fp)
+        cur.clear()
+
+    for ln in (text or '').splitlines():
+        m = _CLS_OBS_ROW.match(ln)
+        if m:
+            _flush()
+            in_obs = True
+            cur.append(_CLS_ROW_TAIL.sub('', m.group(1)))
+            continue
+        if in_obs and (_CLS_ROW_REF.match(ln) or _cls_is_section_title(ln) or _CLS_PAGE_NOISE.search(ln)):
+            _flush()
+            in_obs = False
+        if in_obs:
+            if len(_cls_alnum(' '.join(cur))) < 60:
+                cur.append(_CLS_ROW_TAIL.sub('', ln))
+            continue
+        other.append(ln)
+    _flush()
+    return fps, '\n'.join(other)
+
+
+def _cls_drop_observations(data, text):
+    """AI가 Obs/Observation 행(Planned Inspection Items > Statutory Items 등)을 지적/기국으로 가져온 경우 제거.
+    Obs 행이 없으면 무변경. 같은 문두가 Obs 외 구간(Rec/CoC 행)에도 있으면 유지(fail-safe)."""
+    fps, other = _cls_split_observations(text)
+    if not fps:
+        return data, 0
+    other_n = _cls_alnum(other)
+    dropped = 0
+    for key in ('coc', 'statutory'):
+        kept = []
+        for it in data.get(key) or []:
+            desc = re.sub(r'^\s*statutory\s+', '', it.get('description') or '', flags=re.I)
+            probe = _cls_alnum(desc)
+            hit = False
+            if len(probe) >= 20:
+                for fp in fps:
+                    n = min(len(fp), len(probe), 60)
+                    if n >= 20 and (probe[:n] == fp[:n] or fp[:n] in probe) and fp[:n] not in other_n and probe[:n] not in other_n:
+                        hit = True
+                        break
+            if hit:
+                dropped += 1
+                continue
+            kept.append(it)
+        data[key] = kept
+    return data, dropped
+
+
 def _cls_pdf_text(raw):
     import io
     import pdfplumber
@@ -2562,6 +2626,9 @@ def _extract_class_status_from_upload(f):
         data, n = _cls_drop_memoranda(data, src_text)
         if n:
             app.logger.info('cls memoranda dropped=%s file=%s', n, name)
+        data, n = _cls_drop_observations(data, src_text)
+        if n:
+            app.logger.info('cls observations dropped=%s file=%s', n, name)
     return data, None
 def _cls_delete_file(path):
     """보관 파일 삭제(교체 시 이전 파일 자동삭제). 경로가 업로드 폴더 내일 때만."""
