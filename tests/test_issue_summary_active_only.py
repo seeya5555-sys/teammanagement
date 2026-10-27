@@ -131,6 +131,69 @@ chk(seen == [], '재배정 Closed도 Gemini 입력 0건', seen)
 chk(len(moved_rows) == 1 and moved_rows[0]['issue'] == moved_previous,
     '새 감독 scope에 all 저장본 복원', moved_rows)
 
+print('\n[5] 변경 없는 항목은 이전 요약 재사용, 변경 항목만 재요약')
+
+
+def run(scope):
+    seen.clear()
+    shared_ns._gen_issue_summaries = fake_gemini
+    try:
+        out, _, _ = shared_ns._run_summary_generate(scope)
+    finally:
+        shared_ns._gen_issue_summaries = original
+    return {r['issue_id']: r for r in out}
+
+
+base = run(str(sup))
+base = run(str(sup))
+chk(seen == [], '변경 0건이면 Gemini 호출 0건', seen)
+chk(base[open_id]['issue'].find('NEW open raw') >= 0, '재사용 요약 유지')
+
+A.execute('UPDATE issues SET actions=? WHERE id=?',
+          (json.dumps([{'date': '2026-08-25', 'progress': 'open action 2'}]), open_id))
+after = run(str(sup))
+chk([p['description'] for p in seen] == ['open raw'], '진행사항 추가 항목만 재요약', seen)
+chk(after[progress_id]['issue'] == base[progress_id]['issue'], '미변경 항목 본문 그대로')
+
+A.execute("UPDATE issues SET description='progress raw v2' WHERE id=?", (progress_id,))
+run(str(sup))
+chk([p['description'] for p in seen] == ['progress raw v2'], '상세내용 수정 항목만 재요약', seen)
+
+A.execute("UPDATE issues SET status='InProgress' WHERE id=?", (open_id,))
+run(str(sup))
+chk([p['description'] for p in seen] == ['open raw'], 'Status 변경 항목만 재요약', seen)
+
+new_open = issue('NEW OPEN', 'Open', 'brand new raw', 'brand new action')
+run(str(sup))
+chk([p['description'] for p in seen] == ['brand new raw'], '신규 항목만 요약', seen)
+
+A.execute("UPDATE issues SET priority='Urgent' WHERE id=?", (progress_id,))
+pr = run(str(sup))
+chk(seen == [] and pr[progress_id]['priority'] == 'Urgent', '우선순위만 변경=재요약 없이 표시값 갱신', seen)
+
+failed_id = issue('FAIL ITEM', 'Open', 'fail raw', 'fail action')
+seen.clear()
+shared_ns._gen_issue_summaries = lambda payload: (seen.extend(payload), {})[1]
+try:
+    shared_ns._run_summary_generate(str(sup))
+finally:
+    shared_ns._gen_issue_summaries = original
+run(str(sup))
+chk([p['description'] for p in seen] == ['fail raw'], 'AI 실패 항목은 다음 클릭에 재시도', seen)
+
+print('\n[6] scope 간 저장본: 지문 일치본 선택·현재 scope 본문 우선')
+own = run(str(sup))
+rows_all = json.loads(A.query("SELECT data FROM issue_summaries WHERE scope='all'", one=True)['data'])
+rows_all = [r for r in rows_all if r.get('issue_id') != progress_id]
+rows_all.append({'issue_id': progress_id, 'issue': 'STALE', 'src_hash': 'old'})
+rows_all.append({'issue_id': progress_id, 'issue': 'OTHER SAME HASH',
+                 'src_hash': own[progress_id]['src_hash']})
+A.execute("UPDATE issue_summaries SET data=? WHERE scope='all'",
+          (json.dumps(rows_all, ensure_ascii=False),))
+again = run(str(sup))
+chk(seen == [], '다른 scope의 오래된 지문 때문에 재요약하지 않음', seen)
+chk(again[progress_id]['issue'] == own[progress_id]['issue'], '같은 지문이면 현재 scope 본문 유지')
+
 try:
     os.unlink(DB)
 except OSError:

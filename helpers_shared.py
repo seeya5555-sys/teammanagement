@@ -242,8 +242,11 @@ def _issue_to_dict(row):
         app.logger.warning('issue-to-dict: %s', e)
         d['actions'] = []
     return d
-def _gen_summary_rows(supervisor_id=None):
+def _gen_summary_rows(supervisor_id=None, previous_by_id=None):
     """해당 스코프의 현재 이슈 행을 만든다.
+
+    ``previous_by_id[(issue_id, src_hash)]`` 저장본이 현재 원문 지문과 맞으면 이전 요약을
+    그대로 재사용한다(변경된 Open/InProgress 만 Gemini 호출).
 
     Gemini 입력은 상태가 정확히 Open/InProgress 인 행으로 제한한다. Closed 행은
     ``_run_summary_generate`` 가 저장된 이전 요약을 재사용하고, 이전 요약이 없는
@@ -262,15 +265,29 @@ def _gen_summary_rows(supervisor_id=None):
          ORDER BY s.display_order ASC, s.id ASC, i.issue_date ASC, i.id ASC
     '''
     rows = [_issue_to_dict(r) for r in query(sql, params)]
+    previous_by_id = previous_by_id or {}
+    hashes = [_summary_src_hash(r) for r in rows]
+    reused = {}
+    for idx, r in enumerate(rows):
+        old = previous_by_id.get((str(r.get('id')), hashes[idx]))
+        if old:
+            reused[idx] = old['issue']
     payload = [{'i': idx,
                 'description': r.get('description') or '',
                 'action': _latest_action_progress(r.get('actions'))}
                for idx, r in enumerate(rows)
-               if r.get('status') in ('Open', 'InProgress')]
-    summaries = _gen_issue_summaries(payload)
+               if r.get('status') in ('Open', 'InProgress') and idx not in reused]
+    summaries = _gen_issue_summaries(payload) if payload else {}
     STAT = {'Open': 'Open', 'InProgress': '진행중', 'Closed': 'Closed'}
     out = []
     for idx, r in enumerate(rows):
+        active = r.get('status') in ('Open', 'InProgress')
+        if active and idx in reused:
+            text, src_hash = reused[idx], hashes[idx]
+        else:
+            text = None
+            # AI 요약 실패로 원문 fallback 된 행은 지문을 남기지 않아 다음 클릭에 재시도한다.
+            src_hash = hashes[idx] if (not active or summaries.get(idx)) else None
         s = summaries.get(idx, {})
         desc = s.get('desc') or (r.get('description') or '').strip().split('\n')[0]
         ad, araw = _latest_action(r.get('actions'))
@@ -289,11 +306,21 @@ def _gen_summary_rows(supervisor_id=None):
                     'vessel_id': r.get('vessel_id'),
                     'vessel_name': r.get('vessel_name') or '',
                     'vessel_type': r.get('vessel_type') or '',
-                    'issue': '\n'.join(lines),
+                    'issue': text if text is not None else '\n'.join(lines),
+                    'src_hash': src_hash,
                     'priority': r.get('priority') or '',
                     'status_raw': r.get('status') or '',
                     'status': STAT.get(r.get('status'), r.get('status') or '')})
     return out
+
+
+def _summary_src_hash(r):
+    """요약 입력 지문: 제목·상세·조치/진행 이력·Status·발생일 중 하나라도 바뀌면 달라진다."""
+    import hashlib
+    src = json.dumps([r.get('issue_date') or '', r.get('item_topic') or '',
+                      r.get('description') or '', r.get('actions') or [],
+                      r.get('status') or ''], ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(src.encode('utf-8')).hexdigest()
 def _ensure_summary_table():
     execute("""CREATE TABLE IF NOT EXISTS issue_summaries (
                  scope TEXT PRIMARY KEY, data TEXT, generated_at TEXT )""")
@@ -333,15 +360,32 @@ def _run_summary_generate(sid=None):
     """
     from datetime import datetime
     _ensure_summary_table()
-    rows = _gen_summary_rows(sid)
-    gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     def _load(scope):
         old = query('SELECT data FROM issue_summaries WHERE scope=?', (scope,), one=True)
         try:
-            return json.loads(old['data']) if old and old['data'] else []
+            data = json.loads(old['data']) if old and old['data'] else []
+            return data if isinstance(data, list) else []
         except (TypeError, ValueError, json.JSONDecodeError):
             return []
+
+    # 변경 감지용 직전 저장본: 지문이 맞는 행이면 어느 scope 저장본이든 재사용 가능.
+    # (issue_id, src_hash) 로 매칭하고, 현재 저장 scope 저장본을 마지막에 덮어 우선한다.
+    own_scope = str(sid) if sid else 'all'
+    previous_by_id = {}
+    scoped = sorted(query('SELECT scope, data FROM issue_summaries'),
+                    key=lambda r: r['scope'] == own_scope)
+    for r in scoped:
+        try:
+            data = json.loads(r['data']) if r['data'] else []
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        for old in data if isinstance(data, list) else []:
+            if (isinstance(old, dict) and old.get('issue_id') is not None
+                    and old.get('src_hash') and isinstance(old.get('issue'), str)):
+                previous_by_id[(str(old['issue_id']), old['src_hash'])] = old
+    rows = _gen_summary_rows(sid, previous_by_id)
+    gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     def _save(scope, scope_rows):
         previous = _load(scope)
