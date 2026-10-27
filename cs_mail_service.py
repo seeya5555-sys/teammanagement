@@ -433,8 +433,15 @@ def apply_reply(rid, data):
             key = item_key(origin)
             fp = source_fingerprint(remark)
             if _same_as_last_reply(conn, rid, key, fp):
-                unchanged += 1
                 sources.append((key, fp))
+                tracked0 = conn.execute('SELECT last_status FROM cs_mail_item_state WHERE run_id=? AND finding_id=?', (rid, origin['id'])).fetchone()
+                locked = bool(tracked0 and live['status'] != tracked0['last_status'])
+                if close and live['status'] != 'Closed' and not locked:
+                    # 형 지시 2026-10-27: 같은 회신 문구라도 STATUS=Closed 판정이면 상태만 Close (비고 추가 없음)
+                    prev_remark = live['remark'] or ''
+                    changes.append((prev_remark, 'Closed', origin['id'], prev_remark, live['status'], live['survey_id'], False))
+                    continue
+                unchanged += 1
                 continue
             sources.append((key, fp))
             tracked = conn.execute('SELECT last_remark,last_status FROM cs_mail_item_state WHERE run_id=? AND finding_id=?', (rid, origin['id'])).fetchone()

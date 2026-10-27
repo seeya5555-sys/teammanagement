@@ -441,7 +441,7 @@ class CsMailTests(unittest.TestCase):
             verdicts = {self.f1: 'completed', self.f3: 'planned'}
             with patch.object(runner.dm, 'outlook_scan', return_value=([record], '')), \
                     patch.object(runner, '_decision_split', side_effect=lambda r: (dict(r), {})), \
-                    patch.object(runner.dm, 'llm', side_effect=lambda prompt, **k: {'items': [{'finding_id': f, 'kind': verdicts[f]} for f in verdicts]}):
+                    patch.object(runner.dm, 'llm', side_effect=lambda prompt, **k: {'items': [{'finding_id': f, 'kind': verdicts[f]} for f in verdicts if f'"finding_id": {f}' in prompt or f'"{f}"' in prompt]}):
                 reply = runner.poll(SimpleNamespace(dry=False))
                 self.assertTrue(reply['ok'], reply)
                 self.assertEqual((2, 1), (reply['replies'][0]['updated'], reply['replies'][0]['closed']))
