@@ -516,8 +516,11 @@ function renderSummaryView() {
   if (meta) {
     const total = (data.rows || []).length;
     const shown = rows.length;
+    const st = data.stats;
+    const statTxt = st && st.resummarized != null
+      ? `  ·  신규/갱신 요약 ${st.resummarized}건 · 기존 유지 ${st.reused}건` : '';
     meta.textContent = data.generated_at
-      ? `마지막 갱신: ${data.generated_at}  ·  ${shown}/${total}건`
+      ? `마지막 갱신: ${data.generated_at}  ·  ${shown}/${total}건${statTxt}`
       : '';
   }
   if (!rows.length) {

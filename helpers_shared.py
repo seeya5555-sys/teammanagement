@@ -324,6 +324,15 @@ def _summary_src_hash(r):
 def _ensure_summary_table():
     execute("""CREATE TABLE IF NOT EXISTS issue_summaries (
                  scope TEXT PRIMARY KEY, data TEXT, generated_at TEXT )""")
+    # additive: 생성 시점 재요약/유지 건수(JSON). 구버전 행은 NULL.
+    cols = {r['name'] for r in query('PRAGMA table_info(issue_summaries)')}
+    if 'stats' not in cols:
+        try:
+            execute('ALTER TABLE issue_summaries ADD COLUMN stats TEXT')
+        except sqlite3.OperationalError as e:
+            # 동시 요청이 먼저 추가한 경우만 허용, 그 외 DB 오류는 그대로 올린다.
+            if 'duplicate column' not in str(e).lower():
+                raise
 
 
 def _preserve_closed_summary(rows, previous_rows, fallback_rows=None):
@@ -387,12 +396,17 @@ def _run_summary_generate(sid=None, stats=None):
                 previous_by_id[(str(old['issue_id']), old['src_hash'])] = old
     rows = _gen_summary_rows(sid, previous_by_id)
     gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+    # 재요약=Open/진행중 중 직전 저장본 지문과 안 맞은 행(신규·변경·직전 AI 실패).
+    resum_ids = {str(r.get('issue_id')) for r in rows
+                 if r.get('status_raw') in ('Open', 'InProgress')
+                 and (str(r.get('issue_id')), r.get('src_hash')) not in previous_by_id}
+
+    def _scope_stats(scope_rows):
+        n = sum(1 for r in scope_rows if str(r.get('issue_id')) in resum_ids)
+        return {'resummarized': n, 'reused': len(scope_rows) - n}
+
     if stats is not None:
-        # 재요약=Open/진행중 중 직전 저장본 지문과 안 맞은 행(신규·변경·직전 AI 실패).
-        active = [r for r in rows if r.get('status_raw') in ('Open', 'InProgress')]
-        resum = sum(1 for r in active
-                    if (str(r.get('issue_id')), r.get('src_hash')) not in previous_by_id)
-        stats.update(resummarized=resum, reused=len(rows) - resum)
+        stats.update(_scope_stats(rows))
 
     def _save(scope, scope_rows):
         previous = _load(scope)
@@ -402,8 +416,10 @@ def _run_summary_generate(sid=None, stats=None):
         renum = []
         for i, r in enumerate(scope_rows, start=1):
             rr = dict(r); rr['no'] = i; renum.append(rr)
-        execute("INSERT OR REPLACE INTO issue_summaries (scope, data, generated_at) VALUES (?, ?, ?)",
-                (scope, json.dumps(renum, ensure_ascii=False), gen_at))
+        execute("INSERT OR REPLACE INTO issue_summaries (scope, data, generated_at, stats) "
+                "VALUES (?, ?, ?, ?)",
+                (scope, json.dumps(renum, ensure_ascii=False), gen_at,
+                 json.dumps(_scope_stats(renum))))
         return renum
 
     counts = {}

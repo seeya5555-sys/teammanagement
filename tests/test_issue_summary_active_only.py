@@ -211,6 +211,11 @@ finally:
     shared_ns._gen_issue_summaries = original
 chk(st == {'resummarized': 1, 'reused': len(out7) - 1}, '변경 1건이면 재요약 1', st)
 
+
+print('\n[8] scope별 건수 DB 저장')
+row8 = A.query('SELECT stats FROM issue_summaries WHERE scope=?', (str(sup),), one=True)
+chk(row8 and json.loads(row8['stats']) == st, 'scope stats 저장=반환값', row8 and row8['stats'])
+
 try:
     os.unlink(DB)
 except OSError:

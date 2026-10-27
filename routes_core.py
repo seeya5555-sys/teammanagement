@@ -852,7 +852,7 @@ def _summary_scope():
 @login_required
 def api_issue_summary_get():
     _ensure_summary_table()
-    row = query('SELECT data, generated_at FROM issue_summaries WHERE scope=?',
+    row = query('SELECT data, generated_at, stats FROM issue_summaries WHERE scope=?',
                 (_summary_scope(),), one=True)
     if not row:
         return jsonify({'rows': [], 'generated_at': None, 'count': 0})
@@ -861,7 +861,12 @@ def api_issue_summary_get():
     except Exception as e:
         app.logger.warning('issue-summary-get: %s', e)
         rows = []
-    return jsonify({'rows': rows, 'generated_at': row['generated_at'], 'count': len(rows)})
+    try:
+        stats = json.loads(row['stats']) if row['stats'] else None
+    except (TypeError, ValueError):
+        stats = None
+    return jsonify({'rows': rows, 'generated_at': row['generated_at'], 'count': len(rows),
+                    'stats': stats})
 
 
 
@@ -870,8 +875,9 @@ def api_issue_summary_get():
 @login_required
 def api_issue_summary_generate():
     sid = request.args.get('supervisor_id') or None
-    rows, gen_at, counts = _run_summary_generate(sid)
-    return jsonify({'rows': rows, 'generated_at': gen_at, 'counts': counts})
+    stats = {}
+    rows, gen_at, counts = _run_summary_generate(sid, stats)
+    return jsonify({'rows': rows, 'generated_at': gen_at, 'counts': counts, 'stats': stats})
 
 
 @bp.route('/api/issues/summary-counts', methods=['GET'])
