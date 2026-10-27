@@ -4236,9 +4236,10 @@ def api_agent_automation_health():
 @api_key_required
 def api_ext_summary_generate():
     """스케줄러용(맥 launchd, 매일 18시): 전체 업무요약 생성·갱신. API 키 인증."""
-    rows, gen_at, counts = _run_summary_generate(None)
+    stats = {}
+    rows, gen_at, counts = _run_summary_generate(None, stats)
     return jsonify({'ok': True, 'generated_at': gen_at,
-                    'total': counts.get('all', len(rows)), 'counts': counts})
+                    'total': counts.get('all', len(rows)), 'counts': counts, **stats})
 
 
 @bp.route('/api/ext/surveys')

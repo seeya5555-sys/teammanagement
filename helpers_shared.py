@@ -352,11 +352,12 @@ def _preserve_closed_summary(rows, previous_rows, fallback_rows=None):
     return merged
 
 
-def _run_summary_generate(sid=None):
+def _run_summary_generate(sid=None, stats=None):
     """업무요약 생성+저장 코어 (UI 버튼·API키 스케줄러 공용).
 
     Open/InProgress 만 새로 요약하고 Closed 본문은 각 저장 scope의 직전 값을
-    유지한다. 반환값은 ``(rows, gen_at, counts)``.
+    유지한다. 반환값은 ``(rows, gen_at, counts)``. ``stats`` dict 를 넘기면
+    ``resummarized``(재요약 건수)·``reused``(이전 요약 유지 건수)를 채운다.
     """
     from datetime import datetime
     _ensure_summary_table()
@@ -386,6 +387,12 @@ def _run_summary_generate(sid=None):
                 previous_by_id[(str(old['issue_id']), old['src_hash'])] = old
     rows = _gen_summary_rows(sid, previous_by_id)
     gen_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+    if stats is not None:
+        # 재요약=Open/진행중 중 직전 저장본 지문과 안 맞은 행(신규·변경·직전 AI 실패).
+        active = [r for r in rows if r.get('status_raw') in ('Open', 'InProgress')]
+        resum = sum(1 for r in active
+                    if (str(r.get('issue_id')), r.get('src_hash')) not in previous_by_id)
+        stats.update(resummarized=resum, reused=len(rows) - resum)
 
     def _save(scope, scope_rows):
         previous = _load(scope)

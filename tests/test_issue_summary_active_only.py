@@ -194,6 +194,23 @@ again = run(str(sup))
 chk(seen == [], '다른 scope의 오래된 지문 때문에 재요약하지 않음', seen)
 chk(again[progress_id]['issue'] == own[progress_id]['issue'], '같은 지문이면 현재 scope 본문 유지')
 
+print('\n[7] 재요약/유지 건수 반환')
+st = {}
+shared_ns._gen_issue_summaries = fake_gemini
+try:
+    out7, _, _ = shared_ns._run_summary_generate(str(sup), st)
+finally:
+    shared_ns._gen_issue_summaries = original
+chk(st == {'resummarized': 0, 'reused': len(out7)}, '변경 0건이면 재요약 0', st)
+A.execute("UPDATE issues SET description='progress raw v3' WHERE id=?", (progress_id,))
+st = {}
+shared_ns._gen_issue_summaries = fake_gemini
+try:
+    out7, _, _ = shared_ns._run_summary_generate(str(sup), st)
+finally:
+    shared_ns._gen_issue_summaries = original
+chk(st == {'resummarized': 1, 'reused': len(out7) - 1}, '변경 1건이면 재요약 1', st)
+
 try:
     os.unlink(DB)
 except OSError:
