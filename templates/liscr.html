@@ -140,6 +140,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
+const money=v=>{if(v==null||v==='')return '-';const t=String(v).replace(/,/g,'').trim();const n=Number(t);return (t===''||!isFinite(n))?String(v):n.toLocaleString('en-US',{maximumFractionDigits:2});};
 (function(){
   const $=s=>document.querySelector(s);
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -245,7 +246,7 @@
       kv=`<div class="lz-kv">`
         +`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b></span>`
         +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b></span>`
-        +`<span>금액 <b>${esc(d.amt==null?'-':d.amt)} ${esc(d.cur_cd||'')}</b></span>`
+        +`<span>금액 <b>${esc(money(d.amt))} ${esc(d.cur_cd||'')}</b></span>`
         +`<span>INV_DT <b>${esc(d.inv_dt||'-')}</b></span>`
         +`<span>Remit <b>${esc(d.pay_dt||'-')}</b></span>`
         +`</div>`;
@@ -558,7 +559,7 @@
       const vhit=body.vndr_cd&&(MASTER.vendors||[]).find(r=>r.cd===body.vndr_cd);
       const vline=body.vndr_cd?`\nVendor ${body.vndr_cd}${vhit&&vhit.nm?` ${vhit.nm}`:''}`:'';
       if(!confirm(`SVMS에 신규 인보이스를 만듭니다.\n\nINV_NO ${body.inv_no}${vline}`
-          +`\n금액 ${body.amt}\nRemit ${body.pay_dt||'(비어 있음)'}\n\n진행할까요?`)){
+          +`\n금액 ${money(body.amt)}\nRemit ${body.pay_dt||'(비어 있음)'}\n\n진행할까요?`)){
         cardEl.classList.remove('is-busy');return;
       }
       res=await api('POST',`/api/liscr/jobs/${id}/approve`,body);
@@ -587,12 +588,12 @@
   $('#lz-approve-all').addEventListener('click',async()=>{
     const targets=JOBS.filter(readyForBulk);
     if(!targets.length){alert('전체 승인할 건이 없습니다.');return;}
-    const lines=targets.map(d=>`· #${d.id} ${d.vsl_nm||d.vsl_cd||'-'} / ${d.inv_no||'-'} / ${d.amt==null?'-':d.amt} ${d.cur_cd||''}`);
+    const lines=targets.map(d=>`· #${d.id} ${d.vsl_nm||d.vsl_cd||'-'} / ${d.inv_no||'-'} / ${money(d.amt)} ${d.cur_cd||''}`);
     // 🔴 통화별로 나눠 더한다. 기타 인보이스는 USD 가 아닐 수 있어서, 다 합친 숫자 하나는
     //    금액을 잘못 읽게 만든다(승인 직전 화면에서 제일 하면 안 되는 종류의 거짓말).
     const bycur={};
     targets.forEach(d=>{const k=d.cur_cd||'?';bycur[k]=(bycur[k]||0)+(Number(d.amt)||0);});
-    const sum=Object.keys(bycur).sort().map(k=>`${bycur[k].toLocaleString()} ${k}`).join(' · ');
+    const sum=Object.keys(bycur).sort().map(k=>`${money(bycur[k])} ${k}`).join(' · ');
     if(!confirm(`SVMS에 신규 인보이스 ${targets.length}건을 만듭니다.\n\n${lines.join('\n')}\n\n합계 ${sum}\n\n진행할까요?`)) return;
     // 🔴 id 만 보내면 안 된다 — 확인창을 띄운 사이에 [다시 읽기]/러너 재파싱으로 같은 id 의
     //    금액이 바뀔 수 있다. 화면이 **보여준 값**을 같이 보내고, 서버는 지금 값과 다르면 거절한다.

@@ -107,6 +107,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
+const money=v=>{if(v==null||v==='')return '-';const t=String(v).replace(/,/g,'').trim();const n=Number(t);return (t===''||!isFinite(n))?String(v):n.toLocaleString('en-US',{maximumFractionDigits:2});};
 (function(){
   const $=s=>document.querySelector(s);
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -149,7 +150,7 @@
     // 헤더 메타
     let kv=`<span>선박 <b>${esc(d.vsl_nm||d.vsl_cd||'-')}</b> ${vesselChip(d)}</span>`
           +`<span>벤더 <b>${esc(d.vndr_nm||d.vndr_cd||'-')}</b></span>`
-          +`<span>금액 <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b>${d.vat!=null?` (VAT ${esc(d.vat)})`:''}</span>`
+          +`<span>금액 <b>${esc(money(d.amt))} ${esc(d.cur_cd||'')}</b>${d.vat!=null?` (VAT ${esc(money(d.vat))})`:''}</span>`
           +`<span>INV_NO <b>${esc(d.inv_no||'-')}</b>${invNoOv?` <span class="mun" title="수동교정 ${esc(invNoOv.by||'')} ${esc(invNoOv.at||'')}">(수동교정 · SVMS 원본 ${esc(invNoOv.orig)})</span>`:''}</span>`
           +`<span>INV_DT <b>${esc(d.inv_dt||'-')}</b></span>`;
     // 대조결과
@@ -223,7 +224,7 @@
       <div class="fr-top">
         <span class="fr-caret"><svg class="ic-svg"><use href="#i-chevron-down"/></svg></span>
         <div style="flex:1"><div class="fr-subj">${esc(d.vndr_nm||d.vndr_cd||d.inv_cd)}</div>
-        <div class="fr-meta">${esc(d.inv_cd)} · ${esc(d.vsl_nm||d.vsl_cd||'')} · <b>${esc(d.amt)} ${esc(d.cur_cd||'')}</b></div></div>
+        <div class="fr-meta">${esc(d.inv_cd)} · ${esc(d.vsl_nm||d.vsl_cd||'')} · <b>${esc(money(d.amt))} ${esc(d.cur_cd||'')}</b></div></div>
         <div class="fr-badges">${e15Badge}${gateBadge}${stbadge}</div>
       </div>
       <div class="fr-body"><div class="fr-kv">${kv}</div>${matchLine}${evBox}${corr}${d.upstream_reject_remark?`<div class="fr-sect" style="border-left:4px solid var(--red);background:var(--red-bg)"><b>↩ 상위결재 반려 이력:</b> ${esc(d.upstream_reject_remark)}${d.corrective_action?`<br><b>시정 안내(자동 미적용):</b> ${esc(d.corrective_action)}`:''}</div>`:''}${line}${flagLine}</div>
