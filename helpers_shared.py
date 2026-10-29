@@ -555,7 +555,106 @@ def _findings_workbook(title, subtitle, headers, rows, wrap_cols, widths, status
 
     bio = BytesIO(); wb.save(bio); bio.seek(0)
     return bio
+def _parse_ai_json_text(text, tag):
+    text = (text or '').strip()
+    if text.startswith('```'):
+        text = text.strip('`')
+        if text[:4].lower() == 'json':
+            text = text[4:]
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        app.logger.warning('%s: JSON parse failed %s', tag, text[:200])
+        return {'error': 'PARSE_FAILED', 'raw': text[:300]}
+
+
+def _openai_call_json(parts, budget=130):
+    """parts(Gemini 형식 list) → OpenAI Responses API → 파싱된 JSON 또는 {'error':...}.
+    text → input_text, inline_data(pdf 등) → input_file, inline_data(image/*) → input_image."""
+    if not OPENAI_API_KEY:
+        return {'error': 'NO_API_KEY'}
+    import urllib.request, urllib.error, time as _time
+    content = []
+    for p in parts:
+        if 'text' in p:
+            content.append({'type': 'input_text', 'text': p['text']})
+        elif 'inline_data' in p:
+            mime = p['inline_data'].get('mime_type') or 'application/octet-stream'
+            uri = f"data:{mime};base64,{p['inline_data'].get('data', '')}"
+            if mime.startswith('image/'):
+                content.append({'type': 'input_image', 'image_url': uri})
+            else:
+                ext = {'application/pdf': 'pdf'}.get(mime, 'bin')
+                content.append({'type': 'input_file', 'filename': f'document.{ext}', 'file_data': uri})
+    content.append({'type': 'input_text',
+                    'text': 'Respond with valid JSON only (no markdown, no commentary).'})
+    body = {'model': OPENAI_MODEL, 'input': [{'role': 'user', 'content': content}]}
+    req = urllib.request.Request(
+        'https://api.openai.com/v1/responses', data=json.dumps(body).encode('utf-8'),
+        headers={'content-type': 'application/json', 'authorization': 'Bearer ' + OPENAI_API_KEY},
+        method='POST')
+    data = None
+    deadline = _time.monotonic() + budget   # 공통 예산(_gemini_call_json)에서 받은 GPT 몫
+    for attempt in range(2):
+        left = deadline - _time.monotonic()
+        if left < 15:
+            return {'error': 'API_CALL_FAILED', 'detail': 'openai deadline exceeded'}
+        try:
+            with urllib.request.urlopen(req, timeout=min(120, left)) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            break
+        except urllib.error.HTTPError as he:
+            try:
+                detail = he.read().decode('utf-8')[:300]
+            except Exception:
+                detail = str(he)
+            app.logger.warning('openai-call-json: HTTP %s model=%s try=%d %s',
+                               he.code, OPENAI_MODEL, attempt + 1, detail[:200])
+            if he.code in (500, 502, 503, 504) and attempt < 1:
+                _time.sleep(3)
+                continue
+            return {'error': 'API_CALL_FAILED', 'detail': f'HTTP {he.code}: {detail}'}
+        except Exception as e:
+            app.logger.warning('openai-call-json: %s model=%s try=%d', e, OPENAI_MODEL, attempt + 1)
+            if attempt < 1:
+                _time.sleep(3)
+                continue
+            return {'error': 'API_CALL_FAILED', 'detail': str(e)}
+    text = ''
+    try:
+        for item in (data.get('output') or []):
+            for c in (item.get('content') or []):
+                if c.get('type') == 'output_text' and isinstance(c.get('text'), str):
+                    text += c['text']
+    except Exception as e:
+        return {'error': 'PARSE_FAILED', 'raw': str(e)}
+    if not text.strip():
+        return {'error': 'API_CALL_FAILED', 'detail': 'empty openai output ' + json.dumps(data)[:200]}
+    return _parse_ai_json_text(text, 'openai-call-json')
+
+
 def _gemini_call_json(parts, model=None):
+    """AI JSON 호출 공통 진입점(형 지시 2026-10-29): GPT(OpenAI) 메인, 실패(오류·크레딧 소진·파싱 실패)
+    시 Gemini 자동 백업. 기존 호출부 이름·인자·반환 계약 유지."""
+    import time as _time
+    start = _time.monotonic()
+    total = 270   # GPT+Gemini 합산 상한 — iOS 추출 업로드 타임아웃 300s 안에서 끝나게(업로드·후처리 여유 30s)
+    if OPENAI_API_KEY:
+        try:
+            res = _openai_call_json(parts, budget=130)
+        except Exception as e:   # 입력 변환 등 예외도 백업으로
+            res = {'error': 'API_CALL_FAILED', 'detail': f'openai exception: {e}'}
+        if not (isinstance(res, dict) and res.get('error')):
+            return res
+        app.logger.warning('ai-fallback: openai failed (%s) → gemini', str(res.get('detail') or res.get('error'))[:200])
+    left = total - (_time.monotonic() - start)
+    if left < 20:
+        return {'error': 'API_CALL_FAILED', 'detail': 'ai budget exceeded'}
+    return _gemini_call_json_raw(parts, model=model, budget=min(240, left))
+
+
+def _gemini_call_json_raw(parts, model=None, budget=240):
     """parts(list) → Gemini generateContent → 파싱된 JSON dict 또는 {'error':...}."""
     if not GEMINI_API_KEY:
         return {'error': 'NO_API_KEY'}
@@ -573,7 +672,7 @@ def _gemini_call_json(parts, model=None):
     import time as _time
     # 전체 deadline 240초 < iOS 추출 업로드 타임아웃 300초 — 재시도 중 앱이 먼저 끊지 않게.
     data = None
-    deadline = _time.monotonic() + 240
+    deadline = _time.monotonic() + budget
     for attempt in range(3):
         left = deadline - _time.monotonic()
         if left < 15:
@@ -1010,6 +1109,9 @@ def _safe_filename(s):
 def _ext_allowed(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXT
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+# GPT 메인(2026-10-29): OPENAI_API_KEY 있으면 OpenAI 먼저, 실패 시 Gemini 백업. /etc/trmt.env 에서 지정.
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+OPENAI_MODEL   = os.environ.get('OPENAI_MODEL', 'gpt-5.4')
 GEMINI_MODEL   = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash-lite')
 # 용도별 모델 — /etc/trmt.env 에서 지정 (미지정 시 GEMINI_MODEL 사용)
 #   MODEL_SUMMARY  : 요약        (텍스트)
