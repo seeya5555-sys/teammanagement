@@ -1800,9 +1800,17 @@ function renderImageGallery(body, b) {
         totalFinal += res.final_kb || 0;
         done += 1;
       }
+      const snap = getCurrent();
       await api(`/api/dock-blocks/${b.id}`, {
-        method: 'PUT', body: JSON.stringify({ content: getCurrent() }),
+        method: 'PUT', body: JSON.stringify({ content: snap }),
       });
+      // 섹션 캐시도 갱신 — 안 하면 다른 섹션 갔다 오면 업로드 전(빈) content로 다시 그려지고,
+      // 그 상태에서 열 수·캡션을 바꾸면 빈 목록이 서버에 저장돼 사진이 실제로 지워짐.
+      b.content = snap;
+      for (const info of E.byId.values()) {
+        const t = (info.section.blocks || []).find(x => x.id === b.id);
+        if (t) t.content = snap;
+      }
       rebuild();
       // 압축 결과 노출
       if (totalOrig > 0) {
