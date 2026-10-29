@@ -1269,6 +1269,47 @@ def _noon_alert_date(v):
     return d0
 
 
+@bp.route('/api/ext/fleet-map/noon-missing')
+@api_key_required
+def api_ext_fleet_map_noon_missing():
+    """noon 누락 자동메일(맥 러너)용. 대시보드 배너와 같은 판정(`_noon_alert_date`)으로
+    감독 배정 선박 중 miss>=min_days(기본 3) 선박을 돌려준다. 보고일 불명은 days=None 로 포함."""
+    try:
+        min_days = max(1, int(request.args.get('min_days', 3)))
+    except ValueError:
+        return jsonify({'ok': False, 'error': 'min_days'}), 400
+    try:
+        with open(FLEET_MAP_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+    except (FileNotFoundError, ValueError):
+        return jsonify({'ok': False, 'error': 'fleet map 없음'}), 503
+    try:
+        with open(FLEET_OVERRIDE_FILE, encoding='utf-8') as f:
+            overrides = json.load(f)
+    except (FileNotFoundError, ValueError):
+        overrides = {}
+    assigned = {_vkey(r['name']) for r in
+                query("SELECT DISTINCT v.name FROM supervisor_vessels sv JOIN vessels v ON v.id=sv.vessel_id")}
+    today = (datetime.utcnow() + timedelta(hours=9)).date()
+    out = []
+    for v in (data.get('fleet') or []):
+        k = _vkey(v.get('name'))
+        if v.get('no_noon') or k not in assigned:
+            continue
+        o = overrides.get(k)
+        v = dict(v)
+        if o:   # 판정 시에만 이메일 보고일 반영(_noon_alert_date 는 전진만 함)
+            v['pos_source'] = o.get('source') or 'email'
+            v['pos_reported_at'] = o.get('reported_at') or o.get('stored_at')
+        d0 = _noon_alert_date(v)
+        miss = (today - d0).days if d0 else None
+        if miss is None or miss >= min_days:
+            out.append({'name': v.get('name'), 'vsl_cd': v.get('vsl_cd'),
+                        'last_rpt': d0.isoformat() if d0 else None, 'days': miss})
+    return jsonify({'ok': True, 'today': today.isoformat(), 'min_days': min_days,
+                    'generated_at': data.get('generated_at'), 'vessels': out})
+
+
 @bp.route('/api/fleet-map/data')
 @login_required
 def api_fleet_map_data():

@@ -233,5 +233,31 @@ class FleetNoonStalenessTests(unittest.TestCase):
         self.assertEqual(stale[EMAIL_VESSEL]['days'], 9)
 
 
+    # ── noon 누락 자동메일용 ext API ──────────────────────────
+    def _ext(self, q=''):
+        with appmod.app.app_context():
+            appmod.execute("INSERT OR REPLACE INTO api_settings (k, v) VALUES ('api_key', ?)", ('secret',))
+        r = self.client.get('/api/ext/fleet-map/noon-missing' + q, headers={'X-API-Key': 'secret'})
+        self.assertEqual(r.status_code, 200)
+        return {v['name']: v for v in r.get_json()['vessels']}
+
+    def test_ext_noon_missing_threshold(self):
+        self.write_fleet(3)
+        got = self._ext()
+        self.assertEqual(got[VESSEL]['days'], 3)
+        self.write_fleet(2)
+        self.assertEqual(self._ext(), {})
+
+    def test_ext_noon_missing_email_override_advances(self):
+        self.write_fleet(5)
+        self.stale_email_override(1)
+        got = self._ext()
+        self.assertIn(VESSEL, got)
+        self.assertNotIn(EMAIL_VESSEL, got)
+
+    def test_ext_noon_missing_requires_key(self):
+        self.write_fleet(5)
+        self.assertEqual(self.client.get('/api/ext/fleet-map/noon-missing').status_code, 401)
+
 if __name__ == '__main__':
     unittest.main()

@@ -3105,6 +3105,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/fleet-map/noon-missing",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_tail.api_ext_fleet_map_noon_missing",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/fleet-map/override",
     "methods": [
       "OPTIONS",
