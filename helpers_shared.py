@@ -744,7 +744,11 @@ def _translate_batch_en(texts, group):
     payload = json.dumps([{'i': i, 'text': texts[i]} for i in group], ensure_ascii=False)
     prompt = (EN_TRANSLATION_RULES + "\n" +
         "너는 선박 기술 감독(ship superintendent)이다. 아래 JSON 배열의 각 한국어(또는 한영 혼용) "
-        "텍스트를 선박 관리 현업에서 자연스럽게 쓰는 영어로 번역하라.\n"
+        "텍스트를 선박 감독 보고서(superintendent report)체 영어로 번역하라.\n"
+        "- 짧은 보고 문장: 'It is expected that', 'According to', 'was attempted', 'Recently,' 같은 군더더기·장문 수동태를 피하고 "
+        "'Spares to be delivered on <date>.', 'Alarm persists.', 'Further investigation required.'처럼 핵심만 쓴다. "
+        "주어·관사는 생략 가능, 시제는 상태 위주(completed/arranged/pending/to be ...).\n"
+        "- '결함 자재/부품 보급'은 결함 부품의 교체품(replacement spares for defective ...) 의미로 쓴다. 간결해도 의미가 모호해지면 안 된다.\n"
         "- 장비명·약어·단위·수치(예: BRG, RPM, S/W pump, LT cooler, EGCS, °C, kts)는 그대로 둔다.\n"
         "- 줄바꿈과 번호 매김(1. 2. ...) 구조를 그대로 보존한다.\n"
         "- 이미 영어인 부분은 그대로 둔다. 의미를 바꾸거나 내용을 덧붙이지 마라.\n"
