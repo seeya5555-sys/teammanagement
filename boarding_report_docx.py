@@ -757,6 +757,7 @@ def _render_image(doc, content, base_indent):
 
 def _resolve_brep_image_path(url, filename):
     """boarding/ 폴더에 저장된 이미지 경로 해결 (static 디렉터리 밖 접근 차단)"""
+    url = (url or '').split('?', 1)[0].split('#', 1)[0]
     if url and url.startswith('/static/'):
         rel = url[len('/static/'):]
         from app_core import app

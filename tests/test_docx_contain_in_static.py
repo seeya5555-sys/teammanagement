@@ -17,3 +17,9 @@ def test_rejects_traversal_and_accepts_inside():
     assert f(os.path.join(root, 'js', 'app.js')) == os.path.join(root, 'js', 'app.js')
     assert f(root) == root
     assert f(root + '_evil') is None
+
+
+def test_resolve_strips_cache_query():
+    root = os.path.realpath(app.static_folder)
+    got = dock_report_docx._resolve_image_path('/static/uploads/dock/x.jpg?v=1793241368', '')
+    assert got == os.path.join(root, 'uploads', 'dock', 'x.jpg')

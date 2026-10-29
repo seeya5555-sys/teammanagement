@@ -929,6 +929,8 @@ def _contain_in_static(candidate):
 def _resolve_image_path(url, filename):
     """저장된 이미지 URL → 파일 시스템 경로 (static 디렉터리 밖 접근 차단)"""
     # url 예시: /static/uploads/dock/dock-1-1234-abc.jpg
+    # 캐시 무효화용 ?v=... 쿼리가 붙어 저장되므로 경로 계산 전에 떼어낸다.
+    url = (url or '').split('?', 1)[0].split('#', 1)[0]
     if url and url.startswith('/static/'):
         rel = url[len('/static/'):]
         # static 디렉터리 위치 — app 모듈에서 가져옴
