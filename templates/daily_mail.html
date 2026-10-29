@@ -134,13 +134,23 @@
     const d=await api('/api/daily-mail/settings');
     $('dmSubj').value=d.template.subject_tpl||'';
     $('dmBody').value=d.template.body_tpl||'';
-    $('dmVessels').innerHTML=table(['선박','코드','Open','Dear (이름)','To','CC','발송',''],d.vessels.map(v=>
+    $('dmVessels').innerHTML=table(['선박','코드','Open','Dear (이름)','To','CC','발송','noon 누락 메일',''],d.vessels.map(v=>
       '<tr data-vid="'+v.vessel_id+'"><td>'+esc(v.name)+'</td><td class="muted">'+esc(v.code)+'</td><td>'+v.open_count+'</td>'
       +'<td><input type="text" data-f="dear" placeholder="Sir/Madam" value="'+esc(v.dear_name||'')+'"></td>'
       +'<td><input type="text" data-f="to" value="'+esc(v.to_emails)+'"></td><td><input type="text" data-f="cc" value="'+esc(v.cc_emails)+'"></td>'
       +'<td><label><input type="checkbox" data-f="en" '+(v.enabled?'checked':'')+'> ON</label></td>'
+      +'<td><label title="noon 보고 3일+ 누락 시 자동 메일(바꾸면 바로 저장). 발송 ON + To 있는 선박에만 적용"><input type="checkbox" data-f="noon" '+(v.noon_enabled?'checked':'')+'> ON</label></td>'
       +'<td><button class="btn btn-outline btn-sm" data-act="save-vessel">저장</button><span class="dm-msg"></span></td></tr>'));
   }
+
+  document.addEventListener('change',async(ev)=>{
+    const c=ev.target.closest('input[data-f=noon]'); if(!c) return;
+    const tr=c.closest('tr'); c.disabled=true;
+    try{ await api('/api/daily-mail/settings/'+tr.dataset.vid+'/noon',{method:'POST',body:JSON.stringify({enabled:c.checked})});
+         toast('noon 누락 메일 '+(c.checked?'ON':'OFF')); }
+    catch(e){ c.checked=!c.checked; toast('저장 실패: '+e.message,'error'); }
+    finally{ c.disabled=false; }
+  });
 
   document.addEventListener('click',async(ev)=>{
     const b=ev.target.closest('button[data-act]'); if(!b) return;

@@ -271,6 +271,19 @@ class DailyMailTests(unittest.TestCase):
             vid2 = execute("INSERT INTO vessels(name, vsl_cd) VALUES('NO TO','NOTO')")
         self.assertEqual(400, self.c.post(f'/api/daily-mail/settings/{vid2}/enabled', json={'enabled': True}).status_code)
 
+    def test_noon_toggle_default_on_and_independent(self):
+        self._enable()
+        cfg = lambda: next(x for x in self.c.get('/api/ext/daily-mail/config?week=2026W40', headers=self.h)
+                           .get_json()['vessels'] if x['vessel_id'] == self.vid)
+        self.assertEqual(1, cfg()['noon_enabled'])
+        r = self.c.post(f'/api/daily-mail/settings/{self.vid}/noon', json={'enabled': False})
+        self.assertEqual(200, r.status_code, r.get_json())
+        v = cfg()
+        self.assertEqual((0, 1), (v['noon_enabled'], v['enabled']))   # Daily 발송 ON 은 그대로
+        self.c.post(f'/api/daily-mail/settings/{self.vid}/enabled', json={'enabled': False})
+        self.c.post(f'/api/daily-mail/settings/{self.vid}/enabled', json={'enabled': True})
+        self.assertEqual(0, cfg()['noon_enabled'])                    # Daily 토글이 noon 을 덮지 않음
+
     def _enable(self):
         r = self.c.put(f'/api/daily-mail/settings/{self.vid}',
                        json={'to_emails': 'master@x.com', 'cc_emails': 'team@x.com; bad', 'enabled': 1})

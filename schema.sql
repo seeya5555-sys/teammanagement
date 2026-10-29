@@ -1216,6 +1216,7 @@ CREATE TABLE IF NOT EXISTS daily_mail_settings (
     cc_emails   TEXT    NOT NULL DEFAULT '',
     dear_name   TEXT    NOT NULL DEFAULT '',          -- 메일 'Dear {dear}' (빈칸=Sir/Madam)
     enabled     INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1)),
+    noon_enabled INTEGER NOT NULL DEFAULT 1,                  -- noon 누락 자동메일 ON/OFF
     updated_by  TEXT,
     updated_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );

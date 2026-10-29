@@ -148,8 +148,10 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # pairs (cs_mail_reminder_* for 'cs', mail_reminder_* otherwise) after the _mode whitelist
 # class/vetting/cs. No request/config/DB value reaches SQL syntax; all values bound.
 # Measured with repository_fingerprints(): previous 196 fingerprints unchanged, +7 exact.
+# 2026-10-29 reminder list 28-day window: count unchanged, 1 site's AST changed only by replacing
+# SQL datetime('now') with a bound `?` (now_kst()-28d). Table name still `{mode}` after _mode whitelist.
 EXPECTED_COUNT = 203
-EXPECTED_SHA256 = "68ad98698484fa0aa0c906b67c0744d02b815881faff850595ffc102401a5232"  # 2026-10-19 cs reminder ledger +7
+EXPECTED_SHA256 = "088c0a1ede434a5fa6f14a182e0a74faf28044c7b7554149ed284ad427d43465"  # 2026-10-29 reminder window bound param
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

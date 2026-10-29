@@ -396,6 +396,17 @@ def _daily_mail_dear_name(conn):
         print(f"[auto_migrate] daily_mail_settings.dear_name 점검 건너뜀: {exc}")
 
 
+def _daily_mail_noon_enabled(conn):
+    try:
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(daily_mail_settings)").fetchall()]
+        if columns and "noon_enabled" not in columns:
+            # 기본 ON = 2026-10-29 형 승인으로 이미 돌던 noon 누락 메일 동작 유지
+            conn.execute("ALTER TABLE daily_mail_settings ADD COLUMN noon_enabled INTEGER NOT NULL DEFAULT 1")
+            print("[auto_migrate] daily_mail_settings.noon_enabled 추가됨")
+    except Exception as exc:
+        print(f"[auto_migrate] daily_mail_settings.noon_enabled 점검 건너뜀: {exc}")
+
+
 MANAGEMENT_METADATA_MIGRATIONS = (
     ("class_status.source_path", _class_status_source_path),
     ("class_status_items.action_taken", _class_status_action_taken),
@@ -403,6 +414,7 @@ MANAGEMENT_METADATA_MIGRATIONS = (
     ("vessels.management", _vessel_management_columns),
     ("mail_card.columns", _mail_card_columns),
     ("daily_mail_settings.dear_name", _daily_mail_dear_name),
+    ("daily_mail_settings.noon_enabled", _daily_mail_noon_enabled),
 )
 
 

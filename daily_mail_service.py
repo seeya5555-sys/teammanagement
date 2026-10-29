@@ -179,7 +179,7 @@ def list_settings():
     rows = query(
         "SELECT v.id AS vessel_id, v.name, v.vsl_cd, v.vessel_type, "
         "       COALESCE(s.to_emails,'') AS to_emails, COALESCE(s.cc_emails,'') AS cc_emails, "
-        "       COALESCE(s.dear_name,'') AS dear_name, COALESCE(s.enabled,0) AS enabled, s.updated_by, s.updated_at, "
+        "       COALESCE(s.dear_name,'') AS dear_name, COALESCE(s.enabled,0) AS enabled, COALESCE(s.noon_enabled,1) AS noon_enabled, s.updated_by, s.updated_at, "
         "       (SELECT COUNT(*) FROM issues i WHERE i.vessel_id=v.id "
         "         AND i.status IN ('Open','InProgress')) AS open_count "
         "FROM vessels v LEFT JOIN daily_mail_settings s ON s.vessel_id=v.id "
@@ -252,6 +252,22 @@ def set_enabled(vessel_id, enabled, user):
     return {'vessel_id': vessel_id, 'enabled': enabled}
 
 
+def set_noon_enabled(vessel_id, enabled, user):
+    """noon 보고 누락 자동메일 선박별 ON/OFF(수신처는 Daily 설정 공유). 기본=ON."""
+    if not query('SELECT 1 FROM vessels WHERE id=?', (vessel_id,), one=True):
+        raise DailyMailError(404, '선박이 없습니다.')
+    if not in_roster(vessel_id):
+        raise DailyMailError(403, '담당 선박이 아닙니다.')
+    enabled = 1 if enabled else 0
+    if query('SELECT 1 FROM daily_mail_settings WHERE vessel_id=?', (vessel_id,), one=True):
+        execute("UPDATE daily_mail_settings SET noon_enabled=?, updated_by=?, updated_at=datetime('now','localtime') "
+                'WHERE vessel_id=?', (enabled, user, vessel_id))
+    else:
+        execute('INSERT INTO daily_mail_settings(vessel_id, noon_enabled, updated_by) VALUES(?,?,?)',
+                (vessel_id, enabled, user))
+    return {'vessel_id': vessel_id, 'noon_enabled': enabled}
+
+
 def runner_config(iso_week=None, today=None):
     """러너용: enabled=1 이고 To 가 있는 선박만. 이번 주 run 여부를 같이 준다."""
     iso_week = iso_week or iso_week_of(today)
@@ -272,7 +288,7 @@ def runner_config(iso_week=None, today=None):
         tag = make_tag(iso_week, s['code'])
         vessels.append({
             'vessel_id': s['vessel_id'], 'name': s['name'], 'code': s['code'],
-            'enabled': 1, 'to': to_list, 'cc': cc_list,
+            'enabled': 1, 'noon_enabled': int(s['noon_enabled']), 'to': to_list, 'cc': cc_list,
             'open_count': len(ids), 'open_issue_ids': ids, 'issue_fp': issue_fingerprint(rows), 'tag': tag,
             'dear': s['dear_name'] or DEFAULT_DEAR,
             'subject': tag + ' ' + render_template(tpl['subject_tpl'], s['name'], len(ids), due, s['dear_name']),

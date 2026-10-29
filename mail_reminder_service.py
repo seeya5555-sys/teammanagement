@@ -155,7 +155,9 @@ def _run(mode, rid):
 def pending(mode):
     _mode(mode)
     out, blocked = [], []
-    for r in query(f"SELECT id FROM {mode}_mail_runs WHERE state='sent' AND sent_at>=datetime('now','localtime','-28 days') ORDER BY id"):
+    # 28일 창은 now_kst() 기준(146행 claim 판정과 동일 시계). SQL 'now' 를 쓰면 시계가 갈라져 테스트·판정 불일치.
+    since = (now_kst() - timedelta(days=28)).strftime('%Y-%m-%d %H:%M:%S')
+    for r in query(f"SELECT id FROM {mode}_mail_runs WHERE state='sent' AND sent_at>=? ORDER BY id", (since,)):
         try:
             run = _run(mode, r['id'])
             unresolved = [a for a in run['reminder_attempts'] if a['state'] != 'sent']

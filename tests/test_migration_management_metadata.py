@@ -40,6 +40,7 @@ class ManagementMetadataMigrationTests(unittest.TestCase):
                 "vessels.management",
                 "mail_card.columns",
                 "daily_mail_settings.dear_name",
+                "daily_mail_settings.noon_enabled",
             ),
             tuple(name for name, _step in migration_steps.MANAGEMENT_METADATA_MIGRATIONS),
         )
