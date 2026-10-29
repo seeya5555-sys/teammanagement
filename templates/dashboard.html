@@ -186,7 +186,7 @@
   .ck-dtxt b{font-weight:700}
   .ck-dsrc{flex:0 0 auto;font-size:10px;color:var(--text-tertiary);background:var(--surface-2);padding:2px 7px;border-radius:4px}
   /* approvals */
-  .ck-boxes{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .ck-boxes{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
   .ck-box{display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 4px;border-radius:6px;
           background:var(--surface-2);border:1px solid var(--border-subtle);text-decoration:none;color:inherit}
   .ck-box:hover{border-color:var(--border)}
@@ -324,7 +324,8 @@
   if(!wrap) return;
   const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const TAB={fundreq:"{{ url_for('routes_calendar_dock.fundreq_page') }}",aor:"{{ url_for('routes_calendar_dock.aor_page') }}",
-             invoice:"{{ url_for('routes_calendar_dock.invoice_page') }}"};
+             invoice:"{{ url_for('routes_calendar_dock.invoice_page') }}",
+             repair:"{{ url_for('routes_rpcost.rpcost_page') }}",purchase:"{{ url_for('routes_rpcost.rpcost_page') }}"};
   function dchip(d){
     let cls='blue',lbl='D-'+d;
     if(d<0){cls='red';lbl='D+'+(-d);}
@@ -349,10 +350,11 @@
   function renderApp(a){
     const box=document.getElementById('ckApp');
     if(!a){box.hidden=true;return;}
-    const tot=(a.fundreq||0)+(a.aor||0)+(a.invoice||0);
+    const tot=(a.fundreq||0)+(a.aor||0)+(a.invoice||0)+(a.repair||0)+(a.purchase||0);
     if(!tot && !a.oldest){box.hidden=true;return;}
     let html='<div class="ck-boxes">'+abox('fundreq','FundReq',a.fundreq||0)
-      +abox('aor','AOR',a.aor||0)+abox('invoice','Invoice',a.invoice||0)+'</div>';
+      +abox('aor','AOR',a.aor||0)+abox('invoice','Invoice',a.invoice||0)
+      +abox('repair','수리',a.repair||0)+abox('purchase','구매',a.purchase||0)+'</div>';
     if(a.oldest&&a.oldest.days>0)
       html+='<div class="ck-oldest">가장 오래 대기: '+esc(a.oldest.label)+' <b>'+a.oldest.days+'일</b> 경과</div>';
     document.getElementById('ckAppBody').innerHTML=html;

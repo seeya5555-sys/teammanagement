@@ -39,7 +39,7 @@ r = c.get('/api/dashboard/cockpit')
 assert r.status_code == 200
 with c.session_transaction() as s:
     assert s['role'] == 'member'
-assert r.get_json()['approvals'] == {'fundreq': 0, 'aor': 0, 'invoice': 0, 'oldest': None}
+assert r.get_json()['approvals'] == {'fundreq': 0, 'aor': 0, 'invoice': 0, 'repair': 0, 'purchase': 0, 'oldest': None}
 
 # The opt-in filter preserves every non-Closed status and the unfiltered contract.
 active = c.get('/api/issues?exclude_status=Closed').get_json()

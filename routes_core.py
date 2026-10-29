@@ -239,7 +239,7 @@ def api_dashboard_cockpit():
     due = due[:6]
 
     # ── approvals: 사람 판단대기 큐(전사, admin 큐) ──
-    approvals = {'fundreq': 0, 'aor': 0, 'invoice': 0, 'oldest': None}
+    approvals = {'fundreq': 0, 'aor': 0, 'invoice': 0, 'repair': 0, 'purchase': 0, 'oldest': None}
     if is_admin:
         approvals['fundreq'] = (query("SELECT COUNT(*) c FROM fundreq_draft WHERE status='pending'",
                                       one=True) or {'c': 0})['c']
@@ -247,12 +247,18 @@ def api_dashboard_cockpit():
                                   one=True) or {'c': 0})['c']
         approvals['invoice'] = (query("SELECT COUNT(*) c FROM invoice_draft WHERE status='pending'",
                                       one=True) or {'c': 0})['c']
-        # oldest pending — 3개 큐 중 가장 오래된 created_at
+        approvals['repair'] = (query("SELECT COUNT(*) c FROM rp_cost_draft WHERE status='pending' AND kind='repair'",
+                                     one=True) or {'c': 0})['c']
+        approvals['purchase'] = (query("SELECT COUNT(*) c FROM rp_cost_draft WHERE status='pending' AND kind='purchase'",
+                                       one=True) or {'c': 0})['c']
+        # oldest pending — 5개 큐 중 가장 오래된 created_at
         oldest = None
         for lbl, sql in (
             ('비용청구', "SELECT MIN(created_at) m FROM fundreq_draft WHERE status='pending'"),
             ('AOR',      "SELECT MIN(created_at) m FROM aor_draft WHERE status='pending'"),
             ('인보이스', "SELECT MIN(created_at) m FROM invoice_draft WHERE status='pending'"),
+            ('수리비용', "SELECT MIN(created_at) m FROM rp_cost_draft WHERE status='pending' AND kind='repair'"),
+            ('구매비용', "SELECT MIN(created_at) m FROM rp_cost_draft WHERE status='pending' AND kind='purchase'"),
         ):
             row = query(sql, one=True)
             m = row['m'] if row else None
