@@ -81,6 +81,7 @@
     "routes_dock_submit.py": [],
     "routes_family_assets.py": [],
     "routes_followup.py": [],
+    "routes_journal.py": [],
     "routes_liscr.py": [],
     "routes_repair_request.py": [],
     "routes_rpcost.py": [],
@@ -495,6 +496,15 @@
       "_automation_enabled",
       "_issue_write_scope",
       "admin_required",
+      "api_key_required"
+    ]
+  },
+  "routes_journal.py": {
+    "app_core.py": [
+      "execute",
+      "query"
+    ],
+    "helpers_shared.py": [
       "api_key_required"
     ]
   },

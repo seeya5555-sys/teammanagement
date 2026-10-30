@@ -1469,3 +1469,14 @@ CREATE TABLE IF NOT EXISTS cs_mail_reminder_notices (
  mode TEXT NOT NULL CHECK(mode='cs'), run_id INTEGER NOT NULL,
  notified_at TEXT NOT NULL, PRIMARY KEY(mode,run_id)
 );
+
+-- 개인 마음 기록(손유석 전용, iOS 앱 Bearer 로만 열람·웹 UI 없음). 맥 데쿠가 /api/ext/journal 로 적재.
+CREATE TABLE IF NOT EXISTS personal_journal (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_date  TEXT NOT NULL,                     -- YYYY-MM-DD
+    kind        TEXT NOT NULL DEFAULT 'day',       -- day | note
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE (entry_date, kind, title)
+);

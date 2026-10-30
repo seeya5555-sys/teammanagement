@@ -1811,6 +1811,8 @@ import routes_class_mail
 app.register_blueprint(routes_class_mail.bp)
 import routes_cs_mail
 app.register_blueprint(routes_cs_mail.bp)
+import routes_journal
+app.register_blueprint(routes_journal.bp)
 # Static contract marker: dock sync notifications keep the historical deep link.
 # The executable call remains in routes_dock_submit.py.
 # link='trmt://dock'
