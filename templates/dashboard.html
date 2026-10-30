@@ -638,6 +638,8 @@
   function posSrcLabelBase(v){
     if(v.pos_mode==='svms')
       return '<span style="color:#8a6100">위치=SVMS 운항데이터 <span style="font-size:11px">(수동 AIS off)</span></span>';
+    if(v.pos_source==='mirror')
+      return '<span style="color:#b7791f">위치='+esc(v.pos_mirror_label||'팀장님 사이트')+'</span>';
     if(v.pos_source==='email')
       return '<span style="color:#b7791f">위치=Master 이메일'+(v.pos_reported_at?' ('+esc(String(v.pos_reported_at).slice(0,16).replace("T"," "))+')':'')+'</span>';
     if(v.pos_source==='trmtdb')

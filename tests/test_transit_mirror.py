@@ -31,7 +31,7 @@ REGISTRY = {"ok": True, "registry": {
 }}
 
 
-def fake_get(path):
+def fake_get(path, timeout=None):
     return {"/api/vessels": VESSELS, "/api/transit-plan/today": TODAY_PLAN,
             "/api/transit-plan/registry": REGISTRY}[path]
 
@@ -150,7 +150,7 @@ class TransitMirrorTests(unittest.TestCase):
 
 
     def _fetch(self, vessels, today=None, registry=None):
-        def g(path):
+        def g(path, timeout=None):
             return {"/api/vessels": vessels, "/api/transit-plan/today": today or TODAY_PLAN,
                     "/api/transit-plan/registry": registry or REGISTRY}[path]
         with mock.patch.object(tm, "_get_json", side_effect=g):

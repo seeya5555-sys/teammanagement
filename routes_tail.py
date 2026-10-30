@@ -740,6 +740,15 @@ def _trmtdb_epoch_upper_bound(raw):
     return None
 
 
+def _fleet_current_pos_epoch(v):
+    """현재 선택된 선위의 epoch(액면값, 시각대 보정 없음 — 미러 72h 초과 시 비교용). 불명이면 None."""
+    if v.get('pos_source') in ('trmtdb', 'email'):
+        ep = _trmtdb_epoch_upper_bound(v.get('pos_reported_at') or v.get('position_ts'))
+        if ep is not None:
+            return ep - 12 * 3600   # upper_bound 의 +12h 보수 페널티 제거
+    return _pushed_position_epoch(v)
+
+
 def _overlay_trmtdb_positions(fleet, override_keys):
     """TRMT DB의 latest 위치를 fleet_map 항목에 병합. 이메일 수동 override가 최우선이다.
 
@@ -1437,6 +1446,22 @@ def api_fleet_map_data():
         else:
             fleet = []
         data = {**data, 'fleet': fleet, 'scoped_to': sup_name}
+    # 통항 미러(팀장님 사이트, 마스터 이메일 기반) 선위를 최우선으로 — 응답 메모리에서만, DB 쓰기 없음.
+    # 로그인 감독 배정선만. 미러 72h 이내=항상, 초과=현재보다 엄격히 최신일 때만. 수동 SVMS 고정(ais-off)은 제외.
+    # 실패/캐시 없음 → 기존 동작 그대로(transit_mirror 내부에서 예외 흡수).
+    if sup_id:
+        try:
+            # 형제 모듈 직접 import 금지(층위 규칙) → transit_mirror 가 등록 시 extensions 에 훅을 건다.
+            from flask import current_app
+            _overlay = current_app.extensions.get('transit_mirror_overlay')
+            if _overlay:
+                _new_fleet, _n = _overlay(fleet, _fleet_current_pos_epoch, _ais_off.keys())
+                if _n:
+                    fleet = _new_fleet          # 사본 리스트로 교체(원본 항목 dict 불변)
+                    data = {**data, 'fleet': fleet}
+                data['mirror_overridden'] = _n
+        except Exception:
+            pass
     _fleet_apply_manual_next_port_overrides(fleet, ensure_schema=False)
     _fleet_apply_manual_eta_overrides(fleet, ensure_schema=False)
     # ── 데이터 신선도 ALERT (사이트 내 표시) ─────────────────────────────
