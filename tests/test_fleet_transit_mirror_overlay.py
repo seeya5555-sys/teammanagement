@@ -123,12 +123,13 @@ class FleetMirrorOverlayTests(unittest.TestCase):
         with self.mirror(hours_ago=24 * 5):
             self.assertEqual(MIR_LAT, self.fetch()[MINE]['lat'])
 
-    def test_skip_ais_off_vessel(self):
+    def test_ais_off_vessel_also_uses_mirror(self):
+        # AIS off(SVMS 고정) 선박도 미러가 권위 — 걸프 AIS off 선박이 바로 미러가 필요한 대상.
         self.write_fleet(ais_hours_ago=5)
         with open(shared_ns.FLEET_AIS_OFF_FILE, 'w', encoding='utf-8') as f:
             json.dump({MINE.lower(): {'since': 'x'}}, f)
         with self.mirror(hours_ago=1):
-            self.assertNotEqual('mirror', self.fetch()[MINE].get('pos_source'))
+            self.assertEqual('mirror', self.fetch()[MINE].get('pos_source'))
 
     def test_older_mirror_keeps_existing(self):
         self.write_fleet(ais_hours_ago=1)

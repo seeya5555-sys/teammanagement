@@ -1447,7 +1447,7 @@ def api_fleet_map_data():
             fleet = []
         data = {**data, 'fleet': fleet, 'scoped_to': sup_name}
     # 통항 미러(팀장님 사이트, 마스터 이메일 기반) 선위를 최우선으로 — 응답 메모리에서만, DB 쓰기 없음.
-    # 로그인 감독 배정선만. 미러 72h 이내=항상, 초과=현재보다 엄격히 최신일 때만. 수동 SVMS 고정(ais-off)은 제외.
+    # 로그인 감독 배정선만. 미러 72h 이내=항상, 초과=현재보다 엄격히 최신일 때만. AIS off(SVMS 고정) 선박도 포함.
     # 실패/캐시 없음 → 기존 동작 그대로(transit_mirror 내부에서 예외 흡수).
     if sup_id:
         try:
@@ -1455,7 +1455,7 @@ def api_fleet_map_data():
             from flask import current_app
             _overlay = current_app.extensions.get('transit_mirror_overlay')
             if _overlay:
-                _new_fleet, _n = _overlay(fleet, _fleet_current_pos_epoch, _ais_off.keys())
+                _new_fleet, _n = _overlay(fleet, _fleet_current_pos_epoch, ())
                 if _n:
                     fleet = _new_fleet          # 사본 리스트로 교체(원본 항목 dict 불변)
                     data = {**data, 'fleet': fleet}
