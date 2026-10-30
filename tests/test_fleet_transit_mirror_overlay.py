@@ -325,6 +325,31 @@ class FleetMirrorOverlayTests(unittest.TestCase):
             self.assertLess(time.monotonic() - t0, 1.5)
         self.assertFalse(v.get('transit_today'))
 
+    def test_ios_bearer_path_gets_override_and_flag(self):
+        """iOS 는 같은 /api/fleet-map/data 를 쿠키 없이 Bearer 로 부른다 — 토큰 인증이 supervisor_id 를
+        세션에 채우므로 미러 오버레이·transit_today 가 그대로 적용돼야 한다."""
+        import token_auth
+        self.write_fleet(ais_hours_ago=5)
+        self._warm_today([MINE])
+        tm._cache['at'] = time.time()
+        with appmod.app.app_context():
+            u = appmod.query("SELECT * FROM users WHERE username='m1'", one=True)
+            tok = token_auth._issue_token(u)
+        tm._cache['data'] = None          # 위치는 vessels 경로로
+        self._warm_today([MINE])
+        tm._cache['data']['vessels'] = [{'name': MINE, 'latitude': MIR_LAT, 'longitude': MIR_LNG,
+                                         'positionSource': 'EMAIL', 'positionLastUpdate': 'x',
+                                         'positionTs': int(self.now - 3600)}]
+        c = appmod.app.test_client()        # 쿠키 없음
+        with mock.patch.object(tm, '_get_json', side_effect=OSError('down')):
+            r = c.get('/api/fleet-map/data', headers={'Authorization': 'Bearer ' + tok})
+        self.assertEqual(200, r.status_code)
+        v = {x['name']: x for x in r.get_json()['fleet']}[MINE]
+        self.assertEqual((MIR_LAT, MIR_LNG), (v['lat'], v['lng']))
+        self.assertEqual('mirror', v['pos_source'])
+        self.assertTrue(v['transit_today'])
+        self.assertTrue(v['pos_mirror_label'].startswith('팀장님 사이트'))
+
 
 if __name__ == '__main__':
     unittest.main()
