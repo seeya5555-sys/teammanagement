@@ -96,7 +96,8 @@
       "_token_note_fail",
       "_token_rate_limited",
       "_token_reset_fails"
-    ]
+    ],
+    "transit_mirror.py": []
   },
   "app_core.py": {},
   "boarding_report_docx.py": {
@@ -599,6 +600,14 @@
   "token_auth.py": {
     "app_core.py": [
       "app"
+    ]
+  },
+  "transit_mirror.py": {
+    "app_core.py": [
+      "query"
+    ],
+    "helpers_shared.py": [
+      "login_required"
     ]
   },
   "vetting_mail_service.py": {

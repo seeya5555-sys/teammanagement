@@ -76,6 +76,20 @@
   #fmmap{position:absolute;inset:0}.leaflet-container{background:#16232e;font:inherit}
   .fm-windbtn a{font-size:15px;line-height:30px;width:30px;height:30px;text-align:center;text-decoration:none}
   .fm-windbtn a.on{background:var(--blue);filter:none}
+  /* 통항 미러(외부 통항 모니터링 읽기전용) */
+  .fm-tmbtn a{font-size:11px;font-weight:700;line-height:30px;width:30px;height:30px;text-align:center;text-decoration:none;color:var(--text-secondary)}
+  .fm-tmbtn a.on{background:#b7791f;color:#fff}
+  .tm-dot{width:14px;height:14px;border-radius:3px;transform:rotate(45deg);background:#fbf8f2;border:2px solid #b7791f;box-shadow:0 0 0 1px #16232e}
+  .tm-dot.transit{background:#c2410c;border-color:#fbf8f2;box-shadow:0 0 0 2px #c2410c}
+  .tm-pop{font-size:12px;line-height:1.5;min-width:220px;color:var(--text-primary)}
+  .tm-pop h4{margin:0 0 4px;font-size:13px}
+  .tm-pop .tm-b{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10.5px;font-weight:700;background:#f3ead8;color:#7a5418;margin-right:4px}
+  .tm-pop .tm-b.hot{background:#c2410c;color:#fff}
+  .tm-pop .tm-b.old{background:#e5e0d6;color:#6b6457}
+  .tm-pop table{border-collapse:collapse;margin-top:4px;font-size:11px}
+  .tm-pop td{padding:1px 6px 1px 0;font-variant-numeric:tabular-nums}
+  .tm-pop .tm-cp-real{font-weight:700}
+  .tm-pop .tm-k{color:var(--text-tertiary)}
   .leaflet-velocity-control{background:rgba(251,248,242,.88);color:var(--text-secondary);font-size:11px;border-radius:6px}
   .ship{position:relative;display:flex;align-items:center;justify-content:center;width:24px;height:24px}
   .ship svg{width:22px;height:22px;display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}
@@ -475,6 +489,57 @@
     setTimeout(()=>toggleWind(a),300);   // 기본 ON(바람 보이게) — 버튼 누르면 끔(손유석)
     return c;}});
   map.addControl(new WindCtl());
+  // 통항 미러 — 외부 통항 모니터링 사이트(읽기전용)의 내 배정선 선위·통항계획. 기본 OFF, 첫 켤 때 lazy fetch.
+  const TM_ORIGIN='http://158.180.94.133:5000/?transit=1';
+  let tmLayer=null, tmOn=false, tmLoading=false;
+  function tmPopup(v,meta){
+    const hot=v.category==='통항중';
+    const src=v.positionSource||'—';
+    let h='<div class="tm-pop"><h4>'+esc(v.trmtName||v.name)+'</h4>';
+    h+='<span class="tm-b'+(hot?' hot':'')+'">'+esc(v.category||'—')+'</span>';
+    h+='<span class="tm-b">'+esc(src)+'</span><span class="tm-b old">'+esc(v.positionLastUpdate||'시각 없음')+'</span>';
+    if(meta.stale) h+='<span class="tm-b old">캐시(연결 실패)</span>';
+    const row=(k,x)=>(x!=null&&String(x).trim()!=='')?('<div><span class="tm-k">'+k+'</span> '+esc(x)+'</div>'):'';
+    h+='<div style="margin-top:4px">'+row('상태',v.condition)+row('위치',v.presentLocation)+row('속력',v.speed)
+      +row('다음항',v.nextPort)+row('ETA',v.eta)+row('ETD',v.etd)+row('호르무즈 통과',v.hormuzExit)
+      +row('48h 통항',v.transit48h)+row('통항계획',v.transitPlan)
+      +(v.consent&&v.consent.verdict?row('동의서 검토',v.consent.verdict):'')+'</div>';
+    (v.checkpoints||[]).forEach(e=>{
+      h+='<div style="margin-top:6px"><b>'+esc(e.date.slice(4,6)+'/'+e.date.slice(6))+'</b> '+esc(e.bound)+'<table>';
+      Object.keys(e.cps||{}).sort().forEach(k=>{const c=e.cps[k];
+        h+='<tr class="'+(c.real?'tm-cp-real':'')+'"><td>'+esc(k.toUpperCase())+'</td><td>'+esc(c.lt||'')+'</td><td class="tm-k">'+esc(c.z||'')+'</td><td>'+(c.real?'실적':'예정')+'</td></tr>';});
+      h+='</table></div>';
+    });
+    h+='<div style="margin-top:6px"><a href="'+TM_ORIGIN+'" target="_blank" rel="noopener">원본 사이트 열기</a></div></div>';
+    return h;
+  }
+  function toggleTransit(btn){
+    if(tmLoading) return;
+    if(tmOn){ if(tmLayer) map.removeLayer(tmLayer); tmLayer=null; tmOn=false; btn.classList.remove('on'); return; }
+    tmLoading=true; btn.textContent='···';
+    fetch('/api/transit-mirror',{credentials:'same-origin'}).then(r=>r.ok?r.json():null).then(d=>{
+      if(!d){ alert('통항 미러 로드 실패'); return; }
+      if(!d.ok&&!(d.vessels||[]).length){ alert('통항 모니터링 사이트 연결 실패 — 잠시 후 재시도'); return; }
+      tmLayer=L.layerGroup();
+      (d.vessels||[]).forEach(v=>{
+        const la=Number(v.latitude), lo=Number(v.longitude);
+        if(!Number.isFinite(la)||!Number.isFinite(lo)||(la===0&&lo===0)) return;
+        const hot=v.category==='통항중';
+        L.marker([la,lo],{zIndexOffset:hot?900:400,icon:L.divIcon({className:'',iconSize:[16,16],iconAnchor:[8,8],
+          html:'<div class="tm-dot'+(hot?' transit':'')+'" title="통항 미러: '+esc(v.name)+'"></div>'})})
+          .bindPopup(tmPopup(v,d),{maxWidth:320}).addTo(tmLayer);
+      });
+      tmLayer.addTo(map); tmOn=true; btn.classList.add('on');
+      if(!(d.vessels||[]).length) alert('통항 미러: 표시할 배정선이 없습니다');
+    }).catch(()=>{ alert('통항 미러 로드 실패'); })
+      .finally(()=>{ tmLoading=false; btn.textContent='통항'; });
+  }
+  const TransitCtl=L.Control.extend({options:{position:'topleft'},onAdd:function(){
+    const c=L.DomUtil.create('div','leaflet-bar fm-tmbtn');
+    const a=L.DomUtil.create('a','',c); a.href='#'; a.title='통항 미러 — 외부 통항 모니터링(읽기전용, 내 배정선)'; a.textContent='통항';
+    L.DomEvent.on(a,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);toggleTransit(a);});
+    return c;}});
+  map.addControl(new TransitCtl());
   let FLEET=[],markers=[],routeLayer=null,trackLayer=null,trackRequest=0,trackController=null,trackVessel='',portMarkers=[],curSup='__all',fmQ='',STALE=null,MYSUP=null;
   function icon(v){
     const due=v.cls_due_state==='overdue'?' due-overdue':(v.cls_due_state==='soon'?' due-soon':'');

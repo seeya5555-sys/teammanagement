@@ -5602,6 +5602,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/transit-mirror",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "transit_mirror.api_transit_mirror",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/users",
     "methods": [
       "OPTIONS",

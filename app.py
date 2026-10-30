@@ -1813,6 +1813,8 @@ import routes_cs_mail
 app.register_blueprint(routes_cs_mail.bp)
 import routes_journal
 app.register_blueprint(routes_journal.bp)
+import transit_mirror
+app.register_blueprint(transit_mirror.bp)
 # Static contract marker: dock sync notifications keep the historical deep link.
 # The executable call remains in routes_dock_submit.py.
 # link='trmt://dock'
