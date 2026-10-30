@@ -293,7 +293,9 @@ def _overlay_one(v, m, current_epoch, now):
     if src.upper() == 'EMAIL':
         src = 'E-mail'
     nv['pos_source'] = 'mirror'
-    nv['pos_mirror_label'] = '팀장님 사이트(%s %s)' % (src, m['last'] or ts_txt)
+    last = m['last'] or ts_txt
+    # 원 사이트 문구가 이미 출처를 품으면('E-mail(…)', '수동(…)') 그대로, 아니면 출처를 앞에 붙인다.
+    nv['pos_mirror_label'] = '팀장님 사이트(%s)' % (last if '(' in last else '%s %s' % (src, last))
     nv['position_source'] = 'MIRROR ' + (m['source'] or '')
     nv['position_ts'] = ts_txt
     nv['pos_reported_at'] = ts_txt
