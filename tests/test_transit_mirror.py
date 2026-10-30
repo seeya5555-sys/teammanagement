@@ -1,7 +1,8 @@
 import os
 import tempfile
+import time
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest import mock
 
 import app as appmod
@@ -215,6 +216,226 @@ class TransitMirrorTests(unittest.TestCase):
         evil = '<img src=x onerror="alert(1)">&\''
         d = self._fetch([dict(VESSELS[0], presentLocation=evil)])
         self.assertEqual(evil, d["vessels"][0]["presentLocation"])
+    # ── 통항 모니터링 / transit_today ─────────────────────────────
+    def _bundle(self):
+        return {
+            "daily": {"date": "20261030", "notes": ["메모1", {"nested": 1}, "  "],
+                      "rows": [{"vessel": "PERU PROSPERITY", "bound": "INBOUND", "mgr": "CSM",
+                                "consent": {"crew": 23, "signs": 23, "files": 2, "verdict": "이상 없음",
+                                            "reviewed": True, "names": ["secret crew"]},
+                                "cps": [{"key": "z", "lt": "30/11:45LT", "real": True, "t": "x"},
+                                        {"key": "a", "lt": "30/17:45LT", "real": False}]}]},
+            "prepare": {"basis": "기준 30/06:00LT", "basisKst": "2026-10-30 11:00 KST", "stamp": "20261030-0600",
+                        "rows": []},
+            "registry": {"20261030": [{"vessel": "MALTA PROSPERITY", "key": "MALTAPROSPERITY",
+                                       "bound": "E.BOUND", "mgr": "FLEET",
+                                       "cps": {"a": {"iso": "20261030", "hhmm": "1145", "lt": "30/11:45LT",
+                                                     "real": True, "_from": "등록"}}}],
+                         "20261031": [{"vessel": "X", "key": "X"}]},
+            "record": {"rows": [{"vessel": "SPAIN B", "startIso": "20261030", "done": True, "bound": "E.BOUND",
+                                 "status": "완료", "cps": [{"key": "z", "iso": "20261030", "hhmm": "0130",
+                                                           "lt": "30 / 01:30", "real": True}]}]},
+            "consent": {"byVessel": {"MALTAPROSPERITY": {"crew": 16, "signs": 15, "verdict": "보완 필요",
+                                                         "reviewed": True, "issueText": "secret"}}},
+        }
+
+    def _mon_get(self, path, bundle=None, fail=False):
+        b = bundle or self._bundle()
+
+        def g(p, timeout=None):
+            if fail:
+                raise OSError("down")
+            if p.startswith("/api/transit-plan/today"):
+                return b
+            if p.startswith("/api/transit-plan/dates"):
+                return {"dates": ["20261029", "20261030", "bad"]}
+            if p == "/api/vessels":
+                return VESSELS
+            return {}
+        with mock.patch.object(tm, "_get_json", side_effect=g):
+            return self.client.get(path)
+
+    def test_monitor_auth_required(self):
+        self.assertEqual(401, self.client.get("/api/transit-mirror/monitor").status_code)
+
+    def test_monitor_bad_date(self):
+        self.login()
+        for bad in ("2026-10-30", "20261340", "abc", "2026103"):
+            r = self.client.get("/api/transit-mirror/monitor?date=" + bad)
+            self.assertEqual(400, r.status_code, bad)
+
+    def test_monitor_upstream_down_no_500(self):
+        self.login()
+        r = self._mon_get("/api/transit-mirror/monitor?date=20261030", fail=True)
+        self.assertEqual(200, r.status_code)
+        d = r.get_json()
+        self.assertFalse(d["ok"])
+        self.assertEqual([], d["rows"])
+
+    def test_monitor_internal_error_no_500(self):
+        self.login()
+        with mock.patch.object(tm, "build_monitor", side_effect=RuntimeError("x")):
+            r = self._mon_get("/api/transit-mirror/monitor?date=20261030")
+        self.assertEqual(200, r.status_code)
+        self.assertFalse(r.get_json()["ok"])
+
+    def test_monitor_shape_all_vessels_and_whitelist(self):
+        self.login(sup=False)   # 전체 선박 뷰 — 배정 무관
+        d = self._mon_get("/api/transit-mirror/monitor?date=20261030").get_json()
+        self.assertTrue(d["ok"])
+        names = {r["key"]: r for r in d["rows"]}
+        self.assertEqual({"PERUPROSPERITY", "MALTAPROSPERITY", "SPAINB"}, set(names))
+        peru, malta, spain = names["PERUPROSPERITY"], names["MALTAPROSPERITY"], names["SPAINB"]
+        self.assertEqual("INBOUND", peru["bound"])
+        self.assertEqual("OUTBOUND", malta["bound"])
+        self.assertTrue(malta["registered"])
+        self.assertFalse(peru["registered"])
+        self.assertEqual("30/11:45", peru["cps"]["z"]["lt"])
+        self.assertTrue(peru["cps"]["z"]["real"])
+        # 걸프 LT 11:45 = 07:45Z
+        self.assertEqual(datetime(2026, 10, 30, 7, 45, tzinfo=timezone.utc).timestamp(), peru["cps"]["z"]["utc"])
+        self.assertEqual(datetime(2026, 10, 30, 7, 45, tzinfo=timezone.utc).timestamp(), malta["cps"]["a"]["utc"])
+        self.assertNotIn("_from", malta["cps"]["a"])
+        self.assertEqual(set(peru["consent"]), {"crew", "signs", "files", "issues", "reviewed", "reviewedAt",
+                                                "verdict", "sameDate", "dateUsed"})
+        self.assertNotIn("issueText", malta["consent"])
+        self.assertEqual(16, malta["consent"]["crew"])
+        self.assertTrue(spain["rec"]["done"])
+        self.assertEqual(["메모1"], d["memos"])
+        self.assertEqual("기준 30/06:00LT", d["basis"]["basis"])
+        dates = [x["date"] for x in d["dates"]]
+        self.assertIn("20261029", dates)
+        self.assertIn("20261031", dates)
+        self.assertNotIn("bad", dates)
+        tab = [x for x in d["dates"] if x["date"] == "20261030"][0]
+        self.assertEqual(3, tab["count"])
+        self.assertIn("transiting", peru)
+        self.assertEqual("SVMS", peru["report"]["source"])
+        self.assertNotIn("names", str(d))
+        self.assertNotIn("secret", str(d))
+
+    def test_monitor_nested_values_never_returned(self):
+        self.login()
+        b = self._bundle()
+        b["daily"]["rows"][0]["mgr"] = {"x": 1}
+        b["daily"]["rows"][0]["cps"][0]["lt"] = {"x": 1}
+        b["prepare"]["basis"] = ["x"]
+        d = self._mon_get("/api/transit-mirror/monitor?date=20261030", bundle=b).get_json()
+        peru = [r for r in d["rows"] if r["key"] == "PERUPROSPERITY"][0]
+        self.assertEqual("", peru["mgr"])
+        self.assertEqual("", d["basis"]["basis"])
+
+    def test_transit_today_keys(self):
+        b = self._bundle()
+        keys = tm.transit_today_keys({"today": b, "registry": b["registry"]}, TODAY)
+        self.assertEqual({"PERUPROSPERITY", "MALTAPROSPERITY"}, keys)
+        self.assertEqual(set(), tm.transit_today_keys({"today": b}, date(2026, 11, 2)))
+
+    def test_transit_today_flag_in_mirror_api(self):
+        self.login()
+        b = self._bundle()
+
+        def g(p, timeout=None):
+            return {"/api/vessels": VESSELS, "/api/transit-plan/today": b,
+                    "/api/transit-plan/registry": {"registry": b["registry"]}}[p]
+        with mock.patch.object(tm, "_get_json", side_effect=g), mock.patch.object(tm, "datetime") as dt:
+            dt.now.return_value.date.return_value = TODAY
+            dt.now.return_value.strftime.return_value = "20261030"
+            dt.fromtimestamp.side_effect = datetime.fromtimestamp
+            d = self.client.get("/api/transit-mirror").get_json()
+        flags = {v["key"]: v["transit_today"] for v in d["vessels"]}
+        self.assertEqual({"PERUPROSPERITY": True, "MALTAPROSPERITY": True}, flags)
+
+    # ── 동시성: single-flight · 세대 토큰 · 잠금 밖 I/O ──────────────
+    def test_single_background_refresh_under_concurrency(self):
+        import threading as th
+        calls = {"n": 0}
+        lk = th.Lock()
+        gate = th.Event()
+
+        def g(p, timeout=None):
+            with lk:
+                calls["n"] += 1
+            gate.wait(2)
+            return fake_get(p)
+        with mock.patch.object(tm, "_get_json", side_effect=g):
+            ts = [th.Thread(target=tm.cached_transit_today_keys) for _ in range(20)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+            time.sleep(0.2)
+            gate.set()
+            deadline = time.time() + 3
+            while tm._warm["running"] and time.time() < deadline:
+                time.sleep(0.02)
+        self.assertFalse(tm._warm["running"])
+        self.assertEqual(3, calls["n"])   # 전체 번들 1회분(vessels+today+registry)만
+
+    def test_concurrent_get_upstream_single_flight(self):
+        import threading as th
+        calls = {"n": 0}
+        lk = th.Lock()
+
+        def g(p, timeout=None):
+            with lk:
+                calls["n"] += 1
+            time.sleep(0.2)
+            return fake_get(p)
+        res = []
+        with mock.patch.object(tm, "_get_json", side_effect=g):
+            ts = [th.Thread(target=lambda: res.append(tm.get_upstream())) for _ in range(8)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        self.assertEqual(3, calls["n"])
+        self.assertTrue(all(r[0] is not None for r in res))
+
+    def test_reset_during_inflight_does_not_repopulate(self):
+        import threading as th
+        started, release = th.Event(), th.Event()
+
+        def g(p, timeout=None):
+            started.set()
+            release.wait(2)
+            return fake_get(p)
+        out = {}
+        with mock.patch.object(tm, "_get_json", side_effect=g):
+            t = th.Thread(target=lambda: out.setdefault("r", tm.get_upstream()))
+            t.start()
+            self.assertTrue(started.wait(2))
+            tm.reset_cache()
+            release.set()
+            t.join(3)
+        self.assertIsNone(tm._cache["data"])
+        self.assertEqual(0.0, tm._cache["at"])
+
+    def test_cache_read_not_blocked_by_slow_monitor_fetch(self):
+        import threading as th
+        tm._cache["data"] = {"vessels": VESSELS, "today": {}, "registry": {}}
+        tm._cache["at"] = time.time()
+        started = th.Event()
+
+        def slow(p, timeout=None):
+            started.set()
+            time.sleep(2)
+            return {}
+        with mock.patch.object(tm, "_get_json", side_effect=slow):
+            t = th.Thread(target=lambda: tm.get_monitor_bundle("20261030"))
+            t.start()
+            self.assertTrue(started.wait(2))
+            t0 = time.monotonic()
+            vs = tm.get_vessels_for_fleet()
+            keys = tm.cached_transit_today_keys()
+            data, stale, _ = tm.get_upstream()
+            el = time.monotonic() - t0
+            t.join(5)
+        self.assertLess(el, 0.3)
+        self.assertEqual(VESSELS, vs)
+        self.assertEqual(set(), keys)
+        self.assertFalse(stale)
+
 
 if __name__ == "__main__":
     unittest.main()

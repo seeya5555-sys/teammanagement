@@ -1456,7 +1456,7 @@ def api_fleet_map_data():
             _overlay = current_app.extensions.get('transit_mirror_overlay')
             if _overlay:
                 _new_fleet, _n = _overlay(fleet, _fleet_current_pos_epoch, ())
-                if _n:
+                if _new_fleet is not fleet:     # 선위 덮음 또는 transit_today 표시
                     fleet = _new_fleet          # 사본 리스트로 교체(원본 항목 dict 불변)
                     data = {**data, 'fleet': fleet}
                 data['mirror_overridden'] = _n

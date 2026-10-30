@@ -290,6 +290,41 @@ class FleetMirrorOverlayTests(unittest.TestCase):
         self.assertIsNone(data)
         self.assertTrue(stale)
 
+    def _warm_today(self, names):
+        tk = datetime.now(tm.KST).strftime('%Y%m%d')
+        reg = {tk: [{'vessel': n, 'key': tm.norm_name(n)} for n in names]}
+        tm._cache['data'] = {'vessels': [], 'today': {'registry': reg}, 'registry': reg}
+        tm._cache['at'] = time.time()
+
+    def test_transit_today_flag_on_main_marker(self):
+        self.write_fleet(ais_hours_ago=1)
+        self._warm_today([MINE, OTHER])
+        with mock.patch.object(tm, '_get_json', side_effect=OSError('down')):  # 위치 미러 없음
+            v = self.fetch()[MINE]
+        self.assertTrue(v.get('transit_today'))
+        self.assertEqual(AIS_LAT, v['lat'])          # 깜빡임만, 위치는 그대로
+
+    def test_transit_today_not_for_unassigned_and_original_untouched(self):
+        self._warm_today([OTHER])
+        orig = [{'name': OTHER, 'lat': 1}, {'name': MINE, 'lat': 1}]
+        snap = json.dumps(orig)
+        with mock.patch.object(tm, '_get_json', side_effect=OSError('down')):
+            out, n = self._direct(orig, cur=None)
+        self.assertEqual(snap, json.dumps(orig))
+        self.assertFalse(any(x.get('transit_today') for x in out))
+
+    def test_transit_today_cold_cache_nonblocking(self):
+        self.write_fleet(ais_hours_ago=1)
+
+        def slow(path, timeout=None):
+            time.sleep(2)
+            raise OSError('slow')
+        with mock.patch.object(tm, '_get_json', side_effect=slow), mock.patch.object(tm, 'TIMEOUT_SEC', 0.3):
+            t0 = time.monotonic()
+            v = self.fetch()[MINE]
+            self.assertLess(time.monotonic() - t0, 1.5)
+        self.assertFalse(v.get('transit_today'))
+
 
 if __name__ == '__main__':
     unittest.main()

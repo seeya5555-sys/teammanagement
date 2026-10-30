@@ -79,8 +79,51 @@
   /* 통항 미러(외부 통항 모니터링 읽기전용) */
   .fm-tmbtn a{font-size:11px;font-weight:700;line-height:30px;width:30px;height:30px;text-align:center;text-decoration:none;color:var(--text-secondary)}
   .fm-tmbtn a.on{background:#b7791f;color:#fff}
+  .fm-tmbtn a+a{width:auto;min-width:30px;padding:0 5px;font-size:10.5px;white-space:nowrap}
   .tm-dot{width:14px;height:14px;border-radius:3px;transform:rotate(45deg);background:#fbf8f2;border:2px solid #b7791f;box-shadow:0 0 0 1px #16232e}
   .tm-dot.transit{background:#c2410c;border-color:#fbf8f2;box-shadow:0 0 0 2px #c2410c}
+  /* 오늘 통항 목록 배정선 — 미러 다이아·메인 마커 깜빡임 */
+  @keyframes tmPulse{0%,100%{opacity:1;filter:drop-shadow(0 0 0 rgba(194,65,12,0))}50%{opacity:.35;filter:drop-shadow(0 0 6px rgba(194,65,12,.95))}}
+  .tm-dot.today,.ship.transit-today{animation:tmPulse 1.1s ease-in-out infinite}
+  .ship.transit-today::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid #c2410c;pointer-events:none}
+  @media (prefers-reduced-motion:reduce){.tm-dot.today,.ship.transit-today{animation:none}}
+  /* 통항 모니터링 모달(외부 사이트 읽기전용 미러) */
+  .tmm-back{position:fixed;inset:0;z-index:4000;background:rgba(31,31,29,.45);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto}
+  .tmm-back[hidden]{display:none}
+  .tmm{background:var(--surface);border:1px solid var(--border);border-radius:8px;width:min(1180px,100%);box-shadow:0 10px 30px rgba(0,0,0,.18);color:var(--text-primary);font-size:12.5px}
+  .tmm-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-subtle);background:var(--surface-2);border-radius:8px 8px 0 0}
+  .tmm-h h3{margin:0;font-size:15px}
+  .tmm-h .sp{flex:1}
+  .tmm-h button,.tmm-h a{border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);font-size:12px;font-weight:600;padding:5px 12px;border-radius:4px;cursor:pointer;text-decoration:none}
+  .tmm-basis{display:flex;flex-wrap:wrap;gap:6px 18px;padding:8px 16px;color:var(--text-secondary);font-size:12px;border-bottom:1px solid var(--border-subtle)}
+  .tmm-basis b{color:var(--text-primary)}
+  .tmm-basis .warn{color:var(--amber);font-weight:700}
+  .tmm-tabs{display:flex;gap:4px;overflow-x:auto;padding:8px 12px;border-bottom:1px solid var(--border-subtle)}
+  .tmm-tab{flex:0 0 auto;border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);font-size:12px;padding:4px 10px;border-radius:4px;cursor:pointer;white-space:nowrap}
+  .tmm-tab.on{background:var(--blue);border-color:var(--blue);color:#fff}
+  .tmm-tab .n{opacity:.75;margin-left:3px}
+  .tmm-tab .now{color:#c2410c;font-weight:700;margin-left:3px}
+  .tmm-tab.on .now{color:#fde3cf}
+  .tmm-body{padding:8px 12px 14px;overflow-x:auto}
+  .tmm table{border-collapse:collapse;width:100%;min-width:900px;table-layout:fixed}
+  .tmm th{background:var(--surface-2);color:var(--text-secondary);font-weight:700;font-size:11.5px;text-align:left;padding:6px;border-bottom:1px solid var(--border)}
+  .tmm td{padding:6px;border-bottom:1px solid var(--border-subtle);vertical-align:top;font-variant-numeric:tabular-nums}
+  .tmm .reg{display:inline-block;margin-left:4px;padding:0 5px;border-radius:3px;font-size:10.5px;background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-border)}
+  .tmm .in{color:#1d4ed8;font-weight:700}.tmm .out{color:#ca8a04;font-weight:700}
+  .tmm .cp-lt{display:block}.tmm .cp-lt.real{font-weight:700;color:var(--text-primary)}.tmm .cp-lt.plan{color:#94a3b8}
+  .tmm .cp-z,.tmm .cp-k{display:block;font-size:10.5px;color:var(--text-tertiary)}
+  .tmm td.passed{background:#e8f3e6}
+  .tmm .st-now{color:#0369a1;font-weight:700}.tmm .st-pre{color:#0f766e;font-weight:700}
+  .tmm .st-done{color:#15803d;font-weight:700}.tmm .st-ab{color:#b91c1c;font-weight:700}
+  .tmm .track td{padding:0 6px 8px;border-bottom:1px solid var(--border-subtle)}
+  .tmm .trk{position:relative;height:16px}
+  .tmm .trk .ln{position:absolute;left:0;right:0;top:7px;height:2px;background:var(--border)}
+  .tmm .trk .done{position:absolute;top:7px;height:2px;background:#c2410c}
+  .tmm .trk .shp{position:absolute;top:-1px;width:18px;height:18px;margin-left:-9px;color:#c2410c}
+  .tmm-memo{margin:10px 2px 0;border:1px solid var(--border-subtle);border-radius:6px;padding:6px 10px;background:var(--surface-2)}
+  .tmm-memo summary{cursor:pointer;font-weight:700;color:var(--text-secondary)}
+  .tmm-memo li{margin:3px 0;line-height:1.6}
+  .tmm-empty{padding:28px;text-align:center;color:var(--text-tertiary)}
   .tm-pop{font-size:12px;line-height:1.5;min-width:220px;color:var(--text-primary)}
   .tm-pop h4{margin:0 0 4px;font-size:13px}
   .tm-pop .tm-b{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10.5px;font-weight:700;background:#f3ead8;color:#7a5418;margin-right:4px}
@@ -491,6 +534,8 @@
   map.addControl(new WindCtl());
   // 통항 미러 — 외부 통항 모니터링 사이트(읽기전용)의 내 배정선 선위·통항계획. 기본 OFF, 첫 켤 때 lazy fetch.
   const TM_ORIGIN='http://158.180.94.133:5000/?transit=1';
+  // 링크는 http(s) 만 허용 — 아니면 링크를 아예 그리지 않는다.
+  function tmSafeOrigin(){ try{ const u=new URL(TM_ORIGIN); return (u.protocol==='http:'||u.protocol==='https:')?u.href:''; }catch(e){ return ''; } }
   let tmLayer=null, tmOn=false, tmLoading=false;
   function tmPopup(v,meta){
     const hot=v.category==='통항중';
@@ -510,7 +555,8 @@
         h+='<tr class="'+(c.real?'tm-cp-real':'')+'"><td>'+esc(k.toUpperCase())+'</td><td>'+esc(c.lt||'')+'</td><td class="tm-k">'+esc(c.z||'')+'</td><td>'+(c.real?'실적':'예정')+'</td></tr>';});
       h+='</table></div>';
     });
-    h+='<div style="margin-top:6px"><a href="'+TM_ORIGIN+'" target="_blank" rel="noopener">원본 사이트 열기</a></div></div>';
+    const href=tmSafeOrigin();
+    h+=(href?'<div style="margin-top:6px"><a href="'+esc(href)+'" target="_blank" rel="noopener noreferrer">원본 사이트 열기</a></div>':'')+'</div>';
     return h;
   }
   function toggleTransit(btn){
@@ -526,7 +572,7 @@
         if(!Number.isFinite(la)||!Number.isFinite(lo)||(la===0&&lo===0)) return;
         const hot=v.category==='통항중';
         L.marker([la,lo],{zIndexOffset:hot?900:400,icon:L.divIcon({className:'',iconSize:[16,16],iconAnchor:[8,8],
-          html:'<div class="tm-dot'+(hot?' transit':'')+'" title="통항 미러: '+esc(v.name)+'"></div>'})})
+          html:'<div class="tm-dot'+(hot?' transit':'')+(v.transit_today?' today':'')+'" title="통항 미러: '+esc(v.name)+'"></div>'})})
           .bindPopup(tmPopup(v,d),{maxWidth:320}).addTo(tmLayer);
       });
       tmLayer.addTo(map); tmOn=true; btn.classList.add('on');
@@ -538,8 +584,115 @@
     const c=L.DomUtil.create('div','leaflet-bar fm-tmbtn');
     const a=L.DomUtil.create('a','',c); a.href='#'; a.title='통항 미러 — 외부 통항 모니터링(읽기전용, 내 배정선)'; a.textContent='통항';
     L.DomEvent.on(a,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);toggleTransit(a);});
+    const b=L.DomUtil.create('a','',c); b.href='#'; b.title='통항 모니터링 — 외부 사이트 읽기전용 미러(전체 선박)'; b.textContent='통항표'; b.setAttribute('aria-label','통항 모니터링');
+    L.DomEvent.on(b,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);tmmOpen();});
     return c;}});
   map.addControl(new TransitCtl());
+  // ── 통항 모니터링 모달(외부 사이트 읽기전용 미러) — 등록·보고·통항기록 기능 없음 ──
+  const TMM_CP=['a','s','d','h','z'];
+  let tmmDate='', tmmLoading=false, tmmData=null;
+  function tmmFmt(ep,off){ if(!ep) return ''; const d=new Date((ep+off*3600)*1000);
+    const p=n=>String(n).padStart(2,'0'); return p(d.getUTCDate())+' / '+p(d.getUTCHours())+':'+p(d.getUTCMinutes()); }
+  function tmmDateLabel(k){ return k? (k.slice(4,6)+'/'+k.slice(6)) : ''; }
+  function tmmAge(ts){ if(!ts) return '';
+    const m=Math.max(0,Math.round((Date.now()/1000-ts)/60));
+    const col=m<=120?'#15803d':(m<=360?'#b45309':'#b91c1c');
+    const t=m<60?(m+'분 전'):(Math.floor(m/60)+'시간 '+(m%60)+'분 전');
+    return '<div style="color:'+col+';font-weight:700">'+esc(t)+'</div>'; }
+  function tmmCp(r,k,now){
+    const rc=r.rec&&r.rec.cps?r.rec.cps[k]:null, c=rc||r.cps[k];
+    if(!c||!c.lt) return '<td style="color:#cbd5e1">-</td>';
+    const real=!!(rc||c.real), passed=r.transiting&&c.utc&&c.utc<=now;
+    return '<td class="'+(passed?'passed':'')+'" title="'+esc(c.t||'')+'"><span class="cp-lt '+(real?'real':'plan')+'">'+esc(c.lt)+' LT</span>'
+      +(c.utc?'<span class="cp-z">('+esc(tmmFmt(c.utc,0))+' Z)</span><span class="cp-k">('+esc(tmmFmt(c.utc,9))+' KST)</span>':'')+'</td>';
+  }
+  function tmmTrack(r,now){
+    // 표의 CP 열(A·S·D·H·Z) 위에 선박 위치를 시간 보간으로 표시
+    const pts=TMM_CP.map((k,i)=>{const rc=r.rec&&r.rec.cps?r.rec.cps[k]:null,c=rc||r.cps[k];return c&&c.utc?{i,u:c.utc}:null;}).filter(Boolean);
+    if(pts.length<2) return '';
+    pts.sort((a,b)=>a.u-b.u);
+    let x=null;
+    for(let j=0;j<pts.length-1;j++){const a=pts[j],b=pts[j+1];
+      if(now>=a.u&&now<=b.u){const f=(now-a.u)/Math.max(1,b.u-a.u);x=a.i+(b.i-a.i)*f;break;}}
+    if(x===null) return '';
+    const pct=v=>((v+0.5)/5*100);
+    const start=pct(pts[0].i), cur=pct(x);
+    const l=Math.min(start,cur), w=Math.abs(cur-start);
+    const flip=pts[0].i>pts[pts.length-1].i;
+    const ship='<svg class="shp" style="left:'+cur+'%;transform:scaleX('+(flip?-1:1)+')" viewBox="0 0 24 24" fill="currentColor"><path d="M3 14h18l-3 5H6z"/><rect x="9" y="8" width="5" height="5"/></svg>';
+    return '<tr class="track"><td colspan="4"></td><td colspan="5"><div class="trk"><div class="ln"></div><div class="done" style="left:'+l+'%;width:'+w+'%"></div>'+ship+'</div></td><td colspan="2"></td></tr>';
+  }
+  function tmmRender(){
+    const box=document.getElementById('tmmBody'), d=tmmData; if(!box) return;
+    const bs=document.getElementById('tmmBasis');
+    if(!d||(!d.ok&&!(d.rows||[]).length)){ box.innerHTML='<div class="tmm-empty">통항 모니터링 자료를 불러오지 못했습니다 — 잠시 후 다시 불러오기</div>'; bs.innerHTML=''; document.getElementById('tmmTabs').innerHTML=''; return; }
+    const now=Date.now()/1000, B=d.basis||{};
+    const warn=(B.stamp&&B.dailyDate&&B.stamp.slice(0,8)!==B.dailyDate)?' <span class="warn">CP표는 오늘 회차 아님</span>':'';
+    bs.innerHTML='<span>기준 통항예정 <b>'+esc(tmmDateLabel(d.date))+'</b></span>'
+      +'<span>CP표 회차 <b>'+esc(B.basis||'-')+'</b>'+(B.basisKst?' ('+esc(B.basisKst)+')':'')+warn+'</span>'
+      +'<span>현재 KST <b>'+esc(d.nowKst||'')+'</b></span>'
+      +(d.stale?'<span class="warn">연결 실패 — 캐시 표시('+esc(d.fetchedAt||'')+')</span>':'');
+    document.getElementById('tmmTabs').innerHTML=(d.dates||[]).map(t=>{
+      const isT=t.date===d.today;
+      const cnt=t.count!=null?('<span class="n">'+t.count+'척</span>'):'';
+      const nowc=(t.transiting)?('<span class="now">통항중 '+t.transiting+'</span>'):'';
+      return '<button type="button" class="tmm-tab'+(t.date===d.date?' on':'')+'" data-d="'+esc(t.date)+'">'+esc(tmmDateLabel(t.date))+(isT?' 오늘':'')+' '+nowc+cnt+'</button>';
+    }).join('');
+    const rows=d.rows||[];
+    let h='';
+    if(!rows.length){ h='<div class="tmm-empty">이 날짜에는 통항예정·통항 중 선박이 없습니다.</div>'; }
+    else{
+      h='<table><colgroup><col style="width:15%"><col style="width:10%"><col style="width:7%"><col style="width:8%">'
+        +'<col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:6%"></colgroup>'
+        +'<thead><tr><th>선박</th><th>상태</th><th>관리사</th><th>방향</th><th>CP-A</th><th>CP-S</th><th>CP-D</th><th>CP-H</th><th>CP-Z</th><th>선원 동의서</th><th>준비</th></tr></thead><tbody>';
+      rows.forEach(r=>{
+        let st='<span style="color:#cbd5e1">-</span>';
+        if(r.rec&&r.rec.done) st='<span class="st-done">통항 완료</span>';
+        else if(r.rec&&r.rec.aborted) st='<span class="st-ab">통항 중단</span>';
+        else if(r.transiting) st='<div class="st-now">통항 중</div>'+(r.report?('<div>'+esc(r.report.when||'')+'</div>'+tmmAge(r.report.ts)):'<div style="color:#94a3b8">보고 없음</div>');
+        else if(r.beforeStart) st='<span class="st-pre">통항 전</span>';
+        const bd=r.bound==='INBOUND'?'<span class="in">INBOUND</span>':(r.bound==='OUTBOUND'?'<span class="out">OUTBOUND</span>':'-');
+        const c=r.consent;
+        const nums=c&&(c.crew||c.signs)?(esc(c.crew||0)+'명 · '+esc(c.signs||0)+'장'):(c&&c.files?('파일 '+esc(c.files)+'건'):'-');
+        const ok=c&&c.reviewed, matched=c&&Number(c.crew)>0&&Number(c.crew)===Number(c.signs);
+        const col=!ok?'#b91c1c':((matched||c.verdict==='이상 없음')?'#15803d':'#b45309');
+        const tip=ok?('검토완료 '+(c.reviewedAt||'')+' · 판정 '+(c.verdict||'')):'검토 기록 없음';
+        h+='<tr><td><b>'+esc(r.vessel)+'</b>'+(r.registered?'<span class="reg">등록</span>':'')+'</td><td>'+st+'</td><td>'+esc(r.mgr||'-')+'</td><td>'+bd+'</td>'
+          +TMM_CP.map(k=>tmmCp(r,k,now)).join('')
+          +'<td>'+nums+'</td><td title="'+esc(tip)+'" style="color:'+col+';font-weight:700">'+(ok?'O':'X')+'</td></tr>';
+        if(r.transiting) h+=tmmTrack(r,now);
+      });
+      h+='</tbody></table>';
+    }
+    if((d.memos||[]).length) h+='<details class="tmm-memo"><summary>오늘업데이트 메모 '+d.memos.length+'건</summary><ul>'+d.memos.map(m=>'<li>'+esc(m)+'</li>').join('')+'</ul></details>';
+    box.innerHTML=h;
+  }
+  function tmmLoad(date){
+    if(tmmLoading) return; tmmLoading=true;
+    const body=document.getElementById('tmmBody'); if(body&&!tmmData) body.innerHTML='<div class="tmm-empty">불러오는 중…</div>';
+    fetch('/api/transit-mirror/monitor'+(date?('?date='+encodeURIComponent(date)):''),{credentials:'same-origin'})
+      .then(r=>r.ok?r.json():null).then(d=>{ tmmData=d; if(d&&d.date) tmmDate=d.date; tmmRender(); })
+      .catch(()=>{ tmmData=null; tmmRender(); }).finally(()=>{ tmmLoading=false; });
+  }
+  function tmmEnsure(){
+    let el=document.getElementById('tmmBack'); if(el) return el;
+    el=document.createElement('div'); el.id='tmmBack'; el.className='tmm-back'; el.hidden=true;
+    el.innerHTML='<div class="tmm" role="dialog" aria-modal="true" aria-label="통항 모니터링"><div class="tmm-h"><h3>통항 모니터링</h3><span style="font-size:11px;color:var(--text-tertiary)">외부 사이트 읽기전용 미러</span><span class="sp"></span>'
+      +'<span id="tmmOrigin"></span><button type="button" id="tmmReload">다시 불러오기</button><button type="button" id="tmmClose">닫기</button></div>'
+      +'<div class="tmm-basis" id="tmmBasis"></div><div class="tmm-tabs" id="tmmTabs"></div><div class="tmm-body" id="tmmBody"></div></div>';
+    document.body.appendChild(el);
+    const href=tmSafeOrigin();
+    if(href){ const a=document.createElement('a'); a.setAttribute('href',href); a.setAttribute('target','_blank');
+      a.setAttribute('rel','noopener noreferrer'); a.textContent='원본 사이트'; document.getElementById('tmmOrigin').replaceWith(a); }
+    el.addEventListener('click',e=>{
+      if(e.target===el||e.target.id==='tmmClose'){ el.hidden=true; return; }
+      if(e.target.id==='tmmReload'){ tmmLoad(tmmDate); return; }
+      const t=e.target.closest('.tmm-tab'); if(t){ tmmLoad(t.getAttribute('data-d')); }
+    });
+    document.addEventListener('keydown',e=>{ if(e.key==='Escape') el.hidden=true; });
+    return el;
+  }
+  function tmmOpen(){ const el=tmmEnsure(); el.hidden=false; tmmLoad(tmmDate); }
   let FLEET=[],markers=[],routeLayer=null,trackLayer=null,trackRequest=0,trackController=null,trackVessel='',portMarkers=[],curSup='__all',fmQ='',STALE=null,MYSUP=null;
   function icon(v){
     const due=v.cls_due_state==='overdue'?' due-overdue':(v.cls_due_state==='soon'?' due-soon':'');
@@ -553,7 +706,7 @@
     const hasCourse=v.course!==null && v.course!==undefined && String(v.course).trim()!=='' && Number.isFinite(rawCourse);
     const rot=hasCourse ? ((rawCourse % 360) + 360) % 360 : 0;
     const tri='<svg viewBox="0 0 24 24" class="'+(hasCourse?'':'fm-marker-neutral')+'" style="transform:rotate('+rot+'deg)"><path d="M12 2.5 L18.5 20 L12 15.5 L5.5 20 Z"/></svg>';
-    return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+'" style="position:relative">'+tri+sire+pos+'</div>'});
+    return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+(v.transit_today?' transit-today':'')+'" style="position:relative">'+tri+sire+pos+'</div>'});
   }
 
   let fleetLoad=null, fleetReloadQueued=false, fleetLoadGen=0;
