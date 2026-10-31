@@ -23,8 +23,8 @@ def _timestamp(value):
         raise ReminderError(409, 'invalid stored send timestamp')
 
 
-VETTING_MAX_REMINDERS = 2            # 형 지시 2026-10-18: Vetting 주 2회
-VETTING_SLOTS = (2, 4)               # 수(2)·금(4) 08:00 KST
+VETTING_MAX_REMINDERS = 1            # 형 지시 2026-10-31: Vetting 주 1회(수요일)
+VETTING_SLOTS = (2,)                 # 수(2) 08:00 KST
 
 
 CS_MAX_REMINDERS = 1                 # Condition Survey: 목요일 1회만

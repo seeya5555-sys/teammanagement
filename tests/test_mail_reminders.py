@@ -73,14 +73,14 @@ class ReminderTests(ClassMailTests):
             vt = execute('INSERT INTO vettings(vessel_id,report_number) VALUES(?,?)',(self.vid,'TEST'))
             execute('INSERT INTO vetting_mail_settings(vessel_id,enabled) VALUES(?,1)',(self.vid,))
             fid = execute("INSERT INTO vt_findings(vetting_id,no,status) VALUES(?,1,'Open')",(vt,))
-            rid = execute("INSERT INTO vetting_mail_runs(vetting_id,vessel_id,iso_week,state,subject,to_emails,cc_emails,sent_at) VALUES(?,?,'2026W40','sent','English subject','old@example.com','','2026-10-01 18:00:00')",(vt,self.vid))
+            rid = execute("INSERT INTO vetting_mail_runs(vetting_id,vessel_id,iso_week,state,subject,to_emails,cc_emails,sent_at) VALUES(?,?,'2026W40','sent','English subject','old@example.com','','2026-09-28 18:00:00')",(vt,self.vid))
             execute('UPDATE vetting_mail_runs SET finding_ids=? WHERE id=?',('['+str(fid)+']',rid))
-        # Vetting 은 수·금 08시대만(형 지시 2026-10-18): 목 18:00 발송 → 금 08:00 슬롯. 슬롯 밖은 409.
-        for off in (datetime(2026,10,2,7,59), datetime(2026,10,2,9,5), datetime(2026,10,4,8,30)):
+        # Vetting 은 수요일 08시대만(형 지시 2026-10-31): 월 18:00 발송 → 수 08:00 슬롯. 금요일 포함 슬롯 밖은 409.
+        for off in (datetime(2026,9,30,7,59), datetime(2026,9,30,9,5), datetime(2026,10,2,8,30)):
             with patch.object(R,'now_kst',return_value=off):
                 self.assertEqual(409,self.client.post(f'/api/ext/vetting-mail/runs/{rid}/reminder',headers=self.headers,json={'kind':'claim','n':1}).status_code, off)
                 self.assertEqual([],self.client.get('/api/ext/vetting-mail/reminders',headers=self.headers).get_json()['runs'])
-        with patch.object(R,'now_kst',return_value=datetime(2026,10,2,8,30)):
+        with patch.object(R,'now_kst',return_value=datetime(2026,9,30,8,30)):
             self.assertEqual([rid],[r['id'] for r in self.client.get('/api/ext/vetting-mail/reminders',headers=self.headers).get_json()['runs']])
             response = self.client.post(f'/api/ext/vetting-mail/runs/{rid}/reminder',headers=self.headers,json={'kind':'claim','n':1})
             self.assertEqual(200,response.status_code,response.get_json())
@@ -132,24 +132,21 @@ class ReminderTests(ClassMailTests):
         return A.app.app_context()
 
 class VettingSlotTests(unittest.TestCase):
-    """형 지시 2026-10-18: Vetting 리마인드 주 2회, 수·금 08:00 KST."""
+    """형 지시 2026-10-31: Vetting 리마인드 주 1회, 수요일 08:00 KST(10-18 수·금 2회 대체)."""
     def test_slots(self):
         import mail_reminder_service as mr
         from datetime import datetime as D
         mon = D(2026, 10, 19, 9, 30)                      # 월 09:30 최초 발송
         self.assertEqual(D(2026, 10, 21, 8, 0), mr.next_vetting_slot(mon))           # 수 08:00
-        self.assertEqual(D(2026, 10, 23, 8, 0), mr.next_vetting_slot(D(2026, 10, 21, 8, 0, 5)))  # 금 08:00
-        self.assertEqual(D(2026, 10, 28, 8, 0), mr.next_vetting_slot(D(2026, 10, 23, 8, 1)))     # 다음 수
+        self.assertEqual(D(2026, 10, 28, 8, 0), mr.next_vetting_slot(D(2026, 10, 21, 8, 0, 5)))  # 다음 수(금 없음)
         self.assertEqual(D(2026, 10, 21, 8, 0), mr.next_vetting_slot(D(2026, 10, 21, 7, 59)))
-        self.assertEqual(D(2026, 10, 23, 8, 0), mr.next_vetting_slot(D(2026, 10, 21, 8, 0)))     # 정각 당일 제외
-        self.assertEqual(2, mr.max_reminders('vetting'))
+        self.assertEqual(1, mr.max_reminders('vetting'))
         self.assertEqual(1, mr.max_reminders('class'))
         run = {'sent_at': '2026-10-19 09:30:00', 'last_reminder_at': '2026-10-21 08:00:40'}
         self.assertEqual(D(2026, 10, 21, 8, 0), mr.reminder_due('vetting', run, 1))
-        self.assertEqual(D(2026, 10, 23, 8, 0), mr.reminder_due('vetting', run, 2))
         self.assertEqual(D(2026, 10, 22, 8, 30), mr.reminder_due('class', run, 1))     # Class 기존 규칙 불변
         self.assertTrue(mr.in_vetting_window(D(2026, 10, 21, 8, 0)))
-        self.assertTrue(mr.in_vetting_window(D(2026, 10, 23, 8, 59)))
+        self.assertFalse(mr.in_vetting_window(D(2026, 10, 23, 8, 0)))     # 금요일 슬롯 폐지
         self.assertFalse(mr.in_vetting_window(D(2026, 10, 21, 9, 0)))     # 지연·재실행 → 다음 슬롯
         self.assertFalse(mr.in_vetting_window(D(2026, 10, 22, 8, 0)))     # 목요일
         self.assertFalse(mr.in_vetting_window(D(2026, 10, 21, 7, 59)))

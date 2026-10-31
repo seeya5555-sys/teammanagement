@@ -713,7 +713,8 @@ with ThreadPoolExecutor(max_workers=2) as pool:
     close_f1 = pool.submit(race_month_close, client(u1, 'husband'))
     close_f2 = pool.submit(race_month_close, client(u1, 'husband'))
     assert sorted((close_f1.result(), close_f2.result())) == [201, 409]
-previous_month = db.execute("SELECT strftime('%Y-%m','now','+9 hours','-1 month')").fetchone()[0]
+# 'start of month' 먼저: 31일에 '-1 month'만 쓰면 SQLite가 9/31→10/1로 정규화해 같은 달이 된다.
+previous_month = db.execute("SELECT strftime('%Y-%m','now','+9 hours','start of month','-1 month')").fetchone()[0]
 assert c1.post('/api/family-assets/cash-flow/close', json={
     'month': previous_month, 'expected_revision': 0,
 }).status_code == 409
