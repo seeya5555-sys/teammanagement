@@ -117,6 +117,22 @@ class BrainTests(unittest.TestCase):
         self.assertEqual('fail', iss[0]['status'])
         self.assertIn({'source': f'vessel:{v}', 'target': 'note'}, d['links'])
 
+    def test_mail_nodes_titles_only(self):
+        with appmod.app.app_context():
+            v = execute("INSERT INTO vessels(name) VALUES('GHANA PROSPERITY')")
+            execute("INSERT INTO class_mail_runs(vessel_id, iso_week, state, tag, subject, body, to_emails, cc_emails, "
+                    "snapshot, reply_rows, excel_sha256, sent_at) VALUES(?, '2026W45', 'sent', 't', 'Class 상태 요청', "
+                    "'비밀메일본문', 'a@x.com', '', '{}', '[]', 'h', datetime('now','localtime'))", (v,))
+        self._put({'nodes': [{'id': 'deku', 'title': '데쿠', 'cat': 'hub'}], 'links': []})
+        self._login(self.owner, 'SS0094')
+        g = self.c.get('/api/brain/graph')
+        d = g.get_json()
+        m = [n for n in d['nodes'] if n['cat'] == 'mail']
+        self.assertEqual(['Class 상태 요청'], [n['title'] for n in m])
+        self.assertEqual('disabled', m[0]['status'])
+        self.assertNotIn('비밀메일본문', g.get_data().decode('unicode_escape'))
+        self.assertIn({'source': f'vessel:{v}', 'target': m[0]['id']}, d['links'])
+
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))
 

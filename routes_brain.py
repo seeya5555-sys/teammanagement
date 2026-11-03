@@ -117,6 +117,70 @@ def _add_trmt(nodes, links):
                       'date': r['issue_date'], 'summary': ' · '.join(x for x in sub if x),
                       'body': _last_action(r['actions']) and ('최근 진행: ' + _last_action(r['actions']))})
         links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
+    _add_mail(nodes, links, vid)
+
+
+MAIL_DAYS = 30
+# 메일 종류(key, 이름). 조회는 _mail_rows 안에서 종류별 고정 SQL 리터럴로만 한다(동적 SQL 금지).
+MAIL_KINDS = (('daily', 'Daily'), ('vetting', 'Vetting'), ('class', 'Class'), ('cs', 'CS'))
+
+
+def _mail_rows(key):
+    if key == 'daily':
+        return query("SELECT r.id, r.vessel_id, r.subject, r.to_emails, r.sent_at, r.state, r.reply_status AS reply "
+                     "FROM daily_mail_runs r WHERE r.state IN ('sent','failed') "
+                     "AND COALESCE(r.sent_at, r.created_at) >= date('now','localtime','-30 days') "
+                     "ORDER BY COALESCE(r.sent_at, r.created_at) DESC LIMIT 200")
+    if key == 'vetting':
+        return query("SELECT r.id, r.vessel_id, r.subject, r.to_emails, r.sent_at, r.state, "
+                     "CASE WHEN EXISTS(SELECT 1 FROM vetting_mail_events e WHERE e.run_id=r.id AND e.kind='reply') "
+                     "THEN 'replied' ELSE 'pending' END AS reply "
+                     "FROM vetting_mail_runs r WHERE r.state IN ('sent','failed') "
+                     "AND COALESCE(r.sent_at, r.created_at) >= date('now','localtime','-30 days') "
+                     "ORDER BY COALESCE(r.sent_at, r.created_at) DESC LIMIT 200")
+    if key == 'class':
+        return query("SELECT r.id, r.vessel_id, r.subject, r.to_emails, r.sent_at, r.state, "
+                     "CASE WHEN EXISTS(SELECT 1 FROM class_mail_replies e WHERE e.run_id=r.id) THEN 'replied' ELSE 'pending' END AS reply "
+                     "FROM class_mail_runs r WHERE r.state IN ('sent','failed') "
+                     "AND COALESCE(r.sent_at, r.created_at) >= date('now','localtime','-30 days') "
+                     "ORDER BY COALESCE(r.sent_at, r.created_at) DESC LIMIT 200")
+    if key == 'cs':
+        return query("SELECT r.id, r.vessel_id, r.subject, r.to_emails, r.sent_at, r.state, "
+                     "CASE WHEN EXISTS(SELECT 1 FROM cs_mail_replies e WHERE e.run_id=r.id) THEN 'replied' ELSE 'pending' END AS reply "
+                     "FROM cs_mail_runs r WHERE r.state IN ('sent','failed') "
+                     "AND COALESCE(r.sent_at, r.created_at) >= date('now','localtime','-30 days') "
+                     "ORDER BY COALESCE(r.sent_at, r.created_at) DESC LIMIT 200")
+    return []
+
+
+def _add_mail(nodes, links, vessel_ids):
+    """메일 자동화 발송건(최근 30일): 제목·수신·날짜·회신여부만. 본문·첨부·회신 원문은 넣지 않는다."""
+    nodes.append({'id': 'hub:mail', 'title': '메일', 'cat': 'hub', 'type': 'hub',
+                  'summary': f'메일 자동화 발송건 최근 {MAIL_DAYS}일. 제목·수신처·날짜·회신 여부만(본문 없음).'})
+    links.append({'source': 'deku', 'target': 'hub:mail'})
+    for key, label in MAIL_KINDS:
+        rows = _mail_rows(key)
+        pend = sum(1 for r in rows if r['state'] == 'sent' and r['reply'] != 'replied')
+        hub = f'hub:mail:{key}'
+        nodes.append({'id': hub, 'title': f'{label} 메일 {len(rows)}', 'cat': 'hub', 'type': 'hub',
+                      'summary': f'최근 {MAIL_DAYS}일 발송 {len(rows)}건 · 회신 대기 {pend}건.'})
+        links.append({'source': 'hub:mail', 'target': hub})
+        for r in rows:
+            if r['state'] == 'failed':
+                st, lab = 'fail', '발송 실패'
+            elif r['reply'] == 'replied':
+                st, lab = 'ok', '회신 받음'
+            elif r['reply'] == 'partial':
+                st, lab = 'running', '일부 회신'
+            else:
+                st, lab = 'disabled', '회신 대기'
+            nid = f'mail:{key}:{r["id"]}'
+            nodes.append({'id': nid, 'title': r['subject'] or f'{label} #{r["id"]}', 'cat': 'mail', 'type': key,
+                          'status': st, 'date': (r['sent_at'] or '')[:10],
+                          'summary': f"{lab} · 발송 {r['sent_at'] or '-'} · 수신 {(r['to_emails'] or '')[:200]}"})
+            links.append({'source': hub, 'target': nid})
+            if r['vessel_id'] in vessel_ids:
+                links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
 
 
 @bp.route('/api/ext/brain', methods=['PUT'])

@@ -8,6 +8,7 @@
     { key: 'update', label: '업데이트 이력', color: css('--amber-dot') || '#EF9F27' },
     { key: 'vessel', label: '선박', color: css('--blue') || '#185FA5' },
     { key: 'issue', label: 'TRMT 현안', color: css('--coral-dot') || '#D85A30' },
+    { key: 'mail', label: '메일', color: css('--purple') || '#6B4E71' },
     { key: 'project', label: 'Projects · 진행', color: css('--coral-dot') || '#D85A30' },
     { key: 'area', label: 'Areas · 영역', color: css('--blue-dot') || '#378ADD' },
     { key: 'resource', label: 'Resources · 자료', color: css('--teal-dot') || '#1D9E75' },
@@ -62,7 +63,7 @@
     return { nodes, links };
   }
   function color(n) {
-    const base = ((n.cat === 'automation' || (n.cat === 'issue' && n.status === 'fail')) && STATUS[n.status]) || (CAT[n.cat] || CAT.archive).color;
+    const base = ((n.cat === 'automation' || n.cat === 'mail' || (n.cat === 'issue' && n.status === 'fail')) && STATUS[n.status]) || (CAT[n.cat] || CAT.archive).color;
     if (query && !matches(n)) return base + '33';
     if (n.superseded) return base + '66';
     return base;
@@ -141,7 +142,7 @@
     const c = CAT[n.cat] || CAT.archive;
     const o = (outs.get(id) || []), i = (ins.get(id) || []);
     let h = `<span class="br-badge" style="background:${c.color}22;color:${c.color}">${esc(c.label)}</span>`;
-    if (n.status) h += `<span class="br-badge" style="background:${STATUS[n.status] || '#ccc'}33;color:var(--text-primary)">${esc((n.cat === 'issue' ? { ok: 'Open', running: '진행 중', fail: '마감 지남' } : { ok: '정상', running: '실행 중', fail: '실패', disabled: '꺼짐' })[n.status] || n.status)}</span>`;
+    if (n.status) h += `<span class="br-badge" style="background:${STATUS[n.status] || '#ccc'}33;color:var(--text-primary)">${esc((n.cat === 'issue' ? { ok: 'Open', running: '진행 중', fail: '마감 지남' } : n.cat === 'mail' ? { ok: '회신 받음', running: '일부 회신', fail: '발송 실패', disabled: '회신 대기' } : { ok: '정상', running: '실행 중', fail: '실패', disabled: '꺼짐' })[n.status] || n.status)}</span>`;
     if (n.superseded) h += '<span class="br-badge" style="background:var(--red-bg);color:var(--red)">⛔ 폐기</span>';
     h += `<h2>${esc(n.title)}</h2>`;
     const sub = [n.type, n.section, n.date, n.updated && ('수정 ' + n.updated)].filter(Boolean).map(esc).join(' · ');
