@@ -100,6 +100,23 @@ class BrainTests(unittest.TestCase):
         self.assertEqual('fail', next(n for n in d['nodes'] if n['id'] == 'auto:x')['status'])
         self.assertIn({'source': 'deku', 'target': 'personal:hub'}, d['links'])
 
+    def test_trmt_vessels_and_open_issues(self):
+        with appmod.app.app_context():
+            v = execute("INSERT INTO vessels(name, short_name) VALUES('BELGIUM BRIDGE','BELGIUM B')")
+            sup = execute("INSERT INTO supervisors(name) VALUES('t')")
+            execute("INSERT INTO issues(supervisor_id, vessel_id, issue_date, due_date, item_topic, status) "
+                    "VALUES(?,?,'2026-10-01','2020-01-01','BWTS 클레임','Open')", (sup, v))
+            execute("INSERT INTO issues(supervisor_id, vessel_id, issue_date, item_topic, status) "
+                    "VALUES(?,?,'2026-10-01','끝난 건','Closed')", (sup, v))
+        self._put({'nodes': [{'id': 'deku', 'title': '데쿠', 'cat': 'hub'},
+                             {'id': 'note', 'title': 'n', 'cat': 'project', 'body': 'belgium b dock'}], 'links': []})
+        self._login(self.owner, 'SS0094')
+        d = self.c.get('/api/brain/graph').get_json()
+        iss = [n for n in d['nodes'] if n['cat'] == 'issue']
+        self.assertEqual(['BWTS 클레임'], [n['title'] for n in iss])
+        self.assertEqual('fail', iss[0]['status'])
+        self.assertIn({'source': f'vessel:{v}', 'target': 'note'}, d['links'])
+
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))
 

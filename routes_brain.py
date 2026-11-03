@@ -5,6 +5,7 @@
 개인 마음 기록(personal_journal)은 제목·날짜만 노드로 붙이고 본문은 이 경로로 절대 내보내지 않는다.
 """
 import json
+from datetime import date
 import os
 
 from flask import Blueprint, jsonify, render_template, request, session, abort
@@ -62,9 +63,60 @@ def api_brain_graph():
             links.append({'source': hub, 'target': nid})
         if any(n.get('id') == 'deku' for n in nodes):
             links.append({'source': 'deku', 'target': hub})
+    if any(n.get('id') == 'deku' for n in nodes):
+        _add_trmt(nodes, links)
     return jsonify({'nodes': nodes, 'links': links,
                     'generated_at': data.get('generated_at'),
                     'updated_at': row['updated_at'] if row else None})
+
+
+def _last_action(raw):
+    try:
+        acts = json.loads(raw or '[]')
+    except ValueError:
+        return ''
+    if not isinstance(acts, list) or not acts or not isinstance(acts[-1], dict):
+        return ''
+    a = acts[-1]
+    return f"{a.get('date') or ''} {a.get('progress') or ''}".strip()[:400]
+
+
+def _add_trmt(nodes, links):
+    """TRMT 선박·미종결 현안을 DB 에서 직접 붙인다(동기화 불필요, 항상 최신)."""
+    vrows = query('SELECT id, name, short_name, vsl_cd FROM vessels WHERE active=1 ORDER BY name')
+    irows = query("SELECT id, vessel_id, item_topic, priority, status, issue_date, due_date, actions "
+                  "FROM issues WHERE status IN ('Open','InProgress') ORDER BY due_date IS NULL, due_date")
+    per = {}
+    for r in irows:
+        per[r['vessel_id']] = per.get(r['vessel_id'], 0) + 1
+    nodes.append({'id': 'hub:trmt', 'title': f'TRMT 현안 {len(irows)}', 'cat': 'hub', 'type': 'hub',
+                  'summary': f'선박 {len(vrows)}척 · 미종결 현안 {len(irows)}건(Open·InProgress).'})
+    links.append({'source': 'deku', 'target': 'hub:trmt'})
+    mem = [n for n in nodes if n.get('cat') in CATS - {'hub', 'automation', 'update'}]
+    vid = set()
+    for v in vrows:
+        nid = f"vessel:{v['id']}"
+        vid.add(v['id'])
+        nodes.append({'id': nid, 'title': v['name'], 'cat': 'vessel', 'type': 'vessel',
+                      'summary': f"{v['short_name'] or ''} {v['vsl_cd'] or ''} · 미종결 현안 {per.get(v['id'], 0)}건".strip()})
+        links.append({'source': 'hub:trmt', 'target': nid})
+        keys = {k.lower() for k in (v['name'], v['short_name']) if k and len(k) >= 5}
+        for n in mem:
+            hay = f"{n.get('title', '')} {n.get('summary', '')} {n.get('body', '')}".lower()
+            if any(k in hay for k in keys):
+                links.append({'source': nid, 'target': n['id']})
+    today = date.today().isoformat()
+    for r in irows:
+        if r['vessel_id'] not in vid:
+            continue
+        overdue = bool(r['due_date'] and r['due_date'] < today)
+        st = 'fail' if overdue else ('running' if r['status'] == 'InProgress' else 'ok')
+        sub = [r['priority'], r['status'], r['due_date'] and f"마감 {r['due_date']}" + (' (지남)' if overdue else '')]
+        nid = f"issue:{r['id']}"
+        nodes.append({'id': nid, 'title': r['item_topic'], 'cat': 'issue', 'type': 'issue', 'status': st,
+                      'date': r['issue_date'], 'summary': ' · '.join(x for x in sub if x),
+                      'body': _last_action(r['actions']) and ('최근 진행: ' + _last_action(r['actions']))})
+        links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
 
 
 @bp.route('/api/ext/brain', methods=['PUT'])
