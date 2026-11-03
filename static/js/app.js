@@ -3754,6 +3754,13 @@ if (document.getElementById('btn-new-issue')) (async function init() {
     render();
     wireEvents();
     registerDailyWebMcp();
+    // 브레인 등 외부 딥링크: /?issue=<id> → 해당 현안 펼침
+    const deepIssue = Number(new URLSearchParams(location.search).get('issue'));
+    if (Number.isInteger(deepIssue) && deepIssue > 0) {
+      webMcpOpenIssue(deepIssue).catch((e) => console.warn('deep link issue', e));
+    }
+    const deepVessel = new URLSearchParams(location.search).get('vessel_id');
+    if (deepVessel && /^\d+$/.test(deepVessel)) { S.selectedVessel = deepVessel; render(); }
   } catch (err) {
     console.error(err);
     alert('초기 로드 실패: ' + err.message);

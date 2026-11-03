@@ -113,7 +113,7 @@ def _add_trmt(nodes, links):
     for v in vrows:
         nid = f"vessel:{v['id']}"
         vid.add(v['id'])
-        nodes.append({'id': nid, 'title': v['name'], 'cat': 'vessel', 'type': 'vessel',
+        nodes.append({'id': nid, 'title': v['name'], 'cat': 'vessel', 'type': 'vessel', 'ref': v['id'],
                       'summary': f"{v['short_name'] or ''} {v['vsl_cd'] or ''} · 미종결 현안 {per.get(v['id'], 0)}건".strip()})
         links.append({'source': 'hub:trmt', 'target': nid})
         keys = {k.lower() for k in (v['name'], v['short_name']) if k and len(k) >= 5}
@@ -129,10 +129,11 @@ def _add_trmt(nodes, links):
         st = 'fail' if overdue else ('running' if r['status'] == 'InProgress' else 'ok')
         sub = [r['priority'], r['status'], r['due_date'] and f"마감 {r['due_date']}" + (' (지남)' if overdue else '')]
         nid = f"issue:{r['id']}"
-        nodes.append({'id': nid, 'title': r['item_topic'], 'cat': 'issue', 'type': 'issue', 'status': st,
+        nodes.append({'id': nid, 'title': r['item_topic'], 'cat': 'issue', 'type': 'issue', 'status': st, 'ref': r['id'],
                       'date': r['issue_date'], 'summary': ' · '.join(x for x in sub if x),
                       'body': _last_action(r['actions']) and ('최근 진행: ' + _last_action(r['actions']))})
         links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
+        links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})  # 현안 상세 '연결된 노트'에 소속 선박
     _add_mail(nodes, links, vid)
 
 

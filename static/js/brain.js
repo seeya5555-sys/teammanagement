@@ -149,6 +149,8 @@
     if (sub) h += `<div class="sub">${sub}</div>`;
     if (n.summary) h += `<div class="sum">${esc(n.summary)}</div>`;
     if (n.cat === 'personal' && !n.hub) h += '<div class="br-note">본문은 TRMT 앱 \'마음 기록\'에서만 열람해.</div>';
+    const go = openTarget(n);
+    if (go) h += `<button type="button" class="br-open" data-open="${esc(n.id)}">${esc(go.label)}</button>`;
     if (n.body) h += `<h4>본문</h4><div class="br-text">${esc(n.body)}</div>`;
     h += `<h4>연결된 노트 ${o.length}</h4><ul class="br-links">${o.map(li).join('') || '<li style="color:var(--text-tertiary);cursor:default">없음</li>'}</ul>`;
     h += `<h4>백링크 ${i.length}</h4><ul class="br-links">${i.map(li).join('') || '<li style="color:var(--text-tertiary);cursor:default">없음</li>'}</ul>`;
@@ -156,7 +158,22 @@
     box.scrollTop = 0;
     if (mode === '2d' && graph) graph.nodeCanvasObject(draw2d); // 선택 테두리 다시 그림
   }
+  const MAIL_PAGE = { daily: '/daily-mail', vetting: '/vetting-mail', class: '/class-mail', cs: '/cs-mail' };
+  const inApp = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.trmtBrain);
+  function openTarget(n) {
+    if (n.cat === 'issue' && n.ref) return { label: 'Daily에서 이 현안 열기', web: '/?issue=' + encodeURIComponent(n.ref), app: { kind: 'issue', id: Number(n.ref) } };
+    if (n.cat === 'vessel') return { label: 'Daily에서 이 선박 현안 보기', web: '/?vessel_id=' + encodeURIComponent(n.ref || ''), app: { kind: 'vessel', name: n.title } };
+    if (n.cat === 'mail' && MAIL_PAGE[n.type]) return { label: '메일 자동화 화면 열기', web: MAIL_PAGE[n.type], app: { kind: 'mail', type: n.type } };
+    return null;
+  }
   $('br-detail').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-open]');
+    if (b) {
+      const t = openTarget(byId.get(b.dataset.open) || {}); if (!t) return;
+      if (inApp) window.webkit.messageHandlers.trmtBrain.postMessage(t.app);
+      else location.href = t.web;
+      return;
+    }
     const t = e.target.closest('li[data-id]'); if (!t) return;
     const n = byId.get(t.dataset.id); if (!n) return;
     if (!visible(n)) { enabled.add(n.cat); if (n.superseded) { showSup = true; $('br-sup').checked = true; } renderCats(); refresh(); }
