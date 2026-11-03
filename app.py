@@ -1468,7 +1468,7 @@ def _bearer_auth():
         return                      # ← 범위 제한: /api/ 밖은 미접촉
     if request.path.startswith('/api/ext/'):
         return                      # ← 돈경로/워커 엔드포인트(@api_key_required) 완전 제외
-    is_drydock_bridge = request.path == '/api/drydock/mobile-entry'
+    is_drydock_bridge = request.path in ('/api/drydock/mobile-entry', '/api/brain/mobile-entry')
     if 'user_id' in session and not is_drydock_bridge:
         return                      # ← 브라우저=cookie, 일반 앱 API=Bearer로 분리
     hdr = request.headers.get('Authorization', '')

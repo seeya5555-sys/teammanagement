@@ -133,6 +133,23 @@ class BrainTests(unittest.TestCase):
         self.assertNotIn('비밀메일본문', g.get_data().decode('unicode_escape'))
         self.assertIn({'source': f'vessel:{v}', 'target': m[0]['id']}, d['links'])
 
+    def test_mobile_entry_bearer_only_owner(self):
+        r = self.c.get('/api/brain/mobile-entry', headers=self._bearer(self.owner, 'x'))
+        self.assertEqual(302, r.status_code)
+        self.assertTrue(r.headers['Location'].endswith('/brain?embed=1'))
+        pg = self.c.get('/brain?embed=1')
+        self.assertEqual(200, pg.status_code)
+        self.assertIn('class=" embedded"', pg.get_data(as_text=True))
+        # stale 소유자 쿠키 + 다른 계정 Bearer → 세션이 다른 계정으로 교체돼 거부
+        self.assertIn(self.c.get('/api/brain/mobile-entry', headers=self._bearer(self.other, 'y')).status_code, (403, 404))
+        self.assertIn(self.c.get('/api/brain/graph').status_code, (403, 404))
+        c2 = appmod.app.test_client()
+        self.assertIn(c2.get('/api/brain/mobile-entry', headers=self._bearer(self.other, 'y')).status_code, (403, 404))
+        c3 = appmod.app.test_client()
+        with c3.session_transaction() as s:
+            s['user_id'] = self.owner; s['username'] = 'SS0094'; s['role'] = 'admin'
+        self.assertEqual(401, c3.get('/api/brain/mobile-entry').status_code)
+
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))
 

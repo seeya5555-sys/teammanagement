@@ -45,6 +45,9 @@
            font-family:var(--font-mono, ui-monospace, Menlo, monospace)}
   .br-note{font-size:12px;color:var(--purple-text);background:var(--purple-bg);border:1px solid var(--purple-border);
            border-radius:6px;padding:8px 10px}
+  body.embedded .topnav, body.embedded .mobile-tabbar, body.embedded .mobile-menu { display:none !important; }
+  body.embedded .main-content { padding:8px 8px 0; }
+  body.embedded .br-head h1 { display:none; }
   @media (max-width: 900px){
     .br-wrap{height:auto}
     .br-body{grid-template-columns:1fr}

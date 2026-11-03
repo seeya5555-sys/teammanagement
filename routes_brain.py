@@ -8,7 +8,7 @@ import json
 from datetime import date
 import os
 
-from flask import Blueprint, jsonify, render_template, request, session, abort
+from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session
 
 from app_core import execute, query
 from helpers_shared import api_key_required, login_required
@@ -38,7 +38,23 @@ def _no_store(resp):
 def brain_page():
     if not _owner_ok():
         abort(404)
-    return render_template('brain.html')
+    return render_template('brain.html', embedded=request.args.get('embed') == '1')
+
+
+@bp.route('/api/brain/mobile-entry')
+@login_required
+def api_brain_mobile_entry():
+    """iOS 앱 Bearer 를 브레인 웹 세션으로 1회 교환(Dock Manager mobile-entry 와 같은 방식)."""
+    if not getattr(g, '_token_auth', False):
+        return jsonify({'error': 'fresh_bearer_required'}), 401
+    if not _owner_ok():
+        return jsonify({'error': 'not found'}), 404
+    g._bearer_session_bridge = True
+    session.permanent = False
+    session.modified = True
+    resp = redirect('/brain?embed=1', code=302)
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @bp.route('/api/brain/graph')

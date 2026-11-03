@@ -798,6 +798,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/brain/mobile-entry",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_brain.api_brain_mobile_entry",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/cal/events",
     "methods": [
       "OPTIONS",
