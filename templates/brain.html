@@ -62,6 +62,10 @@
     <span class="br-meta" id="br-meta">불러오는 중…</span>
     <span class="br-spacer"></span>
     <input class="br-search" id="br-search" type="search" placeholder="노트 검색" autocomplete="off">
+    <div class="br-seg br-view" role="group" aria-label="보기 범위">
+      <button type="button" data-view="focus" class="on">데쿠 중심</button>
+      <button type="button" data-view="all">전체</button>
+    </div>
     <div class="br-seg" role="group" aria-label="그래프 보기">
       <button type="button" data-mode="2d" class="on">2D</button>
       <button type="button" data-mode="3d">3D</button>
@@ -79,7 +83,7 @@
       <div class="br-empty" id="br-empty" hidden></div>
     </section>
     <aside class="br-card br-detail" id="br-detail">
-      <div class="ph">그래프에서 노드를 누르면 내용·연결이 여기 보여.</div>
+      <div class="ph">그래프에서 노드를 누르면 내용·연결이 여기 보이고, 데쿠 중심 보기에선 그 노드가 펼쳐져.</div>
     </aside>
   </div>
 </div>

@@ -17,8 +17,8 @@ bp = Blueprint('routes_brain', __name__)
 OWNER_USERNAME = os.environ.get('JOURNAL_OWNER_USERNAME', 'SS0094')
 MAX_PAYLOAD = 8_000_000
 MAX_NODES = 5000
-CATS = {'project', 'area', 'resource', 'archive'}
-STR_FIELDS = ('title', 'type', 'summary', 'body', 'section', 'updated')
+CATS = {'project', 'area', 'resource', 'archive', 'hub', 'automation', 'update'}
+STR_FIELDS = ('title', 'type', 'summary', 'body', 'section', 'updated', 'status')
 
 
 def _owner_ok():
@@ -60,6 +60,8 @@ def api_brain_graph():
             nodes.append({'id': nid, 'title': j['title'], 'cat': 'personal',
                           'date': j['entry_date'], 'summary': ''})
             links.append({'source': hub, 'target': nid})
+        if any(n.get('id') == 'deku' for n in nodes):
+            links.append({'source': 'deku', 'target': hub})
     return jsonify({'nodes': nodes, 'links': links,
                     'generated_at': data.get('generated_at'),
                     'updated_at': row['updated_at'] if row else None})

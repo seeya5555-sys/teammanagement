@@ -1,8 +1,11 @@
-/* 브레인 — 데쿠 memory 지식 그래프. 2D(force-graph) / 3D(3d-force-graph) 전환. */
+/* 브레인 — 데쿠 중심 세컨브레인(기억·자동화·업데이트 이력). 2D(force-graph) / 3D(3d-force-graph) 전환. */
 (function () {
   'use strict';
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const CATS = [
+    { key: 'hub', label: '데쿠·허브', color: css('--accent') || '#1D5B94' },
+    { key: 'automation', label: '자동화', color: css('--green-border') || '#97C459' },
+    { key: 'update', label: '업데이트 이력', color: css('--amber-dot') || '#EF9F27' },
     { key: 'project', label: 'Projects · 진행', color: css('--coral-dot') || '#D85A30' },
     { key: 'area', label: 'Areas · 영역', color: css('--blue-dot') || '#378ADD' },
     { key: 'resource', label: 'Resources · 자료', color: css('--teal-dot') || '#1D9E75' },
@@ -19,6 +22,24 @@
   let mode = '2d', graph = null, selected = null, query = '';
   const enabled = new Set(CATS.map((c) => c.key));
   let showSup = false;
+  let focusMode = true;            // 데쿠 중심: 데쿠에서 2단계 + 펼친 노드의 이웃만
+  const expanded = new Set();
+  const STATUS = { ok: css('--green-border') || '#97C459', running: css('--teal-dot') || '#1D9E75',
+                   fail: css('--red-strong') || '#E24B4A', disabled: css('--border-strong') || '#B4B2A9' };
+  function nbrs(id) { return (outs.get(id) || []).concat(ins.get(id) || []); }
+  function focusSet() {
+    const keep = new Set();
+    if (!byId.has('deku')) return null;
+    let frontier = ['deku']; keep.add('deku');
+    for (let d = 0; d < 2; d++) {
+      const nx = [];
+      frontier.forEach((id) => (outs.get(id) || []).forEach((t) => { if (!keep.has(t)) { keep.add(t); nx.push(t); } }));
+      frontier = nx;
+    }
+    expanded.forEach((id) => { keep.add(id); nbrs(id).forEach((t) => keep.add(t)); });
+    if (selected) keep.add(selected);
+    return keep;
+  }
 
   function visible(n) {
     if (!enabled.has(n.cat)) return false;
@@ -32,18 +53,23 @@
       || (n.summary || '').toLowerCase().includes(q);
   }
   function viewData() {
-    const nodes = all.nodes.filter(visible);
+    const fs = focusMode ? focusSet() : null;
+    const nodes = all.nodes.filter((n) => visible(n) && (!fs || fs.has(n.id) || (query && matches(n))));
     const ids = new Set(nodes.map((n) => n.id));
     const links = all.links.filter((l) => ids.has(l._s) && ids.has(l._t)).map((l) => ({ source: l._s, target: l._t }));
     return { nodes, links };
   }
   function color(n) {
-    const base = (CAT[n.cat] || CAT.archive).color;
+    const base = (n.cat === 'automation' && STATUS[n.status]) || (CAT[n.cat] || CAT.archive).color;
     if (query && !matches(n)) return base + '33';
     if (n.superseded) return base + '66';
     return base;
   }
-  function size(n) { return 2 + Math.min(10, Math.sqrt((outs.get(n.id) || []).length + (ins.get(n.id) || []).length) * 1.6); }
+  function size(n) {
+    if (n.id === 'deku') return 14;
+    if (n.cat === 'hub') return 8;
+    return 2 + Math.min(10, Math.sqrt((outs.get(n.id) || []).length + (ins.get(n.id) || []).length) * 1.6);
+  }
 
   function build() {
     const el = $('br-canvas');
@@ -55,7 +81,7 @@
         .nodeLabel((n) => esc(n.title))
         .nodeColor(color).nodeVal(size).nodeOpacity(0.92)
         .linkColor(() => 'rgba(201,198,188,0.28)').linkWidth(0.4)
-        .onNodeClick((n) => { focus3d(n); select(n.id); });
+        .onNodeClick((n) => { expand(n); focus3d(n); select(n.id); });
     } else {
       graph = ForceGraph()(el).width(w).height(h)
         .backgroundColor(css('--surface') || '#FFFFFF')
@@ -65,9 +91,9 @@
         .nodeCanvasObject(draw2d).nodePointerAreaPaint((n, c, ctx) => {
           ctx.fillStyle = c; ctx.beginPath(); ctx.arc(n.x, n.y, size(n) + 2, 0, 2 * Math.PI); ctx.fill();
         })
-        .onNodeClick((n) => { graph.centerAt(n.x, n.y, 600); select(n.id); });
+        .onNodeClick((n) => { expand(n); graph.centerAt(n.x, n.y, 600); select(n.id); });
     }
-    graph.graphData(viewData());
+    graph.graphData(pinCenter(viewData()));
     graph.cooldownTicks(200);
   }
   function draw2d(n, ctx, scale) {
@@ -84,13 +110,20 @@
       ctx.fillText(n.title || n.id, n.x, n.y + r + 1.5 / scale);
     }
   }
-  function focus3d(n) {
-    const d = 90, k = 1 + d / Math.hypot(n.x || 1, n.y || 1, n.z || 1);
-    graph.cameraPosition({ x: n.x * k, y: n.y * k, z: n.z * k }, n, 900);
+  function expand(n) {
+    if (!focusMode || expanded.has(n.id)) return;
+    expanded.add(n.id); refresh();
   }
+  function pinCenter(d) { const c = d.nodes.find((n) => n.id === 'deku'); if (c) { c.fx = 0; c.fy = 0; if (mode === '3d') c.fz = 0; } return d; }
+  function focus3d(n) {
+    const x = n.x || 0, y = n.y || 0, z = n.z || 0, r = Math.hypot(x, y, z);
+    const d = 120, u = r < 1 ? [0, 0, 1] : [x / r, y / r, z / r];
+    graph.cameraPosition({ x: x + u[0] * d, y: y + u[1] * d, z: z + u[2] * d }, { x, y, z }, 900);
+  }
+
   function refresh() {
     if (!graph) return;
-    graph.graphData(viewData());
+    graph.graphData(pinCenter(viewData()));
     if (mode === '3d') graph.nodeColor(color); // 3D 는 재적용해야 반영됨
   }
 
@@ -106,6 +139,7 @@
     const c = CAT[n.cat] || CAT.archive;
     const o = (outs.get(id) || []), i = (ins.get(id) || []);
     let h = `<span class="br-badge" style="background:${c.color}22;color:${c.color}">${esc(c.label)}</span>`;
+    if (n.status) h += `<span class="br-badge" style="background:${STATUS[n.status] || '#ccc'}33;color:var(--text-primary)">${esc({ ok: '정상', running: '실행 중', fail: '실패', disabled: '꺼짐' }[n.status] || n.status)}</span>`;
     if (n.superseded) h += '<span class="br-badge" style="background:var(--red-bg);color:var(--red)">⛔ 폐기</span>';
     h += `<h2>${esc(n.title)}</h2>`;
     const sub = [n.type, n.section, n.date, n.updated && ('수정 ' + n.updated)].filter(Boolean).map(esc).join(' · ');
@@ -123,6 +157,7 @@
     const t = e.target.closest('li[data-id]'); if (!t) return;
     const n = byId.get(t.dataset.id); if (!n) return;
     if (!visible(n)) { enabled.add(n.cat); if (n.superseded) { showSup = true; $('br-sup').checked = true; } renderCats(); refresh(); }
+    if (focusMode && !expanded.has(n.id)) { expanded.add(n.id); refresh(); }
     setTimeout(() => { if (mode === '2d' && n.x != null) graph.centerAt(n.x, n.y, 600); else if (n.x != null) focus3d(n); }, 50);
     select(n.id);
   });
@@ -146,9 +181,13 @@
       if (query) { const hit = viewData().nodes.find(matches); if (hit) select(hit.id); }
     }, 200);
   });
-  document.querySelectorAll('.br-seg button').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.br-view button').forEach((b) => b.addEventListener('click', () => {
+    document.querySelectorAll('.br-view button').forEach((x) => x.classList.toggle('on', x === b));
+    focusMode = b.dataset.view === 'focus'; if (focusMode) expanded.clear(); refresh();
+  }));
+  document.querySelectorAll('.br-seg:not(.br-view) button').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.mode === mode) return;
-    document.querySelectorAll('.br-seg button').forEach((x) => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.br-seg:not(.br-view) button').forEach((x) => x.classList.toggle('on', x === b));
     if (graph && graph._destructor) graph._destructor();
     mode = b.dataset.mode; build();
   }));
@@ -176,6 +215,7 @@
       return;
     }
     build();
+    if (byId.has('deku')) select('deku');
   }).catch((err) => {
     const e = $('br-empty'); e.hidden = false; e.textContent = '브레인 데이터를 못 불러왔어 (' + err.message + ').';
     $('br-meta').textContent = '';

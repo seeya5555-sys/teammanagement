@@ -89,6 +89,17 @@ class BrainTests(unittest.TestCase):
         n = self.c.get('/api/brain/graph').get_json()['nodes'][0]
         self.assertEqual('5', n['title'])
 
+    def test_deku_layers_and_personal_hub_link(self):
+        r = self._put({'nodes': [{'id': 'deku', 'title': '데쿠', 'cat': 'hub'},
+                                 {'id': 'auto:x', 'title': 'x', 'cat': 'automation', 'status': 'fail'},
+                                 {'id': 'day:2026-11-04', 'title': 'd', 'cat': 'update'}],
+                       'links': [{'source': 'deku', 'target': 'auto:x'}]})
+        self.assertEqual(200, r.status_code, r.get_json())
+        self._login(self.owner, 'SS0094')
+        d = self.c.get('/api/brain/graph').get_json()
+        self.assertEqual('fail', next(n for n in d['nodes'] if n['id'] == 'auto:x')['status'])
+        self.assertIn({'source': 'deku', 'target': 'personal:hub'}, d['links'])
+
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))
 
