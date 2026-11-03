@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}브레인 · TRMT3{% endblock %}
+
+{% block head %}
+<style>
+  .br-wrap{display:flex;flex-direction:column;gap:12px;height:calc(100vh - 110px);min-height:560px}
+  .br-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .br-head h1{font-size:19px;margin:0;font-weight:700;color:var(--text-primary)}
+  .br-meta{font-size:11.5px;color:var(--text-tertiary)}
+  .br-spacer{flex:1}
+  .br-search{border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;width:220px;
+             background:var(--surface);color:var(--text-primary)}
+  .br-seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface)}
+  .br-seg button{border:0;background:transparent;padding:6px 14px;font-size:12.5px;font-weight:600;
+                 color:var(--text-secondary);cursor:pointer}
+  .br-seg button+button{border-left:1px solid var(--border)}
+  .br-seg button.on{background:var(--accent);color:#fff}
+  .br-body{flex:1;display:grid;grid-template-columns:200px 1fr 340px;gap:12px;min-height:0}
+  .br-card{background:var(--surface);border:1px solid var(--border-subtle);border-radius:6px;min-height:0}
+  .br-side{padding:14px;overflow:auto}
+  .br-side h3{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-tertiary);margin:0 0 8px;font-weight:700}
+  .br-side h3+ul{margin-bottom:16px}
+  .br-side ul{list-style:none;margin:0;padding:0}
+  .br-side li label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-primary);padding:4px 0;cursor:pointer}
+  .br-side li .n{margin-left:auto;font-size:11.5px;color:var(--text-tertiary)}
+  .br-dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .br-graph{position:relative;overflow:hidden}
+  .br-graph #br-canvas{position:absolute;inset:0}
+  .br-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+            color:var(--text-tertiary);font-size:13px;text-align:center;padding:20px}
+  .br-empty[hidden]{display:none}
+  .br-detail{padding:16px;overflow:auto}
+  .br-detail .ph{color:var(--text-tertiary);font-size:13px}
+  .br-badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;margin-right:6px}
+  .br-detail h2{font-size:17px;margin:8px 0 4px;color:var(--text-primary);word-break:break-word}
+  .br-detail .sub{font-size:11.5px;color:var(--text-tertiary);margin-bottom:10px}
+  .br-detail .sum{font-size:13px;color:var(--text-secondary);line-height:1.55;margin-bottom:12px}
+  .br-detail h4{font-size:12px;font-weight:700;color:var(--text-secondary);margin:14px 0 6px;
+                padding-top:10px;border-top:1px solid var(--border-subtle)}
+  .br-links{list-style:none;margin:0;padding:0}
+  .br-links li{font-size:12.5px;padding:4px 0;cursor:pointer;color:var(--accent);display:flex;align-items:center;gap:7px}
+  .br-links li:hover{text-decoration:underline}
+  .br-text{white-space:pre-wrap;font-size:12px;line-height:1.55;color:var(--text-primary);background:var(--surface-2);
+           border:1px solid var(--border-subtle);border-radius:6px;padding:10px;max-height:340px;overflow:auto;
+           font-family:var(--font-mono, ui-monospace, Menlo, monospace)}
+  .br-note{font-size:12px;color:var(--purple-text);background:var(--purple-bg);border:1px solid var(--purple-border);
+           border-radius:6px;padding:8px 10px}
+  @media (max-width: 900px){
+    .br-wrap{height:auto}
+    .br-body{grid-template-columns:1fr}
+    .br-side{order:3}
+    .br-graph{height:62vh}
+    .br-search{width:100%}
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="br-wrap">
+  <div class="br-head">
+    <h1>브레인</h1>
+    <span class="br-meta" id="br-meta">불러오는 중…</span>
+    <span class="br-spacer"></span>
+    <input class="br-search" id="br-search" type="search" placeholder="노트 검색" autocomplete="off">
+    <div class="br-seg" role="group" aria-label="그래프 보기">
+      <button type="button" data-mode="2d" class="on">2D</button>
+      <button type="button" data-mode="3d">3D</button>
+    </div>
+  </div>
+  <div class="br-body">
+    <aside class="br-card br-side">
+      <h3>분류</h3>
+      <ul id="br-cats"></ul>
+      <h3>폐기 노트</h3>
+      <ul><li><label><input type="checkbox" id="br-sup">⛔ 폐기 노트 보기</label></li></ul>
+    </aside>
+    <section class="br-card br-graph">
+      <div id="br-canvas"></div>
+      <div class="br-empty" id="br-empty" hidden></div>
+    </section>
+    <aside class="br-card br-detail" id="br-detail">
+      <div class="ph">그래프에서 노드를 누르면 내용·연결이 여기 보여.</div>
+    </aside>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/force-graph@1.52.0/dist/force-graph.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.80.1/dist/3d-force-graph.min.js"></script>
+<script src="{{ url_for('static', filename='js/brain.js') }}"></script>
+{% endblock %}

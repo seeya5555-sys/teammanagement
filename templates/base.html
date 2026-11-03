@@ -25,6 +25,11 @@
       <rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>
       <rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>
     </symbol>
+    <symbol id="i-brain" viewBox="0 0 24 24">
+      <circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="13" r="2.4"/>
+      <circle cx="5" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/>
+      <path d="M7.7 7.3l2.6 3.9M16.3 8.4l-2.6 2.9M10.2 14.6l-3.4 2.2M13.9 14.4l2.4 2.1"/>
+    </symbol>
     <symbol id="i-clipboard" viewBox="0 0 24 24">
       <rect x="8" y="2" width="8" height="4" rx="1"/>
       <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
@@ -97,6 +102,7 @@
         <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}"{% if request.endpoint == ep or (eps and request.endpoint in eps) %} aria-current="page"{% endif %}>{% if icon %}<svg class="nav-ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}{{ label }}</a>
       {%- endmacro %}
       <nav class="main-nav">
+        {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}
         {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
         {{ nlink('routes_core.index', 'Daily 업무관리', icon='clipboard') }}
 
@@ -216,6 +222,7 @@
     </div>
     {# 모바일에서는 핵심 업무 탭을 항상 노출하고 나머지는 햄버거 메뉴로 제공. #}
     <nav class="mobile-tabbar" aria-label="핵심 메뉴">
+      {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}
       {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
       {{ nlink('routes_core.index', 'Daily', icon='clipboard') }}
       {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
@@ -232,6 +239,7 @@
         <button type="button" class="nav-link mm-close" aria-label="메뉴 닫기"><svg class="nav-ic" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
       <div class="mm-body">
+        {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}
         {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
         {{ nlink('routes_core.index', 'Daily 업무관리', icon='clipboard') }}
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화</div>

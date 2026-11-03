@@ -787,6 +787,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/brain/graph",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_brain.api_brain_graph",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/cal/events",
     "methods": [
       "OPTIONS",
@@ -2397,6 +2408,16 @@
       "OPTIONS"
     ],
     "endpoint": "routes_calendar_dock.api_ext_boarding",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/brain",
+    "methods": [
+      "OPTIONS",
+      "PUT"
+    ],
+    "endpoint": "routes_brain.api_ext_brain_put",
     "strict_slashes": true,
     "defaults": {}
   },
@@ -6073,6 +6094,17 @@
       "OPTIONS"
     ],
     "endpoint": "routes_core.boarding_edit_page",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/brain",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_brain.brain_page",
     "strict_slashes": true,
     "defaults": {}
   },

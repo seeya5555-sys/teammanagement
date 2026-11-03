@@ -91,6 +91,7 @@ class ProductizationGatesTests(unittest.TestCase):
             "/krcon/view/<doc_id>",  # JSON document endpoint
             "/dock_procure/template/example",  # XLSX download
             "/dock_procure/template/blank",  # XLSX download
+            "/brain",  # owner(SS0094)-only page; others 404 — covered by tests/test_brain.py
         }
         self.assertEqual(200, appmod.app.test_client().get("/login").status_code)
         exercised = set()

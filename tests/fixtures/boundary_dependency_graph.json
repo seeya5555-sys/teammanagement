@@ -72,6 +72,7 @@
       "_aor_status_list_sql"
     ],
     "migration_steps.py": [],
+    "routes_brain.py": [],
     "routes_calendar_dock.py": [],
     "routes_class_mail.py": [],
     "routes_core.py": [],
@@ -223,6 +224,16 @@
   "maritime_style.py": {},
   "migration_steps.py": {},
   "report_export_service.py": {},
+  "routes_brain.py": {
+    "app_core.py": [
+      "execute",
+      "query"
+    ],
+    "helpers_shared.py": [
+      "api_key_required",
+      "login_required"
+    ]
+  },
   "routes_calendar_dock.py": {
     "app_core.py": [
       "AOR_PDF_DIR",

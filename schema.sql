@@ -1480,3 +1480,10 @@ CREATE TABLE IF NOT EXISTS personal_journal (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     UNIQUE (entry_date, kind, title)
 );
+
+-- 브레인 지식 그래프(손유석 전용). 맥 데쿠가 /api/ext/brain 으로 통째 적재하는 단일 행.
+CREATE TABLE IF NOT EXISTS brain_graph (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    payload     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
