@@ -1,4 +1,4 @@
-"""Vetting Last Result 검사일 +3개월 수검 필요 워닝 계약."""
+"""Vetting Last Result 검사일 +4개월 수검 필요 워닝 계약."""
 from pathlib import Path
 import json
 import subprocess
@@ -25,10 +25,10 @@ const context = {{
 vm.createContext(context);
 vm.runInContext({json.dumps(VT_JS)}, context);
 const cases = [
-  [{{valid:'Last Result', inspection_date:'2026-05-25'}}, '2026-08-24T12:00:00', false],
-  [{{valid:'Last Result', inspection_date:'2026-05-25'}}, '2026-08-25T00:00:00', true],
-  [{{valid:'Last Result', inspection_date:'2026-01-31'}}, '2026-04-30T09:00:00', true],
-  [{{valid:'Last Result', inspection_date:'2024-11-30'}}, '2025-02-28T09:00:00', true],
+  [{{valid:'Last Result', inspection_date:'2026-05-25'}}, '2026-09-24T12:00:00', false],
+  [{{valid:'Last Result', inspection_date:'2026-05-25'}}, '2026-09-25T00:00:00', true],
+  [{{valid:'Last Result', inspection_date:'2026-10-31'}}, '2027-02-28T09:00:00', true],
+  [{{valid:'Last Result', inspection_date:'2026-01-31'}}, '2026-05-30T09:00:00', false],
   [{{valid:'Next Plan', inspection_date:'2026-01-01'}}, '2026-08-25T09:00:00', false],
   [{{valid:'Last Result', inspection_date:''}}, '2026-08-25T09:00:00', false],
   [{{valid:'Last Result', inspection_date:'2026-02-30'}}, '2026-08-25T09:00:00', false],

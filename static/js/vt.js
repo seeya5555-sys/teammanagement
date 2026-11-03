@@ -405,7 +405,7 @@ function vesselSummary(item) {
       const warningDateLabel = latestLastResult.inspection_date;
       wrap.append(el('span', {
         class: 'vt-summary-inspection-due',
-        title: `Last Result 검사일(${warningDateLabel})로부터 3개월 경과`,
+        title: `Last Result 검사일(${warningDateLabel})로부터 4개월 경과`,
       }, '수검 필요'));
     }
   } else {
@@ -426,9 +426,9 @@ function vesselSummary(item) {
   return wrap;
 }
 
-// Last Result 검사일로부터 달력 기준 3개월이 되는 날부터 수검 필요.
-// Date.setMonth()를 원일자에 바로 호출하면 1/31 + 3개월이 5월로 넘치므로,
-// 목표 월의 마지막 날로 clamp한다(예: 1/31 → 4/30).
+// Last Result 검사일로부터 달력 기준 4개월이 되는 날부터 수검 필요.
+// Date.setMonth()를 원일자에 바로 호출하면 10/31 + 4개월이 3월로 넘치므로,
+// 목표 월의 마지막 날로 clamp한다(예: 1/31 → 5/31, 10/31 → 2/28).
 function vtInspectionDateParts(raw) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw || '');
   if (!m) return false;
@@ -450,7 +450,7 @@ function vtNeedsInspection(vt, now = new Date()) {
   if (!parts) return false;
   const { year, month, day } = parts;
 
-  const targetFirst = new Date(year, month - 1 + 3, 1);
+  const targetFirst = new Date(year, month - 1 + 4, 1);
   const targetLastDay = new Date(targetFirst.getFullYear(), targetFirst.getMonth() + 1, 0).getDate();
   const due = new Date(targetFirst.getFullYear(), targetFirst.getMonth(), Math.min(day, targetLastDay));
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());

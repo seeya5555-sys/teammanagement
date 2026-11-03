@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 """Vetting OBS 자동화 — Close report 자동판정 가드 + 메일 run 불변식."""
 import json
 import os
@@ -541,7 +542,7 @@ class VettingObsAutomationTests(unittest.TestCase):
         self.assertTrue(m.get_json()['manual'])
         self.assertTrue(m.get_json()['body'].startswith('Dear Charalampos,'))
         mid = m.get_json()['id']
-        self.c.post(f'/api/ext/vetting-mail/runs/{mid}/state', headers=self.h, json={'state': 'sent', 'sent_at': '2026-10-05 10:00:00'})
+        self.c.post(f'/api/ext/vetting-mail/runs/{mid}/state', headers=self.h, json={'state': 'sent', 'sent_at': (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S')})
         self.assertEqual('done', self.c.post(f'/api/ext/vetting-mail/manual/{qid}/state', headers=self.h,
                                              json={'state': 'done'}).get_json()['state'])
         # 같은 주 자동 발송은 여전히 가능(별개)
@@ -550,7 +551,7 @@ class VettingObsAutomationTests(unittest.TestCase):
         self.c.post(f'/api/vetting-mail/settings/{self.ves}/enabled', json={'enabled': True})
         a = self.c.post('/api/ext/vetting-mail/runs', headers=self.h, json={
             'vetting_id': self.vt, 'iso_week': '2026W41', 'finding_ids': ids}).get_json()['id']
-        self.c.post(f'/api/ext/vetting-mail/runs/{a}/state', headers=self.h, json={'state': 'sent', 'sent_at': '2026-10-06 09:30:00'})
+        self.c.post(f'/api/ext/vetting-mail/runs/{a}/state', headers=self.h, json={'state': 'sent', 'sent_at': (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')})
         # 팔로우업 = 최신 발송분 1건만
         p = self.c.get('/api/ext/vetting-mail/runs/pending', headers=self.h).get_json()['runs']
         self.assertEqual([a], [r['id'] for r in p])
