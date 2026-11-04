@@ -5,6 +5,7 @@
 개인 마음 기록(personal_journal)은 제목·날짜만 노드로 붙이고 본문은 이 경로로 절대 내보내지 않는다.
 """
 import json
+import re
 from datetime import date
 import os
 
@@ -18,8 +19,8 @@ bp = Blueprint('routes_brain', __name__)
 OWNER_USERNAME = os.environ.get('JOURNAL_OWNER_USERNAME', 'SS0094')
 MAX_PAYLOAD = 8_000_000
 MAX_NODES = 5000
-CATS = {'project', 'area', 'resource', 'archive', 'hub', 'automation', 'update'}
-STR_FIELDS = ('title', 'type', 'summary', 'body', 'section', 'updated', 'status')
+CATS = {'project', 'area', 'resource', 'archive', 'hub', 'automation', 'update', 'knowledge'}
+STR_FIELDS = ('title', 'type', 'summary', 'body', 'section', 'updated', 'status', 'vessel')
 
 
 def _owner_ok():
@@ -97,6 +98,10 @@ def _build_graph():
             'updated_at': row['updated_at'] if row else None}
 
 
+def _slug(name):
+    return re.sub(r'[^a-z0-9]+', '-', (name or '').lower()).strip('-')
+
+
 def _history(raw):
     """진행 이력 전체를 날짜·내용 줄로(절단 없음, 서버 PUT 상한 20000자에 맞춰 화면만 스크롤)."""
     try:
@@ -131,7 +136,11 @@ def _add_trmt(nodes, links):
     nodes.append({'id': 'hub:trmt', 'title': f'TRMT 현안 {len(irows)}', 'cat': 'hub', 'type': 'hub',
                   'summary': f'선박 {len(vrows)}척 · 미종결 현안 {len(irows)}건(Open·InProgress).'})
     links.append({'source': 'deku', 'target': 'hub:trmt'})
-    mem = [n for n in nodes if n.get('cat') in CATS - {'hub', 'automation', 'update'}]
+    mem = [n for n in nodes if n.get('cat') in CATS - {'hub', 'automation', 'update', 'knowledge'}]
+    know = {}
+    for n in nodes:
+        if n.get('cat') == 'knowledge' and n.get('vessel'):
+            know.setdefault(n['vessel'], []).append(n['id'])
     vid = set()
     for v in vrows:
         nid = f"vessel:{v['id']}"
@@ -139,6 +148,8 @@ def _add_trmt(nodes, links):
         nodes.append({'id': nid, 'title': v['name'], 'cat': 'vessel', 'type': 'vessel', 'ref': v['id'],
                       'summary': f"{v['short_name'] or ''} {v['vsl_cd'] or ''} · 미종결 현안 {per.get(v['id'], 0)}건".strip()})
         links.append({'source': 'hub:trmt', 'target': nid})
+        for kid in know.get(_slug(v['name']), []):          # ship-wiki·도면 → 선박
+            links.append({'source': nid, 'target': kid})
         keys = {k.lower() for k in (v['name'], v['short_name']) if k and len(k) >= 5}
         for n in mem:
             hay = f"{n.get('title', '')} {n.get('summary', '')} {n.get('body', '')}".lower()

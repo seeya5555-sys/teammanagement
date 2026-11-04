@@ -10,6 +10,7 @@
     { key: 'issue', label: 'TRMT 현안', color: css('--coral-dot') || '#D85A30' },
     { key: 'closed', label: '완료 현안(이력)', color: css('--border-strong') || '#B4B2A9' },
     { key: 'mail', label: '메일', color: css('--purple') || '#6B4E71' },
+    { key: 'knowledge', label: '지식자료(위키·도면·스킬)', color: css('--teal') || '#0F6E56' },
     { key: 'project', label: 'Projects · 진행', color: css('--coral-dot') || '#D85A30' },
     { key: 'area', label: 'Areas · 영역', color: css('--blue-dot') || '#378ADD' },
     { key: 'resource', label: 'Resources · 자료', color: css('--teal-dot') || '#1D9E75' },

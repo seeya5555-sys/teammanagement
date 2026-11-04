@@ -173,6 +173,17 @@ class BrainTests(unittest.TestCase):
         old = next(n for n in d['nodes'] if n['cat'] == 'closed')
         self.assertIn('p29', old['body']); self.assertIn('p0', old['body'])  # 진행 이력 전체
 
+    def test_knowledge_links_to_vessel(self):
+        with appmod.app.app_context():
+            v = execute("INSERT INTO vessels(name) VALUES('BELGIUM B')")
+        r = self._put({'nodes': [{'id': 'deku', 'title': '데쿠', 'cat': 'hub'},
+                                 {'id': 'wiki:belgium-b', 'title': 'w', 'cat': 'knowledge', 'vessel': 'belgium-b'}],
+                       'links': []})
+        self.assertEqual(200, r.status_code, r.get_json())
+        self._login(self.owner, 'SS0094')
+        d = self.c.get('/api/brain/graph').get_json()
+        self.assertIn({'source': f'vessel:{v}', 'target': 'wiki:belgium-b'}, d['links'])
+
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))
 
