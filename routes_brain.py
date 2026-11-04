@@ -62,6 +62,17 @@ def api_brain_mobile_entry():
 def api_brain_graph():
     if not _owner_ok():
         return jsonify({'error': 'not found'}), 404
+    return jsonify(_build_graph())
+
+
+@bp.route('/api/ext/brain/graph')
+@api_key_required
+def api_ext_brain_graph():
+    """맥 데쿠 조회용(필요할 때만). 화면과 같은 그래프 — 마음기록은 제목뿐, 메일 본문 없음."""
+    return jsonify(_build_graph())
+
+
+def _build_graph():
     row = query('SELECT payload, updated_at FROM brain_graph WHERE id=1', one=True)
     data = json.loads(row['payload']) if row else {'nodes': [], 'links': []}
     nodes, links = list(data.get('nodes') or []), list(data.get('links') or [])
@@ -81,9 +92,21 @@ def api_brain_graph():
             links.append({'source': 'deku', 'target': hub})
     if any(n.get('id') == 'deku' for n in nodes):
         _add_trmt(nodes, links)
-    return jsonify({'nodes': nodes, 'links': links,
-                    'generated_at': data.get('generated_at'),
-                    'updated_at': row['updated_at'] if row else None})
+    return {'nodes': nodes, 'links': links,
+            'generated_at': data.get('generated_at'),
+            'updated_at': row['updated_at'] if row else None}
+
+
+def _history(raw):
+    """진행 이력 전체를 날짜·내용 줄로(절단 없음, 서버 PUT 상한 20000자에 맞춰 화면만 스크롤)."""
+    try:
+        acts = json.loads(raw or '[]')
+    except ValueError:
+        return ''
+    if not isinstance(acts, list):
+        return ''
+    lines = [f"{a.get('date') or ''} {a.get('progress') or ''}".strip() for a in acts if isinstance(a, dict)]
+    return '\n'.join(x for x in lines if x)
 
 
 def _last_action(raw):
@@ -122,6 +145,20 @@ def _add_trmt(nodes, links):
             if any(k in hay for k in keys):
                 links.append({'source': nid, 'target': n['id']})
     today = date.today().isoformat()
+    # 완료 현안(이력): 최근 2년 Closed. 화면 기본 숨김(토글), 상세엔 전체 진행 이력.
+    crows = query("SELECT id, vessel_id, item_topic, priority, issue_date, updated_at, actions FROM issues "
+                  "WHERE status='Closed' AND updated_at >= date('now','localtime','-730 days') "
+                  "ORDER BY updated_at DESC")
+    for r in crows:
+        if r['vessel_id'] not in vid:
+            continue
+        nid = f"issue:{r['id']}"
+        nodes.append({'id': nid, 'title': r['item_topic'], 'cat': 'closed', 'type': 'issue', 'ref': r['id'],
+                      'date': r['issue_date'],
+                      'summary': f"완료 · {r['priority']} · 발생 {r['issue_date']} · 종결(최종수정) {(r['updated_at'] or '')[:10]}",
+                      'body': _history(r['actions'])})
+        links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
+        links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})
     for r in irows:
         if r['vessel_id'] not in vid:
             continue
@@ -131,7 +168,7 @@ def _add_trmt(nodes, links):
         nid = f"issue:{r['id']}"
         nodes.append({'id': nid, 'title': r['item_topic'], 'cat': 'issue', 'type': 'issue', 'status': st, 'ref': r['id'],
                       'date': r['issue_date'], 'summary': ' · '.join(x for x in sub if x),
-                      'body': _last_action(r['actions']) and ('최근 진행: ' + _last_action(r['actions']))})
+                      'body': _history(r['actions'])})
         links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
         links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})  # 현안 상세 '연결된 노트'에 소속 선박
     _add_mail(nodes, links, vid)

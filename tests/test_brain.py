@@ -114,6 +114,7 @@ class BrainTests(unittest.TestCase):
         d = self.c.get('/api/brain/graph').get_json()
         iss = [n for n in d['nodes'] if n['cat'] == 'issue']
         self.assertEqual(['BWTS 클레임'], [n['title'] for n in iss])
+        self.assertEqual(['끝난 건'], [n['title'] for n in d['nodes'] if n['cat'] == 'closed'])
         self.assertEqual('fail', iss[0]['status'])
         self.assertIn({'source': f'vessel:{v}', 'target': 'note'}, d['links'])
 
@@ -149,6 +150,28 @@ class BrainTests(unittest.TestCase):
         with c3.session_transaction() as s:
             s['user_id'] = self.owner; s['username'] = 'SS0094'; s['role'] = 'admin'
         self.assertEqual(401, c3.get('/api/brain/mobile-entry').status_code)
+
+    def test_ext_graph_requires_key(self):
+        with appmod.app.app_context():
+            v = execute("INSERT INTO vessels(name) VALUES('GHANA PROSPERITY')")
+            execute("INSERT INTO class_mail_runs(vessel_id, iso_week, state, tag, subject, body, to_emails, cc_emails, "
+                    "snapshot, reply_rows, excel_sha256, sent_at) VALUES(?, '2026W45', 'sent', 't', 'S', "
+                    "'메일본문비밀', 'a@x.com', '', '{}', '[]', 'h', datetime('now','localtime'))", (v,))
+            sup = execute("INSERT INTO supervisors(name) VALUES('t2')")
+            acts = '[' + ','.join('{"date":"2026-01-%02d","progress":"p%d"}' % (i % 28 + 1, i) for i in range(30)) + ']'
+            execute("INSERT INTO issues(supervisor_id, vessel_id, issue_date, item_topic, status, actions) "
+                    "VALUES(?,?,'2026-01-01','옛 건','Closed',?)", (sup, v, acts))
+        self._put({'nodes': [{'id': 'deku', 'title': '데쿠', 'cat': 'hub'}], 'links': []})
+        self.assertIn(self.c.get('/api/ext/brain/graph', headers={'X-API-Key': 'bad'}).status_code, (401, 403))
+        r = self.c.get('/api/ext/brain/graph', headers={'X-API-Key': 'secret'})
+        self.assertEqual(200, r.status_code)
+        self.assertNotIn('비밀본문', r.get_data().decode('unicode_escape'))
+        raw = r.get_data().decode('unicode_escape')
+        self.assertNotIn('메일본문비밀', raw)
+        d = r.get_json()
+        self.assertIn('법원 일정', {n['title'] for n in d['nodes']})          # 마음기록 제목은 있음
+        old = next(n for n in d['nodes'] if n['cat'] == 'closed')
+        self.assertIn('p29', old['body']); self.assertIn('p0', old['body'])  # 진행 이력 전체
 
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))

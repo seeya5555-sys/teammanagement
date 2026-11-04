@@ -8,6 +8,7 @@
     { key: 'update', label: '업데이트 이력', color: css('--amber-dot') || '#EF9F27' },
     { key: 'vessel', label: '선박', color: css('--blue') || '#185FA5' },
     { key: 'issue', label: 'TRMT 현안', color: css('--coral-dot') || '#D85A30' },
+    { key: 'closed', label: '완료 현안(이력)', color: css('--border-strong') || '#B4B2A9' },
     { key: 'mail', label: '메일', color: css('--purple') || '#6B4E71' },
     { key: 'project', label: 'Projects · 진행', color: css('--coral-dot') || '#D85A30' },
     { key: 'area', label: 'Areas · 영역', color: css('--blue-dot') || '#378ADD' },
@@ -24,6 +25,7 @@
   let outs = new Map(), ins = new Map();
   let mode = '2d', graph = null, selected = null, query = '';
   const enabled = new Set(CATS.map((c) => c.key));
+  enabled.delete('closed');            // 완료 현안은 기본 숨김 — 분류에서 켜면 보임
   let showSup = false;
   let focusMode = true;            // 데쿠 중심: 데쿠에서 2단계 + 펼친 노드의 이웃만
   const expanded = new Set();
@@ -161,7 +163,7 @@
   const MAIL_PAGE = { daily: '/daily-mail', vetting: '/vetting-mail', class: '/class-mail', cs: '/cs-mail' };
   const inApp = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.trmtBrain);
   function openTarget(n) {
-    if (n.cat === 'issue' && n.ref) return { label: 'Daily에서 이 현안 열기', web: '/?issue=' + encodeURIComponent(n.ref), app: { kind: 'issue', id: Number(n.ref) } };
+    if ((n.cat === 'issue' || n.cat === 'closed') && n.ref) return { label: 'Daily에서 이 현안 열기', web: '/?issue=' + encodeURIComponent(n.ref), app: { kind: 'issue', id: Number(n.ref) } };
     if (n.cat === 'vessel') return { label: 'Daily에서 이 선박 현안 보기', web: '/?vessel_id=' + encodeURIComponent(n.ref || ''), app: { kind: 'vessel', name: n.title } };
     if (n.cat === 'mail' && MAIL_PAGE[n.type]) return { label: '메일 자동화 화면 열기', web: MAIL_PAGE[n.type], app: { kind: 'mail', type: n.type } };
     return null;

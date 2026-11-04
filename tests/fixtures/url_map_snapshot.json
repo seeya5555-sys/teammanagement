@@ -2433,6 +2433,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/brain/graph",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_brain.api_ext_brain_graph",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/calendar",
     "methods": [
       "GET",
