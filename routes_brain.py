@@ -19,9 +19,9 @@ bp = Blueprint('routes_brain', __name__)
 OWNER_USERNAME = os.environ.get('JOURNAL_OWNER_USERNAME', 'SS0094')
 MAX_PAYLOAD = 8_000_000
 MAX_NODES = 5000
-CATS = {'project', 'area', 'resource', 'archive', 'hub', 'automation', 'update', 'knowledge'}
+CATS = {'project', 'area', 'resource', 'archive', 'hub', 'automation', 'update', 'knowledge', 'decision'}
 APPROVAL_KINDS = (('aor', 'AOR'), ('fundreq', 'FundReq'), ('invoice', 'Invoice'), ('repair', '수리비'), ('purchase', '구매비'))
-STR_FIELDS = ('title', 'type', 'summary', 'body', 'section', 'updated', 'status', 'vessel')
+STR_FIELDS = ('title', 'type', 'summary', 'body', 'section', 'updated', 'status', 'vessel', 'issue')
 
 
 def _owner_ok():
@@ -138,10 +138,11 @@ def _add_trmt(nodes, links):
     nodes.append({'id': 'hub:trmt', 'title': f'TRMT 현안 {len(irows)}', 'cat': 'hub', 'type': 'hub',
                   'summary': f'선박 {len(vrows)}척 · 미종결 현안 {len(irows)}건(Open·InProgress).'})
     links.append({'source': 'deku', 'target': 'hub:trmt'})
-    mem = [n for n in nodes if n.get('cat') in CATS - {'hub', 'automation', 'update', 'knowledge'}]
+    mem = [n for n in nodes if n.get('cat') in CATS - {'hub', 'automation', 'update', 'knowledge', 'decision'}]
+    dec_issue = [(n['id'], n['issue']) for n in nodes if n.get('cat') == 'decision' and n.get('issue')]
     know = {}
     for n in nodes:
-        if n.get('cat') == 'knowledge' and n.get('vessel'):
+        if n.get('cat') in ('knowledge', 'decision') and n.get('vessel'):
             know.setdefault(n['vessel'], []).append(n['id'])
     vid = set()
     for v in vrows:
@@ -184,6 +185,10 @@ def _add_trmt(nodes, links):
                       'body': _history(r['actions'])})
         links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
         links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})  # 현안 상세 '연결된 노트'에 소속 선박
+    present = {n['id'] for n in nodes}
+    for did, iid in dec_issue:                      # 판단 → 관련 현안
+        if f'issue:{iid}' in present:
+            links.append({'source': did, 'target': f'issue:{iid}'})
     _add_mail(nodes, links, vid)
     _add_approvals(nodes, links, vcd)
     _add_schedule(nodes, links, vid)

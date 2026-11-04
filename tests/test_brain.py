@@ -213,6 +213,18 @@ class BrainTests(unittest.TestCase):
         self.assertEqual({'ETA Fujairah', 'KP 입거'}, sc)
         self.assertNotIn('3d-force-graph', self.c.get('/brain').get_data(as_text=True))
 
+    def test_decision_links_issue_and_vessel(self):
+        with appmod.app.app_context():
+            v = execute("INSERT INTO vessels(name) VALUES('BELGIUM B')")
+            sup = execute("INSERT INTO supervisors(name) VALUES('t3')")
+            i = execute("INSERT INTO issues(supervisor_id, vessel_id, issue_date, item_topic, status) VALUES(?,?,'2026-11-01','x','Open')", (sup, v))
+        self._put({'nodes': [{'id': 'deku', 'title': '데쿠', 'cat': 'hub'},
+                             {'id': 'decide:0', 'title': 'd', 'cat': 'decision', 'vessel': 'belgium-b', 'issue': str(i)}], 'links': []})
+        self._login(self.owner, 'SS0094')
+        d = self.c.get('/api/brain/graph').get_json()
+        self.assertIn({'source': 'decide:0', 'target': f'issue:{i}'}, d['links'])
+        self.assertIn({'source': f'vessel:{v}', 'target': 'decide:0'}, d['links'])
+
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))
 

@@ -12,6 +12,7 @@
     { key: 'mail', label: '메일', color: css('--purple') || '#6B4E71' },
     { key: 'approval', label: '결재 대기', color: css('--amber-dot') || '#EF9F27' },
     { key: 'schedule', label: '일정(캘린더·입거)', color: css('--blue-dot') || '#378ADD' },
+    { key: 'decision', label: '데쿠 판단 기록', color: css('--accent-hover') || '#174C7D' },
     { key: 'knowledge', label: '지식자료(위키·도면·스킬)', color: css('--teal') || '#0F6E56' },
     { key: 'project', label: 'Projects · 진행', color: css('--coral-dot') || '#D85A30' },
     { key: 'area', label: 'Areas · 영역', color: css('--blue-dot') || '#378ADD' },
