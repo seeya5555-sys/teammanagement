@@ -200,6 +200,19 @@ class BrainTests(unittest.TestCase):
         self.assertNotIn('secret', json.dumps(ap))
         self.assertIn({'source': f'vessel:{v}', 'target': ap[0]['id']}, d['links'])
 
+    def test_schedule_nodes_and_no_3d(self):
+        with appmod.app.app_context():
+            v = execute("INSERT INTO vessels(name) VALUES('KUWAIT PROSPERITY')")
+            execute("INSERT INTO calendar_events(vessel_id, title, start_date, category) VALUES(?, 'ETA Fujairah', date('now','localtime','+3 days'), 'ETA')", (v,))
+            execute("INSERT INTO calendar_events(title, start_date) VALUES('옛 일정', date('now','localtime','-30 days'))")
+            execute("INSERT INTO dock_daily_project(vessel_id, title, dock_in_date) VALUES(?, 'KP 입거', '2026-12-01')", (v,))
+        self._put({'nodes': [{'id': 'deku', 'title': '데쿠', 'cat': 'hub'}], 'links': []})
+        self._login(self.owner, 'SS0094')
+        d = self.c.get('/api/brain/graph').get_json()
+        sc = {n['title'] for n in d['nodes'] if n['cat'] == 'schedule'}
+        self.assertEqual({'ETA Fujairah', 'KP 입거'}, sc)
+        self.assertNotIn('3d-force-graph', self.c.get('/brain').get_data(as_text=True))
+
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))
 

@@ -186,6 +186,7 @@ def _add_trmt(nodes, links):
         links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})  # 현안 상세 '연결된 노트'에 소속 선박
     _add_mail(nodes, links, vid)
     _add_approvals(nodes, links, vcd)
+    _add_schedule(nodes, links, vid)
 
 
 def _approval_rows(key):
@@ -233,6 +234,40 @@ def _add_approvals(nodes, links, vcd):
     for hub, label, n in hubs:
         nodes.append({'id': hub, 'title': f'{label} {n}', 'cat': 'hub', 'type': 'hub', 'summary': f'{label} 결재 대기 {n}건.'})
         links.append({'source': 'hub:appr', 'target': hub})
+
+
+def _add_schedule(nodes, links, vessel_ids):
+    """일정: 캘린더(지난 7일~앞 60일) + 진행 중 입거 프로젝트. 고정 SQL."""
+    cal = query("SELECT id, vessel_id, title, start_date, end_date, category, location, completed FROM calendar_events "
+                "WHERE start_date >= date('now','localtime','-7 days') AND start_date <= date('now','localtime','+60 days') "
+                "ORDER BY start_date")
+    dock = query("SELECT id, vessel_id, title, berthing_date, dock_in_date, dock_out_date, departure_date "
+                 "FROM dock_daily_project WHERE completed_at IS NULL ORDER BY COALESCE(dock_in_date, berthing_date)")
+    nodes.append({'id': 'hub:sched', 'title': f'일정 {len(cal) + len(dock)}', 'cat': 'hub', 'type': 'hub',
+                  'summary': f'캘린더 {len(cal)}건(지난 7일~앞 60일) · 진행 중 입거 {len(dock)}건.'})
+    links.append({'source': 'deku', 'target': 'hub:sched'})
+    today = date.today().isoformat()
+    for r in cal:
+        nid = f"cal:{r['id']}"
+        end = r['end_date'] or r['start_date']
+        st = 'disabled' if r['completed'] or end < today else ('running' if r['start_date'] <= today else 'ok')
+        span = r['start_date'] + (f" ~ {r['end_date']}" if r['end_date'] and r['end_date'] != r['start_date'] else '')
+        nodes.append({'id': nid, 'title': r['title'], 'cat': 'schedule', 'type': 'calendar', 'status': st,
+                      'date': r['start_date'], 'summary': ' · '.join(x for x in (span, r['category'], r['location']) if x)})
+        links.append({'source': 'hub:sched', 'target': nid})
+        if r['vessel_id'] in vessel_ids:
+            links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
+            links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})
+    for r in dock:
+        nid = f"dock:{r['id']}"
+        span = ' · '.join(f'{k} {v}' for k, v in (('접안', r['berthing_date']), ('입거', r['dock_in_date']),
+                                                     ('출거', r['dock_out_date']), ('출항', r['departure_date'])) if v)
+        nodes.append({'id': nid, 'title': r['title'], 'cat': 'schedule', 'type': 'dock', 'status': 'running',
+                      'date': r['dock_in_date'] or r['berthing_date'] or '', 'summary': '입거 진행 중 · ' + (span or '일정 미입력')})
+        links.append({'source': 'hub:sched', 'target': nid})
+        if r['vessel_id'] in vessel_ids:
+            links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
+            links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})
 
 
 MAIL_DAYS = 30

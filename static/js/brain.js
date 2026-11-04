@@ -1,4 +1,4 @@
-/* 브레인 — 데쿠 중심 세컨브레인(기억·자동화·업데이트 이력). 2D(force-graph) / 3D(3d-force-graph) 전환. */
+/* 브레인 — 데쿠 중심 세컨브레인 2D 그래프(3D 폐기 11-04). */
 (function () {
   'use strict';
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -11,6 +11,7 @@
     { key: 'closed', label: '완료 현안(이력)', color: css('--border-strong') || '#B4B2A9' },
     { key: 'mail', label: '메일', color: css('--purple') || '#6B4E71' },
     { key: 'approval', label: '결재 대기', color: css('--amber-dot') || '#EF9F27' },
+    { key: 'schedule', label: '일정(캘린더·입거)', color: css('--blue-dot') || '#378ADD' },
     { key: 'knowledge', label: '지식자료(위키·도면·스킬)', color: css('--teal') || '#0F6E56' },
     { key: 'project', label: 'Projects · 진행', color: css('--coral-dot') || '#D85A30' },
     { key: 'area', label: 'Areas · 영역', color: css('--blue-dot') || '#378ADD' },
@@ -74,7 +75,7 @@
     return { nodes, links };
   }
   function color(n) {
-    const base = ((n.cat === 'automation' || n.cat === 'mail' || (n.cat === 'issue' && n.status === 'fail')) && STATUS[n.status]) || (CAT[n.cat] || CAT.archive).color;
+    const base = ((n.cat === 'automation' || n.cat === 'mail' || n.cat === 'schedule' || (n.cat === 'issue' && n.status === 'fail')) && STATUS[n.status]) || (CAT[n.cat] || CAT.archive).color;
     if (query && !matches(n)) return base + '33';
     if (n.superseded) return base + '66';
     return base;
@@ -89,14 +90,7 @@
     const el = $('br-canvas');
     el.innerHTML = '';
     const w = el.clientWidth, h = el.clientHeight;
-    if (mode === '3d') {
-      graph = ForceGraph3D()(el).width(w).height(h)
-        .backgroundColor(css('--nav-bg') || '#26241E')
-        .nodeLabel((n) => esc(n.title))
-        .nodeColor(color).nodeVal(size).nodeOpacity(0.92)
-        .linkColor(() => 'rgba(201,198,188,0.28)').linkWidth(0.4)
-        .onNodeClick((n) => { expand(n); focus3d(n); select(n.id); });
-    } else {
+    {
       graph = ForceGraph()(el).width(w).height(h)
         .backgroundColor(css('--surface') || '#FFFFFF')
         .nodeLabel((n) => esc(n.title))
@@ -128,18 +122,12 @@
     if (!focusMode || expanded.has(n.id)) return;
     expanded.add(n.id); refresh();
   }
-  function pinCenter(d) { const c = d.nodes.find((n) => n.id === 'deku'); if (c) { c.fx = 0; c.fy = 0; if (mode === '3d') c.fz = 0; } return d; }
-  function focus3d(n) {
-    const x = n.x || 0, y = n.y || 0, z = n.z || 0, r = Math.hypot(x, y, z);
-    const d = 120, u = r < 1 ? [0, 0, 1] : [x / r, y / r, z / r];
-    graph.cameraPosition({ x: x + u[0] * d, y: y + u[1] * d, z: z + u[2] * d }, { x, y, z }, 900);
-  }
+  function pinCenter(d) { const c = d.nodes.find((n) => n.id === 'deku'); if (c) { c.fx = 0; c.fy = 0; } return d; }
 
   function refresh() {
     if (!graph) return;
     graph.graphData(pinCenter(viewData()));
-    if (mode === '3d') graph.nodeColor(color); // 3D 는 재적용해야 반영됨
-  }
+      }
 
   function li(id) {
     const n = byId.get(id); if (!n) return '';
@@ -191,7 +179,7 @@
     const n = byId.get(t.dataset.id); if (!n) return;
     if (!visible(n)) { enabled.add(n.cat); if (n.superseded) { showSup = true; $('br-sup').checked = true; } renderCats(); refresh(); }
     if (focusMode && !expanded.has(n.id)) { expanded.add(n.id); refresh(); }
-    setTimeout(() => { if (mode === '2d' && n.x != null) graph.centerAt(n.x, n.y, 600); else if (n.x != null) focus3d(n); }, 50);
+    setTimeout(() => { if (mode === '2d' && n.x != null) graph.centerAt(n.x, n.y, 600);  }, 50);
     select(n.id);
   });
 
@@ -243,12 +231,6 @@
   document.querySelectorAll('.br-view button').forEach((b) => b.addEventListener('click', () => {
     document.querySelectorAll('.br-view button').forEach((x) => x.classList.toggle('on', x === b));
     focusMode = b.dataset.view === 'focus'; if (focusMode) expanded.clear(); refresh();
-  }));
-  document.querySelectorAll('.br-seg:not(.br-view) button').forEach((b) => b.addEventListener('click', () => {
-    if (b.dataset.mode === mode) return;
-    document.querySelectorAll('.br-seg:not(.br-view) button').forEach((x) => x.classList.toggle('on', x === b));
-    if (graph && graph._destructor) graph._destructor();
-    mode = b.dataset.mode; build();
   }));
   let rt;
   window.addEventListener('resize', () => {

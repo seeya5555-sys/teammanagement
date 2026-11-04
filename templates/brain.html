@@ -80,10 +80,6 @@
       <button type="button" data-view="focus" class="on">데쿠 중심</button>
       <button type="button" data-view="all">전체</button>
     </div>
-    <div class="br-seg" role="group" aria-label="그래프 보기">
-      <button type="button" data-mode="2d" class="on">2D</button>
-      <button type="button" data-mode="3d">3D</button>
-    </div>
   </div>
   <div class="br-today" id="br-today" hidden></div>
   <div class="br-body">
@@ -104,6 +100,5 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/force-graph@1.52.0/dist/force-graph.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.80.1/dist/3d-force-graph.min.js"></script>
 <script src="{{ url_for('static', filename='js/brain.js') }}"></script>
 {% endblock %}
