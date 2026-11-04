@@ -1,4 +1,5 @@
 """브레인: 소유자만 열람, 다른 계정 404, ext 적재는 API 키, 마음 기록은 제목만(본문 비노출)."""
+import json
 import os
 import tempfile
 import unittest
@@ -183,6 +184,21 @@ class BrainTests(unittest.TestCase):
         self._login(self.owner, 'SS0094')
         d = self.c.get('/api/brain/graph').get_json()
         self.assertIn({'source': f'vessel:{v}', 'target': 'wiki:belgium-b'}, d['links'])
+
+    def test_approval_nodes(self):
+        with appmod.app.app_context():
+            v = execute("INSERT INTO vessels(name, vsl_cd) VALUES('BELGIUM B','BGBB')")
+            execute("INSERT INTO aor_draft(aor_cd, vsl_cd, vsl_nm, subj, amt, cur_cd, raw_row, status) "
+                    "VALUES('A1','BGBB','Belgium B','BWTS repair',1234.5,'USD','{\"secret\":1}','pending')")
+            execute("INSERT INTO aor_draft(aor_cd, vsl_cd, subj, status) VALUES('A2','BGBB','done','submitted')")
+        self._put({'nodes': [{'id': 'deku', 'title': '데쿠', 'cat': 'hub'}], 'links': []})
+        self._login(self.owner, 'SS0094')
+        d = self.c.get('/api/brain/graph').get_json()
+        ap = [n for n in d['nodes'] if n['cat'] == 'approval']
+        self.assertEqual(1, len(ap))
+        self.assertIn('USD 1,234.50', ap[0]['summary'])
+        self.assertNotIn('secret', json.dumps(ap))
+        self.assertIn({'source': f'vessel:{v}', 'target': ap[0]['id']}, d['links'])
 
     def test_anonymous_redirected(self):
         self.assertIn(self.c.get('/api/brain/graph').status_code, (302, 401))

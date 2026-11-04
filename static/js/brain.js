@@ -10,6 +10,7 @@
     { key: 'issue', label: 'TRMT 현안', color: css('--coral-dot') || '#D85A30' },
     { key: 'closed', label: '완료 현안(이력)', color: css('--border-strong') || '#B4B2A9' },
     { key: 'mail', label: '메일', color: css('--purple') || '#6B4E71' },
+    { key: 'approval', label: '결재 대기', color: css('--amber-dot') || '#EF9F27' },
     { key: 'knowledge', label: '지식자료(위키·도면·스킬)', color: css('--teal') || '#0F6E56' },
     { key: 'project', label: 'Projects · 진행', color: css('--coral-dot') || '#D85A30' },
     { key: 'area', label: 'Areas · 영역', color: css('--blue-dot') || '#378ADD' },
@@ -168,11 +169,13 @@
     box.scrollTop = 0;
     if (mode === '2d' && graph) graph.nodeCanvasObject(draw2d); // 선택 테두리 다시 그림
   }
+  const APPR_PAGE = { aor: '/aor', fundreq: '/fundreq', invoice: '/invoice', repair: '/rpcost', purchase: '/rpcost' };
   const MAIL_PAGE = { daily: '/daily-mail', vetting: '/vetting-mail', class: '/class-mail', cs: '/cs-mail' };
   const inApp = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.trmtBrain);
   function openTarget(n) {
     if ((n.cat === 'issue' || n.cat === 'closed') && n.ref) return { label: 'Daily에서 이 현안 열기', web: '/?issue=' + encodeURIComponent(n.ref), app: { kind: 'issue', id: Number(n.ref) } };
     if (n.cat === 'vessel') return { label: 'Daily에서 이 선박 현안 보기', web: '/?vessel_id=' + encodeURIComponent(n.ref || ''), app: { kind: 'vessel', name: n.title } };
+    if (n.cat === 'approval' && APPR_PAGE[n.type] && !inApp) return { label: '결재 화면 열기', web: APPR_PAGE[n.type], app: { kind: 'approval', type: n.type } };
     if (n.cat === 'mail' && MAIL_PAGE[n.type]) return { label: '메일 자동화 화면 열기', web: MAIL_PAGE[n.type], app: { kind: 'mail', type: n.type } };
     return null;
   }
@@ -200,6 +203,7 @@
       { k: 'overdue', label: '마감 지남', cls: 'fail', ids: iss.filter((n) => n.due && n.due < today) },
       { k: 'soon', label: '7일 내 마감', cls: 'warn', ids: iss.filter((n) => n.due && n.due >= today && n.due <= in7) },
       { k: 'mail', label: '회신 대기 메일', cls: '', ids: all.nodes.filter((n) => n.cat === 'mail' && n.status === 'disabled') },
+      { k: 'appr', label: '결재 대기', cls: '', ids: all.nodes.filter((n) => n.cat === 'approval') },
       { k: 'auto', label: '실패 자동화', cls: 'fail', ids: all.nodes.filter((n) => n.cat === 'automation' && n.status === 'fail') },
     ];
     const box = $('br-today');

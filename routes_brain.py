@@ -20,6 +20,7 @@ OWNER_USERNAME = os.environ.get('JOURNAL_OWNER_USERNAME', 'SS0094')
 MAX_PAYLOAD = 8_000_000
 MAX_NODES = 5000
 CATS = {'project', 'area', 'resource', 'archive', 'hub', 'automation', 'update', 'knowledge'}
+APPROVAL_KINDS = (('aor', 'AOR'), ('fundreq', 'FundReq'), ('invoice', 'Invoice'), ('repair', '수리비'), ('purchase', '구매비'))
 STR_FIELDS = ('title', 'type', 'summary', 'body', 'section', 'updated', 'status', 'vessel')
 
 
@@ -128,6 +129,7 @@ def _last_action(raw):
 def _add_trmt(nodes, links):
     """TRMT 선박·미종결 현안을 DB 에서 직접 붙인다(동기화 불필요, 항상 최신)."""
     vrows = query('SELECT id, name, short_name, vsl_cd FROM vessels WHERE active=1 ORDER BY name')
+    vcd = {(v['vsl_cd'] or '').upper(): v['id'] for v in vrows if v['vsl_cd']}
     irows = query("SELECT id, vessel_id, item_topic, priority, status, issue_date, due_date, actions "
                   "FROM issues WHERE status IN ('Open','InProgress') ORDER BY due_date IS NULL, due_date")
     per = {}
@@ -183,6 +185,54 @@ def _add_trmt(nodes, links):
         links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
         links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})  # 현안 상세 '연결된 노트'에 소속 선박
     _add_mail(nodes, links, vid)
+    _add_approvals(nodes, links, vcd)
+
+
+def _approval_rows(key):
+    # 결재 대기(pending)만. 고정 SQL 리터럴(동적 SQL 금지). 결재 버튼·첨부·원본 행은 넣지 않는다.
+    if key == 'aor':
+        return query("SELECT id, aor_cd AS doc, vsl_cd, vsl_nm, subj, amt, cur_cd, created_at FROM aor_draft "
+                     "WHERE status='pending' ORDER BY created_at")
+    if key == 'fundreq':
+        return query("SELECT id, opex_cd AS doc, vsl_cd, vsl_nm, subj, amt, cur_cd, created_at FROM fundreq_draft "
+                     "WHERE status='pending' ORDER BY created_at")
+    if key == 'invoice':
+        return query("SELECT id, inv_cd AS doc, vsl_cd, vsl_nm, COALESCE(subject, vndr_nm) AS subj, amt, cur_cd, created_at "
+                     "FROM invoice_draft WHERE status='pending' ORDER BY created_at")
+    if key == 'repair':
+        return query("SELECT id, svms_key AS doc, vsl_cd, vsl_nm, subj, amt, cur_cd, created_at FROM rp_cost_draft "
+                     "WHERE status='pending' AND kind='repair' ORDER BY created_at")
+    if key == 'purchase':
+        return query("SELECT id, svms_key AS doc, vsl_cd, vsl_nm, subj, amt, cur_cd, created_at FROM rp_cost_draft "
+                     "WHERE status='pending' AND kind='purchase' ORDER BY created_at")
+    return []
+
+
+def _add_approvals(nodes, links, vcd):
+    """결재 대기 큐(AOR·FundReq·Invoice·수리·구매) — 보기 전용. 결재는 원 화면에서만."""
+    total, hubs = 0, []
+    for key, label in APPROVAL_KINDS:
+        rows = _approval_rows(key)
+        total += len(rows)
+        hub = f'hub:appr:{key}'
+        hubs.append((hub, label, len(rows)))
+        for r in rows:
+            nid = f'appr:{key}:{r["id"]}'
+            amt = f"{r['cur_cd'] or ''} {r['amt']:,.2f}".strip() if isinstance(r['amt'], (int, float)) else '-'
+            nodes.append({'id': nid, 'title': f"{r['vsl_nm'] or r['vsl_cd'] or ''} · {r['subj'] or r['doc']}"[:200],
+                          'cat': 'approval', 'type': key, 'status': 'disabled', 'date': (r['created_at'] or '')[:10],
+                          'summary': f"{label} 결재 대기 · {r['doc']} · {amt} · 적재 {(r['created_at'] or '')[:16]}"})
+            links.append({'source': hub, 'target': nid})
+            v = vcd.get((r['vsl_cd'] or '').upper())
+            if v:
+                links.append({'source': f'vessel:{v}', 'target': nid})
+                links.append({'source': nid, 'target': f'vessel:{v}'})
+    nodes.append({'id': 'hub:appr', 'title': f'결재 대기 {total}', 'cat': 'hub', 'type': 'hub',
+                  'summary': ' · '.join(f'{l} {n}' for _, l, n in hubs) + ' — 보기 전용, 결재는 원 화면에서.'})
+    links.append({'source': 'deku', 'target': 'hub:appr'})
+    for hub, label, n in hubs:
+        nodes.append({'id': hub, 'title': f'{label} {n}', 'cat': 'hub', 'type': 'hub', 'summary': f'{label} 결재 대기 {n}건.'})
+        links.append({'source': 'hub:appr', 'target': hub})
 
 
 MAIL_DAYS = 30
