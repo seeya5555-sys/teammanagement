@@ -8,6 +8,14 @@
   .br-head h1{font-size:19px;margin:0;font-weight:700;color:var(--text-primary)}
   .br-meta{font-size:11.5px;color:var(--text-tertiary)}
   .br-spacer{flex:1}
+  .br-today{display:flex;gap:8px;flex-wrap:wrap}
+  .br-today[hidden]{display:none}
+  .br-chip{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border-subtle);
+           border-radius:6px;padding:7px 12px;font-size:12.5px;color:var(--text-secondary);cursor:pointer}
+  .br-chip b{font-size:16px;color:var(--text-primary)}
+  .br-chip.warn{border-color:var(--amber-border);background:var(--amber-bg)} .br-chip.warn b{color:var(--amber)}
+  .br-chip.fail{border-color:var(--red-border);background:var(--red-bg)} .br-chip.fail b{color:var(--red)}
+  .br-chip.on{outline:2px solid var(--accent)}
   .br-search{border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;width:220px;
              background:var(--surface);color:var(--text-primary)}
   .br-seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface)}
@@ -77,6 +85,7 @@
       <button type="button" data-mode="3d">3D</button>
     </div>
   </div>
+  <div class="br-today" id="br-today" hidden></div>
   <div class="br-body">
     <aside class="br-card br-side">
       <h3>분류</h3>

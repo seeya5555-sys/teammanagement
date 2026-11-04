@@ -58,9 +58,16 @@
     return (n.title || '').toLowerCase().includes(q) || (n.id || '').toLowerCase().includes(q)
       || (n.summary || '').toLowerCase().includes(q);
   }
+  let todayPick = null;               // Today 칩 선택 시 해당 노드 묶음만
   function viewData() {
     const fs = focusMode ? focusSet() : null;
-    const nodes = all.nodes.filter((n) => visible(n) && (!fs || fs.has(n.id) || (query && matches(n))));
+    let nodes = all.nodes.filter((n) => visible(n) && (!fs || fs.has(n.id) || (query && matches(n))));
+    if (todayPick) {
+      const keep = new Set(todayPick);
+      todayPick.forEach((id) => nbrs(id).forEach((t) => { const x = byId.get(t); if (x && x.cat === 'vessel') keep.add(t); }));
+      keep.add('deku');
+      nodes = all.nodes.filter((n) => keep.has(n.id) && (visible(n) || n.id === 'deku'));  // Today=데쿠 중심 대신, 분류·폐기 필터는 유지
+    }
     const ids = new Set(nodes.map((n) => n.id));
     const links = all.links.filter((l) => ids.has(l._s) && ids.has(l._t)).map((l) => ({ source: l._s, target: l._t }));
     return { nodes, links };
@@ -185,6 +192,31 @@
     select(n.id);
   });
 
+  function renderToday() {
+    const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    const in7 = new Date(Date.now() + (9 + 24 * 7) * 3600e3).toISOString().slice(0, 10);
+    const iss = all.nodes.filter((n) => n.cat === 'issue');
+    const groups = [
+      { k: 'overdue', label: '마감 지남', cls: 'fail', ids: iss.filter((n) => n.due && n.due < today) },
+      { k: 'soon', label: '7일 내 마감', cls: 'warn', ids: iss.filter((n) => n.due && n.due >= today && n.due <= in7) },
+      { k: 'mail', label: '회신 대기 메일', cls: '', ids: all.nodes.filter((n) => n.cat === 'mail' && n.status === 'disabled') },
+      { k: 'auto', label: '실패 자동화', cls: 'fail', ids: all.nodes.filter((n) => n.cat === 'automation' && n.status === 'fail') },
+    ];
+    const box = $('br-today');
+    box.innerHTML = '<span class="br-meta" style="align-self:center">Today</span>' + groups.map((g) =>
+      `<button type="button" class="br-chip ${g.ids.length ? g.cls : ''}" data-k="${g.k}"><b>${g.ids.length}</b>${esc(g.label)}</button>`).join('');
+    box.hidden = false;
+    box.onclick = (e) => {
+      const b = e.target.closest('.br-chip'); if (!b) return;
+      const g = groups.find((x) => x.k === b.dataset.k);
+      const same = b.classList.contains('on');
+      box.querySelectorAll('.br-chip').forEach((x) => x.classList.remove('on'));
+      todayPick = (same || !g.ids.length) ? null : g.ids.map((n) => n.id);
+      if (todayPick) { b.classList.add('on'); g.ids.forEach((n) => enabled.add(n.cat)); renderCats(); }
+      refresh();
+      if (todayPick) select(todayPick[0]);
+    };
+  }
   function renderCats() {
     const counts = {};
     all.nodes.forEach((n) => { counts[n.cat] = (counts[n.cat] || 0) + 1; });
@@ -237,6 +269,7 @@
       const e = $('br-empty'); e.hidden = false; e.textContent = '아직 동기화된 데이터가 없어. 맥 데쿠가 첫 동기화를 하면 그래프가 그려져.';
       return;
     }
+    renderToday();
     build();
     if (byId.has('deku')) select('deku');
   }).catch((err) => {

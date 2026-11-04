@@ -178,7 +178,7 @@ def _add_trmt(nodes, links):
         sub = [r['priority'], r['status'], r['due_date'] and f"마감 {r['due_date']}" + (' (지남)' if overdue else '')]
         nid = f"issue:{r['id']}"
         nodes.append({'id': nid, 'title': r['item_topic'], 'cat': 'issue', 'type': 'issue', 'status': st, 'ref': r['id'],
-                      'date': r['issue_date'], 'summary': ' · '.join(x for x in sub if x),
+                      'date': r['issue_date'], 'due': r['due_date'] or '', 'summary': ' · '.join(x for x in sub if x),
                       'body': _history(r['actions'])})
         links.append({'source': f"vessel:{r['vessel_id']}", 'target': nid})
         links.append({'source': nid, 'target': f"vessel:{r['vessel_id']}"})  # 현안 상세 '연결된 노트'에 소속 선박
