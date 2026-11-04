@@ -35,7 +35,7 @@ import dock_report_projection
 import report_export_service
 from app_core import (
     AOR_PDF_DIR, FUNDREQ_FILE_DIR, INVOICE_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT,
-    STT_LEASE_SEC, STT_MAX_ATTEMPTS, STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, app,
+    STT_LEASE_SEC, STT_MAX_ATTEMPTS, STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, _PREVIEW_UPLOAD_MAX, app,
     ensure_heif_opener, execute, execute_rc, get_db, query,
 )
 from helpers_shared import (
@@ -6109,7 +6109,7 @@ def api_aor_attachment_pdf(did, idx):
 @bp.route('/api/ext/aor/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
 @api_key_required
 def api_ext_aor_attachment_upload(did, idx):
-    MAX = 25 * 1024 * 1024
+    MAX = _PREVIEW_UPLOAD_MAX
     if idx < 0 or idx > 49: return jsonify({'error': 'invalid index'}), 400
     if request.content_length and request.content_length > MAX: return jsonify({'error': 'too large'}), 413
     row = query('SELECT status FROM aor_draft WHERE id=?', (did,), one=True)
@@ -7855,7 +7855,7 @@ def api_ext_invoice_lookup(inv_cd):
 def api_ext_invoice_pdf_upload(did):
     """prep 엔진이 3자 대조된 원본 PDF를 적재(미리보기용). raw body 또는 multipart 'pdf'.
     저장은 컨펌대기 동안만 — 컨펌/리젝/삭제 시 자동 정리된다."""
-    MAX = 25 * 1024 * 1024
+    MAX = _PREVIEW_UPLOAD_MAX
     # 조기 방어: 선언된 크기가 이미 초과면 body 안 읽고 거부
     if request.content_length and request.content_length > MAX:
         return jsonify({'error': 'too large'}), 413
@@ -7884,7 +7884,7 @@ def api_ext_invoice_pdf_upload(did):
 @bp.route('/api/ext/invoice/drafts/<int:did>/attachments/<int:idx>', methods=['POST'])
 @api_key_required
 def api_ext_invoice_attachment_upload(did, idx):
-    MAX=25*1024*1024
+    MAX=_PREVIEW_UPLOAD_MAX
     row=query('SELECT status,attachments FROM invoice_draft WHERE id=?',(did,),one=True)
     if not row: return jsonify({'error':'not found'}),404
     if row['status'] not in ('pending','approved','rejecting'):

@@ -19,6 +19,7 @@
 명시적으로 import 해서 자기 네임스페이스에 다시 묶는다.
 """
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -180,6 +181,16 @@ def _require_runtime_initialization():
 
 _NON_STT_UPLOAD_MAX = 20 * 1024 * 1024             # 회의록 외 업로드(사진·엑셀 등) 상한 20MB
 _SOA_REVIEW_SNAPSHOT_MAX = 100 * 1024 * 1024        # API-key Mac runner가 예외 인보이스 PDF 묶음을 동기화
+# 맥 러너 → 승인카드 미리보기 첨부(인보이스·AOR·FundReq·RP Cost·전자결재·Dock 견적) 상한.
+# 20MB 전역 상한에 걸려 CAP Report(23.7MB) 등 큰 증빙이 413→'미리보기 없음'이 됐다(2026-11-04).
+_PREVIEW_UPLOAD_MAX = 60 * 1024 * 1024
+_PREVIEW_UPLOAD_PATH_RE = re.compile(
+    r'^/api/ext/(?:invoice/drafts/\d+/(?:pdf|attachments/\d+)'
+    r'|aor/drafts/\d+/attachments/\d+'
+    r'|fundreq/drafts/\d+/attachments/\d+'
+    r'|rpcost/drafts/\d+/pdf'
+    r'|jeonja/review/[^/]+/pdf'
+    r'|dock_procure/\d+/attachments/\d+)$')
 
 
 # ═════════════════════════════════════════════════════════════════

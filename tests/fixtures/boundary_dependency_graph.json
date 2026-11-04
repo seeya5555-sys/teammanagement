@@ -53,6 +53,8 @@
       "STT_MAX_BYTES",
       "UPLOAD_DIR",
       "_NON_STT_UPLOAD_MAX",
+      "_PREVIEW_UPLOAD_MAX",
+      "_PREVIEW_UPLOAD_PATH_RE",
       "_SOA_REVIEW_SNAPSHOT_MAX",
       "_load_or_create_secret_key",
       "app",
@@ -196,6 +198,7 @@
       "SOA_REVIEW_PDF_DIR",
       "UPLOAD_DIR",
       "_NON_STT_UPLOAD_MAX",
+      "_PREVIEW_UPLOAD_MAX",
       "app",
       "execute",
       "get_db",
@@ -246,6 +249,7 @@
       "STT_MAX_BYTES",
       "UPLOAD_DIR",
       "_NON_STT_UPLOAD_MAX",
+      "_PREVIEW_UPLOAD_MAX",
       "app",
       "ensure_heif_opener",
       "execute",
@@ -430,6 +434,7 @@
   "routes_dock_submit.py": {
     "app_core.py": [
       "JEONJA_PDF_DIR",
+      "_PREVIEW_UPLOAD_MAX",
       "app",
       "execute",
       "execute_rc",
@@ -550,6 +555,7 @@
   "routes_rpcost.py": {
     "app_core.py": [
       "RPCOST_PDF_DIR",
+      "_PREVIEW_UPLOAD_MAX",
       "execute",
       "execute_rc",
       "query"

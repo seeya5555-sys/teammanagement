@@ -44,6 +44,7 @@ from app_core import (
     INSTANCE_DIR, INVOICE_PDF_DIR, JEONJA_PDF_DIR, SCHEMA_FILE, SECRET_KEY_FILE, SEED_FILE,
     SOA_REVIEW_PDF_DIR, STT_AUDIO_DIR, STT_AUDIO_EXT, STT_LEASE_SEC, STT_MAX_ATTEMPTS,
     STT_MAX_BYTES, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, _SOA_REVIEW_SNAPSHOT_MAX,
+    _PREVIEW_UPLOAD_MAX, _PREVIEW_UPLOAD_PATH_RE,
     _load_or_create_secret_key, app, close_db, execute, execute_rc, get_db, init_runtime, query,
 )
 from token_auth import (
@@ -70,6 +71,15 @@ def _limit_non_stt_upload():
             abort(413)
         try:
             request.max_content_length = _SOA_REVIEW_SNAPSHOT_MAX
+        except (AttributeError, TypeError):
+            pass
+        return
+    if _PREVIEW_UPLOAD_PATH_RE.match(request.path):   # 맥 러너 미리보기 첨부 — 라우트가 같은 상한으로 재검사
+        cl = request.content_length
+        if cl is not None and cl > _PREVIEW_UPLOAD_MAX:
+            abort(413)
+        try:
+            request.max_content_length = _PREVIEW_UPLOAD_MAX
         except (AttributeError, TypeError):
             pass
         return

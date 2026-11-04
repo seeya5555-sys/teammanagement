@@ -25,7 +25,7 @@ import re
 import uuid
 from flask import send_file
 from app_core import (
-    JEONJA_PDF_DIR, app, execute, execute_rc, get_db, query,
+    JEONJA_PDF_DIR, _PREVIEW_UPLOAD_MAX, app, execute, execute_rc, get_db, query,
 )
 from helpers_shared import (
     AUTOMATION_CLAIM_HOOKS, AUTOMATION_MODES, _xlsx_cell, GEMINI_API_KEY, _DOCKPROC_ATT_MAX, _DOCKPROC_CAT_NM,
@@ -3259,7 +3259,7 @@ def api_automation_jeonja_pdf(ref):
 @api_key_required
 def api_ext_jeonja_pdf_upload(ref):
     """Review runner uploads only the invoice/DN PDF actually used for judgment."""
-    MAX = 25 * 1024 * 1024
+    MAX = _PREVIEW_UPLOAD_MAX
     safe = _jeonja_ref(ref)
     if not safe:
         return jsonify({'error': 'invalid ref'}), 400

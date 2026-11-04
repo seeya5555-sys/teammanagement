@@ -24,14 +24,14 @@ from datetime import datetime
 
 from flask import Blueprint, abort, jsonify, render_template, request, send_file, session
 
-from app_core import RPCOST_PDF_DIR, execute, execute_rc, query
+from app_core import RPCOST_PDF_DIR, _PREVIEW_UPLOAD_MAX, execute, execute_rc, query
 from helpers_shared import _annotate_drafts_with_vessel, _automation_enabled, admin_required, api_key_required
 
 bp = Blueprint('routes_rpcost', __name__)
 
 RPCOST_KINDS = ('repair', 'purchase')
 RPCOST_SLOTS = ('01', '02', '03')
-RPCOST_PDF_MAX = 25 * 1024 * 1024
+RPCOST_PDF_MAX = _PREVIEW_UPLOAD_MAX
 _RPCOST_AUDIT_KEYS = ('original_inv_dt', 'inv_dt_override', 'inv_dt_override_by', 'inv_dt_override_at',
                       'original_date_match')
 # 러너 상태로 '살아있는' 카드 — 재적재 dedup 대상. failed 는 빠진다(다음 적재가 새 카드로 다시 세운다).

@@ -34,7 +34,7 @@ from werkzeug.utils import secure_filename
 
 from app_core import (
     ALLOWED_EXT, BASE_DIR, DATABASE, DOCKATT_FILE_DIR, INSTANCE_DIR,
-    SOA_REVIEW_PDF_DIR, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, app,
+    SOA_REVIEW_PDF_DIR, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, _PREVIEW_UPLOAD_MAX, app,
     execute, get_db, query,
 )
 
@@ -1553,7 +1553,7 @@ _FUNDREQ_ATT_MIME = {
 # 브라우저가 렌더할 수 있는 것만 inline. Office 는 어차피 못 그리니 다운로드로 넘긴다
 # (앱 QuickLook 은 Content-Disposition 과 무관하게 바이트만 받아 확장자로 판별).
 _FUNDREQ_ATT_INLINE = {'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}
-_FUNDREQ_ATT_MAX = _NON_STT_UPLOAD_MAX   # before_request 가 비-STT 업로드를 조이는 값과 일치(초과분은 거기서 413)
+_FUNDREQ_ATT_MAX = _PREVIEW_UPLOAD_MAX   # before_request 미리보기 첨부 경로 상한과 일치(초과분은 거기서 413)
 def _fundreq_att_ext(name):
     """확장자 정규화 — 허용목록에 없으면 None(= 업로드/서빙 거부)."""
     ext = str(name or '').rsplit('.', 1)[-1].strip().lower()

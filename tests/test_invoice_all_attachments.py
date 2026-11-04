@@ -28,6 +28,15 @@ class InvoiceAllAttachmentsTest(unittest.TestCase):
         self.assertEqual([0,1],d['attachment_preview_indices'])
         r=self.c.get(f'/api/invoice/drafts/{self.did}/attachments/0'); self.assertEqual(200,r.status_code); self.assertEqual('nosniff',r.headers.get('X-Content-Type-Options')); r.close()
         r=self.c.get(f'/api/invoice/drafts/{self.did}/attachments/1'); self.assertEqual(200,r.status_code); r.close()
+    def test_large_reference_pdf_over_generic_cap_is_accepted(self):
+        # CAP Report 23.7MB 실측 — 전역 20MB 상한에 걸리면 '미리보기 없음'이 된다(2026-11-04).
+        big=PDF+b'0'*(24*1024*1024)
+        self.assertEqual(200,self.upload(1,big).status_code)
+        self.assertIn(1,self.c.get('/api/invoice/drafts').get_json()['drafts'][0]['attachment_preview_indices'])
+    def test_preview_cap_and_generic_cap_still_enforced(self):
+        self.assertEqual(413,self.upload(1,PDF+b'0'*(61*1024*1024)).status_code)
+        r=self.c.post('/api/ext/invoice/drafts',headers={'X-API-Key':'secret','Content-Type':'application/json'},data=b'{'+b' '*(21*1024*1024)+b'}')
+        self.assertEqual(413,r.status_code)
     def test_non_pdf_and_out_of_range_are_rejected(self):
         self.assertEqual(400,self.upload(2).status_code); self.assertEqual(409,self.upload(9).status_code)
     def test_cleanup_removes_all_cached_attachments(self):
