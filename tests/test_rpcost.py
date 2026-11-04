@@ -186,11 +186,151 @@ class RpCostTests(unittest.TestCase):
         r = self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': '금액 확인'})
         self.assertEqual(200, r.status_code)
         row = self.row(a)
-        self.assertEqual(('rejected', '금액 확인'), (row['status'], row['reject_reason']))
-        self.assertIn('SVMS 반려는 안 함', row['result'])
+        self.assertEqual(('rejecting', '금액 확인'), (row['status'], row['reject_reason']))
+        self.assertEqual('rejecting', r.get_json()['status'])
         self.assertEqual(409, self.c.post('/api/rpcost/drafts/%d/approve' % a).status_code)
+        self.assertEqual(409, self.c.delete('/api/rpcost/drafts/%d' % a).status_code)   # rejecting 삭제 금지
         self.assertEqual(200, self.c.post('/api/rpcost/drafts/%d/reset' % a).status_code)
         self.assertEqual(200, self.c.delete('/api/rpcost/drafts/%d' % a).status_code)
+
+    # ---- reject → SVMS 반려 큐 ----
+    def _runs(self, task='rpcost_reject'):
+        with appmod.app.app_context():
+            return [dict(r) for r in appmod.query("SELECT run_id, status, mode FROM automation_run WHERE task=?", (task,))]
+
+    def test_reject_queues_run_and_reuses_queued(self):
+        a = self.ingest(repair_payload()).get_json()['id']
+        b = self.ingest(purchase_payload()).get_json()['id']
+        ra = self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': 'r1'}).get_json()
+        rb = self.c.post('/api/rpcost/drafts/%d/reject' % b, json={'reason': 'r2'}).get_json()
+        self.assertTrue(ra['reject_run'])
+        self.assertEqual(ra['reject_run'], rb['reject_run'])          # queued 1개 재사용
+        runs = self._runs()
+        self.assertEqual(1, len(runs))
+        self.assertEqual(('queued', 'live'), (runs[0]['status'], runs[0]['mode']))
+        # running 이면 새 run(이미 claim 끝난 run 에 안 실림)
+        with appmod.app.app_context():
+            appmod.execute("UPDATE automation_run SET status='running' WHERE task='rpcost_reject'")
+        self.c.get('/api/rpcost/drafts')                                 # 자기치유: rejecting 남아 있음 → 재큐잉
+        self.assertEqual(['queued', 'running'], sorted(r['status'] for r in self._runs()))
+        self.c.get('/api/rpcost/drafts')
+        self.assertEqual(2, len(self._runs()))                           # 폴링마다 run 폭증 없음
+
+    def test_reject_killswitch_marks_only(self):
+        a = self.ingest(repair_payload()).get_json()['id']
+        orig = routes_rpcost._automation_enabled
+        routes_rpcost._automation_enabled = lambda: False
+        try:
+            r = self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': 'x'}).get_json()
+        finally:
+            routes_rpcost._automation_enabled = orig
+        self.assertIsNone(r['reject_run'])
+        self.assertIn('접수만', r['message'])
+        self.assertEqual('rejecting', self.row(a)['status'])
+        self.assertEqual([], self._runs())
+
+    def test_rejecting_claim_token_and_result(self):
+        a = self.ingest(repair_payload()).get_json()['id']
+        b = self.ingest(purchase_payload()).get_json()['id']
+        self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': '수리 반려'})
+        self.c.post('/api/rpcost/drafts/%d/reject' % b, json={'reason': '구매 반려'})
+        self.assertEqual(401, self.c.get('/api/ext/rpcost/rejecting').status_code)
+        pk = self.c.get('/api/ext/rpcost/rejecting?peek=1', headers=KEY).get_json()
+        self.assertEqual(2, pk['count'])
+        self.assertEqual('rejecting', self.row(a)['status'])                        # peek = 상태 불변
+        self.assertEqual(400, self.c.get('/api/ext/rpcost/rejecting?kind=x', headers=KEY).status_code)
+        j = self.c.get('/api/ext/rpcost/rejecting?kind=purchase', headers=KEY).get_json()
+        self.assertEqual([b], [d['id'] for d in j['drafts']])
+        self.assertEqual('구매 반려', j['drafts'][0]['reject_reason'])
+        tok = j['drafts'][0]['claim_token']
+        self.assertTrue(tok)
+        self.assertEqual(('reject_submitting', tok), (self.row(b)['status'], self.row(b)['claim_token']))
+        self.assertEqual('rejecting', self.row(a)['status'])
+        self.assertEqual(0, self.c.get('/api/ext/rpcost/rejecting?kind=purchase', headers=KEY).get_json()['count'])
+        self.assertEqual(409, self.c.post('/api/rpcost/drafts/%d/reset' % b).status_code)   # claim 후 취소 불가
+        self.assertEqual(409, self.c.post('/api/rpcost/drafts/%d/approve' % b).status_code)
+        bad = self.c.post('/api/ext/rpcost/drafts/%d/reject-result' % b, headers=KEY,
+                          json={'ok': True, 'result': 'x', 'claim_token': 'wrong'})
+        self.assertEqual(409, bad.status_code)
+        self.assertFalse(bad.get_json()['applied'])
+        self.assertEqual(409, self.c.post('/api/ext/rpcost/drafts/%d/reject-result' % b, headers=KEY,
+                                          json={'ok': True}).status_code)                    # 토큰 없음
+        ok = self.c.post('/api/ext/rpcost/drafts/%d/reject-result' % b, headers=KEY,
+                         json={'ok': True, 'result': '리젝완료·STATUS=R', 'claim_token': tok})
+        self.assertEqual(200, ok.status_code)
+        self.assertEqual(('rejected', '리젝완료·STATUS=R'), (self.row(b)['status'], self.row(b)['result']))
+        again = self.c.post('/api/ext/rpcost/drafts/%d/reject-result' % b, headers=KEY,
+                            json={'ok': False, 'result': 'late', 'claim_token': tok})
+        self.assertEqual(409, again.status_code)                                             # 재회신 무시
+        self.assertEqual(409, self.c.post('/api/rpcost/drafts/%d/reset' % b).status_code)   # SVMS 반려완료는 되돌림 불가
+        # 수리 = 실패 → reject_failed, 카드 목록에 표시, reset 으로 재시도 가능
+        j = self.c.get('/api/ext/rpcost/rejecting', headers=KEY).get_json()
+        self.assertEqual([a], [d['id'] for d in j['drafts']])
+        self.c.post('/api/ext/rpcost/drafts/%d/reject-result' % a, headers=KEY,
+                    json={'ok': False, 'result': 'INV_STATUS_CD=CU — 리젝 불가', 'claim_token': j['drafts'][0]['claim_token']})
+        lst = {d['id']: d for d in self.c.get('/api/rpcost/drafts').get_json()['drafts']}
+        self.assertEqual('reject_failed', lst[a]['status'])
+        self.assertIn('리젝 불가', lst[a]['result'])
+        self.assertEqual(200, self.c.post('/api/rpcost/drafts/%d/reset' % a).status_code)
+        self.assertEqual('pending', self.row(a)['status'])
+
+    def test_rejecting_claim_cas_reason_change(self):
+        a = self.ingest(purchase_payload()).get_json()['id']
+        self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': 'r1'})
+        orig = routes_rpcost.query
+
+        def racing(sql, args=(), one=False):
+            res = orig(sql, args, one)
+            if "status='rejecting'" in sql and 'SELECT id, kind' in sql:   # 읽은 직후 사람이 취소→다른 사유로 재리젝
+                appmod.execute("UPDATE rp_cost_draft SET reject_reason='r2' WHERE id=?", (a,))
+            return res
+        routes_rpcost.query = racing
+        try:
+            j = self.c.get('/api/ext/rpcost/rejecting', headers=KEY).get_json()
+        finally:
+            routes_rpcost.query = orig
+        self.assertEqual(0, j['count'])
+        self.assertEqual('rejecting', self.row(a)['status'])
+
+    def test_rejecting_stale_recovered(self):
+        a = self.ingest(purchase_payload()).get_json()['id']
+        self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': 'r1'})
+        tok = self.c.get('/api/ext/rpcost/rejecting', headers=KEY).get_json()['drafts'][0]['claim_token']
+        with appmod.app.app_context():
+            appmod.execute("UPDATE rp_cost_draft SET done_at=datetime('now','localtime','-7 hours') WHERE id=?", (a,))
+        j = self.c.get('/api/ext/rpcost/rejecting', headers=KEY).get_json()
+        self.assertEqual([a], [d['id'] for d in j['drafts']])
+        self.assertNotEqual(tok, j['drafts'][0]['claim_token'])
+        self.assertEqual(409, self.c.post('/api/ext/rpcost/drafts/%d/reject-result' % a, headers=KEY,
+                                          json={'ok': True, 'claim_token': tok}).status_code)   # 옛 토큰 무효
+
+    def test_stale_reject_submitting_reclaimed_via_list(self):
+        a = self.ingest(purchase_payload()).get_json()['id']
+        self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': 'r1'})
+        tok = self.c.get('/api/ext/rpcost/rejecting', headers=KEY).get_json()['drafts'][0]['claim_token']
+        with appmod.app.app_context():
+            appmod.execute("DELETE FROM automation_run")                    # 기존 run 없음(러너 사망)
+            appmod.execute("UPDATE rp_cost_draft SET done_at=datetime('now','localtime','-7 hours') WHERE id=?", (a,))
+        self.c.get('/api/rpcost/drafts')
+        r = self.row(a)
+        self.assertEqual(('rejecting', None), (r['status'], r['claim_token']))
+        self.assertIn('회수', r['result'])
+        self.assertEqual(['queued'], [x['status'] for x in self._runs()])
+        self.assertEqual(409, self.c.post('/api/ext/rpcost/drafts/%d/reject-result' % a, headers=KEY,
+                                          json={'ok': True, 'claim_token': tok}).status_code)
+        # 6h 미만 reject_submitting 은 목록 조회로 회수 안 됨
+        self.c.get('/api/ext/rpcost/rejecting', headers=KEY)
+        self.c.get('/api/rpcost/drafts')
+        self.assertEqual('reject_submitting', self.row(a)['status'])
+
+    def test_rejecting_is_active_for_unique_index(self):
+        a = self.ingest(purchase_payload()).get_json()['id']
+        self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': 'r1'})
+        r = self.ingest(purchase_payload())
+        self.assertEqual((200, a), (r.status_code, r.get_json()['id']))
+        with appmod.app.app_context():
+            sql = appmod.query("SELECT sql FROM sqlite_master WHERE name='uq_rp_cost_draft_active'", one=True)['sql']
+        self.assertIn('reject_submitting', sql)
 
     def test_admin_guard(self):
         with self.c.session_transaction() as s:
@@ -288,13 +428,14 @@ class RpCostTests(unittest.TestCase):
     def test_reset_collision_409(self):
         a = self.ingest(repair_payload()).get_json()['id']
         self.c.post('/api/rpcost/drafts/%d/reject' % a, json={'reason': 'x'})
-        b = self.ingest(repair_payload()).get_json()['id']   # rejected 는 dedup 대상이라 새 카드 안 생김
+        b = self.ingest(repair_payload()).get_json()['id']   # rejecting 은 활성카드라 새 카드 안 생김
         self.assertEqual(a, b)
-        with appmod.app.app_context():                       # 다른 열린 카드가 있는 상태를 직접 구성
+        self.set_status(a, 'reject_failed')                  # 리젝 실패 → 재적재가 새 카드를 세운 상태
+        with appmod.app.app_context():
             appmod.execute("INSERT INTO rp_cost_draft(kind, svms_key, vsl_cd, raw_card) VALUES('repair','ATNHMI26100901','ATNH','{}')")
         r = self.c.post('/api/rpcost/drafts/%d/reset' % a)
         self.assertEqual(409, r.status_code)
-        self.assertEqual('rejected', self.row(a)['status'])
+        self.assertEqual('reject_failed', self.row(a)['status'])
 
     def test_claim_only_and_aba_token(self):
         a = self.ingest(repair_payload()).get_json()['id']
@@ -387,7 +528,8 @@ class RpCostTests(unittest.TestCase):
     def test_page_renders(self):
         r = self.c.get('/rpcost')
         self.assertEqual(200, r.status_code)
-        self.assertIn('TRMT 에만 표시', r.get_data(as_text=True))
+        self.assertIn('리젝 (SVMS 반려+리젝메일)', r.get_data(as_text=True))
+        self.assertNotIn('TRMT 에만 표시', r.get_data(as_text=True))
 
 
 class RpCostBearerTests(unittest.TestCase):
@@ -432,7 +574,8 @@ class RpCostBearerTests(unittest.TestCase):
                                                   json={}).status_code)
             rj = self.app_c.post('/api/rpcost/drafts/%d/reject' % pid, headers=self.h, json={'reason': 'dup'})
             self.assertEqual(200, rj.status_code)
-            self.assertIn('SVMS 는 그대로', rj.get_json()['message'])
+            self.assertEqual('rejecting', rj.get_json()['status'])
+            self.assertIn('SVMS 반려', rj.get_json()['message'])
         finally:
             appmod.app.config['CSRF_PROTECT'] = old
 

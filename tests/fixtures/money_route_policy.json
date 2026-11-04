@@ -114,6 +114,11 @@
     "guard": "api_key_required",
     "non_admin": 401
   },
+  "GET /api/ext/rpcost/rejecting": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
   "GET /api/fundreq/drafts": {
     "anonymous": 401,
     "guard": "admin_required",
@@ -310,6 +315,11 @@
     "non_admin": 401
   },
   "POST /api/ext/rpcost/drafts/<int:did>/pdf": {
+    "anonymous": 401,
+    "guard": "api_key_required",
+    "non_admin": 401
+  },
+  "POST /api/ext/rpcost/drafts/<int:did>/reject-result": {
     "anonymous": 401,
     "guard": "api_key_required",
     "non_admin": 401

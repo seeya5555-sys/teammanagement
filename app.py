@@ -152,7 +152,7 @@ def _rp_cost_draft_install(conn):
         gate          TEXT,                                -- PASS/HOLD
         svms_status   TEXT,                                -- 적재 시 SVMS 라이브 상태(IU/U 등)
         raw_card      TEXT,                                -- prep 카드 + 사람 교정(exp_sel, inv_dt_override audit)
-        status        TEXT NOT NULL DEFAULT 'pending',     -- pending/approved/submitting/submitted/failed/rejected
+        status        TEXT NOT NULL DEFAULT 'pending',     -- pending/approved/submitting/submitted/failed/rejecting/reject_submitting/rejected/reject_failed
         reject_reason TEXT,
         decided_at    TEXT,
         decided_by    TEXT,
@@ -169,13 +169,18 @@ def _rp_cost_draft_install(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_rp_cost_draft_key ON rp_cost_draft(kind, svms_key)")
     # 같은 SVMS 건의 '살아있는' 카드는 1장만(동시 ingest 경합 차단). 이력(submitted/failed/rejected)은 여러 장 허용.
     # 인덱스 생성 전 기존 중복은 최신 1장만 남기고 failed 로 내려 사람 재검토에 맡긴다.
+    # 리젝 실행(rejecting/reject_submitting)도 '살아있는' 카드. 구 인덱스(3상태)면 재생성.
+    old = conn.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_rp_cost_draft_active'").fetchone()
+    if old and 'reject_submitting' not in (old[0] or ''):
+        conn.execute("DROP INDEX uq_rp_cost_draft_active")
     conn.execute("UPDATE rp_cost_draft SET status='failed', "
                  "result=COALESCE(result,'')||' [auto: 중복 활성카드 정리 — UNIQUE 도입]' "
-                 "WHERE status IN ('pending','approved','submitting') AND id NOT IN ("
-                 "SELECT MAX(id) FROM rp_cost_draft WHERE status IN ('pending','approved','submitting') "
+                 "WHERE status IN ('pending','approved','submitting','rejecting','reject_submitting') AND id NOT IN ("
+                 "SELECT MAX(id) FROM rp_cost_draft "
+                 "WHERE status IN ('pending','approved','submitting','rejecting','reject_submitting') "
                  "GROUP BY kind, svms_key)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_rp_cost_draft_active ON rp_cost_draft(kind, svms_key) "
-                 "WHERE status IN ('pending','approved','submitting')")
+                 "WHERE status IN ('pending','approved','submitting','rejecting','reject_submitting')")
 
 
 def init_db(drop=False):

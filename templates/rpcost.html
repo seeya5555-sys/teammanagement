@@ -25,6 +25,8 @@
   .st-submitted{background:var(--green-bg);color:var(--green)}
   .st-rejected{background:var(--surface-3);color:var(--text-secondary)}
   .st-failed{background:var(--red-bg);color:var(--red)}
+  .st-rejecting,.st-reject_submitting{background:var(--amber-bg);color:var(--amber)}
+  .st-reject_failed{background:var(--red-bg);color:var(--red)}
   .fr-body{padding:10px 14px;font-size:13px;color:var(--text-secondary)}
   .fr-kv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:6px}
   .fr-kv b{color:var(--text-primary)}
@@ -91,7 +93,7 @@
   <b>[체크한 것 일괄승인+컨펌]</b>을 누르면 맥 러너가 SVMS 를 다시 읽고 금액이 그대로일 때만 반영합니다.<br>
   · <b>구매</b>: SVMS Approve(STATUS=A). Remit 은 SVMS 값 그대로, 메일 안 보냄.<br>
   · <b>수리</b>: Invoice Date·Expense code 를 카드에서 고칠 수 있고, Remit 은 Invoice Date 의 월말로 맞춥니다. 승인 후 컨펌하면 <b>SVMS HQ Confirm(INV_STATUS CU)</b>을 저장합니다. 저장 직전 SVMS 를 다시 읽어 금액·상태가 바뀌었으면 멈춥니다. BIZ_NO(세금계산서 메일) 건은 거부됩니다.<br>
-  · <b>리젝</b>은 TRMT 에만 표시합니다. SVMS 반려는 하지 않으니 필요하면 SVMS 에서 직접 반려하세요.
+  · <b>리젝</b>(사유 필수)은 맥 러너가 <b>SVMS 반려</b>(구매 STATUS=R + Shore remark / 수리 INV_STATUS CJ)를 저장하고, 반려 확인 후 SVMS 리젝메일을 보냅니다. 실패하면 카드에 <b>reject_failed</b> 로 남습니다.
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
 <datalist id="expcodes"></datalist>
@@ -198,15 +200,16 @@
     if(d.status==='pending'){
       acts=`<label class="fr-optout"><input type="checkbox" data-optout ${gate==='PASS'?'checked':''}> 승인(컨펌)</label>
         <button class="fr-b ap" data-act="approve">승인</button>
-        <input class="fr-rsn" placeholder="리젝 사유 (TRMT 표시만 — SVMS 반려 안 함)">
-        <button class="fr-b rj" data-act="reject">리젝</button>
+        <input class="fr-rsn" placeholder="리젝 사유 (필수 — SVMS 반려 사유로 저장)">
+        <button class="fr-b rj" data-act="reject">리젝 (SVMS 반려+리젝메일)</button>
         <button class="fr-b del" data-act="delete">삭제</button>`;
-    } else if(d.status==='approved'||d.status==='rejected'){
-      const lbl=d.status==='approved'?'승인 — 컨펌 실행 대기':'리젝 표시(TRMT 만)';
-      acts=`<span class="fr-decided">${lbl}${d.reject_reason?' — 사유: '+esc(d.reject_reason):''} (${esc(d.decided_by||'')})</span>
-        <button class="fr-b rs" data-act="reset">결정 취소</button>${d.status==='rejected'?'<button class="fr-b del" data-act="delete">삭제</button>':''}`;
+    } else if(d.status==='approved'||d.status==='rejecting'||d.status==='reject_failed'){
+      const lbl={approved:'승인 — 컨펌 실행 대기',rejecting:'리젝 접수 — 맥 러너 SVMS 반려 대기',reject_failed:'리젝 실패 — SVMS 반려 안 됨/확인 필요'}[d.status];
+      acts=`<span class="fr-decided">${lbl}${d.reject_reason?' — 사유: '+esc(d.reject_reason):''} (${esc(d.decided_by||'')})${d.result?' — '+esc(d.result):''}</span>
+        <button class="fr-b rs" data-act="reset">결정 취소</button>${d.status==='reject_failed'?'<button class="fr-b del" data-act="delete">삭제</button>':''}`;
     } else {
-      acts=`<span class="fr-decided">${esc(d.status)}${d.result?' — '+esc(d.result):''}</span>${d.status!=='submitting'?'<button class="fr-b del" data-act="delete">삭제</button>':''}`;
+      const sl={rejected:'SVMS 반려 완료',reject_submitting:'SVMS 반려 실행중'}[d.status]||d.status;
+      acts=`<span class="fr-decided">${esc(sl)}${d.reject_reason?' — 사유: '+esc(d.reject_reason):''}${d.result?' — '+esc(d.result):''}</span>${(d.status!=='submitting'&&d.status!=='reject_submitting')?'<button class="fr-b del" data-act="delete">삭제</button>':''}`;
     }
     return `<div class="fr-card collapsed" data-id="${d.id}" data-status="${esc(d.status)}" data-kind="${esc(d.kind)}" data-inv-dt="${esc(d.inv_dt||'')}">
       <div class="fr-top"><span class="fr-caret">▾</span>
@@ -288,13 +291,14 @@
     } else if(a==='reject'){
       const rsn=el.querySelector('.fr-rsn').value.trim();
       if(!rsn){alert('리젝 사유를 입력하세요.');return;}
-      if(!confirm(`TRMT 에만 리젝으로 표시할까요?\n· 사유: ${rsn}\n· SVMS 는 바뀌지 않습니다(반려가 필요하면 SVMS 에서 직접)`))return;
+      if(!confirm(`SVMS 에서 반려(리젝)하고 리젝메일을 보낼까요?\n· 사유: ${rsn}\n· 맥 러너가 SVMS 반려(구매 R / 수리 CJ) 저장 후 벤더에게 리젝메일 발송 — 되돌릴 수 없습니다`))return;
       body={reason:rsn};url+='/reject';
     } else if(a==='reset'){url+='/reset';}
     else if(a==='delete'){if(!confirm('이 카드를 삭제할까요?'))return;method='DELETE';}
     el.classList.add('is-busy');
     const {ok,j}=await api(method,url,body);
     if(!ok){alert('실패: '+(j.error||''));el.classList.remove('is-busy');}
+    else if(a==='reject'&&j.message){alert(j.message);}
     load();
   }
   $('#fr-verify').onclick=async()=>{
@@ -324,7 +328,7 @@
     $('#fr-collapse').textContent=anyOpen?'전체펼치기':'전체접기';
   };
   $('#fr-reload').onclick=()=>load();
-  $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌·리젝표시·실패) 카드를 비울까요?'))return;await api('DELETE','/api/rpcost/drafts/decided');load();};
+  $('#fr-clear').onclick=async()=>{if(!confirm('처리완료(컨펌·SVMS 반려·실패·리젝실패) 카드를 비울까요?'))return;await api('DELETE','/api/rpcost/drafts/decided');load();};
   loadExp(); load(); setInterval(()=>{if(document.hidden||(window.InlineEdit&&InlineEdit.busy()))return;load(true);},8000);
 })();
 </script>

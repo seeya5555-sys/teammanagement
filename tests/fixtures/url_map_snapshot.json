@@ -3780,6 +3780,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/rpcost/drafts/<int:did>/reject-result",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_rpcost.api_ext_rpcost_reject_result",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/rpcost/drafts/<int:did>/result",
     "methods": [
       "OPTIONS",
@@ -3807,6 +3817,17 @@
       "POST"
     ],
     "endpoint": "routes_rpcost.api_ext_rpcost_reconcile",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/rpcost/rejecting",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_rpcost.api_ext_rpcost_rejecting",
     "strict_slashes": true,
     "defaults": {}
   },

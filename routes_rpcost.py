@@ -2,13 +2,15 @@
 
 흐름(인보이스탭과 같음):
   · 맥 prep 엔진(automation/svms-repair-purchase/ingest.py)이 카드 적재 — POST /api/ext/rpcost/drafts
-  · 사람이 /rpcost 탭에서 opt-out 승인(approved) / 리젝(TRMT 표시만) / 수리 카드 INV_DT·EXP_CD 교정
+  · 사람이 /rpcost 탭에서 opt-out 승인(approved) / 리젝(rejecting → SVMS 반려+리젝메일) / 수리 카드 INV_DT·EXP_CD 교정
   · [일괄승인+컨펌] → `rpcost_confirm` live → 맥 confirm.py 가 approved claim → SVMS 재조회·검증·저장 → result
 
 범위: SS0094 My Vessel 만. 한 표(rp_cost_draft)에 kind=repair|purchase, dedup 키 = kind + svms_key
   (수리 = INV_CD, 구매 = SVMS INV_NO 키 예 `…AA1`).
 
-🔴 v1 리젝은 **TRMT 표시만**이다. SVMS 에는 아무것도 보내지 않는다(SVMS 반려는 사람이 SVMS 에서 직접).
+🔴 리젝 = rejecting 마킹 + `rpcost_reject` 자동큐 → 맥 confirm.py 가 rejecting claim(claim_token) → SVMS 반려
+   (구매 SP_SET_INV_INFO STATUS R + STATUS_RMK / 수리 SP_SET_INV INV_STATUS CJ) → read-back → 리젝메일 relay → reject-result.
+   실패 = reject_failed(카드에 표시). 러너 LIVE 저장은 RP_REJECT_LIVE=1 일 때만(기본 OFF = DRY, peek 만).
 🔴 수리 컨펌(SP_SET_INV CU)은 러너가 RP_CONFIRM_LIVE=1 AND RP_REPAIR_LIVE_ENABLED=1 일 때만 저장(골든 캡처 반영).
 🔴 result 는 claim_token 일치 시에만 반영. SVMS 에는 서버측 CAS 가 없어 러너가 저장 직전 재조회로만 막는다(잔여위험).
 🔴 EXP_CD 제안(suggest)은 표시·사전입력용일 뿐 gate 를 PASS 로 올리지 않는다. 사람 편집도 gate 를 안 바꾼다.
@@ -22,7 +24,7 @@ import secrets
 import sqlite3
 from datetime import datetime
 
-from flask import Blueprint, abort, jsonify, render_template, request, send_file, session
+from flask import Blueprint, abort, current_app, jsonify, render_template, request, send_file, session
 
 from app_core import RPCOST_PDF_DIR, _PREVIEW_UPLOAD_MAX, execute, execute_rc, query
 from helpers_shared import _annotate_drafts_with_vessel, _automation_enabled, admin_required, api_key_required
@@ -40,6 +42,34 @@ _RPCOST_REOPEN_STATUS = {'repair': 'IU', 'purchase': 'U'}
 # SVMS 에서 사람이 직접 처리한 상태 → 카드 종결 상태.
 _RPCOST_EXT_CLOSE = {('repair', 'CU'): 'submitted', ('repair', 'CJ'): 'rejected',
                      ('purchase', 'A'): 'submitted', ('purchase', 'R'): 'rejected'}
+
+
+def _rpcost_reject_ensure_queued(user):
+    """rejecting 카드 실행 run(`rpcost_reject`) 보장 — invoice_reject 와 같은 규칙(routes_calendar_dock._queue_aor
+    fresh_if_running=True 동치: queued 가 있으면 재사용, running 은 이미 claim 을 끝냈으므로 새 run). 실패 시 None."""
+    try:
+        if not _automation_enabled():
+            return None
+        busy = query("SELECT run_id FROM automation_run WHERE task='rpcost_reject' AND status='queued' "
+                     "ORDER BY id DESC LIMIT 1", one=True)
+        if busy:
+            return busy['run_id']
+        rid = secrets.token_hex(6)
+        execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by) "
+                "VALUES (?, 'rpcost_reject', 'live', 'queued', ?)", (rid, user))
+        return rid
+    except Exception:
+        current_app.logger.exception('rpcost_reject 큐 적재 실패 — rejecting 마킹은 유지, 목록 조회 시 재시도')
+        return None
+
+
+def _rpcost_reclaim_stale_rejects():
+    """6h+ reject_submitting → rejecting(토큰 무효화). 러너 사망 후 자가치유 — ext claim 과 목록 조회 둘 다에서 호출.
+    러너 리젝은 멱등 + 메일 intent 원장이라 재처리해도 이중 반려·이중 메일 없음."""
+    return execute_rc("UPDATE rp_cost_draft SET status='rejecting', claim_token=NULL, done_at=NULL, "
+                      "result=COALESCE(result,'')||' [auto:6h+ reject_submitting→rejecting 회수]' "
+                      "WHERE status='reject_submitting' AND done_at IS NOT NULL "
+                      "AND done_at < datetime('now','localtime','-6 hours')")
 
 
 def _rpcost_pdf_path(did):
@@ -115,8 +145,13 @@ def rpcost_page():
 @bp.route('/api/rpcost/drafts')
 @admin_required
 def api_rpcost_list():
+    _rpcost_reclaim_stale_rejects()
     rows = query("SELECT * FROM rp_cost_draft ORDER BY CASE status WHEN 'pending' THEN 0 "
-                 "WHEN 'approved' THEN 1 WHEN 'submitting' THEN 2 ELSE 3 END, id DESC")
+                 "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 1 WHEN 'submitting' THEN 2 "
+                 "WHEN 'reject_submitting' THEN 2 ELSE 3 END, id DESC")
+    # 자기치유: rejecting 이 남아 있는데 대기 run 이 없으면 재큐잉(마킹 뒤 큐 실패·killswitch 해제·stale 회수분).
+    if any(r['status'] == 'rejecting' for r in rows):
+        _rpcost_reject_ensure_queued(session.get('username') or 'web')
     pending = query("SELECT COUNT(*) c FROM rp_cost_draft WHERE status='pending'", one=True)
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])
     for d in drafts:
@@ -162,8 +197,8 @@ def api_ext_rpcost_create():
         'gate': gate, 'svms_status': svms_status or None,
     }
     ex = query("SELECT id, status, raw_card FROM rp_cost_draft WHERE kind=? AND svms_key=? "
-               "AND status IN ('pending','approved','submitting','submitted','rejected') "
-               "ORDER BY id DESC LIMIT 1", (kind, key), one=True)
+               "AND status IN ('pending','approved','submitting','submitted','rejected','rejecting',"
+               "'reject_submitting') ORDER BY id DESC LIMIT 1", (kind, key), one=True)
     if ex and ex['status'] == 'pending':
         rc, cols = _rpcost_merge_pending(ex['raw_card'], rc, cols)
         execute("UPDATE rp_cost_draft SET ref_key=?, vsl_cd=?, vsl_nm=?, subj=?, vndr_cd=?, vndr_nm=?, inv_no=?, "
@@ -186,7 +221,8 @@ def api_ext_rpcost_create():
     except sqlite3.IntegrityError:
         # 동시 ingest 경합 — 다른 요청이 먼저 '살아있는' 카드를 세웠다(uq_rp_cost_draft_active). 500 대신 dedup.
         cur = query("SELECT id, status FROM rp_cost_draft WHERE kind=? AND svms_key=? "
-                    "AND status IN ('pending','approved','submitting') ORDER BY id DESC LIMIT 1", (kind, key), one=True)
+                    "AND status IN ('pending','approved','submitting','rejecting','reject_submitting') "
+                    "ORDER BY id DESC LIMIT 1", (kind, key), one=True)
         return jsonify({'id': cur['id'] if cur else None, 'status': cur['status'] if cur else None,
                         'dedup': True, 'race': True}), 200
     if reopened_from:
@@ -281,40 +317,43 @@ def api_rpcost_approve_bulk():
 @bp.route('/api/rpcost/drafts/<int:did>/reject', methods=['POST'])
 @admin_required
 def api_rpcost_reject(did):
-    """v1 리젝 = TRMT 표시만(SVMS 반려 안 함). 사유 필수."""
+    """리젝 = rejecting 마킹 + rpcost_reject 자동큐. 맥 러너가 SVMS 반려(구매 R / 수리 CJ) + 리젝메일. 사유 필수."""
     reason = str((request.get_json(silent=True) or {}).get('reason') or '').strip()
     if not reason:
         return jsonify({'error': '리젝 사유(reason) 필수', 'field': 'reason'}), 400
-    rc = execute_rc("UPDATE rp_cost_draft SET status='rejected', reject_reason=?, "
-                    "decided_at=datetime('now','localtime'), decided_by=?, done_at=datetime('now','localtime'), "
-                    "result='TRMT 표시만 — SVMS 반려는 안 함(v1). 필요하면 SVMS 에서 직접 반려' "
-                    "WHERE id=? AND status IN ('pending','approved')",
-                    (reason[:1000], session.get('username') or 'web', did))
+    user = session.get('username') or 'web'
+    rc = execute_rc("UPDATE rp_cost_draft SET status='rejecting', reject_reason=?, "
+                    "decided_at=datetime('now','localtime'), decided_by=?, done_at=NULL, result=NULL, claim_token=NULL "
+                    "WHERE id=? AND status IN ('pending','approved') AND raw_card IS NOT NULL",
+                    (reason[:1000], user, did))
     if not rc:
         cur = query('SELECT status FROM rp_cost_draft WHERE id=?', (did,), one=True)
         if not cur:
             return jsonify({'error': 'not found'}), 404
         return jsonify({'error': 'already decided', 'status': cur['status']}), 409
-    _rpcost_pdf_delete(did)
-    return jsonify({'id': did, 'status': 'rejected',
-                    'message': 'TRMT 에서만 리젝 표시했습니다. SVMS 는 그대로입니다(필요하면 SVMS 에서 직접 반려).'})
+    rid = _rpcost_reject_ensure_queued(user)
+    msg = ('리젝 접수 — 맥 러너가 SVMS 반려 + 리젝메일 실행(카드 상태로 완료 확인)' if rid
+           else '리젝 접수만 됨 — 자동화 killswitch ON 또는 큐 적재 실패. 스위치를 켜면 목록 조회 시 자동 재큐잉')
+    return jsonify({'id': did, 'status': 'rejecting', 'reject_run': rid, 'message': msg})
 
 
 @bp.route('/api/rpcost/drafts/<int:did>/reset', methods=['POST'])
 @admin_required
 def api_rpcost_reset(did):
-    """결정 취소 — 실행 전(approved) 또는 TRMT 표시만 한 리젝(rejected)을 pending 으로."""
+    """결정 취소 — 실행 전(approved/rejecting, 러너 claim 전) 또는 리젝 실패(reject_failed)를 pending 으로.
+    rejected(SVMS 반려 완료)는 되돌리지 않는다."""
     try:
         rc = execute_rc("UPDATE rp_cost_draft SET status='pending', reject_reason=NULL, decided_at=NULL, "
                         "decided_by=NULL, done_at=NULL, result=NULL, claim_token=NULL "
-                        "WHERE id=? AND status IN ('approved','rejected')", (did,))
+                        "WHERE id=? AND status IN ('approved','rejecting','reject_failed')", (did,))
     except sqlite3.IntegrityError:
         return jsonify({'error': '같은 SVMS 건의 열린 카드가 이미 있습니다 — 그 카드를 쓰세요', 'id': did}), 409
     if not rc:
         cur = query('SELECT status FROM rp_cost_draft WHERE id=?', (did,), one=True)
         if not cur:
             return jsonify({'error': 'not found'}), 404
-        return jsonify({'error': '실행 전(approved)·리젝표시(rejected)만 취소 가능', 'status': cur['status']}), 409
+        return jsonify({'error': '실행 전(approved/rejecting)·리젝실패(reject_failed)만 취소 가능',
+                        'status': cur['status']}), 409
     return jsonify({'id': did, 'status': 'pending'})
 
 
@@ -322,11 +361,11 @@ def api_rpcost_reset(did):
 @admin_required
 def api_rpcost_delete(did):
     if not execute_rc("DELETE FROM rp_cost_draft WHERE id=? "
-                      "AND status IN ('pending','submitted','rejected','failed')", (did,)):
+                      "AND status IN ('pending','submitted','rejected','failed','reject_failed')", (did,)):
         cur = query('SELECT status FROM rp_cost_draft WHERE id=?', (did,), one=True)
         if not cur:
             return jsonify({'error': 'not found'}), 404
-        return jsonify({'error': '실행 대기·진행중(approved/submitting)은 삭제 불가 — 결정 취소 후 삭제',
+        return jsonify({'error': '실행 대기·진행중(approved/submitting/rejecting/reject_submitting)은 삭제 불가 — 결정 취소 후 삭제',
                         'status': cur['status']}), 409
     _rpcost_pdf_delete(did)
     return jsonify({'id': did, 'deleted': True})
@@ -335,8 +374,9 @@ def api_rpcost_delete(did):
 @bp.route('/api/rpcost/drafts/decided', methods=['DELETE'])
 @admin_required
 def api_rpcost_clear_decided():
-    ids = [r['id'] for r in query("SELECT id FROM rp_cost_draft WHERE status IN ('submitted','rejected','failed')")]
-    n = execute_rc("DELETE FROM rp_cost_draft WHERE status IN ('submitted','rejected','failed')")
+    ids = [r['id'] for r in query("SELECT id FROM rp_cost_draft "
+                                   "WHERE status IN ('submitted','rejected','failed','reject_failed')")]
+    n = execute_rc("DELETE FROM rp_cost_draft WHERE status IN ('submitted','rejected','failed','reject_failed')")
     for i in ids:
         _rpcost_pdf_delete(i)
     return jsonify({'ok': True, 'deleted': n})
@@ -467,6 +507,51 @@ def api_ext_rpcost_result(did):
         rc = execute_rc("UPDATE rp_cost_draft SET status=?, done_at=datetime('now','localtime'), result=? "
                         "WHERE id=? AND status='submitting' AND claim_token=?",
                         ('submitted' if ok else 'failed', str(d.get('result') or '')[:2000], did, token))
+    if rc and ok:
+        _rpcost_pdf_delete(did)
+    return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)}), (200 if rc else 409)
+
+
+@bp.route('/api/ext/rpcost/rejecting')
+@api_key_required
+def api_ext_rpcost_rejecting():
+    """rejecting → reject_submitting claim(조건부 CAS + claim_token). ?peek=1 = 조회만(DRY). ?only/?kind 는 approved 와 같음.
+    stale(6h+ reject_submitting) = rejecting 으로 회수(토큰 무효화) — 러너 리젝은 멱등(이미 R/CJ = skip, 메일 재발송 없음)."""
+    only = str(request.args.get('only') or '').strip()
+    kind = str(request.args.get('kind') or '').strip().lower()
+    if kind and kind not in RPCOST_KINDS:
+        return jsonify({'error': 'kind must be repair|purchase'}), 400
+    if request.args.get('peek'):
+        rows = query("SELECT id, kind, svms_key, ref_key, vsl_cd, reject_reason, raw_card FROM rp_cost_draft "
+                     "WHERE status='rejecting' AND (?='' OR svms_key=?) AND (?='' OR kind=?) ORDER BY id ASC",
+                     (only, only, kind, kind))
+        return jsonify({'count': len(rows), 'drafts': [dict(r) for r in rows], 'peek': True})
+    _rpcost_reclaim_stale_rejects()
+    out = []
+    for r in query("SELECT id, kind, svms_key, ref_key, vsl_cd, reject_reason, raw_card FROM rp_cost_draft "
+                   "WHERE status='rejecting' AND (?='' OR svms_key=?) AND (?='' OR kind=?) ORDER BY id ASC",
+                   (only, only, kind, kind)):
+        token = secrets.token_hex(16)
+        if execute_rc("UPDATE rp_cost_draft SET status='reject_submitting', claim_token=?, "
+                      "done_at=datetime('now','localtime') WHERE id=? AND status='rejecting' "
+                      "AND reject_reason IS ? AND raw_card IS ?",
+                      (token, r['id'], r['reject_reason'], r['raw_card'])):
+            out.append(dict(r, claim_token=token))
+    return jsonify({'count': len(out), 'drafts': out})
+
+
+@bp.route('/api/ext/rpcost/drafts/<int:did>/reject-result', methods=['POST'])
+@api_key_required
+def api_ext_rpcost_reject_result(did):
+    """리젝 결과: ok → rejected, else reject_failed. claim_token 일치 + reject_submitting 일 때만 반영(불일치 409)."""
+    d = request.get_json(silent=True) or {}
+    ok = bool(d.get('ok'))
+    token = str(d.get('claim_token') or '').strip()
+    rc = 0
+    if token:
+        rc = execute_rc("UPDATE rp_cost_draft SET status=?, done_at=datetime('now','localtime'), result=?, "
+                        "claim_token=NULL WHERE id=? AND status='reject_submitting' AND claim_token=?",
+                        ('rejected' if ok else 'reject_failed', str(d.get('result') or '')[:2000], did, token))
     if rc and ok:
         _rpcost_pdf_delete(did)
     return jsonify({'id': did, 'ok': ok, 'applied': bool(rc)}), (200 if rc else 409)
