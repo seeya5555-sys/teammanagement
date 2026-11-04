@@ -147,6 +147,8 @@
   @keyframes fmPulseA{0%,100%{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}50%{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.25)}}
   .ship-label{font-size:10px;font-weight:700;color:#e8eef2;background:rgba(20,32,42,.82);border:1px solid rgba(120,150,170,.32);padding:1px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4);text-align:center;line-height:1.25}
   .ship-label .sc{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px;font-weight:600;color:#9fc0d4;letter-spacing:.2px}
+  .ship-label .sc.ops{font-family:inherit;font-size:9.5px;color:#f6c76b;white-space:normal;max-width:240px;margin:0 auto}
+  .ship-label .sc.ops.none{color:#8fa3b0}
   .port{width:9px;height:9px;border-radius:50%;background:#16232e;border:2px solid #6f8ba0}
   .port-label{font-size:10px;color:#c4d3de;background:rgba(20,32,42,.8);padding:0 4px;border-radius:4px;white-space:nowrap}
   .fm-panel{position:absolute;top:0;right:0;width:360px;max-width:92%;height:100%;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-lg);transform:translateX(100%);transition:transform .22s;z-index:1000;display:flex;flex-direction:column}
@@ -580,12 +582,31 @@
     }).catch(()=>{ alert('통항 미러 로드 실패'); })
       .finally(()=>{ tmLoading=false; btn.textContent='통항'; });
   }
+  // ── 운항 특이사항 라벨 전환 — 맥 수집기(Outlook 운항메일→한줄요약)가 /api/ext/fleet-map/ops-notes 로 적재 ──
+  let opsOn=false; try{opsOn=localStorage.getItem('fm_ops_on')==='1';}catch(_){}
+  function _dms(dd,pos,neg){const a=Math.abs(dd),d=Math.floor(a),mf=(a-d)*60,m=Math.floor(mf),s=Math.round((mf-m)*60);let mm=m,ss=s;if(ss===60){ss=0;mm+=1;}return d+'°'+String(mm).padStart(2,'0')+"'"+String(ss).padStart(2,'0')+'"'+(dd>=0?pos:neg);}
+  function shipLabelHtml(v){
+    if(opsOn){
+      const n=v.ops_note, s=n&&n.summary;
+      // 수집기가 실패하면 기존 값을 유지하므로, 24h 넘게 갱신 안 된 요약은 낡음을 함께 보여준다.
+      const age=n&&n.generated_at?(Date.now()-new Date(n.generated_at+'+09:00').getTime())/36e5:0;
+      const stale=age>24?' (갱신 '+Math.floor(age/24)+'일 전)':'';
+      return esc(v.name)+'<span class="sc ops'+(s?'':' none')+'" title="'+esc(n&&n.mail_subject?(n.mail_date||'')+' · '+n.mail_subject:'')+'">'+esc((s||(n?'특이사항 없음':'운항 요약 미수집'))+stale)+'</span>';
+    }
+    const _pos=(v.lat!=null&&v.lng!=null)?(_dms(v.lat,'N','S')+' '+_dms(v.lng,'E','W')):'—';
+    return esc(v.name)+'<span class="sc">'+esc((v.speed!=null?v.speed:'—')+'kn · '+_pos)+'</span>';
+  }
   const TransitCtl=L.Control.extend({options:{position:'topleft'},onAdd:function(){
     const c=L.DomUtil.create('div','leaflet-bar fm-tmbtn');
     const a=L.DomUtil.create('a','',c); a.href='#'; a.title='통항 미러 — 외부 통항 모니터링(읽기전용, 내 배정선)'; a.textContent='통항';
     L.DomEvent.on(a,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);toggleTransit(a);});
     const b=L.DomUtil.create('a','',c); b.href='#'; b.title='통항 모니터링 — 외부 사이트 읽기전용 미러(전체 선박)'; b.textContent='통항표'; b.setAttribute('aria-label','통항 모니터링');
     L.DomEvent.on(b,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);tmmOpen();});
+    const o=L.DomUtil.create('a','',c); o.href='#'; o.title='운항 특이사항 — 선명 밑 선속·위치 대신 최근 운항 특이사항 한줄요약 표시'; o.textContent='운항'; o.setAttribute('aria-label','운항 특이사항 표시 전환');
+    if(opsOn) o.classList.add('on');
+    L.DomEvent.on(o,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);
+      opsOn=!opsOn; o.classList.toggle('on',opsOn); try{localStorage.setItem('fm_ops_on',opsOn?'1':'0');}catch(_){}
+      markers.forEach(x=>x.tt.setContent(shipLabelHtml(x.v)));});
     return c;}});
   map.addControl(new TransitCtl());
   // ── 통항 모니터링 모달(외부 사이트 읽기전용 미러) — 등록·보고·통항기록 기능 없음 ──
@@ -736,10 +757,7 @@
     if(!FLEET.length){renderAlert();document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
     FLEET.forEach(v=>{
       const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
-      const _dms=(dd,pos,neg)=>{const a=Math.abs(dd),d=Math.floor(a),mf=(a-d)*60,m=Math.floor(mf),s=Math.round((mf-m)*60);let mm=m,ss=s;if(ss===60){ss=0;mm+=1;}return d+'°'+String(mm).padStart(2,'0')+"'"+String(ss).padStart(2,'0')+'"'+(dd>=0?pos:neg);};
-      const _pos=(v.lat!=null&&v.lng!=null)?(_dms(v.lat,'N','S')+' '+_dms(v.lng,'E','W')):'—';
-      const _sc=((v.speed!=null?v.speed:'—')+'kn · '+_pos);
-      const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(esc(v.name)+'<span class="sc">'+esc(_sc)+'</span>').setLatLng([v.lat,v.lng]);tt.addTo(map);
+      const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(shipLabelHtml(v)).setLatLng([v.lat,v.lng]);tt.addTo(map);
       m.on('click',()=>openV(v));markers.push({v,m,tt});
     });
     const bar=document.getElementById('fmSup');

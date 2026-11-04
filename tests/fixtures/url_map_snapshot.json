@@ -3169,6 +3169,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/fleet-map/ops-notes",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_tail.api_ext_fleet_map_ops_notes",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/fleet-map/override",
     "methods": [
       "OPTIONS",

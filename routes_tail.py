@@ -924,6 +924,65 @@ def api_ext_fleet_map_override():
     return jsonify({'ok': True, 'count': len(ov), 'key': key})
 
 
+FLEET_OPS_NOTE_FILE = os.path.join(INSTANCE_DIR, 'fleet_ops_notes.json')
+OPS_NOTE_MAX_LEN = 160
+
+
+@bp.route('/api/ext/fleet-map/ops-notes', methods=['POST'])
+@api_key_required
+def api_ext_fleet_map_ops_notes():
+    """맥 ops-note 수집기(Outlook 운항메일→LLM 한줄요약)가 선박별 최신 운항 특이사항 적재.
+    payload: {notes:[{vessel, summary, category?, mail_date?, mail_subject?}], generated_at?}
+    전달된 선박만 덮어씀(나머지 유지). summary=None/'' 이면 '없음'으로 저장."""
+    d = request.get_json(silent=True)
+    notes = d.get('notes') if isinstance(d, dict) else None
+    if not isinstance(notes, list) or len(notes) > 200:
+        return jsonify({'ok': False, 'error': 'notes[] required (<=200)'}), 400
+    for n in notes:
+        if (not isinstance(n, dict) or not isinstance(n.get('vessel'), str) or not n['vessel'].strip()
+                or (n.get('summary') is not None and not isinstance(n.get('summary'), str))):
+            return jsonify({'ok': False, 'error': 'invalid note (vessel str, summary str|null)'}), 400
+    import fcntl
+    import tempfile
+    now = datetime.now().isoformat(timespec='seconds')
+    gen = str(d.get('generated_at') or now)[:25]
+    # 프로세스 간 직렬화(read-modify-write) + 요청별 임시파일 → 동시 POST 갱신 유실·파일 경합 방지
+    with open(FLEET_OPS_NOTE_FILE + '.lock', 'w') as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            with open(FLEET_OPS_NOTE_FILE, encoding='utf-8') as f:
+                store = json.load(f)
+        except (FileNotFoundError, ValueError):
+            store = {}
+        for n in notes:
+            store[_vkey(n['vessel'])] = {
+                'vessel': n['vessel'].strip(),
+                'summary': (n.get('summary') or '').strip()[:OPS_NOTE_MAX_LEN] or None,
+                'category': str(n.get('category') or '')[:20] or None,
+                'mail_date': str(n.get('mail_date') or '')[:25] or None,
+                'mail_subject': str(n.get('mail_subject') or '')[:200] or None,
+                'generated_at': gen,
+                'stored_at': now,
+            }
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(FLEET_OPS_NOTE_FILE), suffix='.tmp')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(store, f, ensure_ascii=False)
+        os.replace(tmp, FLEET_OPS_NOTE_FILE)
+    return jsonify({'ok': True, 'count': len(store)})
+
+
+def _fleet_attach_ops_notes(fleet):
+    try:
+        with open(FLEET_OPS_NOTE_FILE, encoding='utf-8') as f:
+            store = json.load(f)
+    except (FileNotFoundError, ValueError):
+        return
+    for v in fleet:
+        n = store.get(_vkey(v.get('name')))
+        if n:
+            v['ops_note'] = {k: n.get(k) for k in ('summary', 'category', 'mail_date', 'mail_subject', 'generated_at')}
+
+
 FLEET_WIND_FILE = os.path.join(INSTANCE_DIR, 'fleet_wind.json')
 
 
@@ -1509,6 +1568,7 @@ def api_fleet_map_data():
         _r = query("SELECT name FROM supervisors WHERE id=?", (_sid,), one=True)
         my_sup = _r['name'] if _r else None
     data['my_supervisor'] = my_sup
+    _fleet_attach_ops_notes(fleet)
     return jsonify(data)
 
 
