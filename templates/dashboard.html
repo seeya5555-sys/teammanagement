@@ -147,8 +147,12 @@
   @keyframes fmPulseA{0%,100%{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}50%{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.25)}}
   .ship-label{font-size:10px;font-weight:700;color:#e8eef2;background:rgba(20,32,42,.82);border:1px solid rgba(120,150,170,.32);padding:1px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4);text-align:center;line-height:1.25}
   .ship-label .sc{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px;font-weight:600;color:#9fc0d4;letter-spacing:.2px}
-  .ship-label .sc.ops{font-family:inherit;font-size:9.5px;color:#f6c76b;white-space:normal;max-width:240px;margin:0 auto}
+  /* 운항 모드: 겹침 방지 위해 한 줄 말줄임, 마우스 올리면 전체 문장 + 맨 앞으로 */
+  .ship-label .sc.ops{font-family:inherit;font-size:9.5px;color:#f6c76b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;margin:0 auto}
   .ship-label .sc.ops.none{color:#8fa3b0}
+  .leaflet-tooltip.ship-label.opsmode{pointer-events:auto}
+  .leaflet-tooltip.ship-label.opsmode:hover{z-index:9999!important}
+  .leaflet-tooltip.ship-label.opsmode:hover .sc.ops{white-space:normal;max-width:260px}
   .port{width:9px;height:9px;border-radius:50%;background:#16232e;border:2px solid #6f8ba0}
   .port-label{font-size:10px;color:#c4d3de;background:rgba(20,32,42,.8);padding:0 4px;border-radius:4px;white-space:nowrap}
   .fm-panel{position:absolute;top:0;right:0;width:360px;max-width:92%;height:100%;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-lg);transform:translateX(100%);transition:transform .22s;z-index:1000;display:flex;flex-direction:column}
@@ -596,6 +600,10 @@
     const _pos=(v.lat!=null&&v.lng!=null)?(_dms(v.lat,'N','S')+' '+_dms(v.lng,'E','W')):'—';
     return esc(v.name)+'<span class="sc">'+esc((v.speed!=null?v.speed:'—')+'kn · '+_pos)+'</span>';
   }
+  function setShipLabel(tt,v){
+    tt.setContent(shipLabelHtml(v));
+    const el=tt.getElement&&tt.getElement(); if(el) el.classList.toggle('opsmode',opsOn);
+  }
   const TransitCtl=L.Control.extend({options:{position:'topleft'},onAdd:function(){
     const c=L.DomUtil.create('div','leaflet-bar fm-tmbtn');
     const a=L.DomUtil.create('a','',c); a.href='#'; a.title='통항 미러 — 외부 통항 모니터링(읽기전용, 내 배정선)'; a.textContent='통항';
@@ -606,7 +614,7 @@
     if(opsOn) o.classList.add('on');
     L.DomEvent.on(o,'click',function(e){L.DomEvent.preventDefault(e);L.DomEvent.stopPropagation(e);
       opsOn=!opsOn; o.classList.toggle('on',opsOn); try{localStorage.setItem('fm_ops_on',opsOn?'1':'0');}catch(_){}
-      markers.forEach(x=>x.tt.setContent(shipLabelHtml(x.v)));});
+      markers.forEach(x=>setShipLabel(x.tt,x.v));});
     return c;}});
   map.addControl(new TransitCtl());
   // ── 통항 모니터링 모달(외부 사이트 읽기전용 미러) — 등록·보고·통항기록 기능 없음 ──
@@ -757,7 +765,7 @@
     if(!FLEET.length){renderAlert();document.querySelector('.fm-stage').insertAdjacentHTML('beforeend','<div class="fm-empty">표시할 선박이 없습니다.</div>');return;}
     FLEET.forEach(v=>{
       const m=L.marker([v.lat,v.lng],{icon:icon(v)}).addTo(map);
-      const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setContent(shipLabelHtml(v)).setLatLng([v.lat,v.lng]);tt.addTo(map);
+      const tt=L.tooltip({permanent:true,direction:'top',offset:[0,-14],className:'ship-label'}).setLatLng([v.lat,v.lng]);tt.addTo(map);setShipLabel(tt,v);
       m.on('click',()=>openV(v));markers.push({v,m,tt});
     });
     const bar=document.getElementById('fmSup');
