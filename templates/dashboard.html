@@ -149,6 +149,8 @@
   @keyframes fmPulseA{0%,100%{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}50%{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.25)}}
   .ship-label{font-size:10px;font-weight:700;color:#e8eef2;background:rgba(20,32,42,.82);border:1px solid rgba(120,150,170,.32);padding:1px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4);text-align:center;line-height:1.25}
   .ship-label .sc{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px;font-weight:600;color:#9fc0d4;letter-spacing:.2px}
+  .ship-label .sc.tw.pre{color:#facc15}
+  .ship-label .sc.tw.today{color:#f87171}
   /* 운항 모드: 선명 길이와 무관하게 고정 폭, 줄임 없이 전체 문장 줄바꿈 표시. hover=맨 앞으로 */
   .leaflet-tooltip.ship-label.opsmode{width:200px;white-space:normal;pointer-events:auto}
   .leaflet-tooltip.ship-label.opsmode:hover{z-index:9999!important}
@@ -599,7 +601,12 @@
       return esc(v.name)+'<span class="sc ops'+(s?'':' none')+'" title="'+esc(n&&n.mail_subject?(n.mail_date||'')+' · '+n.mail_subject:'')+'">'+esc((s||(n?'특이사항 없음':'운항 요약 미수집'))+stale)+'</span>';
     }
     const _pos=(v.lat!=null&&v.lng!=null)?(_dms(v.lat,'N','S')+' '+_dms(v.lng,'E','W')):'—';
-    return esc(v.name)+'<span class="sc">'+esc((v.speed!=null?v.speed:'—')+'kn · '+_pos)+'</span>';
+    return esc(v.name)+'<span class="sc">'+esc((v.speed!=null?v.speed:'—')+'kn · '+_pos)+'</span>'+transitWinHtml(v);
+  }
+  // 통항 하루전/당일 배정선: 시작(E.BOUND=A, W.BOUND=Z) : 종료 LT
+  function transitWinHtml(v){
+    const w=v.transit_window; if(!w||!(v.transit_phase==='pre'||v.transit_phase==='today')) return '';
+    return '<span class="sc tw '+v.transit_phase+'">'+esc(w.sp+' '+(w.start||'—')+' : '+w.ep+' '+(w.end||'—'))+'</span>';
   }
   function setShipLabel(tt,v){
     tt.setContent(shipLabelHtml(v));

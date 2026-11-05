@@ -341,6 +341,20 @@ class TransitMirrorTests(unittest.TestCase):
         ph = tm.transit_phase_map({"registry": reg}, date(2026, 11, 7))
         self.assertEqual({"A": "post", "C": "post"}, ph)
 
+    def test_transit_window_map_bound_direction(self):
+        cp = lambda a, z: {"a": {"lt": a}, "z": {"lt": z}}
+        reg = {"20261105": [{"key": "E", "bound": "E.BOUND", "cps": cp("5/07:30LT", "5/13:30LT")},
+                            {"key": "W", "bound": "W.BOUND", "cps": cp("5/13:30LT", "5/07:30LT")}],
+               "20261106": [{"key": "T", "bound": "W.BOUND", "cps": cp("6/12:00LT", "6/06:00LT")}],
+               "20261104": [{"key": "Y", "bound": "E.BOUND", "cps": cp("4/11:45LT", "4/17:45LT")}]}
+        w = tm.transit_window_map({"registry": reg}, date(2026, 11, 5))
+        self.assertEqual({"start": "5/07:30LT", "sp": "A", "end": "5/13:30LT", "ep": "Z"}, w["E"])
+        self.assertEqual({"start": "5/07:30LT", "sp": "Z", "end": "5/13:30LT", "ep": "A"}, w["W"])
+        self.assertEqual({"start": "6/06:00LT", "sp": "Z", "end": "6/12:00LT", "ep": "A"}, w["T"])
+        self.assertNotIn("Y", w)
+        reg["20261105"].append({"key": "T", "bound": "W.BOUND", "cps": {}})
+        self.assertNotIn("T", tm.transit_window_map({"registry": reg}, date(2026, 11, 5)))
+
     def test_transit_today_flag_in_mirror_api(self):
         self.login()
         b = self._bundle()
