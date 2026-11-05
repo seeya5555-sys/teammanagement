@@ -4467,6 +4467,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/fleet-map/damaged",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_tail.api_fleet_map_damaged_set",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/fleet-map/data",
     "methods": [
       "GET",

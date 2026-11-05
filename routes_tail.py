@@ -1157,6 +1157,93 @@ def api_fleet_map_pos_source_set():
     return jsonify({'ok': True, 'source': source, 'vessel': vessel})
 
 
+# 피격(손상) 선박 — 수동 표시 + 수동 선위. AIS·SVMS 측위가 불량하므로 수동 좌표가 모든 자동 선위보다 우선.
+# {key: {vessel, since, by, lat?, lng?, pos_at?}}. 피격 해제 시 수동 좌표도 함께 삭제(자동 선위 복귀).
+FLEET_DAMAGED_FILE = os.path.join(INSTANCE_DIR, 'fleet_map_damaged.json')
+_fleet_damaged_lock = threading.Lock()
+
+
+def _load_damaged():
+    try:
+        with open(FLEET_DAMAGED_FILE, encoding='utf-8') as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def _save_damaged(d):
+    tmp = FLEET_DAMAGED_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False)
+    os.replace(tmp, FLEET_DAMAGED_FILE)
+
+
+def _fleet_apply_damaged(fleet):
+    """피격 표시·수동 선위를 최종 단계에서 반영(미러·AIS·이메일 덮어쓰기 이후)."""
+    dmg = _load_damaged()
+    for v in fleet:
+        o = dmg.get(_vkey(v.get('name')))
+        v['damaged'] = bool(o)
+        if not o:
+            continue
+        v['damaged_since'] = o.get('since')
+        lat, lng = o.get('lat'), o.get('lng')
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            v['lat'], v['lng'] = lat, lng
+            v['pos_source'] = 'manual'
+            v['pos_reported_at'] = o.get('pos_at')
+            v['position_ts'] = o.get('pos_at')
+            v['ais_stale'] = False
+            v['email_pending'] = False
+            v['damaged_manual_pos'] = True
+
+
+@bp.route('/api/fleet-map/damaged', methods=['POST'])
+@login_required
+def api_fleet_map_damaged_set():
+    """피격 선박 표시/수동 선위.
+    payload: {vessel, damaged:bool} 또는 {vessel, lat, lng}(피격 선박만) 또는 {vessel, clear_pos:true}."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        return jsonify({'ok': False, 'error': 'invalid json'}), 400
+    vessel = d.get('vessel')
+    if not isinstance(vessel, str) or not vessel.strip() or len(vessel) > 120:
+        return jsonify({'ok': False, 'error': 'vessel required'}), 400
+    vessel = vessel.strip()
+    key = _vkey(vessel)
+    now = datetime.now().isoformat(timespec='seconds')
+    with _fleet_damaged_lock:
+        dmg = _load_damaged()
+        if 'damaged' in d:
+            if d.get('damaged') is True:
+                dmg.setdefault(key, {'vessel': vessel, 'since': now,
+                                     'by': session.get('username') or session.get('supervisor_id')})
+            elif d.get('damaged') is False:
+                dmg.pop(key, None)
+            else:
+                return jsonify({'ok': False, 'error': 'damaged must be boolean'}), 400
+        elif d.get('clear_pos') is True:
+            if key in dmg:
+                for f in ('lat', 'lng', 'pos_at'):
+                    dmg[key].pop(f, None)
+        elif 'lat' in d or 'lng' in d:
+            if key not in dmg:
+                return jsonify({'ok': False, 'error': '피격 표시된 선박만 수동 위치 지정 가능'}), 400
+            try:
+                lat, lng = float(d.get('lat')), float(d.get('lng'))
+            except (TypeError, ValueError):
+                return jsonify({'ok': False, 'error': 'lat/lng 숫자 필요'}), 400
+            if not (math.isfinite(lat) and math.isfinite(lng)) or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+                return jsonify({'ok': False, 'error': 'lat/lng 범위 오류'}), 400
+            dmg[key].update({'lat': round(lat, 5), 'lng': round(lng, 5), 'pos_at': now[:16]})
+        else:
+            return jsonify({'ok': False, 'error': 'damaged 또는 lat/lng 필요'}), 400
+        _save_damaged(dmg)
+        cur = dmg.get(key)
+    return jsonify({'ok': True, 'vessel': vessel, 'damaged': bool(cur), 'entry': cur})
+
+
 @bp.route('/api/ext/fleet-map/ais-off')
 @api_key_required
 def api_ext_fleet_map_ais_off_get():
@@ -1523,6 +1610,7 @@ def api_fleet_map_data():
             pass
     _fleet_apply_manual_next_port_overrides(fleet, ensure_schema=False)
     _fleet_apply_manual_eta_overrides(fleet, ensure_schema=False)
+    _fleet_apply_damaged(fleet)
     # ── 데이터 신선도 ALERT (사이트 내 표시) ─────────────────────────────
     # KST = UTC+9 (서버 TZ 무관하게 utcnow 기준). 6h 스케줄 → 파이프라인/선박별 누락 산출.
     now_k = datetime.utcnow() + timedelta(hours=9)

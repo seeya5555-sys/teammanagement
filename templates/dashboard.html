@@ -149,6 +149,15 @@
   @keyframes fmPulseA{0%,100%{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}50%{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) brightness(1.25)}}
   .ship-label{font-size:10px;font-weight:700;color:#e8eef2;background:rgba(20,32,42,.82);border:1px solid rgba(120,150,170,.32);padding:1px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4);text-align:center;line-height:1.25}
   .ship-label .sc{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px;font-weight:600;color:#9fc0d4;letter-spacing:.2px}
+  .ship.damaged::before{content:'';position:absolute;inset:-8px;border-radius:50%;border:2px dashed #dc2626;pointer-events:none}
+  .ship .dmg-flag{position:absolute;bottom:-9px;right:-11px;font-size:13px;line-height:1;filter:drop-shadow(0 0 1px #16232e);pointer-events:none}
+  .fm-dmg{margin:8px 0;padding:8px 10px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--surface-2)}
+  .fm-dmg.on{border-color:#dc2626;background:rgba(220,38,38,.06)}
+  .fm-dmg label{display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer}
+  .fm-dmg .fm-dmg-pos{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+  .fm-dmg input[type=text]{width:96px;font-size:12px;padding:4px 6px}
+  .fm-dmg button{font-size:12px;padding:4px 10px;min-height:28px}
+  .fm-dmg .note{font-size:11px;color:var(--text-tertiary);margin-top:4px}
   .ship-label .sc.tw.pre{color:#facc15}
   .ship-label .sc.tw.today{color:#f87171}
   /* 운항 모드: 선명 길이와 무관하게 고정 폭, 줄임 없이 전체 문장 줄바꿈 표시. hover=맨 앞으로 */
@@ -743,11 +752,13 @@
     const hasCourse=v.course!==null && v.course!==undefined && String(v.course).trim()!=='' && Number.isFinite(rawCourse);
     const rot=hasCourse ? ((rawCourse % 360) + 360) % 360 : 0;
     const tri='<svg viewBox="0 0 24 24" class="'+(hasCourse?'':'fm-marker-neutral')+'" style="transform:rotate('+rot+'deg)"><path d="M12 2.5 L18.5 20 L12 15.5 L5.5 20 Z"/></svg>';
-    return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+(v.transit_today?' transit-today':(v.transit_phase==='pre'?' transit-pre':(v.transit_phase==='post'?' transit-post':'')))+'" style="position:relative">'+tri+sire+pos+'</div>'});
+    const dmg=v.damaged?'<span class="dmg-flag" title="피격 선박'+(v.damaged_manual_pos?' · 수동 위치':'')+'">💥</span>':'';
+    return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+(v.damaged?' damaged':'')+(v.transit_today?' transit-today':(v.transit_phase==='pre'?' transit-pre':(v.transit_phase==='post'?' transit-post':'')))+'" style="position:relative">'+tri+sire+pos+dmg+'</div>'});
   }
 
   let fleetLoad=null, fleetReloadQueued=false, fleetLoadGen=0;
   function loadFleet(){
+  if(window.fmDragging) return Promise.resolve();   // 피격 선박 끌어 옮기는 중엔 30초 갱신이 마커를 갈아엎지 않게
   if(fleetLoad){fleetReloadQueued=true;return fleetLoad;}
   const gen=++fleetLoadGen;
   fleetLoad=fetch('{{ url_for("routes_tail.api_fleet_map_data") }}').then(r=>{
@@ -755,6 +766,7 @@
     return r.json();
   }).then(d=>{
     if(gen!==fleetLoadGen)return;
+    if(window.fmDragging)return;   // 끌기 중 도착한 응답은 버림(마커 교체로 드래그 끊김 방지) — 끝나면 다시 로드
     // 서버는 upstream(33.5MB)을 요청 경로에서 기다리지 않고 10분 TTL 캐시본을 즉시 준다
     // (stale-while-revalidate). upstream 자체가 정시 단위 배치라 30초 polling 은 그대로 둔다.
     markers.forEach(o=>{map.removeLayer(o.m);map.removeLayer(o.tt);}); markers=[];
@@ -823,6 +835,8 @@
     return posSrcLabelBase(v);
   }
   function posSrcLabelBase(v){
+    if(v.pos_source==='manual')
+      return '<span style="color:#dc2626">위치=피격 수동 지정'+(v.pos_reported_at?' ('+esc(String(v.pos_reported_at).slice(0,16).replace("T"," "))+')':'')+'</span>';
     if(v.pos_mode==='svms')
       return '<span style="color:#8a6100">위치=SVMS 운항데이터 <span style="font-size:11px">(수동 AIS off)</span></span>';
     if(v.pos_source==='mirror')
@@ -854,6 +868,74 @@
     }
     return '<div class="fm-line"><span class="lk">AIS 수신</span><span class="lv">'+sw+warn+'</span></div>'+seg;
   }
+  // 피격 선박: 체크박스 + 수동 위치(좌표 입력 / 지도에서 끌어 옮기기). 수동 위치는 모든 자동 선위보다 우선.
+  function damageControl(v){
+    const n=esc(v.name), on=!!v.damaged;
+    let h='<div class="fm-dmg'+(on?' on':'')+'"><label><input type="checkbox" class="fm-dmg-chk" data-vessel="'+n+'"'+(on?' checked':'')+'/> 💥 피격 선박</label>';
+    if(on){
+      const lat=v.damaged_manual_pos?Number(v.lat).toFixed(4):'', lng=v.damaged_manual_pos?Number(v.lng).toFixed(4):'';
+      h+='<div class="fm-dmg-pos">'+
+        '<input type="text" class="fm-dmg-lat" data-vessel="'+n+'" placeholder="위도 25.12" value="'+lat+'" inputmode="decimal"/>'+
+        '<input type="text" class="fm-dmg-lng" data-vessel="'+n+'" placeholder="경도 56.34" value="'+lng+'" inputmode="decimal"/>'+
+        '<button type="button" class="fm-dmg-save primary" data-vessel="'+n+'">좌표 저장</button>'+
+        '<button type="button" class="fm-dmg-drag" data-vessel="'+n+'">지도에서 끌어 옮기기</button>'+
+        (v.damaged_manual_pos?'<button type="button" class="fm-dmg-clear" data-vessel="'+n+'">수동 위치 해제</button>':'')+
+        '</div><div class="note">'+(v.damaged_manual_pos?'수동 위치 표시 중 (AIS·SVMS 무시)':'수동 위치 없음 — 자동 선위 표시 중')+
+        ' · 좌표는 십진수(도). 남위/서경은 음수</div>';
+    }
+    return h+'</div>';
+  }
+  function parseDeg(s){
+    // 25.12 / 25-07.5N / 25°07.5'N 모두 허용
+    s=String(s||'').trim().toUpperCase(); if(!s) return NaN;
+    const neg=/[SW]$/.test(s)||s.startsWith('-');
+    const nums=s.replace(/[NSEW]/g,' ').replace(/[°'"\-]/g,' ').trim().split(/\s+/).filter(Boolean).map(Number);
+    if(!nums.length||nums.some(x=>!Number.isFinite(x))) return NaN;
+    const val=Math.abs(nums[0])+(nums[1]||0)/60+(nums[2]||0)/3600;
+    return neg?-val:val;
+  }
+  function fmDamagePost(vessel,body){
+    return fetch('{{ url_for("routes_tail.api_fleet_map_damaged_set") }}',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign({vessel:vessel},body))})
+      .then(r=>r.json().then(j=>({ok:r.ok,j:j}))).then(({ok,j})=>{
+        if(!ok||!j.ok) alert('피격 설정 실패: '+(j.error||''));
+        refreshFleetPanel(vessel);   // 실패해도 서버 기준 위치로 다시 그림(끌어 놓은 미저장 위치 원복)
+      }).catch(()=>{alert('피격 설정 요청 실패');refreshFleetPanel(vessel);});
+  }
+  // 끌기 모드 취소(패널 닫힘·다른 선박 선택) — 드래그 해제·원위치·자동갱신 재개
+  let fmDragMarker=null;
+  function fmCancelDrag(){
+    if(!fmDragMarker) return;
+    const o=fmDragMarker; fmDragMarker=null;
+    o.m.off('dragend'); o.m.dragging.disable(); o.m.setLatLng([o.v.lat,o.v.lng]);
+    window.fmDragging=false; loadFleet();
+  }
+  document.addEventListener('change',function(ev){
+    const c=ev.target.closest&&ev.target.closest('.fm-dmg-chk'); if(!c) return;
+    const vessel=c.getAttribute('data-vessel')||'';
+    if(!c.checked&&!confirm('피격 표시를 해제할까요? 수동 위치도 함께 지워지고 자동 선위로 돌아갑니다.')){c.checked=true;return;}
+    fmDamagePost(vessel,{damaged:c.checked});
+  });
+  document.addEventListener('click',function(ev){
+    const t=ev.target.closest&&ev.target.closest('.fm-dmg-save,.fm-dmg-clear,.fm-dmg-drag'); if(!t) return;
+    const vessel=t.getAttribute('data-vessel')||'';
+    if(t.classList.contains('fm-dmg-clear')){ if(confirm('수동 위치를 지우고 자동 선위로 돌아갈까요?')) fmDamagePost(vessel,{clear_pos:true}); return; }
+    if(t.classList.contains('fm-dmg-save')){
+      const q=c=>document.querySelector('.'+c+'[data-vessel="'+CSS.escape(vessel)+'"]');
+      const lat=parseDeg(q('fm-dmg-lat')&&q('fm-dmg-lat').value), lng=parseDeg(q('fm-dmg-lng')&&q('fm-dmg-lng').value);
+      if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){alert('좌표 형식 확인: 예) 25.12 / 56.34 또는 25-07.5N / 056-20.4E');return;}
+      fmDamagePost(vessel,{lat:lat,lng:lng}); return;
+    }
+    // 드래그 모드: 해당 마커만 draggable, 놓으면 확인 후 저장
+    const o=markers.find(x=>(x.v.name||'')===vessel); if(!o) return;
+    fmCancelDrag();
+    window.fmDragging=true; fmDragMarker=o; o.m.dragging.enable(); t.textContent='배를 끌어서 놓으세요…'; t.disabled=true;
+    o.m.once('dragend',function(){
+      const p=o.m.getLatLng(); o.m.dragging.disable(); window.fmDragging=false; fmDragMarker=null;
+      if(confirm(vessel+' 위치를 '+p.lat.toFixed(4)+', '+p.lng.toFixed(4)+' 로 저장할까요?')) fmDamagePost(vessel,{lat:p.lat,lng:p.lng});
+      else { o.m.setLatLng([o.v.lat,o.v.lng]); refreshFleetPanel(vessel); }
+    });
+  });
   function nextPortSec(v){
     const np=v.next_port||{};
     const manual=!!(v.next_port_manual&&v.next_port_manual.active);
@@ -1048,6 +1130,7 @@
     return String(deg).padStart(isLat?2:3,'0')+'-'+min.toFixed(1).padStart(4,'0')+hemi;
   }
   function openV(v){
+    if(fmDragMarker&&fmDragMarker.v.name!==v.name) fmCancelDrag();
     trackVessel=v.name;
     document.getElementById('fmName').textContent=v.name;
     document.getElementById('fmSubt').textContent=(v.cls||v.type||'')+' · '+toDDM(v.lat,true)+' '+toDDM(v.lng,false);
@@ -1096,6 +1179,7 @@
       '<div class="fm-sec">운항 상태 '+posSrcLabel(v)+'</div>'+
       trackToggle(v)+
       posSourceControl(v)+
+      damageControl(v)+
       '<div class="fm-line"><span class="lk">Ballast/Laden</span><span class="lv"><span class="pill '+bl+'">'+(v.bl==='L'?'Laden':(v.bl==='B'?'Ballast':'—'))+'</span></span></div>'+
       '<div class="fm-line"><span class="lk">상태/침로/속력</span><span class="lv">'+esc(v.status||'—')+' · '+(v.course!=null?esc(v.course):'—')+'° · '+(v.speed!=null?esc(v.speed):'—')+' kn</span></div>'+
       fuelBlock('ROB · 최신 운항보고'+(reportDate(v.rpt_dt)?' · '+reportDate(v.rpt_dt):''),v.fuel_rob)+
@@ -1110,6 +1194,7 @@
   }
   window.fmClose=function(){
     document.getElementById('fmPanel').classList.remove('open');
+    fmCancelDrag();
     trackVessel='';
     clearRoute();
   };
