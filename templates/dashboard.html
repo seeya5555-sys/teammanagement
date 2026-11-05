@@ -499,8 +499,19 @@
     else { box.hidden=true; }
   }
   // minZoom=3: 최대 축소뷰를 줌3으로 고정(손유석 2026-07-18, 기존 줌2에서 한 스케일 확대). maxZoom=10. 줌은 스크롤로만.
-  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:3,maxZoom:10,
+  const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:3,maxZoom:10,scrollWheelZoom:false,
     maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],3);
+  // 휠 한 칸=줌 한 단계(손유석 2026-11-05): 맥은 한 칸을 여러 wheel 이벤트로 쪼개 보내므로,
+  // 250ms 쉬었다 들어온 첫 이벤트(새 칸) 또는 직전 줌 후 400ms 지난 이벤트(연속으로 여러 칸)만 줌.
+  let fmWheelLast=0,fmWheelZoomed=0;
+  map.getContainer().addEventListener('wheel',e=>{
+    e.preventDefault();
+    const now=Date.now(),fresh=now-fmWheelLast>250||now-fmWheelZoomed>400;fmWheelLast=now;
+    if(!fresh||!e.deltaY)return;
+    fmWheelZoomed=now;
+    const z=Math.max(map.getMinZoom(),Math.min(map.getMaxZoom(),map.getZoom()+(e.deltaY<0?1:-1)));
+    if(z!==map.getZoom())map.setZoomAround(map.mouseEventToLatLng(e),z);
+  },{passive:false});
   // Fleet Map B — API key 없는 Esri World Street Map(영문 지명 우선; 내부 저트래픽 사용)
   // 사용자 화면에 필요한 타일만 브라우저가 직접 요청하고 Leaflet의 HTTP 캐시를 따름(사전수집 없음).
   // CARTO 익명 타일은 현재 타일 자체에 'API KEY REQUIRED' 워터마크를 삽입하고,
