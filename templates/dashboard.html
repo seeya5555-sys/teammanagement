@@ -502,15 +502,29 @@
   const map=L.map('fmmap',{zoomControl:true,worldCopyJump:true,minZoom:3,maxZoom:10,scrollWheelZoom:false,
     maxBounds:[[-82,-230],[90,230]],maxBoundsViscosity:0.6}).setView([20,140],3);
   // 휠 한 칸=줌 한 단계(손유석 2026-11-05): 맥은 한 칸을 여러 wheel 이벤트로 쪼개 보내므로,
-  // 신호가 200ms 이상 끊긴 뒤 첫 이벤트만 줌. 한 칸 신호가 2초 가까이 이어지는 마우스(부드러운 스크롤)도 1단계.
-  // 형 지시 우선: 빠르게 연속으로 여러 칸 굴려도 신호가 안 끊기면 1단계만 움직임(의도된 trade-off).
-  let fmWheelLast=0;
+  // 시간 대기 대신 '이동량' 기준: 묶음 첫 신호에 즉시 1단계, 같은 묶음에서 한 칸 분량(notch)이 더 쌓일 때마다 즉시 다음 단계.
+  // notch=혼자 들어온 한 칸 묶음의 총 이동량을 학습(최솟값 유지). 줌 목표는 누적해 애니메이션 중에도 바로 이어짐.
+  let fmWLast=0,fmWAcc=0,fmWSum=0,fmWSolo=true,fmWNotch=null,fmWTarget=null;
+  const fmZoomStep=(e,dir)=>{
+    const base=fmWTarget??map.getZoom();
+    const z=Math.max(map.getMinZoom(),Math.min(map.getMaxZoom(),base+dir));
+    if(z===base)return;
+    fmWTarget=z;map.setZoomAround(map.mouseEventToLatLng(e),z);
+  };
+  map.on('zoomend',()=>{if(fmWTarget===map.getZoom())fmWTarget=null;});
   map.getContainer().addEventListener('wheel',e=>{
     e.preventDefault();
-    const now=Date.now(),fresh=now-fmWheelLast>200;fmWheelLast=now;
-    if(!fresh||!e.deltaY)return;
-    const z=Math.max(map.getMinZoom(),Math.min(map.getMaxZoom(),map.getZoom()+(e.deltaY<0?1:-1)));
-    if(z!==map.getZoom())map.setZoomAround(map.mouseEventToLatLng(e),z);
+    if(!e.deltaY)return;
+    const d=Math.abs(e.deltaY)*(e.deltaMode===1?33:e.deltaMode===2?400:1),dir=e.deltaY<0?1:-1,now=Date.now();
+    if(now-fmWLast>150){                       // 새 묶음
+      if(fmWSolo&&fmWSum>0)fmWNotch=Math.max(20,Math.min(fmWNotch??Infinity,fmWSum));
+      fmWSum=0;fmWSolo=true;fmWAcc=d-(fmWNotch||Infinity);
+      fmZoomStep(e,dir);
+    }else if(fmWNotch){
+      fmWAcc+=d;
+      while(fmWAcc>=fmWNotch*0.5){fmWAcc-=fmWNotch;fmWSolo=false;fmZoomStep(e,dir);}
+    }
+    fmWSum+=d;fmWLast=now;
   },{passive:false});
   // Fleet Map B — API key 없는 Esri World Street Map(영문 지명 우선; 내부 저트래픽 사용)
   // 사용자 화면에 필요한 타일만 브라우저가 직접 요청하고 Leaflet의 HTTP 캐시를 따름(사전수집 없음).
