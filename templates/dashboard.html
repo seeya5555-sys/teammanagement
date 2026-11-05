@@ -86,6 +86,8 @@
   @keyframes tmPulse{0%,100%{opacity:1;filter:drop-shadow(0 0 0 rgba(194,65,12,0))}50%{opacity:.35;filter:drop-shadow(0 0 6px rgba(194,65,12,.95))}}
   .tm-dot.today,.ship.transit-today{animation:tmPulse 1.1s ease-in-out infinite}
   .ship.transit-today::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid #c2410c;pointer-events:none}
+  .ship.transit-pre::after,.ship.transit-post::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid #eab308;pointer-events:none}
+  .ship.transit-post::after{border-color:#16a34a}
   @media (prefers-reduced-motion:reduce){.tm-dot.today,.ship.transit-today{animation:none}}
   /* 통항 모니터링 모달(외부 사이트 읽기전용 미러) */
   .tmm-back{position:fixed;inset:0;z-index:4000;background:rgba(31,31,29,.45);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto}
@@ -734,7 +736,7 @@
     const hasCourse=v.course!==null && v.course!==undefined && String(v.course).trim()!=='' && Number.isFinite(rawCourse);
     const rot=hasCourse ? ((rawCourse % 360) + 360) % 360 : 0;
     const tri='<svg viewBox="0 0 24 24" class="'+(hasCourse?'':'fm-marker-neutral')+'" style="transform:rotate('+rot+'deg)"><path d="M12 2.5 L18.5 20 L12 15.5 L5.5 20 Z"/></svg>';
-    return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+(v.transit_today?' transit-today':'')+'" style="position:relative">'+tri+sire+pos+'</div>'});
+    return L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ship '+(v.color||'gray')+due+(v.transit_today?' transit-today':(v.transit_phase==='pre'?' transit-pre':(v.transit_phase==='post'?' transit-post':'')))+'" style="position:relative">'+tri+sire+pos+'</div>'});
   }
 
   let fleetLoad=null, fleetReloadQueued=false, fleetLoadGen=0;

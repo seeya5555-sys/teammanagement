@@ -331,6 +331,16 @@ class TransitMirrorTests(unittest.TestCase):
         self.assertEqual({"PERUPROSPERITY", "MALTAPROSPERITY"}, keys)
         self.assertEqual(set(), tm.transit_today_keys({"today": b}, date(2026, 11, 2)))
 
+    def test_transit_phase_map(self):
+        reg = {"20261104": [{"key": "A"}, {"key": "B"}], "20261105": [{"key": "B"}],
+               "20261106": [{"key": "C"}, {"key": "A"}]}
+        ph = tm.transit_phase_map({"registry": reg}, date(2026, 11, 5))
+        self.assertEqual({"A": "pre", "B": "today", "C": "pre"}, ph)
+        ph = tm.transit_phase_map({"registry": reg}, date(2026, 11, 6))
+        self.assertEqual({"A": "today", "B": "post", "C": "today"}, ph)
+        ph = tm.transit_phase_map({"registry": reg}, date(2026, 11, 7))
+        self.assertEqual({"A": "post", "C": "post"}, ph)
+
     def test_transit_today_flag_in_mirror_api(self):
         self.login()
         b = self._bundle()

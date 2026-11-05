@@ -269,13 +269,38 @@ def transit_today_keys(data, today=None):
     return keys
 
 
+def _registry_day_keys(data, day):
+    keys = set()
+    tk = day.strftime('%Y%m%d')
+    regs = [data.get('registry') or {}, ((data.get('today') or {}).get('registry') or {})]
+    for reg in regs:
+        if isinstance(reg, dict):
+            for e in reg.get(tk) or []:
+                if isinstance(e, dict):
+                    k = norm_name(_scalar(e.get('key')) or _scalar(e.get('vessel')))
+                    if k:
+                        keys.add(k)
+    return keys
+
+
+def transit_phase_map(data, today=None):
+    """{정규화키: 'today'|'pre'|'post'} — 당일(빨강) > 하루전(노랑) > 다음날(초록)."""
+    today = today or datetime.now(KST).date()
+    if not isinstance(data, dict):
+        return {}
+    out = {k: 'post' for k in _registry_day_keys(data, today - timedelta(days=1))}
+    out.update({k: 'pre' for k in _registry_day_keys(data, today + timedelta(days=1))})
+    out.update({k: 'today' for k in transit_today_keys(data, today)})
+    return out
+
+
 def build_payload(data, assigned, today=None):
     today = today or datetime.now(KST).date()
     if not data:
         return []
     consent = (((data.get('today') or {}).get('consent') or {}).get('byVessel') or {})
     registry = data.get('registry') or {}
-    today_keys = transit_today_keys(data, today)
+    phases = transit_phase_map(data, today)
     upstream = [v for v in (data.get('vessels') or []) if isinstance(v, dict)]
     seen = {}
     for v in upstream:
@@ -293,7 +318,8 @@ def build_payload(data, assigned, today=None):
         c = consent.get(key) if isinstance(consent, dict) else None
         item['consent'] = {f: _scalar(c.get(f)) for f in CONSENT_FIELDS} if isinstance(c, dict) else None
         item['checkpoints'] = _checkpoints(registry, key, today)
-        item['transit_today'] = key in today_keys
+        item['transit_phase'] = phases.get(key)
+        item['transit_today'] = item['transit_phase'] == 'today'
         out.append(item)
     out.sort(key=lambda x: x['name'])
     return out
@@ -394,7 +420,7 @@ def apply_fleet_overrides(fleet, current_epoch, skip_keys=(), now=None):
     try:
         mirror = fleet_positions(now)
         assigned = _assigned_names()
-        tkeys = {k for k in cached_transit_today_keys() if k in assigned}
+        tkeys = {k: p for k, p in cached_transit_phases().items() if k in assigned}
         if not mirror and not tkeys:
             return fleet, 0
         out, n = [], 0
@@ -408,7 +434,8 @@ def apply_fleet_overrides(fleet, current_epoch, skip_keys=(), now=None):
                     n += 1
             if key in tkeys:
                 nv = nv if nv is not None else copy.deepcopy(v)
-                nv['transit_today'] = True
+                nv['transit_phase'] = tkeys[key]
+                nv['transit_today'] = tkeys[key] == 'today'
             out.append(v if nv is None else nv)
         return out, n
     except Exception:
@@ -432,6 +459,10 @@ def _warm_full_cache():
 
 
 def cached_transit_today_keys():
+    return {k for k, p in cached_transit_phases().items() if p == 'today'}
+
+
+def cached_transit_phases():
     """Fleet Map 용 — 캐시에 있는 전체 번들에서만 읽는다(요청을 막지 않음).
     캐시가 비었거나 만료면 백그라운드 갱신을 **한 개만** 걸고, 이번 응답은 직전 값(없으면 빈 집합)."""
     with _lock:
@@ -447,7 +478,7 @@ def cached_transit_today_keys():
             except Exception:
                 with _warm_lock:
                     _warm['running'] = False
-    return transit_today_keys(data) if data else set()
+    return transit_phase_map(data) if data else {}
 
 
 def _fleet_overlay_hook(fleet, current_epoch, skip_names=()):
