@@ -158,6 +158,7 @@
   .fm-dmg input[type=text]{width:96px;font-size:12px;padding:4px 6px}
   .fm-dmg button{font-size:12px;padding:4px 10px;min-height:28px}
   .fm-dmg .note{font-size:11px;color:var(--text-tertiary);margin-top:4px}
+  .ship-label .sc.dmgd{color:#f87171}
   .ship-label .sc.tw.pre{color:#facc15}
   .ship-label .sc.tw.today{color:#f87171}
   /* 운항 모드: 선명 길이와 무관하게 고정 폭, 줄임 없이 전체 문장 줄바꿈 표시. hover=맨 앞으로 */
@@ -610,7 +611,12 @@
       return esc(v.name)+'<span class="sc ops'+(s?'':' none')+'" title="'+esc(n&&n.mail_subject?(n.mail_date||'')+' · '+n.mail_subject:'')+'">'+esc((s||(n?'특이사항 없음':'운항 요약 미수집'))+stale)+'</span>';
     }
     const _pos=(v.lat!=null&&v.lng!=null)?(_dms(v.lat,'N','S')+' '+_dms(v.lng,'E','W')):'—';
-    return esc(v.name)+'<span class="sc">'+esc((v.speed!=null?v.speed:'—')+'kn · '+_pos)+'</span>'+transitWinHtml(v);
+    return esc(v.name)+'<span class="sc">'+esc((v.speed!=null?v.speed:'—')+'kn · '+_pos)+'</span>'+transitWinHtml(v)+damageDateHtml(v);
+  }
+  function damageDateHtml(v){
+    if(!v.damaged) return '';
+    const d=String(v.damaged_hit_date||'');
+    return '<span class="sc dmgd">💥 피격'+(d?' '+esc(d.slice(5).replace('-','/'))+' ('+esc(d.slice(0,4))+')':'')+'</span>';
   }
   // 통항 하루전/당일 배정선: 시작(E.BOUND=A, W.BOUND=Z) : 종료 LT
   function transitWinHtml(v){
@@ -874,6 +880,9 @@
     let h='<div class="fm-dmg'+(on?' on':'')+'"><label><input type="checkbox" class="fm-dmg-chk" data-vessel="'+n+'"'+(on?' checked':'')+'/> 💥 피격 선박</label>';
     if(on){
       const lat=v.damaged_manual_pos?Number(v.lat).toFixed(4):'', lng=v.damaged_manual_pos?Number(v.lng).toFixed(4):'';
+      h+='<div class="fm-dmg-pos"><span style="font-size:12px;font-weight:600">피격일</span>'+
+        '<input type="date" class="fm-dmg-date" data-vessel="'+n+'" value="'+esc(v.damaged_hit_date||'')+'" style="font-size:12px;padding:3px 6px"/>'+
+        '<button type="button" class="fm-dmg-date-save primary" data-vessel="'+n+'">피격일 저장</button></div>';
       h+='<div class="fm-dmg-pos">'+
         '<input type="text" class="fm-dmg-lat" data-vessel="'+n+'" placeholder="위도 25.12" value="'+lat+'" inputmode="decimal"/>'+
         '<input type="text" class="fm-dmg-lng" data-vessel="'+n+'" placeholder="경도 56.34" value="'+lng+'" inputmode="decimal"/>'+
@@ -917,8 +926,12 @@
     fmDamagePost(vessel,{damaged:c.checked});
   });
   document.addEventListener('click',function(ev){
-    const t=ev.target.closest&&ev.target.closest('.fm-dmg-save,.fm-dmg-clear,.fm-dmg-drag'); if(!t) return;
+    const t=ev.target.closest&&ev.target.closest('.fm-dmg-save,.fm-dmg-clear,.fm-dmg-drag,.fm-dmg-date-save'); if(!t) return;
     const vessel=t.getAttribute('data-vessel')||'';
+    if(t.classList.contains('fm-dmg-date-save')){
+      const di=document.querySelector('.fm-dmg-date[data-vessel="'+CSS.escape(vessel)+'"]');
+      fmDamagePost(vessel,{hit_date:di?di.value:''}); return;
+    }
     if(t.classList.contains('fm-dmg-clear')){ if(confirm('수동 위치를 지우고 자동 선위로 돌아갈까요?')) fmDamagePost(vessel,{clear_pos:true}); return; }
     if(t.classList.contains('fm-dmg-save')){
       const q=c=>document.querySelector('.'+c+'[data-vessel="'+CSS.escape(vessel)+'"]');

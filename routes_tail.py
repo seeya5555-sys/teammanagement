@@ -1188,6 +1188,7 @@ def _fleet_apply_damaged(fleet):
         if not o:
             continue
         v['damaged_since'] = o.get('since')
+        v['damaged_hit_date'] = o.get('hit_date')
         lat, lng = o.get('lat'), o.get('lng')
         if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
             v['lat'], v['lng'] = lat, lng
@@ -1223,6 +1224,18 @@ def api_fleet_map_damaged_set():
                 dmg.pop(key, None)
             else:
                 return jsonify({'ok': False, 'error': 'damaged must be boolean'}), 400
+        elif 'hit_date' in d:
+            if key not in dmg:
+                return jsonify({'ok': False, 'error': '피격 표시된 선박만 피격일 지정 가능'}), 400
+            hd = d.get('hit_date')
+            if hd in (None, ''):
+                dmg[key].pop('hit_date', None)
+            else:
+                try:
+                    hd = datetime.strptime(str(hd).strip(), '%Y-%m-%d').strftime('%Y-%m-%d')
+                except ValueError:
+                    return jsonify({'ok': False, 'error': '피격일 형식 YYYY-MM-DD'}), 400
+                dmg[key]['hit_date'] = hd
         elif d.get('clear_pos') is True:
             if key in dmg:
                 for f in ('lat', 'lng', 'pos_at'):

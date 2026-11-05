@@ -101,6 +101,19 @@ class FleetDamagedTests(unittest.TestCase):
         self.post(damaged=True)
         self.assertEqual(25.0, self.vessel()['lat'])
 
+    def test_hit_date(self):
+        self.assertEqual(400, self.post(hit_date='2026-11-03').status_code, '피격 표시 전엔 거부')
+        self.post(damaged=True)
+        self.assertEqual(400, self.post(hit_date='11/03').status_code)
+        self.assertEqual(200, self.post(hit_date='2026-11-03').status_code)
+        self.assertEqual('2026-11-03', self.vessel()['damaged_hit_date'])
+        self.post(hit_date='')
+        self.assertIsNone(self.vessel()['damaged_hit_date'])
+        self.post(hit_date='2026-11-03')
+        self.post(damaged=False)
+        self.post(damaged=True)
+        self.assertIsNone(self.vessel()['damaged_hit_date'], '해제 후 재표시 시 옛 피격일 안 살아남')
+
     def test_rejects_bad_input(self):
         self.post(damaged=True)
         self.assertEqual(400, self.post(lat=91, lng=56).status_code)
