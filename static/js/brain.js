@@ -31,15 +31,16 @@
   const enabled = new Set(CATS.map((c) => c.key));
   enabled.delete('closed');            // 완료 현안은 기본 숨김 — 분류에서 켜면 보임
   let showSup = false;
-  let focusMode = true;            // 데쿠 중심: 데쿠에서 2단계 + 펼친 노드의 이웃만
+  let focusMode = true;            // 데쿠/아이자와 중심: 중심에서 2단계 + 펼친 노드의 이웃만
+  let center = 'deku';             // 'deku' | 'aizawa' (11-07 아이자와 중심 탭)
   const expanded = new Set();
   const STATUS = { ok: css('--green-border') || '#97C459', running: css('--teal-dot') || '#1D9E75',
                    fail: css('--red-strong') || '#E24B4A', disabled: css('--border-strong') || '#B4B2A9' };
   function nbrs(id) { return (outs.get(id) || []).concat(ins.get(id) || []); }
   function focusSet() {
     const keep = new Set();
-    if (!byId.has('deku')) return null;
-    let frontier = ['deku']; keep.add('deku');
+    if (!byId.has(center)) return null;
+    let frontier = [center]; keep.add(center);
     for (let d = 0; d < 2; d++) {
       const nx = [];
       frontier.forEach((id) => (outs.get(id) || []).forEach((t) => { if (!keep.has(t)) { keep.add(t); nx.push(t); } }));
@@ -68,8 +69,8 @@
     if (todayPick) {
       const keep = new Set(todayPick);
       todayPick.forEach((id) => nbrs(id).forEach((t) => { const x = byId.get(t); if (x && x.cat === 'vessel') keep.add(t); }));
-      keep.add('deku');
-      nodes = all.nodes.filter((n) => keep.has(n.id) && (visible(n) || n.id === 'deku'));  // Today=데쿠 중심 대신, 분류·폐기 필터는 유지
+      keep.add(center);
+      nodes = all.nodes.filter((n) => keep.has(n.id) && (visible(n) || n.id === center));  // Today=데쿠 중심 대신, 분류·폐기 필터는 유지
     }
     const ids = new Set(nodes.map((n) => n.id));
     const links = all.links.filter((l) => ids.has(l._s) && ids.has(l._t)).map((l) => ({ source: l._s, target: l._t }));
@@ -82,7 +83,7 @@
     return base;
   }
   function size(n) {
-    if (n.id === 'deku') return 14;
+    if (n.id === 'deku' || n.id === 'aizawa') return 14;
     if (n.cat === 'hub') return 8;
     return 2 + Math.min(10, Math.sqrt((outs.get(n.id) || []).length + (ins.get(n.id) || []).length) * 1.6);
   }
@@ -123,8 +124,9 @@
     if (!focusMode || expanded.has(n.id)) return;
     expanded.add(n.id); refresh();
   }
-  function pinCenter(d) { const c = d.nodes.find((n) => n.id === 'deku'); if (c) { c.fx = 0; c.fy = 0; } return d; }
+  function pinCenter(d) { const c = d.nodes.find((n) => n.id === center); if (c) { c.fx = 0; c.fy = 0; } return d; }
 
+  function d3Unpin() { (all.nodes || []).forEach((n) => { if (n.id === 'deku' || n.id === 'aizawa') { n.fx = undefined; n.fy = undefined; } }); }
   function refresh() {
     if (!graph) return;
     graph.graphData(pinCenter(viewData()));
@@ -231,7 +233,10 @@
   });
   document.querySelectorAll('.br-view button').forEach((b) => b.addEventListener('click', () => {
     document.querySelectorAll('.br-view button').forEach((x) => x.classList.toggle('on', x === b));
-    focusMode = b.dataset.view === 'focus'; if (focusMode) expanded.clear(); refresh();
+    focusMode = b.dataset.view !== 'all';
+    center = b.dataset.view === 'aizawa' ? 'aizawa' : 'deku';
+    d3Unpin(); expanded.clear(); refresh();
+    if (byId.has(center) && focusMode) select(center);
   }));
   let rt;
   window.addEventListener('resize', () => {
