@@ -141,7 +141,9 @@
     ],
     "daily_mail_service.py": [],
     "mail_common.py": [
-      "MailServiceError"
+      "MailServiceError",
+      "reply_date_prefix",
+      "today_kst"
     ]
   },
   "cs_mail_service.py": {
@@ -153,7 +155,9 @@
     ],
     "daily_mail_service.py": [],
     "mail_common.py": [
-      "MailServiceError"
+      "MailServiceError",
+      "reply_date_prefix",
+      "today_kst"
     ]
   },
   "csrf.py": {},

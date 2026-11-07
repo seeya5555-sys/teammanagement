@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app_core import execute, execute_rc, get_db, query
-from mail_common import MailServiceError
+from mail_common import MailServiceError, reply_date_prefix, today_kst  # noqa: F401 (re-export)
 import daily_mail_service as dm
 
 SUBJECT = '{vessel} - Condition Survey ({quarter}): Rectification Status Required'
@@ -40,10 +40,6 @@ KOREAN = re.compile(r'[ᄀ-ᇿ㄰-㆏가-힯]')
 
 class CsMailError(MailServiceError):
     pass
-
-
-def today_kst():
-    return datetime.now(ZoneInfo('Asia/Seoul')).date()
 
 
 def dumps(value):
@@ -355,18 +351,6 @@ def pending():
         run['processed_message_ids'] = [r['message_id'] for r in query('SELECT message_id FROM cs_mail_replies WHERE run_id=?', (run['id'],))]
         out.append(run)
     return out
-
-
-def reply_date_prefix(received_at, remark):
-    """Class 규칙과 동일: 회신일 [M/D] 접두. 이미 [M/D]로 시작하면 그대로."""
-    if re.match(r'\[\d{1,2}/\d{1,2}\]', remark):
-        return remark
-    raw = str(received_at or '')[:10]
-    try:
-        day = date.fromisoformat(raw)
-    except ValueError:
-        day = date.today()
-    return f'[{day.month}/{day.day}]{remark}'
 
 
 def source_fingerprint(original):

@@ -463,6 +463,8 @@ CREATE TABLE IF NOT EXISTS dock_daily_attachment (
     FOREIGN KEY (block_id) REFERENCES dock_daily_block(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_dock_daily_attachment_report ON dock_daily_attachment(report_id, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_attachment_block ON dock_daily_attachment(block_id, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_dock_daily_block_parent ON dock_daily_block(parent_id);
 
 CREATE TABLE IF NOT EXISTS dock_daily_report_revision (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -646,6 +648,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     FOREIGN KEY (supervisor_id) REFERENCES supervisors(id) ON DELETE SET NULL,
     FOREIGN KEY (vessel_id)     REFERENCES vessels(id)     ON DELETE SET NULL
 );
+CREATE INDEX IF NOT EXISTS idx_calendar_events_vessel ON calendar_events(vessel_id);
 CREATE INDEX IF NOT EXISTS idx_cal_events_date ON calendar_events(start_date);
 CREATE INDEX IF NOT EXISTS idx_cal_events_supervisor ON calendar_events(supervisor_id);
 CREATE INDEX IF NOT EXISTS idx_cal_events_source ON calendar_events(source_type, source_id);
@@ -1038,6 +1041,7 @@ CREATE TABLE IF NOT EXISTS soa_review_attachment (
     updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_soa_review_attachment_case ON soa_review_attachment(case_id, line_id, slot);
+CREATE INDEX IF NOT EXISTS idx_soa_review_attachment_line ON soa_review_attachment(line_id);
 
 CREATE TABLE IF NOT EXISTS soa_review_audit (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

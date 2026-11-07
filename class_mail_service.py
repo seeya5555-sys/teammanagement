@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app_core import execute, execute_rc, get_db, query
-from mail_common import MailServiceError
+from mail_common import MailServiceError, reply_date_prefix, today_kst  # noqa: F401 (re-export)
 import daily_mail_service as dm
 
 SUBJECT = '{vessel} - Class Status: Action Plan and Progress Required'
@@ -32,10 +32,6 @@ CATEGORIES = {'COC': 'Condition of Class (COC)', 'STATUTORY': 'Statutory (Flag)'
 
 class ClassMailError(MailServiceError):
     pass
-
-
-def today_kst():
-    return datetime.now(ZoneInfo('Asia/Seoul')).date()
 
 
 def dumps(value):
@@ -252,18 +248,6 @@ def pending():
         run['processed_message_ids'] = [r['message_id'] for r in query('SELECT message_id FROM class_mail_replies WHERE run_id=?', (run['id'],))]
         out.append(run)
     return out
-
-
-def reply_date_prefix(received_at, remark):
-    """자동 조치사항 맨 앞에 회신일 [M/D] (형 지시 2026-10-06). 이미 [M/D]로 시작하면 그대로."""
-    if re.match(r'\[\d{1,2}/\d{1,2}\]', remark):
-        return remark
-    raw = str(received_at or '')[:10]
-    try:
-        day = date.fromisoformat(raw)
-    except ValueError:
-        day = date.today()
-    return f'[{day.month}/{day.day}]{remark}'
 
 
 def apply_reply(rid, data):
