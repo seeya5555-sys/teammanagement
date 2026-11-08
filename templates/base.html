@@ -25,6 +25,9 @@
       <rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>
       <rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>
     </symbol>
+    <symbol id="i-cube" viewBox="0 0 24 24">
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>
+    </symbol>
     <symbol id="i-brain" viewBox="0 0 24 24">
       <circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="13" r="2.4"/>
       <circle cx="5" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/>
@@ -102,7 +105,7 @@
         <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}"{% if request.endpoint == ep or (eps and request.endpoint in eps) %} aria-current="page"{% endif %}>{% if icon %}<svg class="nav-ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}{{ label }}</a>
       {%- endmacro %}
       <nav class="main-nav">
-        {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}
+        {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}{% if session.username == 'SS0094' %}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
         {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
         {{ nlink('routes_core.index', 'Daily 업무관리', icon='clipboard') }}
 
@@ -222,7 +225,7 @@
     </div>
     {# 모바일에서는 핵심 업무 탭을 항상 노출하고 나머지는 햄버거 메뉴로 제공. #}
     <nav class="mobile-tabbar" aria-label="핵심 메뉴">
-      {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}
+      {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}{% if session.username == 'SS0094' %}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
       {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
       {{ nlink('routes_core.index', 'Daily', icon='clipboard') }}
       {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
@@ -239,7 +242,7 @@
         <button type="button" class="nav-link mm-close" aria-label="메뉴 닫기"><svg class="nav-ic" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
       <div class="mm-body">
-        {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}
+        {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}{% if session.username == 'SS0094' %}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
         {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
         {{ nlink('routes_core.index', 'Daily 업무관리', icon='clipboard') }}
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화</div>

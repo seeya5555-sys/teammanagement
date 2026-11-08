@@ -1830,6 +1830,8 @@ import routes_journal
 app.register_blueprint(routes_journal.bp)
 import routes_brain
 app.register_blueprint(routes_brain.bp)
+import routes_ship3d
+app.register_blueprint(routes_ship3d.bp)
 import transit_mirror
 app.register_blueprint(transit_mirror.bp)
 # Static contract marker: dock sync notifications keep the historical deep link.

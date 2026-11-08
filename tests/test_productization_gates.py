@@ -92,6 +92,8 @@ class ProductizationGatesTests(unittest.TestCase):
             "/dock_procure/template/example",  # XLSX download
             "/dock_procure/template/blank",  # XLSX download
             "/brain",  # owner(SS0094)-only page; others 404 — covered by tests/test_brain.py
+            "/ship3d",  # owner(SS0094)-only page; others 404 — covered by tests/test_ship3d.py
+            "/ship3d/model/<slug>.glb",  # owner-only binary (glb) — covered by tests/test_ship3d.py
         }
         self.assertEqual(200, appmod.app.test_client().get("/login").status_code)
         exercised = set()

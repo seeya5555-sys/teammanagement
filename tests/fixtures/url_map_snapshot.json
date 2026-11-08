@@ -6546,6 +6546,28 @@
     "defaults": {}
   },
   {
+    "rule": "/ship3d",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_ship3d.ship3d_page",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/ship3d/model/<slug>.glb",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_ship3d.ship3d_model",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/shipwiki",
     "methods": [
       "GET",
