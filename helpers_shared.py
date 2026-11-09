@@ -1691,7 +1691,7 @@ def _soa_vessel_params(p, vsl):
     if sl and sl not in ('04', '05'):
         raise ValueError('부서는 05(Technical)/04(Crew)만.')
     review_model = str(p.get('review_model') or 'auto').strip()
-    if review_model not in ('auto', 'claude-haiku-4-5', 'openai/gpt-5.4-mini'):
+    if review_model not in ('auto', 'claude-haiku-5-5', 'claude-haiku-4-5', 'openai/gpt-5.4-mini'):  # 4-5=구 iOS 호환(러너가 5-5로 매핑)
         raise ValueError('검증모델 선택값이 올바르지 않습니다.')
     pp = {'vsl_cd': vsl}
     if fm: pp['fm_dm'] = fm
