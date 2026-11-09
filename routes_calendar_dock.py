@@ -7546,6 +7546,20 @@ def _invoice_pdf_path(did):
 def _invoice_attachment_path(did, idx):
     return os.path.join(INVOICE_PDF_DIR, '%d_%d.pdf' % (int(did), int(idx)))
 
+# 인보이스 Reference 첨부 미리보기 허용 형식. 이미지 증빙(JPG 등)이 PDF 전용 필터에 걸려
+# '미리보기 없음'으로만 보이던 문제(2026-11-09) — 저장 파일명은 기존 규칙(%d_%d.pdf) 유지,
+# 실제 형식은 매직바이트로 판별해 서빙한다.
+_INVOICE_PREVIEW_EXTS = ('.pdf', '.jpg', '.jpeg', '.png')
+
+def _invoice_preview_ext_ok(name):
+    return str(name or '').lower().endswith(_INVOICE_PREVIEW_EXTS)
+
+def _invoice_sniff_mime(head):
+    if head[:5] == b'%PDF-': return 'application/pdf'
+    if head[:3] == b'\xff\xd8\xff': return 'image/jpeg'
+    if head[:8] == b'\x89PNG\r\n\x1a\n': return 'image/png'
+    return None
+
 def _invoice_attachment_indices(did):
     prefix = '%d_' % int(did)
     out=[]
@@ -7718,7 +7732,7 @@ def api_invoice_list():
         try: names=json.loads(dd.get('attachments') or '[]')
         except Exception: names=[]
         dd['attachment_preview_indices'] = [i for i in _invoice_attachment_indices(dd['id'])
-            if 0 <= i < len(names) and str(names[i] or '').lower().endswith('.pdf')]
+            if 0 <= i < len(names) and _invoice_preview_ext_ok(names[i])]
         dd['evidence_checklist'] = _evidence_checklist(
             'invoice', dd, dd['attachment_preview_indices'])
     evidence_gaps = sum(d['evidence_checklist']['gap_count'] for d in drafts if d.get('status') == 'pending')
@@ -7753,7 +7767,9 @@ def api_invoice_attachment(did, idx):
     if idx < 0 or idx >= len(names): abort(404)
     p=_invoice_attachment_path(did,idx)
     if not os.path.exists(p): abort(404)
-    resp=send_file(p,mimetype='application/pdf',as_attachment=False,
+    with open(p,'rb') as fh: mime=_invoice_sniff_mime(fh.read(8))
+    if not mime: abort(404)
+    resp=send_file(p,mimetype=mime,as_attachment=False,
                    download_name=secure_filename(str(names[idx] or ('attachment_%d.pdf'%idx))),conditional=True)
     resp.headers['X-Content-Type-Options']='nosniff'
     return resp
@@ -7892,14 +7908,15 @@ def api_ext_invoice_attachment_upload(did, idx):
     try: names=json.loads(row['attachments'] or '[]')
     except Exception: names=[]
     if idx < 0 or idx >= len(names): return jsonify({'error':'attachment index out of range'}),409
-    if not str(names[idx] or '').lower().endswith('.pdf'):
-        return jsonify({'error':'attachment is not pdf'}),400
+    if not _invoice_preview_ext_ok(names[idx]):
+        return jsonify({'error':'attachment type not previewable'}),400
     expected_fp=hashlib.sha256(json.dumps(names,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
     if request.args.get('name','') != str(names[idx] or '') or request.args.get('fp','') != expected_fp:
         return jsonify({'error':'stale attachment identity'}),409
     if request.content_length and request.content_length > MAX: return jsonify({'error':'too large'}),413
     data=request.get_data()
-    if not data or data[:5] != b'%PDF-': return jsonify({'error':'not pdf'}),400
+    want='application/pdf' if str(names[idx]).lower().endswith('.pdf') else ('image/png' if str(names[idx]).lower().endswith('.png') else 'image/jpeg')
+    if not data or _invoice_sniff_mime(data[:8]) != want: return jsonify({'error':'content does not match type'}),400
     if len(data)>MAX: return jsonify({'error':'too large'}),413
     final=_invoice_attachment_path(did,idx); tmp=final+'.tmp'
     with open(tmp,'wb') as fh: fh.write(data)

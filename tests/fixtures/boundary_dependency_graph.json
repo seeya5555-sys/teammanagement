@@ -88,6 +88,7 @@
     "routes_liscr.py": [],
     "routes_repair_request.py": [],
     "routes_rpcost.py": [],
+    "routes_ship3d.py": [],
     "routes_tail.py": [],
     "routes_vetting_mail.py": [],
     "token_auth.py": [
@@ -569,6 +570,14 @@
       "_automation_enabled",
       "admin_required",
       "api_key_required"
+    ]
+  },
+  "routes_ship3d.py": {
+    "app_core.py": [
+      "INSTANCE_DIR"
+    ],
+    "helpers_shared.py": [
+      "login_required"
     ]
   },
   "routes_tail.py": {
