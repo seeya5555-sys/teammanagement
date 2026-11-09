@@ -143,7 +143,7 @@
               style="padding:6px 9px;border:1px solid var(--border);border-radius:4px;font-size:13px">
         <option value="auto">Auto / 안전기본</option>
         <option value="claude-haiku-5-5">Haiku 5.5</option>
-        <option value="openai/gpt-5.4-mini">GPT 5.4 mini (추가확인)</option>
+        <option value="openai/gpt-6-luna">GPT-6 Luna (추가확인)</option>
       </select>
       <button class="au-b live" id="sv-live" type="button">검증 실기입</button>
       <button class="au-b verify" id="sv-remark" type="button" title="컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)">리마크정리</button>
@@ -754,7 +754,7 @@
     if((fm&&!/^\d{6}$/.test(fm))||(to&&!/^\d{6}$/.test(to))){ alert('기간은 YYYYMM 형식.'); return; }
     const params=vessels.length===1?{vsl_cd:vessels[0]}:{vsl_cds:vessels}; if(fm)params.fm_dm=fm; if(to)params.to_dm=to; if(sl)params.sl_tp=sl;
     params.review_model=reviewModel;
-    const modelWarn = reviewModel==='openai/gpt-5.4-mini' ? '\n\nGPT 5.4 mini는 과플래그 가능성이 있어 결과 추가확인 전제로 실행합니다.' : '';
+    const modelWarn = reviewModel==='openai/gpt-6-luna' ? '\n\nGPT-6 Luna는 과플래그 가능성이 있어 결과 추가확인 전제로 실행합니다.' : '';
     const title=vessels.length===1?vessels[0]:`${vessels.join(', ')} (${vessels.length}척)`;
     if(mode==='remark_cleanup'){
       if(!confirm(`[선박별 리마크정리 — ${title}]\n컨펌(CFM_YN=Y)된 라인에 남아있는 리젝 리마크만 삭제합니다.\n(승인·금액·상태 무변경 · 승인완료(C) SOA는 서버가 막아 대상 아님)\n진행할까요?`)) return;
