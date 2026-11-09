@@ -100,12 +100,12 @@
       {% set auto_eps = ['routes_dock_submit.automation_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_calendar_dock.remittance_page','routes_liscr.liscr_page','routes_calendar_dock.health_page','routes_daily_mail.daily_mail_page','routes_vetting_mail.vetting_mail_page','routes_class_mail.class_mail_page','routes_cs_mail.cs_mail_page'] %}
       {% set dockprep_eps = ['routes_repair_request.repair_request_page','routes_calendar_dock.reqgen_page','routes_dock_submit.dock_procure_page','routes_dock_daily.dock_daily_page'] %}
       {% set expense_eps = ['routes_calendar_dock.expenses_page','routes_calendar_dock.expense_detail_page'] %}
+      {% set ref_eps = ['routes_brain.brain_page','routes_ship3d.ship3d_page','routes_calendar_dock.meeting_page'] + expense_eps %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
       {% macro nlink(ep, label, eps=None, icon=None) -%}
         <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}"{% if request.endpoint == ep or (eps and request.endpoint in eps) %} aria-current="page"{% endif %}>{% if icon %}<svg class="nav-ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}{{ label }}</a>
       {%- endmacro %}
       <nav class="main-nav">
-        {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}{% if session.username == 'SS0094' %}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
         {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
         {{ nlink('routes_core.index', 'Daily 업무관리', icon='clipboard') }}
 
@@ -163,9 +163,16 @@
           </div>
         </div>
 
-        {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
+        <div class="nav-group {% if request.endpoint in ref_eps %}active{% endif %}">
+          <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>Reference<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
+          <div class="nav-submenu">
+            {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
+            {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
+            {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
+          </div>
+        </div>
+
         {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
-        {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
       </nav>
 
       <button type="button" class="nav-burger" id="nav-burger" aria-label="메뉴 열기" aria-expanded="false">
@@ -242,7 +249,6 @@
         <button type="button" class="nav-link mm-close" aria-label="메뉴 닫기"><svg class="nav-ic" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
       <div class="mm-body">
-        {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}{% if session.username == 'SS0094' %}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
         {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
         {{ nlink('routes_core.index', 'Daily 업무관리', icon='clipboard') }}
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-workflow"/></svg>자동화</div>
@@ -286,11 +292,15 @@
           {{ nlink('routes_dock_daily.dock_daily_page', '입거 Daily Report') }}
           {% if session.role == 'admin' %}<a href="{{ url_for('routes_core.dock_manager_shell') }}" class="nav-link{% if request.endpoint == 'routes_core.dock_manager_shell' %} active{% endif %}">Dock Manager</a>{% endif %}
         </div>
+        <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>Reference</div>
+        <div class="mm-sub-group">
+          {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
+          {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
+          {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
+        </div>
         <div class="mm-section"></div>
         <button type="button" class="mm-manual" id="btn-page-manual-mobile"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>현재 탭 설명서</button>
-        {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
         {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
-        {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
       </div>
       {# 드로어 푸터 — 모바일에서 사용자 확인·로그아웃 접근성 확보 #}
       <div class="mm-foot">
