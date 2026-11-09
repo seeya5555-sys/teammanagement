@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}자동화 모음 · TRMT3{% endblock %}
+{% block title %}{% if view == 'soa' %}SOA{% else %}자동화 모음{% endif %} · TRMT3{% endblock %}
 {% block head %}
 <style>
   .au-wrap{max-width:920px}
@@ -111,7 +111,7 @@
 {% endblock %}
 {% block content %}
 <header class="page-header ops-page-header">
-  <div><p class="ops-page-kicker">Operations</p><h1 class="page-title"><svg class="ic-svg"><use href="#i-workflow"/></svg> 자동화 모음</h1></div>
+  <div><p class="ops-page-kicker">Operations</p><h1 class="page-title"><svg class="ic-svg"><use href="#i-workflow"/></svg> {% if view == 'soa' %}SOA 검증{% else %}자동화 모음{% endif %}</h1></div>
 </header>
 <div class="au-wrap">
   <div class="au-master" id="au-master">
@@ -122,6 +122,8 @@
     <button class="au-ks" id="au-ks">…</button>
   </div>
 
+  {# 화면 분리: hub=SOA 숨김 / soa=전자결재 숨김. DOM은 유지(공용 JS가 같은 id를 렌더) #}
+  <div class="au-view-soa"{% if view == 'hub' %} style="display:none"{% endif %}>
   <div id="au-soa" class="jl"></div>
   <div id="soa-review" class="sr"></div>
   <div id="soa-groups" class="soa-groups"></div>
@@ -148,9 +150,13 @@
     </div>
   </div>
 
+  </div>
+
+  <div class="au-view-hub"{% if view == 'soa' %} style="display:none"{% endif %}>
   <div class="au-sec">전자결재</div>
   <div id="au-jeonja"></div>
   <div id="au-jeonja-list" class="jl"></div>
+  </div>
 
   <div class="jpdf-modal" id="jpdf-modal">
     <div class="jpdf-box"><div class="jpdf-bar"><b id="jpdf-title">검토 인보이스</b><a id="jpdf-open" target="_blank" rel="noopener">새 탭</a><button id="jpdf-close" type="button">닫기</button></div><iframe class="jpdf-frame" id="jpdf-frame" title="전자결재 검토 인보이스 미리보기"></iframe></div>

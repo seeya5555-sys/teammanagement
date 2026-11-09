@@ -2993,7 +2993,14 @@ def api_ext_dock_inquiry_result(did):
 @bp.route('/automation')
 @admin_required
 def automation_page():
-    return render_template('automation.html')
+    return render_template('automation.html', view='hub')
+
+
+@bp.route('/automation/soa')
+@admin_required
+def automation_soa_page():
+    # 2026-11-09 형 지시: SOA 섹션을 자동화 모음에서 분리한 별도 탭(같은 템플릿·같은 API, 화면만 분리)
+    return render_template('automation.html', view='soa')
 
 
 @bp.route('/api/automation/run', methods=['POST'])

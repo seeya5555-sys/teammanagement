@@ -6139,6 +6139,17 @@
     "defaults": {}
   },
   {
+    "rule": "/automation/soa",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_dock_submit.automation_soa_page",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/boarding",
     "methods": [
       "GET",
