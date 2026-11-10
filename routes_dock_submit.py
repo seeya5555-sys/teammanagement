@@ -30,7 +30,7 @@ from app_core import (
 from helpers_shared import (
     AUTOMATION_CLAIM_HOOKS, AUTOMATION_MODES, _xlsx_cell, GEMINI_API_KEY, _DOCKPROC_ATT_MAX, _DOCKPROC_CAT_NM,
     _DOCKPROC_PRE_INQUIRY, _DOCK_INQ_DOC, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
-    _FUNDREQ_ATT_MIME, _automation_enabled, _dock_sync_flag_bump, _dockatt_cached_idx,
+    _FUNDREQ_ATT_MIME, _automation_enabled, automation_enqueue_once, _dock_sync_flag_bump, _dockatt_cached_idx,
     _dockatt_disk_map, _dockatt_find, _dockatt_fp, _dockatt_gc, _dockatt_path,
     _dockproc_adopt_svms, _dockproc_cat_code, _dockproc_files_of, _dockproc_hard_n,
     _dockproc_hash, _dockproc_inq_stage_block, _dockproc_inq_target, _dockproc_norm_files,
@@ -3064,9 +3064,9 @@ def api_automation_run():
             app.logger.exception('soa-vessel multi enqueue failed')
             return jsonify({'error': '선박별 SOA 검증 큐 적재 실패 — 아무 작업도 큐에 넣지 않았습니다.'}), 500
         return jsonify({'ok': True, 'run_ids': run_ids, 'count': len(run_ids)})
-    rid = uuid.uuid4().hex[:12]
-    execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by, params) "
-            "VALUES (?,?,?, 'queued', ?, ?)", (rid, task, mode, user, params))
+    rid = automation_enqueue_once(task, mode, user, params)
+    if not rid:     # 위 busy 확인과 이 INSERT 사이에 다른 요청이 먼저 넣음 — 같은 409
+        return jsonify({'error': '이미 실행 대기/진행중입니다.'}), 409
     return jsonify({'ok': True, 'run_id': rid})
 
 
@@ -3135,10 +3135,9 @@ def api_ext_automation_enqueue():
                  (task,), one=True)
     if busy:
         return jsonify({'skipped': True, 'reason': '이미 대기/진행중'}), 200
-    import uuid
-    rid = uuid.uuid4().hex[:12]
-    execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by) "
-            "VALUES (?,?,?, 'queued', 'scheduler')", (rid, task, mode))
+    rid = automation_enqueue_once(task, mode, 'scheduler')
+    if not rid:     # busy 확인과 INSERT 사이에 끼어든 경우 — 같은 skipped 응답
+        return jsonify({'skipped': True, 'reason': '이미 대기/진행중'}), 200
     return jsonify({'ok': True, 'run_id': rid})
 
 
@@ -3171,7 +3170,9 @@ def api_ext_automation_claim():
         return jsonify({'run': None})
     # 조건부 claim — rowcount 0 이면(다른 폴러가 먼저 잡음) dispatch 안 함(이중실행 방지)
     rc = execute_rc("UPDATE automation_run SET status='running', started_at=datetime('now','localtime') "
-                    "WHERE id=? AND status='queued'", (row['id'],))
+                    "WHERE id=? AND status='queued' "
+                    # 위 running 확인과 한 문장으로 묶음 — 폴러가 겹쳐도 running 은 항상 1건
+                    "AND NOT EXISTS (SELECT 1 FROM automation_run WHERE status='running')", (row['id'],))
     if not rc:
         return jsonify({'run': None, 'busy': True})
     try:

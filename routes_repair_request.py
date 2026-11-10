@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, render_template, request, session
 
 from app_core import execute, execute_rc, get_db, query
-from helpers_shared import _automation_enabled, admin_required, api_key_required, login_required
+from helpers_shared import _automation_enabled, automation_reuse_or_enqueue, admin_required, api_key_required, login_required
 
 bp = Blueprint("routes_repair_request", __name__)
 _EDITABLE = ('pending', 'failed')
@@ -16,14 +16,7 @@ _EDITABLE = ('pending', 'failed')
 def _queue_save(user):
     if not _automation_enabled():
         return None
-    busy = query("SELECT run_id FROM automation_run WHERE task='reqgen_save' AND status='queued' "
-                 "ORDER BY id DESC LIMIT 1", one=True)
-    if busy:
-        return busy['run_id']
-    run_id = uuid.uuid4().hex[:12]
-    execute("INSERT INTO automation_run(run_id,task,mode,status,requested_by) "
-            "VALUES(?,'reqgen_save','live','queued',?)", (run_id, user))
-    return run_id
+    return automation_reuse_or_enqueue('reqgen_save', 'live', user, ('queued',))
 
 
 def _text(d, key, required=True, limit=10000):

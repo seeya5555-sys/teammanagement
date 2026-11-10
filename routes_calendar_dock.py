@@ -39,7 +39,7 @@ from app_core import (
     ensure_heif_opener, execute, execute_rc, get_db, query,
 )
 from helpers_shared import (
-    _xlsx_cell,
+    _xlsx_cell, automation_reuse_or_enqueue,
     AUTOMATION_TASKS_BASE, CAL_VALID_COLORS, GEMINI_API_KEY, RETIRED_RUNNER_KEYS,
     SOA_CATEGORY_OWNER, FLEET_MAP_FILE, _AOR_ACTIVE_STATUSES, _FUNDREQ_ATT_INLINE, _FUNDREQ_ATT_MAX,
     _FUNDREQ_ATT_MIME, _HEALTH_ORDER, _annotate_drafts_with_vessel,
@@ -6144,6 +6144,40 @@ def _aor_pdf_path(did, idx):
     return os.path.join(AOR_PDF_DIR, '%d_%d.pdf' % (int(did), int(idx)))
 
 
+def _att_disk_index(dirpath, exts, ci=False, dedupe=True):
+    """미리보기 캐시 폴더(`<did>_<idx>.<ext>`)를 1회만 훑어 {did: 정렬된 idx 목록}을 만든다.
+
+    목록 API 가 카드마다 `_aor_pdf_indices`/`_fundreq_att_indices`/`_invoice_attachment_indices`
+    를 불러 폴더 전체를 카드 수만큼 반복 스캔하던 것을 대체(결과는 그 함수들과 동일 —
+    tests/test_refactor_equivalence_2026_11_10.py). 단건 경로는 기존 함수를 그대로 쓴다.
+    ci=True 면 확장자 대소문자 무시(fundreq 규칙), False 면 그대로 비교(aor·invoice 규칙).
+    dedupe=False 면 같은 idx 가 여러 번 나와도 그대로 둔다(aor 스캐너는 중복 제거를 안 한다).
+    숫자로 못 바꾸는 이름(위첨자 숫자 등)은 그 파일만 건너뛴다.
+    """
+    out = {}
+    try:
+        names = os.listdir(dirpath)
+    except OSError:
+        return out
+    for name in names:
+        head, sep, rest = name.partition('_')
+        if not sep or not head.isascii() or not head.isdigit():
+            continue
+        stem, dot, ext = rest.rpartition('.')
+        if not dot or not stem.isdigit():
+            continue
+        if (ext.lower() if ci else ext) not in exts:
+            continue
+        try:
+            did, idx = int(head), int(stem)
+        except ValueError:
+            continue
+        if str(did) != head:        # 카드별 스캐너의 prefix('%d_') 와 같은 조건 — 0 패딩 id 는 다른 카드가 아니다
+            continue
+        out.setdefault(did, []).append(idx)
+    return {did: sorted(set(v) if dedupe else v) for did, v in out.items()}
+
+
 def _aor_pdf_indices(did):
     prefix = '%d_' % int(did)
     out = []
@@ -6222,8 +6256,9 @@ def api_aor_list():
     crew = query("SELECT v FROM api_settings WHERE k='aor_crew_submitted'", one=True)
     at = query("SELECT v FROM api_settings WHERE k='aor_stats_at'", one=True)
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])
+    aor_idx = _att_disk_index(AOR_PDF_DIR, ('pdf',), dedupe=False)     # 카드마다 listdir 하지 않고 1회 스캔
     for draft in drafts:
-        draft['attachment_preview_indices'] = _aor_pdf_indices(draft['id'])
+        draft['attachment_preview_indices'] = aor_idx.get(draft['id'], [])
         draft['reconcile_alert'] = _aor_reconcile_alert(
             draft.get('status'), draft.get('upstream_status'))
         draft['evidence_checklist'] = _evidence_checklist(
@@ -6365,15 +6400,7 @@ def _queue_aor(task, user, fresh_if_running=False):
     if not _automation_enabled():
         return None
     states = ('queued',) if fresh_if_running else ('queued', 'running')
-    busy = query("SELECT run_id FROM automation_run WHERE task=? "
-                 f"AND status IN ({','.join('?' * len(states))}) ORDER BY id DESC LIMIT 1",
-                 (task, *states), one=True)
-    if busy:
-        return busy['run_id']
-    rid = uuid.uuid4().hex[:12]
-    execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by) "
-            "VALUES (?, ?, 'live', 'queued', ?)", (rid, task, user))
-    return rid
+    return automation_reuse_or_enqueue(task, 'live', user, states)
 
 
 @bp.route('/api/aor/drafts/<int:did>/approve', methods=['POST'])
@@ -7104,10 +7131,11 @@ def api_fundreq_list():
                      "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
     pending = query("SELECT COUNT(*) c FROM fundreq_draft WHERE status='pending'", one=True)
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
+    fr_idx = _att_disk_index(FUNDREQ_FILE_DIR, _FUNDREQ_ATT_MIME, ci=True)   # 1회 스캔
     for draft in drafts:
         draft['contract_check'] = _fundreq_contract_check(draft.get('contract_check'))
         draft['dup_check'] = _fundreq_dup_check(draft.get('dup_check'))
-        draft['attachment_preview_indices'] = _fundreq_att_indices(draft['id'])
+        draft['attachment_preview_indices'] = fr_idx.get(draft['id'], [])
         draft['evidence_checklist'] = _evidence_checklist(
             'fundreq', draft, draft['attachment_preview_indices'])
     evidence_gaps = sum(d['evidence_checklist']['gap_count'] for d in drafts if d.get('status') == 'pending')
@@ -7236,11 +7264,12 @@ def api_ext_fundreq_pending_attachments():
     """러너 self-heal용: pending 카드 중 아직 캐시되지 않은 첨부 index만 반환.
     읽기전용이며 승인·상신 상태는 전혀 바꾸지 않는다."""
     out = []
+    fr_idx = _att_disk_index(FUNDREQ_FILE_DIR, _FUNDREQ_ATT_MIME, ci=True)   # 1회 스캔
     for row in query("SELECT id, opex_cd, attach_files FROM fundreq_draft WHERE status='pending' ORDER BY id"):
         names = _fundreq_att_names(row['attach_files'])
         if not names:
             continue
-        have = set(_fundreq_att_indices(row['id']))
+        have = set(fr_idx.get(row['id'], []))
         missing = [i for i, name in enumerate(names)
                    if i not in have and _fundreq_att_ext(name)]
         if missing:
@@ -7799,11 +7828,12 @@ def api_invoice_list():
                      "WHEN 'approved' THEN 1 WHEN 'rejecting' THEN 2 ELSE 3 END, id DESC")
     pending = query("SELECT COUNT(*) c FROM invoice_draft WHERE status='pending'", one=True)
     drafts = _annotate_drafts_with_vessel([dict(r) for r in rows])  # P4 표시전용 부가
+    inv_idx = _att_disk_index(INVOICE_PDF_DIR, ('pdf',))    # 1회 스캔
     for dd in drafts:   # 대표 PDF(legacy) + 전체 attachment index
         dd['has_pdf'] = os.path.exists(_invoice_pdf_path(dd['id']))
         try: names=json.loads(dd.get('attachments') or '[]')
         except Exception: names=[]
-        dd['attachment_preview_indices'] = [i for i in _invoice_attachment_indices(dd['id'])
+        dd['attachment_preview_indices'] = [i for i in inv_idx.get(dd['id'], [])
             if 0 <= i < len(names) and _invoice_preview_ext_ok(names[i])]
         dd['evidence_checklist'] = _evidence_checklist(
             'invoice', dd, dd['attachment_preview_indices'])

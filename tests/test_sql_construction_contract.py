@@ -150,8 +150,10 @@ DB_CALLS = {"execute", "execute_rc", "executemany", "executescript", "query"}
 # Measured with repository_fingerprints(): previous 196 fingerprints unchanged, +7 exact.
 # 2026-10-29 reminder list 28-day window: count unchanged, 1 site's AST changed only by replacing
 # SQL datetime('now') with a bound `?` (now_kst()-28d). Table name still `{mode}` after _mode whitelist.
-EXPECTED_COUNT = 203
-EXPECTED_SHA256 = "088c0a1ede434a5fa6f14a182e0a74faf28044c7b7554149ed284ad427d43465"  # 2026-10-29 reminder window bound param
+# 2026-11-10 automation queue enqueue 공용화: routes_calendar_dock._queue_aor 의 동적 site 1개 삭제
+# (status IN 자리표시자 조립 → helpers_shared 의 통짜 literal 2벌). 추가 0, 나머지 202개 fingerprint 불변.
+EXPECTED_COUNT = 202
+EXPECTED_SHA256 = "0c09401e885b5a26aff9687a3f9912878cc5d999d1a7e44ad5f224e5ad8e6967"  # 2026-11-10 -1 site (_queue_aor)
 EXCLUDED_DIRS = {
     ".git", ".venv-test", "__pycache__", "instance", "node_modules", "tests",
 }

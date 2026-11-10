@@ -206,6 +206,7 @@
       "_PREVIEW_UPLOAD_MAX",
       "app",
       "execute",
+      "execute_rc",
       "get_db",
       "query"
     ],
@@ -318,6 +319,7 @@
       "admin_required",
       "agent_read_required",
       "api_key_required",
+      "automation_reuse_or_enqueue",
       "login_required",
       "soa_task_key"
     ],
@@ -495,6 +497,7 @@
       "_xlsx_cell",
       "admin_required",
       "api_key_required",
+      "automation_enqueue_once",
       "automation_tasks",
       "login_required"
     ]
@@ -554,6 +557,7 @@
       "_automation_enabled",
       "admin_required",
       "api_key_required",
+      "automation_reuse_or_enqueue",
       "login_required"
     ]
   },
@@ -569,7 +573,8 @@
       "_annotate_drafts_with_vessel",
       "_automation_enabled",
       "admin_required",
-      "api_key_required"
+      "api_key_required",
+      "automation_reuse_or_enqueue"
     ]
   },
   "routes_ship3d.py": {

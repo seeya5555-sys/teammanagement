@@ -35,7 +35,7 @@ from werkzeug.utils import secure_filename
 from app_core import (
     ALLOWED_EXT, BASE_DIR, DATABASE, DOCKATT_FILE_DIR, INSTANCE_DIR,
     SOA_REVIEW_PDF_DIR, UPLOAD_DIR, _NON_STT_UPLOAD_MAX, _PREVIEW_UPLOAD_MAX, app,
-    execute, get_db, query,
+    execute, execute_rc, get_db, query,
 )
 
 
@@ -1658,6 +1658,60 @@ AUTOMATION_CLAIM_HOOKS = []
 def _automation_enabled():
     row = query("SELECT v FROM api_settings WHERE k='automation_enabled'", one=True)
     return (row['v'] if row else '1') != '0'
+
+
+_AUTOMATION_BLOCK_STATES = (('queued', 'running'), ('queued',))
+
+
+def automation_enqueue_once(task, mode, requested_by, params=None, block_states=('queued', 'running')):
+    """automation_run 큐 적재 — 같은 task 가 block_states 상태로 이미 있으면 넣지 않는다.
+
+    기존에는 호출부 5곳이 "SELECT 로 확인 → 별도 INSERT" 2단계였다. 그 사이에 다른 요청이 끼면
+    (더블클릭·동시 승인) 같은 task 가 2건 queued 될 수 있었다. 확인과 INSERT 를 한 문장으로 묶는다.
+    반환: 새 run_id, 이미 있어서 넣지 않았으면 None(응답 분기는 호출부가 기존대로 결정).
+    block_states 는 고정 2종만 허용(그 외 KeyError) — SQL 은 두 경우 모두 통짜 literal.
+    """
+    block_states = tuple(block_states)
+    if block_states not in _AUTOMATION_BLOCK_STATES:
+        raise KeyError(block_states)
+    rid = uuid.uuid4().hex[:12]
+    args = (rid, task, mode, requested_by, params, task)
+    if block_states == ('queued',):
+        rc = execute_rc(
+            "INSERT INTO automation_run (run_id, task, mode, status, requested_by, params) "
+            "SELECT ?,?,?, 'queued', ?, ? WHERE NOT EXISTS ("
+            "SELECT 1 FROM automation_run WHERE task=? AND status='queued')", args)
+    else:
+        rc = execute_rc(
+            "INSERT INTO automation_run (run_id, task, mode, status, requested_by, params) "
+            "SELECT ?,?,?, 'queued', ?, ? WHERE NOT EXISTS ("
+            "SELECT 1 FROM automation_run WHERE task=? AND status IN ('queued','running'))", args)
+    return rid if rc else None
+
+
+def automation_reuse_or_enqueue(task, mode, requested_by, block_states=('queued', 'running')):
+    """block_states 상태의 run 이 있으면 그 run_id 를 재사용, 없으면 새로 적재(카드 승인·리젝 큐 공용).
+
+    조회와 적재 사이에 다른 요청이 먼저 넣었으면 그 run 을 다시 조회해 재사용한다.
+    무조건 INSERT 는 하지 않는다(중복 큐 방지). 5회 연속으로 "없음 → 적재 거부"가 엇갈리면 None —
+    호출부 3곳 모두 None(자동화 정지 시와 같은 값)을 이미 처리한다.
+    """
+    block_states = tuple(block_states)
+    if block_states not in _AUTOMATION_BLOCK_STATES:
+        raise KeyError(block_states)
+    for _ in range(5):
+        if block_states == ('queued',):
+            busy = query("SELECT run_id FROM automation_run WHERE task=? AND status='queued' "
+                         "ORDER BY id DESC LIMIT 1", (task,), one=True)
+        else:
+            busy = query("SELECT run_id FROM automation_run WHERE task=? AND status IN ('queued','running') "
+                         "ORDER BY id DESC LIMIT 1", (task,), one=True)
+        if busy:
+            return busy['run_id']
+        rid = automation_enqueue_once(task, mode, requested_by, None, block_states)
+        if rid:
+            return rid
+    return None
 def _soa_vessel_codes_from_params(p):
     raw = p.get('vsl_cds')
     if raw is None:

@@ -27,7 +27,7 @@ from datetime import datetime
 from flask import Blueprint, abort, current_app, jsonify, render_template, request, send_file, session
 
 from app_core import RPCOST_PDF_DIR, _PREVIEW_UPLOAD_MAX, execute, execute_rc, query
-from helpers_shared import _annotate_drafts_with_vessel, _automation_enabled, admin_required, api_key_required
+from helpers_shared import _annotate_drafts_with_vessel, _automation_enabled, automation_reuse_or_enqueue, admin_required, api_key_required
 
 bp = Blueprint('routes_rpcost', __name__)
 
@@ -50,14 +50,7 @@ def _rpcost_reject_ensure_queued(user):
     try:
         if not _automation_enabled():
             return None
-        busy = query("SELECT run_id FROM automation_run WHERE task='rpcost_reject' AND status='queued' "
-                     "ORDER BY id DESC LIMIT 1", one=True)
-        if busy:
-            return busy['run_id']
-        rid = secrets.token_hex(6)
-        execute("INSERT INTO automation_run (run_id, task, mode, status, requested_by) "
-                "VALUES (?, 'rpcost_reject', 'live', 'queued', ?)", (rid, user))
-        return rid
+        return automation_reuse_or_enqueue('rpcost_reject', 'live', user, ('queued',))
     except Exception:
         current_app.logger.exception('rpcost_reject 큐 적재 실패 — rejecting 마킹은 유지, 목록 조회 시 재시도')
         return None
