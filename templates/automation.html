@@ -28,7 +28,9 @@
   .au-ib .au-ibn{position:absolute;right:3px;bottom:1px;font-size:10px;font-weight:800;line-height:1}
   .au-b.stg2{background:#EEEDFE;color:#534AB7;border-color:#CECBF6}
   .au-ib-sep{width:1px;align-self:stretch;background:var(--border);margin:0 2px}
-  .au-ib[data-tip]:hover::after,.au-ib[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 7px);right:0;z-index:30;background:#222;color:#fff;font-size:11.5px;font-weight:500;line-height:1.45;padding:6px 9px;border-radius:5px;white-space:pre-line;width:max-content;max-width:260px;text-align:left;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+  /* 툴팁=body 직속 fixed 레이어(부모 overflow에 안 잘림, 화면 밖이면 위/아래·좌우 자동 보정) */
+  #au-tip{position:fixed;z-index:9999;display:none;background:#fff;color:#1a1a1a;border:1px solid #c9c9c9;border-left:4px solid #185FA5;font-size:13px;font-weight:500;line-height:1.55;padding:9px 12px;border-radius:6px;white-space:pre-line;max-width:min(340px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.22);pointer-events:none}
+  #au-tip b{display:block;font-size:13.5px;font-weight:800;margin-bottom:3px;color:#111}
   .au-status{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:4px}
   .st-queued{background:var(--amber-bg);color:var(--amber)}.st-running{background:var(--blue-bg);color:var(--blue)}
   .st-done{background:var(--green-bg);color:var(--green)}.st-failed{background:var(--red-bg);color:var(--red)}
@@ -313,6 +315,22 @@
     ['reject_submit','rjt2','send','','리젝제출+메일\n리젝 마킹 SOA를 REJECTED 제출 + 관리사 통보메일'],
     ['remark_cleanup','verify','erase','','리마크정리\n컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)'],
   ];
+  (function(){
+    const tip=document.createElement('div'); tip.id='au-tip'; document.body.appendChild(tip);
+    function show(b){
+      const t=b.dataset.tip||''; const i=t.indexOf('\n');
+      tip.innerHTML=i<0?`<b>${esc(t)}</b>`:`<b>${esc(t.slice(0,i))}</b>${esc(t.slice(i+1))}`;
+      tip.style.display='block';
+      const r=b.getBoundingClientRect(), w=tip.offsetWidth, h=tip.offsetHeight, m=8;
+      let top=r.top-h-m; if(top<m) top=(window.innerHeight-r.bottom>=r.top)?r.bottom+m:r.top-h-m; top=Math.max(m,Math.min(top,window.innerHeight-h-m));
+      let left=r.left+r.width/2-w/2; left=Math.max(m,Math.min(left,window.innerWidth-w-m));
+      tip.style.top=top+'px'; tip.style.left=left+'px';
+    }
+    const hide=()=>{tip.style.display='none';};
+    document.addEventListener('mouseover',e=>{const b=e.target.closest&&e.target.closest('.au-ib[data-tip]'); if(b) show(b); else hide();});
+    document.addEventListener('focusin',e=>{const b=e.target.closest&&e.target.closest('.au-ib[data-tip]'); if(b) show(b);});
+    document.addEventListener('focusout',hide); window.addEventListener('scroll',hide,true);
+  })();
   function soaIb(attr,mode,cls,ic,num,tip,dis){
     const lab=tip.split('\n')[0];
     return `<button class="au-b au-ib ${cls}" ${attr} data-mode="${mode}" data-tip="${escA(tip)}" aria-label="${escA(lab)}" ${dis}><svg viewBox="0 0 24 24">${SOA_IC[ic]}</svg>${num?`<span class="au-ibn">${num}</span>`:''}</button>`;
