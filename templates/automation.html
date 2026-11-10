@@ -695,7 +695,9 @@
     const dAll=(!ENABLED||anyBusy)?'disabled':'';        // 실행계열은 진행중이면도 막음
     const allRow=`<div class="au-row au-allrow"><div class="au-name">SOA 전체 일괄 실행<span class="au-desc">${soaScope()} 일괄 적재 → 러너가 순차 실행</span></div>`+
       `<div class="au-btns">`+
-      SOA_BTNS.filter(b=>b[0]!=='remark_cleanup').map(([m,c,ic,n,tip])=>soaIb(`data-all="${m}"`,m,c,ic,n,'[전체 그룹] '+tip,m==='verify'?dEn:dAll)).join('')+
+      // 전체 줄은 그룹 줄과 헷갈리지 않게 아이콘이 아니라 "전체 …" 글자 버튼(2026-11-10 사고: 전체 리젝제출+메일을 G1 줄로 오인)
+      SOA_BTNS.filter(b=>b[0]!=='remark_cleanup').map(([m,c,ic,n,tip])=>
+        `<button class="au-b ${c}" data-all="${m}" title="${escA('[전체 그룹] '+tip.split('\n')[0])}" ${m==='verify'?dEn:dAll}>전체 ${esc(tip.split('\n')[0].replace(/ \(.*$/,''))}</button>`).join('')+
       `</div></div>`;
     const body=allRow+SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
     el.innerHTML=`<div class="jl-head${SOPEN?' open':''}" id="soa-head"><span class="jl-caret">▸</span>SOA 정기검토 · 자동승인<span class="jl-headmeta">${soaScope()}</span></div>`+
@@ -711,8 +713,11 @@
       reject_mark:`[SOA 전체 ${soaScope()}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit:`[SOA 전체 ${soaScope()}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
     }[mode];
-    if(msg && !confirm(msg)) return;
     const SOA=soaTasks();
+    const names=SOA.map(t=>'· '+(TASKS[t]||t)).join('\n');
+    if(msg && !confirm(`${msg}\n\n⚠️ 전체 실행 — 아래 ${SOA.length}개 그룹 모두에 실행됩니다:\n${names}`)) return;
+    // 외부발송(관리사 통보메일)은 한 번 더 확인
+    if(mode==='reject_submit' && !confirm(`정말 ${SOA.length}개 그룹 전체에 리젝 제출 + 관리사 통보메일을 보낼까요?\n(되돌릴 수 없음 — 한 그룹만 보낼 거면 취소하고 그 그룹 줄의 버튼을 누르세요)`)) return;
     let ok=0,busy_=0,fail=0;
     for(const t of SOA){
       const {ok:o,j}=await api('POST','/api/automation/run',{task:t,mode});
