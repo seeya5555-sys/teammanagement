@@ -310,8 +310,8 @@
   const SOA_BTNS=[
     ['verify','verify','s1','1','1차 검증\n금액·인보이스 대조 → 정상 라인 컨펌 + 금액불일치 라인 리젝체크\n(승인·출금·제출·메일 안 함)'],
     ['stage2','stg2','s1','2','2차 검증\nOperational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스 → 리젝체크+리마크\n(승인·제출·메일 안 함)'],
-    ['live','live','ok','','자동승인\n2차 검증 → 전 선박 통과시에만 1차 검토+승인(장금=출금상신)\n2차 실패 1건이라도 있으면 승인 안 함 · 리젝 라인 있는 SOA 제외'],
-    ['reject_mark','rjt','flag','','리젝체크\n금액 불일치 라인에 리젝 체크만 (제출·메일 안 함)'],
+    ['live','live','ok','','자동승인 (1차 → 2차 → 승인)\n1차 검증 → 2차 검증을 순서대로 돌리고, 둘 다 실패 없이 끝나면 전 라인 Confirm된 SOA만 승인\n실버=승인까지 · 장금=승인+출금상신\n리젝·flag·미검증 라인 있는 SOA는 제외'],
+    ['reject_mark','rjt','flag','','리젝체크 (단독)\n금액 불일치 라인에만 리젝 체크 (1차 검증에 이미 포함 · 제출·메일 안 함)'],
     ['reject_submit','rjt2','send','','리젝제출+메일\n리젝 마킹 SOA를 REJECTED 제출 + 관리사 통보메일'],
     ['remark_cleanup','verify','erase','','리마크정리\n컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)'],
   ];
@@ -354,7 +354,7 @@
   }
   function fmt(r){
     const t=r.finished_at||r.started_at||r.requested_at||'';
-    const modeL={live:(r.task||'').startsWith('soa_')&&r.task!=='soa_vessel'?'2차→자동승인':'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증'}[r.mode]||'검증';
+    const modeL={live:(r.task||'').startsWith('soa_')&&r.task!=='soa_vessel'?'1차→2차→자동승인':'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증'}[r.mode]||'검증';
     return `<div class="au-logrow" data-run-id="${escA(r.run_id||'')}">
       <div class="au-logmeta">
         <span class="au-status st-${escA(r.status)}">${esc(r.status)}</span>
@@ -656,10 +656,10 @@
     el.querySelectorAll('.au-b').forEach(b=>b.onclick=onRun);   // toggle 단독 재호출 시도 동작하게
   }
   async function runAllSoa(mode){
-    const lab={verify:'1차 검증',stage2:'2차 검증',live:'2차검증→자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
+    const lab={verify:'1차 검증',stage2:'2차 검증',live:'1차→2차→자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
     const msg={
       stage2:`[SOA 전체 ${soaScope()}]\n2차 검증(Operational AOR·환율·관리비·NRC·중복 인보이스)을 그룹별로 실행합니다.\n걸린 라인은 리젝체크+리마크 기입. 승인·제출·메일 안 함.\n진행할까요?`,
-      live:`[SOA 전체 ${soaScope()}]\n2차 검증 → 통과한 그룹만 1차 검토+자동승인을 실행할까요?\n(2차 실패 그룹은 승인 0 · 리젝 라인 SOA 제외 · 그룹별 순차 실행)`,
+      live:`[SOA 전체 ${soaScope()}]\n그룹별 ① 1차 → ② 2차 → ③ 전 라인 Confirm SOA만 자동승인(실버=승인 / 장금=+출금상신)\n실패 그룹은 승인 0 · 그룹별 순차 실행\n진행할까요?`,
       reject_mark:`[SOA 전체 ${soaScope()}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit:`[SOA 전체 ${soaScope()}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
     }[mode];
@@ -732,7 +732,7 @@
     const nm=TASKS[task]||task;
     const confirmMsg={
       live: (task==='jeonja'||task==='fundreq')?`[${nm}]\n자동 상신을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`
-        :`[${nm}]\n2차 검증 → 전 선박 통과시에만 1차 검토+자동승인을 실행할까요?\n(2차 실패 1건이라도 있으면 승인 0 · 리젝 라인 SOA 제외 · 텔레그램 보고)`,
+        :`[${nm}]\n① 1차 검증 → ② 2차 검증 → ③ 전 라인 Confirm SOA만 자동승인(실버=승인 / 장금=승인+출금상신)\n1·2차 중 실패 1건이라도 있으면 승인 0 · 리젝 라인 SOA 제외\n진행할까요?`,
       stage2: `[${nm}]\n2차 검증(Operational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스)을 그룹 선박 전체에 실행합니다.\n걸린 라인은 리젝체크+리마크 기입. 승인·출금·제출·메일 안 함.\n진행할까요?`,
       reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
