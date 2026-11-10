@@ -3016,7 +3016,8 @@ def api_automation_run():
     task, mode = task.strip(), mode.strip()
     if task not in automation_tasks() or mode not in AUTOMATION_MODES:
         return jsonify({'error': 'bad task/mode'}), 400
-    if mode == 'stage2' and task != 'soa_vessel':   # 2차검증은 선박별 패널 전용
+    _soa_fixed = ('soa_vessel', 'soa_resend', 'soa_review', 'soa_review_refresh', 'soa_review_push', 'soa_review_approve')
+    if mode == 'stage2' and task != 'soa_vessel' and (not task.startswith('soa_') or task in _soa_fixed):   # 2차검증=선박별 패널 + SOA 그룹
         return jsonify({'error': 'bad task/mode'}), 400
     # 선박별 SOA 검증: params(vsl_cd/vsl_cds 필수, 기간·부서·검증모델 옵션) 검증.
     # live=실기입(체크박스+리젝리마크). 순수 DRY는 카나리/CLI용으로만 유지.

@@ -22,6 +22,13 @@
   .au-b.rjt{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-border)}
   .au-b.rjt2{background:var(--red);color:#fff}
   .au-b:disabled{opacity:.45;cursor:not-allowed}
+  /* SOA 그룹 아이콘 버튼(2026-11-10): 아이콘만 + 호버 툴팁(data-tip) */
+  .au-b.au-ib{position:relative;width:38px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+  .au-b.au-ib svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .au-ib .au-ibn{position:absolute;right:3px;bottom:1px;font-size:10px;font-weight:800;line-height:1}
+  .au-b.stg2{background:#EEEDFE;color:#534AB7;border-color:#CECBF6}
+  .au-ib-sep{width:1px;align-self:stretch;background:var(--border);margin:0 2px}
+  .au-ib[data-tip]:hover::after,.au-ib[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 7px);right:0;z-index:30;background:#222;color:#fff;font-size:11.5px;font-weight:500;line-height:1.45;padding:6px 9px;border-radius:5px;white-space:pre-line;width:max-content;max-width:260px;text-align:left;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.18)}
   .au-status{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:4px}
   .st-queued{background:var(--amber-bg);color:var(--amber)}.st-running{background:var(--blue-bg);color:var(--blue)}
   .st-done{background:var(--green-bg);color:var(--green)}.st-failed{background:var(--red-bg);color:var(--red)}
@@ -290,6 +297,26 @@
     return `<span class="au-status st-${escA(r.status)}">${r.status==='queued'?'대기중':'실행중…'}</span>`;
   }
   function busy(task){ return !!RUNS.find(x=>x.task===task&&(x.status==='queued'||x.status==='running')); }
+  const SOA_IC={
+    s1:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    ok:'<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+    flag:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
+    send:'<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+    erase:'<path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l10-10a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
+  };
+  // [mode, cls, icon, 번호, 툴팁] — 순서 = 1차 → 2차 → 자동승인 → 리젝체크 → 리젝제출+메일 → 리마크정리
+  const SOA_BTNS=[
+    ['verify','verify','s1','1','1차 검증\n금액·인보이스 대조 → 정상 라인 컨펌 + 금액불일치 라인 리젝체크\n(승인·출금·제출·메일 안 함)'],
+    ['stage2','stg2','s1','2','2차 검증\nOperational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스 → 리젝체크+리마크\n(승인·제출·메일 안 함)'],
+    ['live','live','ok','','자동승인\n2차 검증 → 전 선박 통과시에만 1차 검토+승인(장금=출금상신)\n2차 실패 1건이라도 있으면 승인 안 함 · 리젝 라인 있는 SOA 제외'],
+    ['reject_mark','rjt','flag','','리젝체크\n금액 불일치 라인에 리젝 체크만 (제출·메일 안 함)'],
+    ['reject_submit','rjt2','send','','리젝제출+메일\n리젝 마킹 SOA를 REJECTED 제출 + 관리사 통보메일'],
+    ['remark_cleanup','verify','erase','','리마크정리\n컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)'],
+  ];
+  function soaIb(attr,mode,cls,ic,num,tip,dis){
+    const lab=tip.split('\n')[0];
+    return `<button class="au-b au-ib ${cls}" ${attr} data-mode="${mode}" data-tip="${escA(tip)}" aria-label="${escA(lab)}" ${dis}><svg viewBox="0 0 24 24">${SOA_IC[ic]}</svg>${num?`<span class="au-ibn">${num}</span>`:''}</button>`;
+  }
   function row(task,opts){
     const name=TASKS[task]||task;
     const b=busy(task)||!ENABLED;
@@ -303,17 +330,13 @@
     } else if(opts.prep){    // AOR prep — Submitted AOR 카드화(/aor 큐 적재). 상신 아님(읽기+적재)
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}> AOR prep 실행 (/aor 큐 적재)</button>`;
     } else {                 // SOA 그룹: 승인 + 리젝 워크플로우
-      btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증</button>
-            <button class="au-b live" data-task="${task}" data-mode="live" ${dis}>자동승인</button>
-            <button class="au-b rjt" data-task="${task}" data-mode="reject_mark" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg> 리젝체크</button>
-            <button class="au-b rjt2" data-task="${task}" data-mode="reject_submit" ${dis}><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 리젝제출+메일</button>
-            <button class="au-b verify" data-task="${task}" data-mode="remark_cleanup" ${dis}>리마크정리</button>`;
+      btns=SOA_BTNS.map(([m,c,ic,n,tip])=>soaIb(`data-task="${escA(task)}"`,m,c,ic,n,tip,dis)).join('');
     }
     return `<div class="au-row"><div class="au-name">${esc(name)}${statusChip(task)}</div><div class="au-btns">${btns}</div></div>`;
   }
   function fmt(r){
     const t=r.finished_at||r.started_at||r.requested_at||'';
-    const modeL={live:'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증'}[r.mode]||'검증';
+    const modeL={live:(r.task||'').startsWith('soa_')&&r.task!=='soa_vessel'?'2차→자동승인':'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증'}[r.mode]||'검증';
     return `<div class="au-logrow" data-run-id="${escA(r.run_id||'')}">
       <div class="au-logmeta">
         <span class="au-status st-${escA(r.status)}">${esc(r.status)}</span>
@@ -606,10 +629,7 @@
     const dAll=(!ENABLED||anyBusy)?'disabled':'';        // 실행계열은 진행중이면도 막음
     const allRow=`<div class="au-row au-allrow"><div class="au-name">SOA 전체 일괄 실행<span class="au-desc">${soaScope()} 일괄 적재 → 러너가 순차 실행</span></div>`+
       `<div class="au-btns">`+
-      `<button class="au-b verify" data-all="verify" ${dEn}><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증 전체</button>`+
-      `<button class="au-b live" data-all="live" ${dAll}>자동승인 전체</button>`+
-      `<button class="au-b rjt" data-all="reject_mark" ${dAll}><svg class="ic-svg" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg> 리젝체크 전체</button>`+
-      `<button class="au-b rjt2" data-all="reject_submit" ${dAll}><svg class="ic-svg" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 리젝제출+메일 전체</button>`+
+      SOA_BTNS.filter(b=>b[0]!=='remark_cleanup').map(([m,c,ic,n,tip])=>soaIb(`data-all="${m}"`,m,c,ic,n,'[전체 그룹] '+tip,m==='verify'?dEn:dAll)).join('')+
       `</div></div>`;
     const body=allRow+SOA.map(t=>row(t,{money:false})).join('')+row('soa_resend',{resend:true});
     el.innerHTML=`<div class="jl-head${SOPEN?' open':''}" id="soa-head"><span class="jl-caret">▸</span>SOA 정기검토 · 자동승인<span class="jl-headmeta">${soaScope()}</span></div>`+
@@ -618,9 +638,10 @@
     el.querySelectorAll('.au-b').forEach(b=>b.onclick=onRun);   // toggle 단독 재호출 시도 동작하게
   }
   async function runAllSoa(mode){
-    const lab={verify:'검증',live:'자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
+    const lab={verify:'1차 검증',stage2:'2차 검증',live:'2차검증→자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
     const msg={
-      live:`[SOA 전체 ${soaScope()}]\n자동승인을 지금 실행할까요?\n(clean 건만 자동 처리, 예외 미처리·텔레그램 보고 / 그룹별 순차 실행)`,
+      stage2:`[SOA 전체 ${soaScope()}]\n2차 검증(Operational AOR·환율·관리비·NRC·중복 인보이스)을 그룹별로 실행합니다.\n걸린 라인은 리젝체크+리마크 기입. 승인·제출·메일 안 함.\n진행할까요?`,
+      live:`[SOA 전체 ${soaScope()}]\n2차 검증 → 통과한 그룹만 1차 검토+자동승인을 실행할까요?\n(2차 실패 그룹은 승인 0 · 리젝 라인 SOA 제외 · 그룹별 순차 실행)`,
       reject_mark:`[SOA 전체 ${soaScope()}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit:`[SOA 전체 ${soaScope()}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
     }[mode];
@@ -692,7 +713,9 @@
     if(!task||!mode){ console.warn('automation button missing task/mode', btn); return; }  // 스타일용 .au-b가 잘못 바인딩돼도 빈 task/mode POST 금지
     const nm=TASKS[task]||task;
     const confirmMsg={
-      live: `[${nm}]\n자동 ${(task==='jeonja'||task==='fundreq')?'상신':'승인'}을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`,
+      live: (task==='jeonja'||task==='fundreq')?`[${nm}]\n자동 상신을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`
+        :`[${nm}]\n2차 검증 → 전 선박 통과시에만 1차 검토+자동승인을 실행할까요?\n(2차 실패 1건이라도 있으면 승인 0 · 리젝 라인 SOA 제외 · 텔레그램 보고)`,
+      stage2: `[${nm}]\n2차 검증(Operational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스)을 그룹 선박 전체에 실행합니다.\n걸린 라인은 리젝체크+리마크 기입. 승인·출금·제출·메일 안 함.\n진행할까요?`,
       reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
       remark_cleanup: `[${nm}]\n컨펌(CFM_YN=Y)된 라인인데 리젝 리마크가 남아있는 것들의 리마크만 삭제합니다.\n(승인·금액·상태 무변경 — SVMS UI 버그 보정)`,
@@ -703,7 +726,7 @@
       cm=`[전자결재 자동상신]\n상신대상 ${sub.length}건 중 보류 ${ex}건 제외 → ${sub.length-ex}건 상신.\n(불일치 기본보류·상신직전 STATUS 재확인)\n진행할까요?`;
     }
     if(cm && !confirm(cm))return;
-    e.target.disabled=true;
+    btn.disabled=true;
     const {ok,j}=await api('POST','/api/automation/run',{task,mode});
     if(!ok){alert(j.error||'실행 실패');}
     await load();
