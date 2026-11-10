@@ -5750,6 +5750,28 @@ def _soa_review_case_payload(case_row, *, detail=False):
 
 
 
+def _soa_review_schema_probe():
+    """워커 프로세스에서 soa_review_case.status가 R(2자 코드)을 받는지 실측. 성공할 때만 플래그를 내린다(fail-closed).
+    2026-11-10 사고: _auto_migrate의 probe는 systemd ExecStartPre 별도 프로세스에서만 실행돼 gunicorn 워커의
+    SOA_REVIEW_SCHEMA_DEGRADED가 영구 True → 반려(R) SOA 스냅샷이 전부 400(검토함 동기화 실패)."""
+    global SOA_REVIEW_SCHEMA_DEGRADED
+    db = get_db()
+    try:
+        db.execute('SAVEPOINT soa_chk_probe_rt')
+        try:
+            db.execute("INSERT INTO soa_review_case (sx_cd,status) VALUES ('__PROBE__ZZZZZZZZ','R')")
+            ok = True
+        except sqlite3.Error:
+            ok = False
+        finally:
+            db.execute('ROLLBACK TO soa_chk_probe_rt')
+            db.execute('RELEASE soa_chk_probe_rt')
+    except sqlite3.Error:
+        return
+    if ok:
+        SOA_REVIEW_SCHEMA_DEGRADED = False
+
+
 def _soa_review_ingest_snapshot(d):
     """Mac runner snapshot ingest. Writes files first, then swaps DB rows atomically."""
     import base64
@@ -5761,6 +5783,8 @@ def _soa_review_ingest_snapshot(d):
     # 권한 판정은 editable(D/S) 화이트리스트가 담당한다 — 모르는 코드는 read-only로 fail-closed.
     if not re.fullmatch(r'[A-Z0-9]{16}', sx) or not re.fullmatch(r'[A-Z]{1,2}', status):
         raise ValueError('bad sx_cd/header_status')
+    if SOA_REVIEW_SCHEMA_DEGRADED and status not in ('C', 'T', 'D', 'S'):
+        _soa_review_schema_probe()      # 부팅 probe는 ExecStartPre(별도 프로세스)에서만 돌아 워커 플래그가 True로 남음 → 여기서 1회 실측
     if SOA_REVIEW_SCHEMA_DEGRADED and status not in ('C', 'T', 'D', 'S'):
         # 좁은 CHECK가 남은 DB — 아래 INSERT가 IntegrityError로 죽는다. 원인을 명시해서 실패시킨다.
         raise ValueError('schema_degraded: soa_review_case.status CHECK 미완화 — status %s 저장 불가(관리자 조치 필요)' % status)
