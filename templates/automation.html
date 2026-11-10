@@ -22,6 +22,15 @@
   .au-b.rjt{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-border)}
   .au-b.rjt2{background:var(--red);color:#fff}
   .au-b:disabled{opacity:.45;cursor:not-allowed}
+  /* SOA 진행표(SOA별 1차/2차/승인) */
+  .sg-tbl{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff;border:1px solid var(--border-subtle);border-radius:6px}
+  .sg-tbl th{text-align:left;font-size:11.5px;color:var(--text-secondary);padding:6px 9px;border-bottom:1px solid var(--border);white-space:nowrap}
+  .sg-tbl td{padding:6px 9px;border-bottom:1px solid var(--border-subtle);vertical-align:top}
+  .sg-tbl tr.sg-grp td{background:var(--surface-2);font-weight:700;font-size:12px;color:var(--text-secondary)}
+  .sg-note{display:block;font-size:11px;color:var(--text-tertiary);margin-top:2px;word-break:break-word}
+  .sg-chip{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:4px;white-space:nowrap}
+  .sg-ok{background:var(--green-bg);color:var(--green)}.sg-hold{background:var(--amber-bg);color:var(--amber)}
+  .sg-bad{background:var(--red-bg);color:var(--red)}.sg-none{background:var(--surface-2);color:var(--text-tertiary)}
   /* SOA 그룹 아이콘 버튼(2026-11-10): 아이콘만 + 호버 툴팁(data-tip) */
   .au-b.au-ib{position:relative;width:38px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center}
   .au-b.au-ib svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -134,6 +143,7 @@
   {# 화면 분리: hub=SOA 숨김 / soa=전자결재 숨김. DOM은 유지(공용 JS가 같은 id를 렌더) #}
   <div class="au-view-soa"{% if view == 'hub' %} style="display:none"{% endif %}>
   <div id="au-soa" class="jl"></div>
+  <div id="soa-gate" class="jl"></div>
   <div id="soa-review" class="sr"></div>
   <div id="soa-groups" class="soa-groups"></div>
 
@@ -206,6 +216,7 @@
   const SOA_SKIP=new Set(['soa_resend','soa_vessel','soa_review','soa_review_refresh','soa_review_push','soa_review_approve']);
   let TASKS={}, GROUPS=[], ENABLED=true, RUNS=[], TOTAL=0, CLEARED=null, LOG_OPEN=false;
   let GOPEN=false;
+  let GATE=[], GOPEN2=true;   // SOA 진행표(기본 펼침)
   // 그룹 편집 모달 상태. CATOWNER/RESERVED 는 서버가 내려주는 값으로 덮어씀(코드 상수 단일출처).
   let OWNERS={}, CATOWNER={}, RESERVED=[], SGE=null;
   const CATNAME={silver:'실버마리타임',skrt:'장금마리타임'};
@@ -371,6 +382,7 @@
     m.className='au-master'+(ENABLED?'':' off');
     $('#au-master-sub').textContent=ENABLED?'— 전체 자동화 ON. 버튼이 작동합니다.':'— 킬스위치 ON. 모든 자동화 정지중.';
     renderSoa();
+    renderGate();
     renderSoaReview();
     renderGroups();
     $('#au-jeonja').innerHTML=row('jeonja',{money:true});
@@ -638,6 +650,43 @@
     el.querySelectorAll('[data-sg]').forEach(b=>b.onclick=e=>{e.stopPropagation();const g=GROUPS.find(x=>x.key===b.dataset.sg);if(g)openSg(g);});
     el.querySelectorAll('[data-sgdel]').forEach(b=>b.onclick=e=>{e.stopPropagation();deleteSg(b.dataset.sgdel);});
   }
+  // SOA 진행표 — 러너가 push한 SOA별 단계 상태(표시 전용. 승인 판정은 러너가 SVMS 실시간으로 함)
+  const SG_S1={ok:['완료','ok'],reject:['리젝 있음','hold'],human:['사람 확인 필요','hold'],incomplete:['미완료','bad']};
+  const SG_S2={ok:['완료','ok'],finding:['2차 지적','hold'],warn:['일부 미검사','hold'],incomplete:['미완료','bad']};
+  const SG_AP={approved:['승인 완료','ok'],held:['보류','hold'],failed:['실패','bad']};
+  function sgCell(map,st,note,at){
+    const m=map[st];
+    const chip=m?`<span class="sg-chip sg-${m[1]}">${m[0]}</span>`:`<span class="sg-chip sg-none">—</span>`;
+    return chip+((note||at)?`<span class="sg-note">${esc(note||'')}${at?` · ${esc(String(at).slice(5))}`:''}</span>`:'');
+  }
+  function renderGate(){
+    const el=$('#soa-gate'); if(!el) return;
+    const rows=GATE||[];
+    const nOk=rows.filter(r=>r.ap_status==='approved').length;
+    const nBad=rows.filter(r=>r.s1_status==='incomplete'||r.s2_status==='incomplete'||r.ap_status==='failed').length;
+    const meta=rows.length?`SOA ${rows.length}건 · 승인 ${nOk}${nBad?` · <span style="color:#A32D2D;font-weight:700">확인 필요 ${nBad}</span>`:''}`:'기록 없음';
+    let body='';
+    if(GOPEN2){
+      if(!rows.length){ body='<div class="au-note">아직 진행 기록 없음 — 자동승인 또는 2차 검증을 실행하면 SOA별 단계가 여기에 표시됩니다.</div>'; }
+      else{
+        let last=null, trs='';
+        for(const r of rows){
+          if(r.group_key!==last){ last=r.group_key; const g=(GROUPS||[]).find(x=>x.key===r.group_key);
+            trs+=`<tr class="sg-grp"><td colspan="5">${esc(g?g.label:r.group_key)}</td></tr>`; }
+          const ap=r.ap_status?sgCell(SG_AP,r.ap_status,r.ap_note,r.ap_at)
+            :((r.s1_status==='ok'&&r.s2_status==='ok')?'<span class="sg-chip sg-none">승인 대기</span>':'<span class="sg-chip sg-none">—</span>');
+          trs+=`<tr><td><b>${esc(r.sx_cd)}</b><span class="sg-note">${esc(r.vsl_cd)} · ${r.sl_tp==='04'?'Crew':'Technical'}</span></td>`+
+               `<td>${esc(r.sl_dm||'')}</td><td>${sgCell(SG_S1,r.s1_status,r.s1_note,r.s1_at)}</td>`+
+               `<td>${sgCell(SG_S2,r.s2_status,r.s2_note,r.s2_at)}</td><td>${ap}</td></tr>`;
+        }
+        body=`<table class="sg-tbl"><thead><tr><th>SOA</th><th>월</th><th>1차 검증</th><th>2차 검증</th><th>승인</th></tr></thead><tbody>${trs}</tbody></table>`+
+             `<div class="au-note" style="margin-top:6px">현재 Submitted SOA의 단계 상태 (마지막 실행 기준). 1차 완료 = SVMS에서 전 라인 Confirm 확인. 같은 날 다시 실행하면 라인이 그대로인 SOA는 끝난 단계를 건너뜁니다.</div>`;
+      }
+    }
+    el.innerHTML=`<div class="jl-head${GOPEN2?' open':''}" id="soa-gate-head"><span class="jl-caret">▸</span>SOA 진행표 (SOA별 1차 · 2차 · 승인)<span class="jl-headmeta">${meta}</span></div>`+
+      `<div class="jl-body" ${GOPEN2?'':'hidden'}>${body}</div>`;
+    $('#soa-gate-head').onclick=()=>{ GOPEN2=!GOPEN2; renderGate(); };
+  }
   function renderSoa(){
     const el=$('#au-soa'); if(!el) return;
     const SOA=soaTasks();
@@ -764,6 +813,8 @@
       for(const it of JLIST){ if(it.ref in JPENDING) it.excluded=JPENDING[it.ref]; }  // in-flight 토글 보존
     }
     await loadSoaReview();
+    const gs=await api('GET','/api/automation/soa/gate-state');
+    if(gs.ok) GATE=gs.j.rows||[];
     const sg=await api('GET','/api/automation/soa/groups');
     if(sg.ok){
       GROUPS=sg.j.groups||[]; OWNERS=sg.j.owners||{};

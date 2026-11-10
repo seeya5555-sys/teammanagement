@@ -1300,6 +1300,21 @@ def init_db(drop=False):
                 updated_at    TEXT DEFAULT (datetime('now','localtime'))
             )
         """)
+        # SOA 자동승인 진행표(2026-11-10): SOA별 1차/2차/승인 단계 상태. 러너가 push하는 **표시 전용** 스냅샷
+        # (승인 판정은 항상 러너가 SVMS 실시간 조회로 함 — 이 표는 판정 근거 아님).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS soa_gate_state (
+                sx_cd      TEXT PRIMARY KEY,
+                group_key  TEXT NOT NULL,
+                vsl_cd     TEXT NOT NULL,
+                sl_tp      TEXT,
+                sl_dm      TEXT,
+                s1_status  TEXT, s1_note TEXT, s1_at TEXT,
+                s2_status  TEXT, s2_note TEXT, s2_at TEXT,
+                ap_status  TEXT, ap_note TEXT, ap_at TEXT,
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        """)
         # 시드 = 현행 하드코딩값 그대로(전환 직후 동작 동일). 이미 있으면 무시(멱등).
         if not conn.execute('SELECT 1 FROM soa_group LIMIT 1').fetchone():
             _soa_seed = [

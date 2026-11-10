@@ -4393,6 +4393,54 @@ def api_ext_soa_groups():
     })
 
 
+_SOA_GATE_COLS = ('s1_status', 's1_note', 's1_at', 's2_status', 's2_note', 's2_at', 'ap_status', 'ap_note', 'ap_at')
+_SOA_GATE_STATUS = {'s1_status': ('ok', 'reject', 'human', 'incomplete'),
+                    's2_status': ('ok', 'finding', 'warn', 'incomplete'),
+                    'ap_status': ('approved', 'held', 'failed')}
+
+
+@bp.route('/api/ext/soa/gate-state', methods=['POST'])
+@api_key_required
+def api_ext_soa_gate_state():
+    """SOA 자동승인 진행표 스냅샷 — 표시 전용. POST {"group":"G1","rows":[{sx_cd,vsl_cd,sl_tp,sl_dm,s1_*,s2_*,ap_*}]}
+    → 그 그룹 행 전량 교체(빈 rows = 그 그룹에 Submitted SOA 없음). 승인 판정 근거로 쓰지 않는다."""
+    body = request.get_json(silent=True) or {}
+    group = str(body.get('group') or '').strip().upper()
+    rows = body.get('rows')
+    if not re.match(r'^[A-Z0-9_]{1,20}$', group) or not isinstance(rows, list) or len(rows) > 500:
+        return jsonify({'ok': False, 'error': 'group/rows 형식 오류'}), 400
+    clean = []
+    for r in rows:
+        if not isinstance(r, dict):
+            return jsonify({'ok': False, 'error': 'row 형식 오류'}), 400
+        sx = str(r.get('sx_cd') or '').strip().upper()
+        vsl = str(r.get('vsl_cd') or '').strip().upper()
+        if not re.match(r'^[A-Z0-9]{4}[A-Z0-9-]{4,20}$', sx) or not _SOA_VSL_RE.match(vsl) or sx[:4] != vsl:
+            return jsonify({'ok': False, 'error': f'형식 위반: {sx}'}), 400
+        vals = []
+        for c in _SOA_GATE_COLS:
+            v = r.get(c)
+            v = None if v in (None, '') else str(v)[:300]
+            if c in _SOA_GATE_STATUS and v is not None and v not in _SOA_GATE_STATUS[c]:
+                return jsonify({'ok': False, 'error': f'상태값 위반: {sx} {c}={v}'}), 400
+            vals.append(v)
+        clean.append((sx, group, vsl, str(r.get('sl_tp') or '')[:2] or None, str(r.get('sl_dm') or '')[:6] or None, *vals))
+    db = get_db()
+    with db:
+        db.execute('DELETE FROM soa_gate_state WHERE group_key=?', (group,))
+        db.executemany('INSERT OR REPLACE INTO soa_gate_state (sx_cd,group_key,vsl_cd,sl_tp,sl_dm,'
+                       's1_status,s1_note,s1_at,s2_status,s2_note,s2_at,ap_status,ap_note,ap_at) '
+                       'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', clean)
+    return jsonify({'ok': True, 'count': len(clean)})
+
+
+@bp.route('/api/automation/soa/gate-state')
+@admin_required
+def api_soa_gate_state():
+    rows = query('SELECT * FROM soa_gate_state ORDER BY group_key, vsl_cd, sl_dm, sx_cd')
+    return jsonify({'ok': True, 'rows': [dict(r) for r in rows]})
+
+
 @bp.route('/api/ext/soa/vessel-owners', methods=['GET', 'POST'])
 @api_key_required
 def api_ext_soa_vessel_owners():

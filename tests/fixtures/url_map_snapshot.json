@@ -416,6 +416,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/automation/soa/gate-state",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_soa_gate_state",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/automation/soa/groups",
     "methods": [
       "GET",
@@ -3859,6 +3870,16 @@
       "POST"
     ],
     "endpoint": "routes_tail.api_ext_shipwiki_push",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/soa/gate-state",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_soa_gate_state",
     "strict_slashes": true,
     "defaults": {}
   },
