@@ -708,6 +708,7 @@
   async function runAllSoa(mode){
     const lab={verify:'1차 검증',stage2:'2차 검증',live:'1차→2차→자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
     const msg={
+      verify:`[SOA 전체 ${soaScope()}]\n1차 검증(라인 Confirm + 금액불일치 리젝체크)을 실행합니다. 승인·제출·메일 안 함.`,
       stage2:`[SOA 전체 ${soaScope()}]\n2차 검증(Operational AOR·환율·관리비·NRC·중복 인보이스)을 그룹별로 실행합니다.\n걸린 라인은 리젝체크+리마크 기입. 승인·제출·메일 안 함.\n진행할까요?`,
       live:`[SOA 전체 ${soaScope()}]\n그룹별 ① 1차 → ② 2차 → ③ 전 라인 Confirm SOA만 자동승인(실버=승인 / 장금=+출금상신)\n실패 그룹은 승인 0 · 그룹별 순차 실행\n진행할까요?`,
       reject_mark:`[SOA 전체 ${soaScope()}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
