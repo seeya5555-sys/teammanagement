@@ -146,6 +146,7 @@
         <option value="openai/gpt-6-luna">GPT-6 Luna (추가확인)</option>
       </select>
       <button class="au-b live" id="sv-live" type="button">검증 실기입</button>
+      <button class="au-b rjt" id="sv-stage2" type="button" title="2차 검증: Tech/Crew SOA에 올라온 Operational AOR 라인 리젝체크+리마크 (승인·제출·메일 안 함)">2차 검증</button>
       <button class="au-b verify" id="sv-remark" type="button" title="컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)">리마크정리</button>
     </div>
   </div>
@@ -312,7 +313,7 @@
   }
   function fmt(r){
     const t=r.finished_at||r.started_at||r.requested_at||'';
-    const modeL={live:'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리'}[r.mode]||'검증';
+    const modeL={live:'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증'}[r.mode]||'검증';
     return `<div class="au-logrow" data-run-id="${escA(r.run_id||'')}">
       <div class="au-logmeta">
         <span class="au-status st-${escA(r.status)}">${esc(r.status)}</span>
@@ -756,7 +757,9 @@
     params.review_model=reviewModel;
     const modelWarn = reviewModel==='openai/gpt-6-luna' ? '\n\nGPT-6 Luna는 과플래그 가능성이 있어 결과 추가확인 전제로 실행합니다.' : '';
     const title=vessels.length===1?vessels[0]:`${vessels.join(', ')} (${vessels.length}척)`;
-    if(mode==='remark_cleanup'){
+    if(mode==='stage2'){
+      if(!confirm(`[선박별 SOA 2차 검증 — ${title}]\nTech/Crew SOA 라인 중 Operational AOR(비용청구 Dept=Operational)을 찾아 리젝 체크 + 리마크를 기입합니다.\n승인·출금·리젝제출·관리사메일은 안 합니다.\n진행할까요?`)) return;
+    } else if(mode==='remark_cleanup'){
       if(!confirm(`[선박별 리마크정리 — ${title}]\n컨펌(CFM_YN=Y)된 라인에 남아있는 리젝 리마크만 삭제합니다.\n(승인·금액·상태 무변경 · 승인완료(C) SOA는 서버가 막아 대상 아님)\n진행할까요?`)) return;
     } else if(mode==='live' && !confirm(`[선박별 SOA 검증 — ${title}]\n검증 실기입(CFM_YN 체크 + 금액불일치 RJT_YN 리마크)을 실행합니다.\n승인·출금·리젝제출·관리사메일은 안 합니다.${modelWarn}\n진행할까요?`)) return;
     const {ok,j}=await api('POST','/api/automation/run',{task:'soa_vessel',mode,params});
@@ -769,6 +772,7 @@
   $('#sr-save').onclick=saveSr; $('#sr-refresh').onclick=()=>srAction('refresh'); $('#sr-push').onclick=()=>srAction('push'); $('#sr-approve').onclick=()=>srAction('approve');
   $('#sv-live').onclick=()=>runVessel('live');
   $('#sv-remark').onclick=()=>runVessel('remark_cleanup');
+  $('#sv-stage2').onclick=()=>runVessel('stage2');
   $('#au-ks').onclick=toggleKs;
   $('#au-log-head').onclick=(e)=>{ if(e.target.closest('#au-log-clear'))return; LOG_OPEN=!LOG_OPEN; renderLog(); };
   $('#au-log-clear').onclick=(e)=>{ e.stopPropagation(); clearLog(); };
