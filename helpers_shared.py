@@ -1614,7 +1614,7 @@ AUTOMATION_TASKS_BASE = {
     'soa_vessel': '선박별 SOA 검증 — 선박코드 입력 (검증단계까지만: 체크박스+리젝리마크, 승인·출금·제출·메일 안 함)',
 }
 # verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일 / remark_cleanup=컨펌된 라인 잔존 RJT_RMK 삭제(SVMS UI버그 보정)
-AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit', 'remark_cleanup', 'stage2')  # stage2=SOA 2차검증(soa_vessel=선박별 / soa_<그룹>=그룹 순회). 그룹 live=2차 통과시에만 승인
+AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit', 'remark_cleanup', 'stage2', 'slip_submit')  # stage2=SOA 2차검증(soa_vessel=선박별 / soa_<그룹>=그룹 순회). 그룹 live=2차 통과시에만 승인(Approval까지). slip_submit=[전자결재] 장금 출금전표 상신(11-11 분리)
 def soa_task_key(group_key):
     """그룹키(G1/SKRT) → 자동화 task 키(soa_g1/soa_skrt). 러너도 같은 규칙으로 역변환."""
     return 'soa_' + str(group_key).lower()

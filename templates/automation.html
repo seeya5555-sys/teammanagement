@@ -322,7 +322,8 @@
   const SOA_BTNS=[
     ['verify','verify','s1','1','1차 검증\n금액·인보이스 대조 → 정상 라인 컨펌 + 금액불일치 라인 리젝체크\n(승인·출금·제출·메일 안 함)'],
     ['stage2','stg2','s1','2','2차 검증\nOperational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스·AOR을 OPEX로 상신·AOR 인보이스 번호 → 리젝체크+리마크\n12xxxx 계정 Cat-II → Pre-delivery 변경\n인보이스 적요 요약 → Remark 뒤 "| 적요: …" 덧붙임(한영 혼용, 전표 적요로 복사됨)\n(승인·제출·메일 안 함)'],
-    ['live','live','ok','','자동승인 (1차 → 2차 → 승인)\n① 1차 검증 → ② 2차 검증(1차 리젝 있어도 전 선박 끝까지) → ③ SOA별 게이트\n1·2차 완료 + 리젝·2차 지적·미검사 없음 + 전 라인 Confirm + 2차 이후 라인 변경 없음 → 승인\n실버=승인 · 장금=승인+출금상신 · 나머지는 보류 사유를 보고 맨 위에 표시'],
+    ['live','live','ok','','자동승인 (1차 → 2차 → 승인)\n① 1차 검증 → ② 2차 검증(1차 리젝 있어도 전 선박 끝까지) → ③ SOA별 게이트\n1·2차 완료 + 리젝·2차 지적·미검사 없음 + 전 라인 Confirm + 2차 이후 라인 변경 없음 → 승인\n실버·장금 모두 Approval까지 (장금 출금상신은 [전자결재] 버튼) · 나머지는 보류 사유를 보고 맨 위에 표시'],
+    ['slip_submit','live','send','','전자결재 (장금 출금전표 상신)\n승인(C)된 장금 Technical SOA 중 출금전표가 미상신(Draft)인 것만\nTransfer → Oil Qty 점검 → 결재라인 Submit (실버·Crew·미승인 SOA는 안 건드림)'],
     ['reject_submit','rjt2','send','','리젝제출+메일\n리젝 마킹 SOA를 REJECTED 제출 + 관리사 통보메일'],
     ['remark_cleanup','verify','erase','','리마크정리\n컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)'],
   ];
@@ -365,7 +366,7 @@
   }
   function fmt(r){
     const t=r.finished_at||r.started_at||r.requested_at||'';
-    const modeL={live:(r.task||'').startsWith('soa_')&&r.task!=='soa_vessel'?'1차→2차→자동승인':'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증'}[r.mode]||'검증';
+    const modeL={live:(r.task||'').startsWith('soa_')&&r.task!=='soa_vessel'?'1차→2차→자동승인':'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증',slip_submit:'전자결재'}[r.mode]||'검증';
     return `<div class="au-logrow" data-run-id="${escA(r.run_id||'')}">
       <div class="au-logmeta">
         <span class="au-status st-${escA(r.status)}">${esc(r.status)}</span>
@@ -710,13 +711,14 @@
     el.querySelectorAll('.au-b').forEach(b=>b.onclick=onRun);   // toggle 단독 재호출 시도 동작하게
   }
   async function runAllSoa(mode){
-    const lab={verify:'1차 검증',stage2:'2차 검증',live:'1차→2차→자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
+    const lab={verify:'1차 검증',stage2:'2차 검증',live:'1차→2차→자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일',slip_submit:'전자결재'}[mode];
     const msg={
       verify:`[SOA 전체 ${soaScope()}]\n1차 검증(라인 Confirm + 금액불일치 리젝체크)을 실행합니다. 승인·제출·메일 안 함.`,
       stage2:`[SOA 전체 ${soaScope()}]\n2차 검증(Operational AOR·환율·관리비·NRC·중복 인보이스·AOR 증빙)을 그룹별로 실행합니다.\n걸린 라인은 리젝체크+리마크 기입, 12xxxx 계정은 Cat-II를 Pre-delivery로 변경, Remark 뒤에 인보이스 적요 덧붙임. 승인·제출·메일 안 함.\n진행할까요?`,
-      live:`[SOA 전체 ${soaScope()}]\n그룹별 ① 1차 → ② 2차 → ③ 전 라인 Confirm SOA만 자동승인(실버=승인 / 장금=+출금상신)\n실패 그룹은 승인 0 · 그룹별 순차 실행\n진행할까요?`,
+      live:`[SOA 전체 ${soaScope()}]\n그룹별 ① 1차 → ② 2차 → ③ 전 라인 Confirm SOA만 자동승인(실버·장금 모두 Approval까지 — 장금 출금상신은 [전자결재])\n실패 그룹은 승인 0 · 그룹별 순차 실행\n진행할까요?`,
       reject_mark:`[SOA 전체 ${soaScope()}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit:`[SOA 전체 ${soaScope()}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
+      slip_submit:`[SOA 전체 ${soaScope()}]\n전자결재: 승인(C)된 장금 Technical SOA의 미상신 출금전표를 Transfer → Oil Qty 점검 → 결재라인 Submit 합니다.\n(상신 대상·금액은 실행 로그에 표시)\n진행할까요?`,
     }[mode];
     const SOA=soaTasks();
     const names=SOA.map(t=>'· '+(TASKS[t]||t)).join('\n');
@@ -790,7 +792,8 @@
     const nm=TASKS[task]||task;
     const confirmMsg={
       live: (task==='jeonja'||task==='fundreq')?`[${nm}]\n자동 상신을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`
-        :`[${nm}]\n① 1차 검증 → ② 2차 검증 → ③ 전 라인 Confirm SOA만 자동승인(실버=승인 / 장금=승인+출금상신)\n1·2차 중 실패 1건이라도 있으면 승인 0 · 리젝 라인 SOA 제외\n진행할까요?`,
+        :`[${nm}]\n① 1차 검증 → ② 2차 검증 → ③ 전 라인 Confirm SOA만 자동승인(실버·장금 모두 Approval까지 — 장금 출금상신은 [전자결재] 버튼)\n1·2차 중 실패 1건이라도 있으면 승인 0 · 리젝 라인 SOA 제외\n진행할까요?`,
+      slip_submit: `[${nm}]\n전자결재: 승인(C)된 장금 Technical SOA 중 출금전표가 미상신인 것만 Transfer → Oil Qty 점검 → 결재라인 Submit 합니다.\n(실버·Crew·미승인 SOA는 안 건드림 · 상신 대상·금액은 실행 로그에 표시)\n진행할까요?`,
       stage2: `[${nm}]\n2차 검증(Operational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스·AOR 증빙)을 그룹 선박 전체에 실행합니다.\n걸린 라인은 리젝체크+리마크 기입, 12xxxx 계정은 Cat-II를 Pre-delivery로 변경, Remark 뒤에 인보이스 적요 덧붙임. 승인·출금·제출·메일 안 함.\n진행할까요?`,
       reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
