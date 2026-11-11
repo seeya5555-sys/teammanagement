@@ -166,7 +166,7 @@
         <option value="openai/gpt-6-luna">GPT-6 Luna (추가확인)</option>
       </select>
       <button class="au-b live" id="sv-live" type="button">검증 실기입</button>
-      <button class="au-b rjt" id="sv-stage2" type="button" title="2차 검증: Operational AOR · 외화 환율(≥20%) · 관리비 SMA · NRC · 중복 인보이스 라인 리젝체크+리마크 (승인·제출·메일 안 함)">2차 검증</button>
+      <button class="au-b rjt" id="sv-stage2" type="button" title="2차 검증: Operational AOR · 외화 환율(≥20%) · 관리비 SMA · NRC · 중복 인보이스 · AOR을 OPEX로 상신 · AOR 인보이스 번호 → 리젝체크+리마크 / 12xxxx 계정 Cat-II→Pre-delivery 변경 / 인보이스 적요 요약을 Remark 뒤 &quot;| 적요: …&quot; 덧붙임 (승인·제출·메일 안 함)">2차 검증</button>
       <button class="au-b verify" id="sv-remark" type="button" title="컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)">리마크정리</button>
     </div>
   </div>
@@ -321,7 +321,7 @@
   // [mode, cls, icon, 번호, 툴팁] — 순서 = 1차 → 2차 → 자동승인 → 리젝체크 → 리젝제출+메일 → 리마크정리
   const SOA_BTNS=[
     ['verify','verify','s1','1','1차 검증\n금액·인보이스 대조 → 정상 라인 컨펌 + 금액불일치 라인 리젝체크\n(승인·출금·제출·메일 안 함)'],
-    ['stage2','stg2','s1','2','2차 검증\nOperational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스 → 리젝체크+리마크\n(승인·제출·메일 안 함)'],
+    ['stage2','stg2','s1','2','2차 검증\nOperational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스·AOR을 OPEX로 상신·AOR 인보이스 번호 → 리젝체크+리마크\n12xxxx 계정 Cat-II → Pre-delivery 변경\n인보이스 적요 요약 → Remark 뒤 "| 적요: …" 덧붙임(한영 혼용, 전표 적요로 복사됨)\n(승인·제출·메일 안 함)'],
     ['live','live','ok','','자동승인 (1차 → 2차 → 승인)\n① 1차 검증 → ② 2차 검증(1차 리젝 있어도 전 선박 끝까지) → ③ SOA별 게이트\n1·2차 완료 + 리젝·2차 지적·미검사 없음 + 전 라인 Confirm + 2차 이후 라인 변경 없음 → 승인\n실버=승인 · 장금=승인+출금상신 · 나머지는 보류 사유를 보고 맨 위에 표시'],
     ['reject_submit','rjt2','send','','리젝제출+메일\n리젝 마킹 SOA를 REJECTED 제출 + 관리사 통보메일'],
     ['remark_cleanup','verify','erase','','리마크정리\n컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)'],
@@ -713,7 +713,7 @@
     const lab={verify:'1차 검증',stage2:'2차 검증',live:'1차→2차→자동승인',reject_mark:'리젝체크',reject_submit:'리젝제출+메일'}[mode];
     const msg={
       verify:`[SOA 전체 ${soaScope()}]\n1차 검증(라인 Confirm + 금액불일치 리젝체크)을 실행합니다. 승인·제출·메일 안 함.`,
-      stage2:`[SOA 전체 ${soaScope()}]\n2차 검증(Operational AOR·환율·관리비·NRC·중복 인보이스)을 그룹별로 실행합니다.\n걸린 라인은 리젝체크+리마크 기입. 승인·제출·메일 안 함.\n진행할까요?`,
+      stage2:`[SOA 전체 ${soaScope()}]\n2차 검증(Operational AOR·환율·관리비·NRC·중복 인보이스·AOR 증빙)을 그룹별로 실행합니다.\n걸린 라인은 리젝체크+리마크 기입, 12xxxx 계정은 Cat-II를 Pre-delivery로 변경, Remark 뒤에 인보이스 적요 덧붙임. 승인·제출·메일 안 함.\n진행할까요?`,
       live:`[SOA 전체 ${soaScope()}]\n그룹별 ① 1차 → ② 2차 → ③ 전 라인 Confirm SOA만 자동승인(실버=승인 / 장금=+출금상신)\n실패 그룹은 승인 0 · 그룹별 순차 실행\n진행할까요?`,
       reject_mark:`[SOA 전체 ${soaScope()}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit:`[SOA 전체 ${soaScope()}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
@@ -791,7 +791,7 @@
     const confirmMsg={
       live: (task==='jeonja'||task==='fundreq')?`[${nm}]\n자동 상신을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`
         :`[${nm}]\n① 1차 검증 → ② 2차 검증 → ③ 전 라인 Confirm SOA만 자동승인(실버=승인 / 장금=승인+출금상신)\n1·2차 중 실패 1건이라도 있으면 승인 0 · 리젝 라인 SOA 제외\n진행할까요?`,
-      stage2: `[${nm}]\n2차 검증(Operational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스)을 그룹 선박 전체에 실행합니다.\n걸린 라인은 리젝체크+리마크 기입. 승인·출금·제출·메일 안 함.\n진행할까요?`,
+      stage2: `[${nm}]\n2차 검증(Operational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스·AOR 증빙)을 그룹 선박 전체에 실행합니다.\n걸린 라인은 리젝체크+리마크 기입, 12xxxx 계정은 Cat-II를 Pre-delivery로 변경, Remark 뒤에 인보이스 적요 덧붙임. 승인·출금·제출·메일 안 함.\n진행할까요?`,
       reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
       remark_cleanup: `[${nm}]\n컨펌(CFM_YN=Y)된 라인인데 리젝 리마크가 남아있는 것들의 리마크만 삭제합니다.\n(승인·금액·상태 무변경 — SVMS UI 버그 보정)`,
@@ -859,7 +859,7 @@
     const modelWarn = reviewModel==='openai/gpt-6-luna' ? '\n\nGPT-6 Luna는 과플래그 가능성이 있어 결과 추가확인 전제로 실행합니다.' : '';
     const title=vessels.length===1?vessels[0]:`${vessels.join(', ')} (${vessels.length}척)`;
     if(mode==='stage2'){
-      if(!confirm(`[선박별 SOA 2차 검증 — ${title}]\nTech/Crew SOA 라인 중 ①Operational AOR(비용청구 Dept=Operational) ②외화(USD 외) 환율 과청구(기준환율 대비 20% 이상) ③관리비 SMA 계약 초과 ④NRC 인보이스 ⑤중복 인보이스(같은 선박 SOA·비용청구)를 찾아 리젝 체크 + 리마크를 기입합니다.\n승인·출금·리젝제출·관리사메일은 안 합니다.\n진행할까요?`)) return;
+      if(!confirm(`[선박별 SOA 2차 검증 — ${title}]\nTech/Crew SOA 라인 중 ①Operational AOR(비용청구 Dept=Operational) ②외화(USD 외) 환율 과청구(기준환율 대비 20% 이상) ③관리비 SMA 계약 초과 ④NRC 인보이스 ⑤중복 인보이스(같은 선박 SOA) ⑥AOR을 OPEX로 상신·AOR 인보이스 번호를 찾아 리젝 체크 + 리마크를 기입합니다.\n⑦12xxxx 계정이 OPEX/AOR이면 Cat-II를 Pre-delivery로 변경 ⑧인보이스 적요를 요약해 Remark 뒤에 "| 적요: …" 덧붙임(전표 적요로 복사됨).\n승인·출금·리젝제출·관리사메일은 안 합니다.\n진행할까요?`)) return;
     } else if(mode==='remark_cleanup'){
       if(!confirm(`[선박별 리마크정리 — ${title}]\n컨펌(CFM_YN=Y)된 라인에 남아있는 리젝 리마크만 삭제합니다.\n(승인·금액·상태 무변경 · 승인완료(C) SOA는 서버가 막아 대상 아님)\n진행할까요?`)) return;
     } else if(mode==='live' && !confirm(`[선박별 SOA 검증 — ${title}]\n검증 실기입(CFM_YN 체크 + 금액불일치 RJT_YN 리마크)을 실행합니다.\n승인·출금·리젝제출·관리사메일은 안 합니다.${modelWarn}\n진행할까요?`)) return;
