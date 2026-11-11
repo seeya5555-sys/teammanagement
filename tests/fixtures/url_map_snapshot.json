@@ -3552,6 +3552,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/jeonja/runner-holds",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_dock_submit.api_ext_jeonja_runner_holds",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/journal",
     "methods": [
       "OPTIONS",

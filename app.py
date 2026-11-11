@@ -809,6 +809,11 @@ def init_db(drop=False):
         """)
         if 'cost_cur' not in [r[1] for r in conn.execute('PRAGMA table_info(jeonja_review_item)').fetchall()]:
             conn.execute('ALTER TABLE jeonja_review_item ADD COLUMN cost_cur TEXT')
+        _jcols = [r[1] for r in conn.execute('PRAGMA table_info(jeonja_review_item)').fetchall()]
+        if 'runner_hold' not in _jcols:   # 상신 러너가 실제 skip한 사유(PDF해시 중복 등) — 앱/웹 표시용
+            conn.execute('ALTER TABLE jeonja_review_item ADD COLUMN runner_hold TEXT')
+        if 'runner_hold_at' not in _jcols:
+            conn.execute('ALTER TABLE jeonja_review_item ADD COLUMN runner_hold_at TEXT')
 
         # reqgen: 입거 requisition 엑셀 → SVMS 구매청구(PKG_PC_REQ.SP_SET_REQ_INFO) DRAFT 자동작성 큐
         #   사람이 /reqgen 탭서 엑셀 업로드 → 시트별 카드 적재(파싱) → Voyage/Port/Date 입력+승인 →

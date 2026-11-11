@@ -23,6 +23,7 @@ import urllib.request
 from flask import abort, jsonify, render_template, request, session
 import re
 import uuid
+import time
 from flask import send_file
 from app_core import (
     JEONJA_PDF_DIR, _PREVIEW_UPLOAD_MAX, app, execute, execute_rc, get_db, query,
@@ -3324,10 +3325,13 @@ def api_ext_jeonja_review():
     items = d.get('items') or []
     run_id = (d.get('run_id') or '').strip()
     db = get_db()
-    prev_rows = db.execute('SELECT ref, excluded FROM jeonja_review_item').fetchall()
+    prev_rows = db.execute('SELECT ref, excluded, runner_hold, runner_hold_at FROM jeonja_review_item').fetchall()
     canon = lambda value: _jeonja_ref(value) or (value or '').strip()
     prev_refs = {canon(r['ref']) for r in prev_rows if canon(r['ref'])}
     prev_excluded = {canon(r['ref']) for r in prev_rows if r['excluded'] == 1 and canon(r['ref'])}
+    # 러너 보류사유는 다음 상신 run이 덮어쓸 때까지 검증 재적재에도 유지(표시 전용, 상신 판단엔 미사용)
+    prev_hold = {canon(r['ref']): (r['runner_hold'], r['runner_hold_at'])
+                 for r in prev_rows if r['runner_hold'] and canon(r['ref'])}
     DEFAULT_HOLD = {'mismatch'}
     current_refs, completed_refs = set(), set()
     n = invalid = 0
@@ -3350,9 +3354,11 @@ def api_ext_jeonja_review():
                 continue
             excl = 1 if (not safe_ref or ref in prev_excluded or bucket in DEFAULT_HOLD) else 0
             db.execute("INSERT OR REPLACE INTO jeonja_review_item "
-                       "(ref,vsl_cd,subj,fund,cost,cost_cur,dn,bucket,why,excluded,run_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       "(ref,vsl_cd,subj,fund,cost,cost_cur,dn,bucket,why,excluded,run_id,runner_hold,runner_hold_at) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (ref, it.get('vsl_cd'), it.get('subj'), it.get('fund'), it.get('cost'),
-                        it.get('cost_cur'), it.get('dn'), bucket, why, excl, run_id))
+                        it.get('cost_cur'), it.get('dn'), bucket, why, excl, run_id,
+                        *prev_hold.get(ref, (None, None))))
             current_refs.add(ref)
             if bucket == 'already': completed_refs.add(ref)
             n += 1
@@ -3370,7 +3376,7 @@ def api_ext_jeonja_review():
 @admin_required
 def api_automation_jeonja_items():
     """Review checklist plus read-only preview availability."""
-    rows = query("SELECT ref,vsl_cd,subj,fund,cost,cost_cur,dn,bucket,why,excluded,reviewed_at "
+    rows = query("SELECT ref,vsl_cd,subj,fund,cost,cost_cur,dn,bucket,why,excluded,reviewed_at,runner_hold,runner_hold_at "
                  "FROM jeonja_review_item ORDER BY CASE bucket "
                  "WHEN 'pass' THEN 0 WHEN 'costslip' THEN 1 WHEN 'mismatch' THEN 2 "
                  "WHEN 'escalate' THEN 3 WHEN 'flag' THEN 4 WHEN 'already' THEN 5 ELSE 6 END, ref") or []
@@ -3397,6 +3403,33 @@ def api_automation_jeonja_exclude():
         return jsonify({'error': 'no ref'}), 400
     rc = execute_rc("UPDATE jeonja_review_item SET excluded=? WHERE ref=?", (excluded, ref))
     return jsonify({'ok': bool(rc), 'ref': ref, 'excluded': bool(excluded)})
+
+
+@bp.route('/api/ext/jeonja/runner-holds', methods=['POST'])
+@api_key_required
+def api_ext_jeonja_runner_holds():
+    """상신 러너(jeonja_approve)가 run 종료 시 실제 skip 사유 스냅샷 전송 — 표시 전용.
+    목록에 없는 ref 는 사유 해제(이번 run 에서 막히지 않음). 상신·보류 판단엔 절대 안 쓰임."""
+    d = request.get_json(silent=True) or {}
+    holds = d.get('holds')
+    if not isinstance(holds, list):
+        return jsonify({'error': 'holds list required'}), 400
+    at = (d.get('at') or '').strip()[:32] or time.strftime('%Y-%m-%d %H:%M')
+    db = get_db(); n = 0
+    try:
+        db.execute('UPDATE jeonja_review_item SET runner_hold=NULL, runner_hold_at=NULL')
+        for h in holds:
+            ref = _jeonja_ref((h or {}).get('ref') or '')
+            why = ((h or {}).get('why') or '').strip()[:300]
+            if not ref or not why:
+                continue
+            n += db.execute('UPDATE jeonja_review_item SET runner_hold=?, runner_hold_at=? WHERE ref=?',
+                            (why, at, ref)).rowcount
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return jsonify({'ok': True, 'updated': n})
 
 
 @bp.route('/api/ext/jeonja/exclusions')
