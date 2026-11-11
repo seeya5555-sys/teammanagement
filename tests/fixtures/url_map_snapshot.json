@@ -512,6 +512,17 @@
     "defaults": {}
   },
   {
+    "rule": "/api/automation/soa/slip-preview",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_soa_slip_preview",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/biz-receipts/<int:rid>",
     "methods": [
       "DELETE",
@@ -3943,6 +3954,16 @@
       "POST"
     ],
     "endpoint": "routes_calendar_dock.api_ext_soa_review_snapshot",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/soa/slip-preview",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_soa_slip_preview",
     "strict_slashes": true,
     "defaults": {}
   },

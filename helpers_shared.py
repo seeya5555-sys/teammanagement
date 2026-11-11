@@ -1614,7 +1614,36 @@ AUTOMATION_TASKS_BASE = {
     'soa_vessel': '선박별 SOA 검증 — 선박코드 입력 (검증단계까지만: 체크박스+리젝리마크, 승인·출금·제출·메일 안 함)',
 }
 # verify=읽기전용 / live=자동승인·상신 / reject_dry=리젝후보표시 / reject_mark=리젝라인체크 / reject_submit=리젝제출+메일 / remark_cleanup=컨펌된 라인 잔존 RJT_RMK 삭제(SVMS UI버그 보정)
-AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit', 'remark_cleanup', 'stage2', 'slip_submit')  # stage2=SOA 2차검증(soa_vessel=선박별 / soa_<그룹>=그룹 순회). 그룹 live=2차 통과시에만 승인(Approval까지). slip_submit=[전자결재] 장금 출금전표 상신(11-11 분리)
+# ── [전자결재] 미리보기 공용(2026-11-11) — 라우트 2곳(저장/조회·run 검증)이 함께 씀
+SLIP_PREVIEW_MAX_AGE_MIN = 30
+_SL_CD_RE = re.compile(r'^[A-Z0-9]{4}CS\d{10}$')
+
+
+def _ensure_slip_preview_table(db):
+    db.execute('CREATE TABLE IF NOT EXISTS soa_slip_preview (group_key TEXT NOT NULL, sl_cd TEXT NOT NULL, '
+               'sx_cd TEXT, vsl_cd TEXT, usd REAL, subj TEXT, at TEXT NOT NULL, PRIMARY KEY (group_key, sl_cd))')
+
+
+def slip_preview_rows(group):
+    """(rows, at, fresh) — at=미리보기 시각(UTC ISO), fresh=30분 이내."""
+    db = get_db()
+    _ensure_slip_preview_table(db)
+    rows = [dict(r) for r in db.execute('SELECT * FROM soa_slip_preview WHERE group_key=? ORDER BY sl_cd', (group,)).fetchall()]
+    meta = db.execute("SELECT at FROM soa_slip_preview WHERE group_key=? AND sl_cd='__meta__'", (group,)).fetchone()
+    at = meta['at'] if meta else None
+    rows = [r for r in rows if r['sl_cd'] != '__meta__']
+    fresh = False
+    if at:
+        try:
+            age = datetime.utcnow() - datetime.strptime(at, '%Y-%m-%dT%H:%M:%S')
+            fresh = 0 <= age.total_seconds() <= SLIP_PREVIEW_MAX_AGE_MIN * 60
+        except ValueError:
+            fresh = False
+    return rows, at, fresh
+
+
+
+AUTOMATION_MODES = ('verify', 'live', 'reject_dry', 'reject_mark', 'reject_submit', 'remark_cleanup', 'stage2', 'slip_preview', 'slip_submit')  # stage2=SOA 2차검증(soa_vessel=선박별 / soa_<그룹>=그룹 순회). 그룹 live=2차 통과시에만 승인(Approval까지). slip_submit=[전자결재] 장금 출금전표 상신(11-11 분리)
 def soa_task_key(group_key):
     """그룹키(G1/SKRT) → 자동화 task 키(soa_g1/soa_skrt). 러너도 같은 규칙으로 역변환."""
     return 'soa_' + str(group_key).lower()

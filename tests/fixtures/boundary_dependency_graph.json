@@ -278,12 +278,14 @@
       "FLEET_MAP_FILE",
       "GEMINI_API_KEY",
       "RETIRED_RUNNER_KEYS",
+      "SLIP_PREVIEW_MAX_AGE_MIN",
       "SOA_CATEGORY_OWNER",
       "_AOR_ACTIVE_STATUSES",
       "_FUNDREQ_ATT_INLINE",
       "_FUNDREQ_ATT_MAX",
       "_FUNDREQ_ATT_MIME",
       "_HEALTH_ORDER",
+      "_SL_CD_RE",
       "_annotate_drafts_with_vessel",
       "_aor_absorbing_trigger_sql",
       "_aor_status_list_sql",
@@ -294,6 +296,7 @@
       "_dockproc_adopt_svms",
       "_dockproc_subject_from_svms",
       "_ensure_api_table",
+      "_ensure_slip_preview_table",
       "_ensure_summary_table",
       "_ext_allowed",
       "_fundreq_att_ext",
@@ -321,6 +324,7 @@
       "api_key_required",
       "automation_reuse_or_enqueue",
       "login_required",
+      "slip_preview_rows",
       "soa_task_key"
     ],
     "krcon_client.py": [],
@@ -499,7 +503,8 @@
       "api_key_required",
       "automation_enqueue_once",
       "automation_tasks",
-      "login_required"
+      "login_required",
+      "slip_preview_rows"
     ]
   },
   "routes_family_assets.py": {

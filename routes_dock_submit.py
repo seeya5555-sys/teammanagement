@@ -40,7 +40,7 @@ from helpers_shared import (
     _dockproc_subject_from_svms, _dockproc_submit_has_quotes, _ensure_api_table,
     _fundreq_att_ext, _fundreq_att_sniff_ok, _gemini_call_json, _push_outbox_add,
     _push_outbox_drain, _reqgen_build_subj, _reqgen_vsl_prefix, _soa_review_case_unlock,
-    _soa_vessel_codes_from_params, _soa_vessel_params, admin_required, api_key_required,
+    _soa_vessel_codes_from_params, _soa_vessel_params, admin_required, api_key_required, slip_preview_rows,
     automation_tasks, login_required,
 )
 
@@ -3020,6 +3020,35 @@ def api_automation_run():
     _soa_fixed = ('soa_vessel', 'soa_resend', 'soa_review', 'soa_review_refresh', 'soa_review_push', 'soa_review_approve')
     if mode == 'stage2' and task != 'soa_vessel' and (not task.startswith('soa_') or task in _soa_fixed):   # 2차검증=선박별 패널 + SOA 그룹
         return jsonify({'error': 'bad task/mode'}), 400
+    # [전자결재](2026-11-11 형): 장금 출금전표 상신은 SOA 그룹 task 만, 그리고 30분 이내 미리보기에 있는 전표만.
+    if mode in ('slip_preview', 'slip_submit') and (not task.startswith('soa_') or task in _soa_fixed):
+        return jsonify({'error': 'bad task/mode'}), 400
+    slip_params = None
+    if mode == 'slip_submit':
+        p = d.get('params') if isinstance(d.get('params'), dict) else {}
+        want = p.get('sl_cds')
+        if not isinstance(want, list) or not want or len(want) > 50 or \
+                not all(isinstance(x, str) and re.match(r'^[A-Z0-9]{4}CS\d{10}$', x) for x in want):
+            return jsonify({'error': '상신할 전표 목록(sl_cds)이 없습니다 — 먼저 미리보기'}), 400
+        rows, _at, fresh = slip_preview_rows(task[4:].upper())
+        if not fresh:
+            return jsonify({'error': '미리보기가 없거나 30분이 지났습니다 — 미리보기를 다시 실행하세요'}), 409
+        known = {r['sl_cd']: r for r in rows}
+        if not set(want) <= set(known):
+            return jsonify({'error': '미리보기에 없는 전표가 포함됨: ' + ','.join(sorted(set(want) - set(known)))}), 409
+        # 확인한 금액·SOA 결속(올마이트): 사람이 본 USD·SOA 를 상신 run 에 실어 러너가 상신 직전 재대조
+        exp = p.get('expect') if isinstance(p.get('expect'), dict) else {}
+        for sl in want:
+            e = exp.get(sl) if isinstance(exp.get(sl), dict) else {}
+            k = known[sl]
+            try:
+                same_usd = k['usd'] is not None and e.get('usd') is not None and abs(float(e['usd']) - float(k['usd'])) < 0.005
+            except (TypeError, ValueError):
+                same_usd = False
+            if not same_usd or str(e.get('sx_cd') or '') != (k['sx_cd'] or ''):
+                return jsonify({'error': f'확인한 금액/SOA 가 미리보기와 다름: {sl} — 미리보기를 다시 확인하세요'}), 409
+        slip_params = json.dumps({'sl_cds': sorted(set(want)),
+                                  'expect': {sl: {'usd': known[sl]['usd'], 'sx_cd': known[sl]['sx_cd']} for sl in want}})
     # 선박별 SOA 검증: params(vsl_cd/vsl_cds 필수, 기간·부서·검증모델 옵션) 검증.
     # live=실기입(체크박스+리젝리마크). 순수 DRY는 카나리/CLI용으로만 유지.
     params = None
@@ -3033,6 +3062,8 @@ def api_automation_run():
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
         params = json.dumps(vessel_params[0], ensure_ascii=False)
+    if slip_params:
+        params = slip_params
     if task == 'rpcost_confirm':   # 수리/구매 분리 실행(옵션). 미지정 = 둘 다(하위호환)
         p = d.get('params') if isinstance(d.get('params'), dict) else {}
         kind = p.get('kind')

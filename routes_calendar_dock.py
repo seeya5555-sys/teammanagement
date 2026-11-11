@@ -4441,6 +4441,53 @@ def api_soa_gate_state():
     return jsonify({'ok': True, 'rows': [dict(r) for r in rows]})
 
 
+# ── [전자결재] 미리보기(2026-11-11 형): 맥 러너가 상신 대상 장금 출금전표 목록을 올리고, 버튼 확인창이 이걸 보여준다.
+#    slip_submit 실행은 이 미리보기(30분 이내)에 있는 전표만 허용(run API 에서 검증).
+from helpers_shared import SLIP_PREVIEW_MAX_AGE_MIN, _SL_CD_RE, _ensure_slip_preview_table, slip_preview_rows  # noqa: E402
+
+
+@bp.route('/api/ext/soa/slip-preview', methods=['POST'])
+@api_key_required
+def api_ext_soa_slip_preview():
+    body = request.get_json(silent=True) or {}
+    group = str(body.get('group') or '').strip().upper()
+    rows = body.get('rows')
+    if not re.match(r'^[A-Z0-9_]{1,20}$', group) or not isinstance(rows, list) or len(rows) > 50:   # run API 상한과 동일
+        return jsonify({'ok': False, 'error': 'group/rows 형식 오류(최대 50건)'}), 400
+    clean = []
+    for r in rows:
+        if not isinstance(r, dict):
+            return jsonify({'ok': False, 'error': 'row 형식 오류'}), 400
+        sl, sx = str(r.get('sl_cd') or '').upper(), str(r.get('sx_cd') or '').upper()
+        if not _SL_CD_RE.match(sl) or not re.match(r'^[A-Z0-9]{4}CX\d{10}$', sx):
+            return jsonify({'ok': False, 'error': f'형식 위반: {sl} {sx}'}), 400
+        try:
+            usd = None if r.get('usd') in (None, '') else float(r.get('usd'))
+        except (TypeError, ValueError):
+            usd = None
+        clean.append((group, sl, sx, sx[:4], usd, str(r.get('subj') or '')[:120]))
+    now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
+    db = get_db()
+    with db:
+        _ensure_slip_preview_table(db)
+        db.execute('DELETE FROM soa_slip_preview WHERE group_key=?', (group,))
+        db.executemany('INSERT INTO soa_slip_preview (group_key,sl_cd,sx_cd,vsl_cd,usd,subj,at) VALUES (?,?,?,?,?,?,?)',
+                       [c + (now,) for c in clean])
+        db.execute("INSERT INTO soa_slip_preview (group_key,sl_cd,at) VALUES (?, '__meta__', ?)", (group, now))
+    return jsonify({'ok': True, 'count': len(clean), 'at': now})
+
+
+@bp.route('/api/automation/soa/slip-preview')
+@admin_required
+def api_soa_slip_preview():
+    group = str(request.args.get('group') or '').strip().upper()
+    if not re.match(r'^[A-Z0-9_]{1,20}$', group):
+        return jsonify({'ok': False, 'error': 'group 형식 오류'}), 400
+    rows, at, fresh = slip_preview_rows(group)
+    return jsonify({'ok': True, 'group': group, 'rows': rows, 'at': at, 'fresh': fresh,
+                    'max_age_min': SLIP_PREVIEW_MAX_AGE_MIN, 'total_usd': round(sum(r['usd'] or 0 for r in rows), 2)})
+
+
 @bp.route('/api/ext/soa/vessel-owners', methods=['GET', 'POST'])
 @api_key_required
 def api_ext_soa_vessel_owners():

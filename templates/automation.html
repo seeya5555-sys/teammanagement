@@ -323,7 +323,6 @@
     ['verify','verify','s1','1','1차 검증\n금액·인보이스 대조 → 정상 라인 컨펌 + 금액불일치 라인 리젝체크\n(승인·출금·제출·메일 안 함)'],
     ['stage2','stg2','s1','2','2차 검증\nOperational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스·AOR을 OPEX로 상신·AOR 인보이스 번호 → 리젝체크+리마크\n12xxxx 계정 Cat-II → Pre-delivery 변경\n인보이스 적요 요약 → Remark 뒤 "| 적요: …" 덧붙임(한영 혼용, 전표 적요로 복사됨)\n(승인·제출·메일 안 함)'],
     ['live','live','ok','','자동승인 (1차 → 2차 → 승인)\n① 1차 검증 → ② 2차 검증(1차 리젝 있어도 전 선박 끝까지) → ③ SOA별 게이트\n1·2차 완료 + 리젝·2차 지적·미검사 없음 + 전 라인 Confirm + 2차 이후 라인 변경 없음 → 승인\n실버·장금 모두 Approval까지 (장금 출금상신은 [전자결재] 버튼) · 나머지는 보류 사유를 보고 맨 위에 표시'],
-    ['slip_submit','live','send','','전자결재 (장금 출금전표 상신)\n승인(C)된 장금 Technical SOA 중 출금전표가 미상신(Draft)인 것만\nTransfer → Oil Qty 점검 → 결재라인 Submit (실버·Crew·미승인 SOA는 안 건드림)'],
     ['reject_submit','rjt2','send','','리젝제출+메일\n리젝 마킹 SOA를 REJECTED 제출 + 관리사 통보메일'],
     ['remark_cleanup','verify','erase','','리마크정리\n컨펌된 라인에 남은 리젝 리마크만 삭제 (승인·금액·상태 무변경)'],
   ];
@@ -361,12 +360,15 @@
       btns=`<button class="au-b verify" data-task="${task}" data-mode="verify" ${dis}> AOR prep 실행 (/aor 큐 적재)</button>`;
     } else {                 // SOA 그룹: 승인 + 리젝 워크플로우
       btns=SOA_BTNS.map(([m,c,ic,n,tip])=>soaIb(`data-task="${escA(task)}"`,m,c,ic,n,tip,dis)).join('');
+      // [전자결재](11-11): 장금 그룹 줄에만 — 미리보기(목록·금액) 확인 후 그 전표만 상신
+      const gcat=(GROUPS.find(g=>('soa_'+String(g.key).toLowerCase())===task)||{}).category;
+      if(gcat==='skrt') btns+=soaIb(`data-task="${escA(task)}"`,'slip_submit','live money','send','','전자결재 (장금 출금전표 상신)\n① 미리보기: 승인(C)된 장금 Technical SOA 중 미상신 전표 목록·USD를 불러옴(읽기만)\n② 확인창에 목록·합계 표시 → 확인한 전표만 Transfer → Oil Qty 점검 → 결재라인 Submit\n미리보기는 30분 유효',dis);
     }
     return `<div class="au-row"><div class="au-name">${esc(name)}${statusChip(task)}</div><div class="au-btns">${btns}</div></div>`;
   }
   function fmt(r){
     const t=r.finished_at||r.started_at||r.requested_at||'';
-    const modeL={live:(r.task||'').startsWith('soa_')&&r.task!=='soa_vessel'?'1차→2차→자동승인':'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증',slip_submit:'전자결재'}[r.mode]||'검증';
+    const modeL={live:(r.task||'').startsWith('soa_')&&r.task!=='soa_vessel'?'1차→2차→자동승인':'실행',reject_mark:'리젝체크',reject_submit:'리젝제출',remark_cleanup:'리마크정리',stage2:'2차검증',slip_submit:'전자결재',slip_preview:'전자결재 미리보기'}[r.mode]||'검증';
     return `<div class="au-logrow" data-run-id="${escA(r.run_id||'')}">
       <div class="au-logmeta">
         <span class="au-status st-${escA(r.status)}">${esc(r.status)}</span>
@@ -718,7 +720,6 @@
       live:`[SOA 전체 ${soaScope()}]\n그룹별 ① 1차 → ② 2차 → ③ 전 라인 Confirm SOA만 자동승인(실버·장금 모두 Approval까지 — 장금 출금상신은 [전자결재])\n실패 그룹은 승인 0 · 그룹별 순차 실행\n진행할까요?`,
       reject_mark:`[SOA 전체 ${soaScope()}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit:`[SOA 전체 ${soaScope()}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
-      slip_submit:`[SOA 전체 ${soaScope()}]\n전자결재: 승인(C)된 장금 Technical SOA의 미상신 출금전표를 Transfer → Oil Qty 점검 → 결재라인 Submit 합니다.\n(상신 대상·금액은 실행 로그에 표시)\n진행할까요?`,
     }[mode];
     const SOA=soaTasks();
     const names=SOA.map(t=>'· '+(TASKS[t]||t)).join('\n');
@@ -790,10 +791,10 @@
     const task=btn.dataset.task, mode=btn.dataset.mode;
     if(!task||!mode){ console.warn('automation button missing task/mode', btn); return; }  // 스타일용 .au-b가 잘못 바인딩돼도 빈 task/mode POST 금지
     const nm=TASKS[task]||task;
+    if(mode==='slip_submit') return slipFlow(task,nm,btn);
     const confirmMsg={
       live: (task==='jeonja'||task==='fundreq')?`[${nm}]\n자동 상신을 지금 실행할까요?\n(clean 건만 자동 처리, 예외는 미처리·텔레그램 보고)`
         :`[${nm}]\n① 1차 검증 → ② 2차 검증 → ③ 전 라인 Confirm SOA만 자동승인(실버·장금 모두 Approval까지 — 장금 출금상신은 [전자결재] 버튼)\n1·2차 중 실패 1건이라도 있으면 승인 0 · 리젝 라인 SOA 제외\n진행할까요?`,
-      slip_submit: `[${nm}]\n전자결재: 승인(C)된 장금 Technical SOA 중 출금전표가 미상신인 것만 Transfer → Oil Qty 점검 → 결재라인 Submit 합니다.\n(실버·Crew·미승인 SOA는 안 건드림 · 상신 대상·금액은 실행 로그에 표시)\n진행할까요?`,
       stage2: `[${nm}]\n2차 검증(Operational AOR·환율 과청구·관리비 초과·NRC·중복 인보이스·AOR 증빙)을 그룹 선박 전체에 실행합니다.\n걸린 라인은 리젝체크+리마크 기입, 12xxxx 계정은 Cat-II를 Pre-delivery로 변경, Remark 뒤에 인보이스 적요 덧붙임. 승인·출금·제출·메일 안 함.\n진행할까요?`,
       reject_mark: `[${nm}]\n금액 불일치(flag) 라인에 리젝 체크를 자동으로 답니다.\n(아직 제출·메일 안 함 — 체크만)`,
       reject_submit: `[${nm}]\n리젝 마킹된 SOA를 REJECTED로 제출하고 관리사에게 통보메일을 보냅니다.\n진행할까요?`,
@@ -808,6 +809,28 @@
     btn.disabled=true;
     const {ok,j}=await api('POST','/api/automation/run',{task,mode});
     if(!ok){alert(j.error||'실행 실패');}
+    await load();
+  }
+  async function slipFlow(task,nm,btn){   // [전자결재] 미리보기 → 확인 → 확인한 전표만 상신(서버·러너가 목록 재검증)
+    const g=task.slice(4).toUpperCase();
+    const pv=await api('GET','/api/automation/soa/slip-preview?group='+encodeURIComponent(g));
+    if(!pv.ok){ alert((pv.j&&pv.j.error)||'미리보기 조회 실패'); return; }
+    const j=pv.j, when=j.at?new Date(j.at+'Z').toLocaleString('ko-KR'):'';
+    if(!j.fresh){
+      if(!confirm(`[${nm}] 전자결재\n최근 ${j.max_age_min}분 안에 만든 미리보기가 없습니다${when?` (마지막 ${when})`:''}.\n상신 대상 전표 목록을 먼저 불러올까요? (SVMS 읽기만 · 상신 안 함)\n\n완료되면 [전자결재]를 한 번 더 누르세요.`)) return;
+      btn.disabled=true;
+      const r=await api('POST','/api/automation/run',{task,mode:'slip_preview'});
+      if(!r.ok) alert((r.j&&r.j.error)||'미리보기 실행 실패');
+      await load(); return;
+    }
+    const rows=j.rows||[];
+    if(!rows.length){ alert(`[${nm}] 상신 대기 전표가 없습니다.\n(미리보기 ${when})`); return; }
+    const fm=v=>v==null?'-':Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const lines=rows.map(r=>`· ${r.sl_cd} ← ${r.sx_cd}  USD ${fm(r.usd)}`).join('\n');
+    if(!confirm(`[${nm}] 전자결재 — 장금 출금전표 상신\n미리보기 ${when}\n\n${lines}\n\n합계 ${rows.length}건 · USD ${fm(j.total_usd)}\nTransfer → Oil Qty 점검 → 결재라인 Submit. 위 전표만 상신합니다.\n진행할까요?`)) return;
+    btn.disabled=true;
+    const r=await api('POST','/api/automation/run',{task,mode:'slip_submit',params:{sl_cds:rows.map(x=>x.sl_cd),expect:Object.fromEntries(rows.map(x=>[x.sl_cd,{usd:x.usd,sx_cd:x.sx_cd}]))}});
+    if(!r.ok) alert((r.j&&r.j.error)||'실행 실패');
     await load();
   }
   async function toggleKs(){
