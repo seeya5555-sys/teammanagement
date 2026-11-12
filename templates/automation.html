@@ -146,6 +146,7 @@
   <div id="au-soa" class="jl"></div>
   <div id="soa-gate" class="jl"></div>
   <div id="soa-review" class="sr"></div>
+  <div id="soa-notes" class="jl"></div>
   <div id="soa-groups" class="soa-groups"></div>
 
   <div class="au-sec">선박별 SOA 검증 (온디맨드)</div>
@@ -294,6 +295,23 @@
     const {ok,j}=await api('POST',`/api/automation/soa/reviews/${encodeURIComponent(SRC.sx_cd)}/action`,body);
     if(!ok){$('#sr-msg').textContent=(j&&j.error)||'큐 적재 실패';return;}
     $('#sr-msg').textContent=`${action} 대기중…`;SRC.locked=true;SRC.queued_action=action;renderSr();await loadSoaReview();
+  }
+  // ── SOA 적요 (new)·불인정 목록 (11-12 형) ──
+  let NOTES={pending:[],rejected:[]},NOPEN=false;
+  async function loadSoaNotes(){const r=await api('GET','/api/automation/soa/notes');if(r.ok){NOTES=r.j;renderSoaNotes();}}
+  function renderSoaNotes(){
+    const el=$('#soa-notes');if(!el)return;
+    const act=(NOTES.rejected||[]).filter(x=>x.status==='active'),rel=(NOTES.rejected||[]).filter(x=>x.status!=='active');
+    const P=(NOTES.pending||[]).map(x=>`<tr><td>${esc(x.vsl||'')}</td><td>${esc(x.src_sx)} s${esc(x.src_seq)}</td><td>${esc(x.pool||'')}</td><td>${esc(x.exp_cd||'')} ${esc(x.exp_nm||'')}</td><td>${esc(x.summary||'')}</td><td><button class="au-b" data-nrej="${escA(x.src_sx)}|${escA(x.src_seq)}" type="button">불인정</button></td></tr>`).join('')||'<tr><td colspan="6">(new) 대기 적요 없음</td></tr>';
+    const R=act.map(x=>`<tr><td>${esc(x.pool)}</td><td>${esc(x.exp_cd||'')}</td><td>${esc(x.summary)}</td><td>${esc(x.vsl||'')} ${esc(x.src_sx||'')} s${esc(x.src_seq||'')}</td><td>${esc(x.reason||'')}</td><td>${esc((x.created_at||'').slice(0,10))}</td><td><button class="au-b" data-nrel="${x.id}" type="button">해제</button></td></tr>`).join('')||'<tr><td colspan="7">불인정 적요 없음</td></tr>';
+    el.innerHTML=`<div class="jl-head${NOPEN?' open':''}" id="soa-notes-head"><span class="jl-caret">▸</span>SOA 적요 (new) · 불인정 목록<span class="jl-headmeta">대기 ${(NOTES.pending||[]).length} · 불인정 ${act.length}${rel.length?' · 해제 '+rel.length:''}</span></div>`+
+      (NOPEN?`<div class="jl-body"><div class="jl-sub">(new) 대기 — 선주+관리사 선단 과거 승인 이력에 없는 적요. [불인정]을 누르면 이후 거의 같은 적요는 자동 리젝.</div><table class="jl-t"><tr><th>선박</th><th>SOA/라인</th><th>선단</th><th>비용코드</th><th>적요</th><th></th></tr>${P}</table>`+
+      `<div class="jl-sub">불인정 목록 (자동 리젝 기준)</div><table class="jl-t"><tr><th>선단</th><th>비용코드</th><th>적요</th><th>최초 SOA</th><th>사유</th><th>등록일</th><th></th></tr>${R}</table></div>`:'');
+    $('#soa-notes-head').onclick=()=>{NOPEN=!NOPEN;renderSoaNotes();};
+    el.querySelectorAll('[data-nrej]').forEach(b=>b.onclick=async()=>{const [sx,seq]=b.dataset.nrej.split('|');const reason=prompt('불인정 사유(선택)','')??null;if(reason===null)return;
+      const r=await api('POST','/api/automation/soa/notes/reject',{src_sx:sx,src_seq:seq,reason});if(!r.ok)alert((r.j&&r.j.error)||'실패');await loadSoaNotes();});
+    el.querySelectorAll('[data-nrel]').forEach(b=>b.onclick=async()=>{if(!confirm('불인정 해제? 이후 자동 리젝 안 함'))return;
+      const r=await api('POST',`/api/automation/soa/notes/rejected/${b.dataset.nrel}/release`);if(!r.ok)alert((r.j&&r.j.error)||'실패');await loadSoaNotes();});
   }
   async function loadSoaReview(){const r=await api('GET','/api/automation/soa/reviews');if(r.ok){SRLIST=r.j.cases||[];renderSoaReview();}}
   async function api(method,url,body){
@@ -849,6 +867,7 @@
       for(const it of JLIST){ if(it.ref in JPENDING) it.excluded=JPENDING[it.ref]; }  // in-flight 토글 보존
     }
     await loadSoaReview();
+    await loadSoaNotes();
     const gs=await api('GET','/api/automation/soa/gate-state');
     if(gs.ok) GATE=gs.j.rows||[];
     const sg=await api('GET','/api/automation/soa/groups');

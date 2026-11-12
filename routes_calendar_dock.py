@@ -9161,3 +9161,105 @@ def _reqgen_dock_autoload(did):
 # ---- 미적재 청구(orphan) 보관: 태그는 맞는데 발주현황에 행이 없는 SVMS 청구 ----
 #   종전엔 sync 가 `unmatched` 카운터로만 세고 버려서 형 화면에는 흔적이 0 이었다. 자동으로 행을
 #   만들지 않고 **목록으로 남겨** 사람이 [적재] 를 누르게 한다 — 자동생성은 형이 지운 행을 다음
+
+
+# ── SOA 적요 (new)·불인정 목록 (2026-11-12 형 확정, TRMT 전용) ──
+#   맥 러너가 (new) 대기 적요를 push → 형이 [불인정] → 불인정 목록(정본=이 서버) → 러너가 pull 해 자동리젝.
+#   불인정 쓰기 주체 = 이 서버만. 해제 = released(리젝 안 함).
+_NOTE_POOL_RE = re.compile(r'^(SILVER|SKRT)\+(CSM|SYNERGY)$')
+
+
+def _ensure_soa_note_tables(db):
+    db.execute('CREATE TABLE IF NOT EXISTS soa_note_pending (src_sx TEXT NOT NULL, src_seq TEXT NOT NULL, vsl TEXT, pool TEXT, '
+               'exp_cd TEXT, exp_nm TEXT, summary TEXT, sl_dm TEXT, sim REAL, at TEXT, PRIMARY KEY (src_sx, src_seq))')
+    db.execute('CREATE TABLE IF NOT EXISTS soa_note_rejected (id INTEGER PRIMARY KEY AUTOINCREMENT, pool TEXT NOT NULL, exp_cd TEXT, '
+               'summary TEXT NOT NULL, src_sx TEXT, src_seq TEXT, vsl TEXT, reason TEXT, status TEXT NOT NULL DEFAULT \'active\', '
+               'created_at TEXT, released_at TEXT)')
+
+
+@bp.route('/api/ext/soa/notes/pending', methods=['POST'])
+@api_key_required
+def api_ext_soa_notes_pending():
+    """러너 → (new) 대기 적요 전량 교체. {"items":[{src_sx,src_seq,vsl,pool,exp_cd,exp_nm,summary,sl_dm,sim}]}"""
+    body = request.get_json(silent=True) or {}
+    items = body.get('items')
+    if not isinstance(items, list) or len(items) > 2000:
+        return jsonify({'ok': False, 'error': 'items 형식 오류'}), 400
+    now = datetime.now().isoformat(timespec='seconds')
+    clean = []
+    for it in items:
+        if not isinstance(it, dict):
+            return jsonify({'ok': False, 'error': 'item 형식 오류'}), 400
+        sx = str(it.get('src_sx') or '').strip().upper()
+        seq = str(it.get('src_seq') or '').strip()
+        pool = str(it.get('pool') or '')
+        if not re.match(r'^[A-Z0-9]{4}[A-Z0-9-]{4,20}$', sx) or not re.match(r'^\d{1,6}$', seq) or not _NOTE_POOL_RE.match(pool):
+            return jsonify({'ok': False, 'error': f'형식 위반: {sx} {seq} {pool}'}), 400
+        sim = it.get('sim')
+        clean.append((sx, seq, str(it.get('vsl') or '')[:8], pool, str(it.get('exp_cd') or '')[:12],
+                      str(it.get('exp_nm') or '')[:60], str(it.get('summary') or '')[:200],
+                      str(it.get('sl_dm') or '')[:6], float(sim) if isinstance(sim, (int, float)) else None, now))
+    db = get_db()
+    with db:
+        _ensure_soa_note_tables(db)
+        db.execute('DELETE FROM soa_note_pending')
+        db.executemany('INSERT OR REPLACE INTO soa_note_pending VALUES (?,?,?,?,?,?,?,?,?,?)', clean)
+    return jsonify({'ok': True, 'count': len(clean)})
+
+
+@bp.route('/api/ext/soa/notes/rejected')
+@api_key_required
+def api_ext_soa_notes_rejected():
+    """러너 pull: 활성 불인정 목록(정본)."""
+    db = get_db()
+    _ensure_soa_note_tables(db)
+    rows = db.execute("SELECT id,pool,exp_cd,summary,src_sx,src_seq,vsl,reason,created_at FROM soa_note_rejected "
+                      "WHERE status='active' ORDER BY id").fetchall()
+    return jsonify({'ok': True, 'items': [dict(r) for r in rows]})
+
+
+@bp.route('/api/automation/soa/notes')
+@admin_required
+def api_soa_notes():
+    db = get_db()
+    _ensure_soa_note_tables(db)
+    pend = db.execute('SELECT * FROM soa_note_pending ORDER BY sl_dm DESC, src_sx, src_seq').fetchall()
+    rej = db.execute('SELECT * FROM soa_note_rejected ORDER BY status, id DESC').fetchall()
+    return jsonify({'ok': True, 'pending': [dict(r) for r in pend], 'rejected': [dict(r) for r in rej]})
+
+
+@bp.route('/api/automation/soa/notes/reject', methods=['POST'])
+@admin_required
+def api_soa_notes_reject():
+    """형 [불인정]: (new) 대기 적요 1건 → 불인정 목록. 이후 같은 선주+관리사·같은 비용코드의 거의 같은 적요는 자동 리젝."""
+    body = request.get_json(silent=True) or {}
+    sx = str(body.get('src_sx') or '').strip().upper()
+    seq = str(body.get('src_seq') or '').strip()
+    reason = str(body.get('reason') or '')[:200]
+    db = get_db()
+    with db:
+        _ensure_soa_note_tables(db)
+        p = db.execute('SELECT * FROM soa_note_pending WHERE src_sx=? AND src_seq=?', (sx, seq)).fetchone()
+        if not p:
+            return jsonify({'ok': False, 'error': '대기 목록에 없음'}), 404
+        dup = db.execute("SELECT id FROM soa_note_rejected WHERE src_sx=? AND src_seq=? AND status='active'", (sx, seq)).fetchone()
+        if not dup:
+            db.execute("INSERT INTO soa_note_rejected (pool,exp_cd,summary,src_sx,src_seq,vsl,reason,status,created_at) "
+                       "VALUES (?,?,?,?,?,?,?,'active',?)",
+                       (p['pool'], p['exp_cd'], p['summary'], sx, seq, p['vsl'], reason,
+                        datetime.now().isoformat(timespec='seconds')))
+        db.execute('DELETE FROM soa_note_pending WHERE src_sx=? AND src_seq=?', (sx, seq))
+    return jsonify({'ok': True})
+
+
+@bp.route('/api/automation/soa/notes/rejected/<int:rid>/release', methods=['POST'])
+@admin_required
+def api_soa_notes_release(rid):
+    db = get_db()
+    with db:
+        _ensure_soa_note_tables(db)
+        cur = db.execute("UPDATE soa_note_rejected SET status='released', released_at=? WHERE id=? AND status='active'",
+                         (datetime.now().isoformat(timespec='seconds'), rid))
+    if not cur.rowcount:
+        return jsonify({'ok': False, 'error': '활성 불인정 항목 없음'}), 404
+    return jsonify({'ok': True})

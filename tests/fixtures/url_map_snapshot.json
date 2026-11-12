@@ -459,6 +459,37 @@
     "defaults": {}
   },
   {
+    "rule": "/api/automation/soa/notes",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_soa_notes",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/automation/soa/notes/reject",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_soa_notes_reject",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/automation/soa/notes/rejected/<int:rid>/release",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_soa_notes_release",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/automation/soa/reviews",
     "methods": [
       "GET",
@@ -3912,6 +3943,27 @@
       "OPTIONS"
     ],
     "endpoint": "routes_calendar_dock.api_ext_soa_groups",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/soa/notes/pending",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_soa_notes_pending",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/ext/soa/notes/rejected",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_soa_notes_rejected",
     "strict_slashes": true,
     "defaults": {}
   },
