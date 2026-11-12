@@ -887,7 +887,14 @@ def _translate_texts_en(texts):
     CHUNK = 12
     for s in range(0, len(idxs), CHUNK):
         run(idxs[s:s + CHUNK])
+    # 2026-11-12 Peru Issue 315: 묶음 번역이 'VDR 연속 Alarm 발생' → 'Continuous VDR alarm 발생' 처럼 한글을 남김
+    #   → 외부 메일 한글 차단에 걸림. 한글이 남은 항목만 1건씩 1회 재번역(결과에 한글 없을 때만 채택).
+    for i in [i for i in idxs if _HANGUL_RE.search(str(out[i] or ''))]:
+        res = _translate_batch_en(texts, [i])
+        if res and i in res and isinstance(res[i], str) and res[i].strip() and not _HANGUL_RE.search(res[i]):
+            out[i] = res[i]
     return out
+_HANGUL_RE = re.compile(r'[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]')
 def _dd_ko_prompt(payload):
     """감독 DD report 행(영문) → 형의 일일보고 어조(한국어) 번역 프롬프트.
 
