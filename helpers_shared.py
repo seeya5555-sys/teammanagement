@@ -3193,6 +3193,16 @@ def _class_workbook(title, subtitle, headers, rows, wrap_cols, widths):
 CS_EXPORT_HEADERS = ['Category', 'No.', 'ITEM', 'DESCRIPTION', 'RECTIFICATION', 'PHOTO', 'STATUS']
 
 
+def _cs_last_vessel_reply(remark):
+    """비고 끝의 마지막 회신 본문 전체(날짜표시 [M/D] 제외). 회신은 previous+'\n\n'+'[M/D]본문'으로
+    append되므로 마지막 '\n\n[M/D]' 이후 끝까지가 한 회신(본문 내 빈 줄 보존). 없으면 ''."""
+    text = remark or ''
+    last = None
+    for m in re.finditer(r'(?:\A|\n[ \t]*\n)[ \t]*\[\d{1,2}/\d{1,2}\][ \t]*', text):
+        last = m
+    return text[last.end():].strip() if last else ''
+
+
 def _cs_survey_workbook(sid):
     """Condition Survey 엑셀추출 단일 생성기(화면 버튼·CS 메일 첨부 공용).
 
@@ -3207,9 +3217,11 @@ def _cs_survey_workbook(sid):
     fr = query('''SELECT id, category, no, item, description, remark, status
                     FROM cs_findings WHERE survey_id=?
                    ORDER BY CASE category WHEN 'Defect' THEN 0 ELSE 1 END, no, id''', (sid,))
-    # RECTIFICATION·PHOTO 2열은 공란으로 출력(현장기입용). REMARK는 export에서 제외.
+    # RECTIFICATION=직전 선박 회신(비고 끝의 [M/D] 단락, 날짜표시 제외) 미리 채움 — 형 지시 2026-11-12
+    # (Atlantic Green 감독 클레임: 매주 빈칸 → 코멘트 지워진 것으로 보임). 같은 문구 재회신은
+    # cs_mail_service._same_as_last_reply 가 무변경 처리. PHOTO는 공란, 나머지 REMARK는 제외.
     rows = [[r['category'], r['no'], r['item'] or '', r['description'] or '',
-             '', '', r['status'] or ''] for r in fr]
+             _cs_last_vessel_reply(r['remark']), '', r['status'] or ''] for r in fr]
     vessel = s['vessel_name']
     title = f"Condition Survey — {vessel}  {s['year']} Q{s['quarter']}"
     sub_bits = [f"수검일: {s['inspection_date'] or '-'}", f"Vendor: {s['vendor'] or '-'}",
