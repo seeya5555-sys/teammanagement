@@ -332,6 +332,23 @@ _con.close()
 try: os.unlink(OLD_DB)
 except OSError: pass
 
+# ── 11-12 적요 의심: Remark '적요(new):' 라인 = 전 라인 Confirm 이어도 검토 필요 ──
+SX4='SAPSCX2611090099'
+def nline(seq, rmk, rjt='N'):
+    d=line(seq,'Y' if rjt!='Y' else 'N'); d['SX_CD']=SX4; d['RMK']=rmk; d['SUBJ']=rmk; d['RJT_YN']=rjt
+    d['machine_state']='rejected' if rjt=='Y' else 'confirmed'; d['exception']=(rjt=='Y')
+    return d
+nsnap=lambda ls:{'sx_cd':SX4,'header_status':'S','vessel':'SAPS','owner_comp_id':'001','lines':ls}
+r=c.post('/api/ext/soa/reviews/snapshot',json=nsnap([nline('0001','OTHERS | 적요: Fire extinguisher'),nline('0002','OTHERS | 적요(new): Starlink 월 사용료')]),headers=H)
+chk(r.status_code==200,'적요 의심 snapshot ingest',r.get_data(as_text=True))
+got=c.get('/api/automation/soa/reviews/'+SX4).get_json()['case']
+chk(got['note_suspect_count']==1 and got['needs_review'] is True,'적요 의심 1 → 검토 필요',got)
+chk([l['sx_seq'] for l in got['lines'] if l['note_suspect']]==['0002'],'라인 note_suspect 표시',got['lines'])
+lst=[x for x in c.get('/api/automation/soa/reviews').get_json()['cases'] if x['sx_cd']==SX4]
+chk(lst and lst[0]['note_suspect_count']==1,'목록에도 적요 의심 수',lst)
+r=c.post('/api/ext/soa/reviews/snapshot',json=nsnap([nline('0001','OTHERS | 적요: Fire extinguisher'),nline('0002','OTHERS | 적요(new): Starlink',rjt='Y')]),headers=H)
+got=c.get('/api/automation/soa/reviews/'+SX4).get_json()['case']
+chk(got['note_suspect_count']==0,'리젝된 적요 의심 라인은 제외',got)
 try: os.unlink(DB)
 except OSError: pass
 if fails:

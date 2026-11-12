@@ -5651,6 +5651,10 @@ def _soa_review_action_pre_write(result):
                 and not seqs)
 
 
+def _soa_note_suspect(ln):
+    return '적요(new):' in str((ln or {}).get('rmk') or (ln or {}).get('source_rmk') or '')
+
+
 def _soa_review_case_payload(case_row, *, detail=False):
     c = dict(case_row)
     lines = _soa_review_case_lines(c['id'])
@@ -5661,6 +5665,9 @@ def _soa_review_case_payload(case_row, *, detail=False):
                                if ln.get('exception') and ln.get('cfm_yn') != 'Y' and ln.get('rjt_yn') != 'Y')
     pending_count = sum(1 for ln in lines if ln.get('cfm_yn') != 'Y' and ln.get('rjt_yn') != 'Y')
     rejected_count = sum(1 for ln in lines if ln.get('rjt_yn') == 'Y')
+    # 11-12 형: 2차가 Remark 에 '적요(new):' 를 단 라인 = 적요 의심(선주+관리사 선단 과거 승인 이력에 없는 적요).
+    #   자동승인 보류 대상이므로 리젝되지 않은 한 사람 검토 필요로 올린다.
+    note_suspect_count = sum(1 for ln in lines if _soa_note_suspect(ln) and ln.get('rjt_yn') != 'Y')
     action_failed = _soa_review_action_failed(c.get('last_action_result'))
     reconcile_required = _soa_review_action_reconcile(c.get('last_action_result'))
     # 실패 기록을 내리는 조건은 '추론'이 아니라 runner가 구조화해 보고한 사실에만 근거한다:
@@ -5683,7 +5690,7 @@ def _soa_review_case_payload(case_row, *, detail=False):
     needs_review = bool(
         unresolved_failure or reconcile_required or gate['locked'] or unknown_status
         or (not gate['read_only']
-            and (open_exception_count > 0 or pending_count > 0 or bool(c.get('draft_dirty'))
+            and (open_exception_count > 0 or pending_count > 0 or note_suspect_count > 0 or bool(c.get('draft_dirty'))
                  or gate['can_approve'] or approval_pending))
     )
     # 목록 분류는 서버가 확정한다(클라가 추론하지 않음).
@@ -5724,6 +5731,7 @@ def _soa_review_case_payload(case_row, *, detail=False):
         'open_exception_count': open_exception_count,
         'pending_count': pending_count,
         'rejected_count': rejected_count,
+        'note_suspect_count': note_suspect_count,
         'action_failed': action_failed,
         'reconcile_required': reconcile_required,
         'approval_pending': approval_pending,
@@ -5769,6 +5777,7 @@ def _soa_review_case_payload(case_row, *, detail=False):
                 'machine_state': ln.get('machine_state'),
                 'machine_reason': ln.get('machine_reason'),
                 'exception': bool(ln.get('exception')),
+                'note_suspect': _soa_note_suspect(ln),
                 'subj': ln.get('subj'),
                 'rmk': ln.get('rmk'),
                 'cfm_yn': ln.get('cfm_yn'),
