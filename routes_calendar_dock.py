@@ -7287,7 +7287,7 @@ def api_ext_fundreq_pending_list():
                     'count': len(rows)})
 
 
-_FUNDREQ_EXTERNAL_STATUS = {'U': 'submitted', 'R': 'rejected'}   # SVMS STATUS → 카드 종결 상태
+_FUNDREQ_EXTERNAL_STATUS = {'U': 'submitted', 'R': 'rejected', 'C': 'submitted'}   # SVMS STATUS → 카드 종결 상태 (C=실버 전자결재 최종완료, 11-13)
 
 
 @bp.route('/api/ext/fundreq/drafts/<int:did>/external-status', methods=['POST'])

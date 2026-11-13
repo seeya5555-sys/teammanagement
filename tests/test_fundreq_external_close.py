@@ -56,6 +56,12 @@ class FundreqExternalCloseTests(unittest.TestCase):
             self.assertEqual((200, False, st), (r.status_code, r.get_json()["applied"], r.get_json()["status"]), st)
             self.assertEqual(st, self.row(did)["status"])
 
+    def test_c_status_closes_as_submitted(self):   # 11-13 실버 전자결재 최종완료(C)
+        a = self.draft("A")
+        r = self.client.post(f"/api/ext/fundreq/drafts/{a}/external-status", json={"svms_status": "C"}, headers=self.h)
+        self.assertEqual((200, True), (r.status_code, r.get_json()["applied"]))
+        self.assertEqual("submitted", self.row(a)["status"])
+
     def test_invalid_inputs_rejected(self):
         a = self.draft("A")
         for body in ({"svms_status": "S"}, {"svms_status": "Z"}, {}, {"svms_status": "U", "status": "rejected"}):
