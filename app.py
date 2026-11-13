@@ -1830,6 +1830,8 @@ import routes_repair_request
 app.register_blueprint(routes_repair_request.bp)
 import routes_family_assets
 app.register_blueprint(routes_family_assets.bp)
+import routes_news
+app.register_blueprint(routes_news.bp)
 import routes_liscr
 app.register_blueprint(routes_liscr.bp)
 import routes_rpcost

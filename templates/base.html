@@ -28,6 +28,9 @@
     <symbol id="i-cube" viewBox="0 0 24 24">
       <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>
     </symbol>
+    <symbol id="i-news" viewBox="0 0 24 24">
+      <path d="M4 5h13v14H6a2 2 0 0 1-2-2z"/><path d="M17 9h3v8a2 2 0 0 1-2 2h-1"/><path d="M7.5 9h6M7.5 12.5h6M7.5 16h4"/>
+    </symbol>
     <symbol id="i-brain" viewBox="0 0 24 24">
       <circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="13" r="2.4"/>
       <circle cx="5" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/>
@@ -100,7 +103,7 @@
       {% set auto_eps = ['routes_dock_submit.automation_page','routes_dock_submit.automation_soa_page','routes_calendar_dock.aor_page','routes_calendar_dock.fundreq_page','routes_calendar_dock.invoice_page','routes_calendar_dock.remittance_page','routes_liscr.liscr_page','routes_calendar_dock.health_page','routes_daily_mail.daily_mail_page','routes_vetting_mail.vetting_mail_page','routes_class_mail.class_mail_page','routes_cs_mail.cs_mail_page'] %}
       {% set dockprep_eps = ['routes_repair_request.repair_request_page','routes_calendar_dock.reqgen_page','routes_dock_submit.dock_procure_page','routes_dock_daily.dock_daily_page'] %}
       {% set expense_eps = ['routes_calendar_dock.expenses_page','routes_calendar_dock.expense_detail_page'] %}
-      {% set ref_eps = ['routes_brain.brain_page','routes_ship3d.ship3d_page','routes_calendar_dock.meeting_page'] + expense_eps %}
+      {% set ref_eps = ['routes_news.news_page','routes_brain.brain_page','routes_ship3d.ship3d_page','routes_calendar_dock.meeting_page'] + expense_eps %}
       {# 한 곳에서 active 판정 — 데스크탑/모바일 공통. icon 지정 시 스프라이트 SVG 출력 #}
       {% macro nlink(ep, label, eps=None, icon=None) -%}
         <a href="{{ url_for(ep) }}" class="nav-link {% if request.endpoint == ep or (eps and request.endpoint in eps) %}active{% endif %}"{% if request.endpoint == ep or (eps and request.endpoint in eps) %} aria-current="page"{% endif %}>{% if icon %}<svg class="nav-ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}{{ label }}</a>
@@ -167,7 +170,7 @@
         <div class="nav-group {% if request.endpoint in ref_eps %}active{% endif %}">
           <button type="button" class="nav-trigger"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>Reference<svg class="nav-ic caret-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
           <div class="nav-submenu">
-            {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
+            {% if session.username == 'SS0094' %}{{ nlink('routes_news.news_page', 'AI NEWS', icon='news') }}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
             {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
             {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
           </div>
@@ -233,7 +236,7 @@
     </div>
     {# 모바일에서는 핵심 업무 탭을 항상 노출하고 나머지는 햄버거 메뉴로 제공. #}
     <nav class="mobile-tabbar" aria-label="핵심 메뉴">
-      {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}{% if session.username == 'SS0094' %}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
+      {% if session.username == 'SS0094' %}{{ nlink('routes_news.news_page', 'AI NEWS', icon='news') }}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{% endif %}{% if session.username == 'SS0094' %}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
       {{ nlink('routes_core.dashboard', '대시보드', icon='dashboard') }}
       {{ nlink('routes_core.index', 'Daily', icon='clipboard') }}
       {{ nlink('routes_core.calendar_page', 'Calendar', icon='calendar') }}
@@ -296,7 +299,7 @@
         </div>
         <div class="mm-section"><svg class="nav-ic" aria-hidden="true"><use href="#i-book-open"/></svg>Reference</div>
         <div class="mm-sub-group">
-          {% if session.username == 'SS0094' %}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
+          {% if session.username == 'SS0094' %}{{ nlink('routes_news.news_page', 'AI NEWS', icon='news') }}{{ nlink('routes_brain.brain_page', '브레인', icon='brain') }}{{ nlink('routes_ship3d.ship3d_page', '선박 3D', icon='cube') }}{% endif %}
           {{ nlink('routes_calendar_dock.meeting_page', '회의록', icon='file-text') }}
           {{ nlink('routes_calendar_dock.expenses_page', 'Expenses', expense_eps, icon='wallet') }}
         </div>

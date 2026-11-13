@@ -1491,3 +1491,28 @@ CREATE TABLE IF NOT EXISTS brain_graph (
     payload     TEXT NOT NULL,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+-- AI NEWS(손유석 전용). 맥 데쿠가 /api/ext/news 로 06/18시 적재, 핀 안 한 건 24시간 뒤 자동 삭제.
+CREATE TABLE IF NOT EXISTS news_item (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid         TEXT NOT NULL UNIQUE,
+    url         TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'web',
+    title_en    TEXT NOT NULL,
+    content_en  TEXT NOT NULL DEFAULT '',
+    title_ko    TEXT NOT NULL,
+    summary_ko  TEXT NOT NULL DEFAULT '',
+    reason_ko   TEXT NOT NULL DEFAULT '',
+    score       INTEGER,
+    ai_ok       INTEGER NOT NULL DEFAULT 1,
+    meta        TEXT NOT NULL DEFAULT '{}',
+    pinned      INTEGER NOT NULL DEFAULT 0,
+    pinned_at   TEXT,
+    batch_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_news_item_pinned_created ON news_item(pinned, created_at);
+CREATE TABLE IF NOT EXISTS news_seen (
+    uid      TEXT PRIMARY KEY,
+    seen_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);

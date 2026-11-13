@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}AI NEWS · TRMT3{% endblock %}
+
+{% block head %}
+<style>
+  .nw-wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+  .nw-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .nw-head h1{font-size:19px;margin:0;font-weight:700;color:var(--text-primary)}
+  .nw-meta{font-size:11.5px;color:var(--text-tertiary)}
+  .nw-spacer{flex:1}
+  .nw-seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface)}
+  .nw-seg button{border:0;background:transparent;padding:6px 14px;font-size:12.5px;font-weight:600;color:var(--text-secondary);cursor:pointer}
+  .nw-seg button+button{border-left:1px solid var(--border)}
+  .nw-seg button.on{background:var(--accent);color:#fff}
+  .nw-chk{font-size:12.5px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;cursor:pointer}
+  .nw-list{display:flex;flex-direction:column;gap:8px}
+  .nw-card{background:var(--surface);border:1px solid var(--border-subtle);border-radius:8px;padding:12px 14px;display:flex;gap:12px}
+  .nw-card.imp{border-color:var(--red-border);background:var(--red-bg)}
+  .nw-score{flex:0 0 38px;height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+            font-weight:800;font-size:15px;background:var(--surface-2,#f1f3f5);color:var(--text-secondary)}
+  .nw-card.imp .nw-score{background:var(--red);color:#fff}
+  .nw-body{flex:1;min-width:0}
+  .nw-title{font-size:14.5px;font-weight:700;color:var(--text-primary);text-decoration:none;line-height:1.4}
+  .nw-title:hover{text-decoration:underline}
+  .nw-badge{display:inline-block;font-size:11px;font-weight:800;color:#fff;background:var(--red);border-radius:4px;padding:1px 6px;margin-right:6px;vertical-align:1px}
+  .nw-sum{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.5}
+  .nw-foot{font-size:11.5px;color:var(--text-tertiary);margin-top:6px;display:flex;gap:10px;flex-wrap:wrap}
+  .nw-foot .reason{font-style:italic}
+  .nw-orig{font-size:11.5px;color:var(--text-tertiary);margin-top:3px}
+  .nw-pin{flex:0 0 auto;border:1px solid var(--border);background:var(--surface);border-radius:6px;height:32px;padding:0 10px;
+          font-size:15px;cursor:pointer;opacity:.55}
+  .nw-pin.on{opacity:1;border-color:var(--accent);background:var(--accent-bg,#eef4ff)}
+  .nw-empty{padding:40px 10px;text-align:center;color:var(--text-tertiary);font-size:13px}
+  .nw-warn{font-size:12px;color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-border);border-radius:6px;padding:6px 10px}
+  @media (max-width:640px){.nw-card{padding:10px}.nw-score{flex-basis:32px;height:32px;font-size:13px}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="nw-wrap">
+  <div class="nw-head">
+    <h1>AI NEWS</h1>
+    <span class="nw-meta" id="nw-meta"></span>
+    <span class="nw-spacer"></span>
+    <label class="nw-chk"><input type="checkbox" id="nw-imp"> 중요만</label>
+    <div class="nw-seg" role="tablist">
+      <button type="button" class="on" data-view="latest">최신 (24시간)</button>
+      <button type="button" data-view="pinned">📌 보관함 <span id="nw-pcount"></span></button>
+    </div>
+  </div>
+  <div class="nw-meta">매일 06:00 · 18:00 업데이트 · 8점 이상 = 중요(!) · 핀하지 않은 기사는 24시간 뒤 자동 삭제</div>
+  <div class="nw-list" id="nw-list"><div class="nw-empty">불러오는 중…</div></div>
+</div>
+
+<script>
+(function () {
+  let view = 'latest', items = [];
+  const list = document.getElementById('nw-list');
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const SRC = {reddit: 'Reddit', github: 'GitHub', x: 'X', threads: 'Threads', ossinsight: 'GitHub 트렌딩'};
+  function metaLine(it) {
+    const m = it.meta || {}, out = [SRC[it.source] || it.source];
+    if (m.subreddit) out.push('r/' + m.subreddit);
+    if (m.score != null) out.push('▲' + m.score);
+    if (m.num_comments != null) out.push('💬' + m.num_comments);
+    if (m.stars_gained != null) out.push('★+' + m.stars_gained);
+    out.push((it.batch_at || '').slice(5, 16));
+    return out.join(' · ');
+  }
+  function render() {
+    const onlyImp = document.getElementById('nw-imp').checked;
+    const rows = items.filter((it) => !onlyImp || it.important);
+    if (!rows.length) {
+      list.innerHTML = '<div class="nw-empty">' + (view === 'pinned' ? '보관한 기사가 없어. 기사 오른쪽 📌 을 누르면 여기 영구 보관돼.' : '아직 표시할 기사가 없어. 다음 업데이트(06:00/18:00)를 기다려줘.') + '</div>';
+      return;
+    }
+    list.innerHTML = rows.map((it) => `
+      <div class="nw-card${it.important ? ' imp' : ''}">
+        <div class="nw-score" title="중요도">${it.score == null ? '–' : it.score}</div>
+        <div class="nw-body">
+          <a class="nw-title" href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">${it.important ? '<span class="nw-badge">중요 !</span>' : ''}${esc(it.title_ko)}</a>
+          ${it.summary_ko ? `<div class="nw-sum">${esc(it.summary_ko)}</div>` : ''}
+          ${it.title_ko !== it.title_en ? `<div class="nw-orig">${esc(it.title_en)}</div>` : ''}
+          ${!it.ai_ok ? '<div class="nw-warn">번역·중요도 AI 호출 실패 — 원문 그대로 표시</div>' : ''}
+          <div class="nw-foot"><span>${esc(metaLine(it))}</span>${it.reason_ko ? `<span class="reason">${esc(it.reason_ko)}</span>` : ''}</div>
+        </div>
+        <button type="button" class="nw-pin${it.pinned ? ' on' : ''}" data-id="${it.id}" title="${it.pinned ? '보관 해제' : '보관(핀)'}">📌</button>
+      </div>`).join('');
+  }
+  function load() {
+    fetch('/api/news?view=' + view, {credentials: 'same-origin'}).then((r) => r.json()).then((d) => {
+      items = d.items || [];
+      document.getElementById('nw-meta').textContent = d.last_batch ? '최근 업데이트 ' + d.last_batch.slice(0, 16) : '';
+      document.getElementById('nw-pcount').textContent = d.pinned_total ? '(' + d.pinned_total + ')' : '';
+      render();
+    }).catch(() => { list.innerHTML = '<div class="nw-empty">불러오기 실패 — 새로고침 해줘.</div>'; });
+  }
+  document.querySelectorAll('.nw-seg button').forEach((b) => b.addEventListener('click', () => {
+    document.querySelectorAll('.nw-seg button').forEach((x) => x.classList.toggle('on', x === b));
+    view = b.dataset.view; load();
+  }));
+  document.getElementById('nw-imp').addEventListener('change', render);
+  list.addEventListener('click', (e) => {
+    const b = e.target.closest('.nw-pin'); if (!b) return;
+    const it = items.find((x) => String(x.id) === b.dataset.id); if (!it) return;
+    b.disabled = true;
+    fetch('/api/news/' + it.id + '/pin', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pinned: !it.pinned})})
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(() => load()).catch(() => { b.disabled = false; alert('핀 저장 실패'); });
+  });
+  load();
+})();
+</script>
+{% endblock %}

@@ -569,7 +569,7 @@ def _parse_ai_json_text(text, tag):
         return {'error': 'PARSE_FAILED', 'raw': text[:300]}
 
 
-def _openai_call_json(parts, budget=130):
+def _openai_call_json(parts, budget=130, model=None):
     """parts(Gemini 형식 list) → OpenAI Responses API → 파싱된 JSON 또는 {'error':...}.
     text → input_text, inline_data(pdf 등) → input_file, inline_data(image/*) → input_image."""
     if not OPENAI_API_KEY:
@@ -589,7 +589,7 @@ def _openai_call_json(parts, budget=130):
                 content.append({'type': 'input_file', 'filename': f'document.{ext}', 'file_data': uri})
     content.append({'type': 'input_text',
                     'text': 'Respond with valid JSON only (no markdown, no commentary).'})
-    body = {'model': OPENAI_MODEL, 'input': [{'role': 'user', 'content': content}]}
+    body = {'model': model or OPENAI_MODEL, 'input': [{'role': 'user', 'content': content}]}
     req = urllib.request.Request(
         'https://api.openai.com/v1/responses', data=json.dumps(body).encode('utf-8'),
         headers={'content-type': 'application/json', 'authorization': 'Bearer ' + OPENAI_API_KEY},
@@ -634,7 +634,7 @@ def _openai_call_json(parts, budget=130):
     return _parse_ai_json_text(text, 'openai-call-json')
 
 
-def _gemini_call_json(parts, model=None):
+def _gemini_call_json(parts, model=None, openai_model=None):
     """AI JSON 호출 공통 진입점(형 지시 2026-10-29): GPT(OpenAI) 메인, 실패(오류·크레딧 소진·파싱 실패)
     시 Gemini 자동 백업. 기존 호출부 이름·인자·반환 계약 유지."""
     import time as _time
@@ -642,7 +642,8 @@ def _gemini_call_json(parts, model=None):
     total = 270   # GPT+Gemini 합산 상한 — iOS 추출 업로드 타임아웃 300s 안에서 끝나게(업로드·후처리 여유 30s)
     if OPENAI_API_KEY:
         try:
-            res = _openai_call_json(parts, budget=130)
+            res = (_openai_call_json(parts, budget=130, model=openai_model) if openai_model
+                   else _openai_call_json(parts, budget=130))
         except Exception as e:   # 입력 변환 등 예외도 백업으로
             res = {'error': 'API_CALL_FAILED', 'detail': f'openai exception: {e}'}
         if not (isinstance(res, dict) and res.get('error')):
