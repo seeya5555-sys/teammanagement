@@ -1516,3 +1516,10 @@ CREATE TABLE IF NOT EXISTS news_seen (
     uid      TEXT PRIMARY KEY,
     seen_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+-- 비용청구 승인 탭 OPEX 현황표(담당선 월 Tech·Crew OPEX, 맥 러너가 통째 적재하는 단일 행, 11-13)
+CREATE TABLE IF NOT EXISTS fundreq_opex_matrix (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    payload     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);

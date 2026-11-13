@@ -59,6 +59,7 @@
   <div><p class="ops-page-kicker">Approval queue</p><h2 class="page-title" style="margin:0"><svg class="ic-svg"><use href="#i-wallet"/></svg> 비용청구 승인</h2></div>
   <span class="fr-count" id="fr-count"></span>
   <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="fr-b" style="background:var(--surface);color:var(--text-primary);border:1px solid var(--border)" id="fr-opex" title="담당선 월 Tech·Crew OPEX 청구 현황·중복">OPEX</button>
     <button class="fr-b" style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-border)" id="fr-verify"><svg class="ic-svg"><use href="#i-search-check"/></svg> 검증(카드적재)</button>
     <button class="fr-b" style="background:var(--amber);color:#fff" id="fr-submit"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></svg> 체크한 것 승인+상신</button>
     <button class="fr-b rs" id="fr-reload"><svg class="ic-svg" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg> 새로고침</button>
@@ -66,13 +67,99 @@
   </div>
 </header>
 <div class="fr-note">
-  평일 cron은 장금 Technical Submitted 건을 <b>카드로 적재만</b> 함. 체크한 카드만 <b>[체크한 것 승인+상신]</b> 버튼으로 SVMS 상신됨.
+  평일 cron은 장금 Technical Submitted 건과 <b>실버 월 OPEX(Tech·Crew, 형 결재 차례)</b>를 <b>카드로 적재만</b> 함. 체크한 카드만 <b>[체크한 것 승인+상신]</b> 버튼으로 SVMS 상신됨.
   금액이 일치해도 자동상신되지 않음. 모든 카드는 사람이 직접 체크해야 함. (검증결과 <span style="color:var(--green);font-weight:700">pass</span>는 승인 권장, <span style="color:var(--red);font-weight:700">불일치/차액</span>은 직접 확인)
 </div>
 <div class="fr-list" id="fr-list"><div class="fr-empty">불러오는 중…</div></div>
+<div class="ox-back" id="ox-back" hidden>
+  <div class="ox-modal" role="dialog" aria-label="OPEX 청구 현황">
+    <div class="ox-head">
+      <b>담당선 월 OPEX 청구 현황 (Crew · Tech)</b>
+      <select id="ox-year"></select>
+      <span class="ox-meta" id="ox-meta"></span>
+      <button type="button" class="fr-b rs" id="ox-close" style="margin-left:auto">닫기</button>
+    </div>
+    <div class="ox-legend"><span class="ox-c ok">O</span> 1건 <span class="ox-c wait">대기</span> 결재 진행중 <span class="ox-c dup">중복(N건)</span> 같은 달 2건 이상 <span class="ox-c none">X</span> 청구 없음 <span class="ox-c wait">?</span> 판독불가 건 있어 확인 필요 <span class="ox-c none">–</span> 조회 범위 밖 · 청구월=비용청구 Subject 기준(리젝·초안 제외)</div>
+    <div class="ox-scroll"><table class="ox-t" id="ox-table"></table></div>
+    <div class="ox-detail" id="ox-detail">칸을 누르면 해당 건이 여기 보여.</div>
+    <div class="ox-unread" id="ox-unread"></div>
+  </div>
+</div>
+<style>
+  .ox-back{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:1000;display:flex;align-items:flex-start;justify-content:center;padding:40px 12px;overflow:auto}
+  .ox-back[hidden]{display:none}
+  .ox-modal{background:var(--surface);border-radius:10px;max-width:1180px;width:100%;padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .ox-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .ox-meta{font-size:11.5px;color:var(--text-tertiary)}
+  .ox-legend{font-size:11.5px;color:var(--text-secondary);margin-bottom:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .ox-scroll{overflow:auto;max-height:62vh;border:1px solid var(--border-subtle);border-radius:6px}
+  .ox-t{border-collapse:collapse;width:100%;font-size:12px}
+  .ox-t th,.ox-t td{border:1px solid var(--border-subtle);padding:4px 6px;text-align:center;white-space:nowrap}
+  .ox-t th{background:var(--surface-2,#f4f3ee);position:sticky;top:0}
+  .ox-t td.vn{text-align:left;font-weight:600}
+  .ox-c{display:inline-block;min-width:22px;padding:1px 5px;border-radius:4px;font-weight:700;cursor:pointer}
+  .ox-c.ok{color:var(--green);background:var(--green-bg,#eef8f0)}
+  .ox-c.wait{color:var(--amber);background:var(--amber-bg)}
+  .ox-c.dup{color:#fff;background:var(--red)}
+  .ox-c.none{color:var(--text-tertiary)}
+  .ox-detail{font-size:12px;margin-top:8px;padding:8px;background:var(--surface-2,#f4f3ee);border-radius:6px;min-height:20px}
+  .ox-unread{font-size:11.5px;color:var(--amber);margin-top:6px}
+</style>
 {% endblock %}
 {% block scripts %}
 <script>
+(function(){
+  const back=document.getElementById('ox-back'); let data=null;
+  const esc=(x)=>String(x==null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const MON=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  function years(){const ys=new Set([String(new Date().getFullYear())]);(data.vessels||[]).forEach(v=>['T','C'].forEach(d=>Object.keys(v[d]||{}).forEach(m=>ys.add(m.slice(0,4)))));return [...ys].sort();}
+  function cell(items,ym,unread){
+    const now=new Date(), cur=now.getFullYear()*12+now.getMonth(), [y,m]=ym.split('-').map(Number), idx=y*12+m-1;
+    const rg=data.range||{};
+    if(!rg.from||ym<rg.from||ym>rg.to) return '<span class="ox-c none" title="조회 범위 밖">–</span>';   // 미조회 ≠ 미청구
+    if(!items||!items.length){
+      if(idx>cur+1) return '';
+      return unread?'<span class="ox-c wait" title="청구월 판독불가 건 있음 — 확인">?</span>':'<span class="ox-c none">X</span>';
+    }
+    if(items.length>1) return '<span class="ox-c dup">중복('+items.length+'건)</span>';
+    return items.some(i=>i.st==='S'||i.st==='P'||i.st==='U')&&!items.some(i=>i.st==='C')?'<span class="ox-c wait">대기</span>':'<span class="ox-c ok">O</span>';
+  }
+  function render(){
+    const y=document.getElementById('ox-year').value; let h='<tr><th>VESSEL</th><th>선주</th><th>OPEX</th>'+MON.map(m=>'<th>'+m+'</th>').join('')+'</tr>';
+    let unread=[];
+    (data.vessels||[]).forEach(v=>{
+      (v.unread||[]).forEach(u=>unread.push(v.vsl+' '+u.cd+' '+u.subj));
+      ['C','T'].forEach((d,k)=>{
+        h+='<tr>'+(k===0?'<td class="vn" rowspan="2">'+esc(v.name||v.vsl)+'</td><td rowspan="2">'+esc(v.owner)+'</td>':'')+'<td>'+(d==='C'?'CREW':'TECH')+'</td>';
+        const un=(v.unread||[]).some(u=>u.dept===d);
+        for(let i=1;i<=12;i++){const ym=y+'-'+String(i).padStart(2,'0');h+='<td data-v="'+esc(v.vsl)+'" data-d="'+d+'" data-m="'+ym+'">'+cell((v[d]||{})[ym],ym,un)+'</td>';}
+        h+='</tr>';
+      });
+    });
+    document.getElementById('ox-table').innerHTML=h;
+    document.getElementById('ox-unread').textContent=unread.length?('⚠️ 청구월 판독 불가(표에 없음): '+unread.join(' / ')):'';
+  }
+  document.getElementById('ox-table').addEventListener('click',e=>{
+    const td=e.target.closest('td[data-m]'); if(!td) return;
+    const v=(data.vessels||[]).find(x=>x.vsl===td.dataset.v); const items=((v||{})[td.dataset.d]||{})[td.dataset.m]||[];
+    document.getElementById('ox-detail').innerHTML='<b>'+esc((v&&v.name)||'')+' '+(td.dataset.d==='C'?'CREW':'TECH')+' '+esc(td.dataset.m)+'</b> — '+
+      (items.length?items.map(i=>esc(i.cd)+' ['+esc(i.st)+'] '+(i.amt==null?'-':Number(i.amt).toLocaleString())+' '+esc(i.cur)+' · '+esc(i.subj)+(i.inv_dt?' (Inv '+esc(i.inv_dt)+')':'')).join('<br>')
+        :((data.range&&(td.dataset.m<data.range.from||td.dataset.m>data.range.to))?'조회 범위 밖(미조회)'
+        :(((v||{}).unread||[]).some(u=>u.dept===td.dataset.d)?'이 달 청구 확인 안 됨 — 청구월 판독불가 건이 있어 미청구로 단정 못 함':'청구 없음')));
+  });
+  document.getElementById('ox-year').addEventListener('change',render);
+  document.getElementById('ox-close').addEventListener('click',()=>{back.hidden=true;});
+  back.addEventListener('click',e=>{if(e.target===back) back.hidden=true;});
+  document.getElementById('fr-opex').addEventListener('click',()=>{
+    back.hidden=false; document.getElementById('ox-table').innerHTML='<tr><td>불러오는 중…</td></tr>';
+    fetch('/api/fundreq/opex-matrix',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
+      data=d; const sel=document.getElementById('ox-year'); const ys=years(); const cy=String(new Date().getFullYear());
+      sel.innerHTML=ys.map(y=>'<option'+(y===cy?' selected':'')+'>'+y+'</option>').join('');
+      document.getElementById('ox-meta').textContent=d.generated_at?('기준 '+d.generated_at+' (카드 적재 09:50·18:00·[검증] 때 갱신)'):'아직 집계 없음 — [검증(카드적재)] 한 번 실행해줘';
+      render();
+    }).catch(()=>{document.getElementById('ox-table').innerHTML='<tr><td>불러오기 실패</td></tr>';});
+  });
+})();
 const money=v=>{if(v==null||v==='')return '-';const t=String(v).replace(/,/g,'').trim();const n=Number(t);return (t===''||!isFinite(n))?String(v):n.toLocaleString('en-US',{maximumFractionDigits:2});};
 (function(){
   const $=s=>document.querySelector(s);

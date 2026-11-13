@@ -3366,6 +3366,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/fundreq/opex-matrix",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_calendar_dock.api_ext_fundreq_opex_matrix",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/fundreq/rejecting",
     "methods": [
       "GET",
@@ -4834,6 +4844,17 @@
       "OPTIONS"
     ],
     "endpoint": "routes_calendar_dock.api_fundreq_clear_decided",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/fundreq/opex-matrix",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_calendar_dock.api_fundreq_opex_matrix",
     "strict_slashes": true,
     "defaults": {}
   },

@@ -7176,6 +7176,76 @@ def fundreq_page():
     return render_template('fundreq.html')
 
 
+_OPEX_MATRIX_MAX = 2_000_000
+_OPEX_MONTH_RE = re.compile(r'^20\d{2}-(0[1-9]|1[0-2])$')
+
+
+def _opex_matrix_clean(d):
+    """맥 러너가 올린 담당선 월 OPEX 현황표 검증·정규화(표시 전용, 승인 판단에 쓰지 않음)."""
+    if not isinstance(d, dict) or not isinstance(d.get('vessels'), list) or len(d['vessels']) > 80:
+        raise ValueError('vessels list(<=80) required')
+    def item(x):
+        if not isinstance(x, dict):
+            raise ValueError('bad item')
+        amt = x.get('amt')
+        if amt is not None and (isinstance(amt, bool) or not isinstance(amt, (int, float)) or amt != amt or abs(amt) > 1e12):
+            amt = None
+        return {'cd': str(x.get('cd') or '')[:30], 'st': str(x.get('st') or '')[:2], 'amt': amt,
+                'cur': str(x.get('cur') or '')[:5], 'subj': str(x.get('subj') or '')[:120],
+                'inv_dt': str(x.get('inv_dt') or '')[:10], 'dept': str(x.get('dept') or '')[:1]}
+    out = []
+    for v in d['vessels']:
+        if not isinstance(v, dict) or not re.fullmatch(r'[A-Z0-9]{3,6}', str(v.get('vsl') or '')):
+            raise ValueError('bad vessel')
+        e = {'vsl': v['vsl'], 'name': str(v.get('name') or '')[:60], 'owner': str(v.get('owner') or '')[:10], 'unread': []}
+        for dept in ('T', 'C'):
+            months = v.get(dept) or {}
+            if not isinstance(months, dict) or len(months) > 60:
+                raise ValueError('bad months')
+            e[dept] = {}
+            for m, items in months.items():
+                if not _OPEX_MONTH_RE.match(str(m)) or not isinstance(items, list) or len(items) > 20:
+                    raise ValueError('bad month entry')
+                e[dept][m] = [item(x) for x in items]
+        un = v.get('unread') or []
+        if not isinstance(un, list) or len(un) > 100:
+            raise ValueError('bad unread')
+        e['unread'] = [item(x) for x in un]
+        out.append(e)
+    rng = d.get('range') if isinstance(d.get('range'), dict) else {}
+    rng = {k: str(rng.get(k)) for k in ('from', 'to') if _OPEX_MONTH_RE.match(str(rng.get(k) or ''))}
+    if len(rng) != 2:
+        raise ValueError('range{from,to} YYYY-MM required')
+    return {'generated_at': str(d.get('generated_at') or '')[:20], 'range': rng, 'vessels': out}
+
+
+@bp.route('/api/ext/fundreq/opex-matrix', methods=['POST'])
+@api_key_required
+def api_ext_fundreq_opex_matrix():
+    raw = request.get_data(cache=False)
+    if len(raw) > _OPEX_MATRIX_MAX:
+        return jsonify({'error': 'payload too large'}), 413
+    try:
+        clean = _opex_matrix_clean(json.loads(raw or b'{}'))
+    except (ValueError, TypeError) as e:
+        return jsonify({'error': str(e)[:120]}), 400
+    execute("INSERT INTO fundreq_opex_matrix(id, payload, updated_at) VALUES(1, ?, datetime('now','localtime')) "
+            "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
+            (json.dumps(clean, ensure_ascii=False),))
+    return jsonify({'ok': True, 'vessels': len(clean['vessels'])})
+
+
+@bp.route('/api/fundreq/opex-matrix')
+@admin_required
+def api_fundreq_opex_matrix():
+    row = query("SELECT payload, updated_at FROM fundreq_opex_matrix WHERE id=1", one=True)
+    if not row:
+        return jsonify({'vessels': [], 'generated_at': None, 'updated_at': None})
+    d = json.loads(row['payload'])
+    d['updated_at'] = row['updated_at']
+    return jsonify(d)
+
+
 @bp.route('/api/fundreq/drafts')
 @admin_required
 def api_fundreq_list():
