@@ -25,11 +25,13 @@ MIN_SCORE = 6
 IMPORTANT_SCORE = 8
 AI_CHUNK = 30
 AI_DEADLINE = 400   # 요청 전체 AI 시간 상한(초) — 수집기 타임아웃 600s 안
-RETENTION_SQL = "datetime('now','localtime','-24 hours')"
 
 PROMPT = """너는 AI 뉴스 편집자다. 독자는 한국 선박 기술감독으로, Claude·GPT·Gemini 같은 AI 도구와 에이전트를 업무 자동화에 적극 쓴다.
 가산점 관심사: Claude/GPT/Gemini 신모델·가격·API·정책 변화, AI 에이전트·코딩 에이전트·MCP, AI 업계 큰 사건(대형 투자·IPO·경영진·규제), 해운·조선 AI.
-감점: AI와 무관한 글, 단순 질문·잡담·밈, 근거 없는 소문, 마이너한 개인 프로젝트.
+감점: AI와 무관한 글, 단순 질문·잡담·밈, 근거 없는 소문, 개인 프로젝트 자랑·사용 후기, 커뮤니티 논쟁.
+점수 기준(엄격하게): 9~10=독자 업무·도구 선택에 바로 영향(주요 모델·API·가격 발표, 업계 판도 사건) / 8=꼭 알아둘 만한 의미 있는 변화 /
+6~7=참고할 만한 소식 / 5 이하=버림. 8점 이상은 전체 목록에서 3~4건 이내로만 준다.
+같은 사건·같은 발표를 다룬 항목이 여럿이면 가장 정보가 많은 하나만 점수를 주고 나머지는 0점.
 아래 각 항목에 대해 JSON 객체 하나만 출력한다:
 {"items":[{"i":번호,"title_ko":"자연스러운 한국어 제목(고유명사·모델명·제품명은 원문 유지)","summary_ko":"핵심 1~2문장 한국어 요약","score":0~10 정수,"reason_ko":"점수 근거 한 문장"}]}
 모든 항목을 빠짐없이 같은 번호로 돌려준다.
@@ -43,7 +45,7 @@ def _owner_ok():
 
 
 def _purge():
-    execute(f"DELETE FROM news_item WHERE pinned=0 AND created_at < {RETENTION_SQL}")
+    execute("DELETE FROM news_item WHERE pinned=0 AND created_at < datetime('now','localtime','-24 hours')")
     execute("DELETE FROM news_seen WHERE seen_at < datetime('now','localtime','-3 days')")
 
 

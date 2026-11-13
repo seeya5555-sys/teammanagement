@@ -3708,6 +3708,16 @@
     "defaults": {}
   },
   {
+    "rule": "/api/ext/news",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_news.api_ext_news_ingest",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/ext/push",
     "methods": [
       "OPTIONS",
@@ -5339,6 +5349,27 @@
     "defaults": {}
   },
   {
+    "rule": "/api/news",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_news.api_news_list",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/api/news/<int:item_id>/pin",
+    "methods": [
+      "OPTIONS",
+      "POST"
+    ],
+    "endpoint": "routes_news.api_news_pin",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
     "rule": "/api/remittance/drafts",
     "methods": [
       "GET",
@@ -6613,6 +6644,17 @@
       "OPTIONS"
     ],
     "endpoint": "routes_calendar_dock.msg_preview_page",
+    "strict_slashes": true,
+    "defaults": {}
+  },
+  {
+    "rule": "/news",
+    "methods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "endpoint": "routes_news.news_page",
     "strict_slashes": true,
     "defaults": {}
   },

@@ -86,6 +86,7 @@
     "routes_followup.py": [],
     "routes_journal.py": [],
     "routes_liscr.py": [],
+    "routes_news.py": [],
     "routes_repair_request.py": [],
     "routes_rpcost.py": [],
     "routes_ship3d.py": [],
@@ -549,6 +550,18 @@
     "helpers_shared.py": [
       "admin_required",
       "api_key_required"
+    ]
+  },
+  "routes_news.py": {
+    "app_core.py": [
+      "execute",
+      "get_db",
+      "query"
+    ],
+    "helpers_shared.py": [
+      "_gemini_call_json",
+      "api_key_required",
+      "login_required"
     ]
   },
   "routes_repair_request.py": {
